@@ -1,0 +1,348 @@
+.footer {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #dee1e6;
+  color: #9095a1;
+  font-size: 12px;
+  padding: 0 40px;
+}
+
+.footer nav {
+  display: flex;
+  gap: 24px;
+}
+
+@media (max-width: 1180px) {
+  .app-shell {
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  }
+
+  .content-grid,
+  .content-grid.creation-flow-grid,
+  .content-grid.creation-flow-grid.permission-grid,
+  .content-grid.creation-flow-grid.review-grid,
+  .content-grid.review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .job-detail-card-grid.two-up,
+  .job-detail-card-grid.summary-grid,
+  .detail-kv-grid.summary-kv {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-page,
+  .catalog-detail-grid,
+  .sql-page,
+  .sql-page.context-collapsed,
+  .sql-editor-layout,
+  .dashboard-layout,
+  .dashboard-builder-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sql-history-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-filter-bar,
+  .dashboard-metric-grid,
+  .hegun-connector-grid,
+  .hegun-field-grid,
+  .dashboard-list-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hegun-source-grid,
+  .hegun-schema-grid,
+  .hegun-rule-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .catalog-preview-panel {
+    width: 100%;
+  }
+
+  .dag-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-panel,
+  .validation-panel {
+    max-width: 744px;
+  }
+
+  .creation-flow-grid .summary-panel,
+  .creation-flow-grid .validation-panel {
+    position: static;
+    max-height: none;
+    margin-top: 0;
+  }
+
+  .review-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .connector-row,
+  .compact-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jobs-page-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .create-job-button {
+    width: 100%;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jobs-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .jobs-search,
+  .reset-filter {
+    grid-column: 1 / -1;
+  }
+
+  .job-row {
+    grid-template-columns: 1fr;
+  }
+
+  .job-row-main {
+    grid-template-areas:
+      "title"
+      "progress"
+      "details"
+      "actions";
+    grid-template-columns: 1fr;
+  }
+
+  .job-row-status {
+    justify-content: flex-start;
+  }
+
+  .job-row-details {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .job-row-actions {
+    justify-content: flex-start;
+  }
+
+  .job-card dl,
+  .dag-node {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 780px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .stepper-inner {
+    height: auto;
+    padding: 18px 20px;
+  }
+
+  .page-body {
+    padding: 20px;
+  }
+
+  .sql-dataset-panel {
+    top: 76px;
+    left: 16px;
+    width: min(320px, calc(100vw - 32px));
+    max-height: calc(100vh - 96px);
+  }
+
+  .sql-collapse-button {
+    top: 390px;
+    left: min(calc(320px + 15px), calc(100vw - 17px));
+  }
+
+  .sql-page.context-collapsed .sql-collapse-button {
+    left: 16px;
+  }
+
+  .option-grid,
+  .form-grid,
+  .form-grid.compact,
+  .creation-flow-grid .summary-panel dl,
+  .format-grid,
+  .connector-row,
+  .compact-cards,
+  .metric-grid,
+  .jobs-toolbar,
+  .job-row-details,
+  .sql-history-panel,
+  .sql-estimation-bar,
+  .dashboard-filter-bar,
+  .dashboard-metric-grid,
+  .dashboard-canvas,
+  .dashboard-donut-area,
+  .hegun-connector-grid,
+  .hegun-field-grid,
+  .hegun-rule-builder,
+  .hegun-test-strip,
+  .hegun-rule-library {
+    grid-template-columns: 1fr;
+  }
+
+  .hegun-rule-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hegun-rule-footer .primary-button {
+    width: 100%;
+  }
+
+  .job-title-row,
+  .job-detail-title-row,
+  .job-table-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .detail-kv-grid,
+  .detail-metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .stats-card {
+    grid-template-areas:
+      "heading"
+      "metrics"
+      "meta"
+      "progress";
+    grid-template-columns: 1fr;
+  }
+
+  .stats-card-heading p {
+    max-width: none;
+  }
+
+  .detail-status-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dag-run-select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dag-summary-grid,
+  .runs-stats-summary > div {
+    grid-template-columns: 1fr;
+  }
+
+  .dag-flow-topbar,
+  .dag-selected-strip,
+  .panel-header,
+  .sql-editor-header,
+  .sql-result-header,
+  .sql-editor-footer,
+  .dashboard-header,
+  .dashboard-card-header,
+  .dashboard-workspace-header,
+  .dashboard-intro-card,
+  .dashboard-publish-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sql-editor-actions,
+  .sql-result-actions,
+  .sql-result-status {
+    justify-content: flex-start;
+  }
+
+  .sql-estimation-bar div {
+    width: 100%;
+  }
+
+  .dashboard-header-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .dashboard-header-actions .primary-button,
+  .dashboard-header-actions .secondary-button,
+  .dashboard-filter-bar .secondary-button {
+    width: 100%;
+  }
+
+  .dashboard-filter-bar label {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-segmented {
+    width: 100%;
+  }
+
+  .dashboard-segmented button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .panel-note {
+    width: 100%;
+    margin-left: 0;
+    text-align: left;
+  }
+
+  .form-actions.inline {
+    justify-content: stretch;
+  }
+
+  .form-actions.inline button {
+    flex: 1 1 100%;
+  }
+
+  .dashboard-list-toolbar,
+  .dashboard-category-chart {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-axis-labels {
+    display: none;
+  }
+
+  .dashboard-category-bars {
+    overflow-x: auto;
+  }
+
+  .job-detail-tabs {
+    overflow-x: auto;
+  }
+
+  .job-owner,
+  .job-detail-actions,
+  .job-row-actions,
+  .job-table-footer div {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 18px 20px;
+  }
+}

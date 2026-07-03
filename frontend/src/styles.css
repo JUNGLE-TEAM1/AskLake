@@ -1,0 +1,11 @@
+@import url("https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;600;700;800&display=swap");
+
+@import "./styles/base.css";
+@import "./styles/layout.css";
+@import "./styles/ingest.css";
+@import "./styles/ingest-dag.css";
+@import "./styles/catalog.css";
+@import "./styles/sql.css";
+@import "./styles/dashboard.css";
+@import "./styles/etl.css";
+@import "./styles/responsive.css";
