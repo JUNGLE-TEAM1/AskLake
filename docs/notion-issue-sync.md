@@ -38,6 +38,17 @@ The workflow runs on:
 
 GitHub-hosted scheduled workflows are not guaranteed to run exactly every 5 minutes, and 5 minutes is the practical minimum cadence for this sync.
 
+## Status behavior
+
+- Existing Project 4 item status is mirrored into Notion `Project Status`.
+- Moving a card in GitHub Project 4 moves the card to the same Notion board column on the next sync.
+- New GitHub issues are added to Project 4 and Notion automatically.
+- New open issues default to `Backlog`.
+- Reopened issues default to `Ready`.
+- Closed issues are moved to `Done`.
+- Issues labeled `blocked` or `blocker` move to `blocked`.
+- Issues labeled `review`, `needs review`, or `in review` move to `In review`.
+
 ## First-run check
 
 Run the workflow manually with `dry_run=true` before enabling normal writes. A clean first run should report planned mutations only. After secrets are confirmed, run again with `dry_run=false`.
