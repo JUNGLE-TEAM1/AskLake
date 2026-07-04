@@ -38,6 +38,7 @@ import type { AuditResult, CatalogDataset } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
+  baseId: string;
   id: string;
   name: string;
   type: string;
@@ -48,6 +49,8 @@ type LineageTableNodeData = Record<string, unknown> & {
   engine: string;
   handleMode: "source" | "target" | "both";
   layerLabel: string;
+  onColumnSelect: (columnId: string) => void;
+  selectedColumnId: string;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
 };
@@ -397,8 +400,14 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
-  const { edges, nodes } = buildLineageGraph(dataset);
+  const defaultColumnId = normalizeLineageId(dataset.schema[0]?.[0] ?? "column");
+  const [selectedColumnId, setSelectedColumnId] = useState(defaultColumnId);
+  const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId);
   const statusMeta = datasetStatusMeta[dataset.status];
+
+  useEffect(() => {
+    setSelectedColumnId(defaultColumnId);
+  }, [defaultColumnId, dataset.id]);
 
   return (
     <section className="catalog-lineage-card">
@@ -435,7 +444,11 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
-function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Node[] } {
+function buildLineageGraph(
+  dataset: CatalogDataset,
+  selectedColumnId: string,
+  onColumnSelect: (columnId: string) => void,
+): { edges: Edge[]; nodes: Node[] } {
   const primaryColumns = buildLineageColumns(dataset.schema);
   const upstreamHeight = getLineageStackHeight(dataset.upstream.length, primaryColumns.length);
   const currentHeight = getLineageTableHeight(primaryColumns.length);
@@ -456,6 +469,8 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
         engine: sourceMeta.engine,
         handleMode: "source",
         layerLabel: sourceMeta.layerLabel,
+        onColumnSelect,
+        selectedColumnId,
         tableName: getLineageTableName(item),
         tone: sourceMeta.tone,
       },
@@ -470,6 +485,8 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       engine: "ICEBERG",
       handleMode: "both",
       layerLabel: `${dataset.layer} LAYER`,
+      onColumnSelect,
+      selectedColumnId,
       tableName: dataset.name,
       tone: getLayerTone(dataset.layer),
     },
@@ -483,6 +500,8 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       engine: getDownstreamEngine(item),
       handleMode: "target",
       layerLabel: "CONSUMER",
+      onColumnSelect,
+      selectedColumnId,
       tableName: getLineageTableName(item),
       tone: "downstream",
     },
@@ -495,6 +514,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     return primaryColumns.map((targetColumn, columnIndex) => {
       const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
       return buildColumnEdge({
+        active: targetColumn.baseId === selectedColumnId,
         id: `${node.id}-${sourceColumn.id}-to-current-${targetColumn.id}`,
         source: node.id,
         sourceHandle: lineageHandleId(sourceColumn.id, "right"),
@@ -508,6 +528,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     return primaryColumns.map((sourceColumn, columnIndex) => {
       const targetColumn = targetColumns[columnIndex % targetColumns.length];
       return buildColumnEdge({
+        active: sourceColumn.baseId === selectedColumnId,
         id: `current-${sourceColumn.id}-to-${node.id}-${targetColumn.id}`,
         source: currentNode.id,
         sourceHandle: lineageHandleId(sourceColumn.id, "right"),
@@ -548,7 +569,12 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
       </header>
       <div className="lineage-table-columns">
         {data.columns.map((column) => (
-          <div className="lineage-column-row" key={column.id}>
+          <button
+            className={column.baseId === data.selectedColumnId ? "lineage-column-row active" : "lineage-column-row"}
+            key={column.id}
+            onClick={() => data.onColumnSelect(column.baseId)}
+            type="button"
+          >
             {(data.handleMode === "target" || data.handleMode === "both") && (
               <Handle
                 className="lineage-column-handle left target-handle"
@@ -567,7 +593,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
                 type="source"
               />
             )}
-          </div>
+          </button>
         ))}
       </div>
     </article>
@@ -575,12 +601,14 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
 }
 
 function buildColumnEdge({
+  active,
   id,
   source,
   sourceHandle,
   target,
   targetHandle,
 }: {
+  active: boolean;
   id: string;
   source: string;
   sourceHandle: string;
@@ -589,12 +617,15 @@ function buildColumnEdge({
 }): Edge {
   return {
     animated: false,
-    className: "lineage-column-edge",
+    className: active ? "lineage-column-edge active" : "lineage-column-edge muted",
     id,
-    markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
+    markerEnd: { color: active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
-    style: { stroke: "#fb923c", strokeDasharray: "6 5", strokeWidth: 2 },
+    style: {
+      stroke: active ? "#2563eb" : "#94a3b8",
+      strokeWidth: active ? 2.4 : 1.5,
+    },
     target,
     targetHandle,
     type: "smoothstep",
@@ -603,6 +634,7 @@ function buildColumnEdge({
 
 function buildLineageColumns(schema: CatalogDataset["schema"]): LineageColumn[] {
   return schema.slice(0, 7).map(([name, type]) => ({
+    baseId: normalizeLineageId(name),
     id: normalizeLineageId(name),
     name,
     type,
