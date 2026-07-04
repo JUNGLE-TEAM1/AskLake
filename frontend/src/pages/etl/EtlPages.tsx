@@ -34,7 +34,7 @@ import {
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, RetryPolicyDraft, ScheduleFlowId, TargetLayer } from "../../types";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -46,6 +46,7 @@ type RepeatScheduleDraft = {
 };
 
 export function SchedulePage({
+  draftRetryPolicy,
   draftScheduleLabel,
   mode,
   onDraftChange,
@@ -54,6 +55,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
+  draftRetryPolicy: RetryPolicyDraft;
   draftScheduleLabel: string;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -73,6 +75,9 @@ export function SchedulePage({
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
+  const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
+    onDraftChange({ schedule: { retryPolicy } });
+  };
   const applyScheduleDraft = () => {
     const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
     const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
@@ -112,7 +117,7 @@ export function SchedulePage({
             <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
+        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
           const sanitizedCron = sanitizeCronInput(cron);
           setCustomCron(sanitizedCron);
           onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
@@ -136,16 +141,16 @@ export function SchedulePage({
         }} onTimeChange={(time) => {
           setRepeatTime(time);
           onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
-        }} />}
-        {mode === "manual" && <ManualSettings />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
+        }} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
           onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
         }} onDateTimeCommit={() => {
           const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
           setOnceDateTime(normalizedDateTime);
           onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
-        }} />}
+        }} onRetryPolicyChange={updateRetryPolicy} />}
     </CreationFlowLayout>
   );
 }
@@ -978,8 +983,10 @@ function RepeatSettings({
   onDayChange,
   onFrequencyChange,
   onMinuteChange,
+  onRetryPolicyChange,
   onTimeCommit,
   onTimeChange,
+  retryPolicy,
   selectedDay,
   time,
 }: {
@@ -991,8 +998,10 @@ function RepeatSettings({
   onDayChange: (day: string) => void;
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
+  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
+  retryPolicy: RetryPolicyDraft;
   selectedDay: string;
   time: string;
 }) {
@@ -1074,12 +1083,12 @@ function RepeatSettings({
           <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
         </span>
       </label>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
 
-function ManualSettings() {
+function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -1097,13 +1106,13 @@ function ManualSettings() {
           </span>
         </label>
       </div>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
       <InfoBox title="자동 실행 예정 없음" body="저장 후 필요할 때 직접 실행할 수 있으며, 다음 실행 일시는 생성되지 않습니다." />
     </section>
   );
 }
 
-function OnceSettings({ dateTime, onDateTimeChange, onDateTimeCommit }: { dateTime: string; onDateTimeChange: (dateTime: string) => void; onDateTimeCommit: () => void }) {
+function OnceSettings({ dateTime, onDateTimeChange, onDateTimeCommit, onRetryPolicyChange, retryPolicy }: { dateTime: string; onDateTimeChange: (dateTime: string) => void; onDateTimeCommit: () => void; onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -1128,7 +1137,7 @@ function OnceSettings({ dateTime, onDateTimeChange, onDateTimeCommit }: { dateTi
           </span>
         </label>
       </div>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
@@ -1424,7 +1433,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
           title="최종 유효성 검사"
           actions={<CreationPanelActions withDivider nextLabel="파이프라인 생성" onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
         >
-          {["소스 연결 완료", "처리 테스트 통과", "스케줄 유효함", "권한 선택됨", "타겟 설정 유효함"].map((item) => (
+          {["소스 연결 완료", "처리 테스트 통과", "스케줄 유효함", "실패 처리 정책 유효함", "권한 선택됨", "타겟 설정 유효함"].map((item) => (
             <div className="validation-row" key={item}>
               <Check size={16} />
               <span>{item}</span>
@@ -1443,6 +1452,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
             ["스키마", request.schemaSummary, "schema"],
             ["처리 규칙", request.ruleSummary, "rules"],
             ["스케줄", request.scheduleLabel, scheduleEditFlow],
+            ["실패 처리 정책", request.retryPolicySummary, scheduleEditFlow],
             ["권한", request.permissionSummary, "permission"],
             ["타겟 저장소", `${request.targetLayer} / ${request.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
