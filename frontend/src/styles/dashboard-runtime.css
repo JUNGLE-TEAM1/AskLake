@@ -104,7 +104,6 @@
 .asklake-dashboard-tab-delete:focus-visible,
 .asklake-dashboard-tab-add:focus-visible,
 .asklake-dataset-option:focus-visible,
-.asklake-widget-add-list button:focus-visible,
 .asklake-widget-config-form input:focus-visible,
 .asklake-widget-config-form select:focus-visible,
 .asklake-widget-config-form textarea:focus-visible,
@@ -644,16 +643,16 @@
 .asklake-widget-frame.editable {
   height: 100%;
   min-height: 0;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+}
+
+.asklake-widget-frame.editable:active {
+  cursor: grabbing;
 }
 
 .asklake-widget-frame.editable:hover {
   border-color: #94a3b8;
-}
-
-.asklake-widget-frame.editable * {
-  pointer-events: none;
 }
 
 .asklake-widget-frame.selected {
@@ -690,6 +689,12 @@
   color: #0f172a;
   font-size: 15px;
   line-height: 1.25;
+}
+
+.asklake-widget-frame-body {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .asklake-widget-empty {
@@ -861,12 +866,6 @@
   flex: 0 0 auto;
 }
 
-.asklake-widget-add-list {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-}
-
 .asklake-widget-config-panel {
   display: grid;
   justify-items: stretch;
@@ -983,59 +982,6 @@
 .asklake-widget-create-button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
-}
-
-.asklake-widget-add-list button,
-.asklake-inspector-danger-button {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: 1px solid var(--dash-border-strong);
-  border-radius: 6px;
-  background: #ffffff;
-  color: var(--dash-text);
-  font-size: 13px;
-  font-weight: 800;
-  padding: 0 10px;
-}
-
-.asklake-widget-add-list button:hover {
-  border-color: #2563eb;
-  color: #2563eb;
-}
-
-.asklake-inspector-danger-button {
-  color: #b91c1c;
-}
-
-.asklake-inspector-danger-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.asklake-inspector-details {
-  display: grid;
-  width: 100%;
-  gap: 7px;
-  text-align: left;
-}
-
-.asklake-inspector-details p {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid var(--dash-border);
-  color: var(--dash-text-muted);
-  font-size: 12px;
-  padding-bottom: 7px;
-}
-
-.asklake-inspector-details strong {
-  color: var(--dash-text);
-  font-size: 12px;
-  text-align: right;
 }
 
 .asklake-dashboard-inspector {

@@ -51,7 +51,9 @@ export function WidgetFrame({
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
       </header>
-      <WidgetRenderer widget={widget} />
+      <div className="asklake-widget-frame-body">
+        <WidgetRenderer widget={widget} />
+      </div>
     </article>
   );
 }

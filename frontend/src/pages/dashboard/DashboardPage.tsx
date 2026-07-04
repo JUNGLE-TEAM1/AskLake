@@ -16,6 +16,7 @@ import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
 import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import { WidgetFrame } from "./runtime/WidgetFrame";
 import { WidgetConfigPanel } from "./runtime/WidgetConfigPanel";
+import { findNextAvailableLayout, hasAnyLayoutCollision, toCollisionLayout } from "./runtime/dashboardLayoutUtils";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import type { CreateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
 import {
@@ -65,14 +66,6 @@ type RuntimeNotice = {
   tone: "success" | "info" | "error";
 };
 
-const draftWidgetLabels: Record<DashboardRuntimeWidgetType, string> = {
-  bar_chart: "막대 차트",
-  donut_chart: "도넛 차트",
-  line_chart: "라인 차트",
-  metric: "지표",
-  table: "테이블",
-};
-
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
@@ -80,8 +73,6 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
 };
-
-const draftWidgetPalette: DashboardRuntimeWidgetType[] = ["metric", "bar_chart", "line_chart", "donut_chart", "table"];
 
 export function DashboardPage({
   dataset,
@@ -526,35 +517,12 @@ export function DashboardPage({
     }
   };
 
-  const addDraftWidget = async (type: DashboardRuntimeWidgetType) => {
-    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId) return;
-    const nextY = selectedDraftWidgets.reduce((bottom, widget) => Math.max(bottom, widget.layout.y + widget.layout.h), 0);
-    const layout = {
-      ...defaultDraftWidgetLayout[type],
-      y: nextY,
-    };
-
-    try {
-      const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
-        layout,
-        title: draftWidgetLabels[type],
-        type,
-      });
-      await loadDraftRuntime(runtimeSelection.dashboardId);
-      setSelectedWidgetId(widget.id);
-      onAction("dashboard.widget.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, type);
-    } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a draft widget.");
-    }
-  };
-
   const addDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
     if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId || isCreatingDatasetWidget) return;
-    const nextY = selectedDraftWidgets.reduce((bottom, widget) => Math.max(bottom, widget.layout.y + widget.layout.h), 0);
-    const layout = {
-      ...defaultDraftWidgetLayout[input.type],
-      y: nextY,
-    };
+    const layout = findNextAvailableLayout(
+      toCollisionLayout(selectedDraftWidgets),
+      defaultDraftWidgetLayout[input.type],
+    );
 
     setIsCreatingDatasetWidget(true);
     setDraftError(null);
@@ -585,6 +553,11 @@ export function DashboardPage({
 
   const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
     if (!selectedRuntimePageId) return;
+    if (hasAnyLayoutCollision(layout)) {
+      setRuntimeNotice({ message: "위젯이 겹쳐 레이아웃을 저장하지 않았습니다. 위치를 다시 조정해 주세요.", tone: "error" });
+      return;
+    }
+
     const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
 
     setDraftRuntime((currentRuntime) => {
@@ -842,6 +815,7 @@ export function DashboardPage({
           selectedWidgetId={selectedWidgetId}
           widgets={selectedDraftWidgets}
           onLayoutCommit={updateDraftWidgetLayouts}
+          onLayoutRejected={() => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" })}
           onSelectWidget={setSelectedWidgetId}
         />
       )
@@ -921,22 +895,6 @@ export function DashboardPage({
                 selectedDatasetId={selectedDatasetId}
                 onCreateWidget={addDatasetDraftWidget}
               />
-              <section>
-                <strong>위젯 추가</strong>
-                <span>선택한 페이지에 기본 위젯을 추가합니다.</span>
-                <div className="asklake-widget-add-list">
-                  {draftWidgetPalette.map((type) => (
-                    <button
-                      disabled={!selectedRuntimePageId || draftLoading}
-                      key={type}
-                      type="button"
-                      onClick={() => void addDraftWidget(type)}
-                    >
-                      + {draftWidgetLabels[type]}
-                    </button>
-                  ))}
-                </div>
-              </section>
             </aside>
           ) : undefined}
           mode={runtimeSelection.mode}
