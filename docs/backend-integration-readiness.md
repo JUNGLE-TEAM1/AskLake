@@ -89,11 +89,14 @@ VITE_USE_MOCK_API=false
 | 대시보드 초안 생성 | `POST /api/dashboards` |
 | 대시보드 저장 | `PATCH /api/dashboards/{dashboardId}` |
 | 대시보드 게시 | `POST /api/dashboards/{dashboardId}/publish` |
-| 저장된 대시보드 목록 | `GET /api/dashboards` |
+| 저장된 대시보드 목록 | `GET /api/dashboards?search=&owner=&tags=&sort=&page=&pageSize=` |
 | 대시보드 상세 | `GET /api/dashboards/{dashboardId}` |
 | 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
 | 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 | 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
+
+대시보드 목록의 검색, 소유자 필터, 태그 필터, 정렬, pagination은 서버에서 처리합니다.
+프론트는 query parameter를 보내고 `items`, `total`, `page`, `pageSize`, `filterOptions`를 받아 목록과 pagination을 표시합니다.
 
 ## 4. 화면별 연결 범위
 
