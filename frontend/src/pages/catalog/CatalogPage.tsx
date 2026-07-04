@@ -49,8 +49,8 @@ type LineageTableNodeData = Record<string, unknown> & {
   engine: string;
   handleMode: "source" | "target" | "both";
   layerLabel: string;
-  onColumnSelect: (columnId: string) => void;
-  selectedColumnId: string;
+  onColumnSelect: (columnId: string | null) => void;
+  selectedColumnId: string | null;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
 };
@@ -400,14 +400,13 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
-  const defaultColumnId = normalizeLineageId(dataset.schema[0]?.[0] ?? "column");
-  const [selectedColumnId, setSelectedColumnId] = useState(defaultColumnId);
+  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
   const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId);
   const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
-    setSelectedColumnId(defaultColumnId);
-  }, [defaultColumnId, dataset.id]);
+    setSelectedColumnId(null);
+  }, [dataset.id]);
 
   return (
     <section className="catalog-lineage-card">
@@ -429,6 +428,7 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
           nodesDraggable={false}
           nodesConnectable={false}
           nodeTypes={lineageNodeTypes}
+          onPaneClick={() => setSelectedColumnId(null)}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="#d5dde8" gap={22} />
@@ -446,8 +446,8 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
 
 function buildLineageGraph(
   dataset: CatalogDataset,
-  selectedColumnId: string,
-  onColumnSelect: (columnId: string) => void,
+  selectedColumnId: string | null,
+  onColumnSelect: (columnId: string | null) => void,
 ): { edges: Edge[]; nodes: Node[] } {
   const primaryColumns = buildLineageColumns(dataset.schema);
   const upstreamHeight = getLineageStackHeight(dataset.upstream.length, primaryColumns.length);
@@ -515,6 +515,7 @@ function buildLineageGraph(
       const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
       return buildColumnEdge({
         active: targetColumn.baseId === selectedColumnId,
+        selected: selectedColumnId !== null,
         id: `${node.id}-${sourceColumn.id}-to-current-${targetColumn.id}`,
         source: node.id,
         sourceHandle: lineageHandleId(sourceColumn.id, "right"),
@@ -529,6 +530,7 @@ function buildLineageGraph(
       const targetColumn = targetColumns[columnIndex % targetColumns.length];
       return buildColumnEdge({
         active: sourceColumn.baseId === selectedColumnId,
+        selected: selectedColumnId !== null,
         id: `current-${sourceColumn.id}-to-${node.id}-${targetColumn.id}`,
         source: currentNode.id,
         sourceHandle: lineageHandleId(sourceColumn.id, "right"),
@@ -572,7 +574,10 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
           <button
             className={column.baseId === data.selectedColumnId ? "lineage-column-row active" : "lineage-column-row"}
             key={column.id}
-            onClick={() => data.onColumnSelect(column.baseId)}
+            onClick={(event) => {
+              event.stopPropagation();
+              data.onColumnSelect(column.baseId);
+            }}
             type="button"
           >
             {(data.handleMode === "target" || data.handleMode === "both") && (
@@ -603,6 +608,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
 function buildColumnEdge({
   active,
   id,
+  selected,
   source,
   sourceHandle,
   target,
@@ -610,6 +616,7 @@ function buildColumnEdge({
 }: {
   active: boolean;
   id: string;
+  selected: boolean;
   source: string;
   sourceHandle: string;
   target: string;
@@ -617,14 +624,14 @@ function buildColumnEdge({
 }): Edge {
   return {
     animated: false,
-    className: active ? "lineage-column-edge active" : "lineage-column-edge muted",
+    className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
-    markerEnd: { color: active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
+    markerEnd: { color: selected && active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
     style: {
-      stroke: active ? "#2563eb" : "#94a3b8",
-      strokeWidth: active ? 2.4 : 1.5,
+      stroke: selected && active ? "#2563eb" : "#94a3b8",
+      strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
     targetHandle,
