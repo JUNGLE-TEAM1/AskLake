@@ -723,6 +723,11 @@ export async function publishDashboardRuntime(dashboardId) {
   };
 }
 
+export async function deleteDashboard(dashboardId) {
+  const result = await pool.query("DELETE FROM dashboards WHERE id = $1 RETURNING payload", [dashboardId]);
+  return result.rows[0]?.payload ?? null;
+}
+
 export async function saveSqlRun(resultDraft) {
   await pool.query(
     `

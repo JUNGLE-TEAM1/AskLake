@@ -79,7 +79,7 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 - ETL job 생성과 상태 전이
 - dataset catalog hydrate
 - SQL query run 생성과 결과 반환
-- dashboard 저장/게시
+- dashboard 저장/게시/삭제
 - audit log 저장
 - 인증/권한이 도입될 경우 actor와 access policy 판정
 

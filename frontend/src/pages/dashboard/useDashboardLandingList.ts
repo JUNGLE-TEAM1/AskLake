@@ -5,9 +5,11 @@ import { dashboardPageSize } from "./dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 
 type DashboardListAction = (action: string, apiPath: string, targetId: string) => void;
+const dashboardSearchDebounceMs = 300;
 
 export function useDashboardLandingList(dashboards: SavedDashboardCard[], onAction: DashboardListAction, refreshKey = 0) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
@@ -15,6 +17,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   const [currentPage, setCurrentPage] = useState(1);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>(() => getMockDashboardListResponse({
     page: 1,
     pageSize: dashboardPageSize,
@@ -25,10 +28,21 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     owner: ownerFilter === "all" ? undefined : ownerFilter,
     page: currentPage,
     pageSize: dashboardPageSize,
-    search: searchQuery.trim() || undefined,
+    search: debouncedSearchQuery.trim() || undefined,
     sort: sortOption,
     tags: selectedTags.length ? selectedTags : undefined,
-  }), [currentPage, ownerFilter, searchQuery, selectedTags, sortOption]);
+  }), [currentPage, debouncedSearchQuery, ownerFilter, selectedTags, sortOption]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, dashboardSearchDebounceMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     let ignore = false;
@@ -52,7 +66,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     return () => {
       ignore = true;
     };
-  }, [currentPage, dashboardQuery, dashboards, refreshKey]);
+  }, [currentPage, dashboardQuery, dashboards, refreshKey, reloadKey]);
 
   const resetPage = () => {
     setCurrentPage(1);
@@ -115,6 +129,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     goToPreviousDashboardPage,
     openListControl,
     ownerFilter,
+    reloadDashboards: () => setReloadKey((key) => key + 1),
     safeDashboardPage: dashboardResponse.page,
     searchQuery,
     selectDashboardOwner,
@@ -122,7 +137,6 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     selectedTags,
     setSearchQuery: (value: string) => {
       setSearchQuery(value);
-      resetPage();
     },
     sortOption,
     toggleDashboardListControl,
