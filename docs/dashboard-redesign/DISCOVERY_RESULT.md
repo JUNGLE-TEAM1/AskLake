@@ -157,8 +157,14 @@ For Phase verification, use `npm run build` unless new scripts are added.
   - Current: `kpi`, `bar`, `line`, `donut`, `table`
   - Redesign pack: `metric`, `bar_chart`, `line_chart`, `donut_chart`, `table`
 - Adding react-grid-layout and a chart library should be delayed until their phases.
-- Directly changing global dashboard CSS could affect the existing white list UI. Runtime dark CSS should use `.asklake-dashboard-runtime`.
+- Directly changing global dashboard CSS could affect the existing white list UI. Runtime CSS should stay isolated under `.asklake-dashboard-runtime`.
 - There is no migration runner; schema changes need careful idempotent SQL.
+
+## Design Direction Update
+
+- User direction on 2026-07-04: dashboard viewer/editor UI must use a white-tone visual direction going forward.
+- Do not continue the earlier dark-shell direction from the external phase pack.
+- Keep the existing white dashboard list UI preserved, and make runtime/editor surfaces consistent with that lighter product UI.
 
 ## Recommended Phase 01 File Changes
 
