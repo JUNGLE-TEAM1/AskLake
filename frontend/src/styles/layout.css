@@ -219,6 +219,20 @@ select.control-input {
   appearance: none;
 }
 
+.input-with-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-unit > span {
+  color: #565d6d;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .control-toggle {
   justify-content: center;
   font-weight: 800;

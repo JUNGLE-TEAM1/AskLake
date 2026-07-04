@@ -71,48 +71,57 @@ export function RetryPolicy() {
       <div className="form-grid compact">
         <label className="field">
           <span>최대 재시도</span>
-          <input
-            className="input control-input"
-            inputMode="numeric"
-            max="10"
-            min="0"
-            type="number"
-            value={maxRetries}
-            onBlur={() => setMaxRetries((value) => normalizeNumber(value, "3", 0, 10))}
-            onChange={(event) => setMaxRetries(normalizeNumber(event.target.value, "3", 0, 10))}
-            onInput={(event) => setMaxRetries(normalizeNumber(event.currentTarget.value, "3", 0, 10))}
-            onKeyDown={blockNumberControlText}
-          />
+          <div className="input-with-unit">
+            <input
+              className="input control-input"
+              inputMode="numeric"
+              max="10"
+              min="0"
+              type="number"
+              value={maxRetries}
+              onBlur={() => setMaxRetries((value) => normalizeNumber(value, "3", 0, 10))}
+              onChange={(event) => setMaxRetries(normalizeNumber(event.target.value, "3", 0, 10))}
+              onInput={(event) => setMaxRetries(normalizeNumber(event.currentTarget.value, "3", 0, 10))}
+              onKeyDown={blockNumberControlText}
+            />
+            <span>회</span>
+          </div>
         </label>
         <label className="field">
           <span>재시도 간격</span>
-          <input
-            className="input control-input"
-            inputMode="numeric"
-            max="1440"
-            min="1"
-            type="number"
-            value={retryInterval}
-            onBlur={() => setRetryInterval((value) => normalizeNumber(value, "10", 1, 1440))}
-            onChange={(event) => setRetryInterval(normalizeNumber(event.target.value, "10", 1, 1440))}
-            onInput={(event) => setRetryInterval(normalizeNumber(event.currentTarget.value, "10", 1, 1440))}
-            onKeyDown={blockNumberControlText}
-          />
+          <div className="input-with-unit">
+            <input
+              className="input control-input"
+              inputMode="numeric"
+              max="1440"
+              min="1"
+              type="number"
+              value={retryInterval}
+              onBlur={() => setRetryInterval((value) => normalizeNumber(value, "10", 1, 1440))}
+              onChange={(event) => setRetryInterval(normalizeNumber(event.target.value, "10", 1, 1440))}
+              onInput={(event) => setRetryInterval(normalizeNumber(event.currentTarget.value, "10", 1, 1440))}
+              onKeyDown={blockNumberControlText}
+            />
+            <span>분</span>
+          </div>
         </label>
         <label className="field">
           <span>실행 제한 시간</span>
-          <input
-            className="input control-input"
-            inputMode="numeric"
-            max="1440"
-            min="1"
-            type="number"
-            value={timeoutMinutes}
-            onBlur={() => setTimeoutMinutes((value) => normalizeNumber(value, "60", 1, 1440))}
-            onChange={(event) => setTimeoutMinutes(normalizeNumber(event.target.value, "60", 1, 1440))}
-            onInput={(event) => setTimeoutMinutes(normalizeNumber(event.currentTarget.value, "60", 1, 1440))}
-            onKeyDown={blockNumberControlText}
-          />
+          <div className="input-with-unit">
+            <input
+              className="input control-input"
+              inputMode="numeric"
+              max="1440"
+              min="1"
+              type="number"
+              value={timeoutMinutes}
+              onBlur={() => setTimeoutMinutes((value) => normalizeNumber(value, "60", 1, 1440))}
+              onChange={(event) => setTimeoutMinutes(normalizeNumber(event.target.value, "60", 1, 1440))}
+              onInput={(event) => setTimeoutMinutes(normalizeNumber(event.currentTarget.value, "60", 1, 1440))}
+              onKeyDown={blockNumberControlText}
+            />
+            <span>분</span>
+          </div>
         </label>
         <label className="field wide">
           <span>최종 실패 처리</span>
