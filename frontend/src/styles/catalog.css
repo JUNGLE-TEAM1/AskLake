@@ -170,6 +170,7 @@
 }
 
 .catalog-result-card {
+  position: relative;
   display: grid;
   gap: 10px;
   min-height: 128px;
@@ -180,9 +181,32 @@
   text-align: left;
 }
 
+.catalog-result-card.pinned {
+  padding-right: 104px;
+}
+
 .catalog-result-card.active {
   border-color: #bfdbfe;
   box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.catalog-result-pin-badge {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #c7d2fe;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 6px 9px;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .catalog-empty-state,
