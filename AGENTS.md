@@ -74,6 +74,8 @@ When extending AskLake, prefer this order:
 
 ## Branch Naming
 
+`main` is protected. Do not push directly to `main`; open a PR from a task branch for every `main` change.
+
 Recommended branch types:
 
 - `feature/<name>`
