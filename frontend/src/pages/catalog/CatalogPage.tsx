@@ -32,7 +32,6 @@ import {
   SlidersHorizontal,
   Table2,
   TerminalSquare,
-  X,
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
@@ -71,6 +70,11 @@ type CatalogFilterState = {
   rag: boolean;
 };
 
+type CatalogSearchQuery = {
+  keywords: string[];
+  tags: string[];
+};
+
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
 const lineageColumnRowHeight = 32;
@@ -80,8 +84,61 @@ function normalizeCatalogText(value: string) {
   return value.trim().toLowerCase();
 }
 
-function datasetMatchesSearch(dataset: CatalogDataset, normalizedQuery: string) {
-  if (!normalizedQuery) return true;
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
+  const tagCounts = new Map<string, { count: number; firstIndex: number; tag: string }>();
+  let nextIndex = 0;
+
+  datasets.forEach((dataset) => {
+    const datasetTags = new Set(dataset.tags.map((tag) => tag.trim()).filter(Boolean));
+
+    datasetTags.forEach((tag) => {
+      const normalizedTag = normalizeCatalogText(tag);
+      const current = tagCounts.get(normalizedTag);
+
+      if (current) {
+        tagCounts.set(normalizedTag, { ...current, count: current.count + 1 });
+        return;
+      }
+
+      tagCounts.set(normalizedTag, { count: 1, firstIndex: nextIndex, tag });
+      nextIndex += 1;
+    });
+  });
+
+  return Array.from(tagCounts.values())
+    .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
+    .map(({ tag }) => tag);
+}
+
+function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
+  let remainingQuery = normalizeCatalogText(query);
+  const tags: string[] = [];
+
+  knownTags
+    .map(normalizeCatalogText)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .forEach((tag) => {
+      const tagPattern = new RegExp(`(^|\\s)${escapeRegExp(tag)}(?=\\s|$)`);
+
+      if (!tagPattern.test(remainingQuery)) return;
+
+      tags.push(tag);
+      remainingQuery = remainingQuery.replace(new RegExp(`(^|\\s)${escapeRegExp(tag)}(?=\\s|$)`, "g"), " ");
+    });
+
+  return {
+    keywords: remainingQuery.split(/\s+/).filter(Boolean),
+    tags: Array.from(new Set(tags)),
+  };
+}
+
+function datasetMatchesSearch(dataset: CatalogDataset, searchQuery: CatalogSearchQuery) {
+  if (searchQuery.keywords.length === 0 && searchQuery.tags.length === 0) return true;
 
   const searchableText = [
     dataset.name,
@@ -96,8 +153,10 @@ function datasetMatchesSearch(dataset: CatalogDataset, normalizedQuery: string) 
     ...dataset.downstream,
     ...dataset.schema.flatMap(([name, type]) => [name, type]),
   ].map(normalizeCatalogText).join(" ");
+  const datasetTags = new Set(dataset.tags.map(normalizeCatalogText));
 
-  return searchableText.includes(normalizedQuery);
+  return searchQuery.tags.every((tag) => datasetTags.has(tag))
+    && searchQuery.keywords.every((keyword) => searchableText.includes(keyword));
 }
 
 function datasetMatchesFilters(dataset: CatalogDataset, filters: CatalogFilterState) {
@@ -125,21 +184,21 @@ export function CatalogPage({
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
-  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [searchText, setSearchText] = useState("");
-  const tags = ["#customer", "#sales", "#behavior", "#marketing", "#dw", "#growth", "#클릭", "#실시간", "#고객 주문", "#스트림", "#RAG", "#사용자 지표"];
-  const normalizedSearchText = useMemo(() => normalizeCatalogText(searchText), [searchText]);
+  const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
+  const topTags = useMemo(() => tags.slice(0, 10), [tags]);
+  const searchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
+  const selectedSearchTags = useMemo(() => new Set(searchQuery.tags), [searchQuery.tags]);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
       const isPinned = pinnedDatasetIds.includes(dataset.id);
-      const matchesSearch = datasetMatchesSearch(dataset, normalizedSearchText);
-      const matchesTag = !activeTag || dataset.tags.includes(activeTag);
+      const matchesSearch = datasetMatchesSearch(dataset, searchQuery);
       const matchesFilters = datasetMatchesFilters(dataset, filterState);
 
-      return (isPinned || matchesSearch) && matchesTag && matchesFilters;
+      return (isPinned || matchesSearch) && matchesFilters;
     })
     .sort((left, right) => {
       const leftPinnedIndex = pinnedDatasetIds.indexOf(left.dataset.id);
@@ -151,7 +210,7 @@ export function CatalogPage({
       if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
       return left.index - right.index;
     })
-    .map(({ dataset }) => dataset), [activeTag, datasets, filterState, normalizedSearchText, pinnedDatasetIds]);
+    .map(({ dataset }) => dataset), [datasets, filterState, pinnedDatasetIds, searchQuery]);
   const hasCatalogResults = filteredDatasets.length > 0;
   const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
 
@@ -172,10 +231,18 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const toggleTag = (tag: string) => {
-    const nextTag = activeTag === tag ? null : tag;
-    setActiveTag(nextTag);
-    onAction("catalog.tag_filter_selected", nextTag ? `/api/catalog/datasets?tag=${encodeURIComponent(nextTag)}` : "/api/catalog/datasets", tag);
+  const addTagToSearch = (tag: string) => {
+    const normalizedTag = normalizeCatalogText(tag);
+
+    if (selectedSearchTags.has(normalizedTag)) {
+      onAction("catalog.tag_search_duplicate_ignored", `/api/catalog/datasets?q=${encodeURIComponent(searchText.trim())}`, tag);
+      return;
+    }
+
+    const nextSearchText = [searchText.trim(), tag].filter(Boolean).join(" ");
+
+    setSearchText(nextSearchText);
+    onAction("catalog.tag_search_added", `/api/catalog/datasets?q=${encodeURIComponent(nextSearchText)}`, tag);
   };
 
   const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
@@ -208,32 +275,25 @@ export function CatalogPage({
               type="search"
               value={searchText}
             />
-            {searchText && (
-              <button
-                aria-label="검색어 지우기"
-                className="catalog-search-clear"
-                title="검색어 지우기"
-                type="button"
-                onClick={() => setSearchText("")}
-              >
-                <X size={14} />
-              </button>
-            )}
           </div>
           <div className="catalog-tag-row">
             <span>태그</span>
             <div>
-              {tags.map((tag) => (
-                <button
-                  aria-pressed={activeTag === tag}
-                  className={activeTag === tag ? "catalog-tag active" : "catalog-tag"}
-                  key={tag}
-                  type="button"
-                  onClick={() => toggleTag(tag)}
-                >
-                  {tag}
-                </button>
-              ))}
+              {topTags.map((tag) => {
+                const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+
+                return (
+                  <button
+                    aria-pressed={isTagInSearch}
+                    className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                    key={tag}
+                    type="button"
+                    onClick={() => addTagToSearch(tag)}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </section>
