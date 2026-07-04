@@ -176,7 +176,7 @@ type DataProcessingResult = {
   durationMs: number;
   status: "success" | "failed";
   retryCount: number;
-  scaleLabel: "500MB" | "1GB" | "10GB";
+  scaleLabel: "sample" | "500MB" | "1GB";
   caveat?: string;
 };
 ```

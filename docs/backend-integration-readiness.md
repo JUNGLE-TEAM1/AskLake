@@ -4,7 +4,6 @@
 상세 요청/응답 타입은 `docs/api-contract.md`를 기준으로 합니다.
 API, mock fixture, frontend internal state는 영어 canonical status value를 사용하고, 한국어 화면 문구는 프론트 mapper에서 변환합니다.
 E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 기준으로 합니다.
-10GB demo evidence가 필요한 경우 `docs/10gb-fallback-verification.md`를 추가로 참조합니다.
 
 ## 1. 현재 상태 요약
 
