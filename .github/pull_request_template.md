@@ -45,7 +45,6 @@
 - data/migration 영향:
 - security/privacy 영향:
 - 문서/운영 영향:
-- Source of Truth 문서 영향:
 
 secret, credential, license 변경 여부:
 

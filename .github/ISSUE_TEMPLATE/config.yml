@@ -2,4 +2,4 @@ blank_issues_enabled: true
 contact_links:
   - name: AskLake 협업 하네스 문서
     url: https://github.com/JUNGLE-TEAM1/AskLake/blob/main/AGENTS.md
-    about: Source of Truth, 개발 순서, 검증 기준을 먼저 확인해야 하는 경우 참고합니다.
+    about: 개발 순서와 검증 기준을 먼저 확인해야 하는 경우 참고합니다.
