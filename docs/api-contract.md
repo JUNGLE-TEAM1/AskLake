@@ -70,6 +70,9 @@ Create submit 직전에는 `frontend/src/services/draftPipelineContract.ts`의 m
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
+  schemaColumns: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows: string[][];
   sourceConfig: Array<[string, string]>;
   sourceType: string;
   sourceLabel: string;
@@ -89,10 +92,12 @@ type CreatePipelineRequest = {
 
 - Review Summary는 `DraftPipeline`에서 파생한 `CreatePipelineRequest` 값을 표시한다.
 - `POST /api/etl/jobs`는 flat `CreatePipelineRequest`를 받는다.
+- `schemaColumns`, `schemaSampleRows`, `schemaFingerprint`는 `draft.schema`에서 그대로 submit payload에 포함한다.
 - `ruleSummary`는 `transform.summary`와 `quality.summary`를 합친 값이며, 둘 중 하나가 다른 하나를 덮어쓰면 안 된다.
 - 성공 응답은 `{ job, dataset }` shape를 유지한다.
 - mock create 응답의 `dataset.schema`와 `dataset.sampleRows`는 Pair A 1번의 `draft.schema.columns/sampleRows`에서 파생한다.
 - 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
+- create submit은 처리 중 중복 클릭을 막고, 실패하면 이전 `jobs`, `datasets`, `selectedJob`, `selectedDataset`을 유지한다.
 - 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
 
 ## 3. 환경변수
@@ -303,6 +308,9 @@ Request:
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
+  schemaColumns: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows: string[][];
   sourceConfig: Array<[string, string]>;
   sourceType: string;
   sourceLabel: string;
@@ -331,6 +339,18 @@ Request 예시:
     ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
     ["Path / Prefix", "data/inventory/daily/"]
   ],
+  "schemaColumns": [
+    {
+      "confidence": 100,
+      "nullable": false,
+      "role": "Primary",
+      "sourceName": "review_id",
+      "targetName": "review_id",
+      "type": "BigInt"
+    }
+  ],
+  "schemaFingerprint": "review_id:BigInt:required",
+  "schemaSampleRows": [["10001"], ["10002"]],
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
@@ -403,9 +423,11 @@ Response 예시:
 
 - `job`을 수집/처리 목록 최상단에 추가합니다.
 - `dataset`을 카탈로그 목록 최상단에 추가합니다.
-- mock 응답 예시의 `schema/sampleRows`는 fallback이며, `draft.schema.columns/sampleRows`가 있으면 그 값에서 파생합니다.
+- mock 응답 예시의 `schema/sampleRows`는 fallback이며, request의 `schemaColumns/schemaSampleRows`가 있으면 그 값에서 파생합니다.
 - `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
 - 생성 성공 감사 로그를 남깁니다.
+- 생성 요청 중에는 생성 버튼을 비활성화하고, 함수 내부에서도 중복 요청을 무시합니다.
+- 생성 실패 시 이전 `jobs`, `datasets`, `selectedJob`, `selectedDataset`을 복원합니다.
 
 Validation:
 

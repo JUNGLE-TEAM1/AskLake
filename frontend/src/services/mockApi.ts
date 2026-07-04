@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import type { CatalogDataset, CreatePipelineRequest, DraftPipeline, JobCommand, JobRowData, SqlResultDraft } from "../types";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -21,23 +21,32 @@ async function resolveMock<T>(payload: T): Promise<T> {
   return payload;
 }
 
-function datasetSchemaFromDraft(draftPipeline: DraftPipeline): CatalogDataset["schema"] {
-  if (draftPipeline.schema.columns.length === 0) {
+function validRequestSchemaColumns(request: CreatePipelineRequest) {
+  return request.schemaColumns
+    .map((column, sourceIndex) => ({ column, sourceIndex }))
+    .filter(({ column }) => column.targetName.trim());
+}
+
+function datasetSchemaFromRequest(request: CreatePipelineRequest): CatalogDataset["schema"] {
+  const columns = validRequestSchemaColumns(request);
+  if (columns.length === 0) {
     return fallbackDatasetSchema;
   }
 
-  const schema = draftPipeline.schema.columns
-    .filter((column) => column.targetName.trim())
-    .map((column) => [column.targetName, column.type.toLowerCase()] as [string, string]);
-  return schema.length > 0 ? schema : fallbackDatasetSchema;
+  return columns.map(({ column }) => [column.targetName, column.type.toLowerCase()] as [string, string]);
 }
 
-function datasetSampleRowsFromDraft(draftPipeline: DraftPipeline, schema: CatalogDataset["schema"]): string[][] {
-  if (draftPipeline.schema.sampleRows.length === 0) {
+function datasetSampleRowsFromRequest(request: CreatePipelineRequest, schema: CatalogDataset["schema"]): string[][] {
+  if (request.schemaSampleRows.length === 0) {
     return [schema.map((_, index) => (index === 0 ? "Pipeline queued" : "-"))];
   }
 
-  return draftPipeline.schema.sampleRows.map((row) => schema.map((_, index) => row[index] ?? "-"));
+  const columns = validRequestSchemaColumns(request);
+  if (columns.length === 0) {
+    return request.schemaSampleRows.map((row) => schema.map((_, index) => row[index] ?? "-"));
+  }
+
+  return request.schemaSampleRows.map((row) => columns.map(({ sourceIndex }) => row[sourceIndex] ?? "-"));
 }
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {
@@ -45,8 +54,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   if (!apiConfig.useMock) {
     return apiClient.post<PipelineCreationResult>("/api/etl/jobs", request);
   }
-  const datasetSchema = datasetSchemaFromDraft(draftPipeline);
-  const datasetSampleRows = datasetSampleRowsFromDraft(draftPipeline, datasetSchema);
+  const datasetSchema = datasetSchemaFromRequest(request);
+  const datasetSampleRows = datasetSampleRowsFromRequest(request, datasetSchema);
 
   const job: JobRowData = {
     status: "스케줄됨",

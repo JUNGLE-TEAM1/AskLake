@@ -104,6 +104,9 @@ export type DraftPipeline = {
 export type CreatePipelineRequest = {
   id: string;
   jobName: string;
+  schemaColumns: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows: string[][];
   sourceConfig: Array<[string, string]>;
   sourceType: string;
   sourceLabel: string;

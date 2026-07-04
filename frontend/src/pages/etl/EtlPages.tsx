@@ -1285,7 +1285,19 @@ export function PermissionPage({
   );
 }
 
-export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
+export function ReviewPage({
+  createPending,
+  draft,
+  onCreate,
+  onEdit,
+  onSave,
+}: {
+  createPending?: boolean;
+  draft: DraftPipeline;
+  onCreate: () => void;
+  onEdit: (flow: FlowId) => void;
+  onSave: () => void;
+}) {
   const request = toCreatePipelineRequest(draft);
   const fallbackSchemaRows = [
     ["review_id", "BIGINT", "NO", "SOURCE.id"],
@@ -1318,7 +1330,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
       side={(
         <CreationValidationPanel
           title="최종 유효성 검사"
-          actions={<CreationPanelActions withDivider nextLabel="파이프라인 생성" onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
+          actions={<CreationPanelActions withDivider nextDisabled={createPending} nextLabel={createPending ? "생성 중..." : "파이프라인 생성"} onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
         >
           {validationRows.map(([item, status]) => (
             <div className="validation-row" key={item}>

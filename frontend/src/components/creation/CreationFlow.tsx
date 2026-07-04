@@ -25,6 +25,7 @@ export function CreationFlowLayout({
 }
 
 export function CreationPanelActions({
+  nextDisabled,
   nextLabel = "다음 단계로",
   prevLabel = "이전",
   saveLabel = "설정 저장",
@@ -33,6 +34,7 @@ export function CreationPanelActions({
   onSave,
   withDivider,
 }: {
+  nextDisabled?: boolean;
   nextLabel?: string;
   prevLabel?: string;
   saveLabel?: string;
@@ -45,7 +47,7 @@ export function CreationPanelActions({
     <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
       <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
       <button className="secondary-button" type="button" onClick={onSave}>{saveLabel}</button>
-      <button className="primary-button" type="button" onClick={onNext}>{nextLabel}</button>
+      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
     </div>
   );
 }

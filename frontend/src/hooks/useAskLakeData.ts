@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import { createPipelineDraft, runJobCommand } from "../services/mockApi";
@@ -68,12 +68,25 @@ export function useAskLakeData({
   const [selectedJob, setSelectedJob] = useState<JobRowData>(etlJobs[1]);
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
+  const createPendingRef = useRef(false);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
   const createPipeline = async () => {
+    if (createPendingRef.current) {
+      showToast("이미 생성 요청이 처리 중입니다.", "info");
+      return;
+    }
+
+    const previousState = {
+      datasets,
+      jobs,
+      selectedDataset,
+      selectedJob,
+    };
+    createPendingRef.current = true;
     setApiPending(true);
     try {
       const { dataset, job } = await createPipelineDraft(draftPipeline, jobs.length);
@@ -86,9 +99,14 @@ export function useAskLakeData({
       showToast("파이프라인 생성 요청이 접수되었습니다.");
       onFlowChange("jobs");
     } catch {
+      setJobs(previousState.jobs);
+      setDatasets(previousState.datasets);
+      setSelectedJob(previousState.selectedJob);
+      setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
       showToast("파이프라인 생성 요청에 실패했습니다.", "info");
     } finally {
+      createPendingRef.current = false;
       setApiPending(false);
     }
   };
