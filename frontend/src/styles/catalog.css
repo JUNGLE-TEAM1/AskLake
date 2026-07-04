@@ -679,16 +679,16 @@
   border: 2px solid #fff;
   background: #3b82f6;
   box-shadow: 0 1px 4px rgb(37 99 235 / 30%);
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .catalog-lineage-flow .lineage-column-handle.left {
   left: -6px;
-  transform: translate(-50%, -50%);
 }
 
 .catalog-lineage-flow .lineage-column-handle.right {
   right: -6px;
-  transform: translate(50%, -50%);
 }
 
 .catalog-lineage-flow .react-flow__edge-path {

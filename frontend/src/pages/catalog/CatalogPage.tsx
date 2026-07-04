@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type React from "react";
-import { Background, BaseEdge, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
-import type { Edge, EdgeProps, Node } from "@xyflow/react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -46,6 +46,7 @@ type LineageColumn = {
 type LineageTableNodeData = Record<string, unknown> & {
   columns: LineageColumn[];
   engine: string;
+  handleMode: "source" | "target" | "both";
   layerLabel: string;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
@@ -53,10 +54,6 @@ type LineageTableNodeData = Record<string, unknown> & {
 
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
-};
-
-const lineageEdgeTypes = {
-  lineageColumn: LineageColumnEdge,
 };
 
 const lineageNodeWidth = 306;
@@ -422,7 +419,6 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
           nodes={nodes}
           nodesDraggable={false}
           nodesConnectable={false}
-          edgeTypes={lineageEdgeTypes}
           nodeTypes={lineageNodeTypes}
           proOptions={{ hideAttribution: true }}
         >
@@ -458,6 +454,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       data: {
         columns: buildSourceColumns(primaryColumns, item, index),
         engine: sourceMeta.engine,
+        handleMode: "source",
         layerLabel: sourceMeta.layerLabel,
         tableName: getLineageTableName(item),
         tone: sourceMeta.tone,
@@ -471,6 +468,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     data: {
       columns: primaryColumns,
       engine: "ICEBERG",
+      handleMode: "both",
       layerLabel: `${dataset.layer} LAYER`,
       tableName: dataset.name,
       tone: getLayerTone(dataset.layer),
@@ -483,6 +481,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     data: {
       columns: primaryColumns,
       engine: getDownstreamEngine(item),
+      handleMode: "target",
       layerLabel: "CONSUMER",
       tableName: getLineageTableName(item),
       tone: "downstream",
@@ -498,9 +497,9 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       return buildColumnEdge({
         id: `${node.id}-${sourceColumn.id}-to-current-${targetColumn.id}`,
         source: node.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "out"),
+        sourceHandle: lineageHandleId(sourceColumn.id, "right"),
         target: currentNode.id,
-        targetHandle: lineageHandleId(targetColumn.id, "in"),
+        targetHandle: lineageHandleId(targetColumn.id, "left"),
       });
     });
   });
@@ -511,9 +510,9 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       return buildColumnEdge({
         id: `current-${sourceColumn.id}-to-${node.id}-${targetColumn.id}`,
         source: currentNode.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "out"),
+        sourceHandle: lineageHandleId(sourceColumn.id, "right"),
         target: node.id,
-        targetHandle: lineageHandleId(targetColumn.id, "in"),
+        targetHandle: lineageHandleId(targetColumn.id, "left"),
       });
     });
   });
@@ -550,49 +549,29 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
       <div className="lineage-table-columns">
         {data.columns.map((column) => (
           <div className="lineage-column-row" key={column.id}>
-            <Handle
-              className="lineage-column-handle left"
-              id={lineageHandleId(column.id, "in")}
-              position={Position.Left}
-              style={{ top: "50%" }}
-              type="target"
-            />
+            {(data.handleMode === "target" || data.handleMode === "both") && (
+              <Handle
+                className="lineage-column-handle left target-handle"
+                id={lineageHandleId(column.id, "left")}
+                position={Position.Left}
+                type="target"
+              />
+            )}
             <span>{column.name}</span>
             <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
-            <Handle
-              className="lineage-column-handle right"
-              id={lineageHandleId(column.id, "out")}
-              position={Position.Right}
-              style={{ top: "50%" }}
-              type="source"
-            />
+            {(data.handleMode === "source" || data.handleMode === "both") && (
+              <Handle
+                className="lineage-column-handle right source-handle"
+                id={lineageHandleId(column.id, "right")}
+                position={Position.Right}
+                type="source"
+              />
+            )}
           </div>
         ))}
       </div>
     </article>
   );
-}
-
-function LineageColumnEdge({
-  id,
-  markerEnd,
-  sourceX,
-  sourceY,
-  style,
-  targetX,
-  targetY,
-}: EdgeProps) {
-  const direction = targetX >= sourceX ? 1 : -1;
-  const horizontalDistance = Math.abs(targetX - sourceX);
-  const controlOffset = Math.max(110, horizontalDistance * 0.52);
-  const path = [
-    `M ${sourceX},${sourceY}`,
-    `C ${sourceX + controlOffset * direction},${sourceY}`,
-    `${targetX - controlOffset * direction},${targetY}`,
-    `${targetX},${targetY}`,
-  ].join(" ");
-
-  return <BaseEdge id={id} markerEnd={markerEnd} path={path} style={style} />;
 }
 
 function buildColumnEdge({
@@ -618,7 +597,7 @@ function buildColumnEdge({
     style: { stroke: "#fb923c", strokeDasharray: "6 5", strokeWidth: 2 },
     target,
     targetHandle,
-    type: "lineageColumn",
+    type: "smoothstep",
   };
 }
 
@@ -694,8 +673,8 @@ function isRawSource(value: string): boolean {
   return lower.includes("postgres") || lower.includes("kafka") || lower.includes("s3") || lower.includes("raw");
 }
 
-function lineageHandleId(columnId: string, direction: "in" | "out"): string {
-  return `${columnId}-${direction}`;
+function lineageHandleId(columnId: string, position: "left" | "right"): string {
+  return `${columnId}-${position}`;
 }
 
 function normalizeLineageId(value: string): string {
