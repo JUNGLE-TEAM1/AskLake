@@ -152,3 +152,9 @@ export async function listDashboards(query: DashboardListQuery, mockDashboards: 
   if ("dashboards" in response) return normalizeDashboardPageResponse(response);
   return normalizeDashboardListResponse(response);
 }
+
+export async function deleteDashboardCard(dashboardId: string): Promise<void> {
+  if (apiConfig.useMock) return;
+
+  await apiClient.delete<void>(`/api/dashboards/${encodeURIComponent(dashboardId)}`);
+}

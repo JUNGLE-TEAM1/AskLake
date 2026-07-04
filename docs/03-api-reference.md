@@ -64,6 +64,7 @@ Canonical status values:
 | `POST` | `/api/dashboards/query` | dashboard 검색/필터/정렬/pagination JSON 요청, 서버 SQL로 처리 |
 | `POST` | `/api/dashboards` | dashboard draft 생성 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard 저장 |
+| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
@@ -78,7 +79,7 @@ Canonical status values:
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
 | SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
-| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, dashboard builder APIs |
+| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, `DELETE /api/dashboards/{dashboardId}`, dashboard builder APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 ## 8) Pair Handoff Contracts

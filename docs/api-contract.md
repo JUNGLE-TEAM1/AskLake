@@ -13,7 +13,8 @@
 | 4 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 5 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
-| 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 7 | P2 | `DELETE /api/dashboards/{dashboardId}` | dashboard 삭제 |
+| 8 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
 현재 프론트에서 `VITE_USE_MOCK_API=false`로 바꾸면 P0 API 3개를 실제 백엔드로 호출합니다.
 P1/P2 API는 다음 연결 단계에서 프론트 hydrate와 저장 흐름을 분리할 때 붙이면 됩니다.
@@ -648,7 +649,22 @@ type DashboardListResponse = {
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
 `filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
 
-### 8.4 대시보드 초안 생성
+### 8.4 대시보드 삭제
+
+`DELETE /api/dashboards/{dashboardId}`
+
+프론트 목록의 삭제 버튼은 저장된 dashboard 리소스를 삭제하고, 성공 후 현재 검색/필터/pagination 조건으로 목록을 다시 조회합니다.
+
+Response `204 No Content`:
+
+응답 body는 없습니다.
+
+Validation:
+
+- 존재하지 않는 dashboard는 `404 NOT_FOUND`를 반환합니다.
+- 삭제 실패 시 프론트는 optimistic 제거를 rollback하고 `dashboard.delete_failed` 감사 로그를 남깁니다.
+
+### 8.5 대시보드 초안 생성
 
 `POST /api/dashboards`
 

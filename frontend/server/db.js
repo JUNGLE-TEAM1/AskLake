@@ -217,6 +217,11 @@ export async function saveDashboard(dashboard) {
   return dashboard;
 }
 
+export async function deleteDashboard(dashboardId) {
+  const result = await pool.query("DELETE FROM dashboards WHERE id = $1 RETURNING id", [dashboardId]);
+  return result.rowCount > 0;
+}
+
 export async function saveSqlRun(resultDraft) {
   await pool.query(
     `
