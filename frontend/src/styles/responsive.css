@@ -43,10 +43,6 @@
     grid-template-columns: 1fr;
   }
 
-  .sql-history-panel {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .hegun-connector-grid,
@@ -188,8 +184,6 @@
   .metric-grid,
   .jobs-toolbar,
   .job-row-details,
-  .sql-history-panel,
-  .sql-estimation-bar,
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .dashboard-canvas,
@@ -267,13 +261,8 @@
   }
 
   .sql-editor-actions,
-  .sql-result-actions,
   .sql-result-status {
     justify-content: flex-start;
-  }
-
-  .sql-estimation-bar div {
-    width: 100%;
   }
 
   .dashboard-header-actions {

@@ -142,10 +142,10 @@ VITE_USE_MOCK_API=false
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | SQL 실행 | mock result 생성 | `POST /api/query/runs` |
-| SQL 저장 | 감사 로그만 기록 | `POST /api/query/saved` |
-| 결과 Lake 저장 | 감사 로그만 기록 | `POST /api/query/results/lake` |
-| CSV 다운로드 | 감사 로그만 기록 | `GET /api/query/runs/{runId}/download` |
-| 대시보드 생성 | `SqlResultDraft`를 builder로 전달 | `POST /api/dashboards` |
+| SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
+| 결과 Lake 저장 | 후속 실제 동작 구현 예정 | `POST /api/query/results/lake` |
+| CSV 다운로드 | 후속 실제 동작 구현 예정 | `GET /api/query/runs/{runId}/download` |
+| 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 
 SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 
