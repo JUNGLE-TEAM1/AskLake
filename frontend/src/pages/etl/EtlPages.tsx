@@ -34,7 +34,7 @@ import {
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 
 export function SchedulePage({
   mode,
@@ -112,7 +112,24 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
   );
 }
 
+function sampleValuesFromSchemaCell(value: string): string[] {
+  return value
+    .replace("...", "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<[string, string]>): Array<[string, string]> {
+  const savedByLabel = new Map(savedFields);
+  const mergedFields = baseFields.map(([label, value]) => [label, savedByLabel.get(label) ?? value] as [string, string]);
+  const baseLabels = new Set(baseFields.map(([label]) => label));
+  const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
+  return [...mergedFields, ...extraSavedFields];
+}
+
 export function SourceConnectionPage({
+  draft,
   onAction,
   onDraftChange,
   onNotify,
@@ -120,6 +137,7 @@ export function SourceConnectionPage({
   onNext,
   onSave,
 }: {
+  draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onNotify: (message: string) => void;
@@ -127,8 +145,10 @@ export function SourceConnectionPage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [sourceType, setSourceType] = useState("File / S3");
+  const [sourceType, setSourceType] = useState(draft.source.sourceType || "File / S3");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
+  const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
+  const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "Connection verified");
   const connectorMeta: Record<string, { desc: string; status: string }> = {
     Database: { desc: "Postgres, MySQL, Oracle", status: "ready" },
     "File / S3": { desc: "S3, GCS, Azure Blob", status: "valid" },
@@ -271,47 +291,77 @@ export function SourceConnectionPage({
       actions: ["Show Advanced Configuration"],
     },
   };
-  const current = sourceConfigs[sourceType];
-  const editableFields = sourceFields[sourceType] ?? current.fields;
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? sourceType;
+  const activeSourceType = sourceConfigs[sourceType] ? sourceType : "File / S3";
+  const current = sourceConfigs[activeSourceType];
+  const editableFields = sourceFields[activeSourceType] ?? (
+    draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
+      ? mergeFieldRows(current.fields, draft.source.sourceConfig)
+      : current.fields
+  );
+  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
+    failed: { badge: "Check failed", title: "Connection failed" },
+    idle: { badge: "Test required", title: "Connection test pending" },
+    success: { badge: "Ready for preview", title: "Connection verified" },
+    testing: { badge: "Testing", title: "Connection test running" },
+  };
 
-  const applySourceDraft = (nextType = sourceType, nextFields = editableFields) => {
+  const applySourceDraft = (
+    nextType = activeSourceType,
+    nextFields = editableFields,
+    nextStatus = connectionStatus,
+    nextMessage = connectionMessage,
+  ) => {
     const label = nextFields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? nextType;
     onDraftChange({
-      sourceConfig: nextFields,
-      sourceLabel: label,
-      sourceType: nextType,
+      source: {
+        connectionMessage: nextMessage,
+        connectionStatus: nextStatus,
+        sourceConfig: nextFields,
+        sourceLabel: label,
+        sourceType: nextType,
+      },
     });
   };
 
   const selectSource = (value: string) => {
+    const nextMessage = `${value} 설정이 선택되었습니다. 연결 테스트가 필요합니다.`;
     setSourceType(value);
-    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields, "idle", nextMessage);
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
   const updateSourceField = (label: string, value: string) => {
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
-    setSourceFields((fields) => ({ ...fields, [sourceType]: nextFields }));
-    applySourceDraft(sourceType, nextFields);
+    const nextMessage = "Source 설정이 변경되었습니다. 연결 테스트가 필요합니다.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
   };
 
   const testConnection = () => {
-    onAction("etl.source.connection_tested", "/api/etl/sources/test", sourceType);
-    onNotify(`${sourceType} 연결 테스트가 통과되었습니다.`);
+    const nextMessage = `${activeSourceType} 연결 테스트가 통과되었습니다.`;
+    setConnectionStatus("success");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, editableFields, "success", nextMessage);
+    onAction("etl.source.connection_tested", "/api/etl/sources/test", activeSourceType);
+    onNotify(nextMessage);
   };
 
   const fetchMetadata = () => {
-    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", sourceType);
+    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
   const refreshPreview = () => {
-    onAction("etl.source.preview_refreshed", "/api/etl/sources/preview", sourceType);
+    onAction("etl.source.preview_refreshed", "/api/etl/sources/preview", activeSourceType);
   };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceType} · ${sourceLabel}`} onPrev={onPrev} onNext={() => {
+      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${activeSourceType} · ${sourceLabel}`} onPrev={onPrev} onNext={() => {
         applySourceDraft();
         onNext();
       }} onSave={() => {
@@ -328,7 +378,7 @@ export function SourceConnectionPage({
           </div>
           <div className="hegun-connector-grid">
             {Object.entries(connectorMeta).map(([connector, meta]) => (
-              <button className={sourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
+              <button className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
                 <strong>{connector}</strong>
                 <span>{meta.desc}</span>
                 <em>{meta.status}</em>
@@ -344,7 +394,7 @@ export function SourceConnectionPage({
           </div>
           <div className="hegun-field-grid">
             {editableFields.map(([label, value]) => (
-              <label className={value.length > 38 ? "field wide" : "field"} key={`${sourceType}-${label}`}>
+              <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
                 <span>{label}</span>
                 <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
               </label>
@@ -352,7 +402,7 @@ export function SourceConnectionPage({
           </div>
           {current.info && <InfoBox title="Secure Connection" body={current.info} />}
           <div className="form-actions inline">
-            {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", sourceType)}>Show Advanced Configuration</button>}
+            {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>Show Advanced Configuration</button>}
             {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>Fetch Metadata</button>}
             <button className="secondary-button" type="button" onClick={testConnection}>Test Connection</button>
           </div>
@@ -366,14 +416,14 @@ export function SourceConnectionPage({
             </div>
             <div className="hegun-test-summary">
               <div>
-                <strong>Connection verified</strong>
-                <span>{current.testItems.length} checks completed for {sourceType}</span>
+                <strong>{connectionStatusCopy[connectionStatus].title}</strong>
+                <span>{connectionMessage || `${current.testItems.length} checks configured for ${activeSourceType}`}</span>
               </div>
-              <em>Ready for preview</em>
+              <em>{connectionStatusCopy[connectionStatus].badge}</em>
             </div>
             <div className="hegun-test-strip">
               {current.testItems.map(([label, value], index) => (
-                <span key={`${sourceType}-${label}-${index}`}>
+                <span key={`${activeSourceType}-${label}-${index}`}>
                   <i><Check size={13} /></i>
                   <strong>{label}</strong>
                   <em>{value}</em>
@@ -386,7 +436,7 @@ export function SourceConnectionPage({
                 <span>live</span>
               </div>
               <div className="hegun-log-lines">
-                {current.logs.map((log, index) => <span key={`${sourceType}-log-${index}`}>{log}</span>)}
+                {current.logs.map((log, index) => <span key={`${activeSourceType}-log-${index}`}>{log}</span>)}
               </div>
             </div>
           </section>
@@ -398,7 +448,7 @@ export function SourceConnectionPage({
             </div>
             <div className="hegun-asset-list">
               {current.assets.map(([name, meta, status], index) => (
-                <article key={`${sourceType}-${name}-${index}`}>
+                <article key={`${activeSourceType}-${name}-${index}`}>
                   <strong>{name}</strong>
                   <span>{meta}</span>
                   <em>{status}</em>
@@ -415,13 +465,13 @@ export function SourceConnectionPage({
           </div>
           <div className="hegun-preview-actions">
             {current.actions?.includes("Refresh Preview") && <button className="secondary-button" type="button" onClick={refreshPreview}>Refresh Preview</button>}
-            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", sourceType)}>Download CSV</button>}
-            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", sourceType)}>Full Screen</button>}
+            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", activeSourceType)}>Download CSV</button>}
+            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", activeSourceType)}>Full Screen</button>}
           </div>
           <div className="hegun-table-scroll">
             <table className="schema-table">
               <thead><tr>{current.previewColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{current.previewRows.map((row, rowIndex) => <tr key={`${sourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+              <tbody>{current.previewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
             </table>
           </div>
         </section>
@@ -433,6 +483,7 @@ export function SourceConnectionPage({
 }
 
 export function SchemaInferencePage({
+  draft,
   onDraftChange,
   onAction,
   onNotify,
@@ -440,6 +491,7 @@ export function SchemaInferencePage({
   onPrev,
   onSave,
 }: {
+  draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
@@ -462,28 +514,55 @@ export function SchemaInferencePage({
     ["Status", "Inference Needs Review"],
     ["Parser", "CSV · UTF-8 · Header"],
   ];
+  const schemaColumns: SchemaColumnDraft[] = schemaRows.map((row) => ({
+    confidence: Number.parseInt(row[6], 10),
+    nullable: row[4] === "YES",
+    role: row[5] === "-" ? undefined : row[5],
+    sourceName: row[1],
+    targetName: row[2],
+    type: row[3],
+  }));
+  const lowConfidenceCount = schemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
+  const inferredSummary = `${schemaColumns.length} fields inferred · ${lowConfidenceCount} need review`;
+  const approvedSummary = `${schemaColumns.length} fields approved · 0 blocking issues`;
+  const schemaSampleRows = Array.from({ length: 3 }, (_, rowIndex) => (
+    schemaRows.map((row) => sampleValuesFromSchemaCell(row[7])[rowIndex] ?? "-")
+  ));
+  const schemaFingerprint = schemaColumns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`).join("|");
+
+  const applySchemaDraft = (summary: string) => {
+    onDraftChange({
+      schema: {
+        columns: schemaColumns,
+        sampleRows: schemaSampleRows,
+        schemaFingerprint,
+        summary,
+      },
+    });
+  };
 
   const runInference = () => {
     onAction("etl.schema.inferred", "/api/etl/schema-inference", "customer_review_raw");
-    onDraftChange({ schemaSummary: "24 fields inferred · 3 need review" });
+    applySchemaDraft(inferredSummary);
     onNotify("샘플 데이터 기준 스키마 추론이 완료되었습니다.");
   };
 
   const schemaAction = (action: string, path: string, schemaSummary?: string) => {
     onAction(action, path, "orders_main_prod.csv");
     if (schemaSummary) {
-      onDraftChange({ schemaSummary });
+      applySchemaDraft(schemaSummary);
     }
   };
 
   const approveSchema = () => {
-    schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", "24 fields approved · 0 blocking issues");
+    schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
   };
 
   const saveSchemaDraft = () => {
-    onDraftChange({ schemaSummary: "24 fields approved · 0 blocking issues" });
+    applySchemaDraft(approvedSummary);
     onSave();
   };
+  const currentSummary = draft.schema.columns.length > 0 ? draft.schema.summary : inferredSummary;
 
   return (
     <CreationFlowLayout
@@ -497,21 +576,21 @@ export function SchemaInferencePage({
           {metadata.map(([label, value], index) => (
             <article className="review-mini-card" key={`${label}-${index}`}>
               <strong>{label}</strong>
-              <span>{value}</span>
+              <span>{label === "Status" ? currentSummary : value}</span>
             </article>
           ))}
         </div>
         <section className="panel hegun-console-panel">
           <div className="panel-header">
             <LayoutGrid size={18} />
-            <h2>Showing 24 Fields</h2>
+            <h2>Showing {schemaColumns.length} Fields</h2>
             <span className="panel-note">Filter, bulk edit, and approve inferred fields</span>
           </div>
           <div className="hegun-toolbar">
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.rescanned", "/api/etl/schema-inference/rescan", "24 fields re-scanned · 3 need review")}>Re-scan Source</button>
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", "24 fields approved · 0 blocking issues")}>Approve All</button>
+            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.rescanned", "/api/etl/schema-inference/rescan", `${schemaColumns.length} fields re-scanned · ${lowConfidenceCount} need review`)}>Re-scan Source</button>
+            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>Approve All</button>
             <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.bulk_edit_opened", "/api/etl/schema-inference/bulk-edit")}>Bulk Edit Type</button>
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.mappings_reset", "/api/etl/schema-inference/reset-mappings", "24 fields inferred · mappings reset")}>Reset Mappings</button>
+            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.mappings_reset", "/api/etl/schema-inference/reset-mappings", `${schemaColumns.length} fields inferred · mappings reset`)}>Reset Mappings</button>
             <span>Filter fields...</span>
           </div>
           <div className="hegun-table-scroll">
@@ -1208,7 +1287,7 @@ export function PermissionPage({
 
 export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
   const request = toCreatePipelineRequest(draft);
-  const schemaRows = [
+  const fallbackSchemaRows = [
     ["review_id", "BIGINT", "NO", "SOURCE.id"],
     ["product_id", "STRING", "NO", "SOURCE.p_code"],
     ["rating", "INT", "YES", "CAST(SOURCE.score AS INT)"],
@@ -1216,7 +1295,22 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
     ["review_text", "STRING", "YES", "REGEXP_REPLACE(SOURCE.content, \"[\\n\\r]\", \" \")"],
     ["created_at", "TIMESTAMP", "NO", "CURRENT_TIMESTAMP()"],
   ];
+  const schemaRows = draft.schema.columns.length > 0
+    ? draft.schema.columns.map((column) => [
+      column.targetName,
+      column.type,
+      column.nullable ? "YES" : "NO",
+      column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+    ])
+    : fallbackSchemaRows;
   const sourceSummary = request.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
+  const validationRows = [
+    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
+    ["스키마", draft.schema.columns.length > 0 ? "확정됨" : "추론 필요"],
+    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
+    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
+    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
+  ];
 
   return (
     <CreationFlowLayout
@@ -1226,11 +1320,11 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
           title="최종 유효성 검사"
           actions={<CreationPanelActions withDivider nextLabel="파이프라인 생성" onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
         >
-          {["소스 연결 완료", "처리 테스트 통과", "스케줄 유효함", "권한 선택됨", "타겟 설정 유효함"].map((item) => (
+          {validationRows.map(([item, status]) => (
             <div className="validation-row" key={item}>
               <Check size={16} />
               <span>{item}</span>
-              <strong>유효함</strong>
+              <strong>{status}</strong>
             </div>
           ))}
           <InfoBox title="안내사항" body="파이프라인 생성 후 데이터 카탈로그에서 즉시 조회 및 SQL 쿼리를 수행할 수 있습니다." />

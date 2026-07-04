@@ -13,6 +13,7 @@ export type {
   PermissionDraft,
   QualityDraft,
   ScheduleDraft,
+  SchemaColumnDraft,
   SchemaDraft,
   SourceDraft,
   TargetDraft,

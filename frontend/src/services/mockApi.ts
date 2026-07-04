@@ -14,10 +14,30 @@ export type JobCommandResult = {
 };
 
 const mockLatencyMs = 120;
+const fallbackDatasetSchema: CatalogDataset["schema"] = [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]];
 
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
+}
+
+function datasetSchemaFromDraft(draftPipeline: DraftPipeline): CatalogDataset["schema"] {
+  if (draftPipeline.schema.columns.length === 0) {
+    return fallbackDatasetSchema;
+  }
+
+  const schema = draftPipeline.schema.columns
+    .filter((column) => column.targetName.trim())
+    .map((column) => [column.targetName, column.type.toLowerCase()] as [string, string]);
+  return schema.length > 0 ? schema : fallbackDatasetSchema;
+}
+
+function datasetSampleRowsFromDraft(draftPipeline: DraftPipeline, schema: CatalogDataset["schema"]): string[][] {
+  if (draftPipeline.schema.sampleRows.length === 0) {
+    return [schema.map((_, index) => (index === 0 ? "Pipeline queued" : "-"))];
+  }
+
+  return draftPipeline.schema.sampleRows.map((row) => schema.map((_, index) => row[index] ?? "-"));
 }
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {
@@ -25,6 +45,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   if (!apiConfig.useMock) {
     return apiClient.post<PipelineCreationResult>("/api/etl/jobs", request);
   }
+  const datasetSchema = datasetSchemaFromDraft(draftPipeline);
+  const datasetSampleRows = datasetSampleRowsFromDraft(draftPipeline, datasetSchema);
 
   const job: JobRowData = {
     status: "스케줄됨",
@@ -53,8 +75,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     quality: "95% (Draft verified)",
     rag: request.rag,
     rows: "0 rows",
-    sampleRows: [["-", "-", "-", "-", "Pipeline queued"]],
-    schema: [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
+    sampleRows: datasetSampleRows,
+    schema: datasetSchema,
     size: "Pending",
     source: request.jobName,
     status: "사용 가능",

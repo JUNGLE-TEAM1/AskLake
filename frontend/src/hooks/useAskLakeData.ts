@@ -27,7 +27,7 @@ const initialDraftPipeline: DraftPipeline = {
   schema: {
     columns: [],
     sampleRows: [],
-    summary: "24 fields inferred · 3 need review",
+    summary: "7 fields inferred · 2 need review",
   },
   source: {
     connectionStatus: "success",

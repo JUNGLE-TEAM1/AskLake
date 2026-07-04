@@ -244,9 +244,9 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   ],
   schema: [
     ["샘플 Row", "10,000"],
-    ["추론 필드", "24개"],
+    ["추론 필드", "7개"],
     ["평균 Confidence", "87%"],
-    ["검토 필요", "3개 필드"],
+    ["검토 필요", "2개 필드"],
     ["다음 단계", "룰 적용"],
   ],
   rules: [

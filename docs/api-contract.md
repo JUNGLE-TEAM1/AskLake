@@ -91,6 +91,7 @@ type CreatePipelineRequest = {
 - `POST /api/etl/jobs`는 flat `CreatePipelineRequest`를 받는다.
 - `ruleSummary`는 `transform.summary`와 `quality.summary`를 합친 값이며, 둘 중 하나가 다른 하나를 덮어쓰면 안 된다.
 - 성공 응답은 `{ job, dataset }` shape를 유지한다.
+- mock create 응답의 `dataset.schema`와 `dataset.sampleRows`는 Pair A 1번의 `draft.schema.columns/sampleRows`에서 파생한다.
 - 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
 - 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
 
@@ -402,6 +403,7 @@ Response 예시:
 
 - `job`을 수집/처리 목록 최상단에 추가합니다.
 - `dataset`을 카탈로그 목록 최상단에 추가합니다.
+- mock 응답 예시의 `schema/sampleRows`는 fallback이며, `draft.schema.columns/sampleRows`가 있으면 그 값에서 파생합니다.
 - `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
 - 생성 성공 감사 로그를 남깁니다.
 
