@@ -2,6 +2,8 @@ import { Eye, Pencil, RefreshCw, Send, Share2 } from "lucide-react";
 
 export function DashboardTopBar({
   hasPublishedRevision,
+  isPublishing = false,
+  isRefreshing = false,
   mode,
   onOpenDraft,
   onOpenPublished,
@@ -11,6 +13,8 @@ export function DashboardTopBar({
   title,
 }: {
   hasPublishedRevision?: boolean;
+  isPublishing?: boolean;
+  isRefreshing?: boolean;
   mode: "published" | "draft";
   onOpenDraft?: () => void;
   onOpenPublished?: () => void;
@@ -22,7 +26,7 @@ export function DashboardTopBar({
   return (
     <header className="asklake-dashboard-topbar">
       <div className="asklake-dashboard-title">
-        <span>{mode === "published" ? "Published view" : "Draft editor"}</span>
+        <span>{mode === "published" ? "게시된 내용 보기" : "초안 편집"}</span>
         <h1>{title}</h1>
       </div>
       <div className="asklake-dashboard-actions">
@@ -33,9 +37,14 @@ export function DashboardTopBar({
           </button>
         ) : (
           <>
-            <button className="asklake-dashboard-action primary" type="button" onClick={onPublishDraft}>
+            <button
+              className="asklake-dashboard-action primary"
+              disabled={isPublishing}
+              type="button"
+              onClick={onPublishDraft}
+            >
               <Send size={16} />
-              게시
+              {isPublishing ? "게시 중" : "게시"}
             </button>
             {hasPublishedRevision && (
               <button className="asklake-dashboard-action" type="button" onClick={onOpenPublished}>
@@ -45,7 +54,14 @@ export function DashboardTopBar({
             )}
           </>
         )}
-        <button className="asklake-dashboard-icon-action" type="button" aria-label="대시보드 새로고침" onClick={onRefresh}>
+        <button
+          aria-label="대시보드 새로고침"
+          className="asklake-dashboard-icon-action"
+          disabled={isRefreshing}
+          title="새로고침"
+          type="button"
+          onClick={onRefresh}
+        >
           <RefreshCw size={17} />
         </button>
         <button className="asklake-dashboard-action" type="button" aria-label="대시보드 공유" onClick={onShare}>

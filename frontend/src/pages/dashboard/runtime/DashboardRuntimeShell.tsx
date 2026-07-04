@@ -8,12 +8,21 @@ type DashboardPageTab = {
   title: string;
 };
 
+type RuntimeNotice = {
+  message: string;
+  tone: "success" | "info" | "error";
+};
+
 export function DashboardRuntimeShell({
   children,
   hasPublishedRevision,
   inspector,
+  isPublishing,
+  isRefreshing,
   mode,
+  notice,
   onAddPage,
+  onCloseSharePanel,
   onDeletePage,
   onOpenDraft,
   onOpenPublished,
@@ -23,13 +32,18 @@ export function DashboardRuntimeShell({
   onShare,
   pages,
   selectedPageId,
+  shareLink,
   title,
 }: {
   children: React.ReactNode;
   hasPublishedRevision?: boolean;
   inspector?: React.ReactNode;
+  isPublishing?: boolean;
+  isRefreshing?: boolean;
   mode: "published" | "draft";
+  notice?: RuntimeNotice | null;
   onAddPage?: () => void;
+  onCloseSharePanel?: () => void;
   onDeletePage?: (pageId: string) => void;
   onOpenDraft?: () => void;
   onOpenPublished?: () => void;
@@ -39,12 +53,15 @@ export function DashboardRuntimeShell({
   onShare?: () => void;
   pages: DashboardPageTab[];
   selectedPageId: string | null;
+  shareLink?: string | null;
   title: string;
 }) {
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
         hasPublishedRevision={hasPublishedRevision}
+        isPublishing={isPublishing}
+        isRefreshing={isRefreshing}
         mode={mode}
         title={title}
         onOpenDraft={onOpenDraft}
@@ -53,6 +70,21 @@ export function DashboardRuntimeShell({
         onRefresh={onRefresh}
         onShare={onShare}
       />
+      {notice && (
+        <div className={`asklake-dashboard-runtime-notice ${notice.tone}`} role="status">
+          {notice.message}
+        </div>
+      )}
+      {shareLink && (
+        <div className="asklake-dashboard-share-panel" role="dialog" aria-label="대시보드 공유">
+          <div>
+            <strong>대시보드 공유</strong>
+            <span>현재 대시보드 링크를 복사했습니다.</span>
+            <code>{shareLink}</code>
+          </div>
+          <button type="button" onClick={onCloseSharePanel}>닫기</button>
+        </div>
+      )}
       <div className="asklake-dashboard-subnav">
         <div className="asklake-dashboard-data-tab">
           <span aria-hidden="true">▦</span>

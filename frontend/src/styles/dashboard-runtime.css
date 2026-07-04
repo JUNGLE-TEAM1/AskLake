@@ -84,6 +84,24 @@
   color: #ffffff;
 }
 
+.asklake-dashboard-action:disabled,
+.asklake-dashboard-icon-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.asklake-dashboard-action:focus-visible,
+.asklake-dashboard-icon-action:focus-visible,
+.asklake-dashboard-filter-button:focus-visible,
+.asklake-dashboard-tab-button:focus-visible,
+.asklake-dashboard-tab-delete:focus-visible,
+.asklake-dashboard-tab-add:focus-visible,
+.asklake-widget-add-list button:focus-visible,
+.asklake-dashboard-share-panel button:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.25);
+  outline-offset: 2px;
+}
+
 .asklake-dashboard-icon-action {
   width: 36px;
   padding: 0;
@@ -98,6 +116,12 @@
   background: #f1f5f9;
 }
 
+.asklake-dashboard-action.primary:hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
 .asklake-dashboard-subnav {
   display: flex;
   min-height: 52px;
@@ -106,6 +130,68 @@
   border-bottom: 1px solid var(--dash-border);
   background: #f8fafc;
   padding: 0 24px;
+}
+
+.asklake-dashboard-runtime-notice {
+  border-bottom: 1px solid var(--dash-border);
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 10px 24px;
+}
+
+.asklake-dashboard-runtime-notice.success {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.asklake-dashboard-runtime-notice.error {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.asklake-dashboard-share-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--dash-border);
+  background: #ffffff;
+  padding: 14px 24px;
+}
+
+.asklake-dashboard-share-panel div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.asklake-dashboard-share-panel strong {
+  color: var(--dash-text);
+  font-size: 14px;
+}
+
+.asklake-dashboard-share-panel span {
+  color: var(--dash-text-muted);
+  font-size: 13px;
+}
+
+.asklake-dashboard-share-panel code {
+  color: #1d4ed8;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.asklake-dashboard-share-panel button {
+  height: 32px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 12px;
 }
 
 .asklake-dashboard-data-tab {
@@ -690,6 +776,13 @@
     width: 100%;
     justify-content: flex-start;
     overflow-x: auto;
+  }
+
+  .asklake-dashboard-share-panel {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-right: 16px;
+    padding-left: 16px;
   }
 
   .asklake-dashboard-title h1 {

@@ -171,7 +171,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 저장 | localStorage snapshot과 감사 로그 기록 | draft revision page/widget/layout API 또는 `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
 | Published 조회 | DB-backed published revision snapshot | `GET /api/dashboards/{id}/published` |
-| Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
+| Share | 현재는 프론트에서 runtime 링크 복사와 feedback 패널 표시 | 향후 `POST /api/dashboards/{id}/share` |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 

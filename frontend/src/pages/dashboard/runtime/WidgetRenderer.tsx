@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import type { DashboardRuntimeWidget } from "../../../types";
 
 type SimpleRow = Record<string, unknown>;
@@ -214,7 +214,7 @@ function DonutChartWidget({ widget }: { widget: DashboardRuntimeWidget }) {
   );
 }
 
-export function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
+export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);
   if (hasError) return <WidgetDataError />;
 
@@ -225,4 +225,4 @@ export function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
   if (widget.type === "donut_chart") return <DonutChartWidget widget={widget} />;
 
   return <EmptyWidgetData />;
-}
+});

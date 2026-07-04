@@ -135,6 +135,10 @@ type DashboardRuntimeResponse = {
 Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.
 
+### Dashboard runtime UX note
+
+Phase 06 frontend behavior uses the existing runtime endpoints without adding a share API. Draft publish calls `POST /api/dashboards/{dashboardId}/publish`, refresh refetches the active draft or published runtime payload, and share copies `/dashboards/{dashboardId}` when a published revision exists or `/dashboards/{dashboardId}/edit` when only draft is available.
+
 ### Pair A -> Pair B
 
 ```ts

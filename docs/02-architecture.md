@@ -139,6 +139,7 @@ Dashboard runtime API:
 - `POST /api/dashboards/{dashboardId}/publish`
 
 Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제와 widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
+Phase 06 runtime UX는 별도 share API 없이 프론트에서 공유 링크를 복사한다. Published revision이 있으면 `/dashboards/{dashboardId}`를, draft만 있으면 `/dashboards/{dashboardId}/edit`를 복사하며, publish 성공 후 목록 상태도 다시 갱신한다.
 
 ## 8) 설계 원칙
 
