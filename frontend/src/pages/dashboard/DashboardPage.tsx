@@ -9,6 +9,8 @@ import {
   Table2,
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
+import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
+import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -27,10 +29,32 @@ import {
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
 import { saveDashboardCard } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
-export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset: CatalogDataset; entry: DashboardEntry; sqlResult: SqlResultDraft | null; onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void }) {
+const defaultRuntimePages = [
+  { id: "page-1", title: "Untitled page" },
+  { id: "page-2", title: "제목 없는 페이지" },
+];
+
+type RuntimePage = {
+  id: string;
+  title: string;
+};
+
+export function DashboardPage({
+  dataset,
+  entry,
+  sqlResult,
+  onAction,
+  onRuntimeNavigate,
+}: {
+  dataset: CatalogDataset;
+  entry: DashboardEntry;
+  sqlResult: SqlResultDraft | null;
+  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onRuntimeNavigate?: (dashboardId: string, mode: DashboardRuntimeMode) => void;
+}) {
   const [view, setView] = useState<DashboardView>(entry.view);
   const [builderWidgets, setBuilderWidgets] = useState<DashboardWidgetType[]>([]);
   const [isPublished, setIsPublished] = useState(false);
@@ -39,6 +63,12 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   const [expandedChart, setExpandedChart] = useState<ExpandedChart | null>(null);
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
+  const [runtimeSelection, setRuntimeSelection] = useState<{ dashboardId: string; mode: DashboardRuntimeMode }>(() => ({
+    dashboardId: entry.dashboardId ?? "dash_sales_demo",
+    mode: entry.runtimeMode ?? "published",
+  }));
+  const [runtimePagesByDashboardId, setRuntimePagesByDashboardId] = useState<Record<string, RuntimePage[]>>({});
+  const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
     const stored = window.localStorage.getItem("asklake.dashboardCards");
     if (!stored) return defaultDashboardCards;
@@ -100,16 +130,34 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     runId: activeSqlResult.runId,
   } : undefined;
   const sidebarDashboards = dashboardList.visibleDashboards.length ? dashboardList.visibleDashboards : savedDashboards;
+  const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
+  const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
+  const runtimeTitle = runtimeDashboard?.name ?? runtimeSelection.dashboardId;
+  const runtimePages = runtimePagesByDashboardId[runtimeSelection.dashboardId] ?? defaultRuntimePages;
+  const runtimeHasPublishedRevision = runtimeDashboard?.status === "published" || runtimeSelection.mode === "published";
 
   useEffect(() => {
     setView(entry.view);
+    if (entry.view === "runtime" && entry.dashboardId) {
+      setRuntimeSelection({
+        dashboardId: entry.dashboardId,
+        mode: entry.runtimeMode ?? "published",
+      });
+    }
     if (entry.source === "sql" && sqlResult?.datasetId === dataset.id) {
       setBuilderWidgets(["table", "bar"]);
     }
     if (entry.view === "builder") {
       onAction(entry.source === "sql" ? "dashboard.builder.opened_from_sql" : "dashboard.builder.opened_from_catalog", "/api/dashboards/builder", dataset.id);
     }
-  }, [dataset.id, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
+  }, [dataset.id, entry.dashboardId, entry.runtimeMode, entry.source, entry.version, entry.view, sqlResult?.datasetId]);
+
+  useEffect(() => {
+    if (view !== "runtime") return;
+    if (!runtimePages.some((page) => page.id === selectedRuntimePageId)) {
+      setSelectedRuntimePageId(runtimePages[0]?.id ?? null);
+    }
+  }, [runtimePages, selectedRuntimePageId, view]);
 
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
@@ -133,6 +181,21 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   const openDetail = (name = dashboardTitle) => {
     setView("detail");
     onAction("dashboard.opened", `/api/dashboards/${dashboardId}`, name);
+  };
+
+  const openRuntimeDashboard = (nextDashboardId: string, mode: DashboardRuntimeMode) => {
+    setRuntimeSelection({ dashboardId: nextDashboardId, mode });
+    setView("runtime");
+    onAction(
+      mode === "published" ? "dashboard.runtime.published_opened" : "dashboard.runtime.draft_opened",
+      mode === "published" ? `/api/dashboards/${nextDashboardId}/published` : `/api/dashboards/${nextDashboardId}/draft/ensure`,
+      nextDashboardId,
+    );
+    onRuntimeNavigate?.(nextDashboardId, mode);
+  };
+
+  const openDashboardFromList = (dashboard: SavedDashboardCard) => {
+    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
   };
 
   const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
@@ -191,6 +254,29 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     const shareUrl = `${window.location.origin}/dashboards/${encodeURIComponent(dashboardTitle)}`;
     void navigator.clipboard?.writeText(shareUrl);
     onAction("dashboard.shared", "/api/dashboards/share", dataset.id);
+  };
+
+  const addRuntimePage = () => {
+    const nextPage = {
+      id: `page-${Date.now()}`,
+      title: "제목 없는 페이지",
+    };
+    setRuntimePagesByDashboardId((pagesByDashboardId) => ({
+      ...pagesByDashboardId,
+      [runtimeSelection.dashboardId]: [...runtimePages, nextPage],
+    }));
+    setSelectedRuntimePageId(nextPage.id);
+    onAction("dashboard.page.local_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
+  };
+
+  const refreshRuntimeDashboard = () => {
+    onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
+  };
+
+  const shareRuntimeDashboard = () => {
+    const path = runtimeSelection.mode === "draft" ? `/dashboards/${runtimeSelection.dashboardId}/edit` : `/dashboards/${runtimeSelection.dashboardId}`;
+    void navigator.clipboard?.writeText(`${window.location.origin}${path}`);
+    onAction("dashboard.runtime.shared", path, runtimeSelection.dashboardId);
   };
 
   const exportDashboard = () => {
@@ -293,7 +379,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
         onClearTags={dashboardList.clearDashboardTags}
         onCreateDashboard={openBuilder}
         onNextPage={dashboardList.goToNextDashboardPage}
-        onOpenDashboard={openDetail}
+        onOpenDashboard={openDashboardFromList}
         onPreviousPage={dashboardList.goToPreviousDashboardPage}
         onSearchQueryChange={dashboardList.setSearchQuery}
         onSelectOwner={dashboardList.selectDashboardOwner}
@@ -311,6 +397,39 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
         tags={dashboardList.dashboardTags}
         totalPages={dashboardList.totalDashboardPages}
       />
+    );
+  }
+
+  if (view === "runtime") {
+    const isDraftMode = runtimeSelection.mode === "draft";
+    return (
+      <div className="dashboard-page dashboard-runtime-page">
+        <DashboardRuntimeShell
+          hasPublishedRevision={runtimeHasPublishedRevision}
+          inspector={isDraftMode ? (
+            <aside className="asklake-dashboard-inspector">
+              <section>
+                <strong>구성할 위젯을 선택합니다</strong>
+                <span>Phase 04에서 위젯 선택, 설정, 삭제 컨트롤이 이 영역에 연결됩니다.</span>
+              </section>
+            </aside>
+          ) : undefined}
+          mode={runtimeSelection.mode}
+          pages={runtimePages}
+          selectedPageId={selectedRuntimePageId}
+          title={runtimeTitle}
+          onAddPage={addRuntimePage}
+          onOpenDraft={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}
+          onOpenPublished={() => openRuntimeDashboard(runtimeSelection.dashboardId, "published")}
+          onRefresh={refreshRuntimeDashboard}
+          onSelectPage={setSelectedRuntimePageId}
+          onShare={shareRuntimeDashboard}
+        >
+          <div className="asklake-dashboard-empty-canvas">
+            <EmptyDashboardCanvas editable={isDraftMode} />
+          </div>
+        </DashboardRuntimeShell>
+      </div>
     );
   }
 

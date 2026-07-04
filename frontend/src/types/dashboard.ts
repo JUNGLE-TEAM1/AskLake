@@ -1,4 +1,5 @@
-export type DashboardView = "list" | "builder" | "detail";
+export type DashboardRuntimeMode = "published" | "draft";
+export type DashboardView = "list" | "builder" | "detail" | "runtime";
 export type DashboardStatus = "draft" | "published";
 export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
@@ -48,6 +49,8 @@ export type DashboardListResponse = {
 };
 
 export type DashboardEntry = {
+  dashboardId?: string;
+  runtimeMode?: DashboardRuntimeMode;
   source: "sidebar" | "sql" | "catalog" | "internal";
   view: DashboardView;
   version: number;

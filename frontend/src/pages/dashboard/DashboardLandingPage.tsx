@@ -40,7 +40,7 @@ export function DashboardLandingPage({
   onClearTags: () => void;
   onCreateDashboard: () => void;
   onNextPage: () => void;
-  onOpenDashboard: (name: string) => void;
+  onOpenDashboard: (dashboard: SavedDashboardCard) => void;
   onPreviousPage: () => void;
   onSearchQueryChange: (value: string) => void;
   onSelectOwner: (owner: string) => void;

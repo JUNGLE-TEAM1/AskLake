@@ -7,7 +7,7 @@ export function DashboardTable({
   onOpenDetail,
 }: {
   dashboards: SavedDashboardCard[];
-  onOpenDetail: (name: string) => void;
+  onOpenDetail: (dashboard: SavedDashboardCard) => void;
 }) {
   return (
     <div className="dashboard-table-scroll">
@@ -22,9 +22,18 @@ export function DashboardTable({
         </thead>
         <tbody>
           {dashboards.map((dashboard) => (
-            <tr key={dashboard.id}>
+            <tr className="dashboard-table-row" key={dashboard.id} onClick={() => onOpenDetail(dashboard)}>
               <td>
-                <button className="dashboard-row-link" type="button" onClick={() => onOpenDetail(dashboard.name)}>{dashboard.name}</button>
+                <button
+                  className="dashboard-row-link"
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenDetail(dashboard);
+                  }}
+                >
+                  {dashboard.name}
+                </button>
                 <span className="dashboard-row-tags">
                   {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
                     <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
