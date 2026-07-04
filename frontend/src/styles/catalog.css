@@ -683,10 +683,12 @@
 
 .catalog-lineage-flow .lineage-column-handle.left {
   left: -6px;
+  transform: translate(-50%, -50%);
 }
 
 .catalog-lineage-flow .lineage-column-handle.right {
   right: -6px;
+  transform: translate(50%, -50%);
 }
 
 .catalog-lineage-flow .react-flow__edge-path {

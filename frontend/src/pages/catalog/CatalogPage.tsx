@@ -486,7 +486,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     position: { x: downstreamX, y: downstreamStartY + getLineageStackOffset(index, primaryColumns.length) },
     type: "lineageTable",
   }));
-  const upstreamEdges = upstreamNodes.flatMap((node, nodeIndex) => {
+  const upstreamEdges = upstreamNodes.flatMap((node) => {
     const sourceColumns = node.data.columns as LineageColumn[];
     return primaryColumns.map((targetColumn, columnIndex) => {
       const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
@@ -496,11 +496,10 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
         sourceHandle: lineageHandleId(sourceColumn.id, "out"),
         target: currentNode.id,
         targetHandle: lineageHandleId(targetColumn.id, "in"),
-        edgeIndex: nodeIndex + columnIndex,
       });
     });
   });
-  const downstreamEdges = downstreamNodes.flatMap((node, nodeIndex) => {
+  const downstreamEdges = downstreamNodes.flatMap((node) => {
     const targetColumns = node.data.columns as LineageColumn[];
     return primaryColumns.map((sourceColumn, columnIndex) => {
       const targetColumn = targetColumns[columnIndex % targetColumns.length];
@@ -510,7 +509,6 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
         sourceHandle: lineageHandleId(sourceColumn.id, "out"),
         target: node.id,
         targetHandle: lineageHandleId(targetColumn.id, "in"),
-        edgeIndex: nodeIndex + columnIndex,
       });
     });
   });
@@ -545,13 +543,13 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
         <em>{data.engine}</em>
       </header>
       <div className="lineage-table-columns">
-        {data.columns.map((column, index) => (
+        {data.columns.map((column) => (
           <div className="lineage-column-row" key={column.id}>
             <Handle
               className="lineage-column-handle left"
               id={lineageHandleId(column.id, "in")}
               position={Position.Left}
-              style={{ top: `${82 + index * 46}px` }}
+              style={{ top: "50%" }}
               type="target"
             />
             <span>{column.name}</span>
@@ -560,7 +558,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
               className="lineage-column-handle right"
               id={lineageHandleId(column.id, "out")}
               position={Position.Right}
-              style={{ top: `${82 + index * 46}px` }}
+              style={{ top: "50%" }}
               type="source"
             />
           </div>
@@ -571,14 +569,12 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
 }
 
 function buildColumnEdge({
-  edgeIndex,
   id,
   source,
   sourceHandle,
   target,
   targetHandle,
 }: {
-  edgeIndex: number;
   id: string;
   source: string;
   sourceHandle: string;
@@ -595,7 +591,7 @@ function buildColumnEdge({
     style: { stroke: "#fb923c", strokeDasharray: "6 5", strokeWidth: 2 },
     target,
     targetHandle,
-    type: "default",
+    type: "straight",
   };
 }
 
