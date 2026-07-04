@@ -5,9 +5,11 @@ import { dashboardPageSize } from "./dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 
 type DashboardListAction = (action: string, apiPath: string, targetId: string) => void;
+const dashboardSearchDebounceMs = 300;
 
 export function useDashboardLandingList(dashboards: SavedDashboardCard[], onAction: DashboardListAction, refreshKey = 0) {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
@@ -26,10 +28,21 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     owner: ownerFilter === "all" ? undefined : ownerFilter,
     page: currentPage,
     pageSize: dashboardPageSize,
-    search: searchQuery.trim() || undefined,
+    search: debouncedSearchQuery.trim() || undefined,
     sort: sortOption,
     tags: selectedTags.length ? selectedTags : undefined,
-  }), [currentPage, ownerFilter, searchQuery, selectedTags, sortOption]);
+  }), [currentPage, debouncedSearchQuery, ownerFilter, selectedTags, sortOption]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, dashboardSearchDebounceMs);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery]);
 
   useEffect(() => {
     let ignore = false;
@@ -124,7 +137,6 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     selectedTags,
     setSearchQuery: (value: string) => {
       setSearchQuery(value);
-      resetPage();
     },
     sortOption,
     toggleDashboardListControl,
