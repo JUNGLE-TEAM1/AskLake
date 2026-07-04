@@ -142,6 +142,7 @@ VITE_USE_MOCK_API=false
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | SQL 실행 | mock result 생성 | `POST /api/query/runs` |
+| Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 테이블 검색/자동완성 | 접근 가능한 mock dataset 목록에서 검색하고 `FROM`/`JOIN` 뒤 후보 삽입 | `GET /api/catalog/datasets?q=` 또는 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
 | 결과 Lake 저장 | 후속 실제 동작 구현 예정 | `POST /api/query/results/lake` |

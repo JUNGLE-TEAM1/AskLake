@@ -20,12 +20,12 @@ export function SqlAnalysisPage({
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
-  const defaultQuery = useMemo(() => {
-    const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
-    return `SELECT ${columns}
-FROM ${dataset.name}
-LIMIT 100;`;
-  }, [dataset.name, dataset.schema]);
+  const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
+  const baseDataset = useMemo(
+    () => datasets.find((item) => item.id === baseDatasetId) ?? dataset,
+    [baseDatasetId, dataset, datasets],
+  );
+  const defaultQuery = useMemo(() => buildDefaultQuery(baseDataset), [baseDataset]);
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
@@ -61,15 +61,19 @@ LIMIT 100;`;
   const tableCompletion = useMemo(() => getTableCompletion(query, datasets), [datasets, query]);
 
   useEffect(() => {
+    setBaseDatasetId(dataset.id);
+  }, [dataset.id]);
+
+  useEffect(() => {
     setExecuted(false);
     setQuery(defaultQuery);
     setResultDraft(null);
     setExecutionMs(null);
-    setActiveSchemaDatasetId(dataset.id);
+    setActiveSchemaDatasetId(baseDataset.id);
     onResultChange(null);
-  }, [defaultQuery, dataset.id]);
+  }, [baseDataset.id, defaultQuery]);
 
-  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(dataset, query);
+  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
 
   const resetResultState = () => {
     setExecuted(false);
@@ -92,9 +96,9 @@ LIMIT 100;`;
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", `/api/query/runs`, dataset.id);
+      onAction("analysis.query.executed", `/api/query/runs`, baseDataset.id);
     } catch {
-      onAction("analysis.query.failed", `/api/query/runs`, dataset.id, "failed");
+      onAction("analysis.query.failed", `/api/query/runs`, baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
@@ -102,13 +106,13 @@ LIMIT 100;`;
 
   const resetQuery = () => {
     updateQuery(defaultQuery);
-    onAction("analysis.query.reset", "/api/query/reset", dataset.id);
+    onAction("analysis.query.reset", "/api/query/reset", baseDataset.id);
   };
 
   const toggleContext = () => {
     const nextCollapsed = !contextCollapsed;
     setContextCollapsed(nextCollapsed);
-    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", dataset.id);
+    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", baseDataset.id);
   };
 
   const insertSqlText = (text: string) => {
@@ -137,6 +141,14 @@ LIMIT 100;`;
     }
     setActiveSchemaDatasetId(targetDataset.id);
     onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
+  };
+
+  const changeBaseDataset = (targetDataset: CatalogDataset) => {
+    setBaseDatasetId(targetDataset.id);
+    setActiveSchemaDatasetId(targetDataset.id);
+    setQuery(buildDefaultQuery(targetDataset));
+    resetResultState();
+    onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
   };
 
   const insertColumnName = (columnName: string) => {
@@ -173,11 +185,11 @@ LIMIT 100;`;
           </div>
         </div>
         <section className="sql-base-table">
-          <h2>base table</h2>
-          <button type="button" onClick={() => setActiveSchemaDatasetId(dataset.id)}>
-            <span>{dataset.layer}</span>
-            <strong>{dataset.name}</strong>
-            <small>{dataset.schema.length} columns · {dataset.owner}</small>
+          <h2>BASE DATASET</h2>
+          <button className="sql-base-table-card" type="button" onClick={() => setActiveSchemaDatasetId(baseDataset.id)}>
+            <span>{baseDataset.layer}</span>
+            <strong>{baseDataset.name}</strong>
+            <small>{baseDataset.schema.length} columns · {baseDataset.owner}</small>
           </button>
         </section>
         <label className="sql-context-search">
@@ -193,12 +205,16 @@ LIMIT 100;`;
           <div>
             {filteredDatasets.map((item) => (
               <article className={item.id === activeSchemaDataset.id ? "sql-table-card active" : "sql-table-card"} key={item.id}>
-                <button className="sql-table-card-main" type="button" onClick={() => insertTableName(item)}>
+                <div className="sql-table-card-main">
                   <span>{item.layer}</span>
                   <strong>{item.name}</strong>
                   <small>{item.schema.slice(0, 3).map(([name]) => name).join(" · ")}</small>
-                </button>
-                <button className="sql-inline-action" type="button" onClick={() => setActiveSchemaDatasetId(item.id)}>스키마</button>
+                </div>
+                <div className="sql-table-card-actions">
+                  <button type="button" onClick={() => changeBaseDataset(item)} disabled={item.id === baseDataset.id}>Base로 설정</button>
+                  <button type="button" onClick={() => insertTableName(item)}>SQL에 삽입</button>
+                  <button type="button" onClick={() => setActiveSchemaDatasetId(item.id)}>Schema</button>
+                </div>
               </article>
             ))}
             {filteredDatasets.length === 0 && <p>검색 결과가 없습니다.</p>}
@@ -215,9 +231,9 @@ LIMIT 100;`;
           </div>
         </section>
         <div className="sql-context-source">
-          <span>선택 데이터셋</span>
-          <strong>{dataset.name}</strong>
-          <DatasetStatusBadge dataset={dataset} />
+          <span>현재 분석 기준</span>
+          <strong>{baseDataset.name}</strong>
+          <DatasetStatusBadge dataset={baseDataset} />
         </div>
       </aside>
 
@@ -229,14 +245,14 @@ LIMIT 100;`;
         <header className="sql-page-header">
           <span>Analyze / Dataset-scoped SQL</span>
           <h1>읽기 전용 SQL 실행</h1>
-          <p>{dataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 저장/내보냅니다.</p>
+          <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
         </header>
 
         <section className="sql-editor-card">
           <div className="sql-editor-header">
             <div>
               <span>QUERY EDITOR</span>
-              <h2>선택 데이터셋 기준 SQL</h2>
+              <h2>Base Dataset 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
               <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
@@ -300,6 +316,13 @@ LIMIT 100;`;
       </main>
     </div>
   );
+}
+
+function buildDefaultQuery(dataset: CatalogDataset) {
+  const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
+  return `SELECT ${columns}
+FROM ${dataset.name}
+LIMIT 100;`;
 }
 
 function getTableCompletion(query: string, datasets: CatalogDataset[]) {
