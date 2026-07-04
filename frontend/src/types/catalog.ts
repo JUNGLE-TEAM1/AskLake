@@ -15,8 +15,7 @@ export type CatalogDataset = {
   schema: Array<[string, string]>;
   size: string;
   source: string;
-  status: "사용 가능" | "승인 필요";
+  status: "available" | "approval_required";
   tags: string[];
   upstream: string[];
 };
-

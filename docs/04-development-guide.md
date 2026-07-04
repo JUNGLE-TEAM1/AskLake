@@ -64,7 +64,35 @@ VITE_USE_MOCK_API=false
 4. `npm run build` 실행
 5. 관련 docs 업데이트
 
-## 6) PR 체크리스트
+상태값을 다룰 때는 API/mock/internal state에 영어 canonical value를 사용한다.
+화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
+
+## 6) Pair Ownership
+
+4일 데모 마일스톤은 2인 3개 Pair 기준으로 운영한다.
+Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 시작 시 채운다.
+
+| Pair | Primary Area | Deliverables | Handoff |
+| --- | --- | --- | --- |
+| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
+| Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
+| Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
+
+## 7) Daily Operating Loop
+
+매일 종료 전 아래 질문을 확인한다.
+
+- 오늘 데모 흐름에서 끊기는 화면은 어디인가?
+- Pair 간 넘겨야 하는 `jobId`, `runId`, `datasetId`, `sqlResult.runId`, `dashboardId`, `sourceRunId`가 같은가?
+- Dataset을 바꾸면 schema, lineage, SQL query, SQL result가 같이 바뀌는가?
+- Dashboard Widget은 SQL Result의 `columns`/`rows`를 실제로 쓰는가?
+- 실패했을 때 입력값과 이전 상태가 유지되는가?
+- fallback caveat가 숨겨지지 않았는가?
+- 오늘 끝나야 할 화면 결과가 실제 클릭으로 확인되었는가?
+
+Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQL -> Dashboard -> Publish 흐름 1회, 실패 케이스 1회, fallback 케이스 1회를 확인한다.
+
+## 8) PR 체크리스트
 
 - [ ] GitHub 기본 PR 템플릿을 채웠다.
 - [ ] 변경 목적이 명확하다.
@@ -74,7 +102,7 @@ VITE_USE_MOCK_API=false
 - [ ] architecture, routing, state ownership 변경이 있으면 `docs/02-architecture.md`가 최신 상태다.
 - [ ] repository/CI/platform guardrail 변경이 있으면 `docs/system-guardrails.md`가 최신 상태다.
 
-## 7) 테스트 전략
+## 9) 테스트 전략
 
 현재 최소 검증:
 
@@ -90,7 +118,7 @@ VITE_USE_MOCK_API=false
 - mock/live mode smoke tests
 - dashboard persistence regression tests
 
-## 8) Manual Smoke Checklist
+## 10) Manual Smoke Checklist
 
 - 수집/처리 목록이 열린다.
 - 새 수집/처리 생성 flow가 Review까지 이동한다.
@@ -100,7 +128,7 @@ VITE_USE_MOCK_API=false
 - SQL 실행 결과로 dashboard builder를 열 수 있다.
 - audit log와 toast가 동작한다.
 
-## 9) 문서 업데이트 기준
+## 11) 문서 업데이트 기준
 
 - 제품 범위 변경: `docs/01-product-planning.md`
 - 구조/상태/데이터 소유권 변경: `docs/02-architecture.md`
