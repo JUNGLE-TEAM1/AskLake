@@ -11,9 +11,11 @@ import {
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardCanvas } from "./runtime/DashboardCanvas";
+import { DatasetSidebar } from "./runtime/DatasetSidebar";
 import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
 import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import { WidgetFrame } from "./runtime/WidgetFrame";
+import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -119,6 +121,8 @@ export function DashboardPage({
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
+  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
@@ -186,6 +190,15 @@ export function DashboardPage({
   const activeDashboardId = selectedDashboard?.id ?? dashboardId;
   const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
   const activeDashboardWidgets = selectedDashboard?.widgets?.length ? selectedDashboard.widgets : snapshotWidgets;
+  const {
+    datasets: dashboardDatasets,
+    error: dashboardDatasetsError,
+    isLoading: dashboardDatasetsLoading,
+  } = useDashboardDatasets();
+  const selectedDataset = useMemo(
+    () => dashboardDatasets.find((datasetOption) => datasetOption.id === selectedDatasetId) ?? null,
+    [dashboardDatasets, selectedDatasetId],
+  );
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -220,6 +233,12 @@ export function DashboardPage({
       })
       .filter((row): row is readonly [string, string] => Boolean(row))
     : [];
+
+  useEffect(() => {
+    if (!selectedDatasetId) return;
+    if (dashboardDatasets.some((datasetOption) => datasetOption.id === selectedDatasetId)) return;
+    setSelectedDatasetId(null);
+  }, [dashboardDatasets, selectedDatasetId]);
 
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
@@ -852,6 +871,17 @@ export function DashboardPage({
     return (
       <div className="dashboard-page dashboard-runtime-page">
         <DashboardRuntimeShell
+          datasetSidebar={isDraftMode ? (
+            <DatasetSidebar
+              datasets={dashboardDatasets}
+              error={dashboardDatasetsError}
+              isOpen={isDatasetSidebarOpen}
+              isLoading={dashboardDatasetsLoading}
+              selectedDatasetId={selectedDatasetId}
+              onSelectDataset={setSelectedDatasetId}
+            />
+          ) : undefined}
+          datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
           hasPublishedRevision={runtimeHasPublishedRevision}
           isAddingPage={isAddingRuntimePage}
           isPublishing={isPublishingRuntime}
@@ -873,6 +903,27 @@ export function DashboardPage({
                     </button>
                   ))}
                 </div>
+              </section>
+              <section>
+                {selectedDataset ? (
+                  <>
+                    <strong>{selectedDataset.name}</strong>
+                    <span>{selectedDataset.description}</span>
+                    <div className="asklake-inspector-details">
+                      <p><span>Layer</span><strong>{selectedDataset.layer.toUpperCase()}</strong></p>
+                      <p><span>Columns</span><strong>{selectedDataset.columns.length}</strong></p>
+                      <p>
+                        <span>Metrics</span>
+                        <strong>{selectedDataset.columns.filter((column) => column.type === "number").length}</strong>
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>데이터셋을 선택하세요</strong>
+                    <span>왼쪽에서 Gold 데이터셋을 선택하면 다음 단계에서 위젯 설정에 사용할 수 있습니다.</span>
+                  </>
+                )}
               </section>
               <section>
                 {selectedDraftWidget ? (
@@ -915,6 +966,7 @@ export function DashboardPage({
           onRefresh={refreshRuntimeDashboard}
           onSelectPage={setSelectedRuntimePageId}
           onShare={shareRuntimeDashboard}
+          onToggleDatasetSidebar={isDraftMode ? () => setIsDatasetSidebarOpen((open) => !open) : undefined}
         >
           {runtimeCanvas}
         </DashboardRuntimeShell>
