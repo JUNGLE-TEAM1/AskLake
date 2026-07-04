@@ -107,7 +107,7 @@ type JobCommandResponse = {
   apiPath: string;
   job?: JobRowData;
   run?: {
-    id: string;
+    runId: string;
     jobId: string;
     status: "queued" | "running" | "success" | "failed" | "canceled";
     startedAt?: string;
@@ -127,7 +127,7 @@ type JobCommandResponse = {
 필수 확인:
 
 - `job`이 있으면 프론트는 해당 응답을 기준으로 Job 상태를 갱신한다.
-- `run.id`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
+- `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
 - `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
 
 ### Pair B -> Pair C

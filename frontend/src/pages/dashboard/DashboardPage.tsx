@@ -84,6 +84,13 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     donut: { title: `${secondaryColumn} 비중`, fields: [["Dimension", secondaryColumn], ["Metric", metricColumn], ["Aggregation", "SUM"]] },
     table: { title: "SQL 결과 테이블", fields: [["Columns", dashboardColumns.slice(0, 4).join(", ")], ["Rows", String(activeSqlResult?.rowCount ?? dataset.sampleRows.length)], ["Sort", `${primaryColumn} ASC`]] },
   };
+  const snapshotWidgets: DashboardWidgetType[] = builderWidgets.length ? builderWidgets : activeSqlResult ? ["table", "bar"] : ["bar", "line", "donut", "table"];
+  const sqlResultSnapshot = activeSqlResult ? {
+    columns: activeSqlResult.columns,
+    query: activeSqlResult.query,
+    rowCount: activeSqlResult.rowCount,
+    runId: activeSqlResult.runId,
+  } : undefined;
 
   useEffect(() => {
     setView(entry.view);
@@ -128,9 +135,11 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       name: dashboardTitle,
       owner: dataset.owner,
       sourceRunId,
+      sqlResult: sqlResultSnapshot,
       status,
       tags: activeSqlResult ? "SQL Result · Dashboard" : `${dataset.layer} · Dashboard`,
       updated: "방금 전",
+      widgets: snapshotWidgets,
     };
     setSavedDashboards((cards) => [nextCard, ...cards.filter((card) => card.id !== nextCard.id)]);
     return nextCard;
@@ -170,15 +179,10 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       exportedAt: new Date().toISOString(),
       filters: { period, segment },
       sourceRunId,
-      sqlResult: activeSqlResult ? {
-        columns: activeSqlResult.columns,
-        query: activeSqlResult.query,
-        rowCount: activeSqlResult.rowCount,
-        runId: activeSqlResult.runId,
-      } : null,
+      sqlResult: sqlResultSnapshot ?? null,
       status: isPublished ? "published" : "draft",
       title: dashboardTitle,
-      widgets: builderWidgets.length ? builderWidgets : ["category", "orders", "channels", "table"],
+      widgets: snapshotWidgets,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
