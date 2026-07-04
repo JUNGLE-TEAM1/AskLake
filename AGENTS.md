@@ -21,6 +21,8 @@ If documents conflict, follow the numbered order above. Existing detailed backen
 
 ## How Codex Should Work In This Repo
 
+If `AGENTS.local.md` exists, Codex should read it after this file for local-only workflow preferences. That file is ignored by git and must not be treated as shared project policy.
+
 Before writing code, Codex should:
 
 1. Read the planning and architecture docs first.

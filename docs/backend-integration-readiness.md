@@ -134,7 +134,7 @@ VITE_USE_MOCK_API=false
 | 상세 | selectedDataset 표시 | `GET /api/catalog/datasets/{datasetId}` |
 | 스키마 | dataset.schema 표시 | 상세 포함 또는 `/schema` |
 | 샘플 row | dataset.sampleRows 표시 | 상세 포함 또는 `/sample-rows` |
-| 리니지 | upstream/downstream 표시 | 상세 포함 또는 `/lineage` |
+| 리니지 | `LineageGraph` contract를 React Flow로 렌더링, 없으면 upstream fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL로 열기 | SQL 화면 이동 | 없음, datasetId 유지 |
 
 ### 4.4 SQL 분석
@@ -197,7 +197,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 
 | 순서 | 작업 | 파일 |
 | --- | --- | --- |
-| 1 | `getJobs`, `getDatasets` API adapter 추가 | `frontend/src/services/mockApi.ts` |
+| 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
 | 3 | dashboard adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |

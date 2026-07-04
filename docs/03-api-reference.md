@@ -55,6 +55,7 @@ Canonical status values:
 | `GET` | `/api/etl/jobs/{jobId}` | TBD | job 상세 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
+| `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate | `docs/api-contract.md` |
 
 ## 6) P2 / 확장 API
 
@@ -74,7 +75,7 @@ Canonical status values:
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
 | 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
-| Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
+| Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
@@ -161,8 +162,8 @@ type LineageContext = {
 };
 ```
 
-Lineage API가 없으면 `CatalogDataset.upstream`과 `CatalogDataset.downstream`으로 fallback context를 만든다.
-현재 Catalog lineage modal은 source/upstream -> current 흐름을 우선 표시하고, downstream 소비처는 별도 영향도 context로 분리할 수 있다.
+정식 Catalog lineage modal은 `LineageGraph` contract를 React Flow node/edge로 변환해 표시한다.
+Lineage API가 없으면 `CatalogDataset.upstream`으로 mock fallback graph를 만들고, `CatalogDataset.downstream`은 별도 영향도 context로 분리할 수 있다.
 
 ### Optional Large-Scale Evidence Extension
 

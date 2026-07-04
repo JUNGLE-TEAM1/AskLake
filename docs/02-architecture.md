@@ -31,7 +31,7 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
-| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal with full upstream lineage, column-level handles, and selected-column emphasis |
+| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | Backend | TBD | planned | API contract exists |
@@ -60,6 +60,7 @@ flowchart LR
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
 - catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`
+- lineage graph API/mock boundary: `frontend/src/services/mockApi.ts`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
 - mock data: `frontend/src/data/mockData.ts`
@@ -95,6 +96,7 @@ flowchart LR
 | --- | --- | --- |
 | ETL Job | `JobRowData` mock | persisted job resource |
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
+| Dataset Lineage | `LineageGraph` mock/fallback | column-level lineage graph resource |
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
 | Dashboard | `DashboardEntry` and local builder state | dashboard resource |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
@@ -120,6 +122,7 @@ P1 hydrate API:
 - `GET /api/etl/jobs/{jobId}`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
+- `GET /api/catalog/datasets/{datasetId}/lineage`
 
 ## 8) 설계 원칙
 

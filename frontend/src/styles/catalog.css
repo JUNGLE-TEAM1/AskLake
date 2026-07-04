@@ -493,6 +493,28 @@
   background: #f6f8fb;
 }
 
+.catalog-lineage-empty {
+  display: grid;
+  min-height: 360px;
+  place-content: center;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f6f8fb;
+  color: #64748b;
+  text-align: center;
+}
+
+.catalog-lineage-empty strong {
+  color: #1e293b;
+  font-size: 16px;
+}
+
+.catalog-lineage-empty span {
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .catalog-lineage-title {
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr);
