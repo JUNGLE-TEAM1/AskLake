@@ -401,8 +401,8 @@ export function JobDetailPage({
             <div className="detail-kv-grid">
               <Field label="Source 유형" value={sourceType} />
               <Field label="Source 경로" value={sourcePath} />
-              <Field label="연결 상태" value={job.status === "실패" ? "AccessGranted · 처리 실패" : "AccessGranted"} />
-              <Field label="인증 방식" value={sourceType === "S3" ? "IAM Role" : sourceType === "Kafka" ? "SASL/SCRAM" : "Service Account"} />
+              <Field label="연결 상태" value={job.status === "실패" ? "생성 시 검증됨 · 처리 실패" : "생성 시 Source 검증 완료"} />
+              <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "MinIO/S3 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
               <Field label="읽기 방식" value={job.status === "실행 중" ? "Streaming" : "Batch Scan"} />
             </div>
           </article>

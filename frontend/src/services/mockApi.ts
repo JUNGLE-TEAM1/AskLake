@@ -14,8 +14,6 @@ export type JobCommandResult = {
 };
 
 const mockLatencyMs = 120;
-const fallbackDatasetSchema: CatalogDataset["schema"] = [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]];
-
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
@@ -29,16 +27,12 @@ function validRequestSchemaColumns(request: CreatePipelineRequest) {
 
 function datasetSchemaFromRequest(request: CreatePipelineRequest): CatalogDataset["schema"] {
   const columns = validRequestSchemaColumns(request);
-  if (columns.length === 0) {
-    return fallbackDatasetSchema;
-  }
-
   return columns.map(({ column }) => [column.targetName, column.type.toLowerCase()] as [string, string]);
 }
 
 function datasetSampleRowsFromRequest(request: CreatePipelineRequest, schema: CatalogDataset["schema"]): string[][] {
   if (request.schemaSampleRows.length === 0) {
-    return [schema.map((_, index) => (index === 0 ? "Pipeline queued" : "-"))];
+    return [];
   }
 
   const columns = validRequestSchemaColumns(request);

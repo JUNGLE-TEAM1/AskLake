@@ -74,16 +74,16 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   ],
   source: [
     ["선택 커넥터", "File / S3"],
-    ["연결 상태", "AccessGranted"],
-    ["감지 파일", "3개"],
-    ["인증 방식", "IAM Role"],
+    ["연결 상태", "MinIO 테스트 대기"],
+    ["감지 파일", "0개"],
+    ["인증 방식", "MinIO access key"],
     ["다음 단계", "스키마 추론"],
   ],
   schema: [
-    ["샘플 Row", "10,000"],
-    ["추론 필드", "7개"],
-    ["평균 Confidence", "87%"],
-    ["검토 필요", "2개 필드"],
+    ["샘플 Row", "0"],
+    ["추론 필드", "0개"],
+    ["평균 Confidence", "-"],
+    ["검토 필요", "-"],
     ["다음 단계", "룰 적용"],
   ],
   rules: [
@@ -130,7 +130,7 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   ],
   review: [
     ["파이프라인", "pair_a_customer_review_gold"],
-    ["소스", "File / S3"],
+    ["소스", "MinIO / m3-raw"],
     ["스케줄", "매주 목요일 10:30"],
     ["권한", "분석가 외 2건"],
     ["타겟", "S3 Gold / Parquet"],

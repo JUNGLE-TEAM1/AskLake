@@ -62,6 +62,7 @@ export function CreationSummaryPanel({
   prevLabel,
   saveLabel,
   selected,
+  summaryRows,
   title,
 }: {
   flow: FlowId;
@@ -73,8 +74,10 @@ export function CreationSummaryPanel({
   prevLabel?: string;
   saveLabel?: string;
   selected?: string;
+  summaryRows?: Array<[string, string]>;
   title: string;
 }) {
+  const rows = summaryRows ?? summaryByFlow[flow];
   return (
     <aside className="summary-panel">
       <div className="summary-header">
@@ -82,7 +85,7 @@ export function CreationSummaryPanel({
         <h2>{title}</h2>
       </div>
       <dl>
-        {summaryByFlow[flow].map(([label, value]) => (
+        {rows.map(([label, value]) => (
           <div key={label}>
             <dt>{label}</dt>
             <dd>{selected && label === "실행 방식" ? selected : value}</dd>

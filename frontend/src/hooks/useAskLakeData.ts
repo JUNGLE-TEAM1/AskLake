@@ -38,11 +38,16 @@ const initialDraftPipeline: DraftPipeline = {
     connectionMessage: "Source connection test is required before review.",
     connectionStatus: "idle",
     sourceConfig: [
-      ["Storage Provider", "Amazon S3"],
-      ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
-      ["Path / Prefix", "data/inventory/daily/"],
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://127.0.0.1:9000"],
+      ["Region", "us-east-1"],
+      ["Bucket / Stage Name", "m3-raw"],
+      ["Path / Prefix", "nyc_taxi/csv/"],
+      ["Access Key", "m3admin"],
+      ["Secret Key", "wishuponastar"],
+      ["Use Path Style", "true"],
     ],
-    sourceLabel: "S3 Raw reviews",
+    sourceLabel: "m3-raw",
     sourceType: "File / S3",
   },
   target: {
@@ -139,6 +144,7 @@ export function useAskLakeData({
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
       writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
       showToast("파이프라인 생성 요청이 접수되었습니다.");
+      setDraftPipeline(initialDraftPipeline);
       onFlowChange("jobs");
     } catch {
       setJobs(previousState.jobs);
