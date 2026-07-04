@@ -50,7 +50,9 @@ type LineageTableNodeData = Record<string, unknown> & {
   handleMode: "source" | "target" | "both";
   layerLabel: string;
   onColumnSelect: (columnId: string | null) => void;
+  onNodeSelect: (nodeId: string | null) => void;
   selectedColumnId: string | null;
+  selectedNodeId: string | null;
   sourceHint?: string;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
@@ -402,11 +404,13 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
-  const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId, selectedNodeId, setSelectedNodeId);
   const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
     setSelectedColumnId(null);
+    setSelectedNodeId(null);
   }, [dataset.id]);
 
   return (
@@ -429,7 +433,10 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
           nodesDraggable={false}
           nodesConnectable={false}
           nodeTypes={lineageNodeTypes}
-          onPaneClick={() => setSelectedColumnId(null)}
+          onPaneClick={() => {
+            setSelectedColumnId(null);
+            setSelectedNodeId(null);
+          }}
           proOptions={{ hideAttribution: true }}
         >
           <Background color="#d5dde8" gap={22} />
@@ -449,6 +456,8 @@ function buildLineageGraph(
   dataset: CatalogDataset,
   selectedColumnId: string | null,
   onColumnSelect: (columnId: string | null) => void,
+  selectedNodeId: string | null,
+  onNodeSelect: (nodeId: string | null) => void,
 ): { edges: Edge[]; nodes: Node[] } {
   const primaryColumns = buildLineageColumns(dataset.schema);
   const upstreamHeight = getLineageStackHeight(dataset.upstream.length, primaryColumns.length);
@@ -469,7 +478,9 @@ function buildLineageGraph(
         handleMode: "source",
         layerLabel: sourceMeta.layerLabel,
         onColumnSelect,
+        onNodeSelect,
         selectedColumnId,
+        selectedNodeId,
         sourceHint,
         tableName: getLineageTableName(item),
         tone: sourceMeta.tone,
@@ -486,7 +497,9 @@ function buildLineageGraph(
       handleMode: "target",
       layerLabel: `${dataset.layer} LAYER`,
       onColumnSelect,
+      onNodeSelect,
       selectedColumnId,
+      selectedNodeId,
       tableName: dataset.name,
       tone: getLayerTone(dataset.layer),
     },
@@ -530,8 +543,23 @@ function getLineageTableHeight(columnCount: number): number {
 }
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
+  const isNodeSelected = data.selectedNodeId === data.tableName || data.selectedNodeId === data.sourceHint;
+  const canSelectNode = Boolean(data.sourceHint);
+
   return (
-    <article className={`lineage-table-node ${data.tone}`}>
+    <article
+      className={[
+        "lineage-table-node",
+        data.tone,
+        canSelectNode ? "selectable" : "",
+        isNodeSelected ? "selected" : "",
+      ].filter(Boolean).join(" ")}
+      onClick={(event) => {
+        if (!canSelectNode) return;
+        event.stopPropagation();
+        data.onNodeSelect(isNodeSelected ? null : data.tableName);
+      }}
+    >
       <header className="lineage-table-header">
         <div>
           <span>{data.layerLabel}</span>
@@ -540,6 +568,12 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
         </div>
         <em>{data.engine}</em>
       </header>
+      {data.sourceHint && (
+        <div className={isNodeSelected ? "lineage-node-detail expanded" : "lineage-node-detail"}>
+          <span>Upstream source</span>
+          <strong>{data.sourceHint.replace(/^Source /, "")}</strong>
+        </div>
+      )}
       <div className="lineage-table-columns">
         {data.columns.map((column) => (
           <button
