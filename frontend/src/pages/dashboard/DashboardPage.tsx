@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
   Maximize2,
@@ -11,9 +10,9 @@ import {
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
-import { hasAnyLayoutCollision } from "./runtime/dashboardLayoutUtils";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
 import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
+import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -37,7 +36,6 @@ import {
   ensureDraftDashboard,
   getPublishedDashboard,
   publishDashboard as publishRuntimeDashboard,
-  saveDraftLayouts,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
@@ -279,6 +277,15 @@ export function DashboardPage({
     setDraftError,
     setRuntimeNotice,
     setSelectedWidgetId,
+  });
+
+  const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
+    dashboardId: runtimeSelection.dashboardId,
+    onAction,
+    selectedPageId: selectedRuntimePageId,
+    setDraftError,
+    setDraftRuntime,
+    setRuntimeNotice,
   });
 
   useEffect(() => {
@@ -555,57 +562,6 @@ export function DashboardPage({
     } finally {
       setIsPublishingRuntime(false);
     }
-  };
-
-  const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
-    if (!selectedRuntimePageId) return;
-    if (hasAnyLayoutCollision(layout)) {
-      setRuntimeNotice({ message: "위젯이 겹쳐 레이아웃을 저장하지 않았습니다. 위치를 다시 조정해 주세요.", tone: "error" });
-      return;
-    }
-
-    const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
-
-    setDraftRuntime((currentRuntime) => {
-      if (!currentRuntime) return currentRuntime;
-      const widgets = currentRuntime.widgetsByPageId[selectedRuntimePageId] ?? [];
-      return {
-        ...currentRuntime,
-        widgetsByPageId: {
-          ...currentRuntime.widgetsByPageId,
-          [selectedRuntimePageId]: widgets.map((widget) => {
-            const nextLayout = layoutByWidgetId.get(widget.id);
-            if (!nextLayout) return widget;
-            return {
-              ...widget,
-              layout: {
-                ...widget.layout,
-                h: nextLayout.h,
-                minH: widget.layout.minH,
-                minW: widget.layout.minW,
-                w: nextLayout.w,
-                x: nextLayout.x,
-                y: nextLayout.y,
-              },
-            };
-          }),
-        },
-      };
-    });
-
-    void saveDraftLayouts(runtimeSelection.dashboardId, {
-      layouts: layout.map((item) => ({
-        h: item.h,
-        w: item.w,
-        widgetId: item.i,
-        x: item.x,
-        y: item.y,
-      })),
-      pageId: selectedRuntimePageId,
-    }).catch((error) => {
-      setDraftError(error instanceof Error ? error.message : "Failed to save widget layout.");
-    });
-    onAction("dashboard.layout.saved", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId);
   };
 
   const exportDashboard = () => {
