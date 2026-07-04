@@ -50,9 +50,17 @@
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .hegun-connector-grid,
-  .hegun-field-grid,
-  .dashboard-list-toolbar {
+  .hegun-field-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-list-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dashboard-toolbar-actions {
+    justify-content: flex-start;
+    min-width: 0;
   }
 
   .hegun-source-grid,
@@ -260,7 +268,6 @@
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,
-  .dashboard-intro-card,
   .dashboard-publish-card {
     align-items: flex-start;
     flex-direction: column;
@@ -317,6 +324,15 @@
   .dashboard-list-toolbar,
   .dashboard-category-chart {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .dashboard-list-toolbar .dashboard-filter-button {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .dashboard-axis-labels {
