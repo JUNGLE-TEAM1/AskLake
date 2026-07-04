@@ -11,9 +11,9 @@ import {
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
-import { findNextAvailableLayout, hasAnyLayoutCollision, toCollisionLayout } from "./runtime/dashboardLayoutUtils";
+import { hasAnyLayoutCollision } from "./runtime/dashboardLayoutUtils";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
-import type { CreateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
+import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -33,7 +33,6 @@ import {
 import { useDashboardLandingList } from "./useDashboardLandingList";
 import {
   createDraftPage,
-  createDraftWidget,
   deleteDraftPage,
   ensureDraftDashboard,
   getPublishedDashboard,
@@ -107,7 +106,6 @@ export function DashboardPage({
   const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
-  const [isCreatingDatasetWidget, setIsCreatingDatasetWidget] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
@@ -266,6 +264,22 @@ export function DashboardPage({
       setDraftLoading(false);
     }
   };
+
+  const {
+    createDatasetDraftWidget,
+    isCreatingDatasetWidget,
+  } = useDraftWidgetCreator({
+    dashboardId: runtimeSelection.dashboardId,
+    defaultLayouts: defaultDraftWidgetLayout,
+    mode: runtimeSelection.mode,
+    onAction,
+    reloadDraftRuntime: loadDraftRuntime,
+    selectedPageId: selectedRuntimePageId,
+    selectedWidgets: selectedDraftWidgets,
+    setDraftError,
+    setRuntimeNotice,
+    setSelectedWidgetId,
+  });
 
   useEffect(() => {
     setView(entry.view);
@@ -543,40 +557,6 @@ export function DashboardPage({
     }
   };
 
-  const addDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
-    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId || isCreatingDatasetWidget) return;
-    const layout = findNextAvailableLayout(
-      toCollisionLayout(selectedDraftWidgets),
-      defaultDraftWidgetLayout[input.type],
-    );
-
-    setIsCreatingDatasetWidget(true);
-    setDraftError(null);
-    try {
-      const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
-        datasetId: input.datasetId,
-        layout,
-        title: input.title,
-        type: input.type,
-        config: {
-          color: input.color,
-          description: input.description,
-          xKey: input.xKey,
-          yKey: input.yKey,
-        },
-      });
-      await loadDraftRuntime(runtimeSelection.dashboardId);
-      setSelectedWidgetId(widget.id);
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
-      onAction("dashboard.widget.dataset_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, input.datasetId);
-    } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
-    } finally {
-      setIsCreatingDatasetWidget(false);
-    }
-  };
-
   const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
     if (!selectedRuntimePageId) return;
     if (hasAnyLayoutCollision(layout)) {
@@ -824,7 +804,7 @@ export function DashboardPage({
         title={runtimeTitle}
         onAddPage={addRuntimePage}
         onCloseSharePanel={() => setRuntimeShareLink(null)}
-        onCreateDatasetWidget={addDatasetDraftWidget}
+        onCreateDatasetWidget={createDatasetDraftWidget}
         onDeletePage={deleteRuntimePage}
         onLayoutCommit={updateDraftWidgetLayouts}
         onLayoutRejected={() => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" })}
