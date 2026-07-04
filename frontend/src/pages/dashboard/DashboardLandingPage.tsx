@@ -1,4 +1,5 @@
 import { Plus } from "lucide-react";
+import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
 import { DashboardTable } from "./components/DashboardTable";
@@ -8,14 +9,20 @@ import type { SavedDashboardCard } from "../../types";
 export function DashboardLandingPage({
   currentPage,
   dashboardCount,
+  deleteError,
+  deleteTarget,
+  deletingDashboardId,
   dashboards,
   error,
   isLoading,
   onClearTags,
   onCreateDashboard,
+  onCancelDelete,
+  onConfirmDelete,
   onNextPage,
   onOpenDashboard,
   onPreviousPage,
+  onRequestDelete,
   onSearchQueryChange,
   onSelectOwner,
   onSelectSort,
@@ -34,14 +41,20 @@ export function DashboardLandingPage({
 }: {
   currentPage: number;
   dashboardCount: number;
+  deleteError: string | null;
+  deleteTarget: SavedDashboardCard | null;
+  deletingDashboardId: string | null;
   dashboards: SavedDashboardCard[];
   error: string | null;
   isLoading: boolean;
   onClearTags: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
   onCreateDashboard: () => void;
   onNextPage: () => void;
-  onOpenDashboard: (name: string) => void;
+  onOpenDashboard: (dashboard: SavedDashboardCard) => void;
   onPreviousPage: () => void;
+  onRequestDelete: (dashboard: SavedDashboardCard) => void;
   onSearchQueryChange: (value: string) => void;
   onSelectOwner: (owner: string) => void;
   onSelectSort: (sortOption: DashboardSortOption) => void;
@@ -89,9 +102,23 @@ export function DashboardLandingPage({
         <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
         {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
         {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
-        <DashboardTable dashboards={dashboards} onOpenDetail={onOpenDashboard} />
+        <DashboardTable
+          dashboards={dashboards}
+          deletingDashboardId={deletingDashboardId}
+          onOpenDetail={onOpenDashboard}
+          onRequestDelete={onRequestDelete}
+        />
         <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
       </section>
+      {deleteTarget && (
+        <DashboardDeleteConfirmDialog
+          dashboard={deleteTarget}
+          error={deleteError}
+          isDeleting={deletingDashboardId === deleteTarget.id}
+          onCancel={onCancelDelete}
+          onConfirm={onConfirmDelete}
+        />
+      )}
     </div>
   );
 }

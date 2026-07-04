@@ -648,7 +648,40 @@ type DashboardListResponse = {
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
 `filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
 
-### 8.4 대시보드 초안 생성
+### 8.4 대시보드 삭제
+
+`DELETE /api/dashboards/{dashboardId}`
+
+대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
+서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+
+Request body는 없습니다.
+
+로컬 API 서버의 임시 권한 입력:
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
+| `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
+
+Response `200 OK`:
+
+```json
+{
+  "deletedDashboardId": "dash_sales_analytics_demo"
+}
+```
+
+Error:
+
+| Status | Code | 상황 |
+| --- | --- | --- |
+| `403` | `FORBIDDEN` | 삭제 권한이 없는 사용자 |
+| `404` | `NOT_FOUND` | 존재하지 않는 dashboard |
+
+삭제 성공 후 프론트는 dashboard 목록을 다시 조회합니다.
+
+### 8.5 대시보드 초안 생성
 
 `POST /api/dashboards`
 

@@ -202,6 +202,11 @@ export async function getDataset(datasetId) {
   return result.rows[0]?.payload ?? null;
 }
 
+export async function getDashboard(dashboardId) {
+  const result = await pool.query("SELECT payload FROM dashboards WHERE id = $1", [dashboardId]);
+  return result.rows[0]?.payload ?? null;
+}
+
 export async function saveJob(job) {
   await upsertJson("etl_jobs", job);
   return job;
@@ -215,6 +220,11 @@ export async function saveDataset(dataset) {
 export async function saveDashboard(dashboard) {
   await upsertJson("dashboards", dashboard);
   return dashboard;
+}
+
+export async function deleteDashboard(dashboardId) {
+  const result = await pool.query("DELETE FROM dashboards WHERE id = $1 RETURNING payload", [dashboardId]);
+  return result.rows[0]?.payload ?? null;
 }
 
 export async function saveSqlRun(resultDraft) {

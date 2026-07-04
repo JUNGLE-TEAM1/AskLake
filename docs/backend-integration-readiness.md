@@ -92,6 +92,7 @@ VITE_USE_MOCK_API=false
 | 저장된 대시보드 첫 목록 | `GET /api/dashboards` |
 | 저장된 대시보드 검색/필터 목록 | `POST /api/dashboards/query` |
 | 대시보드 상세 | `GET /api/dashboards/{dashboardId}` |
+| 대시보드 삭제 | `DELETE /api/dashboards/{dashboardId}` |
 | 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
 | 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 | 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
@@ -162,6 +163,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
 | 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
+| 목록에서 삭제 | 확인 모달 후 목록 재조회 | `DELETE /api/dashboards/{id}` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |

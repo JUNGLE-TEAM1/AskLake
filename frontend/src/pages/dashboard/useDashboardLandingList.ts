@@ -15,6 +15,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   const [currentPage, setCurrentPage] = useState(1);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>(() => getMockDashboardListResponse({
     page: 1,
     pageSize: dashboardPageSize,
@@ -52,7 +53,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     return () => {
       ignore = true;
     };
-  }, [currentPage, dashboardQuery, dashboards, refreshKey]);
+  }, [currentPage, dashboardQuery, dashboards, refreshKey, reloadKey]);
 
   const resetPage = () => {
     setCurrentPage(1);
@@ -115,6 +116,7 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
     goToPreviousDashboardPage,
     openListControl,
     ownerFilter,
+    reloadDashboards: () => setReloadKey((key) => key + 1),
     safeDashboardPage: dashboardResponse.page,
     searchQuery,
     selectDashboardOwner,
