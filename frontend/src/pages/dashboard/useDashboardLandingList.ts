@@ -6,13 +6,15 @@ import type { DashboardListControl, DashboardSortOption } from "./dashboardListU
 
 type DashboardListAction = (action: string, apiPath: string, targetId: string) => void;
 
-export function useDashboardLandingList(dashboards: SavedDashboardCard[], onAction: DashboardListAction) {
+export function useDashboardLandingList(dashboards: SavedDashboardCard[], onAction: DashboardListAction, refreshKey = 0) {
   const [searchQuery, setSearchQuery] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
   const [openListControl, setOpenListControl] = useState<DashboardListControl | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>(() => getMockDashboardListResponse({
     page: 1,
     pageSize: dashboardPageSize,
@@ -31,18 +33,26 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   useEffect(() => {
     let ignore = false;
 
+    setDashboardLoading(true);
+    setDashboardError(null);
     void listDashboards(dashboardQuery, dashboards)
       .then((response) => {
         if (ignore) return;
         setDashboardResponse(response);
         if (response.page !== currentPage) setCurrentPage(response.page);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        if (ignore) return;
+        setDashboardError(error instanceof Error ? error.message : "Failed to load dashboards.");
+      })
+      .finally(() => {
+        if (!ignore) setDashboardLoading(false);
+      });
 
     return () => {
       ignore = true;
     };
-  }, [currentPage, dashboardQuery, dashboards]);
+  }, [currentPage, dashboardQuery, dashboards, refreshKey]);
 
   const resetPage = () => {
     setCurrentPage(1);
@@ -95,6 +105,8 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   return {
     clearDashboardTags,
     dashboardCount: dashboardResponse.total,
+    dashboardError,
+    dashboardLoading,
     dashboardOwners: dashboardResponse.filterOptions.owners,
     dashboardPageEnd,
     dashboardPageStart,

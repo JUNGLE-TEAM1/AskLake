@@ -26,7 +26,7 @@ export const dashboardSortOptions: DashboardSortOptionMeta[] = [
 ];
 
 export function splitDashboardTags(tags: string) {
-  return tags.split("·").map((tag) => tag.trim()).filter(Boolean);
+  return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
 }
 
 export function formatDashboardTimestamp(date: Date) {
@@ -41,7 +41,7 @@ export function formatDashboardDateLabel(value?: string) {
   return `${parsedDate.getFullYear()}년 ${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일 ${parsedDate.getHours()}시 ${minute}분`;
 }
 
-export function normalizeSavedDashboardCard(card: SavedDashboardCard, index: number): SavedDashboardCard {
+export function normalizeSavedDashboardCard(card: SavedDashboardCard, index = 0): SavedDashboardCard {
   const fallbackCard = defaultDashboardCards.find((dashboard) => dashboard.id === card.id) ?? defaultDashboardCards[index] ?? defaultDashboardCards[0];
   const createdAt = card.createdAt ?? fallbackCard?.createdAt ?? fallbackDashboardDate;
   const createdAtValue = card.createdAtValue ?? fallbackCard?.createdAtValue ?? fallbackDashboardDateValue;
