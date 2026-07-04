@@ -31,6 +31,24 @@ Before writing code, Codex should:
 6. Keep `README.md` short and useful for first-time setup.
 7. Track repository/CI/platform rules in `docs/system-guardrails.md`; keep human workflow rules in this harness.
 
+## GitHub Auth In Codex
+
+GitHub CLI tokens for this machine are stored in the macOS Keychain. The normal
+Codex sandbox cannot always read that Keychain entry, so `gh auth status` may
+incorrectly report a missing or invalid token inside the sandbox even when the
+same account works outside it.
+
+When using GitHub CLI commands for this repository:
+
+- Do not repeat `gh auth login` just because a sandboxed command says the token
+  is missing or invalid.
+- Re-run GitHub CLI commands that need authentication with escalated
+  permissions so `gh` can read the existing Keychain token.
+- Use `gh auth status` with escalated permissions to verify the real login
+  state.
+- Never commit, print, or copy GitHub tokens into repo files, logs, docs, or
+  scripts.
+
 ## Current Implementation Baseline
 
 - Frontend app: `frontend/`

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   BarChart3,
@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   Maximize2,
   Minus,
+  Pencil,
   PlayCircle,
   Plus,
   RefreshCw,
@@ -42,11 +43,12 @@ import {
   TRANSFORM_QUALITY_PREVIEW_BY_STEP_ID,
   TRANSFORM_QUALITY_SAMPLE_PROFILE,
   TRANSFORM_QUALITY_VALIDATION_RESULT,
+  runTransformQualitySamplePreview,
 } from "../../data/transformQualityMockData";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
 import type { QualityRuleDraft, TransformStepDraft } from "../../types/etl";
-import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample } from "../../data/transformQualityMockData";
+import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityMockData";
 
 export function SchedulePage({
   draftScheduleLabel,
@@ -761,6 +763,18 @@ type RecipeStep = RuleStepDraft & {
 };
 type QualityRule = QualityRuleOption;
 
+type TransformQualityPreviewCache = {
+  datasetId: string;
+  invalidRows: TransformQualityInvalidRow[];
+  qualityRules: QualityRule[];
+  recipeSteps: RecipeStep[];
+  selectedPreviewStepId: string;
+  selectedQualityRuleId: string;
+  savedAt: string;
+  validation: TransformQualityValidationResult;
+  version: 1;
+};
+
 const RULE_METRIC_DEFS: Array<{ icon: React.ReactNode; label: string; value: (stats: RuleStats) => string }> = [
   { icon: <SlidersHorizontal size={18} />, label: "Total Rules", value: (stats) => String(stats.totalRules) },
   { icon: <Database size={18} />, label: "Affected Columns", value: (stats) => String(stats.affectedColumns) },
@@ -800,20 +814,79 @@ const INITIAL_RECIPE_STEPS: RecipeStep[] = RECOMMENDED_TRANSFORM_STEPS.map(({ id
   params,
 }));
 const INITIAL_QUALITY_RULES: QualityRule[] = QUALITY_RULE_OPTIONS;
+const TRANSFORM_QUALITY_SAMPLE_COLUMNS = [...TRANSFORM_QUALITY_SAMPLE_PROFILE.columns];
+const TRANSFORM_QUALITY_SAMPLE_COLUMN_SET = new Set<string>(TRANSFORM_QUALITY_SAMPLE_COLUMNS);
 const INITIAL_AFFECTED_COLUMNS = 12;
 const INITIAL_TRANSFORMATION_COVERAGE = 84;
+const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
+const TRANSFORM_FAILURE_POLICY_OPTIONS = ["Warn", "Set Null", "Drop Row", "Fail Run"] as const;
+const QUALITY_VALIDATION_OPTIONS: Array<QualityRule["validationType"]> = ["Not Null", "Regex Match", "Range Check", "Accepted Values"];
+const QUALITY_SEVERITY_OPTIONS: Array<QualityRule["severity"]> = ["Warning", "Error"];
+const QUALITY_FAILURE_ACTION_OPTIONS: Array<QualityRule["failureAction"]> = ["Warn", "Quarantine", "Fail Run", "Drop Row", "Set Null"];
+const QUALITY_DRAFT_PREVIEW_ID_PREFIX = "qr-draft-preview-";
+type TransformOperation = (typeof TRANSFORM_OPERATION_OPTIONS)[number];
+type TransformFailurePolicy = (typeof TRANSFORM_FAILURE_POLICY_OPTIONS)[number];
 
 const DEFAULT_RULE_STEP_BY_CATEGORY: Record<RuleCategory, RuleStepDraft> = {
   transform: { input: "raw_value", operation: "Extract JSONPath", output: "normalized_value", params: "$.value", onError: "Set Null" },
   quality: { input: "user_email", operation: "Regex Match", output: "quality_status", params: "email pattern", onError: "Warn" },
 };
 
-const INVALID_RULE_ROWS = TRANSFORM_QUALITY_INVALID_ROWS;
+const TRANSFORM_QUALITY_PREVIEW_CACHE_KEY = "asklake.transformQualityPreviewCache";
+
+function createDefaultTransformQualityPreviewCache(): TransformQualityPreviewCache {
+  return {
+    datasetId: TRANSFORM_QUALITY_SAMPLE_PROFILE.datasetId,
+    invalidRows: TRANSFORM_QUALITY_INVALID_ROWS,
+    qualityRules: INITIAL_QUALITY_RULES,
+    recipeSteps: INITIAL_RECIPE_STEPS,
+    selectedPreviewStepId: INITIAL_RECIPE_STEPS[0]?.id ?? "",
+    selectedQualityRuleId: INITIAL_QUALITY_RULES[0]?.id ?? "",
+    savedAt: new Date().toISOString(),
+    validation: TRANSFORM_QUALITY_VALIDATION_RESULT,
+    version: 1,
+  };
+}
+
+function readTransformQualityPreviewCache(): TransformQualityPreviewCache {
+  if (typeof window === "undefined") return createDefaultTransformQualityPreviewCache();
+  try {
+    const stored = window.localStorage.getItem(TRANSFORM_QUALITY_PREVIEW_CACHE_KEY);
+    if (!stored) return createDefaultTransformQualityPreviewCache();
+    const parsed = JSON.parse(stored) as Partial<TransformQualityPreviewCache>;
+    if (parsed.version !== 1 || !Array.isArray(parsed.recipeSteps) || !Array.isArray(parsed.qualityRules)) {
+      return createDefaultTransformQualityPreviewCache();
+    }
+    const defaultCache = createDefaultTransformQualityPreviewCache();
+    const qualityRules = parsed.qualityRules.filter((rule) => !rule.id.startsWith(QUALITY_DRAFT_PREVIEW_ID_PREFIX));
+    const selectedQualityRuleId = qualityRules.some((rule) => rule.id === parsed.selectedQualityRuleId)
+      ? parsed.selectedQualityRuleId ?? ""
+      : qualityRules[0]?.id ?? defaultCache.selectedQualityRuleId;
+    return {
+      ...defaultCache,
+      ...parsed,
+      invalidRows: Array.isArray(parsed.invalidRows) ? parsed.invalidRows : TRANSFORM_QUALITY_INVALID_ROWS,
+      qualityRules: qualityRules.length > 0 ? qualityRules : defaultCache.qualityRules,
+      recipeSteps: parsed.recipeSteps,
+      selectedQualityRuleId,
+      validation: parsed.validation ?? TRANSFORM_QUALITY_VALIDATION_RESULT,
+    };
+  } catch {
+    return createDefaultTransformQualityPreviewCache();
+  }
+}
+
+function writeTransformQualityPreviewCache(cache: TransformQualityPreviewCache) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(TRANSFORM_QUALITY_PREVIEW_CACHE_KEY, JSON.stringify(cache));
+}
 
 type RuleStats = {
   affectedColumns: number;
   coverage: number;
   invalidRows: number;
+  qualityRules: number;
+  transformSteps: number;
   totalRules: number;
 };
 
@@ -823,12 +896,14 @@ function getRuleStats(steps: RecipeStep[], qualityRules: QualityRule[], invalidR
     affectedColumns: Math.max(0, INITIAL_AFFECTED_COLUMNS + ruleCountDelta),
     coverage: Math.min(100, Math.max(0, INITIAL_TRANSFORMATION_COVERAGE + ruleCountDelta * 2)),
     invalidRows,
+    qualityRules: qualityRules.length,
+    transformSteps: steps.length,
     totalRules: steps.length + qualityRules.length,
   };
 }
 
-function formatRuleSummary(stats: RuleStats) {
-  return `${stats.totalRules} transform steps · ${TRANSFORM_QUALITY_VALIDATION_RESULT.qualityScore}% quality score · ${stats.invalidRows} invalid rows`;
+function formatRuleSummary(stats: RuleStats, validation: TransformQualityValidationResult) {
+  return `${stats.transformSteps} transform steps · ${stats.qualityRules} quality rules · ${validation.qualityScore}% quality score · ${stats.invalidRows} invalid rows`;
 }
 
 function getTransformStepKind(operation: string): TransformStepDraft["kind"] {
@@ -882,6 +957,72 @@ function formatInvalidRowsPreviewSummary(invalidRowCount: number, exampleCount: 
   return `${invalidRowCount} invalid rows · showing ${exampleCount} examples`;
 }
 
+function getWorkingColumns(steps: RecipeStep[]) {
+  return Array.from(new Set([
+    ...TRANSFORM_QUALITY_SAMPLE_COLUMNS,
+    ...steps.map((step) => step.output.trim()).filter(Boolean),
+  ]));
+}
+
+function getDerivedColumns(steps: RecipeStep[]) {
+  return Array.from(new Set(
+    steps
+      .map((step) => step.output.trim())
+      .filter((column) => column && !TRANSFORM_QUALITY_SAMPLE_COLUMN_SET.has(column)),
+  ));
+}
+
+function getPermanentQualityRules(rules: QualityRule[]) {
+  return rules.filter((rule) => !rule.id.startsWith(QUALITY_DRAFT_PREVIEW_ID_PREFIX));
+}
+
+function replaceOrAppendById<T extends { id: string }>(items: T[], nextItem: T) {
+  return items.some((item) => item.id === nextItem.id)
+    ? items.map((item) => item.id === nextItem.id ? nextItem : item)
+    : [...items, nextItem];
+}
+
+function getTransformFailurePolicy(value: string): TransformFailurePolicy {
+  return TRANSFORM_FAILURE_POLICY_OPTIONS.find((option) => option === value) ?? "Warn";
+}
+
+function createRecipeStepFromDraft(draft: RuleStepDraft, id: string, fallback: RuleStepDraft = DEFAULT_RULE_STEP_BY_CATEGORY.transform): RecipeStep {
+  return {
+    id,
+    input: draft.input.trim() || fallback.input,
+    onError: draft.onError.trim() || fallback.onError,
+    operation: draft.operation.trim() || fallback.operation,
+    output: draft.output.trim() || fallback.output,
+    params: draft.params.trim() || fallback.params,
+  };
+}
+
+function recipeStepToRuleStepDraft(step: RecipeStep): RuleStepDraft {
+  return {
+    input: step.input,
+    onError: step.onError,
+    operation: step.operation,
+    output: step.output,
+    params: step.params,
+  };
+}
+
+function qualityRuleToRuleStepDraft(rule: QualityRule): RuleStepDraft {
+  return {
+    input: rule.targetColumn,
+    onError: rule.failureAction,
+    operation: rule.validationType,
+    output: "validation_status",
+    params: rule.severity,
+  };
+}
+
+function getQualityRuleInvalidRows(rows: TransformQualityInvalidRow[], rule: QualityRule) {
+  const rowsWithRuleIds = rows.filter((row) => row.ruleId);
+  if (rowsWithRuleIds.length > 0) return rows.filter((row) => row.ruleId === rule.id);
+  return rows.filter((row) => row.column === rule.targetColumn);
+}
+
 export function RuleApplicationPage({
   onDraftChange,
   onAction,
@@ -897,24 +1038,86 @@ export function RuleApplicationPage({
   onPrev: () => void;
   onSave: () => void;
 }) {
+  const [previewCache] = useState(() => readTransformQualityPreviewCache());
   const [selectedRuleCategory, setSelectedRuleCategory] = useState<RuleCategory>("transform");
-  const [recipeSteps, setRecipeSteps] = useState<RecipeStep[]>(INITIAL_RECIPE_STEPS);
-  const [qualityRules, setQualityRules] = useState<QualityRule[]>(INITIAL_QUALITY_RULES);
-  const [selectedPreviewStepId, setSelectedPreviewStepId] = useState(INITIAL_RECIPE_STEPS[0].id);
-  const [selectedQualityRuleId, setSelectedQualityRuleId] = useState(INITIAL_QUALITY_RULES[0]?.id ?? "");
+  const [recipeSteps, setRecipeSteps] = useState<RecipeStep[]>(previewCache.recipeSteps);
+  const [qualityRules, setQualityRules] = useState<QualityRule[]>(previewCache.qualityRules);
+  const [selectedPreviewStepId, setSelectedPreviewStepId] = useState(previewCache.selectedPreviewStepId);
+  const [selectedQualityRuleId, setSelectedQualityRuleId] = useState(previewCache.selectedQualityRuleId);
   const [draftPreviewStep, setDraftPreviewStep] = useState<RecipeStep | null>(null);
+  const [draftPreviewQualityRule, setDraftPreviewQualityRule] = useState<QualityRule | null>(null);
+  const [editingTransformStepId, setEditingTransformStepId] = useState<string | null>(null);
+  const [editingQualityRuleId, setEditingQualityRuleId] = useState<string | null>(null);
   const [showInvalidRows, setShowInvalidRows] = useState(false);
-  const invalidRowCount = TRANSFORM_QUALITY_VALIDATION_RESULT.invalidRowCount;
+  const workingColumns = useMemo(() => getWorkingColumns(recipeSteps), [recipeSteps]);
+  const derivedColumns = useMemo(() => getDerivedColumns(recipeSteps), [recipeSteps]);
+  const runnerResult = useMemo(() => runTransformQualitySamplePreview(recipeSteps, qualityRules), [qualityRules, recipeSteps]);
+  const previewRunnerResult = useMemo(() => {
+    const previewSteps = draftPreviewStep?.id === selectedPreviewStepId ? replaceOrAppendById(recipeSteps, draftPreviewStep) : recipeSteps;
+    return runTransformQualitySamplePreview(previewSteps, qualityRules);
+  }, [draftPreviewStep, qualityRules, recipeSteps, selectedPreviewStepId]);
+  const qualityPreviewRules = useMemo(() => (
+    draftPreviewQualityRule?.id === selectedQualityRuleId ? replaceOrAppendById(qualityRules, draftPreviewQualityRule) : qualityRules
+  ), [draftPreviewQualityRule, qualityRules, selectedQualityRuleId]);
+  const qualityPreviewRunnerResult = useMemo(() => (
+    draftPreviewQualityRule?.id === selectedQualityRuleId
+      ? runTransformQualitySamplePreview(recipeSteps, qualityPreviewRules)
+      : runnerResult
+  ), [draftPreviewQualityRule, qualityPreviewRules, recipeSteps, runnerResult, selectedQualityRuleId]);
+  const validationResult = runnerResult.validation;
+  const invalidRows = validationResult.failedRows;
+  const invalidRowCount = validationResult.invalidRowCount;
   const ruleStats = getRuleStats(recipeSteps, qualityRules, invalidRowCount);
   const selectedPreviewStep = (draftPreviewStep?.id === selectedPreviewStepId ? draftPreviewStep : undefined)
     ?? recipeSteps.find((step) => step.id === selectedPreviewStepId)
     ?? recipeSteps[0]
     ?? INITIAL_RECIPE_STEPS[0];
-  const selectedQualityRule = qualityRules.find((rule) => rule.id === selectedQualityRuleId) ?? qualityRules[0] ?? INITIAL_QUALITY_RULES[0];
-  const invalidRowsPreviewSummary = formatInvalidRowsPreviewSummary(invalidRowCount, INVALID_RULE_ROWS.length);
+  const selectedQualityRule = draftPreviewQualityRule?.id === selectedQualityRuleId
+    ? draftPreviewQualityRule
+    : qualityRules.find((rule) => rule.id === selectedQualityRuleId) ?? qualityRules[0] ?? INITIAL_QUALITY_RULES[0];
+  const selectedQualityInvalidRows = getQualityRuleInvalidRows(qualityPreviewRunnerResult.validation.failedRows, selectedQualityRule);
+  const invalidRowsPreviewSummary = formatInvalidRowsPreviewSummary(invalidRowCount, invalidRows.length);
+  const cachedSelectedQualityRuleId = qualityRules.some((rule) => rule.id === selectedQualityRuleId)
+    ? selectedQualityRuleId
+    : qualityRules[0]?.id ?? INITIAL_QUALITY_RULES[0]?.id ?? "";
+  const editingTransformStep = editingTransformStepId ? recipeSteps.find((step) => step.id === editingTransformStepId) ?? null : null;
+  const editingQualityRule = editingQualityRuleId ? qualityRules.find((rule) => rule.id === editingQualityRuleId) ?? null : null;
+  const editingDraft = useMemo(() => {
+    if (selectedRuleCategory === "transform" && editingTransformStep) {
+      return recipeStepToRuleStepDraft(editingTransformStep);
+    }
+    if (selectedRuleCategory === "quality" && editingQualityRule) {
+      return qualityRuleToRuleStepDraft(editingQualityRule);
+    }
+    return null;
+  }, [editingQualityRule, editingTransformStep, selectedRuleCategory]);
+  const editingLabel = useMemo(() => {
+    if (selectedRuleCategory === "transform" && editingTransformStep) {
+      return `Step ${recipeSteps.findIndex((step) => step.id === editingTransformStep.id) + 1}`;
+    }
+    if (selectedRuleCategory === "quality" && editingQualityRule) {
+      return `Rule ${qualityRules.findIndex((rule) => rule.id === editingQualityRule.id) + 1}`;
+    }
+    return undefined;
+  }, [editingQualityRule, editingTransformStep, qualityRules, recipeSteps, selectedRuleCategory]);
+
+  useEffect(() => {
+    writeTransformQualityPreviewCache({
+      datasetId: TRANSFORM_QUALITY_SAMPLE_PROFILE.datasetId,
+      invalidRows,
+      qualityRules,
+      recipeSteps,
+      selectedPreviewStepId,
+      selectedQualityRuleId: cachedSelectedQualityRuleId,
+      savedAt: new Date().toISOString(),
+      validation: validationResult,
+      version: 1,
+    });
+  }, [cachedSelectedQualityRuleId, invalidRows, qualityRules, recipeSteps, selectedPreviewStepId, validationResult]);
 
   const buildRuleDraftPatch = (steps: RecipeStep[] = recipeSteps, rules: QualityRule[] = qualityRules): DraftPipelinePatch => {
-    const nextSummary = formatRuleSummary(getRuleStats(steps, rules, invalidRowCount));
+    const nextValidation = steps === recipeSteps && rules === qualityRules ? validationResult : runTransformQualitySamplePreview(steps, rules).validation;
+    const nextSummary = formatRuleSummary(getRuleStats(steps, rules, nextValidation.invalidRowCount), nextValidation);
     return {
       ruleSummary: nextSummary,
       transform: {
@@ -922,11 +1125,11 @@ export function RuleApplicationPage({
         summary: nextSummary,
       },
       quality: {
-        invalidRows: toDraftInvalidRows(INVALID_RULE_ROWS),
+        invalidRows: toDraftInvalidRows(nextValidation.failedRows),
         rules: toDraftQualityRules(rules),
-        score: TRANSFORM_QUALITY_VALIDATION_RESULT.qualityScore,
-        status: TRANSFORM_QUALITY_VALIDATION_RESULT.status,
-        summary: TRANSFORM_QUALITY_VALIDATION_RESULT.summary,
+        score: nextValidation.qualityScore,
+        status: nextValidation.status,
+        summary: nextValidation.summary,
       },
     };
   };
@@ -957,8 +1160,27 @@ export function RuleApplicationPage({
 
   const previewRecipeStep = (step: RecipeStep) => {
     setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
     setSelectedPreviewStepId(step.id);
     ruleAction("etl.rules.step_previewed", `/api/etl/rules/steps/${step.id}/preview`);
+  };
+
+  const editRecipeStep = (step: RecipeStep) => {
+    setSelectedRuleCategory("transform");
+    setEditingTransformStepId(step.id);
+    setEditingQualityRuleId(null);
+    setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    setSelectedPreviewStepId(step.id);
+    ruleAction("etl.rules.step_edit_started", `/api/etl/rules/steps/${step.id}`);
+  };
+
+  const cancelRuleEdit = () => {
+    setEditingTransformStepId(null);
+    setEditingQualityRuleId(null);
+    setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    ruleAction("etl.rules.edit_canceled", "/api/etl/rules/edit");
   };
 
   const removeRecipeStep = (step: RecipeStep) => {
@@ -969,46 +1191,59 @@ export function RuleApplicationPage({
     }
     setRecipeSteps(nextSteps);
     setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    if (editingTransformStepId === step.id) {
+      setEditingTransformStepId(null);
+    }
     if (!nextSteps.some((nextStep) => nextStep.id === selectedPreviewStepId)) {
-      setSelectedPreviewStepId(nextSteps[0].id);
+      const removedIndex = recipeSteps.findIndex((currentStep) => currentStep.id === step.id);
+      const nextSelectedStep = nextSteps[Math.min(Math.max(removedIndex, 0), nextSteps.length - 1)] ?? nextSteps[0];
+      setSelectedPreviewStepId(nextSelectedStep.id);
     }
     applyRuleDraft(nextSteps);
     ruleAction("etl.rules.step_removed", `/api/etl/rules/steps/${step.id}`);
   };
 
   const addRecipeStep = (draft: RuleStepDraft) => {
-    const fallback = DEFAULT_RULE_STEP_BY_CATEGORY[selectedRuleCategory];
     const nextStepNumber = String(Math.max(...recipeSteps.map((step) => Number(step.id)), 0) + 1);
-    const nextStep: RecipeStep = {
-      id: nextStepNumber,
-      input: draft.input.trim() || fallback.input,
-      onError: draft.onError.trim() || fallback.onError,
-      operation: draft.operation.trim() || fallback.operation,
-      output: draft.output.trim() || fallback.output,
-      params: draft.params.trim() || fallback.params,
-    };
+    const nextStep = createRecipeStepFromDraft(draft, nextStepNumber);
     const nextSteps = [...recipeSteps, nextStep];
     setRecipeSteps(nextSteps);
     setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
     setSelectedPreviewStepId(nextStep.id);
     applyRuleDraft(nextSteps);
     ruleAction("etl.rules.step_added", "/api/etl/rules/steps");
     onNotify("새 rule step이 추가되었습니다.");
   };
 
+  const updateRecipeStep = (draft: RuleStepDraft) => {
+    if (!editingTransformStepId) return;
+    const currentStep = recipeSteps.find((step) => step.id === editingTransformStepId);
+    if (!currentStep) {
+      setEditingTransformStepId(null);
+      onNotify("수정할 transform step을 찾을 수 없습니다.");
+      return;
+    }
+    const updatedStep = createRecipeStepFromDraft(draft, editingTransformStepId, currentStep);
+    const nextSteps = recipeSteps.map((step) => step.id === editingTransformStepId ? updatedStep : step);
+    setRecipeSteps(nextSteps);
+    setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    setEditingTransformStepId(null);
+    setSelectedPreviewStepId(updatedStep.id);
+    applyRuleDraft(nextSteps);
+    ruleAction("etl.rules.step_updated", `/api/etl/rules/steps/${updatedStep.id}`);
+    onNotify("rule step이 업데이트되었습니다.");
+  };
+
   const addQualityRule = (draft: RuleStepDraft) => {
-    const fallback = DEFAULT_RULE_STEP_BY_CATEGORY.quality;
-    const nextRuleNumber = qualityRules.length + 1;
-    const validationType = (draft.operation.trim() || fallback.operation) as QualityRule["validationType"];
-    const nextRule: QualityRule = {
-      failureAction: (draft.onError.trim() || fallback.onError) as QualityRule["failureAction"],
-      id: `qr-custom-${nextRuleNumber}`,
-      severity: draft.params.toLowerCase().includes("error") ? "Error" : "Warning",
-      targetColumn: draft.input.trim() || fallback.input,
-      validationType: ["Not Null", "Range Check", "Regex Match", "Accepted Values"].includes(validationType) ? validationType : "Regex Match",
-    };
-    const nextRules = [...qualityRules, nextRule];
+    const baseRules = getPermanentQualityRules(qualityRules);
+    const nextRuleNumber = baseRules.length + 1;
+    const nextRule = createQualityRuleFromDraft(draft, `qr-custom-${nextRuleNumber}`);
+    const nextRules = [...baseRules, nextRule];
     setQualityRules(nextRules);
+    setDraftPreviewQualityRule(null);
     setSelectedQualityRuleId(nextRule.id);
     applyRuleDraft(recipeSteps, nextRules);
     ruleAction("etl.rules.quality_rule_added", "/api/etl/rules/quality");
@@ -1024,35 +1259,75 @@ export function RuleApplicationPage({
   };
 
   const previewQualityRule = (rule: QualityRule) => {
+    setDraftPreviewQualityRule(null);
     setSelectedQualityRuleId(rule.id);
     ruleAction("etl.rules.quality_rule_previewed", `/api/etl/rules/quality/${rule.id}/preview`);
   };
 
+  const editQualityRule = (rule: QualityRule) => {
+    setSelectedRuleCategory("quality");
+    setEditingQualityRuleId(rule.id);
+    setEditingTransformStepId(null);
+    setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    setSelectedQualityRuleId(rule.id);
+    ruleAction("etl.rules.quality_rule_edit_started", `/api/etl/rules/quality/${rule.id}`);
+  };
+
+  const removeQualityRule = (rule: QualityRule) => {
+    const baseRules = getPermanentQualityRules(qualityRules);
+    if (baseRules.length <= 1) {
+      onNotify("최소 1개 quality rule은 유지해야 합니다.");
+      return;
+    }
+    const removedIndex = baseRules.findIndex((currentRule) => currentRule.id === rule.id);
+    const nextRules = baseRules.filter((currentRule) => currentRule.id !== rule.id);
+    setQualityRules(nextRules);
+    setDraftPreviewQualityRule(null);
+    if (editingQualityRuleId === rule.id) {
+      setEditingQualityRuleId(null);
+    }
+    if (!nextRules.some((nextRule) => nextRule.id === selectedQualityRuleId)) {
+      const nextSelectedRule = nextRules[Math.min(Math.max(removedIndex, 0), nextRules.length - 1)] ?? nextRules[0];
+      setSelectedQualityRuleId(nextSelectedRule.id);
+    }
+    applyRuleDraft(recipeSteps, nextRules);
+    ruleAction("etl.rules.quality_rule_removed", `/api/etl/rules/quality/${rule.id}`);
+    onNotify("quality check가 제외되었습니다.");
+  };
+
+  const updateQualityRule = (draft: RuleStepDraft) => {
+    if (!editingQualityRuleId) return;
+    const baseRules = getPermanentQualityRules(qualityRules);
+    const currentRule = baseRules.find((rule) => rule.id === editingQualityRuleId);
+    if (!currentRule) {
+      setEditingQualityRuleId(null);
+      onNotify("수정할 quality rule을 찾을 수 없습니다.");
+      return;
+    }
+    const updatedRule = createQualityRuleFromDraft(draft, currentRule.id);
+    const nextRules = baseRules.map((rule) => rule.id === currentRule.id ? updatedRule : rule);
+    setQualityRules(nextRules);
+    setDraftPreviewQualityRule(null);
+    setEditingQualityRuleId(null);
+    setSelectedQualityRuleId(updatedRule.id);
+    applyRuleDraft(recipeSteps, nextRules);
+    ruleAction("etl.rules.quality_rule_updated", `/api/etl/rules/quality/${updatedRule.id}`);
+    onNotify("quality check가 업데이트되었습니다.");
+  };
+
   const previewDraftStep = (draft: RuleStepDraft) => {
     if (selectedRuleCategory === "quality") {
-      const fallback = DEFAULT_RULE_STEP_BY_CATEGORY.quality;
-      const draftRule: QualityRule = {
-        failureAction: (draft.onError.trim() || fallback.onError) as QualityRule["failureAction"],
-        id: `qr-draft-preview-${Date.now()}`,
-        severity: draft.params.toLowerCase().includes("error") ? "Error" : "Warning",
-        targetColumn: draft.input.trim() || fallback.input,
-        validationType: "Regex Match",
-      };
+      const draftRule = createQualityRuleFromDraft(draft, editingQualityRuleId ?? `${QUALITY_DRAFT_PREVIEW_ID_PREFIX}${Date.now()}`);
+      setDraftPreviewQualityRule(draftRule);
       setSelectedQualityRuleId(draftRule.id);
-      setQualityRules((currentRules) => [draftRule, ...currentRules.filter((rule) => !rule.id.startsWith("qr-draft-preview-"))]);
       ruleAction("etl.rules.quality_rule_previewed", "/api/etl/rules/quality/preview");
       return;
     }
-    const fallback = DEFAULT_RULE_STEP_BY_CATEGORY[selectedRuleCategory];
-    const previewStep: RecipeStep = {
-      id: `draft-preview-${Date.now()}`,
-      input: draft.input.trim() || fallback.input,
-      onError: draft.onError.trim() || fallback.onError,
-      operation: draft.operation.trim() || fallback.operation,
-      output: draft.output.trim() || fallback.output,
-      params: draft.params.trim() || fallback.params,
-    };
+    const currentStep = editingTransformStepId ? recipeSteps.find((step) => step.id === editingTransformStepId) : undefined;
+    const previewStep = createRecipeStepFromDraft(draft, editingTransformStepId ?? `draft-preview-${Date.now()}`, currentStep);
     setDraftPreviewStep(previewStep);
+    setDraftPreviewQualityRule(null);
     setSelectedPreviewStepId(previewStep.id);
     ruleAction("etl.rules.step_previewed", "/api/etl/rules/steps/preview");
   };
@@ -1065,28 +1340,47 @@ export function RuleApplicationPage({
   return (
     <div className="hegun-rule-page">
       <RuleMetrics stats={ruleStats} />
+      <RuleCategoryTabs activeCategory={selectedRuleCategory} onSelect={(category) => {
+        setSelectedRuleCategory(category);
+        ruleAction("etl.rules.category_selected", `/api/etl/rules/categories/${category}`);
+      }} />
       <div className="hegun-rule-workspace">
-        <RuleCategoryRail activeCategory={selectedRuleCategory} onSelect={(category) => {
-          setSelectedRuleCategory(category);
-          ruleAction("etl.rules.category_selected", `/api/etl/rules/categories/${category}`);
-        }} />
         <div className="hegun-rule-main-stack">
           {selectedRuleCategory === "quality" ? (
-            <QualityRulesTable rules={qualityRules} selectedRuleId={selectedQualityRuleId} onPreview={previewQualityRule} />
+            <QualityRulesTable rules={qualityRules} selectedRuleId={selectedQualityRuleId} onEdit={editQualityRule} onPreview={previewQualityRule} onRemove={removeQualityRule} />
           ) : (
-            <RecipeStepsTable steps={recipeSteps} onPreview={previewRecipeStep} onRemove={removeRecipeStep} />
+            <RecipeStepsTable selectedStepId={selectedPreviewStep.id} steps={recipeSteps} onEdit={editRecipeStep} onPreview={previewRecipeStep} onRemove={removeRecipeStep} />
           )}
-          <RuleStepBuilder category={selectedRuleCategory} onAction={ruleAction} onAddStep={addRuleDraft} onPreviewStep={previewDraftStep} />
+          <RuleStepBuilder
+            category={selectedRuleCategory}
+            editingDraft={editingDraft}
+            editingLabel={editingLabel}
+            workingColumns={workingColumns}
+            onAction={ruleAction}
+            onAddStep={addRuleDraft}
+            onCancelEdit={cancelRuleEdit}
+            onPreviewStep={previewDraftStep}
+            onUpdateStep={selectedRuleCategory === "quality" ? updateQualityRule : updateRecipeStep}
+          />
           {selectedRuleCategory === "quality" ? (
-            <QualityPreviewAnalysis invalidRows={INVALID_RULE_ROWS} invalidRowCount={invalidRowCount} rule={selectedQualityRule} onAction={ruleAction} />
+            <QualityPreviewAnalysis invalidRows={selectedQualityInvalidRows} rule={selectedQualityRule} sampleRows={qualityPreviewRunnerResult.validation.sampleRows} onAction={ruleAction} />
           ) : (
             <StepPreviewAnalysis
-              preview={TRANSFORM_QUALITY_PREVIEW_BY_STEP_ID[selectedPreviewStep.id]}
+              preview={previewRunnerResult.previewByStepId[selectedPreviewStep.id] ?? TRANSFORM_QUALITY_PREVIEW_BY_STEP_ID[selectedPreviewStep.id]}
               step={selectedPreviewStep}
               onAction={ruleAction}
             />
           )}
-          {showInvalidRows && <InvalidRowsPanel invalidRows={INVALID_RULE_ROWS} invalidRowsPreviewSummary={invalidRowsPreviewSummary} onAction={ruleAction} />}
+          <FinalDatasetPreviewPanel
+            columns={workingColumns}
+            derivedColumns={derivedColumns}
+            invalidRowCount={invalidRowCount}
+            rows={runnerResult.transformedRows}
+            totalRows={runnerResult.transformedRows.length}
+            transformStepCount={recipeSteps.length}
+          />
+          {selectedRuleCategory === "quality" && <QualityFailedRowsPanel invalidRows={selectedQualityInvalidRows} rule={selectedQualityRule} onAction={ruleAction} />}
+          {showInvalidRows && <InvalidRowsPanel invalidRows={invalidRows} invalidRowsPreviewSummary={invalidRowsPreviewSummary} onAction={ruleAction} />}
         </div>
       </div>
       <RuleBottomBar invalidRowCount={invalidRowCount} invalidRowsVisible={showInvalidRows} onInvalidRows={toggleInvalidRows} onNext={goNext} onPrev={onPrev} onSave={saveRuleDraft} onTest={testRules} />
@@ -1114,17 +1408,19 @@ function RuleMetrics({ stats }: { stats: RuleStats }) {
   );
 }
 
-function RuleCategoryRail({ activeCategory, onSelect }: { activeCategory: RuleCategory; onSelect: (category: RuleCategory) => void }) {
+function RuleCategoryTabs({ activeCategory, onSelect }: { activeCategory: RuleCategory; onSelect: (category: RuleCategory) => void }) {
   return (
-    <aside className="hegun-rule-rail">
-      <label className="hegun-rule-search">
-        <Search size={16} />
-        <input aria-label="Search rule types" placeholder="Search rule types..." />
-      </label>
-      <span className="hegun-rail-eyebrow">Rule Categories</span>
-      <div className="hegun-rule-category-list">
+    <section className="hegun-rule-mode-switcher" aria-label="Rule mode">
+      <div className="hegun-rule-category-list" role="tablist" aria-label="Rule mode">
         {RULE_CATEGORIES.map((category) => (
-          <button className={category.id === activeCategory ? "hegun-rule-category active" : "hegun-rule-category"} key={category.id} type="button" onClick={() => onSelect(category.id)}>
+          <button
+            aria-selected={category.id === activeCategory}
+            className={category.id === activeCategory ? "hegun-rule-category active" : "hegun-rule-category"}
+            key={category.id}
+            role="tab"
+            type="button"
+            onClick={() => onSelect(category.id)}
+          >
             <span className="hegun-rule-category-icon">{category.icon}</span>
             <strong>{category.label}</strong>
             <em>{category.description}</em>
@@ -1135,17 +1431,21 @@ function RuleCategoryRail({ activeCategory, onSelect }: { activeCategory: RuleCa
         <BookOpen size={16} />
         <span>Sample first, full dataset during execution.</span>
       </div>
-    </aside>
+    </section>
   );
 }
 
 function RecipeStepsTable({
+  onEdit,
   onPreview,
   onRemove,
+  selectedStepId,
   steps,
 }: {
+  onEdit: (step: RecipeStep) => void;
   onPreview: (step: RecipeStep) => void;
   onRemove: (step: RecipeStep) => void;
+  selectedStepId: string;
   steps: RecipeStep[];
 }) {
   return (
@@ -1170,9 +1470,24 @@ function RecipeStepsTable({
           <tbody>
             {steps.map((row, index) => {
               const stepNumber = index + 1;
+              const isSelected = row.id === selectedStepId;
               return (
-              <tr key={`${row.id}-${row.input}`}>
-                <td><strong>{stepNumber}</strong></td>
+              <tr
+                aria-current={isSelected ? "step" : undefined}
+                className={isSelected ? "selected" : undefined}
+                key={`${row.id}-${row.input}`}
+                onClick={() => onPreview(row)}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onPreview(row);
+                  }
+                }}
+              >
+                <td>
+                  <span className="hegun-step-number"><strong>{stepNumber}</strong></span>
+                </td>
                 <td><span className="hegun-data-chip">{row.input}</span></td>
                 <td>{row.operation}</td>
                 <td><span className="hegun-data-chip muted">{row.output}</span></td>
@@ -1180,10 +1495,16 @@ function RecipeStepsTable({
                 <td><span className={`hegun-error-pill ${row.onError.toLowerCase().replace(/\s/g, "-")}`}>{row.onError}</span></td>
                 <td>
                   <div className="hegun-row-actions">
-                    <button aria-label={`Preview step ${stepNumber}`} type="button" onClick={() => onPreview(row)}>
-                      <Search size={15} />
+                    <button aria-label={`Edit step ${stepNumber}`} type="button" onClick={(event) => {
+                      event.stopPropagation();
+                      onEdit(row);
+                    }}>
+                      <Pencil size={15} />
                     </button>
-                    <button aria-label={`Remove step ${stepNumber}`} type="button" onClick={() => onRemove(row)}>
+                    <button aria-label={`Remove step ${stepNumber}`} type="button" onClick={(event) => {
+                      event.stopPropagation();
+                      onRemove(row);
+                    }}>
                       <Minus size={15} />
                     </button>
                   </div>
@@ -1199,10 +1520,14 @@ function RecipeStepsTable({
 }
 
 function QualityRulesTable({
+  onEdit,
+  onRemove,
   onPreview,
   rules,
   selectedRuleId,
 }: {
+  onEdit: (rule: QualityRule) => void;
+  onRemove: (rule: QualityRule) => void;
   onPreview: (rule: QualityRule) => void;
   rules: QualityRule[];
   selectedRuleId: string;
@@ -1227,8 +1552,22 @@ function QualityRulesTable({
             </tr>
           </thead>
           <tbody>
-            {rules.map((rule, index) => (
-              <tr className={rule.id === selectedRuleId ? "selected" : undefined} key={rule.id}>
+            {rules.map((rule, index) => {
+              const isSelected = rule.id === selectedRuleId;
+              return (
+              <tr
+                aria-current={isSelected ? "step" : undefined}
+                className={isSelected ? "selected" : undefined}
+                key={rule.id}
+                onClick={() => onPreview(rule)}
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onPreview(rule);
+                  }
+                }}
+              >
                 <td><strong>{index + 1}</strong></td>
                 <td><span className="hegun-data-chip">{rule.targetColumn}</span></td>
                 <td>{rule.validationType}</td>
@@ -1237,13 +1576,23 @@ function QualityRulesTable({
                 <td>{rule.severity === "Error" ? "Blocking" : "Monitor"}</td>
                 <td>
                   <div className="hegun-row-actions">
-                    <button aria-label={`Preview quality rule ${index + 1}`} type="button" onClick={() => onPreview(rule)}>
-                      <Search size={15} />
+                    <button aria-label={`Edit quality rule ${index + 1}`} type="button" onClick={(event) => {
+                      event.stopPropagation();
+                      onEdit(rule);
+                    }}>
+                      <Pencil size={15} />
+                    </button>
+                    <button aria-label={`Exclude quality rule ${index + 1}`} type="button" onClick={(event) => {
+                      event.stopPropagation();
+                      onRemove(rule);
+                    }}>
+                      <Minus size={15} />
                     </button>
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1251,41 +1600,266 @@ function QualityRulesTable({
   );
 }
 
+function transformPresetToRuleStepDraft(step: (typeof RECOMMENDED_TRANSFORM_STEPS)[number]): RuleStepDraft {
+  return {
+    input: step.input,
+    onError: step.onError,
+    operation: step.operation,
+    output: step.output,
+    params: step.params,
+  };
+}
+
+function getQualityValidationType(operation: string): QualityRule["validationType"] {
+  const validationType = operation.trim() as QualityRule["validationType"];
+  return QUALITY_VALIDATION_OPTIONS.find((option) => option === validationType) ?? "Regex Match";
+}
+
+function getQualitySeverity(severity: string): QualityRule["severity"] {
+  const nextSeverity = severity.trim() as QualityRule["severity"];
+  return QUALITY_SEVERITY_OPTIONS.find((option) => option === nextSeverity) ?? "Warning";
+}
+
+function getQualityFailureAction(failureAction: string): QualityRule["failureAction"] {
+  const nextFailureAction = failureAction.trim() as QualityRule["failureAction"];
+  return QUALITY_FAILURE_ACTION_OPTIONS.find((option) => option === nextFailureAction) ?? "Warn";
+}
+
+function createQualityRuleFromDraft(draft: RuleStepDraft, id: string): QualityRule {
+  const fallback = DEFAULT_RULE_STEP_BY_CATEGORY.quality;
+  return {
+    failureAction: getQualityFailureAction(draft.onError || fallback.onError),
+    id,
+    severity: getQualitySeverity(draft.params || "Warning"),
+    targetColumn: draft.input.trim() || fallback.input,
+    validationType: getQualityValidationType(draft.operation || fallback.operation),
+  };
+}
+
+function getAllowedTransformOperation(operation: string | undefined): TransformOperation {
+  return TRANSFORM_OPERATION_OPTIONS.find((option) => option === operation) ?? "Extract JSONPath";
+}
+
+function getDefaultParamForOperation(operation: TransformOperation) {
+  switch (operation) {
+    case "Extract JSONPath":
+      return "$.user.contact.email";
+    case "Lowercase + Trim":
+      return "lower(), trim()";
+    case "Cast Decimal":
+      return "decimal(10,2)";
+    case "Parse Timestamp":
+      return "UTC";
+    case "Mask":
+      return "keep first 3 digits";
+    default:
+      return "";
+  }
+}
+
+function getRecommendedOutputColumn(operation: TransformOperation, inputColumn: string) {
+  if (operation === "Extract JSONPath" && inputColumn === "meta_json") return "user_email";
+  if (operation === "Parse Timestamp" && inputColumn === "created_at") return "created_at_utc";
+  if (operation === "Mask" && inputColumn === "phone_number") return "phone_masked";
+  return inputColumn || "normalized_value";
+}
+
 function RuleStepBuilder({
   category,
+  editingDraft,
+  editingLabel,
   onAddStep,
   onAction,
+  onCancelEdit,
   onPreviewStep,
+  onUpdateStep,
+  workingColumns,
 }: {
   category: RuleCategory;
+  editingDraft: RuleStepDraft | null;
+  editingLabel?: string;
   onAddStep: (draft: RuleStepDraft) => void;
   onAction: RuleActionHandler;
+  onCancelEdit: () => void;
   onPreviewStep: (draft: RuleStepDraft) => void;
+  onUpdateStep: (draft: RuleStepDraft) => void;
+  workingColumns: string[];
 }) {
   const isTransform = category === "transform";
+  const isEditing = Boolean(editingDraft);
   const [collapsed, setCollapsed] = useState(true);
-  const [draft, setDraft] = useState<RuleStepDraft>({
-    input: "",
-    onError: "",
-    operation: "",
-    output: "",
-    params: "",
-  });
-  const updateDraft = (field: keyof RuleStepDraft, value: string) => {
-    setDraft((currentDraft) => ({ ...currentDraft, [field]: value }));
+  const defaultPresetId = isTransform ? RECOMMENDED_TRANSFORM_STEPS[0]?.id ?? "" : QUALITY_RULE_OPTIONS[0]?.id ?? "";
+  const [selectedPresetId, setSelectedPresetId] = useState(defaultPresetId);
+  const selectedTransformPreset = RECOMMENDED_TRANSFORM_STEPS.find((step) => step.id === selectedPresetId) ?? RECOMMENDED_TRANSFORM_STEPS[0];
+  const selectedQualityPreset = QUALITY_RULE_OPTIONS.find((rule) => rule.id === selectedPresetId) ?? QUALITY_RULE_OPTIONS[0];
+  const [selectedInputColumn, setSelectedInputColumn] = useState(selectedTransformPreset.input);
+  const [selectedOperation, setSelectedOperation] = useState<TransformOperation>(getAllowedTransformOperation(selectedTransformPreset.operation));
+  const [outputColumn, setOutputColumn] = useState(selectedTransformPreset.output);
+  const [outputColumnTouched, setOutputColumnTouched] = useState(false);
+  const [jsonPath, setJsonPath] = useState(getDefaultParamForOperation("Extract JSONPath"));
+  const [decimalFormat, setDecimalFormat] = useState(getDefaultParamForOperation("Cast Decimal"));
+  const [timestampFormat, setTimestampFormat] = useState(getDefaultParamForOperation("Parse Timestamp"));
+  const [maskPolicy, setMaskPolicy] = useState(getDefaultParamForOperation("Mask"));
+  const [onError, setOnError] = useState<TransformFailurePolicy>("Set Null");
+  const [selectedTargetColumn, setSelectedTargetColumn] = useState(selectedQualityPreset.targetColumn);
+  const [selectedValidationType, setSelectedValidationType] = useState<QualityRule["validationType"]>(selectedQualityPreset.validationType);
+  const [selectedSeverity, setSelectedSeverity] = useState<QualityRule["severity"]>(selectedQualityPreset.severity);
+  const [selectedFailureAction, setSelectedFailureAction] = useState<QualityRule["failureAction"]>(selectedQualityPreset.failureAction);
+  const trimmedOutputColumn = outputColumn.trim();
+  const outputColumnMode = trimmedOutputColumn && TRANSFORM_QUALITY_SAMPLE_COLUMN_SET.has(trimmedOutputColumn) ? "inPlace" : "derived";
+  const getTransformParams = (operation: TransformOperation) => {
+    switch (operation) {
+      case "Extract JSONPath":
+        return jsonPath.trim() || getDefaultParamForOperation(operation);
+      case "Lowercase + Trim":
+        return getDefaultParamForOperation(operation);
+      case "Cast Decimal":
+        return decimalFormat.trim() || getDefaultParamForOperation(operation);
+      case "Parse Timestamp":
+        return timestampFormat.trim() || getDefaultParamForOperation(operation);
+      case "Mask":
+        return maskPolicy.trim() || getDefaultParamForOperation(operation);
+      default:
+        return "";
+    }
   };
+  const selectedDraft = isTransform
+    ? {
+        input: selectedInputColumn,
+        onError,
+        operation: selectedOperation,
+        output: outputColumn,
+        params: getTransformParams(selectedOperation),
+      }
+    : {
+        input: selectedTargetColumn,
+        onError: selectedFailureAction,
+        operation: selectedValidationType,
+        output: "validation_status",
+        params: selectedSeverity,
+      };
+  const presetOptions = isTransform
+    ? RECOMMENDED_TRANSFORM_STEPS.map((step) => ({ id: step.id, label: `${step.operation}: ${step.input} -> ${step.output}` }))
+    : QUALITY_RULE_OPTIONS.map((rule) => ({ id: rule.id, label: `${rule.validationType}: ${rule.targetColumn} · ${rule.severity} / ${rule.failureAction}` }));
+  const applyTransformPreset = (preset: typeof selectedTransformPreset) => {
+    const operation = getAllowedTransformOperation(preset.operation);
+    setSelectedInputColumn(preset.input);
+    setSelectedOperation(operation);
+    setOutputColumn(preset.output || getRecommendedOutputColumn(operation, preset.input));
+    setOutputColumnTouched(false);
+    setJsonPath(operation === "Extract JSONPath" ? preset.params : getDefaultParamForOperation("Extract JSONPath"));
+    setDecimalFormat(operation === "Cast Decimal" ? preset.params : getDefaultParamForOperation("Cast Decimal"));
+    setTimestampFormat(operation === "Parse Timestamp" ? preset.params : getDefaultParamForOperation("Parse Timestamp"));
+    setMaskPolicy(operation === "Mask" ? preset.params : getDefaultParamForOperation("Mask"));
+    setOnError(TRANSFORM_FAILURE_POLICY_OPTIONS.find((option) => option === preset.onError) ?? "Warn");
+  };
+  const applyQualityPreset = (preset: QualityRule) => {
+    setSelectedTargetColumn(preset.targetColumn);
+    setSelectedValidationType(preset.validationType);
+    setSelectedSeverity(preset.severity);
+    setSelectedFailureAction(preset.failureAction);
+  };
+  const applyTransformDraft = (draft: RuleStepDraft) => {
+    const operation = getAllowedTransformOperation(draft.operation);
+    setSelectedInputColumn(draft.input);
+    setSelectedOperation(operation);
+    setOutputColumn(draft.output || getRecommendedOutputColumn(operation, draft.input));
+    setOutputColumnTouched(true);
+    setJsonPath(operation === "Extract JSONPath" ? draft.params : getDefaultParamForOperation("Extract JSONPath"));
+    setDecimalFormat(operation === "Cast Decimal" ? draft.params : getDefaultParamForOperation("Cast Decimal"));
+    setTimestampFormat(operation === "Parse Timestamp" ? draft.params : getDefaultParamForOperation("Parse Timestamp"));
+    setMaskPolicy(operation === "Mask" ? draft.params : getDefaultParamForOperation("Mask"));
+    setOnError(getTransformFailurePolicy(draft.onError));
+  };
+  const applyQualityDraft = (draft: RuleStepDraft) => {
+    setSelectedTargetColumn(draft.input);
+    setSelectedValidationType(getQualityValidationType(draft.operation));
+    setSelectedSeverity(getQualitySeverity(draft.params));
+    setSelectedFailureAction(getQualityFailureAction(draft.onError));
+  };
+  useEffect(() => {
+    if (isEditing) return;
+    setSelectedPresetId(defaultPresetId);
+  }, [defaultPresetId, isEditing]);
+  useEffect(() => {
+    if (isEditing) return;
+    if (isTransform) {
+      applyTransformPreset(selectedTransformPreset);
+      return;
+    }
+    applyQualityPreset(selectedQualityPreset);
+  }, [isEditing, isTransform, selectedPresetId, selectedQualityPreset, selectedTransformPreset]);
+  useEffect(() => {
+    if (!editingDraft) return;
+    setCollapsed(false);
+    if (isTransform) {
+      applyTransformDraft(editingDraft);
+      return;
+    }
+    applyQualityDraft(editingDraft);
+  }, [editingDraft, isTransform]);
+  useEffect(() => {
+    if (!isTransform || outputColumnTouched) return;
+    setOutputColumn(getRecommendedOutputColumn(selectedOperation, selectedInputColumn));
+  }, [isTransform, outputColumnTouched, selectedInputColumn, selectedOperation]);
+  useEffect(() => {
+    if (workingColumns.length === 0) return;
+    if (isTransform && !workingColumns.includes(selectedInputColumn)) {
+      setSelectedInputColumn(workingColumns[0]);
+      if (!outputColumnTouched) {
+        setOutputColumn(getRecommendedOutputColumn(selectedOperation, workingColumns[0]));
+      }
+    }
+    if (!isTransform && !workingColumns.includes(selectedTargetColumn)) {
+      setSelectedTargetColumn(workingColumns[0]);
+    }
+  }, [isTransform, outputColumnTouched, selectedInputColumn, selectedOperation, selectedTargetColumn, workingColumns]);
   const toggleCollapsed = () => {
     setCollapsed((isCollapsed) => !isCollapsed);
     onAction(collapsed ? "etl.rules.builder_expanded" : "etl.rules.builder_collapsed", "/api/etl/rules/builder");
   };
+  const selectTransformOperation = (operation: TransformOperation) => {
+    setSelectedOperation(operation);
+    if (!outputColumnTouched) {
+      setOutputColumn(getRecommendedOutputColumn(operation, selectedInputColumn));
+    }
+  };
+  const selectTransformInputColumn = (inputColumn: string) => {
+    setSelectedInputColumn(inputColumn);
+    if (!outputColumnTouched) {
+      setOutputColumn(getRecommendedOutputColumn(selectedOperation, inputColumn));
+    }
+  };
   const previewDraft = () => {
-    onPreviewStep(draft);
+    onPreviewStep(selectedDraft);
   };
   const addDraftStep = () => {
-    onAddStep(draft);
-    setDraft({ input: "", onError: "", operation: "", output: "", params: "" });
+    if (isEditing) {
+      onUpdateStep(selectedDraft);
+    } else {
+      onAddStep(selectedDraft);
+    }
     setCollapsed(true);
   };
+  const cancelEdit = () => {
+    onCancelEdit();
+    setCollapsed(true);
+  };
+  const builderTitle = isEditing
+    ? isTransform
+      ? "Edit Transformation Step"
+      : "Edit Quality Check"
+    : isTransform
+      ? "Add Transformation Step"
+      : "Add Quality Check";
+  const builderDescription = isEditing
+    ? `${editingLabel ?? "Selected rule"} 값을 수정한 뒤 Update로 같은 id에 저장합니다.`
+    : isTransform
+      ? "Define a new rule to process your data pipeline"
+      : "Define a validation rule before execution";
+  const submitLabel = isEditing
+    ? isTransform ? "Update Step" : "Update Check"
+    : isTransform ? "Add Selected Step" : "Add Selected Check";
 
   return (
     <section className={collapsed ? "panel hegun-console-panel hegun-builder-panel collapsed" : "panel hegun-console-panel hegun-builder-panel"}>
@@ -1294,10 +1868,10 @@ function RuleStepBuilder({
         onClick={toggleCollapsed}
       >
         <div>
-          <span className="hegun-builder-icon"><Plus size={20} /></span>
+          <span className="hegun-builder-icon">{isEditing ? <Pencil size={20} /> : <Plus size={20} />}</span>
           <div>
-            <h2>{isTransform ? "Add Transformation Step" : "Add Quality Check"}</h2>
-            <p>{isTransform ? "Define a new rule to process your data pipeline" : "Define a validation rule before execution"}</p>
+            <h2>{builderTitle}</h2>
+            <p>{builderDescription}</p>
           </div>
         </div>
         <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "Expand add step" : "Collapse add step"} type="button" onClick={(event) => {
@@ -1310,38 +1884,193 @@ function RuleStepBuilder({
       {!collapsed && (
         <>
           <div className="hegun-rule-builder">
+            {!isEditing && (
+              <label className="hegun-rule-field wide">
+                <span>{isTransform ? "Load Recommended Rule" : "Load Recommended Quality Rule"}</span>
+                <select className="input control-input" value={selectedPresetId} onChange={(event) => setSelectedPresetId(event.target.value)}>
+                  {presetOptions.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="hegun-rule-field">
               <span>{isTransform ? "Input Column" : "Target Column"}</span>
-              <input className="input control-input" value={draft.input} onChange={(event) => updateDraft("input", event.target.value)} />
+              <select
+                className="input control-input"
+                value={isTransform ? selectedInputColumn : selectedTargetColumn}
+                onChange={(event) => {
+                  if (isTransform) {
+                    selectTransformInputColumn(event.target.value);
+                    return;
+                  }
+                  setSelectedTargetColumn(event.target.value);
+                }}
+              >
+                {workingColumns.map((column) => (
+                  <option key={column} value={column}>
+                    {TRANSFORM_QUALITY_SAMPLE_COLUMN_SET.has(column) ? column : `${column} (derived)`}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="hegun-rule-field">
               <span>{isTransform ? "Operation" : "Validation Rule"}</span>
-              <input className="input control-input" value={draft.operation} onChange={(event) => updateDraft("operation", event.target.value)} />
+              {isTransform ? (
+                <select className="input control-input" value={selectedOperation} onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}>
+                  {TRANSFORM_OPERATION_OPTIONS.map((operation) => (
+                    <option key={operation} value={operation}>{operation}</option>
+                  ))}
+                </select>
+              ) : (
+                <select className="input control-input" value={selectedValidationType} onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}>
+                  {QUALITY_VALIDATION_OPTIONS.map((validationType) => (
+                    <option key={validationType} value={validationType}>{validationType}</option>
+                  ))}
+                </select>
+              )}
             </label>
             <label className="hegun-rule-field">
-              <span>{isTransform ? "Output Column" : "Result Field"}</span>
-              <input className="input control-input" placeholder={isTransform ? "e.g. user_email" : "e.g. validation_status"} value={draft.output} onChange={(event) => updateDraft("output", event.target.value)} />
+              <span>{isTransform ? "Output Column" : "Severity"}</span>
+              {isTransform ? (
+                <div className="hegun-rule-control-stack">
+                  <input
+                    className="input control-input"
+                    type="text"
+                    value={outputColumn}
+                    onChange={(event) => {
+                      setOutputColumn(event.target.value);
+                      setOutputColumnTouched(true);
+                    }}
+                  />
+                  <em>
+                    {trimmedOutputColumn
+                      ? outputColumnMode === "inPlace"
+                        ? "기존 컬럼을 덮어씁니다."
+                        : "새 derived column을 생성하고 이후 step에서 사용할 수 있습니다."
+                      : "새 이름을 입력하면 이후 step에서 사용할 수 있는 derived column이 됩니다."}
+                  </em>
+                </div>
+              ) : (
+                <select className="input control-input" value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}>
+                  {QUALITY_SEVERITY_OPTIONS.map((severity) => (
+                    <option key={severity} value={severity}>{severity}</option>
+                  ))}
+                </select>
+              )}
             </label>
             <label className="hegun-rule-field">
-              <span>{isTransform ? "Parameters" : "Severity / Criteria"}</span>
-              <input className="input control-input" placeholder={isTransform ? "e.g. $.user.id" : "e.g. value > 0"} value={draft.params} onChange={(event) => updateDraft("params", event.target.value)} />
+              <span>{isTransform ? "Parameters" : "Failure Action"}</span>
+              {isTransform ? (
+                <TransformParameterControl
+                  decimalFormat={decimalFormat}
+                  jsonPath={jsonPath}
+                  maskPolicy={maskPolicy}
+                  operation={selectedOperation}
+                  timestampFormat={timestampFormat}
+                  onDecimalFormatChange={setDecimalFormat}
+                  onJsonPathChange={setJsonPath}
+                  onMaskPolicyChange={setMaskPolicy}
+                  onTimestampFormatChange={setTimestampFormat}
+                />
+              ) : (
+                <select className="input control-input" value={selectedFailureAction} onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}>
+                  {QUALITY_FAILURE_ACTION_OPTIONS.map((failureAction) => (
+                    <option key={failureAction} value={failureAction}>{failureAction}</option>
+                  ))}
+                </select>
+              )}
             </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "On Error" : "Failure Action"}</span>
-              <input className="input control-input" value={draft.onError} onChange={(event) => updateDraft("onError", event.target.value)} />
-            </label>
-            <div className="hegun-rule-checkboxes">
-              <label><input type="checkbox" /> Add optional condition</label>
-              <label><input type="checkbox" defaultChecked /> Live Preview</label>
-            </div>
+            {isTransform && (
+              <label className="hegun-rule-field">
+                <span>On Error</span>
+                <select className="input control-input" value={onError} onChange={(event) => setOnError(event.target.value as TransformFailurePolicy)}>
+                  {TRANSFORM_FAILURE_POLICY_OPTIONS.map((policy) => (
+                    <option key={policy} value={policy}>{policy}</option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
           <div className="hegun-rule-form-actions">
-            <button className="secondary-button" type="button" onClick={previewDraft}>{isTransform ? "Preview Step" : "Preview Check"}</button>
-            <button className="primary-button" type="button" onClick={addDraftStep}>{isTransform ? "Add Step" : "Add Check"}</button>
+            {isEditing && <button className="ghost-button" type="button" onClick={cancelEdit}>Cancel Edit</button>}
+            <button className="secondary-button" type="button" onClick={previewDraft}>{isTransform ? "Preview Selected Step" : "Preview Selected Check"}</button>
+            <button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</button>
           </div>
         </>
       )}
     </section>
+  );
+}
+
+function TransformParameterControl({
+  decimalFormat,
+  jsonPath,
+  maskPolicy,
+  onDecimalFormatChange,
+  onJsonPathChange,
+  onMaskPolicyChange,
+  onTimestampFormatChange,
+  operation,
+  timestampFormat,
+}: {
+  decimalFormat: string;
+  jsonPath: string;
+  maskPolicy: string;
+  onDecimalFormatChange: (value: string) => void;
+  onJsonPathChange: (value: string) => void;
+  onMaskPolicyChange: (value: string) => void;
+  onTimestampFormatChange: (value: string) => void;
+  operation: TransformOperation;
+  timestampFormat: string;
+}) {
+  if (operation === "Lowercase + Trim") {
+    return (
+      <div className="hegun-rule-select">
+        <strong>No parameter required</strong>
+        <em>params saved as lower(), trim()</em>
+      </div>
+    );
+  }
+
+  if (operation === "Extract JSONPath") {
+    return (
+      <div className="hegun-rule-control-stack">
+        <input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
+        <em>JSON column에서 꺼낼 경로</em>
+      </div>
+    );
+  }
+
+  if (operation === "Cast Decimal") {
+    return (
+      <div className="hegun-rule-control-stack">
+        <input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
+        <em>Decimal Format</em>
+      </div>
+    );
+  }
+
+  if (operation === "Parse Timestamp") {
+    return (
+      <div className="hegun-rule-control-stack">
+        <select className="input control-input" value={timestampFormat} onChange={(event) => onTimestampFormatChange(event.target.value)}>
+          <option value="UTC">UTC</option>
+          <option value="string to UTC">string to UTC</option>
+        </select>
+        <em>Target Timezone / Format</em>
+      </div>
+    );
+  }
+
+  return (
+    <div className="hegun-rule-control-stack">
+      <select className="input control-input" value={maskPolicy} onChange={(event) => onMaskPolicyChange(event.target.value)}>
+        <option value="keep first 3 digits">keep first 3 digits</option>
+        <option value="keep last 4 digits">keep last 4 digits</option>
+      </select>
+      <em>Mask Policy</em>
+    </div>
   );
 }
 
@@ -1380,27 +2109,112 @@ function RuleBottomBar({
   );
 }
 
+function FinalDatasetPreviewPanel({
+  columns,
+  derivedColumns,
+  invalidRowCount,
+  rows,
+  totalRows,
+  transformStepCount,
+}: {
+  columns: string[];
+  derivedColumns: string[];
+  invalidRowCount: number;
+  rows: TransformQualitySampleRow[];
+  totalRows: number;
+  transformStepCount: number;
+}) {
+  const previewRows = rows.slice(0, 10);
+  const derivedColumnSet = new Set(derivedColumns);
+  const showingRowsLabel = `Showing ${previewRows.length.toLocaleString()} of ${totalRows.toLocaleString()} rows`;
+  const summaryItems = [
+    { label: "Sample rows processed", value: totalRows.toLocaleString() },
+    { label: "Transform steps applied", value: transformStepCount.toLocaleString() },
+    { label: "Derived columns created", value: derivedColumns.length.toLocaleString() },
+    { label: "Invalid rows detected", value: invalidRowCount.toLocaleString() },
+  ];
+
+  return (
+    <section className="panel hegun-console-panel hegun-final-preview-panel">
+      <div className="panel-header">
+        <Table2 size={18} />
+        <h2>Final Dataset Preview</h2>
+        <span className="panel-note">{showingRowsLabel}</span>
+      </div>
+      <div className="hegun-final-preview-summary">
+        {summaryItems.map((item) => (
+          <article key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </article>
+        ))}
+      </div>
+      <div className="hegun-table-scroll">
+        <table className="schema-table hegun-final-preview-table">
+          <thead>
+            <tr>
+              {columns.map((column) => (
+                <th key={column}>
+                  <span className="hegun-final-column-header">
+                    {column}
+                    {derivedColumnSet.has(column) && <em>derived</em>}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.length > 0 ? previewRows.map((row, rowIndex) => (
+              <tr key={row.row_id ?? `row-${rowIndex}`}>
+                {columns.map((column) => (
+                  <td key={`${row.row_id ?? rowIndex}-${column}`}>{row[column] ?? ""}</td>
+                ))}
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={columns.length}>
+                  <span className="hegun-empty-table-state">No transformed sample rows available.</span>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="hegun-final-preview-footer">{showingRowsLabel}</div>
+    </section>
+  );
+}
+
 function StepPreviewAnalysis({
   onAction,
   preview,
   step,
 }: {
   onAction: RuleActionHandler;
-  preview?: TransformQualityPreviewSample;
+  preview?: TransformQualityPreviewSample | TransformQualityStepPreview;
   step: RecipeStep;
 }) {
-  const hasFixture = Boolean(preview);
-  const inputValue = preview?.inputValue ?? (step.input === "meta_json" ? '{ "user": { "contact": { "email": "Jane.Doe@Acme.com" } } }' : `Sample ${step.input} value`);
-  const outputValue = preview?.outputValue ?? (step.output === "user_email" ? "jane.doe@acme.com" : `${step.operation} result for ${step.output}`);
+  const hasPreview = Boolean(preview);
+  const inputValue = preview?.inputValue ?? "";
+  const outputValue = preview?.outputValue ?? "";
   const matchedRows = preview?.matchedRows ?? TRANSFORM_QUALITY_SAMPLE_PROFILE.totalRows;
   const failedRows = preview?.failedRows ?? 0;
-  const previewStatus = preview?.status ?? "Fallback sample";
+  const previewStatus = preview?.status ?? "Preview pending";
+  const beforeRows = preview && "beforeRows" in preview ? preview.beforeRows : [];
+  const afterRows = preview && "afterRows" in preview ? preview.afterRows : [];
+  const previewColumns = preview && "columns" in preview ? preview.columns : ["row_id", step.input, step.output].filter(Boolean);
+  const impactRows = buildStepImpactRows(beforeRows, afterRows, previewColumns, step, preview);
   return (
     <section className="panel hegun-console-panel">
       <div className="panel-header">
         <RefreshCw size={18} />
         <h2>단계 미리보기 및 분석 (Step Preview & Analysis)</h2>
         <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</button>
+      </div>
+      <div className="hegun-selected-step-banner">
+        <span>Selected Step</span>
+        <strong>{step.id}. {step.operation}</strong>
+        <em>{step.input} {"->"} {step.output}</em>
       </div>
       <div className="hegun-preview-grid">
         <div className="hegun-preview-column">
@@ -1412,7 +2226,7 @@ function StepPreviewAnalysis({
           <Field label="Params" value={step.params} wide />
         </div>
         <div className="hegun-preview-column hegun-before-after">
-          <h3>Before / After</h3>
+          <h3>Input to Output</h3>
           <Field label="Input Value" value={inputValue} wide />
           <div className="hegun-preview-arrow">→</div>
           <Field label="Output Value" value={outputValue} wide />
@@ -1422,27 +2236,109 @@ function StepPreviewAnalysis({
           <h3>Sample Stats</h3>
           <StatusTile label="Sample Rows" value={TRANSFORM_QUALITY_SAMPLE_PROFILE.totalRows.toLocaleString()} status="Tested" />
           <StatusTile label="Matched Rows" value={matchedRows.toLocaleString()} status="Matched" />
-          <StatusTile label="Failed Rows" value={String(failedRows)} status={failedRows > 0 ? "Review" : hasFixture ? "Clean" : "Fallback"} />
-          <StatusTile label="Affected Column" value={preview?.affectedColumn ?? step.output} status={hasFixture ? "Output" : "Fallback"} />
+          <StatusTile label="Failed Rows" value={String(failedRows)} status={failedRows > 0 ? "Review" : hasPreview ? "Clean" : "Pending"} />
+          <StatusTile label="Affected Column" value={preview?.affectedColumn ?? step.output} status={hasPreview ? "Output" : "Pending"} />
         </div>
       </div>
+      <div className="hegun-impact-header">
+        <div>
+          <h3>Rule Impact Preview</h3>
+          <p>{step.operation} runs against {matchedRows.toLocaleString()} matched rows. Showing {impactRows.length} representative rows.</p>
+        </div>
+        <span>{previewStatus}</span>
+      </div>
+      <StepImpactRowsTable rows={impactRows} step={step} />
     </section>
   );
 }
 
+function StepImpactRowsTable({
+  rows,
+  step,
+}: {
+  rows: ReturnType<typeof buildStepImpactRows>;
+  step: RecipeStep;
+}) {
+  return (
+    <div className="hegun-table-scroll">
+      <table className="schema-table hegun-impact-table">
+        <thead>
+          <tr>
+            <th>Row</th>
+            <th>Before: {step.input}</th>
+            <th>Transform</th>
+            <th>After: {step.output}</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={`${row.rowId}-${row.beforeValue}-${row.afterValue}`}>
+              <td><strong>{row.rowId}</strong></td>
+              <td><code className="hegun-impact-value">{row.beforeValue}</code></td>
+              <td><span className="hegun-data-chip muted">{step.operation}</span></td>
+              <td><code className="hegun-impact-value output">{row.afterValue}</code></td>
+              <td><span className={`hegun-impact-status ${row.status.toLowerCase()}`}>{row.status}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function buildStepImpactRows(
+  beforeRows: string[][],
+  afterRows: string[][],
+  columns: string[],
+  step: RecipeStep,
+  preview?: TransformQualityPreviewSample | TransformQualityStepPreview,
+) {
+  const rowIdIndex = Math.max(0, columns.indexOf("row_id"));
+  const inputIndex = columns.indexOf(step.input);
+  const outputIndex = columns.reduce((matchedIndex, column, index) => column === step.output ? index : matchedIndex, -1);
+  const safeInputIndex = inputIndex >= 0 ? inputIndex : 0;
+  const safeOutputIndex = outputIndex >= 0 ? outputIndex : columns.length - 1;
+  const sourceRows = beforeRows.length > 0
+    ? beforeRows.slice(0, 5)
+    : Array.from({ length: 3 }, (_, index) => [String(index + 1), preview?.inputValue ?? "", preview?.outputValue ?? ""]);
+
+  return sourceRows.map((row, index) => {
+    const afterRow = afterRows[index] ?? row;
+    const beforeOutputValue = row[safeOutputIndex] ?? "";
+    const afterValue = afterRow[safeOutputIndex] ?? preview?.outputValue ?? "";
+    const changed = afterValue !== beforeOutputValue;
+    const status = step.input !== step.output ? "Derived" : changed ? "Changed" : "Unchanged";
+
+    return {
+      afterValue: truncatePreviewValue(afterValue),
+      beforeValue: truncatePreviewValue(row[safeInputIndex] ?? ""),
+      rowId: row[rowIdIndex] ?? String(index + 1),
+      status,
+    };
+  });
+}
+
+function truncatePreviewValue(value: string) {
+  if (value.length <= 120) return value;
+  return `${value.slice(0, 117)}...`;
+}
+
 function QualityPreviewAnalysis({
-  invalidRowCount,
   invalidRows,
   onAction,
   rule,
+  sampleRows,
 }: {
-  invalidRowCount: number;
   invalidRows: TransformQualityInvalidRow[];
   onAction: RuleActionHandler;
   rule: QualityRule;
+  sampleRows: number;
 }) {
-  const matchedRows = Math.max(0, TRANSFORM_QUALITY_SAMPLE_PROFILE.totalRows - invalidRowCount);
-  const firstFailure = invalidRows.find((row) => row.column === rule.targetColumn) ?? invalidRows[0];
+  const invalidRowCount = invalidRows.length;
+  const matchedRows = Math.max(0, sampleRows - invalidRowCount);
+  const qualityScore = sampleRows ? Number(((matchedRows / sampleRows) * 100).toFixed(1)) : 100;
+  const firstFailure = invalidRows[0];
   return (
     <section className="panel hegun-console-panel">
       <div className="panel-header">
@@ -1465,17 +2361,76 @@ function QualityPreviewAnalysis({
           <Field label="Column" value={firstFailure?.column ?? rule.targetColumn} />
           <Field label="Sample Value" value={firstFailure?.sampleValue || "(empty)"} wide />
           <Field label="Reason" value={firstFailure?.reason ?? "All sampled rows passed"} wide />
+          <Field label="Action" value={firstFailure?.action ?? rule.failureAction} />
           <span className={invalidRowCount > 0 ? "hegun-warning-state" : "hegun-success-state"}>
             <Info size={14} /> {invalidRowCount > 0 ? "Review needed" : "Success"}
           </span>
         </div>
         <div className="hegun-preview-column">
           <h3>Sample Stats</h3>
-          <StatusTile label="Sample Rows" value={TRANSFORM_QUALITY_SAMPLE_PROFILE.totalRows.toLocaleString()} status="Tested" />
+          <StatusTile label="Sample Rows" value={sampleRows.toLocaleString()} status="Tested" />
           <StatusTile label="Passed Rows" value={matchedRows.toLocaleString()} status="Passed" />
-          <StatusTile label="Invalid Rows" value={String(invalidRowCount)} status="Review" />
-          <StatusTile label="Quality Score" value={`${TRANSFORM_QUALITY_VALIDATION_RESULT.qualityScore}%`} status="Warn" />
+          <StatusTile label="Invalid Rows" value={String(invalidRowCount)} status={invalidRowCount > 0 ? "Review" : "Clean"} />
+          <StatusTile label="Quality Score" value={`${qualityScore}%`} status={invalidRowCount > 0 ? "Warn" : "Pass"} />
         </div>
+      </div>
+    </section>
+  );
+}
+
+function QualityFailedRowsPanel({
+  invalidRows,
+  onAction,
+  rule,
+}: {
+  invalidRows: TransformQualityInvalidRow[];
+  onAction: RuleActionHandler;
+  rule: QualityRule;
+}) {
+  const previewRows = invalidRows.slice(0, 12);
+  const rowSummary = invalidRows.length === 0
+    ? "No failed rows for selected check"
+    : `${invalidRows.length} failed rows for ${rule.validationType} on ${rule.targetColumn}`;
+  return (
+    <section className="panel hegun-console-panel hegun-quality-failures-panel">
+      <div className="panel-header">
+        <Table2 size={18} />
+        <h2>Failed Rows for Selected Check</h2>
+        <span className="panel-note">{rowSummary}</span>
+      </div>
+      <div className="hegun-table-scroll">
+        <table className="schema-table hegun-quality-failed-table">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Column</th>
+              <th>Sample Value</th>
+              <th>Reason</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {previewRows.length > 0 ? previewRows.map((row) => (
+              <tr key={`${row.ruleId ?? rule.id}-${row.row}-${row.column}-${row.reason}`}>
+                <td>{row.row}</td>
+                <td>{row.column}</td>
+                <td><code className="hegun-impact-value">{row.sampleValue || "(empty)"}</code></td>
+                <td>{row.reason}</td>
+                <td><span className="hegun-data-chip muted">{row.action}</span></td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={5}>
+                  <span className="hegun-empty-table-state">Selected check passed all sampled rows.</span>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="hegun-rule-form-actions">
+        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>Export Rows</button>
+        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>Mark Reviewed</button>
       </div>
     </section>
   );
@@ -1505,6 +2460,7 @@ function InvalidRowsPanel({
               <th>Column</th>
               <th>Reason</th>
               <th>Action</th>
+              <th>Sample Value</th>
             </tr>
           </thead>
           <tbody>
@@ -1514,6 +2470,7 @@ function InvalidRowsPanel({
                 <td>{row.column}</td>
                 <td>{row.reason}</td>
                 <td><span className="hegun-data-chip muted">{row.action}</span></td>
+                <td><code className="hegun-impact-value">{row.sampleValue || "(empty)"}</code></td>
               </tr>
             ))}
           </tbody>
