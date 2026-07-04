@@ -98,6 +98,7 @@ type CreatePipelineRequest = {
 - mock create 응답의 `dataset.schema`와 `dataset.sampleRows`는 Pair A 1번의 `draft.schema.columns/sampleRows`에서 파생한다.
 - 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
 - create submit은 처리 중 중복 클릭을 막고, 실패하면 이전 `jobs`, `datasets`, `selectedJob`, `selectedDataset`을 유지한다.
+- Day1 Pair A 1번 기본 target dataset은 기존 catalog fixture와 겹치지 않아야 한다. 그래야 create 후 ETL 목록과 Catalog 목록 prepend가 브라우저에서 명확히 검증된다.
 - 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
 
 ## 3. 환경변수

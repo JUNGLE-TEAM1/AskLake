@@ -7,7 +7,7 @@ import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, Draft
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
 const initialDraftPipeline: DraftPipeline = {
-  id: "customer_review_gold",
+  id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
     summary: "Data Engineer Group · 조직 내부",
@@ -27,10 +27,11 @@ const initialDraftPipeline: DraftPipeline = {
   schema: {
     columns: [],
     sampleRows: [],
-    summary: "7 fields inferred · 2 need review",
+    summary: "Schema inference pending",
   },
   source: {
-    connectionStatus: "success",
+    connectionMessage: "Source connection test is required before review.",
+    connectionStatus: "idle",
     sourceConfig: [
       ["Storage Provider", "Amazon S3"],
       ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
@@ -40,7 +41,7 @@ const initialDraftPipeline: DraftPipeline = {
     sourceType: "File / S3",
   },
   target: {
-    datasetName: "customer_review_gold",
+    datasetName: "pair_a_customer_review_gold",
     format: "Parquet",
     layer: "GOLD",
     rag: true,
