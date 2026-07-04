@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Database,
   Maximize2,
@@ -22,14 +22,10 @@ import type { ExpandedChart } from "./DashboardParts";
 import { defaultDashboardCards } from "./dashboardListData";
 import type { SavedDashboardCard } from "./dashboardListData";
 import {
-  filterAndSortDashboardCards,
   formatDashboardTimestamp,
-  getDashboardOwners,
-  getDashboardPage,
-  getDashboardTags,
   hydrateSavedDashboardCards,
 } from "./dashboardListUtils";
-import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
+import { useDashboardLandingList } from "./useDashboardLandingList";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
@@ -52,12 +48,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       return defaultDashboardCards;
     }
   });
-  const [searchQuery, setSearchQuery] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState("all");
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
-  const [openListControl, setOpenListControl] = useState<DashboardListControl | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
+  const dashboardList = useDashboardLandingList(savedDashboards, onAction);
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
@@ -107,23 +98,6 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     rowCount: activeSqlResult.rowCount,
     runId: activeSqlResult.runId,
   } : undefined;
-  const dashboardOwners = useMemo(() => getDashboardOwners(savedDashboards), [savedDashboards]);
-  const dashboardTags = useMemo(() => getDashboardTags(savedDashboards), [savedDashboards]);
-  const filteredDashboards = useMemo(() => filterAndSortDashboardCards({
-    dashboards: savedDashboards,
-    ownerFilter,
-    searchQuery,
-    selectedTags,
-    sortOption,
-  }), [ownerFilter, savedDashboards, searchQuery, selectedTags, sortOption]);
-  const dashboardPage = useMemo(() => getDashboardPage(filteredDashboards, currentPage), [currentPage, filteredDashboards]);
-  const {
-    pageEnd: dashboardPageEnd,
-    pageStart: dashboardPageStart,
-    safePage: safeDashboardPage,
-    totalPages: totalDashboardPages,
-    visibleDashboards,
-  } = dashboardPage;
 
   useEffect(() => {
     setView(entry.view);
@@ -139,50 +113,10 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
   }, [savedDashboards]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [ownerFilter, searchQuery, selectedTags, sortOption]);
-
   const changeFilter = (nextPeriod: string, nextSegment = segment) => {
     setPeriod(nextPeriod);
     setSegment(nextSegment);
     onAction("dashboard.filter.changed", "/api/dashboards/filters", dataset.id);
-  };
-
-  const selectDashboardOwner = (owner: string) => {
-    setOwnerFilter(owner);
-    setOpenListControl(null);
-    onAction("dashboard.list.owner_filter_changed", "/api/dashboards/filters", owner);
-  };
-
-  const toggleDashboardTag = (tag: string) => {
-    setSelectedTags((tags) => (tags.includes(tag) ? tags.filter((selectedTag) => selectedTag !== tag) : [...tags, tag]));
-    onAction("dashboard.list.tag_filter_changed", "/api/dashboards/filters", tag);
-  };
-
-  const clearDashboardTags = () => {
-    setSelectedTags([]);
-    onAction("dashboard.list.tag_filter_cleared", "/api/dashboards/filters", "all-tags");
-  };
-
-  const selectDashboardSort = (nextSort: DashboardSortOption) => {
-    setSortOption(nextSort);
-    setOpenListControl(null);
-    onAction("dashboard.list.sort_changed", "/api/dashboards/sort", nextSort);
-  };
-
-  const toggleDashboardListControl = (control: DashboardListControl) => {
-    setOpenListControl((currentControl) => (currentControl === control ? null : control));
-  };
-
-  const goToPreviousDashboardPage = () => {
-    setCurrentPage((page) => Math.max(1, page - 1));
-    onAction("dashboard.list.page_previous", "/api/dashboards?page=previous", "dashboards");
-  };
-
-  const goToNextDashboardPage = () => {
-    setCurrentPage((page) => Math.min(totalDashboardPages, page + 1));
-    onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards");
   };
 
   const openBuilder = () => {
@@ -342,29 +276,29 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   if (view === "list") {
     return (
       <DashboardLandingPage
-        currentPage={safeDashboardPage}
-        dashboardCount={filteredDashboards.length}
-        dashboards={visibleDashboards}
-        onClearTags={clearDashboardTags}
+        currentPage={dashboardList.safeDashboardPage}
+        dashboardCount={dashboardList.dashboardCount}
+        dashboards={dashboardList.visibleDashboards}
+        onClearTags={dashboardList.clearDashboardTags}
         onCreateDashboard={openBuilder}
-        onNextPage={goToNextDashboardPage}
+        onNextPage={dashboardList.goToNextDashboardPage}
         onOpenDashboard={openDetail}
-        onPreviousPage={goToPreviousDashboardPage}
-        onSearchQueryChange={setSearchQuery}
-        onSelectOwner={selectDashboardOwner}
-        onSelectSort={selectDashboardSort}
-        onToggleControl={toggleDashboardListControl}
-        onToggleTag={toggleDashboardTag}
-        openControl={openListControl}
-        ownerFilter={ownerFilter}
-        owners={dashboardOwners}
-        pageEnd={dashboardPageEnd}
-        pageStart={dashboardPageStart}
-        searchQuery={searchQuery}
-        selectedTags={selectedTags}
-        sortOption={sortOption}
-        tags={dashboardTags}
-        totalPages={totalDashboardPages}
+        onPreviousPage={dashboardList.goToPreviousDashboardPage}
+        onSearchQueryChange={dashboardList.setSearchQuery}
+        onSelectOwner={dashboardList.selectDashboardOwner}
+        onSelectSort={dashboardList.selectDashboardSort}
+        onToggleControl={dashboardList.toggleDashboardListControl}
+        onToggleTag={dashboardList.toggleDashboardTag}
+        openControl={dashboardList.openListControl}
+        ownerFilter={dashboardList.ownerFilter}
+        owners={dashboardList.dashboardOwners}
+        pageEnd={dashboardList.dashboardPageEnd}
+        pageStart={dashboardList.dashboardPageStart}
+        searchQuery={dashboardList.searchQuery}
+        selectedTags={dashboardList.selectedTags}
+        sortOption={dashboardList.sortOption}
+        tags={dashboardList.dashboardTags}
+        totalPages={dashboardList.totalDashboardPages}
       />
     );
   }
