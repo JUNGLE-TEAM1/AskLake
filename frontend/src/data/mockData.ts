@@ -104,6 +104,19 @@ export const catalogDatasets: CatalogDataset[] = [
       datasets: [
         {
           columns: [
+            { id: "customer_id", name: "customer_id", type: "string" },
+            { id: "customer_name", name: "customer_name", type: "string" },
+            { id: "email", name: "email", type: "string" },
+            { id: "plan", name: "plan", type: "string" },
+            { id: "customer_status", name: "customer_status", type: "string" },
+          ],
+          engine: "POSTGRESQL",
+          id: "source-commerce-customers",
+          layer: "SOURCE",
+          name: "commerce.customers",
+        },
+        {
+          columns: [
             { id: "order_id", name: "order_id", type: "string" },
             { id: "customer_id", name: "customer_id", type: "string" },
             { id: "order_date", name: "order_date", type: "timestamp" },
@@ -114,6 +127,19 @@ export const catalogDatasets: CatalogDataset[] = [
           id: "source-commerce-orders",
           layer: "SOURCE",
           name: "commerce.orders",
+        },
+        {
+          columns: [
+            { id: "customer_id", name: "customer_id", type: "string" },
+            { id: "customer_name", name: "customer_name", type: "string" },
+            { id: "email", name: "email", type: "string" },
+            { id: "plan", name: "plan", type: "string" },
+            { id: "customer_status", name: "customer_status", type: "string" },
+          ],
+          engine: "ICEBERG",
+          id: "silver-customer-profile",
+          layer: "SILVER",
+          name: "customer_profile",
         },
         {
           columns: [
@@ -143,11 +169,18 @@ export const catalogDatasets: CatalogDataset[] = [
         },
       ],
       edges: [
+        { fromColumnId: "customer_id", fromDatasetId: "source-commerce-customers", toColumnId: "customer_id", toDatasetId: "silver-customer-profile" },
+        { fromColumnId: "customer_name", fromDatasetId: "source-commerce-customers", toColumnId: "customer_name", toDatasetId: "silver-customer-profile" },
+        { fromColumnId: "email", fromDatasetId: "source-commerce-customers", toColumnId: "email", toDatasetId: "silver-customer-profile" },
+        { fromColumnId: "plan", fromDatasetId: "source-commerce-customers", toColumnId: "plan", toDatasetId: "silver-customer-profile" },
+        { fromColumnId: "customer_status", fromDatasetId: "source-commerce-customers", toColumnId: "customer_status", toDatasetId: "silver-customer-profile" },
         { fromColumnId: "order_id", fromDatasetId: "source-commerce-orders", toColumnId: "order_id", toDatasetId: "silver-daily-order-ingestion" },
         { fromColumnId: "customer_id", fromDatasetId: "source-commerce-orders", toColumnId: "customer_id", toDatasetId: "silver-daily-order-ingestion" },
         { fromColumnId: "order_date", fromDatasetId: "source-commerce-orders", toColumnId: "order_date", toDatasetId: "silver-daily-order-ingestion" },
         { fromColumnId: "total_amount", fromDatasetId: "source-commerce-orders", toColumnId: "total_amount", toDatasetId: "silver-daily-order-ingestion" },
         { fromColumnId: "status", fromDatasetId: "source-commerce-orders", toColumnId: "status", toDatasetId: "silver-daily-order-ingestion" },
+        { fromColumnId: "customer_id", fromDatasetId: "silver-customer-profile", toColumnId: "customer_id", toDatasetId: "ds_customer_orders_gold" },
+        { fromColumnId: "customer_status", fromDatasetId: "silver-customer-profile", toColumnId: "status", toDatasetId: "ds_customer_orders_gold" },
         { fromColumnId: "order_id", fromDatasetId: "silver-daily-order-ingestion", toColumnId: "order_id", toDatasetId: "ds_customer_orders_gold" },
         { fromColumnId: "customer_id", fromDatasetId: "silver-daily-order-ingestion", toColumnId: "customer_id", toDatasetId: "ds_customer_orders_gold" },
         { fromColumnId: "order_date", fromDatasetId: "silver-daily-order-ingestion", toColumnId: "order_date", toDatasetId: "ds_customer_orders_gold" },

@@ -487,7 +487,8 @@ function buildLineageGraph(
   const nodeIdsWithOutgoing = new Set(graph.edges.map((edge) => edge.fromDatasetId));
   const selection = selectedColumnKey ? getLineageSelection(graph, selectedColumnKey) : null;
   const nodes: Node<LineageTableNodeData>[] = groupedDatasets.flatMap((group, groupIndex) => {
-    const groupHeight = getLineageStackHeight(group.length, getMaxColumnCount(group));
+    const groupColumnCount = getMaxColumnCount(group);
+    const groupHeight = getLineageStackHeight(group.length, groupColumnCount);
     const groupStartY = (maxGroupHeight - groupHeight) / 2;
     return group.map((lineageDataset, itemIndex) => {
       const columns = buildLineageColumns(lineageDataset.columns);
@@ -513,7 +514,7 @@ function buildLineageGraph(
         id: lineageDataset.id,
         position: {
           x: groupIndex * 315 + 20,
-          y: groupStartY + getLineageStackOffset(itemIndex, lineageDataset.columns.length),
+          y: groupStartY + getLineageStackOffset(itemIndex, groupColumnCount),
         },
         type: "lineageTable",
       };
