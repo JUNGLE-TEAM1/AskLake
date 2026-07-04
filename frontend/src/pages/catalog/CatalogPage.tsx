@@ -442,9 +442,8 @@ function CatalogLineage({ dataset, datasets = [dataset] }: { dataset: CatalogDat
       </div>
       <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
         <ReactFlow
+          defaultViewport={{ x: -90, y: 36, zoom: 0.86 }}
           edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.12 }}
           maxZoom={1.1}
           minZoom={0.35}
           nodes={nodes}
@@ -490,8 +489,8 @@ function buildLineageGraph(
   const levelHeights = visibleLevels.map((level) => getLineageStackHeight(level.length, primaryColumns.length));
   const currentHeight = getLineageTableHeight(primaryColumns.length);
   const graphHeight = Math.max(currentHeight, ...levelHeights);
-  const levelGapX = 410;
-  const rootX = 40 + visibleLevels.length * levelGapX;
+  const levelGapX = 350;
+  const rootX = 1090;
   const currentY = (graphHeight - currentHeight) / 2;
 
   const currentNode: Node<LineageTableNodeData> = {
