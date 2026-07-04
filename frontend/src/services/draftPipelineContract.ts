@@ -1,13 +1,22 @@
-import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, ScheduleDraft } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, RetryFailureAction, RetryPolicyDraft, ScheduleDraft } from "../types";
+
+export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
+  notify_only: "알림만 남기기",
+  retry_then_fail: "재시도 후 실패 처리",
+  retry_then_quarantine: "재시도 후 격리",
+};
 
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
   const targetDataset = draft.target.datasetName.trim() || "unnamed_dataset";
+  const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   return {
     id: draft.id,
     jobName: `${targetDataset}_pipeline`,
     owner: draft.permission.owner,
     permissionSummary: draft.permission.summary,
     rag: draft.target.rag,
+    retryPolicy,
+    retryPolicySummary: formatRetryPolicySummary(retryPolicy),
     ruleSummary: combineSummaries(draft.transform.summary, draft.quality.summary),
     scheduleLabel: draft.schedule.label,
     schemaColumns: draft.schema.columns,
@@ -56,6 +65,25 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.rag !== undefined) next.target.rag = patch.rag;
 
   return next;
+}
+
+export function formatRetryPolicySummary(policy: RetryPolicyDraft): string {
+  const normalized = normalizeRetryPolicy(policy);
+  return `${normalized.maxRetries}회 재시도 · ${normalized.retryIntervalMinutes}분 간격 · ${normalized.timeoutMinutes}분 제한 · ${retryFailureActionLabels[normalized.failureAction]}`;
+}
+
+export function normalizeRetryPolicy(policy: RetryPolicyDraft): RetryPolicyDraft {
+  return {
+    failureAction: retryFailureActionLabels[policy.failureAction] ? policy.failureAction : "retry_then_fail",
+    maxRetries: clampInteger(policy.maxRetries, 3, 0, 10),
+    retryIntervalMinutes: clampInteger(policy.retryIntervalMinutes, 10, 1, 1440),
+    timeoutMinutes: clampInteger(policy.timeoutMinutes, 60, 1, 1440),
+  };
+}
+
+function clampInteger(value: number, fallback: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.trunc(value), min), max);
 }
 
 function scheduleModeFromLabel(label: string): ScheduleDraft["mode"] {

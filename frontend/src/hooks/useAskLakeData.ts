@@ -23,6 +23,12 @@ const initialDraftPipeline: DraftPipeline = {
     label: "매주 목요일 10:30",
     mode: "repeat",
     nextRun: "다음 예약 대기",
+    retryPolicy: {
+      failureAction: "retry_then_fail",
+      maxRetries: 3,
+      retryIntervalMinutes: 10,
+      timeoutMinutes: 60,
+    },
   },
   schema: {
     columns: [],

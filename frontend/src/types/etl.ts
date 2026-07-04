@@ -76,6 +76,16 @@ export type ScheduleDraft = {
   label: string;
   mode: "manual" | "once" | "repeat";
   nextRun?: string;
+  retryPolicy: RetryPolicyDraft;
+};
+
+export type RetryFailureAction = "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+
+export type RetryPolicyDraft = {
+  failureAction: RetryFailureAction;
+  maxRetries: number;
+  retryIntervalMinutes: number;
+  timeoutMinutes: number;
 };
 
 export type PermissionDraft = {
@@ -113,6 +123,8 @@ export type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  retryPolicy: RetryPolicyDraft;
+  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: TargetLayer;

@@ -60,7 +60,7 @@ Slice 소유권:
 | `schema` | Pair A 1번 | columns, sample rows, schema summary, schema fingerprint |
 | `transform` | Pair A 2번 | transform steps, output columns, transform summary |
 | `quality` | Pair A 2번 | quality rules, score/status, invalid row preview, quality summary |
-| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run |
+| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run, retry policy |
 | `permission` | Pair A 2번 | owner, permission summary |
 | `target` | Pair A 2번 | target dataset, layer, format, RAG flag |
 
@@ -79,6 +79,13 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  retryPolicy: {
+    maxRetries: number;
+    retryIntervalMinutes: number;
+    timeoutMinutes: number;
+    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  };
+  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -98,6 +105,7 @@ type CreatePipelineRequest = {
 - mock create 응답의 `dataset.schema`와 `dataset.sampleRows`는 Pair A 1번의 `draft.schema.columns/sampleRows`에서 파생한다.
 - 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
 - create submit은 처리 중 중복 클릭을 막고, 실패하면 이전 `jobs`, `datasets`, `selectedJob`, `selectedDataset`을 유지한다.
+- Review submit은 `draft.source.connectionStatus === "success"`와 `draft.schema.columns.length > 0`을 만족해야 활성화된다.
 - Day1 Pair A 1번 기본 target dataset은 기존 catalog fixture와 겹치지 않아야 한다. 그래야 create 후 ETL 목록과 Catalog 목록 prepend가 브라우저에서 명확히 검증된다.
 - 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
 
@@ -318,6 +326,13 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  retryPolicy: {
+    maxRetries: number;
+    retryIntervalMinutes: number;
+    timeoutMinutes: number;
+    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  };
+  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -355,6 +370,13 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
+  "retryPolicy": {
+    "maxRetries": 3,
+    "retryIntervalMinutes": 10,
+    "timeoutMinutes": 60,
+    "failureAction": "retry_then_fail"
+  },
+  "retryPolicySummary": "3회 재시도 · 10분 간격 · 60분 제한 · 재시도 후 실패 처리",
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",
