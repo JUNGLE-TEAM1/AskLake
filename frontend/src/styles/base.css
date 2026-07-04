@@ -126,6 +126,10 @@ p {
 }
 
 .main-shell {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+  flex-direction: column;
   min-width: 0;
 }
 
@@ -383,6 +387,9 @@ p {
 }
 
 .page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 24px var(--layout-page-padding) 40px;
 }
 
