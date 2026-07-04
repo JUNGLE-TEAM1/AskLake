@@ -1,9 +1,23 @@
-import type { DashboardListQuery, DashboardListResponse, DashboardSortOption, SavedDashboardCard } from "../types";
+import type { DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardSortOption, SavedDashboardCard } from "../types";
 import { normalizeDashboardStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
+type DashboardQueryPayload = Omit<DashboardListQuery, "search"> & {
+  searchQuery?: string;
+};
+
+type DashboardPageResponse = {
+  dashboards: SavedDashboardCard[];
+  facets: DashboardListFilterOptions;
+  page: {
+    current: number;
+    pageSize: number;
+    total: number;
+  };
+};
+
 function splitTags(tags: string) {
-  return tags.split("·").map((tag) => tag.trim()).filter(Boolean);
+  return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
 }
 
 function dateValue(value?: string) {
@@ -103,10 +117,38 @@ function normalizeDashboardListResponse(response: DashboardListResponse): Dashbo
   };
 }
 
+function toDashboardQueryPayload(query: DashboardListQuery): DashboardQueryPayload {
+  return {
+    owner: query.owner,
+    page: normalizePage(query.page),
+    pageSize: normalizePageSize(query.pageSize),
+    searchQuery: query.search?.trim() || undefined,
+    sort: query.sort,
+    tags: query.tags?.filter(Boolean),
+  };
+}
+
+function normalizeDashboardPageResponse(response: DashboardPageResponse): DashboardListResponse {
+  const pageSize = normalizePageSize(response.page?.pageSize ?? 10);
+  const total = Math.max(0, response.page?.total ?? response.dashboards.length);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  return {
+    filterOptions: {
+      owners: response.facets?.owners ?? [],
+      tags: response.facets?.tags ?? [],
+    },
+    items: response.dashboards.map(normalizeDashboardCard),
+    page: Math.min(normalizePage(response.page?.current ?? 1), totalPages),
+    pageSize,
+    total,
+  };
+}
+
 export async function listDashboards(query: DashboardListQuery, mockDashboards: SavedDashboardCard[]): Promise<DashboardListResponse> {
   if (apiConfig.useMock) return getMockDashboardListResponse(query, mockDashboards);
 
-  const queryString = toDashboardListSearchParams(query);
-  const response = await apiClient.get<DashboardListResponse>(`/api/dashboards?${queryString}`);
+  const response = await apiClient.post<DashboardListResponse | DashboardPageResponse>("/api/dashboards/query", toDashboardQueryPayload(query));
+  if ("dashboards" in response) return normalizeDashboardPageResponse(response);
   return normalizeDashboardListResponse(response);
 }

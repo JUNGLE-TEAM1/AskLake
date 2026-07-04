@@ -43,6 +43,8 @@ export function App() {
   const {
     apiPending,
     createPipeline,
+    dataError,
+    dataLoading,
     datasets,
     draftPipeline,
     handleJobCommand,
@@ -70,7 +72,7 @@ export function App() {
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
-  }, [activeFlow, selectedJob.id]);
+  }, [activeFlow, selectedJob?.id]);
 
   const moveToFlow = (flow: FlowId) => {
     if (flow === "repeat" || flow === "manual" || flow === "once") {
@@ -95,14 +97,25 @@ export function App() {
     moveToFlow(item.flow);
   };
 
-  const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset: CatalogDataset = selectedDataset) => {
-    setSelectedDataset(dataset);
-    writeAuditLog(action, apiPath, dataset.id);
+  const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
+    const targetDataset = dataset ?? selectedDataset;
+    if (!targetDataset) {
+      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
+      return;
+    }
+
+    setSelectedDataset(targetDataset);
+    writeAuditLog(action, apiPath, targetDataset.id);
     setDashboardEntry((entry) => ({ source, view: "builder", version: entry.version + 1 }));
     moveToFlow("dashboard");
   };
 
   const openDashboardFromSql = (result: SqlResultDraft) => {
+    if (!selectedDataset) {
+      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
+      return;
+    }
+
     setSqlResultDraft(result);
     openDashboardBuilder("sql", "analysis.dashboard.create_requested", "/api/dashboards", selectedDataset);
   };
@@ -122,6 +135,29 @@ export function App() {
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : "page-body"}>
+          {dataLoading && (
+            <div className="module-placeholder-page">
+              <span>POSTGRES</span>
+              <h1>DB 데이터를 불러오는 중입니다</h1>
+              <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
+            </div>
+          )}
+          {!dataLoading && dataError && (
+            <div className="module-placeholder-page">
+              <span>POSTGRES ERROR</span>
+              <h1>DB API 연결을 확인해주세요</h1>
+              <p>{dataError}</p>
+            </div>
+          )}
+          {!dataLoading && !dataError && (!selectedDataset || !selectedJob) && (
+            <div className="module-placeholder-page">
+              <span>POSTGRES EMPTY</span>
+              <h1>표시할 seed 데이터가 없습니다</h1>
+              <p>Postgres seed를 다시 실행한 뒤 새로고침해주세요.</p>
+            </div>
+          )}
+          {!dataLoading && !dataError && selectedDataset && selectedJob && (
+            <>
           {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
           {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
@@ -141,6 +177,8 @@ export function App() {
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
+            </>
+          )}
         </section>
         <Footer />
       </main>

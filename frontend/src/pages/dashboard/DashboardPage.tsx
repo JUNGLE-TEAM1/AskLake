@@ -23,8 +23,10 @@ import { defaultDashboardCards } from "./dashboardListData";
 import {
   formatDashboardTimestamp,
   hydrateSavedDashboardCards,
+  normalizeSavedDashboardCard,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
+import { saveDashboardCard } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
@@ -47,7 +49,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       return defaultDashboardCards;
     }
   });
-  const dashboardList = useDashboardLandingList(savedDashboards, onAction);
+  const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version);
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
@@ -97,6 +99,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     rowCount: activeSqlResult.rowCount,
     runId: activeSqlResult.runId,
   } : undefined;
+  const sidebarDashboards = dashboardList.visibleDashboards.length ? dashboardList.visibleDashboards : savedDashboards;
 
   useEffect(() => {
     setView(entry.view);
@@ -111,7 +114,6 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
   }, [savedDashboards]);
-
   const changeFilter = (nextPeriod: string, nextSegment = segment) => {
     setPeriod(nextPeriod);
     setSegment(nextSegment);
@@ -133,7 +135,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     onAction("dashboard.opened", `/api/dashboards/${dashboardId}`, name);
   };
 
-  const upsertDashboard = (status: SavedDashboardCard["status"]) => {
+  const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
     const existingCard = savedDashboards.find((card) => card.id === dashboardId);
     const now = new Date();
     const nextCard: SavedDashboardCard = {
@@ -152,8 +154,16 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       updatedAtValue: now.toISOString(),
       widgets: snapshotWidgets,
     };
-    setSavedDashboards((cards) => [nextCard, ...cards.filter((card) => card.id !== nextCard.id)]);
-    return nextCard;
+    const optimisticCard = normalizeSavedDashboardCard(nextCard);
+    setSavedDashboards((cards) => [optimisticCard, ...cards.filter((card) => card.id !== optimisticCard.id)]);
+
+    try {
+      const savedCard = normalizeSavedDashboardCard(await saveDashboardCard(optimisticCard));
+      setSavedDashboards((cards) => [savedCard, ...cards.filter((card) => card.id !== savedCard.id)]);
+      return savedCard;
+    } catch {
+      return optimisticCard;
+    }
   };
 
   const addWidgetToCanvas = () => {
@@ -168,12 +178,12 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   const publishDashboard = () => {
     setIsPublished(true);
-    upsertDashboard("published");
+    void upsertDashboard("published");
     onAction("dashboard.published", `/api/dashboards/${dashboardId}/publish`, dashboardId);
   };
 
   const saveDashboard = () => {
-    upsertDashboard(isPublished ? "published" : "draft");
+    void upsertDashboard(isPublished ? "published" : "draft");
     onAction("dashboard.saved", `/api/dashboards/${dashboardId}`, dashboardId);
   };
 
@@ -278,6 +288,8 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
         currentPage={dashboardList.safeDashboardPage}
         dashboardCount={dashboardList.dashboardCount}
         dashboards={dashboardList.visibleDashboards}
+        error={dashboardList.dashboardError}
+        isLoading={dashboardList.dashboardLoading}
         onClearTags={dashboardList.clearDashboardTags}
         onCreateDashboard={openBuilder}
         onNextPage={dashboardList.goToNextDashboardPage}
@@ -555,7 +567,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
           </section>
           <section>
             <h2>대시보드 목록</h2>
-            {savedDashboards.slice(0, 3).map((dashboard) => (
+            {sidebarDashboards.slice(0, 3).map((dashboard) => (
               <button key={dashboard.id} type="button" onClick={() => openDetail(dashboard.name)}>
                 <strong>{dashboard.name}</strong>
                 <span>{dashboardStatusMeta[dashboard.status].label}</span>

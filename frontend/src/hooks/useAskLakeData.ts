@@ -1,6 +1,5 @@
-import { useState } from "react";
-import { catalogDatasets, etlJobs } from "../data/mockData";
-import { createPipelineDraft, runJobCommand } from "../services/mockApi";
+import { useEffect, useState } from "react";
+import { createPipelineDraft, getDatasets, getJobs, runJobCommand } from "../services/mockApi";
 import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -35,14 +34,45 @@ export function useAskLakeData({
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
 }) {
-  const [jobs, setJobs] = useState<JobRowData[]>(etlJobs);
-  const [datasets, setDatasets] = useState<CatalogDataset[]>(catalogDatasets);
+  const [jobs, setJobs] = useState<JobRowData[]>([]);
+  const [datasets, setDatasets] = useState<CatalogDataset[]>([]);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
-  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(catalogDatasets[0]);
-  const [selectedJob, setSelectedJob] = useState<JobRowData>(etlJobs[1]);
+  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset | null>(null);
+  const [selectedJob, setSelectedJob] = useState<JobRowData | null>(null);
   const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function hydrateData() {
+      setDataLoading(true);
+      setDataError(null);
+      try {
+        const [nextJobs, nextDatasets] = await Promise.all([getJobs(), getDatasets()]);
+        if (canceled) return;
+        setJobs(nextJobs);
+        setDatasets(nextDatasets);
+        setSelectedJob((job) => job ?? nextJobs[1] ?? nextJobs[0] ?? null);
+        setSelectedDataset((dataset) => dataset ?? nextDatasets[0] ?? null);
+      } catch (error) {
+        if (canceled) return;
+        setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
+        showToast("DB API에서 초기 데이터를 불러오지 못했습니다.", "info");
+      } finally {
+        if (!canceled) setDataLoading(false);
+      }
+    }
+
+    void hydrateData();
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   const updateDraftPipeline = (patch: Partial<DraftPipeline>) => {
     setDraftPipeline((draft) => ({ ...draft, ...patch }));
@@ -70,7 +100,7 @@ export function useAskLakeData({
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
-    setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
+    setSelectedJob((job) => (job?.id === jobId ? updater(job) : job));
   };
 
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
@@ -85,7 +115,7 @@ export function useAskLakeData({
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
       setJobs(remaining);
-      setSelectedJob(remaining[0] ?? job);
+      setSelectedJob(remaining[0] ?? null);
       onFlowChange("jobs");
       return;
     }
@@ -136,6 +166,8 @@ export function useAskLakeData({
   return {
     apiPending,
     createPipeline,
+    dataError,
+    dataLoading,
     datasets,
     draftPipeline,
     handleJobCommand,

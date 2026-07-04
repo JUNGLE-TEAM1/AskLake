@@ -599,23 +599,34 @@ GET /api/catalog/datasets/{datasetId}/lineage
 
 ### 8.3 대시보드 목록 조회
 
-`GET /api/dashboards`
+`POST /api/dashboards/query`
 
-Query parameters:
+첫 진입은 `GET /api/dashboards`가 기본 정렬 기준으로 10개만 반환합니다.
+검색, 필터, 정렬, 다음 page 요청은 프론트가 JSON body를 보내고 서버가 SQL 조건을 구성해 조회합니다.
+
+Request body:
 
 | 이름 | 타입 | 필수 | 설명 |
 | --- | --- | --- | --- |
 | `search` | string | no | dashboard 이름, 소유자, 태그 검색어 |
+| `searchQuery` | string | no | local API 호환 검색어. `search`와 같은 의미 |
 | `owner` | string | no | 특정 소유자 필터 |
-| `tags` | comma-separated string | no | 선택된 태그 목록. 예: `Marketing,ROI` |
+| `tags` | string[] | no | 선택된 태그 목록. 예: `["Marketing", "ROI"]` |
 | `sort` | string | yes | `name-asc`, `name-desc`, `updated-asc`, `updated-desc`, `created-asc`, `created-desc` |
 | `page` | number | yes | 1부터 시작하는 page 번호 |
 | `pageSize` | number | yes | 한 page에 표시할 dashboard 개수 |
 
 Request 예시:
 
-```text
-GET /api/dashboards?search=roi&owner=Jane%20Doe&tags=Marketing,ROI&sort=updated-desc&page=1&pageSize=10
+```json
+{
+  "searchQuery": "roi",
+  "owner": "Jane Doe",
+  "tags": ["Marketing", "ROI"],
+  "sort": "updated-desc",
+  "page": 1,
+  "pageSize": 10
+}
 ```
 
 Response `200 OK`:
