@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Plus, X } from "lucide-react";
 
 type DashboardPageTab = {
@@ -6,6 +7,7 @@ type DashboardPageTab = {
 };
 
 export function DashboardPageTabs({
+  isAddingPage = false,
   mode,
   onAddPage,
   onDeletePage,
@@ -13,6 +15,7 @@ export function DashboardPageTabs({
   pages,
   selectedPageId,
 }: {
+  isAddingPage?: boolean;
   mode: "published" | "draft";
   onAddPage?: () => void;
   onDeletePage?: (pageId: string) => void;
@@ -20,36 +23,56 @@ export function DashboardPageTabs({
   pages: DashboardPageTab[];
   selectedPageId: string | null;
 }) {
+  const selectedTabRef = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    selectedTabRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [selectedPageId, pages.length]);
+
   return (
     <div className="asklake-dashboard-tabs" role="tablist" aria-label="대시보드 페이지">
-      {pages.map((page) => (
-        <span className={page.id === selectedPageId ? "asklake-dashboard-page-tab active" : "asklake-dashboard-page-tab"} key={page.id}>
-          <button
-            aria-selected={page.id === selectedPageId}
-            className="asklake-dashboard-tab-button"
-            role="tab"
-            type="button"
-            onClick={() => onSelectPage(page.id)}
+      {pages.map((page) => {
+        const isSelected = page.id === selectedPageId;
+        return (
+          <span
+            className={isSelected ? "asklake-dashboard-page-tab active" : "asklake-dashboard-page-tab"}
+            key={page.id}
+            ref={isSelected ? selectedTabRef : undefined}
           >
-            {page.title}
-          </button>
-          {mode === "draft" && (
             <button
-              className="asklake-dashboard-tab-delete"
+              aria-selected={isSelected}
+              className="asklake-dashboard-tab-button"
+              role="tab"
               type="button"
-              aria-label={`${page.title} 페이지 삭제`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onDeletePage?.(page.id);
-              }}
+              onClick={() => onSelectPage(page.id)}
             >
-              <X size={13} />
+              {page.title}
             </button>
-          )}
-        </span>
-      ))}
+            {mode === "draft" && (
+              <button
+                className="asklake-dashboard-tab-delete"
+                type="button"
+                aria-label={`${page.title} 페이지 삭제`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeletePage?.(page.id);
+                }}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </span>
+        );
+      })}
       {mode === "draft" && (
-        <button className="asklake-dashboard-tab-add" type="button" aria-label="페이지 추가" onClick={onAddPage}>
+        <button
+          className="asklake-dashboard-tab-add"
+          disabled={isAddingPage}
+          title={isAddingPage ? "페이지 추가 중" : "페이지 추가"}
+          type="button"
+          aria-label={isAddingPage ? "페이지 추가 중" : "페이지 추가"}
+          onClick={onAddPage}
+        >
           <Plus size={18} />
         </button>
       )}

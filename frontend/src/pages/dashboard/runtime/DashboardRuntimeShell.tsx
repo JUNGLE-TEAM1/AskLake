@@ -17,6 +17,7 @@ export function DashboardRuntimeShell({
   children,
   hasPublishedRevision,
   inspector,
+  isAddingPage,
   isPublishing,
   isRefreshing,
   mode,
@@ -38,6 +39,7 @@ export function DashboardRuntimeShell({
   children: React.ReactNode;
   hasPublishedRevision?: boolean;
   inspector?: React.ReactNode;
+  isAddingPage?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
   mode: "published" | "draft";
@@ -94,6 +96,7 @@ export function DashboardRuntimeShell({
           <Filter size={17} />
         </button>
         <DashboardPageTabs
+          isAddingPage={isAddingPage}
           mode={mode}
           pages={pages}
           selectedPageId={selectedPageId}

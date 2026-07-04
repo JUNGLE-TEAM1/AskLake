@@ -109,6 +109,7 @@ export function DashboardPage({
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
+  const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
@@ -424,14 +425,23 @@ export function DashboardPage({
   };
 
   const addRuntimePage = async () => {
-    if (runtimeSelection.mode !== "draft") return;
+    if (runtimeSelection.mode !== "draft" || isAddingRuntimePage) return;
+    const nextPageNumber = (draftRuntime?.pages.length ?? 0) + 1;
+    const title = nextPageNumber > 1 ? `제목 없는 페이지 ${nextPageNumber}` : "제목 없는 페이지";
+    setIsAddingRuntimePage(true);
+    setDraftError(null);
+    setRuntimeNotice({ message: "페이지를 추가하는 중입니다.", tone: "info" });
     try {
-      const page = await createDraftPage(runtimeSelection.dashboardId, { title: "제목 없는 페이지" });
-      await loadDraftRuntime(runtimeSelection.dashboardId);
+      const page = await createDraftPage(runtimeSelection.dashboardId, { title });
       setSelectedRuntimePageId(page.id);
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setRuntimeNotice({ message: `${page.title} 페이지를 추가했습니다.`, tone: "success" });
       onAction("dashboard.page.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Failed to create a draft page.");
+      setRuntimeNotice({ message: "페이지를 추가하지 못했습니다.", tone: "error" });
+    } finally {
+      setIsAddingRuntimePage(false);
     }
   };
 
@@ -787,6 +797,7 @@ export function DashboardPage({
       <div className="dashboard-page dashboard-runtime-page">
         <DashboardRuntimeShell
           hasPublishedRevision={runtimeHasPublishedRevision}
+          isAddingPage={isAddingRuntimePage}
           isPublishing={isPublishingRuntime}
           isRefreshing={isRefreshingRuntime}
           inspector={isDraftMode ? (
