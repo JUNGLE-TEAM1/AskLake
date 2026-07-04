@@ -376,7 +376,7 @@ export function DashboardPage({
   };
 
   const openDashboardFromList = (dashboard: SavedDashboardCard) => {
-    openRuntimeDashboard(dashboard.id, dashboard.status === "published" ? "published" : "draft");
+    openRuntimeDashboard(dashboard.id, "published");
   };
 
   const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
@@ -750,7 +750,7 @@ export function DashboardPage({
     const isDraftMode = runtimeSelection.mode === "draft";
     const openDraftAction = (
       <button className="asklake-dashboard-empty-action" type="button" onClick={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}>
-        초안 편집
+        위젯 편집
       </button>
     );
     const retryAction = (
@@ -821,8 +821,8 @@ export function DashboardPage({
         <EmptyDashboardCanvas
           action={openDraftAction}
           editable={false}
-          title="게시된 대시보드가 없습니다"
-          description="초안 편집에서 페이지와 위젯을 구성한 뒤 게시하세요."
+          title="위젯을 추가해 주세요"
+          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
         />
       </div>
     ) : !runtimePages.length ? (
@@ -830,8 +830,8 @@ export function DashboardPage({
         <EmptyDashboardCanvas
           action={openDraftAction}
           editable={false}
-          title="게시된 revision에 페이지가 없습니다"
-          description="초안 편집에서 페이지를 추가한 뒤 다시 게시하세요."
+          title="위젯을 추가해 주세요"
+          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
         />
       </div>
     ) : selectedPublishedWidgets.length === 0 ? (
@@ -839,8 +839,8 @@ export function DashboardPage({
         <EmptyDashboardCanvas
           action={openDraftAction}
           editable={false}
-          title="이 페이지에 게시된 위젯이 없습니다"
-          description="초안 편집에서 이 페이지에 위젯을 배치한 뒤 게시하세요."
+          title="위젯을 추가해 주세요"
+          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
         />
       </div>
     ) : (

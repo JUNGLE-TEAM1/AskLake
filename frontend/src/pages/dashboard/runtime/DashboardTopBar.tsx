@@ -33,7 +33,7 @@ export function DashboardTopBar({
         {mode === "published" ? (
           <button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft}>
             <Pencil size={16} />
-            초안 편집
+            위젯 편집
           </button>
         ) : (
           <>

@@ -11,10 +11,10 @@ export function EmptyDashboardCanvas({
   editable: boolean;
   title?: string;
 }) {
-  const fallbackTitle = editable ? "빈 대시보드 페이지" : "게시된 위젯이 없습니다";
+  const fallbackTitle = editable ? "빈 대시보드 페이지" : "위젯을 추가해 주세요";
   const fallbackDescription = editable
     ? "위젯을 이곳으로 끌어오거나 추가 버튼으로 시작하세요."
-    : "초안 편집에서 페이지와 위젯을 구성한 뒤 게시하세요.";
+    : "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다";
 
   return (
     <div className="asklake-dashboard-empty-canvas__inner">
