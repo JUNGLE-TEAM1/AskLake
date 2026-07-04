@@ -26,65 +26,21 @@ import {
   defaultDashboardCards,
 } from "./DashboardParts";
 import type { ExpandedChart, SavedDashboardCard } from "./DashboardParts";
+import {
+  dashboardSortOptions,
+  filterAndSortDashboardCards,
+  formatDashboardDateLabel,
+  formatDashboardTimestamp,
+  getDashboardOwners,
+  getDashboardPage,
+  getDashboardSortLabel,
+  getDashboardTags,
+  hydrateSavedDashboardCards,
+  splitDashboardTags,
+} from "./dashboardListUtils";
+import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
-import { dashboardStatusMeta, normalizeDashboardStatus } from "../../utils/statusMeta";
-
-type DashboardListControl = "owner" | "tag" | "sort";
-type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
-
-const dashboardPageSize = 10;
-const fallbackDashboardDate = "2026-06-26 22:04";
-const fallbackDashboardDateValue = "2026-06-26T22:04:00";
-const dashboardSortOptions: Array<{ ariaLabel: string; direction: "asc" | "desc"; id: DashboardSortOption; label: string }> = [
-  { id: "name-asc", label: "알파벳순", direction: "asc", ariaLabel: "알파벳순 오름차순" },
-  { id: "name-desc", label: "알파벳순", direction: "desc", ariaLabel: "알파벳순 내림차순" },
-  { id: "updated-asc", label: "마지막 수정", direction: "asc", ariaLabel: "마지막 수정 오름차순" },
-  { id: "updated-desc", label: "마지막 수정", direction: "desc", ariaLabel: "마지막 수정 내림차순" },
-  { id: "created-asc", label: "생성일", direction: "asc", ariaLabel: "생성일 오름차순" },
-  { id: "created-desc", label: "생성일", direction: "desc", ariaLabel: "생성일 내림차순" },
-];
-
-function splitDashboardTags(tags: string) {
-  return tags.split("·").map((tag) => tag.trim()).filter(Boolean);
-}
-
-function dashboardDateValue(value?: string) {
-  const parsed = Date.parse(value ?? "");
-  return Number.isNaN(parsed) ? 0 : parsed;
-}
-
-function formatDashboardTimestamp(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function formatDashboardDateLabel(value?: string) {
-  const parsedDate = new Date(value ?? fallbackDashboardDateValue);
-  if (Number.isNaN(parsedDate.getTime())) return fallbackDashboardDate;
-  const minute = String(parsedDate.getMinutes()).padStart(2, "0");
-  return `${parsedDate.getFullYear()}년 ${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일 ${parsedDate.getHours()}시 ${minute}분`;
-}
-
-function normalizeSavedDashboardCard(card: SavedDashboardCard, index: number): SavedDashboardCard {
-  const fallbackCard = defaultDashboardCards.find((dashboard) => dashboard.id === card.id) ?? defaultDashboardCards[index] ?? defaultDashboardCards[0];
-  const createdAt = card.createdAt ?? fallbackCard?.createdAt ?? fallbackDashboardDate;
-  const createdAtValue = card.createdAtValue ?? fallbackCard?.createdAtValue ?? fallbackDashboardDateValue;
-
-  return {
-    ...card,
-    createdAt,
-    createdAtValue,
-    status: normalizeDashboardStatus(card.status),
-    updatedAtValue: card.updatedAtValue ?? fallbackCard?.updatedAtValue ?? createdAtValue,
-  };
-}
-
-function hydrateSavedDashboardCards(cards: SavedDashboardCard[]) {
-  const normalizedCards = cards.map(normalizeSavedDashboardCard);
-  const storedIds = new Set(normalizedCards.map((card) => card.id));
-  const missingDefaultCards = defaultDashboardCards.filter((card) => !storedIds.has(card.id));
-  return [...normalizedCards, ...missingDefaultCards];
-}
+import { dashboardStatusMeta } from "../../utils/statusMeta";
 
 export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset: CatalogDataset; entry: DashboardEntry; sqlResult: SqlResultDraft | null; onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void }) {
   const [view, setView] = useState<DashboardView>(entry.view);
@@ -160,36 +116,24 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     rowCount: activeSqlResult.rowCount,
     runId: activeSqlResult.runId,
   } : undefined;
-  const dashboardOwners = useMemo(() => Array.from(new Set(savedDashboards.map((dashboard) => dashboard.owner))).sort((first, second) => first.localeCompare(second)), [savedDashboards]);
-  const dashboardTags = useMemo(() => Array.from(new Set(savedDashboards.flatMap((dashboard) => splitDashboardTags(dashboard.tags)))).sort((first, second) => first.localeCompare(second)), [savedDashboards]);
-  const filteredDashboards = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const selectedTagSet = new Set(selectedTags);
-
-    return [...savedDashboards]
-      .filter((dashboard) => {
-        const dashboardTagsForRow = splitDashboardTags(dashboard.tags);
-        const matchesSearch = !query || [dashboard.name, dashboard.owner, dashboard.tags].some((value) => value.toLowerCase().includes(query));
-        const matchesOwner = ownerFilter === "all" || dashboard.owner === ownerFilter;
-        const matchesTags = selectedTagSet.size === 0 || Array.from(selectedTagSet).every((tag) => dashboardTagsForRow.includes(tag));
-        return matchesSearch && matchesOwner && matchesTags;
-      })
-      .sort((first, second) => {
-        if (sortOption === "name-asc") return first.name.localeCompare(second.name);
-        if (sortOption === "name-desc") return second.name.localeCompare(first.name);
-        if (sortOption === "created-asc") return dashboardDateValue(first.createdAtValue) - dashboardDateValue(second.createdAtValue);
-        if (sortOption === "created-desc") return dashboardDateValue(second.createdAtValue) - dashboardDateValue(first.createdAtValue);
-        if (sortOption === "updated-asc") return dashboardDateValue(first.updatedAtValue) - dashboardDateValue(second.updatedAtValue);
-        return dashboardDateValue(second.updatedAtValue) - dashboardDateValue(first.updatedAtValue);
-      });
-  }, [ownerFilter, savedDashboards, searchQuery, selectedTags, sortOption]);
-  const totalDashboardPages = Math.max(1, Math.ceil(filteredDashboards.length / dashboardPageSize));
-  const safeDashboardPage = Math.min(currentPage, totalDashboardPages);
-  const dashboardPageStartIndex = (safeDashboardPage - 1) * dashboardPageSize;
-  const visibleDashboards = filteredDashboards.slice(dashboardPageStartIndex, dashboardPageStartIndex + dashboardPageSize);
-  const dashboardPageStart = filteredDashboards.length === 0 ? 0 : dashboardPageStartIndex + 1;
-  const dashboardPageEnd = dashboardPageStartIndex + visibleDashboards.length;
-  const activeSortLabel = dashboardSortOptions.find((option) => option.id === sortOption)?.ariaLabel ?? "정렬 기준";
+  const dashboardOwners = useMemo(() => getDashboardOwners(savedDashboards), [savedDashboards]);
+  const dashboardTags = useMemo(() => getDashboardTags(savedDashboards), [savedDashboards]);
+  const filteredDashboards = useMemo(() => filterAndSortDashboardCards({
+    dashboards: savedDashboards,
+    ownerFilter,
+    searchQuery,
+    selectedTags,
+    sortOption,
+  }), [ownerFilter, savedDashboards, searchQuery, selectedTags, sortOption]);
+  const dashboardPage = useMemo(() => getDashboardPage(filteredDashboards, currentPage), [currentPage, filteredDashboards]);
+  const {
+    pageEnd: dashboardPageEnd,
+    pageStart: dashboardPageStart,
+    safePage: safeDashboardPage,
+    totalPages: totalDashboardPages,
+    visibleDashboards,
+  } = dashboardPage;
+  const activeSortLabel = getDashboardSortLabel(sortOption);
 
   useEffect(() => {
     setView(entry.view);
