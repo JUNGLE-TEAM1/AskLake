@@ -2,9 +2,6 @@
 
 이 문서는 현재 프론트엔드를 백엔드와 연결하기 전에 남은 작업, mock 제거 순서, 화면별 API 연결 범위를 정리한 체크 문서입니다.
 상세 요청/응답 타입은 `docs/api-contract.md`를 기준으로 합니다.
-API, mock fixture, frontend internal state는 영어 canonical status value를 사용하고, 한국어 화면 문구는 프론트 mapper에서 변환합니다.
-E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 기준으로 합니다.
-10GB demo evidence가 필요한 경우 `docs/10gb-fallback-verification.md`를 추가로 참조합니다.
 
 ## 1. 현재 상태 요약
 
@@ -77,7 +74,6 @@ VITE_USE_MOCK_API=false
 1. 앱 최초 로딩 시 jobs/datasets를 병렬 조회합니다.
 2. 조회 실패 시 사용자에게 연결 실패 토스트를 보여주고 mock fallback 여부를 결정합니다.
 3. 생성/명령 후에는 낙관적 업데이트보다 서버 응답값을 기준으로 상태를 갱신합니다.
-4. hydrate 응답의 `status`는 `docs/03-api-reference.md`의 canonical status values를 따라야 합니다.
 
 ### 3.3 3차: 대시보드 저장 모델 연결
 
@@ -156,10 +152,10 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 위젯 타입 선택 | 프론트 상태 변경 | 없음 |
 | 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
-| 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
+| 저장 | 감사 로그만 기록 | `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
-| 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
+| 내보내기 | 감사 로그만 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
 ## 5. 아직 실제 저장되지 않는 기능

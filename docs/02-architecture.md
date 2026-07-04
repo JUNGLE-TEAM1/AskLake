@@ -124,7 +124,6 @@ P1 hydrate API:
 
 - Mock data는 demo baseline이며, 최종 persistence model로 간주하지 않는다.
 - API response shape는 프론트 타입과 문서가 함께 바뀌어야 한다.
-- API, mock fixture, frontend internal state의 status 값은 영어 canonical value로 유지하고 UI label mapper에서 한국어 표시로 변환한다.
 - Backend 연결은 생성/명령/SQL 실행 같은 P0 vertical slice부터 시작한다.
 - SQL runtime은 read-only guard를 가져야 한다.
 - 감사 로그는 사용자에게 보이는 제품 기능이면서 backend integration evidence로도 쓰일 수 있다.

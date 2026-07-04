@@ -1,4 +1,4 @@
-import { Activity, RefreshCw } from "lucide-react";
+import { Activity, RefreshCw, Search } from "lucide-react";
 import type { AuditEntry } from "../../types";
 
 export function Topbar({
@@ -14,6 +14,10 @@ export function Topbar({
 }) {
   return (
     <header className="topbar">
+      <div className="search-box">
+        <Search size={16} />
+        <span>검색...</span>
+      </div>
       <div className="topbar-actions">
         <div className="audit-menu">
           <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>

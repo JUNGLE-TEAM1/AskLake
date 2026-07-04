@@ -1,5 +1,4 @@
 export type DashboardView = "list" | "builder" | "detail";
-export type DashboardStatus = "draft" | "published";
 export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
 
 export type DashboardEntry = {
@@ -7,3 +6,4 @@ export type DashboardEntry = {
   view: DashboardView;
   version: number;
 };
+

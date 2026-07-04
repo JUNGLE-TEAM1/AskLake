@@ -32,24 +32,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
-import type { AuditResult, FlowId, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStatus } from "../../types";
-import { jobStatusMeta } from "../../utils/statusMeta";
-
-const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
-  queued: { className: "scheduled", label: "대기 중" },
-  running: { className: "running", label: "실행 중" },
-  failed: { className: "failed", label: "실패" },
-  success: { className: "success", label: "성공" },
-  canceled: { className: "failed", label: "취소됨" },
-};
-
-const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: string }> = {
-  pending: { className: "paused", label: "대기" },
-  running: { className: "running", label: "진행" },
-  success: { className: "success", label: "성공" },
-  failed: { className: "failed", label: "실패" },
-  blocked: { className: "paused", label: "중단" },
-};
+import type { AuditResult, FlowId, JobCommand, JobRowData, JobStatus } from "../../types";
 
 export function JobsLandingPage({
   jobs,
@@ -70,9 +53,9 @@ export function JobsLandingPage({
 }) {
   const metrics = [
     ["전체 작업", String(jobs.length)],
-    ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
-    ["스케줄됨", String(jobs.filter((job) => job.status === "scheduled").length)],
-    ["실패", String(jobs.filter((job) => job.status === "failed").length)],
+    ["실행 중", String(jobs.filter((job) => job.status === "실행 중").length)],
+    ["스케줄됨", String(jobs.filter((job) => job.status === "스케줄됨").length)],
+    ["실패", String(jobs.filter((job) => job.status === "실패").length)],
     ["최신 아님", "4"],
   ];
 
@@ -96,7 +79,7 @@ export function JobsLandingPage({
               onDag={onDag}
               onDetail={() => onDetail(job)}
               onEdit={() => onCommand(job, "edit")}
-              onRun={() => onCommand(job, job.status === "failed" ? "retry" : "run")}
+              onRun={() => onCommand(job, job.status === "실패" ? "retry" : "run")}
             />
           ))}
           <div className="job-table-footer">
@@ -151,9 +134,9 @@ function JobRow({
   onEdit: () => void;
   onRun: () => void;
 }) {
-  const actionLabel = job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
-  const tertiaryLabel = job.status === "running" ? "취소" : "수정";
-  const statusClass = jobStatusMeta[job.status].className;
+  const actionLabel = job.status === "실행 중" ? "실행 흐름" : job.status === "실패" ? "다시 실행" : job.status === "일시정지" ? "재개" : "즉시 실행";
+  const tertiaryLabel = job.status === "실행 중" ? "취소" : "수정";
+  const statusClass = job.status === "실패" ? "failed" : job.status === "실행 중" ? "running" : job.status === "일시정지" ? "paused" : "scheduled";
 
   return (
     <article className={`job-row ${statusClass}`}>
@@ -181,8 +164,8 @@ function JobRow({
         </dl>
         <div className="job-row-actions">
           <button className="job-action-button" type="button" onClick={onDetail}>상세</button>
-          <button className="job-action-button primary" type="button" onClick={job.status === "running" ? onDag : onRun}>{actionLabel}</button>
-          <button className={job.status === "running" ? "job-action-button danger" : "job-action-button"} type="button" onClick={job.status === "running" ? onCancel : onEdit}>{tertiaryLabel}</button>
+          <button className="job-action-button primary" type="button" onClick={job.status === "실행 중" ? onDag : onRun}>{actionLabel}</button>
+          <button className={job.status === "실행 중" ? "job-action-button danger" : "job-action-button"} type="button" onClick={job.status === "실행 중" ? onCancel : onEdit}>{tertiaryLabel}</button>
         </div>
       </div>
     </article>
@@ -190,8 +173,7 @@ function JobRow({
 }
 
 function StatusPill({ status }: { status: JobStatus }) {
-  const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <span className={`status-pill ${statusClass}`}>{jobStatusMeta[status].label}</span>;
+  return <span className={`status-pill ${status === "실패" ? "danger" : status === "실행 중" ? "running" : status === "일시정지" ? "paused" : ""}`}>{status}</span>;
 }
 
 function JobProgress({ label, value }: { label: string; value: number }) {
@@ -208,7 +190,7 @@ function JobProgress({ label, value }: { label: string; value: number }) {
   );
 }
 
-function DetailStatusStrip({ body, title, tone }: { body: string; title: string; tone: "danger" | "running" | "scheduled" | "canceled" }) {
+function DetailStatusStrip({ body, title, tone }: { body: string; title: string; tone: "danger" | "running" | "scheduled" }) {
   return (
     <section className={`detail-status-strip ${tone}`}>
       <strong>{title}</strong>
@@ -217,7 +199,7 @@ function DetailStatusStrip({ body, title, tone }: { body: string; title: string;
   );
 }
 
-function DetailMetricCard({ label, tone, value }: { label: string; tone?: "danger" | "running" | "scheduled" | "canceled"; value: string }) {
+function DetailMetricCard({ label, tone, value }: { label: string; tone?: "danger" | "running" | "scheduled"; value: string }) {
   return (
     <article className={tone ? `detail-metric-card ${tone}` : "detail-metric-card"}>
       <span>{label}</span>
@@ -294,27 +276,25 @@ export function JobDetailPage({
 }) {
   const sourceType = job.source.split(" / ")[0] ?? job.source;
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
-  const statusText = jobStatusMeta[job.status].summaryLabel;
-  const issueText = job.status === "failed" ? "age 필드 TYPE_CAST 규칙 실패" : job.status === "running" || job.status === "paused" || job.status === "canceled" ? job.lastState : "최근 실행 성공";
-  const averageDuration = job.status === "running" ? "12.0m" : job.status === "failed" ? "14.1m" : "3.8m";
-  const totalRuns = job.status === "running" ? "128회" : job.status === "failed" ? "47회" : "86회";
-  const lastSuccess = job.status === "failed" ? "2026-07-02 08:03" : job.lastRun;
-  const successRate = job.status === "failed" ? "94.2%" : job.status === "running" ? "진행 중" : "99.1%";
-  const recentFailure = job.status === "failed" ? "run_002" : job.status === "running" ? "없음" : "-";
-  const currentStage = job.status === "failed" ? "Transform Rule 적용" : job.status === "running" ? job.progress?.label ?? "Load to Lake" : job.status === "paused" ? "재개 대기" : job.status === "canceled" ? "취소됨" : "대기 중";
-  const lastChangedBy = job.status === "failed" ? "data-team" : job.owner;
-  const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
-  const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
-  const stripBody = job.status === "failed"
+  const statusText = job.status === "실패" ? "FAILED" : job.status === "실행 중" ? "RUNNING" : job.status === "일시정지" ? "PAUSED" : "SCHEDULED";
+  const issueText = job.status === "실패" ? "age 필드 TYPE_CAST 규칙 실패" : job.status === "실행 중" || job.status === "일시정지" ? job.lastState : "최근 실행 성공";
+  const averageDuration = job.status === "실행 중" ? "12.0m" : job.status === "실패" ? "14.1m" : "3.8m";
+  const totalRuns = job.status === "실행 중" ? "128회" : job.status === "실패" ? "47회" : "86회";
+  const lastSuccess = job.status === "실패" ? "2026-07-02 08:03" : job.lastRun;
+  const successRate = job.status === "실패" ? "94.2%" : job.status === "실행 중" ? "진행 중" : "99.1%";
+  const recentFailure = job.status === "실패" ? "run_002" : job.status === "실행 중" ? "없음" : "-";
+  const currentStage = job.status === "실패" ? "Transform Rule 적용" : job.status === "실행 중" ? job.progress?.label ?? "Load to Lake" : job.status === "일시정지" ? "재개 대기" : "대기 중";
+  const lastChangedBy = job.status === "실패" ? "data-team" : job.owner;
+  const stripTone = job.status === "실패" ? "danger" : job.status === "실행 중" ? "running" : "scheduled";
+  const stripTitle = job.status === "실패" ? "최근 실행 실패" : job.status === "실행 중" ? "현재 실행 중" : job.status === "일시정지" ? "작업 일시정지" : "스케줄 정상";
+  const stripBody = job.status === "실패"
     ? "run_002 · Transform Rule 적용 단계에서 TYPE_CAST 실패가 발생했습니다. DAG에서 영향 단계를 확인하세요."
-    : job.status === "running"
+    : job.status === "실행 중"
       ? `${job.progress?.label ?? "Load to Lake"} · 현재 처리 중이며 실행 흐름에서 단계별 로그를 확인할 수 있습니다.`
-      : job.status === "paused"
+      : job.status === "일시정지"
         ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 mock 실행을 재개할 수 있습니다."
-        : job.status === "canceled"
-          ? "사용자 요청으로 실행이 취소되었습니다. 다시 실행하면 새 Run으로 처리 흐름을 재개할 수 있습니다."
       : `${job.nextRun}에 다음 실행이 예약되어 있고 최근 실행 상태는 정상입니다.`;
-  const schemaRows = job.status === "failed"
+  const schemaRows = job.status === "실패"
     ? [
       ["1", "user_id", "user_id", "String", "No", "-"],
       ["2", "age", "age", "Mixed", "Yes", "TYPE_CAST 실패"],
@@ -322,7 +302,7 @@ export function JobDetailPage({
       ["4", "event_time", "event_time", "timestamp", "No", "-"],
       ["5", "raw_value", "raw_value", "String", "Yes", "-"],
     ]
-    : job.status === "running"
+    : job.status === "실행 중"
       ? [
         ["1", "event_id", "event_id", "String", "No", "검증 완료"],
         ["2", "user_id", "user_id", "String", "No", "검증 완료"],
@@ -337,13 +317,13 @@ export function JobDetailPage({
         ["4", "status", "status", "String", "No", "정상"],
         ["5", "region", "region", "String", "Yes", "-"],
       ];
-  const ruleRows = job.status === "failed"
+  const ruleRows = job.status === "실패"
     ? [
       ["TYPE_CAST", "age", "integer", "FAILED"],
       ["VALIDATION", "age", "age >= 0", "SKIPPED"],
       ["DEDUP", "user_id,event_time", "latest", "SKIPPED"],
     ]
-    : job.status === "running"
+    : job.status === "실행 중"
       ? [
         ["NORMALIZE", "event_time", "UTC timestamp", "RUNNING"],
         ["PARSE_JSON", "raw_payload", "flatten selected keys", "RUNNING"],
@@ -390,7 +370,7 @@ export function JobDetailPage({
               <DetailMetricCard label="성공률" tone={stripTone} value={successRate} />
               <DetailMetricCard label="평균 실행시간" value={averageDuration} />
               <DetailMetricCard label="총 실행" value={totalRuns} />
-              <DetailMetricCard label={job.status === "failed" ? "최근 실패" : "현재 단계"} tone={stripTone} value={job.status === "failed" ? recentFailure : currentStage} />
+              <DetailMetricCard label={job.status === "실패" ? "최근 실패" : "현재 단계"} tone={stripTone} value={job.status === "실패" ? recentFailure : currentStage} />
             </div>
             <div className="detail-meta-line">
               <span>마지막 성공: {lastSuccess}</span>
@@ -411,9 +391,9 @@ export function JobDetailPage({
             <div className="detail-kv-grid">
               <Field label="Source 유형" value={sourceType} />
               <Field label="Source 경로" value={sourcePath} />
-              <Field label="연결 상태" value={job.status === "failed" ? "AccessGranted · 처리 실패" : "AccessGranted"} />
+              <Field label="연결 상태" value={job.status === "실패" ? "AccessGranted · 처리 실패" : "AccessGranted"} />
               <Field label="인증 방식" value={sourceType === "S3" ? "IAM Role" : sourceType === "Kafka" ? "SASL/SCRAM" : "Service Account"} />
-              <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
+              <Field label="읽기 방식" value={job.status === "실행 중" ? "Streaming" : "Batch Scan"} />
             </div>
           </article>
           <article className="job-detail-card">
@@ -422,8 +402,8 @@ export function JobDetailPage({
               <Field label="타깃 데이터셋" value={job.target} />
               <Field label="Lake 경로" value={`lake/${job.target}`} />
               <Field label="저장 포맷" value="Parquet" />
-              <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
-              <Field label="품질 체크" value={job.status === "failed" ? "Transform 전 중단" : "row count / schema check"} />
+              <Field label="쓰기 모드" value={job.status === "실행 중" ? "Append Stream" : "Append + compact"} />
+              <Field label="품질 체크" value={job.status === "실패" ? "Transform 전 중단" : "row count / schema check"} />
             </div>
             <div className="detail-meta-line">
               <span>Downstream: SQL · Dashboard · Catalog</span>
@@ -490,10 +470,10 @@ export function JobDetailPage({
           <article className="job-detail-card">
             <h3>Schedule</h3>
             <div className="detail-kv-grid">
-              <Field label="실행 유형" value={job.status === "running" ? "실시간 수집" : "반복 실행"} />
+              <Field label="실행 유형" value={job.status === "실행 중" ? "실시간 수집" : "반복 실행"} />
               <Field label="주기" value={job.schedule} />
               <Field label="다음 실행" value={job.nextRun} />
-              <Field label="재시도 정책" value={job.status === "failed" ? "3회 · backoff 10m" : "3회 · backoff 5m"} />
+              <Field label="재시도 정책" value={job.status === "실패" ? "3회 · backoff 10m" : "3회 · backoff 5m"} />
             </div>
           </article>
           <article className="job-detail-card">
@@ -501,8 +481,8 @@ export function JobDetailPage({
             <div className="detail-kv-grid">
               <Field label="Owner" value={job.owner} />
               <Field label="접근 그룹" value="Data Platform, Analytics" />
-              <Field label="canRun" value={job.status === "failed" ? "Owner 승인 후 가능" : "true"} />
-              <Field label="승인 상태" value={job.status === "failed" ? "재실행 승인 필요" : "승인됨"} />
+              <Field label="canRun" value={job.status === "실패" ? "Owner 승인 후 가능" : "true"} />
+              <Field label="승인 상태" value={job.status === "실패" ? "재실행 승인 필요" : "승인됨"} />
             </div>
           </article>
         </div>
@@ -512,26 +492,33 @@ export function JobDetailPage({
 }
 
 export function JobRunsPage({
-  evidence,
   job,
   onAction,
   onBack,
   onCommand,
   onDag,
 }: {
-  evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onDag: () => void;
 }) {
-  const defaultRuns: JobRunSummary[] = [
-    { duration: "12m", endedAt: "-", errorSummary: "-", failedStage: "-", inputRows: "142,030", outputRows: "130,410", runId: "run_003", startedAt: "10:00", status: "running" },
-    { duration: "18s", endedAt: "10:10", errorSummary: "age 필드 타입 변환 실패", failedStage: "Transform Rule 적용", inputRows: "21,840", outputRows: "0", runId: "run_002", startedAt: "10:10", status: "failed" },
-    { duration: "3m", endedAt: "08:03", errorSummary: "-", failedStage: "-", inputRows: "21,040", outputRows: "21,038", runId: "run_001", startedAt: "08:00", status: "success" },
+  const runs: Array<{
+    duration: string;
+    endedAt: string;
+    errorSummary: string;
+    failedStage: string;
+    inputRows: string;
+    outputRows: string;
+    runId: string;
+    startedAt: string;
+    status: "실행 중" | "실패" | "성공";
+  }> = [
+    { duration: "12m", endedAt: "-", errorSummary: "-", failedStage: "-", inputRows: "142,030", outputRows: "130,410", runId: "run_003", startedAt: "10:00", status: "실행 중" },
+    { duration: "18s", endedAt: "10:10", errorSummary: "age 필드 타입 변환 실패", failedStage: "Transform Rule 적용", inputRows: "21,840", outputRows: "0", runId: "run_002", startedAt: "10:10", status: "실패" },
+    { duration: "3m", endedAt: "08:03", errorSummary: "-", failedStage: "-", inputRows: "21,040", outputRows: "21,038", runId: "run_001", startedAt: "08:00", status: "성공" },
   ];
-  const runs = evidence?.runs.length ? evidence.runs : defaultRuns;
 
   return (
     <div className="job-detail-page job-runs-page">
@@ -544,7 +531,7 @@ export function JobRunsPage({
             <button className="runs-filter-button date" type="button" onClick={() => onAction("etl.runs.date_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/date`, job.id)}><Calendar size={14} /> 날짜 선택</button>
           </div>
           <div className="runs-filters-right">
-            <span>{runs.length} runs total</span>
+            <span>47 runs total</span>
             <button className="runs-refresh-button" type="button" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}><RefreshCw size={14} /> 새로고침</button>
           </div>
         </div>
@@ -568,7 +555,7 @@ export function JobRunsPage({
             </thead>
             <tbody>
               {runs.map((row) => (
-                <tr className={row.status === "failed" || row.status === "canceled" ? "run-row failed" : "run-row"} key={row.runId}>
+                <tr className={row.status === "실패" ? "run-row failed" : "run-row"} key={row.runId}>
                   <td>{row.runId}</td>
                   <td><RunStatusPill status={row.status} /></td>
                   <td>{row.startedAt}</td>
@@ -587,7 +574,7 @@ export function JobRunsPage({
           </table>
           </div>
           <div className="runs-pagination">
-            <span>Showing 1-{runs.length} of {runs.length}</span>
+            <span>Showing 1-3 of 47</span>
             <div>
               <button type="button" aria-label="이전 페이지" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</button>
               <button type="button" aria-label="다음 페이지" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</button>
@@ -600,7 +587,7 @@ export function JobRunsPage({
           <div>
             <RunSummaryMetric label="7일 성공률" value="94.2%" />
             <RunSummaryMetric label="평균 소요시간" value="14.1m" />
-            <RunSummaryMetric label="총 실행" value={`${runs.length}회`} />
+            <RunSummaryMetric label="총 실행" value="47회" />
           </div>
         </article>
       </section>
@@ -608,13 +595,11 @@ export function JobRunsPage({
   );
 }
 
-function RunStatusPill({ status }: { status: JobRunStatus }) {
-  const statusMeta = runStatusMeta[status];
-
+function RunStatusPill({ status }: { status: "실행 중" | "실패" | "성공" }) {
   return (
-    <span className={`run-status-pill ${statusMeta.className}`}>
-      {status === "running" && <span className="run-status-dot" />}
-      {statusMeta.label}
+    <span className={`run-status-pill ${status === "실패" ? "failed" : status === "실행 중" ? "running" : "success"}`}>
+      {status === "실행 중" && <span className="run-status-dot" />}
+      {status}
     </span>
   );
 }
@@ -629,7 +614,6 @@ function RunSummaryMetric({ label, value }: { label: string; value: string }) {
 }
 
 export function JobDagPage({
-  evidence,
   job,
   onAction,
   onBack,
@@ -637,7 +621,6 @@ export function JobDagPage({
   onEdit,
   onRuns,
 }: {
-  evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -648,20 +631,22 @@ export function JobDagPage({
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const [dagFullscreenOpen, setDagFullscreenOpen] = useState(false);
   const [dagZoom, setDagZoom] = useState(0);
-  const defaultDagSteps: JobDagStep[] = [
-    { id: "step-1", meta: "S3 · raw/user-log/*.csv", status: "success", title: "1. Source 연결" },
-    { id: "step-2", meta: "21,840 rows scanned", status: "success", title: "2. 파일 읽기" },
-    { id: "step-3", meta: "5 columns mapped", status: "success", title: "3. Schema 매핑" },
-    { id: "step-4", meta: "age TYPE_CAST → Integer", note: "cannot cast unknown", status: "failed", title: "4. Transform Rule" },
-    { id: "step-5", meta: "age >= 0", status: "blocked", title: "5. Validation" },
-    { id: "step-6", meta: "user_activity", status: "blocked", title: "6. Lake 적재" },
-    { id: "step-7", meta: "row count / schema check", status: "blocked", title: "7. 품질 체크" },
-    { id: "step-8", meta: "SQL · Dashboard · Index", status: "blocked", title: "8. Downstream 반영" },
+  const dagSteps: Array<{
+    id: string;
+    meta: string;
+    note?: string;
+    status: "성공" | "실패" | "중단";
+    title: string;
+  }> = [
+    { id: "step-1", meta: "S3 · raw/user-log/*.csv", status: "성공", title: "1. Source 연결" },
+    { id: "step-2", meta: "21,840 rows scanned", status: "성공", title: "2. 파일 읽기" },
+    { id: "step-3", meta: "5 columns mapped", status: "성공", title: "3. Schema 매핑" },
+    { id: "step-4", meta: "age TYPE_CAST → Integer", note: "cannot cast unknown", status: "실패", title: "4. Transform Rule" },
+    { id: "step-5", meta: "age >= 0", status: "중단", title: "5. Validation" },
+    { id: "step-6", meta: "user_activity", status: "중단", title: "6. Lake 적재" },
+    { id: "step-7", meta: "row count / schema check", status: "중단", title: "7. 품질 체크" },
+    { id: "step-8", meta: "SQL · Dashboard · Index", status: "중단", title: "8. Downstream 반영" },
   ];
-  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : defaultDagSteps;
-  const currentRun = evidence?.runs[0] ?? { duration: "00:00:18", endedAt: "10:10", errorSummary: "age 필드 타입 변환 실패", failedStage: "Transform Rule 적용", inputRows: "21,840", outputRows: "0", runId: "run_002", startedAt: "10:10", status: "failed" as JobRunStatus };
-  const completedSteps = dagSteps.filter((step) => step.status === "success").length;
-  const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const dagZoomClass = `zoom-${dagZoom}`;
   const zoomIn = () => {
     setDagZoom((zoom) => Math.min(2, zoom + 1));
@@ -686,9 +671,9 @@ export function JobDagPage({
         <strong>Run context</strong>
         <span>실패 Run의 단계별 상태와 중단 영향 범위를 확인합니다.</span>
         <div className="dag-legend">
-          <DagStatePill status="success" />
-          <DagStatePill status="failed" />
-          <DagStatePill status="blocked" />
+          <DagStatePill status="성공" />
+          <DagStatePill status="실패" />
+          <DagStatePill status="중단" />
         </div>
       </div>
 
@@ -722,16 +707,16 @@ export function JobDagPage({
 
       <section className="dag-body-content">
         <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-          {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
+          run_002 · 2026-07-02 10:10 · FAILED
           <span>▾</span>
         </button>
 
         <div className="dag-summary-grid">
-          <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
-          <DagSummaryCard label="소요 시간" value={currentRun.duration} />
-          <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
-          <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
-          <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
+          <DagSummaryCard label="현재 상태" value="FAILED" />
+          <DagSummaryCard label="소요 시간" value="00:00:18" />
+          <DagSummaryCard label="진행 단계" value="4/8 steps" />
+          <DagSummaryCard helper="→ 0 (Error)" label="처리 행수" value="21,840" />
+          <DagSummaryCard label="실패 단계" value="Transform Rule 적용" />
         </div>
 
         <article className="dag-flow-card">
@@ -792,9 +777,8 @@ function DagSummaryCard({ helper, label, value }: { helper?: string; label: stri
   );
 }
 
-function DagStatePill({ status }: { status: JobDagStepStatus }) {
-  const statusMeta = dagStepStatusMeta[status];
-  return <span className={`dag-state-pill ${statusMeta.className}`}>{statusMeta.label}</span>;
+function DagStatePill({ status }: { status: "성공" | "실패" | "중단" }) {
+  return <span className={`dag-state-pill ${status === "실패" ? "failed" : status === "중단" ? "paused" : "success"}`}>{status}</span>;
 }
 
 function DagStepNode({
@@ -803,10 +787,10 @@ function DagStepNode({
   wide,
 }: {
   onSelect: () => void;
-  step: JobDagStep;
+  step: { meta: string; note?: string; status: "성공" | "실패" | "중단"; title: string };
   wide?: boolean;
 }) {
-  const tone = dagStepStatusMeta[step.status].className;
+  const tone = step.status === "실패" ? "failed" : step.status === "중단" ? "paused" : "success";
 
   return (
     <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} type="button" onClick={onSelect}>

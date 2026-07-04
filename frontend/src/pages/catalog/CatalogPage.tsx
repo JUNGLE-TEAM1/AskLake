@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
 import type { AuditResult, CatalogDataset } from "../../types";
-import { datasetStatusMeta } from "../../utils/statusMeta";
 
 export function CatalogPage({
   datasets,
@@ -239,13 +238,10 @@ export function CatalogDetailPage({
 }
 
 export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
-  const statusMeta = datasetStatusMeta[dataset.status];
-  const statusClass = dataset.status === "approval_required" ? statusMeta.className : dataset.freshness === "stale" ? "stale" : statusMeta.className;
-
   return (
-    <span className={`dataset-status-badge ${statusClass}`}>
+    <span className={`dataset-status-badge ${dataset.status === "승인 필요" ? "approval" : dataset.freshness === "stale" ? "stale" : "available"}`}>
       {dataset.rag && <span>RAG</span>}
-      {statusMeta.label}
+      {dataset.status}
     </span>
   );
 }
@@ -348,7 +344,7 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
       <div className="catalog-lineage-footer">
         <span>Upstream {dataset.upstream.length}</span>
         <span>Layer {dataset.layer}</span>
-        <span>Status {datasetStatusMeta[dataset.status].label}</span>
+        <span>Status {dataset.status}</span>
       </div>
     </section>
   );
