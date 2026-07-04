@@ -1,5 +1,4 @@
 import { useRef, useState } from "react";
-import { catalogDatasets, etlJobs } from "../data/mockData";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import { createPipelineDraft, runJobCommand } from "../services/mockApi";
 import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
@@ -59,6 +58,42 @@ const initialDraftPipeline: DraftPipeline = {
   },
 };
 
+const emptySelectedDataset: CatalogDataset = {
+  description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하세요.",
+  downstream: [],
+  freshness: "approval",
+  id: "dataset_not_selected",
+  layer: "RAW",
+  lastUpdated: "-",
+  name: "데이터셋 없음",
+  nextRefresh: "-",
+  owner: "-",
+  quality: "-",
+  rag: false,
+  rows: "0 rows",
+  sampleRows: [],
+  schema: [],
+  size: "-",
+  source: "-",
+  status: "승인 필요",
+  tags: [],
+  upstream: [],
+};
+
+const emptySelectedJob: JobRowData = {
+  id: "JOB-NONE",
+  lastRun: "-",
+  lastState: "작업 없음",
+  name: "작업 없음",
+  nextRun: "-",
+  owner: "-",
+  schedule: "-",
+  source: "-",
+  status: "일시정지",
+  tag: "[없음]",
+  target: "-",
+};
+
 export function useAskLakeData({
   onFlowChange,
   showToast,
@@ -68,11 +103,11 @@ export function useAskLakeData({
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
 }) {
-  const [jobs, setJobs] = useState<JobRowData[]>(etlJobs);
-  const [datasets, setDatasets] = useState<CatalogDataset[]>(catalogDatasets);
+  const [jobs, setJobs] = useState<JobRowData[]>([]);
+  const [datasets, setDatasets] = useState<CatalogDataset[]>([]);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
-  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(catalogDatasets[0]);
-  const [selectedJob, setSelectedJob] = useState<JobRowData>(etlJobs[1]);
+  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(emptySelectedDataset);
+  const [selectedJob, setSelectedJob] = useState<JobRowData>(emptySelectedJob);
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
@@ -135,7 +170,7 @@ export function useAskLakeData({
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
       setJobs(remaining);
-      setSelectedJob(remaining[0] ?? job);
+      setSelectedJob(remaining[0] ?? emptySelectedJob);
       onFlowChange("jobs");
       return;
     }

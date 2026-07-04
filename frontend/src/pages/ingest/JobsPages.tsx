@@ -56,7 +56,7 @@ export function JobsLandingPage({
     ["실행 중", String(jobs.filter((job) => job.status === "실행 중").length)],
     ["스케줄됨", String(jobs.filter((job) => job.status === "스케줄됨").length)],
     ["실패", String(jobs.filter((job) => job.status === "실패").length)],
-    ["최신 아님", "4"],
+    ["최신 아님", "0"],
   ];
 
   return (
@@ -71,6 +71,14 @@ export function JobsLandingPage({
         </div>
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
         <section className="job-table" aria-label="ETL 작업 목록">
+          {jobs.length === 0 && (
+            <div className="job-empty-state">
+              <Plus size={22} />
+              <strong>생성된 수집/처리 작업이 없습니다.</strong>
+              <p>Source 연결과 Schema 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다.</p>
+              <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
+            </div>
+          )}
           {jobs.map((job) => (
             <JobRow
               job={job}
@@ -82,13 +90,15 @@ export function JobsLandingPage({
               onRun={() => onCommand(job, job.status === "실패" ? "retry" : "run")}
             />
           ))}
-          <div className="job-table-footer">
-            <span>1-{jobs.length} of {jobs.length}</span>
-            <div>
-              <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
-              <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+          {jobs.length > 0 && (
+            <div className="job-table-footer">
+              <span>1-{jobs.length} of {jobs.length}</span>
+              <div>
+                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
+                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+              </div>
             </div>
-          </div>
+          )}
         </section>
       </div>
     </div>
@@ -292,7 +302,7 @@ export function JobDetailPage({
     : job.status === "실행 중"
       ? `${job.progress?.label ?? "Load to Lake"} · 현재 처리 중이며 실행 흐름에서 단계별 로그를 확인할 수 있습니다.`
       : job.status === "일시정지"
-        ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 mock 실행을 재개할 수 있습니다."
+        ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 실행을 재개할 수 있습니다."
       : `${job.nextRun}에 다음 실행이 예약되어 있고 최근 실행 상태는 정상입니다.`;
   const schemaRows = job.status === "실패"
     ? [

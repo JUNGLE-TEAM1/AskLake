@@ -50,10 +50,10 @@ export function useAuditLogs() {
       const previous = JSON.parse(window.localStorage.getItem("asklake.auditLogs") ?? "[]");
       window.localStorage.setItem("asklake.auditLogs", JSON.stringify([entry, ...previous].slice(0, 50)));
     } catch {
-      console.warn("[AskLake mock API] local audit storage is unavailable in this browser context.");
+      console.warn("[AskLake API adapter] local audit storage is unavailable in this browser context.");
     }
 
-    console.info("[AskLake mock API]", entry);
+    console.info("[AskLake API adapter]", entry);
   };
 
   return {
