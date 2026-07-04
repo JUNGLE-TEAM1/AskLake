@@ -18,44 +18,21 @@ type RuntimeNotice = {
   tone: "success" | "info" | "error";
 };
 
-type DashboardRuntimeViewProps = {
-  dashboardDatasets: DashboardDatasetOption[];
-  dashboardDatasetsError: Error | null;
-  dashboardDatasetsLoading: boolean;
+type DashboardRuntimeState = {
   draftError: string | null;
   draftLoading: boolean;
   draftRuntime: DashboardRuntimeResponse | null;
   hasPublishedRevision: boolean;
   isAddingPage: boolean;
-  isCreatingDatasetWidget: boolean;
   isDatasetSidebarOpen: boolean;
   isPublishing: boolean;
   isRefreshing: boolean;
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
-  onAddPage: () => void;
-  onCloseSharePanel: () => void;
-  onCreateDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
-  onDeletePage: (pageId: string) => void;
-  onLayoutCommit: (layout: LayoutItem[]) => void;
-  onLayoutRejected: () => void;
-  onOpenDraft: () => void;
-  onOpenPublished: () => void;
-  onPublishDraft: () => void;
-  onRefresh: () => void;
-  onRetryDraft: () => void;
-  onRetryPublished: () => void;
-  onSelectDataset: (datasetId: string) => void;
-  onSelectPage: (pageId: string) => void;
-  onSelectWidget: (widgetId: string) => void;
-  onShare: () => void;
-  onToggleDatasetSidebar: () => void;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
-  selectedDataset: DashboardDatasetOption | null;
-  selectedDatasetId: string | null;
   selectedDraftWidgets: DashboardRuntimeWidget[];
   selectedPageId: string | null;
   selectedPublishedWidgets: DashboardRuntimeWidget[];
@@ -64,56 +41,100 @@ type DashboardRuntimeViewProps = {
   title: string;
 };
 
+type DashboardRuntimeDatasetState = {
+  datasets: DashboardDatasetOption[];
+  error: Error | null;
+  isCreatingWidget: boolean;
+  isLoading: boolean;
+  selectedDataset: DashboardDatasetOption | null;
+  selectedDatasetId: string | null;
+};
+
+type DashboardRuntimeViewActions = {
+  addPage: () => void;
+  closeSharePanel: () => void;
+  createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  deletePage: (pageId: string) => void;
+  layoutCommit: (layout: LayoutItem[]) => void;
+  layoutRejected: () => void;
+  openDraft: () => void;
+  openPublished: () => void;
+  publishDraft: () => void;
+  refresh: () => void;
+  retryDraft: () => void;
+  retryPublished: () => void;
+  selectDataset: (datasetId: string) => void;
+  selectPage: (pageId: string) => void;
+  selectWidget: (widgetId: string) => void;
+  share: () => void;
+  toggleDatasetSidebar: () => void;
+};
+
+type DashboardRuntimeViewProps = {
+  actions: DashboardRuntimeViewActions;
+  datasets: DashboardRuntimeDatasetState;
+  runtime: DashboardRuntimeState;
+};
+
 const emptyDashboardCopy = {
   description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
   title: "위젯을 추가해 주세요",
 };
 
 export function DashboardRuntimeView({
-  dashboardDatasets,
-  dashboardDatasetsError,
-  dashboardDatasetsLoading,
-  draftError,
-  draftLoading,
-  draftRuntime,
-  hasPublishedRevision,
-  isAddingPage,
-  isCreatingDatasetWidget,
-  isDatasetSidebarOpen,
-  isPublishing,
-  isRefreshing,
-  mode,
-  notice,
-  onAddPage,
-  onCloseSharePanel,
-  onCreateDatasetWidget,
-  onDeletePage,
-  onLayoutCommit,
-  onLayoutRejected,
-  onOpenDraft,
-  onOpenPublished,
-  onPublishDraft,
-  onRefresh,
-  onRetryDraft,
-  onRetryPublished,
-  onSelectDataset,
-  onSelectPage,
-  onSelectWidget,
-  onShare,
-  onToggleDatasetSidebar,
-  pages,
-  publishedRuntime,
-  runtimeError,
-  runtimeLoading,
-  selectedDataset,
-  selectedDatasetId,
-  selectedDraftWidgets,
-  selectedPageId,
-  selectedPublishedWidgets,
-  selectedWidgetId,
-  shareLink,
-  title,
+  actions,
+  datasets,
+  runtime,
 }: DashboardRuntimeViewProps) {
+  const {
+    draftError,
+    draftLoading,
+    draftRuntime,
+    hasPublishedRevision,
+    isAddingPage,
+    isDatasetSidebarOpen,
+    isPublishing,
+    isRefreshing,
+    mode,
+    notice,
+    pages,
+    publishedRuntime,
+    runtimeError,
+    runtimeLoading,
+    selectedDraftWidgets,
+    selectedPageId,
+    selectedPublishedWidgets,
+    selectedWidgetId,
+    shareLink,
+    title,
+  } = runtime;
+  const {
+    datasets: dashboardDatasets,
+    error: dashboardDatasetsError,
+    isCreatingWidget: isCreatingDatasetWidget,
+    isLoading: dashboardDatasetsLoading,
+    selectedDataset,
+    selectedDatasetId,
+  } = datasets;
+  const {
+    addPage: onAddPage,
+    closeSharePanel: onCloseSharePanel,
+    createDatasetWidget: onCreateDatasetWidget,
+    deletePage: onDeletePage,
+    layoutCommit: onLayoutCommit,
+    layoutRejected: onLayoutRejected,
+    openDraft: onOpenDraft,
+    openPublished: onOpenPublished,
+    publishDraft: onPublishDraft,
+    refresh: onRefresh,
+    retryDraft: onRetryDraft,
+    retryPublished: onRetryPublished,
+    selectDataset: onSelectDataset,
+    selectPage: onSelectPage,
+    selectWidget: onSelectWidget,
+    share: onShare,
+    toggleDatasetSidebar: onToggleDatasetSidebar,
+  } = actions;
   const isDraftMode = mode === "draft";
   const openDraftAction = (
     <button className="asklake-dashboard-empty-action" type="button" onClick={onOpenDraft}>

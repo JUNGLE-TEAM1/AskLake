@@ -730,51 +730,61 @@ export function DashboardPage({
   }
 
   if (view === "runtime") {
+    const runtimeViewActions = {
+      addPage: addRuntimePage,
+      closeSharePanel: () => setRuntimeShareLink(null),
+      createDatasetWidget: createDatasetDraftWidget,
+      deletePage: deleteRuntimePage,
+      layoutCommit: updateDraftWidgetLayouts,
+      layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
+      openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
+      openPublished: () => openRuntimeDashboard(runtimeSelection.dashboardId, "published"),
+      publishDraft: publishDraftRuntime,
+      refresh: refreshRuntimeDashboard,
+      retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
+      retryPublished: () => void loadPublishedRuntime(runtimeSelection.dashboardId),
+      selectDataset: setSelectedDatasetId,
+      selectPage: setSelectedRuntimePageId,
+      selectWidget: setSelectedWidgetId,
+      share: shareRuntimeDashboard,
+      toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
+    };
+    const runtimeDatasetState = {
+      datasets: dashboardDatasets,
+      error: dashboardDatasetsError,
+      isCreatingWidget: isCreatingDatasetWidget,
+      isLoading: dashboardDatasetsLoading,
+      selectedDataset,
+      selectedDatasetId,
+    };
+    const runtimeViewState = {
+      draftError,
+      draftLoading,
+      draftRuntime,
+      hasPublishedRevision: runtimeHasPublishedRevision,
+      isAddingPage: isAddingRuntimePage,
+      isDatasetSidebarOpen,
+      isPublishing: isPublishingRuntime,
+      isRefreshing: isRefreshingRuntime,
+      mode: runtimeSelection.mode,
+      notice: runtimeNotice,
+      pages: runtimePages,
+      publishedRuntime,
+      runtimeError,
+      runtimeLoading,
+      selectedDraftWidgets,
+      selectedPageId: selectedRuntimePageId,
+      selectedPublishedWidgets,
+      selectedWidgetId,
+      shareLink: runtimeShareLink,
+      title: runtimeTitle,
+    };
+
     return (
       <DashboardRuntimeView
-        dashboardDatasets={dashboardDatasets}
-        dashboardDatasetsError={dashboardDatasetsError}
-        dashboardDatasetsLoading={dashboardDatasetsLoading}
-        draftError={draftError}
-        draftLoading={draftLoading}
-        draftRuntime={draftRuntime}
-        hasPublishedRevision={runtimeHasPublishedRevision}
-        isAddingPage={isAddingRuntimePage}
-        isCreatingDatasetWidget={isCreatingDatasetWidget}
-        isDatasetSidebarOpen={isDatasetSidebarOpen}
-        isPublishing={isPublishingRuntime}
-        isRefreshing={isRefreshingRuntime}
-        mode={runtimeSelection.mode}
-        notice={runtimeNotice}
-        pages={runtimePages}
-        publishedRuntime={publishedRuntime}
-        runtimeError={runtimeError}
-        runtimeLoading={runtimeLoading}
-        selectedDataset={selectedDataset}
-        selectedDatasetId={selectedDatasetId}
-        selectedDraftWidgets={selectedDraftWidgets}
-        selectedPageId={selectedRuntimePageId}
-        selectedPublishedWidgets={selectedPublishedWidgets}
-        selectedWidgetId={selectedWidgetId}
-        shareLink={runtimeShareLink}
-        title={runtimeTitle}
-        onAddPage={addRuntimePage}
-        onCloseSharePanel={() => setRuntimeShareLink(null)}
-        onCreateDatasetWidget={createDatasetDraftWidget}
-        onDeletePage={deleteRuntimePage}
-        onLayoutCommit={updateDraftWidgetLayouts}
-        onLayoutRejected={() => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" })}
-        onOpenDraft={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}
-        onOpenPublished={() => openRuntimeDashboard(runtimeSelection.dashboardId, "published")}
-        onPublishDraft={publishDraftRuntime}
-        onRefresh={refreshRuntimeDashboard}
-        onRetryDraft={() => void loadDraftRuntime(runtimeSelection.dashboardId)}
-        onRetryPublished={() => void loadPublishedRuntime(runtimeSelection.dashboardId)}
-        onSelectDataset={setSelectedDatasetId}
-        onSelectPage={setSelectedRuntimePageId}
-        onSelectWidget={setSelectedWidgetId}
-        onShare={shareRuntimeDashboard}
-        onToggleDatasetSidebar={() => setIsDatasetSidebarOpen((open) => !open)}
+        actions={runtimeViewActions}
+        datasets={runtimeDatasetState}
+        runtime={runtimeViewState}
       />
     );
   }
