@@ -452,14 +452,11 @@ function buildLineageGraph(
   const primaryColumns = buildLineageColumns(dataset.schema);
   const upstreamHeight = getLineageStackHeight(dataset.upstream.length, primaryColumns.length);
   const currentHeight = getLineageTableHeight(primaryColumns.length);
-  const downstreamHeight = getLineageStackHeight(dataset.downstream.length, primaryColumns.length);
-  const graphHeight = Math.max(upstreamHeight, currentHeight, downstreamHeight);
+  const graphHeight = Math.max(upstreamHeight, currentHeight);
   const upstreamStartY = (graphHeight - upstreamHeight) / 2;
   const currentY = (graphHeight - currentHeight) / 2;
-  const downstreamStartY = (graphHeight - downstreamHeight) / 2;
   const sourceX = 40;
   const currentX = 450;
-  const downstreamX = 860;
 
   const upstreamNodes: Node<LineageTableNodeData>[] = dataset.upstream.map((item, index) => {
     const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
@@ -483,7 +480,7 @@ function buildLineageGraph(
     data: {
       columns: primaryColumns,
       engine: "ICEBERG",
-      handleMode: "both",
+      handleMode: "target",
       layerLabel: `${dataset.layer} LAYER`,
       onColumnSelect,
       selectedColumnId,
@@ -494,21 +491,6 @@ function buildLineageGraph(
     position: { x: currentX, y: currentY },
     type: "lineageTable",
   };
-  const downstreamNodes: Node<LineageTableNodeData>[] = dataset.downstream.map((item, index) => ({
-    data: {
-      columns: primaryColumns,
-      engine: getDownstreamEngine(item),
-      handleMode: "target",
-      layerLabel: "CONSUMER",
-      onColumnSelect,
-      selectedColumnId,
-      tableName: getLineageTableName(item),
-      tone: "downstream",
-    },
-    id: `downstream-${index}`,
-    position: { x: downstreamX, y: downstreamStartY + getLineageStackOffset(index, primaryColumns.length) },
-    type: "lineageTable",
-  }));
   const upstreamEdges = upstreamNodes.flatMap((node) => {
     const sourceColumns = node.data.columns as LineageColumn[];
     return primaryColumns.map((targetColumn, columnIndex) => {
@@ -524,25 +506,10 @@ function buildLineageGraph(
       });
     });
   });
-  const downstreamEdges = downstreamNodes.flatMap((node) => {
-    const targetColumns = node.data.columns as LineageColumn[];
-    return primaryColumns.map((sourceColumn, columnIndex) => {
-      const targetColumn = targetColumns[columnIndex % targetColumns.length];
-      return buildColumnEdge({
-        active: sourceColumn.baseId === selectedColumnId,
-        selected: selectedColumnId !== null,
-        id: `current-${sourceColumn.id}-to-${node.id}-${targetColumn.id}`,
-        source: currentNode.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "right"),
-        target: node.id,
-        targetHandle: lineageHandleId(targetColumn.id, "left"),
-      });
-    });
-  });
 
   return {
-    edges: [...upstreamEdges, ...downstreamEdges],
-    nodes: [...upstreamNodes, currentNode, ...downstreamNodes],
+    edges: upstreamEdges,
+    nodes: [...upstreamNodes, currentNode],
   };
 }
 
@@ -688,14 +655,6 @@ function getLayerTone(layer: CatalogDataset["layer"]): LineageTableNodeData["ton
   if (layer === "SILVER") return "silver";
   if (layer === "BRONZE") return "bronze";
   return "source";
-}
-
-function getDownstreamEngine(value: string): string {
-  const lower = value.toLowerCase();
-  if (lower.includes("sql")) return "SQL";
-  if (lower.includes("dashboard")) return "BI";
-  if (lower.includes("ai")) return "AI";
-  return "MART";
 }
 
 function getColumnTypeTone(type: string): string {
