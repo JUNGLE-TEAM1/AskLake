@@ -9,9 +9,16 @@ export type SavedDashboardCard = {
   name: string;
   owner: string;
   sourceRunId?: string;
+  sqlResult?: {
+    columns: string[];
+    query: string;
+    rowCount: number;
+    runId: string;
+  };
   status: DashboardStatus;
   tags: string;
   updated: string;
+  widgets?: DashboardWidgetType[];
 };
 
 export type ExpandedChart = {

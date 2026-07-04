@@ -186,6 +186,33 @@ type JobRowData = {
 };
 ```
 
+### JobRunSummary and JobDagStep
+
+```ts
+type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
+
+type JobRunSummary = {
+  runId: string;
+  status: JobRunStatus;
+  startedAt: string;
+  endedAt: string;
+  duration: string;
+  inputRows: string;
+  outputRows: string;
+  failedStage: string;
+  errorSummary: string;
+};
+
+type JobDagStep = {
+  id: string;
+  title: string;
+  meta: string;
+  status: JobDagStepStatus;
+  note?: string;
+};
+```
+
 ### CatalogDataset
 
 ```ts
@@ -383,6 +410,8 @@ type JobCommandResponse = {
   action: string;
   apiPath: string;
   job?: JobRowData;
+  run?: JobRunSummary;
+  dagSteps?: JobDagStep[];
 };
 ```
 

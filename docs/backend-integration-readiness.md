@@ -156,10 +156,10 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 위젯 타입 선택 | 프론트 상태 변경 | 없음 |
 | 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
-| 저장 | 감사 로그만 기록 | `PATCH /api/dashboards/{id}` |
+| 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
-| 내보내기 | 감사 로그만 기록 | `GET /api/dashboards/{id}/export` |
+| 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
 ## 5. 아직 실제 저장되지 않는 기능

@@ -74,7 +74,7 @@ Fallback을 쓴 경우 known issues에 남긴다.
 | Artifact | 목적 | 필수 필드 |
 | --- | --- | --- |
 | `create-job-response.json` | Job/Dataset 생성 증거 | `job.id`, `dataset.id`, `dataset.name` |
-| `job-command-response.json` | 실행 상태 증거 | `job.id`, `run.id`, `run.status`, `dagSteps` |
+| `job-command-response.json` | 실행 상태 증거 | `job.id`, `run.runId`, `run.status`, `dagSteps` |
 | `catalog-dataset-{datasetId}.json` | Catalog 표시 근거 | `id`, `name`, `schema`, `rows`, `size`, `upstream`, `downstream` |
 | `lineage-{datasetId}.json` | Lineage 표시 근거 | `nodes`, `edges`, `selectedNodeId` |
 | `sql-result-{runId}.json` | SQL 결과 근거 | `runId`, `datasetId`, `query`, `columns`, `rows`, `rowCount` |

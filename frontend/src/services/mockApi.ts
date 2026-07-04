@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -10,7 +10,9 @@ export type PipelineCreationResult = {
 export type JobCommandResult = {
   action: string;
   apiPath: string;
+  dagSteps?: JobDagStep[];
   job?: JobRowData;
+  run?: JobRunSummary;
 };
 
 const mockLatencyMs = 120;
@@ -97,10 +99,34 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     cancel: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
   };
   const audit = actionByCommand[command];
+  const runId = `run_${Date.now()}`;
 
   if (command === "run" || command === "retry") {
+    const run: JobRunSummary = {
+      duration: "진행 중",
+      endedAt: "-",
+      errorSummary: "-",
+      failedStage: "-",
+      inputRows: "0",
+      outputRows: "0",
+      runId,
+      startedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+      status: "running",
+    };
+    const dagSteps: JobDagStep[] = [
+      { id: "step-1", meta: job.source, status: "running", title: "1. Source 연결" },
+      { id: "step-2", meta: "대기 중", status: "pending", title: "2. 파일 읽기" },
+      { id: "step-3", meta: "대기 중", status: "pending", title: "3. Schema 매핑" },
+      { id: "step-4", meta: "대기 중", status: "pending", title: "4. Transform Rule" },
+      { id: "step-5", meta: "대기 중", status: "pending", title: "5. Validation" },
+      { id: "step-6", meta: job.target, status: "pending", title: "6. Lake 적재" },
+      { id: "step-7", meta: "row count / schema check", status: "pending", title: "7. 품질 체크" },
+      { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "pending", title: "8. Downstream 반영" },
+    ];
+
     return resolveMock({
       ...audit,
+      dagSteps,
       job: {
         ...job,
         status: "running",
@@ -109,12 +135,36 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
         nextRun: "-",
         progress: { label: command === "retry" ? "재실행 중 · Source 연결" : "1/8 단계 · Source 연결", value: 12 },
       },
+      run,
     });
   }
 
   if (command === "pause") {
+    const run: JobRunSummary = {
+      duration: "일시정지",
+      endedAt: "-",
+      errorSummary: "-",
+      failedStage: "-",
+      inputRows: "72,410",
+      outputRows: "0",
+      runId,
+      startedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+      status: "running",
+    };
+    const dagSteps: JobDagStep[] = [
+      { id: "step-1", meta: job.source, status: "success", title: "1. Source 연결" },
+      { id: "step-2", meta: "72,410 rows scanned", status: "success", title: "2. 파일 읽기" },
+      { id: "step-3", meta: "사용자 일시정지", note: "resume 대기", status: "blocked", title: "3. Schema 매핑" },
+      { id: "step-4", meta: "대기 중", status: "blocked", title: "4. Transform Rule" },
+      { id: "step-5", meta: "대기 중", status: "blocked", title: "5. Validation" },
+      { id: "step-6", meta: job.target, status: "blocked", title: "6. Lake 적재" },
+      { id: "step-7", meta: "row count / schema check", status: "blocked", title: "7. 품질 체크" },
+      { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
+    ];
+
     return resolveMock({
       ...audit,
+      dagSteps,
       job: {
         ...job,
         status: "paused",
@@ -122,11 +172,35 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
         nextRun: "재개 대기",
         progress: job.progress ?? { label: "일시정지됨", value: 50 },
       },
+      run,
     });
   }
 
+  const run: JobRunSummary = {
+    duration: "취소됨",
+    endedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    errorSummary: "사용자 요청으로 취소",
+    failedStage: "-",
+    inputRows: "72,410",
+    outputRows: "0",
+    runId,
+    startedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    status: "canceled",
+  };
+  const dagSteps: JobDagStep[] = [
+    { id: "step-1", meta: job.source, status: "success", title: "1. Source 연결" },
+    { id: "step-2", meta: "72,410 rows scanned", status: "success", title: "2. 파일 읽기" },
+    { id: "step-3", meta: "사용자 취소", note: "cancel requested", status: "blocked", title: "3. Schema 매핑" },
+    { id: "step-4", meta: "취소 이후 중단", status: "blocked", title: "4. Transform Rule" },
+    { id: "step-5", meta: "취소 이후 중단", status: "blocked", title: "5. Validation" },
+    { id: "step-6", meta: job.target, status: "blocked", title: "6. Lake 적재" },
+    { id: "step-7", meta: "row count / schema check", status: "blocked", title: "7. 품질 체크" },
+    { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
+  ];
+
   return resolveMock({
     ...audit,
+    dagSteps,
     job: {
       ...job,
       status: "canceled",
@@ -135,6 +209,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       nextRun: job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
       progress: undefined,
     },
+    run,
   });
 }
 
