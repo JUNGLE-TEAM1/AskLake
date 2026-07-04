@@ -804,7 +804,50 @@ Response `201 Created`:
 }
 ```
 
-#### 8.5.4 Draft layout batch 저장
+#### 8.5.4 Draft page 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+동작:
+
+1. 현재 draft revision에 속한 page만 삭제합니다.
+2. 해당 page의 widgets는 cascade로 함께 삭제합니다.
+3. 남은 page의 `orderIndex`를 다시 정렬합니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.5 Draft widget 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+
+Request:
+
+```json
+{
+  "type": "metric",
+  "title": "지표",
+  "layout": { "x": 0, "y": 0, "w": 3, "h": 3, "minW": 2, "minH": 2 },
+  "config": {}
+}
+```
+
+Response `201 Created`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
+
+#### 8.5.6 Draft layout batch 저장
 
 `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 
@@ -827,7 +870,7 @@ Response `200 OK`:
 
 서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
 
-#### 8.5.5 Publish
+#### 8.5.7 Publish
 
 `POST /api/dashboards/{dashboardId}/publish`
 
@@ -836,6 +879,8 @@ Response `200 OK`:
 1. 현재 draft revision을 깊은 복사합니다.
 2. 새 revision을 `kind = "published"`로 저장합니다.
 3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+
+Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 
 Response `200 OK`:
 

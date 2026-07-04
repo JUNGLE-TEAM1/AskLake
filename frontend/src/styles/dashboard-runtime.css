@@ -92,7 +92,8 @@
 .asklake-dashboard-action:hover,
 .asklake-dashboard-icon-action:hover,
 .asklake-dashboard-filter-button:hover,
-.asklake-dashboard-tabs button:hover {
+.asklake-dashboard-page-tab:hover,
+.asklake-dashboard-tab-add:hover {
   border-color: #94a3b8;
   background: #f1f5f9;
 }
@@ -144,12 +145,21 @@
   overflow-x: auto;
 }
 
-.asklake-dashboard-tabs button {
+.asklake-dashboard-page-tab {
   position: relative;
+  display: inline-flex;
   min-width: max-content;
   height: 40px;
+  align-items: center;
   border: 1px solid transparent;
   border-radius: 6px 6px 0 0;
+  background: transparent;
+}
+
+.asklake-dashboard-tab-button {
+  height: 100%;
+  min-width: max-content;
+  border: 0;
   background: transparent;
   color: #475569;
   font-size: 14px;
@@ -157,13 +167,16 @@
   padding: 0 12px;
 }
 
-.asklake-dashboard-tabs button.active {
+.asklake-dashboard-page-tab.active {
   border-color: var(--dash-border-strong);
   background: #ffffff;
+}
+
+.asklake-dashboard-page-tab.active .asklake-dashboard-tab-button {
   color: #0f172a;
 }
 
-.asklake-dashboard-tabs button.active::after {
+.asklake-dashboard-page-tab.active::after {
   position: absolute;
   right: 0;
   bottom: -1px;
@@ -173,10 +186,34 @@
   content: "";
 }
 
+.asklake-dashboard-tab-delete {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+  opacity: 0.72;
+}
+
+.asklake-dashboard-tab-delete:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+  opacity: 1;
+}
+
 .asklake-dashboard-tabs .asklake-dashboard-tab-add {
   display: grid;
   width: 40px;
   min-width: 40px;
+  height: 40px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: #475569;
   place-items: center;
   padding: 0;
 }
@@ -229,7 +266,9 @@
   background: #ffffff;
 }
 
-.asklake-dashboard-canvas-wrap.edit .asklake-dashboard-empty-canvas {
+.asklake-dashboard-canvas-wrap.edit .asklake-dashboard-empty-canvas,
+.asklake-dashboard-empty-canvas.edit,
+.asklake-dashboard-rgl.edit {
   background-image:
     linear-gradient(to right, rgba(15, 23, 42, 0.06) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(15, 23, 42, 0.06) 1px, transparent 1px);
@@ -276,6 +315,30 @@
   align-items: stretch;
 }
 
+.asklake-dashboard-rgl-shell,
+.asklake-dashboard-rgl {
+  min-height: calc(100vh - 340px);
+  width: 100%;
+}
+
+.asklake-dashboard-rgl.edit {
+  min-height: calc(100vh - 340px);
+}
+
+.asklake-dashboard-rgl .react-grid-item {
+  min-width: 0;
+}
+
+.asklake-dashboard-rgl .react-grid-placeholder {
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.asklake-dashboard-rgl .react-resizable-handle::after {
+  border-right-color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
 .asklake-widget-frame {
   display: grid;
   min-width: 0;
@@ -285,6 +348,22 @@
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+}
+
+.asklake-widget-frame.editable {
+  height: 100%;
+  min-height: 0;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
+}
+
+.asklake-widget-frame.editable:hover {
+  border-color: #94a3b8;
+}
+
+.asklake-widget-frame.selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb, 0 14px 32px rgba(37, 99, 235, 0.1);
 }
 
 .asklake-widget-frame header {
@@ -463,6 +542,65 @@
 
 .asklake-donut-widget__legend strong {
   flex: 0 0 auto;
+}
+
+.asklake-widget-add-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.asklake-widget-add-list button,
+.asklake-inspector-danger-button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.asklake-widget-add-list button:hover {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.asklake-inspector-danger-button {
+  color: #b91c1c;
+}
+
+.asklake-inspector-danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.asklake-inspector-details {
+  display: grid;
+  width: 100%;
+  gap: 7px;
+  text-align: left;
+}
+
+.asklake-inspector-details p {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--dash-border);
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  padding-bottom: 7px;
+}
+
+.asklake-inspector-details strong {
+  color: var(--dash-text);
+  font-size: 12px;
+  text-align: right;
 }
 
 .asklake-dashboard-inspector {

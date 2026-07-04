@@ -3,6 +3,8 @@ import { URL } from "node:url";
 import {
   databaseUrl,
   createDraftDashboardPage,
+  createDraftDashboardWidget,
+  deleteDraftDashboardPage,
   ensureSchema,
   ensureDraftDashboardRuntime,
   getDataset,
@@ -324,6 +326,32 @@ async function route(request, response) {
       return;
     }
     sendJson(response, 201, page);
+    return;
+  }
+
+  const draftWidgetsMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/pages\/([^/]+)\/widgets$/);
+  if (request.method === "POST" && draftWidgetsMatch) {
+    const dashboardId = decodeURIComponent(draftWidgetsMatch[1]);
+    const pageId = decodeURIComponent(draftWidgetsMatch[2]);
+    const widget = await createDraftDashboardWidget(dashboardId, pageId, await readJson(request));
+    if (!widget) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard draft page not found");
+      return;
+    }
+    sendJson(response, 201, widget);
+    return;
+  }
+
+  const draftPageDeleteMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/pages\/([^/]+)$/);
+  if (request.method === "DELETE" && draftPageDeleteMatch) {
+    const dashboardId = decodeURIComponent(draftPageDeleteMatch[1]);
+    const pageId = decodeURIComponent(draftPageDeleteMatch[2]);
+    const result = await deleteDraftDashboardPage(dashboardId, pageId);
+    if (!result) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard draft page not found");
+      return;
+    }
+    sendJson(response, 200, result);
     return;
   }
 

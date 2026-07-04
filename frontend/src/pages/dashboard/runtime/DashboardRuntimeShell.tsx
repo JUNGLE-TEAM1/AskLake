@@ -14,8 +14,10 @@ export function DashboardRuntimeShell({
   inspector,
   mode,
   onAddPage,
+  onDeletePage,
   onOpenDraft,
   onOpenPublished,
+  onPublishDraft,
   onRefresh,
   onSelectPage,
   onShare,
@@ -28,8 +30,10 @@ export function DashboardRuntimeShell({
   inspector?: React.ReactNode;
   mode: "published" | "draft";
   onAddPage?: () => void;
+  onDeletePage?: (pageId: string) => void;
   onOpenDraft?: () => void;
   onOpenPublished?: () => void;
+  onPublishDraft?: () => void;
   onRefresh?: () => void;
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
@@ -45,6 +49,7 @@ export function DashboardRuntimeShell({
         title={title}
         onOpenDraft={onOpenDraft}
         onOpenPublished={onOpenPublished}
+        onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
         onShare={onShare}
       />
@@ -61,6 +66,7 @@ export function DashboardRuntimeShell({
           pages={pages}
           selectedPageId={selectedPageId}
           onAddPage={onAddPage}
+          onDeletePage={onDeletePage}
           onSelectPage={onSelectPage}
         />
       </div>

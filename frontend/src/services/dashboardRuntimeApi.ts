@@ -20,6 +20,19 @@ export function createDraftPage(dashboardId: string, input: { title: string }) {
   );
 }
 
+export function createDraftWidget(dashboardId: string, pageId: string, input: CreateDraftWidgetInput) {
+  return apiClient.post<{ id: string }>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}/widgets`,
+    input,
+  );
+}
+
+export function deleteDraftPage(dashboardId: string, pageId: string) {
+  return apiClient.delete<{ ok: true }>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}`,
+  );
+}
+
 export function saveDraftLayouts(
   dashboardId: string,
   input: {

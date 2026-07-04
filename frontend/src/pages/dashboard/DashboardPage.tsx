@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
   Maximize2,
@@ -9,6 +10,7 @@ import {
   Table2,
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
+import { DashboardCanvas } from "./runtime/DashboardCanvas";
 import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
 import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import { WidgetFrame } from "./runtime/WidgetFrame";
@@ -29,9 +31,17 @@ import {
   normalizeSavedDashboardCard,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
-import { getPublishedDashboard } from "../../services/dashboardRuntimeApi";
+import {
+  createDraftPage,
+  createDraftWidget,
+  deleteDraftPage,
+  ensureDraftDashboard,
+  getPublishedDashboard,
+  publishDashboard as publishRuntimeDashboard,
+  saveDraftLayouts,
+} from "../../services/dashboardRuntimeApi";
 import { saveDashboardCard } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
 const defaultRuntimePages = [
@@ -43,6 +53,24 @@ type RuntimePage = {
   id: string;
   title: string;
 };
+
+const draftWidgetLabels: Record<DashboardRuntimeWidgetType, string> = {
+  bar_chart: "막대 차트",
+  donut_chart: "도넛 차트",
+  line_chart: "라인 차트",
+  metric: "지표",
+  table: "테이블",
+};
+
+const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
+  bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
+  donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
+  line_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
+  metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
+  table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
+};
+
+const draftWidgetPalette: DashboardRuntimeWidgetType[] = ["metric", "bar_chart", "line_chart", "donut_chart", "table"];
 
 export function DashboardPage({
   dataset,
@@ -72,7 +100,10 @@ export function DashboardPage({
   const [publishedRuntime, setPublishedRuntime] = useState<DashboardRuntimeResponse | null>(null);
   const [runtimeLoading, setRuntimeLoading] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
-  const [runtimePagesByDashboardId, setRuntimePagesByDashboardId] = useState<Record<string, RuntimePage[]>>({});
+  const [draftRuntime, setDraftRuntime] = useState<DashboardRuntimeResponse | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
     const stored = window.localStorage.getItem("asklake.dashboardCards");
@@ -139,13 +170,17 @@ export function DashboardPage({
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
     ? publishedRuntime?.dashboard.title ?? runtimeDashboard?.name ?? runtimeSelection.dashboardId
-    : runtimeDashboard?.name ?? runtimeSelection.dashboardId;
+    : draftRuntime?.dashboard.title ?? runtimeDashboard?.name ?? runtimeSelection.dashboardId;
   const runtimePages = runtimeSelection.mode === "published"
     ? (publishedRuntime?.pages ?? [])
-    : runtimePagesByDashboardId[runtimeSelection.dashboardId] ?? defaultRuntimePages;
+    : (draftRuntime?.pages ?? []);
   const runtimeHasPublishedRevision = runtimeSelection.mode === "published"
     ? publishedRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published"
-    : runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published";
+    : draftRuntime?.dashboard.hasPublishedRevision ?? runtimeDashboard?.hasPublishedRevision ?? runtimeDashboard?.status === "published";
+  const selectedDraftWidgets = runtimeSelection.mode === "draft" && selectedRuntimePageId
+    ? draftRuntime?.widgetsByPageId[selectedRuntimePageId] ?? []
+    : [];
+  const selectedDraftWidget = selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null;
 
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
@@ -172,6 +207,21 @@ export function DashboardPage({
       setRuntimeError(error instanceof Error ? error.message : "Failed to load the published dashboard.");
     } finally {
       setRuntimeLoading(false);
+    }
+  };
+
+  const loadDraftRuntime = async (nextDashboardId: string) => {
+    setDraftLoading(true);
+    setDraftError(null);
+    try {
+      const runtime = await ensureDraftDashboard(nextDashboardId);
+      setDraftRuntime(runtime);
+      selectRuntimePageFromResponse(runtime);
+    } catch (error) {
+      setDraftRuntime(null);
+      setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
+    } finally {
+      setDraftLoading(false);
     }
   };
 
@@ -202,11 +252,25 @@ export function DashboardPage({
   }, [runtimeSelection.dashboardId, runtimeSelection.mode, view]);
 
   useEffect(() => {
+    if (view !== "runtime" || runtimeSelection.mode !== "draft") {
+      setDraftError(null);
+      setDraftLoading(false);
+      return;
+    }
+
+    void loadDraftRuntime(runtimeSelection.dashboardId);
+  }, [runtimeSelection.dashboardId, runtimeSelection.mode, view]);
+
+  useEffect(() => {
     if (view !== "runtime") return;
     if (!runtimePages.some((page) => page.id === selectedRuntimePageId)) {
       setSelectedRuntimePageId(runtimePages[0]?.id ?? null);
     }
   }, [runtimePages, selectedRuntimePageId, view]);
+
+  useEffect(() => {
+    setSelectedWidgetId(null);
+  }, [selectedRuntimePageId]);
 
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
@@ -305,22 +369,38 @@ export function DashboardPage({
     onAction("dashboard.shared", "/api/dashboards/share", dataset.id);
   };
 
-  const addRuntimePage = () => {
-    const nextPage = {
-      id: `page-${Date.now()}`,
-      title: "제목 없는 페이지",
-    };
-    setRuntimePagesByDashboardId((pagesByDashboardId) => ({
-      ...pagesByDashboardId,
-      [runtimeSelection.dashboardId]: [...runtimePages, nextPage],
-    }));
-    setSelectedRuntimePageId(nextPage.id);
-    onAction("dashboard.page.local_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
+  const addRuntimePage = async () => {
+    if (runtimeSelection.mode !== "draft") return;
+    try {
+      const page = await createDraftPage(runtimeSelection.dashboardId, { title: "제목 없는 페이지" });
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setSelectedRuntimePageId(page.id);
+      onAction("dashboard.page.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Failed to create a draft page.");
+    }
+  };
+
+  const deleteRuntimePage = async (pageId: string) => {
+    if (runtimeSelection.mode !== "draft") return;
+    try {
+      await deleteDraftPage(runtimeSelection.dashboardId, pageId);
+      if (selectedRuntimePageId === pageId) {
+        setSelectedRuntimePageId(null);
+      }
+      setSelectedWidgetId(null);
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      onAction("dashboard.page.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${pageId}`, runtimeSelection.dashboardId);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Failed to delete a draft page.");
+    }
   };
 
   const refreshRuntimeDashboard = () => {
     if (runtimeSelection.mode === "published") {
       void loadPublishedRuntime(runtimeSelection.dashboardId);
+    } else {
+      void loadDraftRuntime(runtimeSelection.dashboardId);
     }
     onAction("dashboard.runtime.refreshed", `/api/dashboards/${runtimeSelection.dashboardId}`, runtimeSelection.dashboardId);
   };
@@ -329,6 +409,85 @@ export function DashboardPage({
     const path = runtimeSelection.mode === "draft" ? `/dashboards/${runtimeSelection.dashboardId}/edit` : `/dashboards/${runtimeSelection.dashboardId}`;
     void navigator.clipboard?.writeText(`${window.location.origin}${path}`);
     onAction("dashboard.runtime.shared", path, runtimeSelection.dashboardId);
+  };
+
+  const publishDraftRuntime = async () => {
+    if (runtimeSelection.mode !== "draft") return;
+    try {
+      await publishRuntimeDashboard(runtimeSelection.dashboardId);
+      onAction("dashboard.runtime.published", `/api/dashboards/${runtimeSelection.dashboardId}/publish`, runtimeSelection.dashboardId);
+      openRuntimeDashboard(runtimeSelection.dashboardId, "published");
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Failed to publish the draft dashboard.");
+    }
+  };
+
+  const addDraftWidget = async (type: DashboardRuntimeWidgetType) => {
+    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId) return;
+    const nextY = selectedDraftWidgets.reduce((bottom, widget) => Math.max(bottom, widget.layout.y + widget.layout.h), 0);
+    const layout = {
+      ...defaultDraftWidgetLayout[type],
+      y: nextY,
+    };
+
+    try {
+      const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
+        layout,
+        title: draftWidgetLabels[type],
+        type,
+      });
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setSelectedWidgetId(widget.id);
+      onAction("dashboard.widget.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, type);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Failed to create a draft widget.");
+    }
+  };
+
+  const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
+    if (!selectedRuntimePageId) return;
+    const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
+
+    setDraftRuntime((currentRuntime) => {
+      if (!currentRuntime) return currentRuntime;
+      const widgets = currentRuntime.widgetsByPageId[selectedRuntimePageId] ?? [];
+      return {
+        ...currentRuntime,
+        widgetsByPageId: {
+          ...currentRuntime.widgetsByPageId,
+          [selectedRuntimePageId]: widgets.map((widget) => {
+            const nextLayout = layoutByWidgetId.get(widget.id);
+            if (!nextLayout) return widget;
+            return {
+              ...widget,
+              layout: {
+                ...widget.layout,
+                h: nextLayout.h,
+                minH: widget.layout.minH,
+                minW: widget.layout.minW,
+                w: nextLayout.w,
+                x: nextLayout.x,
+                y: nextLayout.y,
+              },
+            };
+          }),
+        },
+      };
+    });
+
+    void saveDraftLayouts(runtimeSelection.dashboardId, {
+      layouts: layout.map((item) => ({
+        h: item.h,
+        w: item.w,
+        widgetId: item.i,
+        x: item.x,
+        y: item.y,
+      })),
+      pageId: selectedRuntimePageId,
+    }).catch((error) => {
+      setDraftError(error instanceof Error ? error.message : "Failed to save widget layout.");
+    });
+    onAction("dashboard.layout.saved", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId);
   };
 
   const exportDashboard = () => {
@@ -467,10 +626,47 @@ export function DashboardPage({
         다시 시도
       </button>
     );
+    const draftRetryAction = (
+      <button className="asklake-dashboard-empty-action" type="button" onClick={() => void loadDraftRuntime(runtimeSelection.dashboardId)}>
+        다시 시도
+      </button>
+    );
     const runtimeCanvas = isDraftMode ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas editable />
-      </div>
+      draftLoading ? (
+        <div className="asklake-dashboard-empty-canvas edit">
+          <EmptyDashboardCanvas
+            editable
+            title="초안 대시보드를 불러오는 중입니다"
+            description="초안 revision, 페이지, 위젯 레이아웃을 준비하고 있습니다."
+          />
+        </div>
+      ) : draftError ? (
+        <div className="asklake-dashboard-empty-canvas edit">
+          <EmptyDashboardCanvas
+            action={draftRetryAction}
+            editable
+            title="초안 대시보드를 불러오지 못했습니다"
+            description={draftError}
+          />
+        </div>
+      ) : !draftRuntime?.revision ? (
+        <div className="asklake-dashboard-empty-canvas edit">
+          <EmptyDashboardCanvas
+            action={draftRetryAction}
+            editable
+            title="초안 revision이 없습니다"
+            description="새로고침으로 초안 revision을 다시 생성해 보세요."
+          />
+        </div>
+      ) : (
+        <DashboardCanvas
+          editable
+          selectedWidgetId={selectedWidgetId}
+          widgets={selectedDraftWidgets}
+          onLayoutCommit={updateDraftWidgetLayouts}
+          onSelectWidget={setSelectedWidgetId}
+        />
+      )
     ) : runtimeLoading ? (
       <div className="asklake-dashboard-empty-canvas">
         <EmptyDashboardCanvas
@@ -528,8 +724,40 @@ export function DashboardPage({
           inspector={isDraftMode ? (
             <aside className="asklake-dashboard-inspector">
               <section>
-                <strong>구성할 위젯을 선택합니다</strong>
-                <span>Phase 04에서 위젯 선택, 설정, 삭제 컨트롤이 이 영역에 연결됩니다.</span>
+                <strong>위젯 추가</strong>
+                <span>선택한 페이지에 기본 위젯을 추가합니다.</span>
+                <div className="asklake-widget-add-list">
+                  {draftWidgetPalette.map((type) => (
+                    <button
+                      disabled={!selectedRuntimePageId || draftLoading}
+                      key={type}
+                      type="button"
+                      onClick={() => void addDraftWidget(type)}
+                    >
+                      + {draftWidgetLabels[type]}
+                    </button>
+                  ))}
+                </div>
+              </section>
+              <section>
+                {selectedDraftWidget ? (
+                  <>
+                    <strong>{selectedDraftWidget.title || "제목 없는 위젯"}</strong>
+                    <div className="asklake-inspector-details">
+                      <p><span>유형</span><strong>{draftWidgetLabels[selectedDraftWidget.type]}</strong></p>
+                      <p><span>x / y</span><strong>{selectedDraftWidget.layout.x} / {selectedDraftWidget.layout.y}</strong></p>
+                      <p><span>w / h</span><strong>{selectedDraftWidget.layout.w} / {selectedDraftWidget.layout.h}</strong></p>
+                    </div>
+                    <button className="asklake-inspector-danger-button" type="button" disabled>
+                      삭제 준비 중
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <strong>구성할 위젯을 선택하세요</strong>
+                    <span>캔버스의 위젯을 클릭하면 위치와 크기 정보가 표시됩니다.</span>
+                  </>
+                )}
               </section>
             </aside>
           ) : undefined}
@@ -538,8 +766,10 @@ export function DashboardPage({
           selectedPageId={selectedRuntimePageId}
           title={runtimeTitle}
           onAddPage={addRuntimePage}
+          onDeletePage={deleteRuntimePage}
           onOpenDraft={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}
           onOpenPublished={() => openRuntimeDashboard(runtimeSelection.dashboardId, "published")}
+          onPublishDraft={publishDraftRuntime}
           onRefresh={refreshRuntimeDashboard}
           onSelectPage={setSelectedRuntimePageId}
           onShare={shareRuntimeDashboard}

@@ -11,6 +11,7 @@ npm run dev
 ```
 
 기본 dev server는 Vite 설정을 따른다.
+Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
 
 ## 2) 빌드
 

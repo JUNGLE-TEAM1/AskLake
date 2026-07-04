@@ -67,6 +67,8 @@ Canonical status values:
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 dashboard runtime 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft revision에 page 추가 |
+| `DELETE` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page와 하위 widgets 삭제 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` | draft page에 widget 추가 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
@@ -127,6 +129,8 @@ type DashboardRuntimeResponse = {
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 응답한다.
 `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent하며 draft가 없으면 published snapshot 또는 빈 revision과 기본 page를 만든다.
+`DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`는 page와 해당 page의 widgets를 함께 삭제한다.
+`POST /api/dashboards/{dashboardId}/publish`는 현재 draft revision을 새 published revision으로 복사하므로, draft editor에서 추가/삭제한 pages는 publish 후 published viewer에서 보인다.
 
 Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.

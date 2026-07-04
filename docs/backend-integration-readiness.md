@@ -94,8 +94,9 @@ VITE_USE_MOCK_API=false
 | 게시 대시보드 상세 | `GET /api/dashboards/{dashboardId}/published` |
 | 초안 편집 상세 | `POST /api/dashboards/{dashboardId}/draft/ensure` |
 | 페이지 추가 | `POST /api/dashboards/{dashboardId}/draft/pages` |
+| 페이지 삭제 | `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}` |
+| 위젯 추가 | `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` |
 | 레이아웃 저장 | `PATCH /api/dashboards/{dashboardId}/draft/layouts` |
-| 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
 | 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 | 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 
@@ -161,14 +162,15 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | 위젯 타입 선택 | 프론트 상태 변경 | 없음 |
-| 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
+| 위젯 추가 | draft canvas에 추가 | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
-| Draft 조회/생성 | local builder state | `POST /api/dashboards/{id}/draft/ensure` |
-| Page 추가 | local tab state | `POST /api/dashboards/{id}/draft/pages` |
-| Layout 저장 | local canvas state | `PATCH /api/dashboards/{id}/draft/layouts` |
+| Draft 조회/생성 | DB-backed draft runtime | `POST /api/dashboards/{id}/draft/ensure` |
+| Page 추가 | DB-backed draft page | `POST /api/dashboards/{id}/draft/pages` |
+| Page 삭제 | DB-backed draft page 삭제 | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
+| Layout 저장 | DB-backed widget layout 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | 저장 | localStorage snapshot과 감사 로그 기록 | draft revision page/widget/layout API 또는 `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
-| Published 조회 | local published snapshot | `GET /api/dashboards/{id}/published` |
+| Published 조회 | DB-backed published revision snapshot | `GET /api/dashboards/{id}/published` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
@@ -203,8 +205,10 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 3. `GET /api/dashboards/{dashboardId}/published`
 4. `POST /api/dashboards/{dashboardId}/draft/ensure`
 5. `POST /api/dashboards/{dashboardId}/draft/pages`
-6. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
-7. `POST /api/dashboards/{dashboardId}/publish`
+6. `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+7. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+8. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+9. `POST /api/dashboards/{dashboardId}/publish`
 
 ## 7. 프론트에서 다음에 할 작업
 

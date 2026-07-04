@@ -31,6 +31,7 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
+| Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor drag/resize canvas |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
@@ -132,8 +133,12 @@ Dashboard runtime API:
 - `GET /api/dashboards/{dashboardId}/published`
 - `POST /api/dashboards/{dashboardId}/draft/ensure`
 - `POST /api/dashboards/{dashboardId}/draft/pages`
+- `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+- `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
+
+Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제와 widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
 
 ## 8) 설계 원칙
 

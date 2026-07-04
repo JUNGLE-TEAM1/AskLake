@@ -14,16 +14,35 @@ function clampSpan(value: number | undefined, fallback: number) {
   return Math.min(12, Math.max(1, Math.round(value ?? fallback)));
 }
 
-export function WidgetFrame({ widget }: { widget: DashboardRuntimeWidget }) {
+function cx(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
+}
+
+export function WidgetFrame({
+  editable = false,
+  onSelect,
+  selected = false,
+  widget,
+}: {
+  editable?: boolean;
+  onSelect?: (widgetId: string) => void;
+  selected?: boolean;
+  widget: DashboardRuntimeWidget;
+}) {
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
 
   return (
     <article
-      className="asklake-widget-frame"
+      className={cx("asklake-widget-frame", editable && "editable", selected && "selected")}
       style={{
-        gridColumn: `span ${columnSpan}`,
-        minHeight: `${Math.max(160, rowSpan * 56)}px`,
+        gridColumn: editable ? undefined : `span ${columnSpan}`,
+        minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
+      }}
+      onClick={(event) => {
+        if (!editable) return;
+        event.stopPropagation();
+        onSelect?.(widget.id);
       }}
     >
       <header>

@@ -612,6 +612,61 @@ export async function createDraftDashboardPage(dashboardId, { title = "제목 �
   };
 }
 
+export async function createDraftDashboardWidget(dashboardId, pageId, input = {}) {
+  const draftPayload = await ensureDraftDashboardRuntime(dashboardId);
+  if (!draftPayload?.revision || !pageId) return null;
+
+  const pageResult = await pool.query(
+    "SELECT id FROM dashboard_pages WHERE id = $1 AND revision_id = $2",
+    [pageId, draftPayload.revision.id],
+  );
+  if (!pageResult.rows[0]) return null;
+
+  const type = normalizeRuntimeWidgetType(input.type);
+  const fallbackLayout = defaultLayoutByType[type] ?? defaultLayoutByType.table;
+  const layout = normalizeLayout(input.layout ?? fallbackLayout);
+  const widget = await createWidget({
+    pageId,
+    type,
+    title: input.title ?? null,
+    layout,
+    config: input.config ?? {},
+    data: Array.isArray(input.data) ? input.data : [],
+    queryId: input.queryId ?? null,
+    datasetId: input.datasetId ?? null,
+  });
+
+  return {
+    id: widget.id,
+  };
+}
+
+export async function deleteDraftDashboardPage(dashboardId, pageId) {
+  const draftRevision = await getLatestRevision(dashboardId, "draft");
+  if (!draftRevision || !pageId) return null;
+
+  const deleteResult = await pool.query(
+    `
+      DELETE FROM dashboard_pages
+      WHERE id = $1
+        AND revision_id = $2
+      RETURNING id
+    `,
+    [pageId, draftRevision.id],
+  );
+  if (!deleteResult.rows[0]) return null;
+
+  const remainingPages = await pool.query(
+    "SELECT id FROM dashboard_pages WHERE revision_id = $1 ORDER BY order_index ASC, created_at ASC",
+    [draftRevision.id],
+  );
+  for (const [index, page] of remainingPages.rows.entries()) {
+    await pool.query("UPDATE dashboard_pages SET order_index = $1 WHERE id = $2", [index, page.id]);
+  }
+
+  return { ok: true };
+}
+
 export async function saveDraftDashboardLayouts(dashboardId, { pageId, layouts = [] } = {}) {
   const draftRevision = await getLatestRevision(dashboardId, "draft");
   if (!draftRevision || !pageId || !Array.isArray(layouts)) return null;

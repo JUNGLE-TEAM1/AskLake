@@ -1,10 +1,11 @@
-import { Eye, Pencil, RefreshCw, Share2 } from "lucide-react";
+import { Eye, Pencil, RefreshCw, Send, Share2 } from "lucide-react";
 
 export function DashboardTopBar({
   hasPublishedRevision,
   mode,
   onOpenDraft,
   onOpenPublished,
+  onPublishDraft,
   onRefresh,
   onShare,
   title,
@@ -13,6 +14,7 @@ export function DashboardTopBar({
   mode: "published" | "draft";
   onOpenDraft?: () => void;
   onOpenPublished?: () => void;
+  onPublishDraft?: () => void;
   onRefresh?: () => void;
   onShare?: () => void;
   title: string;
@@ -30,12 +32,18 @@ export function DashboardTopBar({
             초안 편집
           </button>
         ) : (
-          hasPublishedRevision && (
-            <button className="asklake-dashboard-action" type="button" onClick={onOpenPublished}>
-              <Eye size={16} />
-              게시된 내용 보기
+          <>
+            <button className="asklake-dashboard-action primary" type="button" onClick={onPublishDraft}>
+              <Send size={16} />
+              게시
             </button>
-          )
+            {hasPublishedRevision && (
+              <button className="asklake-dashboard-action" type="button" onClick={onOpenPublished}>
+                <Eye size={16} />
+                게시된 내용 보기
+              </button>
+            )}
+          </>
         )}
         <button className="asklake-dashboard-icon-action" type="button" aria-label="대시보드 새로고침" onClick={onRefresh}>
           <RefreshCw size={17} />
