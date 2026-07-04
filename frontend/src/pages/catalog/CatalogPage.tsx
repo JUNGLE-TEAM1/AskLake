@@ -134,7 +134,7 @@ export function CatalogPage({
       const matchesTag = !activeTag || dataset.tags.includes(activeTag);
       const matchesFilters = datasetMatchesFilters(dataset, filterState);
 
-      return isPinned || (matchesSearch && matchesTag && matchesFilters);
+      return (isPinned || matchesSearch) && matchesTag && matchesFilters;
     })
     .sort((left, right) => {
       const leftPinnedIndex = pinnedDatasetIds.indexOf(left.dataset.id);
