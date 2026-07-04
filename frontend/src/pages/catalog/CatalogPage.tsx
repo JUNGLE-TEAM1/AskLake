@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
@@ -32,6 +32,7 @@ import {
   SlidersHorizontal,
   Table2,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
@@ -64,10 +65,50 @@ const lineageNodeTypes = {
   lineageTable: LineageTableNode,
 };
 
+type CatalogFilterState = {
+  approvalRequired: boolean;
+  available: boolean;
+  rag: boolean;
+};
+
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
 const lineageColumnRowHeight = 32;
 const lineageGroupGap = 44;
+
+function normalizeCatalogText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function datasetMatchesSearch(dataset: CatalogDataset, normalizedQuery: string) {
+  if (!normalizedQuery) return true;
+
+  const searchableText = [
+    dataset.name,
+    dataset.description,
+    dataset.source,
+    dataset.owner,
+    dataset.layer,
+    dataset.status,
+    dataset.freshness,
+    ...dataset.tags,
+    ...dataset.upstream,
+    ...dataset.downstream,
+    ...dataset.schema.flatMap(([name, type]) => [name, type]),
+  ].map(normalizeCatalogText).join(" ");
+
+  return searchableText.includes(normalizedQuery);
+}
+
+function datasetMatchesFilters(dataset: CatalogDataset, filters: CatalogFilterState) {
+  const statusFilterActive = filters.available || filters.approvalRequired;
+  const matchesStatus = !statusFilterActive
+    || (filters.available && dataset.status === "available")
+    || (filters.approvalRequired && dataset.status === "approval_required");
+  const matchesRag = !filters.rag || dataset.rag;
+
+  return matchesStatus && matchesRag;
+}
 
 export function CatalogPage({
   datasets,
@@ -84,12 +125,69 @@ export function CatalogPage({
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
+  const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [searchText, setSearchText] = useState("");
   const tags = ["#customer", "#sales", "#behavior", "#marketing", "#dw", "#growth", "#클릭", "#실시간", "#고객 주문", "#스트림", "#RAG", "#사용자 지표"];
+  const normalizedSearchText = useMemo(() => normalizeCatalogText(searchText), [searchText]);
+  const filteredDatasets = useMemo(() => datasets
+    .map((dataset, index) => ({ dataset, index }))
+    .filter(({ dataset }) => {
+      const isPinned = pinnedDatasetIds.includes(dataset.id);
+      const matchesSearch = datasetMatchesSearch(dataset, normalizedSearchText);
+      const matchesTag = !activeTag || dataset.tags.includes(activeTag);
+      const matchesFilters = datasetMatchesFilters(dataset, filterState);
+
+      return (isPinned || matchesSearch) && matchesTag && matchesFilters;
+    })
+    .sort((left, right) => {
+      const leftPinnedIndex = pinnedDatasetIds.indexOf(left.dataset.id);
+      const rightPinnedIndex = pinnedDatasetIds.indexOf(right.dataset.id);
+      const leftPinned = leftPinnedIndex !== -1;
+      const rightPinned = rightPinnedIndex !== -1;
+
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+      if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
+      return left.index - right.index;
+    })
+    .map(({ dataset }) => dataset), [activeTag, datasets, filterState, normalizedSearchText, pinnedDatasetIds]);
+  const hasCatalogResults = filteredDatasets.length > 0;
+  const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
 
   useEffect(() => {
-    const nextPreview = datasets.find((dataset) => dataset.id === selectedDataset.id) ?? datasets[0];
-    setPreviewDataset(nextPreview);
-  }, [datasets, selectedDataset.id]);
+    if (!hasCatalogResults) return;
+
+    const selectedInResults = filteredDatasets.find((dataset) => dataset.id === selectedDataset.id);
+    const previewInResults = filteredDatasets.find((dataset) => dataset.id === previewDataset.id);
+    const nextPreview = previewInResults ?? selectedInResults ?? filteredDatasets[0];
+
+    if (nextPreview.id !== previewDataset.id) {
+      setPreviewDataset(nextPreview);
+    }
+  }, [filteredDatasets, hasCatalogResults, previewDataset.id, selectedDataset.id]);
+
+  const handleSearchSubmit = () => {
+    const query = searchText.trim();
+    onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
+  };
+
+  const toggleTag = (tag: string) => {
+    const nextTag = activeTag === tag ? null : tag;
+    setActiveTag(nextTag);
+    onAction("catalog.tag_filter_selected", nextTag ? `/api/catalog/datasets?tag=${encodeURIComponent(nextTag)}` : "/api/catalog/datasets", tag);
+  };
+
+  const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
+    setFilterState((filters) => ({ ...filters, [filterName]: checked }));
+    onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  };
+
+  const togglePinnedDataset = () => {
+    const nextPinned = !isPreviewPinned;
+    setPinnedDatasetIds((ids) => nextPinned ? [previewDataset.id, ...ids.filter((id) => id !== previewDataset.id)] : ids.filter((id) => id !== previewDataset.id));
+    onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", `/api/catalog/datasets/${previewDataset.id}/pin`, previewDataset.id);
+  };
 
   return (
     <div className="catalog-page">
@@ -98,13 +196,44 @@ export function CatalogPage({
         <section className="catalog-search-panel">
           <div className="catalog-search-box">
             <Search size={18} />
-            <span>테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요...</span>
-            <kbd>Enter</kbd>
+            <input
+              aria-label="카탈로그 검색"
+              onChange={(event) => setSearchText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  handleSearchSubmit();
+                }
+              }}
+              placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
+              type="search"
+              value={searchText}
+            />
+            {searchText && (
+              <button
+                aria-label="검색어 지우기"
+                className="catalog-search-clear"
+                title="검색어 지우기"
+                type="button"
+                onClick={() => setSearchText("")}
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
           <div className="catalog-tag-row">
             <span>태그</span>
             <div>
-              {tags.map((tag) => <button className="catalog-tag" key={tag} type="button" onClick={() => onAction("catalog.tag_filter_selected", `/api/catalog/search?tag=${encodeURIComponent(tag)}`, tag)}>{tag}</button>)}
+              {tags.map((tag) => (
+                <button
+                  aria-pressed={activeTag === tag}
+                  className={activeTag === tag ? "catalog-tag active" : "catalog-tag"}
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                >
+                  {tag}
+                </button>
+              ))}
             </div>
           </div>
         </section>
@@ -113,21 +242,27 @@ export function CatalogPage({
           <div className="catalog-results-header">
             <div>
               <h2>검색 결과</h2>
-              <span>{datasets.length}건</span>
+              <span>{filteredDatasets.length}건</span>
             </div>
             <div className="catalog-filter-row">
-              {["사용 가능", "승인 필요", "RAG 여부"].map((filter) => (
-                <label key={filter}>
-                  <input type="checkbox" />
-                  {filter}
-                </label>
-              ))}
+              <label>
+                <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
+                사용 가능
+              </label>
+              <label>
+                <input checked={filterState.approvalRequired} type="checkbox" onChange={(event) => updateFilter("approvalRequired", event.target.checked)} />
+                승인 필요
+              </label>
+              <label>
+                <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
+                RAG 여부
+              </label>
               <button type="button" onClick={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>정렬 기준 ▾</button>
             </div>
           </div>
 
           <div className="catalog-result-list">
-            {datasets.map((dataset) => (
+            {filteredDatasets.map((dataset) => (
               <button
                 className={dataset.id === previewDataset.id ? "catalog-result-card active" : "catalog-result-card"}
                 key={dataset.id}
@@ -146,73 +281,95 @@ export function CatalogPage({
                 </div>
               </button>
             ))}
+            {!hasCatalogResults && (
+              <div className="catalog-empty-state">
+                <strong>검색 결과가 없습니다.</strong>
+                <span>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</span>
+              </div>
+            )}
           </div>
         </section>
       </div>
 
-      <aside className="catalog-preview-panel">
-        <div className="catalog-preview-title">
-          <LayoutGrid size={20} />
-          <div>
-            <h2>{previewDataset.name}</h2>
-            <p>{previewDataset.description}</p>
+      {hasCatalogResults ? (
+        <aside className="catalog-preview-panel">
+          <div className="catalog-preview-title">
+            <LayoutGrid size={20} />
+            <div>
+              <h2>{previewDataset.name}</h2>
+              <p>{previewDataset.description}</p>
+            </div>
+            <button
+              aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+              aria-pressed={isPreviewPinned}
+              className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
+              title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+              type="button"
+              onClick={togglePinnedDataset}
+            >
+              <Star size={18} />
+            </button>
           </div>
-          <Star size={18} />
-        </div>
 
-        <div className="catalog-preview-metrics">
-          <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-          <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-          <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-          <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-          <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-          <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-        </div>
-
-        <article className="catalog-preview-card">
-          <div className="catalog-preview-card-header">
-            <TerminalSquare size={16} />
-            <h3>스키마 미리보기</h3>
-            <span>{previewDataset.schema.length} 컬럼</span>
+          <div className="catalog-preview-metrics">
+            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
           </div>
-          <table className="catalog-schema-preview">
-            <thead>
-              <tr><th>Column Name</th><th>Type</th></tr>
-            </thead>
-            <tbody>
-              {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
-            </tbody>
-          </table>
-          <button className="catalog-text-button" type="button" onClick={() => {
-            onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
-            setActiveModal("schema");
-          }}>전체 스키마 상세 보기</button>
-        </article>
 
-        <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
-          onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-          setActiveModal("lineage");
-        }} onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
+          <article className="catalog-preview-card">
+            <div className="catalog-preview-card-header">
+              <TerminalSquare size={16} />
+              <h3>스키마 미리보기</h3>
+              <span>{previewDataset.schema.length} 컬럼</span>
+            </div>
+            <table className="catalog-schema-preview">
+              <thead>
+                <tr><th>Column Name</th><th>Type</th></tr>
+              </thead>
+              <tbody>
+                {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
+              </tbody>
+            </table>
+            <button className="catalog-text-button" type="button" onClick={() => {
+              onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
+              setActiveModal("schema");
+            }}>전체 스키마 상세 보기</button>
+          </article>
+
+          <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
             onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
             setActiveModal("lineage");
-          }
-        }}>
-          <ExternalLink size={16} />
-          <div>
-            <strong>데이터 흐름도 확인</strong>
-            <span>Upstream {previewDataset.upstream.length} / Downstream {previewDataset.downstream.length}</span>
-          </div>
-          <span>›</span>
-        </article>
+          }} onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
+              setActiveModal("lineage");
+            }
+          }}>
+            <ExternalLink size={16} />
+            <div>
+              <strong>데이터 흐름도 확인</strong>
+              <span>Upstream {previewDataset.upstream.length} / Downstream {previewDataset.downstream.length}</span>
+            </div>
+            <span>›</span>
+          </article>
 
-        <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
-          <ExternalLink size={16} /> 쿼리 편집기에서 열기
-        </button>
-        <button className="secondary-button catalog-wide-button" type="button" onClick={() => onAction("catalog.dataset.saved", `/api/catalog/datasets/${previewDataset.id}/saved`, previewDataset.id)}>내 저장소 보관</button>
-        <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
-      </aside>
+          <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
+            <ExternalLink size={16} /> 쿼리 편집기에서 열기
+          </button>
+          <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
+        </aside>
+      ) : (
+        <aside className="catalog-preview-panel catalog-preview-panel-empty">
+          <LayoutGrid size={22} />
+          <strong>선택할 데이터셋이 없습니다.</strong>
+          <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
+        </aside>
+      )}
       {activeModal && (
         <CatalogModal
           dataset={previewDataset}
