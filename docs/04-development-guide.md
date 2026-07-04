@@ -145,3 +145,9 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - 개발 명령/검증/브랜치 규칙 변경: 이 문서
 - CI/ruleset/platform guardrail 변경: `docs/system-guardrails.md`
 - GitHub PR/Issue 템플릿 변경: 이 문서와 `docs/system-guardrails.md`
+
+## 12) Local Codex Workflow Overrides
+
+`AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
+
+This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.
