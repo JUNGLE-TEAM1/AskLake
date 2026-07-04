@@ -6,6 +6,23 @@ import type { DashboardRuntimeWidget } from "../../../types";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
 
+const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
+
+function scaleLayout(layout: LayoutItem[], cols: number) {
+  return layout.map((item) => {
+    const minW = Math.min(cols, item.minW ?? 1);
+    const scaledWidth = Math.max(minW, Math.round((item.w / 12) * cols));
+    const w = Math.min(cols, scaledWidth);
+    const x = Math.min(Math.max(0, Math.round((item.x / 12) * cols)), Math.max(0, cols - w));
+    return {
+      ...item,
+      minW,
+      w,
+      x,
+    };
+  });
+}
+
 export function DashboardCanvas({
   editable,
   onLayoutCommit,
@@ -36,6 +53,16 @@ export function DashboardCanvas({
       })) satisfies Layout,
     [editable, widgets],
   );
+  const responsiveLayouts = useMemo(
+    () => ({
+      lg: layout,
+      md: layout,
+      sm: scaleLayout([...layout], breakpointCols.sm),
+      xs: scaleLayout([...layout], breakpointCols.xs),
+      xxs: scaleLayout([...layout], breakpointCols.xxs),
+    }),
+    [layout],
+  );
 
   if (widgets.length === 0) {
     return (
@@ -52,11 +79,11 @@ export function DashboardCanvas({
           key={editable ? "draft" : "published"}
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
-          cols={{ lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 }}
+          cols={breakpointCols}
           compactor={noCompactor}
           containerPadding={[0, 0]}
           dragConfig={{ enabled: editable, threshold: 3 }}
-          layouts={{ lg: layout }}
+          layouts={responsiveLayouts}
           margin={[12, 12]}
           resizeConfig={{ enabled: editable, handles: ["se"] }}
           rowHeight={48}

@@ -181,6 +181,16 @@ export function DashboardPage({
     ? draftRuntime?.widgetsByPageId[selectedRuntimePageId] ?? []
     : [];
   const selectedDraftWidget = selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null;
+  const selectedDraftWidgetConfigRows = selectedDraftWidget
+    ? ["xKey", "yKey", "valueKey", "labelKey", "columns"]
+      .map((key) => {
+        const value = selectedDraftWidget.config[key];
+        if (Array.isArray(value)) return [key, value.join(", ")] as const;
+        if (value === null || value === undefined || value === "") return null;
+        return [key, String(value)] as const;
+      })
+      .filter((row): row is readonly [string, string] => Boolean(row))
+    : [];
 
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
@@ -747,6 +757,10 @@ export function DashboardPage({
                       <p><span>유형</span><strong>{draftWidgetLabels[selectedDraftWidget.type]}</strong></p>
                       <p><span>x / y</span><strong>{selectedDraftWidget.layout.x} / {selectedDraftWidget.layout.y}</strong></p>
                       <p><span>w / h</span><strong>{selectedDraftWidget.layout.w} / {selectedDraftWidget.layout.h}</strong></p>
+                      <p><span>data rows</span><strong>{selectedDraftWidget.data.length}</strong></p>
+                      {selectedDraftWidgetConfigRows.map(([key, value]) => (
+                        <p key={key}><span>{key}</span><strong>{value}</strong></p>
+                      ))}
                     </div>
                     <button className="asklake-inspector-danger-button" type="button" disabled>
                       삭제 준비 중
