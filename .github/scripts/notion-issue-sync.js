@@ -56,7 +56,10 @@ module.exports = async function sync({ github, context, core }) {
   }
 
   const eventIssue = issueFromSyncableIssueEvent(context, config);
-  if (eventIssue && !projectIssues.some((issue) => issue.issueUrl === eventIssue.issueUrl)) {
+  const existingEventProjectIssue = eventIssue
+    ? projectIssues.find((issue) => issue.issueUrl === eventIssue.issueUrl)
+    : null;
+  if (eventIssue && !existingEventProjectIssue) {
     const result = await syncMissingProjectIssueFromEvent({
       github,
       notion,
@@ -75,8 +78,61 @@ module.exports = async function sync({ github, context, core }) {
     updatedMarkers += result.updatedMarkers;
   }
 
+  const eventPullRequest = pullRequestFromSyncableEvent(context);
+  if (eventPullRequest) {
+    const result = await syncProjectIssueFromPullRequestEvent({
+      github,
+      notion,
+      config,
+      project,
+      notionIndex,
+      seenNotionPages,
+      pullRequest: eventPullRequest,
+    });
+    eventProjectItems += result.eventProjectItems;
+    updatedGitHub += result.updatedGitHub;
+    createdNotion += result.createdNotion;
+    updatedNotion += result.updatedNotion;
+    restoredNotion += result.restoredNotion;
+    conflicts += result.conflicts;
+    updatedMarkers += result.updatedMarkers;
+  } else if (eventIssue && existingEventProjectIssue) {
+    const eventIssueWithProjectStatus = {
+      ...eventIssue,
+      projectItemId: existingEventProjectIssue.projectItemId,
+      projectStatus: existingEventProjectIssue.projectStatus,
+      projectStatusOptionId: existingEventProjectIssue.projectStatusOptionId,
+    };
+    const wanted = wantedProjectStatusDecisionForIssueEvent({ issue: eventIssueWithProjectStatus, config, project });
+    const projectIssue = await ensureProjectItem({
+      github,
+      config,
+      project,
+      issue: eventIssueWithProjectStatus,
+      wantedStatus: wanted.status,
+    });
+    if (projectIssue.projectStatusUpdated) {
+      updatedGitHub += 1;
+    }
+    const eventIssueIndex = projectIssues.findIndex((issue) => issue.issueUrl === projectIssue.issueUrl);
+    if (eventIssueIndex >= 0) {
+      projectIssues[eventIssueIndex] = projectIssue;
+    }
+    if (config.dryRun) {
+      console.log(
+        `[dry-run] issue #${eventIssue.number} targetBranch=${wanted.targetBranch || "(none)"} => wantedStatus=${wanted.status} reason="${wanted.reason}"`,
+      );
+    }
+  }
+
   for (const issue of projectIssues) {
-    const match = await findNotionMatchForIssue({ notion, config, index: notionIndex, issue });
+    let githubIssue = issueForGitHubSource(issue);
+    githubIssue = await inferProjectStatusDuringFullSync({ github, config, project, issue: githubIssue });
+    if (githubIssue.projectStatusUpdated) {
+      updatedGitHub += 1;
+    }
+
+    const match = await findNotionMatchForIssue({ notion, config, index: notionIndex, issue: githubIssue });
 
     if (match.conflictRows) {
       const rowsToMark = match.conflictRows.filter((row) => !seenNotionPages.has(row.pageId));
@@ -94,7 +150,6 @@ module.exports = async function sync({ github, context, core }) {
     }
 
     let row = match.row;
-    let githubIssue = issueForGitHubSource(issue);
 
     if (!row) {
       githubIssue = await ensureClosedProjectStatus({ github, config, project, issue: githubIssue });
@@ -312,8 +367,11 @@ function buildConfig(context) {
     githubStatusField: process.env.GITHUB_PROJECT_STATUS_FIELD || "Status",
     openedProjectStatus: process.env.GITHUB_PROJECT_OPENED_STATUS || "Backlog",
     reopenedProjectStatus: process.env.GITHUB_PROJECT_REOPENED_STATUS || "Ready",
+    readyProjectStatus: process.env.GITHUB_PROJECT_READY_STATUS || "Ready",
+    inProgressProjectStatus: process.env.GITHUB_PROJECT_IN_PROGRESS_STATUS || "In progress",
     blockedProjectStatus: process.env.GITHUB_PROJECT_BLOCKED_STATUS || "Blocked",
     reviewProjectStatus: process.env.GITHUB_PROJECT_REVIEW_STATUS || "Review",
+    previewProjectStatus: process.env.GITHUB_PROJECT_PREVIEW_STATUS || "Preview",
     fallbackStatusOptionIds: parseStatusOptionIds(process.env.GITHUB_PROJECT_STATUS_OPTION_IDS),
     projectStatusAliases: parseStatusAliases(process.env.GITHUB_PROJECT_STATUS_ALIASES),
     props: {
@@ -1077,8 +1135,13 @@ async function syncMissingProjectIssueFromEvent({ github, notion, config, projec
     conflicts: 0,
     updatedMarkers: 0,
   };
-  const wantedStatus = wantedProjectStatusForIssueEvent({ issue, config });
-  let projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus });
+  const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project });
+  let projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus: wanted.status });
+  if (config.dryRun) {
+    console.log(
+      `[dry-run] issue #${issue.number} targetBranch=${wanted.targetBranch || "(none)"} => wantedStatus=${wanted.status} reason="${wanted.reason}"`,
+    );
+  }
   result.eventProjectItems = projectIssue.wasAddedToProject ? 1 : 0;
   if (projectIssue.wasAddedToProject || projectIssue.projectStatusUpdated) {
     result.updatedGitHub += 1;
@@ -1139,6 +1202,120 @@ async function syncMissingProjectIssueFromEvent({ github, notion, config, projec
   return result;
 }
 
+async function syncProjectIssueFromPullRequestEvent({
+  github,
+  notion,
+  config,
+  project,
+  notionIndex,
+  seenNotionPages,
+  pullRequest,
+}) {
+  const result = {
+    eventProjectItems: 0,
+    updatedGitHub: 0,
+    createdNotion: 0,
+    updatedNotion: 0,
+    restoredNotion: 0,
+    conflicts: 0,
+    updatedMarkers: 0,
+  };
+
+  const issueNumber = findLinkedIssueNumberFromPullRequest(pullRequest);
+  if (!issueNumber) {
+    console.warn(
+      `Skipping Project status update for PR #${pullRequest.number}: linked issue number was not found in body, branch, or title.`,
+    );
+    return result;
+  }
+
+  const issue = await fetchGitHubIssueOrNull({ github, config, issueNumber });
+  if (!issue) {
+    console.warn(`Skipping Project status update for PR #${pullRequest.number}: issue #${issueNumber} was not found.`);
+    return result;
+  }
+
+  const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project, pullRequest });
+  const projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus: wanted.status });
+  if (projectIssue.wasAddedToProject) {
+    result.eventProjectItems += 1;
+  }
+  if (projectIssue.wasAddedToProject || projectIssue.projectStatusUpdated) {
+    result.updatedGitHub += 1;
+  }
+
+  if (config.dryRun) {
+    console.log(
+      `[dry-run] issue #${issue.number} targetBranch=${wanted.targetBranch || "(none)"} head=${pullRequest.headRefName} base=${pullRequest.baseRefName} prState=${pullRequest.state} draft=${pullRequest.draft} => wantedStatus=${wanted.status} reason="${wanted.reason}"`,
+    );
+  }
+
+  const match = await findNotionMatchForIssue({ notion, config, index: notionIndex, issue: projectIssue });
+  if (match.conflictRows) {
+    const message = `Conflict: multiple Notion rows match ${projectIssue.issueUrl}. githubChangedAt=${projectIssue.githubUpdatedAt}`;
+    for (const row of match.conflictRows) {
+      seenNotionPages.add(row.pageId);
+      if (await markNotionConflict({ notion, config, row, message })) {
+        result.conflicts += 1;
+      }
+    }
+    return result;
+  }
+
+  if (!match.row) {
+    const page = await createNotionIssuePage({ notion, config, issue: projectIssue, source: "GitHub" });
+    result.createdNotion += 1;
+    if (await ensureGitHubIssueHasNotionMarker({ github, config, issue: projectIssue, pageId: page.id })) {
+      result.updatedMarkers += 1;
+    }
+    return result;
+  }
+
+  seenNotionPages.add(match.row.pageId);
+  const activeRow = await restoreRowIfArchived({ notion, config, row: match.row });
+  if (activeRow.restored) {
+    result.restoredNotion += 1;
+  }
+  if (!activeRow.row.inTrash) {
+    if (await updateNotionIssuePage({ notion, config, pageId: activeRow.row.pageId, row: activeRow.row, issue: projectIssue, source: "GitHub" })) {
+      result.updatedNotion += 1;
+    }
+  }
+
+  return result;
+}
+
+async function inferProjectStatusDuringFullSync({ github, config, project, issue }) {
+  if (!shouldInferProjectStatusDuringFullSync(issue, config)) {
+    return issue;
+  }
+
+  const wanted = wantedProjectStatusDecisionForIssueEvent({ issue, config, project });
+  const projectIssue = await ensureProjectItem({ github, config, project, issue, wantedStatus: wanted.status });
+
+  if (config.dryRun) {
+    console.log(
+      `[dry-run] issue #${issue.number} targetBranch=${wanted.targetBranch || "(none)"} => wantedStatus=${wanted.status} reason="${wanted.reason}"`,
+    );
+  }
+
+  return projectIssue;
+}
+
+function shouldInferProjectStatusDuringFullSync(issue, config) {
+  if (issue.state === "closed") {
+    return true;
+  }
+
+  const currentStatus = normalizeProjectStatusName(issue.projectStatus);
+  if (!currentStatus || currentStatus === normalizeProjectStatusName(config.openedProjectStatus)) {
+    return true;
+  }
+
+  const labels = new Set((issue.labels || []).map(normalizeProjectStatusName));
+  return hasAnyLabel(labels, ["blocked", "blocker", "차단", "막힘", "review", "in review", "needs review", "리뷰", "검토"]);
+}
+
 async function ensureClosedProjectStatus({ github, config, project, issue }) {
   const currentStatusName = issue.originalProjectStatus ?? issue.projectStatus;
   if (issue.state !== "closed" || sameProjectStatus(currentStatusName, CLOSED_PROJECT_STATUS)) {
@@ -1178,25 +1355,312 @@ function wantedProjectStatusForMissingProjectItem({ row, issue, decision }) {
   return issue.projectStatus || row.projectStatus || null;
 }
 
-function wantedProjectStatusForIssueEvent({ issue, config }) {
-  if (issue.state === "closed") {
-    return CLOSED_PROJECT_STATUS;
-  }
+function wantedProjectStatusForIssueEvent({ issue, config, project = null, pullRequest = null }) {
+  return wantedProjectStatusDecisionForIssueEvent({ issue, config, project, pullRequest }).status;
+}
 
+function wantedProjectStatusDecisionForIssueEvent({ issue, config, project = null, pullRequest = null }) {
+  const decision = inferProjectStatusFromIssue(issue, config, pullRequest);
+  return {
+    ...decision,
+    status: resolveProjectStatusName({ project, statusName: decision.status, fallbacks: decision.fallbacks }),
+  };
+}
+
+function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
+  const targetBranch = inferTargetBranchFromIssue(issue);
+  const workingBranch = inferWorkingBranchFromIssue(issue);
   const labels = new Set((issue.labels || []).map(normalizeProjectStatusName));
-  if (labels.has("blocked") || labels.has("blocker")) {
-    return config.blockedProjectStatus;
+  const bodyFields = parseIssueBodyFields(issue.body || "");
+
+  if (issue.state === "closed") {
+    return statusDecision(CLOSED_PROJECT_STATUS, "issue is closed", { targetBranch });
   }
 
-  if (labels.has("review") || labels.has("in review") || labels.has("needs review")) {
-    return config.reviewProjectStatus;
+  if (hasAnyLabel(labels, ["blocked", "blocker", "차단", "막힘"]) || hasBlockedSignal(issue, bodyFields)) {
+    return statusDecision(config.blockedProjectStatus, "blocked label or body field", { targetBranch });
+  }
+
+  if (pullRequest?.merged && issue.state !== "closed") {
+    return statusDecision(config.previewProjectStatus, "PR merged to target branch while issue is still open", {
+      targetBranch,
+      fallbacks: [config.readyProjectStatus, config.inProgressProjectStatus],
+    });
+  }
+
+  if (hasPreviewSignal({ issue, labels, pullRequest })) {
+    return statusDecision(config.previewProjectStatus, "preview label or URL found", {
+      targetBranch,
+      fallbacks: [config.readyProjectStatus, config.inProgressProjectStatus],
+    });
+  }
+
+  if (pullRequest?.draft) {
+    return statusDecision(config.inProgressProjectStatus, "draft PR", { targetBranch });
+  }
+
+  if (pullRequest && pullRequest.state === "closed" && !pullRequest.merged) {
+    return statusDecision(config.inProgressProjectStatus, "PR closed without merge", { targetBranch });
+  }
+
+  if (pullRequest && pullRequest.state === "open") {
+    return statusDecision(config.reviewProjectStatus, "open PR ready for review", { targetBranch });
+  }
+
+  if (hasAnyLabel(labels, ["review", "in review", "needs review", "리뷰", "검토"])) {
+    return statusDecision(config.reviewProjectStatus, "review label", { targetBranch });
   }
 
   if (issue.eventAction === "reopened") {
-    return config.reopenedProjectStatus;
+    return statusDecision(config.reopenedProjectStatus, "issue reopened", { targetBranch });
   }
 
-  return issue.projectStatus || config.openedProjectStatus;
+  const initialStatus = readIssueBodyFieldFromParsed(bodyFields, ["초기 상태", "Initial Status", "Project Status"]);
+  if (initialStatus && !sameProjectStatus(initialStatus, config.openedProjectStatus)) {
+    return statusDecision(initialStatus, "initial status field", { targetBranch });
+  }
+
+  if (workingBranch) {
+    return statusDecision(config.inProgressProjectStatus, "working branch field is set", { targetBranch });
+  }
+
+  if (targetBranch && hasEnoughIssueDetail(issue)) {
+    return statusDecision(config.readyProjectStatus, "target branch and required issue details are present", { targetBranch });
+  }
+
+  return statusDecision(issue.projectStatus || config.openedProjectStatus, "not enough information for a later status", {
+    targetBranch,
+  });
+}
+
+function statusDecision(status, reason, { targetBranch = null, fallbacks = [] } = {}) {
+  return { status, reason, targetBranch, fallbacks };
+}
+
+function resolveProjectStatusName({ project, statusName, fallbacks = [] }) {
+  if (!project || project.statusOptionsByName.has(normalizeProjectStatusName(statusName))) {
+    return statusName;
+  }
+
+  for (const fallback of fallbacks) {
+    if (project.statusOptionsByName.has(normalizeProjectStatusName(fallback))) {
+      console.warn(`Project status "${statusName}" is not available. Falling back to "${fallback}".`);
+      return fallback;
+    }
+  }
+
+  return statusName;
+}
+
+function parseIssueBodyFields(body) {
+  const fields = new Map();
+  const lines = String(body || "").split(/\r?\n/);
+  let pendingField = null;
+
+  for (const line of lines) {
+    const heading = /^#{2,6}\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      pendingField = null;
+      continue;
+    }
+
+    const pendingValue = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?(.+?)\s*$/.exec(line);
+    if (pendingField && pendingValue) {
+      const value = cleanupFieldValue(pendingValue[1]);
+      if (value && /^예\s*:/i.test(value)) {
+        pendingField = null;
+        continue;
+      }
+      if (value && !fields.has(pendingField)) {
+        fields.set(pendingField, value);
+        pendingField = null;
+        continue;
+      }
+    }
+
+    const emptyField = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?([^:\n]+?)\s*:\s*$/.exec(line);
+    if (emptyField) {
+      pendingField = normalizeIssueFieldName(emptyField[1]);
+      continue;
+    }
+
+    const match = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?([^:\n]+?)\s*:\s*(.+?)\s*$/.exec(line);
+    if (!match) {
+      continue;
+    }
+
+    const name = normalizeIssueFieldName(match[1]);
+    const value = cleanupFieldValue(match[2]);
+    if (value) {
+      fields.set(name, value);
+    }
+  }
+
+  return fields;
+}
+
+function readIssueBodyField(body, fieldNames) {
+  return readIssueBodyFieldFromParsed(parseIssueBodyFields(body), fieldNames);
+}
+
+function readIssueBodyFieldFromParsed(fields, fieldNames) {
+  for (const fieldName of fieldNames) {
+    const value = fields.get(normalizeIssueFieldName(fieldName));
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function hasMeaningfulSectionContent(body, sectionNames) {
+  const wantedSections = new Set(sectionNames.map(normalizeIssueFieldName));
+  const sections = new Map();
+  let currentSection = null;
+  let currentLines = [];
+
+  const flush = () => {
+    if (!currentSection) {
+      return;
+    }
+    const value = cleanupFieldValue(currentLines.join("\n"));
+    if (value) {
+      sections.set(normalizeIssueFieldName(currentSection), value);
+    }
+  };
+
+  for (const line of String(body || "").split(/\r?\n/)) {
+    const heading = /^#{2,6}\s+(.+?)\s*$/.exec(line);
+    if (heading) {
+      flush();
+      currentSection = heading[1].replace(/^\d+\.\s*/, "").trim();
+      currentLines = [];
+      continue;
+    }
+
+    if (currentSection) {
+      currentLines.push(line);
+    }
+  }
+
+  flush();
+  return [...wantedSections].some((sectionName) => Boolean(sections.get(sectionName)));
+}
+
+function inferTargetBranchFromIssue(issue) {
+  return normalizeBranchName(
+    readIssueBodyField(issue.body, ["담당 브랜치", "Target Branch", "Base Branch", "작업 기준 브랜치"]),
+  );
+}
+
+function inferWorkingBranchFromIssue(issue) {
+  return normalizeBranchName(readIssueBodyField(issue.body, ["작업 브랜치", "Working Branch", "Head Branch"]));
+}
+
+function normalizeBranchName(branch) {
+  const value = cleanupFieldValue(branch);
+  if (!value) {
+    return null;
+  }
+  return value.replace(/^`|`$/g, "").trim();
+}
+
+function extractLinkedIssueNumberFromBranch(branch) {
+  const match = /(?:^|[/_-])(?:issue[-_])?#?(\d+)(?:[-_/]|$)/i.exec(branch || "");
+  return match ? Number(match[1]) : null;
+}
+
+function extractLinkedIssueNumberFromPrBody(body) {
+  const closing = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/i.exec(body || "");
+  if (closing) {
+    return Number(closing[1]);
+  }
+
+  const anyReference = /#(\d+)/.exec(body || "");
+  return anyReference ? Number(anyReference[1]) : null;
+}
+
+function findLinkedIssueNumberFromPullRequest(pullRequest) {
+  return (
+    extractLinkedIssueNumberFromPrBody(pullRequest.body) ||
+    extractLinkedIssueNumberFromBranch(pullRequest.headRefName) ||
+    extractLinkedIssueNumberFromPrBody(pullRequest.title)
+  );
+}
+
+function pullRequestFromSyncableEvent(context) {
+  if (context.eventName !== "pull_request" || !context.payload.pull_request) {
+    return null;
+  }
+
+  const pullRequest = context.payload.pull_request;
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title || "",
+    body: pullRequest.body || "",
+    state: pullRequest.state || "open",
+    draft: Boolean(pullRequest.draft),
+    merged: Boolean(pullRequest.merged),
+    labels: (pullRequest.labels || []).map((label) => label.name).filter(Boolean),
+    headRefName: pullRequest.head?.ref || "",
+    baseRefName: pullRequest.base?.ref || "",
+  };
+}
+
+function hasBlockedSignal(issue, bodyFields) {
+  const blockedField = readIssueBodyFieldFromParsed(bodyFields, ["차단 사유", "Blocked Reason", "Dependency", "의존 작업"]);
+  if (blockedField) {
+    return true;
+  }
+
+  return hasMeaningfulSectionContent(issue.body, ["필요한 결정 사항", "차단 사유", "의존 작업"]);
+}
+
+function hasPreviewSignal({ issue, labels, pullRequest }) {
+  if (hasAnyLabel(labels, ["preview", "staging", "배포확인", "qa"])) {
+    return true;
+  }
+
+  const pullRequestLabels = new Set((pullRequest?.labels || []).map(normalizeProjectStatusName));
+  if (hasAnyLabel(pullRequestLabels, ["preview", "staging", "배포확인", "qa"])) {
+    return true;
+  }
+
+  return hasPreviewUrl(issue.body) || hasPreviewUrl(pullRequest?.body);
+}
+
+function hasPreviewUrl(value) {
+  return /\b(?:preview|staging|vercel)(?:\s+url)?\b|https?:\/\/\S*(?:vercel\.app|preview|staging)\S*/i.test(value || "");
+}
+
+function hasEnoughIssueDetail(issue) {
+  return Boolean(issue.assignees?.length && cleanupFieldValue(issue.title) && cleanupFieldValue(issue.body));
+}
+
+function hasAnyLabel(labels, names) {
+  return names.some((name) => labels.has(normalizeProjectStatusName(name)));
+}
+
+function normalizeIssueFieldName(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .replace(/^\d+\.\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function cleanupFieldValue(value) {
+  const cleaned = String(value || "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^\s*[-*]\s*/gm, "")
+    .trim();
+
+  if (!cleaned || /^[-_]+$/.test(cleaned) || /^(없음|n\/a|na|none|null|no)$/i.test(cleaned)) {
+    return null;
+  }
+
+  return cleaned;
 }
 
 function issueFromRest(issue, config) {
@@ -1721,6 +2185,9 @@ module.exports._private = {
   chooseSyncDirection,
   diffIssueAndRow,
   issueForGitHubSource,
+  parseIssueBodyFields,
+  readIssueBodyField,
   sameList,
+  wantedProjectStatusDecisionForIssueEvent,
   wantedProjectStatusForIssueEvent,
 };
