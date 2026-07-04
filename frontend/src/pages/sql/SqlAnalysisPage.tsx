@@ -573,7 +573,11 @@ function buildAutocompleteCandidates({
   const token = context.token.toLowerCase();
   if (!token && context.mode === "general") return [];
   const canShowForToken = (value: string) => !token || value.toLowerCase().includes(token);
-  const tableCandidates: AutocompleteCandidate[] = datasets
+  const contextDatasets = [
+    baseDataset,
+    ...datasets.filter((item) => referenceDatasetIdSet.has(item.id) && item.id !== baseDataset.id),
+  ];
+  const tableCandidates: AutocompleteCandidate[] = contextDatasets
     .filter((item) => canShowForToken(item.name))
     .sort((left, right) => getDatasetContextRank(left.id, baseDataset.id, referenceDatasetIdSet) - getDatasetContextRank(right.id, baseDataset.id, referenceDatasetIdSet))
     .map((item) => ({
@@ -584,10 +588,6 @@ function buildAutocompleteCandidates({
       detail: item.id === baseDataset.id ? "table · base" : referenceDatasetIdSet.has(item.id) ? "table · referenced" : "table",
       datasetId: item.id,
     }));
-  const contextDatasets = [
-    baseDataset,
-    ...datasets.filter((item) => referenceDatasetIdSet.has(item.id) && item.id !== baseDataset.id),
-  ];
   const columnCandidates = contextDatasets.flatMap((item) => item.schema.flatMap(([name, type]) => {
     const candidates: AutocompleteCandidate[] = [];
     if (canShowForToken(name)) {
