@@ -5,14 +5,20 @@ on:
     branches:
       - main
       - dev
+      - pair1
+      - pair2
+      - pair3
     types:
       - opened
       - reopened
       - synchronize
       - edited
+      - ready_for_review
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 jobs:
   validate-pr-source:
@@ -20,29 +26,159 @@ jobs:
 
     steps:
       - name: Validate PR source branch
+        uses: actions/github-script@v9
         env:
-          BASE_BRANCH: ${{ github.base_ref }}
-          HEAD_BRANCH: ${{ github.head_ref }}
-        run: |
-          echo "base=${BASE_BRANCH}"
-          echo "head=${HEAD_BRANCH}"
+          ALLOW_DIRECT_HOTFIX: "false"
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const base = pr.base.ref;
+            const head = pr.head.ref;
+            const allowedPairBranches = new Set(["pair1", "pair2", "pair3"]);
+            const workBranchPattern = /^(feature|bugfix|hotfix|chore|refactor|docs|test)\/.+/;
+            const allowDirectHotfix = String(process.env.ALLOW_DIRECT_HOTFIX || "").toLowerCase() === "true";
 
-          if [ "${BASE_BRANCH}" = "main" ]; then
-            if [ "${HEAD_BRANCH}" != "dev" ]; then
-              echo "::error::Pull requests into main must come from dev."
-              exit 1
-            fi
-            exit 0
-          fi
+            core.info(`base=${base}`);
+            core.info(`head=${head}`);
 
-          if [ "${BASE_BRANCH}" = "dev" ]; then
-            case "${HEAD_BRANCH}" in
-              pair1|pair2|pair3)
-                exit 0
-                ;;
-              *)
-                echo "::error::Pull requests into dev must come from pair1, pair2, or pair3."
-                exit 1
-                ;;
-            esac
-          fi
+            if (base === "main") {
+              if (head === "dev" || (allowDirectHotfix && head.startsWith("hotfix/"))) {
+                return;
+              }
+              core.setFailed("Pull requests into main must come from dev.");
+              return;
+            }
+
+            if (base === "dev") {
+              if (allowedPairBranches.has(head) || (allowDirectHotfix && head.startsWith("hotfix/"))) {
+                return;
+              }
+              core.setFailed("Pull requests into dev must come from pair1, pair2, or pair3.");
+              return;
+            }
+
+            if (!allowedPairBranches.has(base)) {
+              core.setFailed(`Unsupported PR base branch: ${base}`);
+              return;
+            }
+
+            if (!workBranchPattern.test(head)) {
+              core.setFailed("Pull requests into pair branches must come from feature/*, bugfix/*, hotfix/*, chore/*, refactor/*, docs/*, or test/*.");
+              return;
+            }
+
+            const issueNumber = findIssueNumber(pr.body) || findIssueNumber(head) || findIssueNumber(pr.title);
+            if (!issueNumber) {
+              core.setFailed("Could not find a linked issue number in PR body, head branch, or title.");
+              return;
+            }
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+            const targetBranch = readIssueBodyField(issue.body || "", [
+              "담당 브랜치",
+              "Target Branch",
+              "Base Branch",
+              "작업 기준 브랜치",
+            ]);
+
+            if (!targetBranch) {
+              core.setFailed(`Issue #${issueNumber} does not declare a target branch.`);
+              return;
+            }
+
+            if (normalizeBranchName(targetBranch) !== base) {
+              core.setFailed(`Issue #${issueNumber} target branch is "${targetBranch}", but PR base is "${base}".`);
+              return;
+            }
+
+            core.info(`Allowed: issue #${issueNumber} target branch ${targetBranch} matches PR base ${base}.`);
+
+            function findIssueNumber(value) {
+              const text = String(value || "");
+              const closing = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/i.exec(text);
+              if (closing) {
+                return Number(closing[1]);
+              }
+
+              const branch = /(?:^|[/_-])(?:issue[-_])?#?(\d+)(?:[-_/]|$)/i.exec(text);
+              if (branch) {
+                return Number(branch[1]);
+              }
+
+              const reference = /#(\d+)/.exec(text);
+              return reference ? Number(reference[1]) : null;
+            }
+
+            function readIssueBodyField(body, fieldNames) {
+              const fields = new Map();
+              let pendingField = null;
+              for (const line of String(body || "").split(/\r?\n/)) {
+                if (/^#{2,6}\s+/.test(line)) {
+                  pendingField = null;
+                  continue;
+                }
+
+                const pendingValue = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?(.+?)\s*$/.exec(line);
+                if (pendingField && pendingValue) {
+                  const value = cleanupFieldValue(pendingValue[1]);
+                  if (value && /^예\s*:/i.test(value)) {
+                    pendingField = null;
+                    continue;
+                  }
+                  if (value && !fields.has(pendingField)) {
+                    fields.set(pendingField, value);
+                    pendingField = null;
+                    continue;
+                  }
+                }
+
+                const emptyField = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?([^:\n]+?)\s*:\s*$/.exec(line);
+                if (emptyField) {
+                  pendingField = normalizeFieldName(emptyField[1]);
+                  continue;
+                }
+
+                const match = /^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?([^:\n]+?)\s*:\s*(.+?)\s*$/.exec(line);
+                if (!match) {
+                  continue;
+                }
+
+                const value = cleanupFieldValue(match[2]);
+                if (value) {
+                  fields.set(normalizeFieldName(match[1]), value);
+                }
+              }
+
+              for (const fieldName of fieldNames) {
+                const value = fields.get(normalizeFieldName(fieldName));
+                if (value) {
+                  return value;
+                }
+              }
+              return null;
+            }
+
+            function normalizeBranchName(value) {
+              return cleanupFieldValue(value)?.replace(/^`|`$/g, "").trim();
+            }
+
+            function normalizeFieldName(value) {
+              return String(value || "")
+                .normalize("NFKC")
+                .replace(/^\d+\.\s*/, "")
+                .replace(/\s+/g, " ")
+                .trim()
+                .toLowerCase();
+            }
+
+            function cleanupFieldValue(value) {
+              const cleaned = String(value || "").trim();
+              if (!cleaned || /^[-_]+$/.test(cleaned) || /^(없음|n\/a|na|none|null|no)$/i.test(cleaned)) {
+                return null;
+              }
+              return cleaned;
+            }
