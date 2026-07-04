@@ -47,10 +47,11 @@ import {
 } from "../../data/transformQualityMockData";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
-import type { QualityRuleDraft, TransformStepDraft } from "../../types/etl";
+import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityMockData";
 
 export function SchedulePage({
+  draftRetryPolicy,
   draftScheduleLabel,
   mode,
   onDraftChange,
@@ -59,6 +60,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
+  draftRetryPolicy: RetryPolicyDraft;
   draftScheduleLabel: string;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -74,6 +76,9 @@ export function SchedulePage({
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const scheduleLabel = formatScheduleLabel(mode, repeatDay, repeatTime, onceDateTime);
+  const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
+    onDraftChange({ schedule: { retryPolicy } });
+  };
   const applyScheduleDraft = () => {
     onDraftChange({ scheduleLabel });
   };
@@ -106,15 +111,15 @@ export function SchedulePage({
             <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings selectedDay={repeatDay} time={repeatTime} onDayChange={(day) => {
+        {mode === "repeat" && <RepeatSettings retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onRetryPolicyChange={updateRetryPolicy} onDayChange={(day) => {
           setRepeatDay(day);
           onDraftChange({ scheduleLabel: `매주 ${day}요일 ${repeatTime}` });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
           onDraftChange({ scheduleLabel: `매주 ${repeatDay}요일 ${time}` });
         }} />}
-        {mode === "manual" && <ManualSettings />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
+        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
           onDraftChange({ scheduleLabel: `${dateTime} 1회 실행` });
         }} />}
@@ -2486,12 +2491,16 @@ function InvalidRowsPanel({
 
 function RepeatSettings({
   onDayChange,
+  onRetryPolicyChange,
   onTimeChange,
+  retryPolicy,
   selectedDay,
   time,
 }: {
   onDayChange: (day: string) => void;
+  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
   onTimeChange: (time: string) => void;
+  retryPolicy: RetryPolicyDraft;
   selectedDay: string;
   time: string;
 }) {
@@ -2529,12 +2538,12 @@ function RepeatSettings({
           <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
         </span>
       </label>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
 
-function ManualSettings() {
+function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -2552,13 +2561,23 @@ function ManualSettings() {
           </span>
         </label>
       </div>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
       <InfoBox title="자동 실행 예정 없음" body="저장 후 필요할 때 직접 실행할 수 있으며, 다음 실행 일시는 생성되지 않습니다." />
     </section>
   );
 }
 
-function OnceSettings({ dateTime, onDateTimeChange }: { dateTime: string; onDateTimeChange: (dateTime: string) => void }) {
+function OnceSettings({
+  dateTime,
+  onDateTimeChange,
+  onRetryPolicyChange,
+  retryPolicy,
+}: {
+  dateTime: string;
+  onDateTimeChange: (dateTime: string) => void;
+  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
+  retryPolicy: RetryPolicyDraft;
+}) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -2583,7 +2602,7 @@ function OnceSettings({ dateTime, onDateTimeChange }: { dateTime: string; onDate
           </span>
         </label>
       </div>
-      <RetryPolicy />
+      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
