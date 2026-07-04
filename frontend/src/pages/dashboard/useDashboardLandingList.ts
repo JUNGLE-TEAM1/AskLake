@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { SavedDashboardCard } from "./dashboardListData";
+import type { SavedDashboardCard } from "../../types";
 import {
   filterAndSortDashboardCards,
   getDashboardOwners,

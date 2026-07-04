@@ -1,6 +1,6 @@
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
-import type { SavedDashboardCard } from "../dashboardListData";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
+import type { SavedDashboardCard } from "../../../types";
 
 export function DashboardTable({
   dashboards,

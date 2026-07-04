@@ -20,13 +20,12 @@ import {
 import { DashboardLandingPage } from "./DashboardLandingPage";
 import type { ExpandedChart } from "./DashboardParts";
 import { defaultDashboardCards } from "./dashboardListData";
-import type { SavedDashboardCard } from "./dashboardListData";
 import {
   formatDashboardTimestamp,
   hydrateSavedDashboardCards,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
-import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
 export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset: CatalogDataset; entry: DashboardEntry; sqlResult: SqlResultDraft | null; onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void }) {

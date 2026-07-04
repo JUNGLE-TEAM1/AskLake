@@ -1,9 +1,9 @@
 import { defaultDashboardCards } from "./dashboardListData";
-import type { SavedDashboardCard } from "./dashboardListData";
+import type { DashboardSortOption, SavedDashboardCard } from "../../types";
 import { normalizeDashboardStatus } from "../../utils/statusMeta";
 
 export type DashboardListControl = "owner" | "tag" | "sort";
-export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
+export type { DashboardSortOption } from "../../types";
 
 export type DashboardSortOptionMeta = {
   ariaLabel: string;

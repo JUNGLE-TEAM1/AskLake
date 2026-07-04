@@ -1,9 +1,9 @@
 import { Plus } from "lucide-react";
-import type { SavedDashboardCard } from "./dashboardListData";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
 import { DashboardTable } from "./components/DashboardTable";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
+import type { SavedDashboardCard } from "../../types";
 
 export function DashboardLandingPage({
   currentPage,

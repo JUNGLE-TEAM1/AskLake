@@ -1,26 +1,4 @@
-import type { DashboardStatus, DashboardWidgetType } from "../../types";
-
-export type SavedDashboardCard = {
-  datasetId?: string;
-  id: string;
-  meta: string;
-  name: string;
-  owner: string;
-  createdAt?: string;
-  createdAtValue?: string;
-  sourceRunId?: string;
-  sqlResult?: {
-    columns: string[];
-    query: string;
-    rowCount: number;
-    runId: string;
-  };
-  status: DashboardStatus;
-  tags: string;
-  updated: string;
-  updatedAtValue?: string;
-  widgets?: DashboardWidgetType[];
-};
+import type { SavedDashboardCard } from "../../types";
 
 export const defaultDashboardCards: SavedDashboardCard[] = [
   { id: "dash_sales_demo", name: "Sales Analytics Demo 2026-06-26 22:04:05", tags: "Sales · Revenue · Demo", owner: "Admin User", createdAt: "2026-06-26 22:04", createdAtValue: "2026-06-26T22:04:05", updated: "2시간 전", updatedAtValue: "2026-07-04T13:46:00", status: "published", meta: "최근 7일 · 자동 갱신" },
