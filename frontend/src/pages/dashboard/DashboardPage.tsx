@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronRight,
   Database,
+  Filter,
   Maximize2,
   Plus,
   Search,
@@ -23,6 +29,63 @@ import type { ExpandedChart, SavedDashboardCard } from "./DashboardParts";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta, normalizeDashboardStatus } from "../../utils/statusMeta";
 
+type DashboardListControl = "owner" | "tag" | "sort";
+type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
+
+const dashboardPageSize = 10;
+const fallbackDashboardDate = "2026-06-26 22:04";
+const fallbackDashboardDateValue = "2026-06-26T22:04:00";
+const dashboardSortOptions: Array<{ ariaLabel: string; direction: "asc" | "desc"; id: DashboardSortOption; label: string }> = [
+  { id: "name-asc", label: "알파벳순", direction: "asc", ariaLabel: "알파벳순 오름차순" },
+  { id: "name-desc", label: "알파벳순", direction: "desc", ariaLabel: "알파벳순 내림차순" },
+  { id: "updated-asc", label: "마지막 수정", direction: "asc", ariaLabel: "마지막 수정 오름차순" },
+  { id: "updated-desc", label: "마지막 수정", direction: "desc", ariaLabel: "마지막 수정 내림차순" },
+  { id: "created-asc", label: "생성일", direction: "asc", ariaLabel: "생성일 오름차순" },
+  { id: "created-desc", label: "생성일", direction: "desc", ariaLabel: "생성일 내림차순" },
+];
+
+function splitDashboardTags(tags: string) {
+  return tags.split("·").map((tag) => tag.trim()).filter(Boolean);
+}
+
+function dashboardDateValue(value?: string) {
+  const parsed = Date.parse(value ?? "");
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatDashboardTimestamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatDashboardDateLabel(value?: string) {
+  const parsedDate = new Date(value ?? fallbackDashboardDateValue);
+  if (Number.isNaN(parsedDate.getTime())) return fallbackDashboardDate;
+  const minute = String(parsedDate.getMinutes()).padStart(2, "0");
+  return `${parsedDate.getFullYear()}년 ${parsedDate.getMonth() + 1}월 ${parsedDate.getDate()}일 ${parsedDate.getHours()}시 ${minute}분`;
+}
+
+function normalizeSavedDashboardCard(card: SavedDashboardCard, index: number): SavedDashboardCard {
+  const fallbackCard = defaultDashboardCards.find((dashboard) => dashboard.id === card.id) ?? defaultDashboardCards[index] ?? defaultDashboardCards[0];
+  const createdAt = card.createdAt ?? fallbackCard?.createdAt ?? fallbackDashboardDate;
+  const createdAtValue = card.createdAtValue ?? fallbackCard?.createdAtValue ?? fallbackDashboardDateValue;
+
+  return {
+    ...card,
+    createdAt,
+    createdAtValue,
+    status: normalizeDashboardStatus(card.status),
+    updatedAtValue: card.updatedAtValue ?? fallbackCard?.updatedAtValue ?? createdAtValue,
+  };
+}
+
+function hydrateSavedDashboardCards(cards: SavedDashboardCard[]) {
+  const normalizedCards = cards.map(normalizeSavedDashboardCard);
+  const storedIds = new Set(normalizedCards.map((card) => card.id));
+  const missingDefaultCards = defaultDashboardCards.filter((card) => !storedIds.has(card.id));
+  return [...normalizedCards, ...missingDefaultCards];
+}
+
 export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset: CatalogDataset; entry: DashboardEntry; sqlResult: SqlResultDraft | null; onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void }) {
   const [view, setView] = useState<DashboardView>(entry.view);
   const [builderWidgets, setBuilderWidgets] = useState<DashboardWidgetType[]>([]);
@@ -37,11 +100,17 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     if (!stored) return defaultDashboardCards;
     try {
       const cards = JSON.parse(stored) as SavedDashboardCard[];
-      return cards.map((card) => ({ ...card, status: normalizeDashboardStatus(card.status) }));
+      return hydrateSavedDashboardCards(cards);
     } catch {
       return defaultDashboardCards;
     }
   });
+  const [searchQuery, setSearchQuery] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
+  const [openListControl, setOpenListControl] = useState<DashboardListControl | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
@@ -91,6 +160,36 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     rowCount: activeSqlResult.rowCount,
     runId: activeSqlResult.runId,
   } : undefined;
+  const dashboardOwners = useMemo(() => Array.from(new Set(savedDashboards.map((dashboard) => dashboard.owner))).sort((first, second) => first.localeCompare(second)), [savedDashboards]);
+  const dashboardTags = useMemo(() => Array.from(new Set(savedDashboards.flatMap((dashboard) => splitDashboardTags(dashboard.tags)))).sort((first, second) => first.localeCompare(second)), [savedDashboards]);
+  const filteredDashboards = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    const selectedTagSet = new Set(selectedTags);
+
+    return [...savedDashboards]
+      .filter((dashboard) => {
+        const dashboardTagsForRow = splitDashboardTags(dashboard.tags);
+        const matchesSearch = !query || [dashboard.name, dashboard.owner, dashboard.tags].some((value) => value.toLowerCase().includes(query));
+        const matchesOwner = ownerFilter === "all" || dashboard.owner === ownerFilter;
+        const matchesTags = selectedTagSet.size === 0 || Array.from(selectedTagSet).every((tag) => dashboardTagsForRow.includes(tag));
+        return matchesSearch && matchesOwner && matchesTags;
+      })
+      .sort((first, second) => {
+        if (sortOption === "name-asc") return first.name.localeCompare(second.name);
+        if (sortOption === "name-desc") return second.name.localeCompare(first.name);
+        if (sortOption === "created-asc") return dashboardDateValue(first.createdAtValue) - dashboardDateValue(second.createdAtValue);
+        if (sortOption === "created-desc") return dashboardDateValue(second.createdAtValue) - dashboardDateValue(first.createdAtValue);
+        if (sortOption === "updated-asc") return dashboardDateValue(first.updatedAtValue) - dashboardDateValue(second.updatedAtValue);
+        return dashboardDateValue(second.updatedAtValue) - dashboardDateValue(first.updatedAtValue);
+      });
+  }, [ownerFilter, savedDashboards, searchQuery, selectedTags, sortOption]);
+  const totalDashboardPages = Math.max(1, Math.ceil(filteredDashboards.length / dashboardPageSize));
+  const safeDashboardPage = Math.min(currentPage, totalDashboardPages);
+  const dashboardPageStartIndex = (safeDashboardPage - 1) * dashboardPageSize;
+  const visibleDashboards = filteredDashboards.slice(dashboardPageStartIndex, dashboardPageStartIndex + dashboardPageSize);
+  const dashboardPageStart = filteredDashboards.length === 0 ? 0 : dashboardPageStartIndex + 1;
+  const dashboardPageEnd = dashboardPageStartIndex + visibleDashboards.length;
+  const activeSortLabel = dashboardSortOptions.find((option) => option.id === sortOption)?.ariaLabel ?? "정렬 기준";
 
   useEffect(() => {
     setView(entry.view);
@@ -106,10 +205,36 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
   }, [savedDashboards]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [ownerFilter, searchQuery, selectedTags, sortOption]);
+
   const changeFilter = (nextPeriod: string, nextSegment = segment) => {
     setPeriod(nextPeriod);
     setSegment(nextSegment);
     onAction("dashboard.filter.changed", "/api/dashboards/filters", dataset.id);
+  };
+
+  const selectDashboardOwner = (owner: string) => {
+    setOwnerFilter(owner);
+    setOpenListControl(null);
+    onAction("dashboard.list.owner_filter_changed", "/api/dashboards/filters", owner);
+  };
+
+  const toggleDashboardTag = (tag: string) => {
+    setSelectedTags((tags) => (tags.includes(tag) ? tags.filter((selectedTag) => selectedTag !== tag) : [...tags, tag]));
+    onAction("dashboard.list.tag_filter_changed", "/api/dashboards/filters", tag);
+  };
+
+  const clearDashboardTags = () => {
+    setSelectedTags([]);
+    onAction("dashboard.list.tag_filter_cleared", "/api/dashboards/filters", "all-tags");
+  };
+
+  const selectDashboardSort = (nextSort: DashboardSortOption) => {
+    setSortOption(nextSort);
+    setOpenListControl(null);
+    onAction("dashboard.list.sort_changed", "/api/dashboards/sort", nextSort);
   };
 
   const openBuilder = () => {
@@ -128,7 +253,11 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   };
 
   const upsertDashboard = (status: SavedDashboardCard["status"]) => {
+    const existingCard = savedDashboards.find((card) => card.id === dashboardId);
+    const now = new Date();
     const nextCard: SavedDashboardCard = {
+      createdAt: existingCard?.createdAt ?? formatDashboardTimestamp(now),
+      createdAtValue: existingCard?.createdAtValue ?? now.toISOString(),
       datasetId: dataset.id,
       id: dashboardId,
       meta: `${Math.max(builderWidgets.length, activeSqlResult ? 2 : 1)}개 위젯 · ${sourceRunId ? `sourceRunId ${sourceRunId}` : `${dataset.layer} source`}`,
@@ -139,6 +268,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       status,
       tags: activeSqlResult ? "SQL Result · Dashboard" : `${dataset.layer} · Dashboard`,
       updated: "방금 전",
+      updatedAtValue: now.toISOString(),
       widgets: snapshotWidgets,
     };
     setSavedDashboards((cards) => [nextCard, ...cards.filter((card) => card.id !== nextCard.id)]);
@@ -266,36 +396,72 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       <div className="dashboard-page dashboard-list-page">
         <header className="dashboard-header">
           <div>
-            <span>Dashboards</span>
             <h1>대시보드</h1>
-            <p>SQL 쿼리와 데이터셋을 기반으로 위젯을 만들고 게시된 대시보드를 관리합니다.</p>
           </div>
           <div className="dashboard-header-actions">
-            <button className="secondary-button" type="button" onClick={() => onAction("dashboard.list.filter_changed", "/api/dashboards/filters", "sample-gallery")}>샘플 갤러리 보기</button>
-            <button className="primary-button" type="button" onClick={openBuilder}><Plus size={16} /> 대시보드 만들기</button>
+            <button className="primary-button dashboard-create-button" type="button" onClick={openBuilder}><Plus size={24} /> 새 대시보드 생성</button>
           </div>
         </header>
 
-        <section className="dashboard-intro-card">
-          <div>
-            <h2>대시보드 시작하기</h2>
-            <p>Databricks 대시보드를 사용하여 데이터를 시각화하고 인사이트를 공유하세요. SQL 쿼리를 작성하여 위젯을 만들고 레이아웃을 자유롭게 조정할 수 있습니다.</p>
-          </div>
-          <button className="secondary-button" type="button" onClick={() => onAction("dashboard.docs_opened", "/api/dashboards/docs", "dashboard-docs")}>문서 더 보기</button>
-        </section>
-
         <section className="dashboard-list-toolbar">
-          {["최근 기록", "팀 활동", "모든 소유자", "태그 필터"].map((filter) => (
-            <button key={filter} type="button" onClick={() => onAction("dashboard.list.filter_changed", "/api/dashboards/filters", filter)}>{filter}</button>
-          ))}
           <div className="dashboard-list-search">
             <Search size={16} />
-            <span>대시보드 검색...</span>
+            <input aria-label="대시보드 검색" type="search" placeholder="대시보드 검색..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+          </div>
+          <div className="dashboard-toolbar-actions">
+            <div className="dashboard-toolbar-menu">
+              <button className="dashboard-filter-button" type="button" aria-expanded={openListControl === "owner"} aria-haspopup="menu" onClick={() => setOpenListControl((control) => (control === "owner" ? null : "owner"))}>
+                <Filter size={22} />
+                <span>{ownerFilter === "all" ? "모든 소유자" : ownerFilter}</span>
+                <ChevronDown size={18} />
+              </button>
+              {openListControl === "owner" && (
+                <div className="dashboard-list-menu" role="menu">
+                  <button className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} type="button" role="menuitem" onClick={() => selectDashboardOwner("all")}>모든 소유자</button>
+                  {dashboardOwners.map((owner) => (
+                    <button className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"} key={owner} type="button" role="menuitem" onClick={() => selectDashboardOwner(owner)}>{owner}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="dashboard-toolbar-menu">
+              <button className="dashboard-filter-button" type="button" aria-expanded={openListControl === "tag"} aria-haspopup="menu" onClick={() => setOpenListControl((control) => (control === "tag" ? null : "tag"))}>
+                <span>{selectedTags.length ? `태그 ${selectedTags.length}개` : "태그 필터"}</span>
+                <ChevronRight size={18} />
+              </button>
+              {openListControl === "tag" && (
+                <div className="dashboard-list-menu" role="menu">
+                  <button className="dashboard-menu-option" type="button" role="menuitem" onClick={clearDashboardTags}>전체 태그</button>
+                  {dashboardTags.map((tag) => (
+                    <label className="dashboard-menu-option checkbox" key={tag}>
+                      <input type="checkbox" checked={selectedTags.includes(tag)} onChange={() => toggleDashboardTag(tag)} />
+                      <span>{tag}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            <span className="dashboard-toolbar-divider" aria-hidden="true" />
+            <div className="dashboard-toolbar-menu">
+              <button className="dashboard-sort-button" type="button" aria-label={`정렬 기준: ${activeSortLabel}`} aria-expanded={openListControl === "sort"} aria-haspopup="menu" title={activeSortLabel} onClick={() => setOpenListControl((control) => (control === "sort" ? null : "sort"))}>
+                <ArrowUpDown size={24} />
+              </button>
+              {openListControl === "sort" && (
+                <div className="dashboard-list-menu sort" role="menu">
+                  {dashboardSortOptions.map((option) => (
+                    <button className={sortOption === option.id ? "dashboard-menu-option active" : "dashboard-menu-option"} key={option.id} type="button" role="menuitem" aria-label={option.ariaLabel} onClick={() => selectDashboardSort(option.id)}>
+                      <span>{option.label}</span>
+                      {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
         <section className="dashboard-table-list">
-          <div className="dashboard-list-count">전체 {savedDashboards.length}개 중 1-{savedDashboards.length}개 표시</div>
+          <div className="dashboard-list-count">전체 {filteredDashboards.length}개 중 {dashboardPageStart}-{dashboardPageEnd}개 표시</div>
           <div className="dashboard-table-scroll">
             <table className="schema-table">
               <thead>
@@ -303,28 +469,38 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
                   <th>이름</th>
                   <th>소유자</th>
                   <th>마지막 수정</th>
-                  <th>작업</th>
+                  <th>생성 일시</th>
                 </tr>
               </thead>
               <tbody>
-                {savedDashboards.map((dashboard) => (
+                {visibleDashboards.map((dashboard) => (
                   <tr key={dashboard.id}>
                     <td>
                       <button className="dashboard-row-link" type="button" onClick={() => openDetail(dashboard.name)}>{dashboard.name}</button>
-                      <span className="dashboard-row-tags">{dashboard.tags} · {dashboardStatusMeta[dashboard.status].label}</span>
+                      <span className="dashboard-row-tags">
+                        {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
+                          <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
+                        ))}
+                      </span>
                     </td>
                     <td>{dashboard.owner}</td>
                     <td>{dashboard.updated}</td>
-                    <td><button className="ghost-link" type="button" onClick={() => openDetail(dashboard.name)}>게시된 대시보드 보기</button></td>
+                    <td>{formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="dashboard-pagination">
-            <button type="button" onClick={() => onAction("dashboard.list.page_previous", "/api/dashboards?page=previous", "dashboards")}>이전</button>
-            <span>1</span>
-            <button type="button" onClick={() => onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards")}>다음</button>
+            <button type="button" disabled={safeDashboardPage === 1} onClick={() => {
+              setCurrentPage((page) => Math.max(1, page - 1));
+              onAction("dashboard.list.page_previous", "/api/dashboards?page=previous", "dashboards");
+            }}>이전</button>
+            <span>{safeDashboardPage}</span>
+            <button type="button" disabled={safeDashboardPage === totalDashboardPages} onClick={() => {
+              setCurrentPage((page) => Math.min(totalDashboardPages, page + 1));
+              onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards");
+            }}>다음</button>
           </div>
         </section>
       </div>
