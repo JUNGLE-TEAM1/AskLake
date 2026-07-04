@@ -49,7 +49,6 @@
 }
 
 .sql-panel-header span,
-.sql-context-source span,
 .sql-page-header span,
 .sql-editor-header span,
 .sql-result-header span:first-child {
@@ -294,19 +293,6 @@
 
 .sql-dataset-metrics {
   grid-template-columns: 1fr 1fr;
-}
-
-.sql-context-source {
-  display: grid;
-  gap: 7px;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 14px;
-}
-
-.sql-context-source strong {
-  color: #0f172a;
-  font-size: 13px;
-  overflow-wrap: anywhere;
 }
 
 .sql-collapse-button {

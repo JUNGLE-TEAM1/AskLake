@@ -5,7 +5,6 @@ import {
   RotateCcw,
   Search,
 } from "lucide-react";
-import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { executeQueryDraft } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
 
@@ -230,11 +229,6 @@ export function SqlAnalysisPage({
             ))}
           </div>
         </section>
-        <div className="sql-context-source">
-          <span>현재 분석 기준</span>
-          <strong>{baseDataset.name}</strong>
-          <DatasetStatusBadge dataset={baseDataset} />
-        </div>
       </aside>
 
       <button className="sql-collapse-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "SQL context 펼치기" : "SQL context 접기"}>
