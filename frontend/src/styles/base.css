@@ -312,6 +312,12 @@ p {
   padding: 8px 12px;
 }
 
+.app-api-pending.fallback {
+  top: 162px;
+  border-color: #facc15;
+  background: #422006;
+}
+
 .avatar {
   width: 36px;
   height: 36px;
