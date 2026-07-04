@@ -5,7 +5,7 @@ This repository mirrors GitHub Project issues for `JUNGLE-TEAM1/AskLake` into a 
 ## Notion target
 
 - Page: `302호 1팀 나만무 프로젝트`
-- Database: `AskLake 깃허브 이슈 (5분마다 GitHub와 연동)`
+- Database: `AskLake 깃허브 이슈 (Project 4 연동)`
 - Database ID: `6df04edc16184687a6b698ff7becccdf`
 - Data source ID: `73e16bb0-ef44-4d52-b75c-b07c32fed7a1`
 - Board view: `Kanban by Project Status`
@@ -13,9 +13,9 @@ This repository mirrors GitHub Project issues for `JUNGLE-TEAM1/AskLake` into a 
 ## GitHub Project target
 
 - Owner: `JUNGLE-TEAM1`
-- Project number: `3`
+- Project number: `4`
 - Project field: `Status`
-- Status options: `Backlog`, `Ready`, `In Progress`, `Blocked`, `Review`, `Done`
+- Status options: `Backlog`, `Ready`, `In progress`, `blocked`, `In review`, `Done`
 
 ## Required repository secrets
 
@@ -25,7 +25,7 @@ Set these in `Settings > Secrets and variables > Actions > Repository secrets`.
 - `NOTION_DATABASE_ID`: `6df04edc16184687a6b698ff7becccdf`
 - `ISSUE_SYNC_PAT`: GitHub personal access token used by the workflow.
 
-`ISSUE_SYNC_PAT` should have access to `JUNGLE-TEAM1/AskLake` issues and `JUNGLE-TEAM1` Project 3. The token needs repository issue write access plus GitHub Projects read/write access. If this secret is missing, the workflow falls back to `GITHUB_TOKEN`, but org-level Project v2 writes may fail.
+`ISSUE_SYNC_PAT` should have access to `JUNGLE-TEAM1/AskLake` issues and `JUNGLE-TEAM1` Project 4. The token needs repository issue write access plus GitHub Projects read/write access. If this secret is missing, the workflow falls back to `GITHUB_TOKEN`, but org-level Project v2 writes may fail.
 
 ## Schedule
 
