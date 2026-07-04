@@ -478,6 +478,62 @@
   overflow-x: auto;
 }
 
+.catalog-lineage-flow {
+  width: 100%;
+  height: 440px;
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.catalog-lineage-flow .react-flow__node {
+  width: 190px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.3;
+  padding: 12px 14px;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 8%);
+}
+
+.catalog-lineage-flow .react-flow__node.current,
+.catalog-lineage-flow .lineage-flow-node.current {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.catalog-lineage-flow .react-flow__node.source,
+.catalog-lineage-flow .lineage-flow-node.source {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.catalog-lineage-flow .react-flow__node.downstream,
+.catalog-lineage-flow .lineage-flow-node.downstream {
+  border-color: #e2e8f0;
+  background: #fff;
+  color: #334155;
+}
+
+.catalog-lineage-flow .react-flow__edge-path {
+  stroke: #64748b;
+  stroke-width: 2;
+}
+
+.catalog-lineage-flow .react-flow__controls {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 10%);
+}
+
 .catalog-lineage-mini {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -504,47 +560,4 @@
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
-}
-
-.catalog-lineage-graph {
-  display: grid;
-  min-width: 860px;
-  grid-template-columns: minmax(220px, 1fr) 90px minmax(220px, 1fr) 90px minmax(220px, 1fr);
-  align-items: center;
-  gap: 0;
-  padding: 20px 0;
-}
-
-.lineage-column {
-  display: grid;
-  gap: 12px;
-}
-
-.lineage-column > span {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.lineage-node {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 800;
-  padding: 14px;
-}
-
-.lineage-node.current {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.lineage-node.downstream {
-  background: #f8fafc;
 }

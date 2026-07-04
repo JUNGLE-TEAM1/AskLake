@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import type React from "react";
+import { Background, Controls, MarkerType, ReactFlow } from "@xyflow/react";
+import type { Edge, Node } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
   BookOpen,
@@ -8,7 +11,6 @@ import {
   Check,
   CircleUser,
   Clock3,
-  Database,
   Download,
   ExternalLink,
   FileText,
@@ -371,29 +373,28 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
+  const { edges, nodes } = buildLineageGraph(dataset);
+
   return (
     <section className="catalog-lineage-card">
       <div className="catalog-section-header">
         <h2>{dataset.name}</h2>
         <span>DATA LINEAGE</span>
       </div>
-      <div className="catalog-lineage-scroll">
-        <div className="catalog-lineage-graph">
-          <div className="lineage-column">
-            <span>Upstream</span>
-            {dataset.upstream.map((item) => <LineageNode key={item} label={item} tone="source" />)}
-          </div>
-          <div className="lineage-connector" />
-          <div className="lineage-column current">
-            <span>{dataset.layer} LAYER</span>
-            <LineageNode label={dataset.name} tone="current" />
-          </div>
-          <div className="lineage-connector" />
-          <div className="lineage-column">
-            <span>Downstream</span>
-            {dataset.downstream.map((item) => <LineageNode key={item} label={item} tone="downstream" />)}
-          </div>
-        </div>
+      <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
+        <ReactFlow
+          edges={edges}
+          fitView
+          maxZoom={1.35}
+          minZoom={0.45}
+          nodes={nodes}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#cbd5e1" gap={18} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
       </div>
       <div className="catalog-lineage-footer">
         <span>Upstream {dataset.upstream.length}</span>
@@ -404,6 +405,50 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
+function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Node[] } {
+  const upstreamNodes: Node[] = dataset.upstream.map((item, index) => ({
+    data: { label: item },
+    id: `upstream-${index}`,
+    position: { x: 0, y: index * 96 },
+    type: "input",
+    className: "lineage-flow-node source",
+  }));
+  const currentNode: Node = {
+    data: { label: dataset.name },
+    id: "current-dataset",
+    position: { x: 330, y: Math.max(0, (dataset.upstream.length - 1) * 48) },
+    className: "lineage-flow-node current",
+  };
+  const downstreamNodes: Node[] = dataset.downstream.map((item, index) => ({
+    data: { label: item },
+    id: `downstream-${index}`,
+    position: { x: 660, y: index * 96 },
+    type: "output",
+    className: "lineage-flow-node downstream",
+  }));
+  const upstreamEdges: Edge[] = upstreamNodes.map((node) => ({
+    id: `${node.id}-to-current`,
+    source: node.id,
+    target: currentNode.id,
+    markerEnd: { type: MarkerType.ArrowClosed },
+    type: "smoothstep",
+    className: "lineage-flow-edge",
+  }));
+  const downstreamEdges: Edge[] = downstreamNodes.map((node) => ({
+    id: `current-to-${node.id}`,
+    source: currentNode.id,
+    target: node.id,
+    markerEnd: { type: MarkerType.ArrowClosed },
+    type: "smoothstep",
+    className: "lineage-flow-edge",
+  }));
+
+  return {
+    edges: [...upstreamEdges, ...downstreamEdges],
+    nodes: [...upstreamNodes, currentNode, ...downstreamNodes],
+  };
+}
+
 function CatalogLineageMini({ dataset }: { dataset: CatalogDataset }) {
   return (
     <div className="catalog-lineage-mini">
@@ -411,14 +456,5 @@ function CatalogLineageMini({ dataset }: { dataset: CatalogDataset }) {
       <strong>{dataset.name}</strong>
       <div>{dataset.downstream.slice(0, 2).map((item) => <span key={item}>{item}</span>)}</div>
     </div>
-  );
-}
-
-function LineageNode({ label, tone }: { label: string; tone: "source" | "current" | "downstream" }) {
-  return (
-    <article className={`lineage-node ${tone}`}>
-      <Database size={16} />
-      <span>{label}</span>
-    </article>
   );
 }

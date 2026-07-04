@@ -31,6 +31,7 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
+| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | Backend | TBD | planned | API contract exists |
@@ -58,7 +59,7 @@ flowchart LR
 - layout: `frontend/src/components/layout/`
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
-- catalog 화면: `frontend/src/pages/catalog/`
+- catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
 - mock data: `frontend/src/data/mockData.ts`
