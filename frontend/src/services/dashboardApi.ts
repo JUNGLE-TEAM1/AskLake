@@ -20,8 +20,25 @@ type DeleteDashboardResponse = {
   deletedDashboardId: string;
 };
 
+export type CreateDashboardInput = {
+  datasetId?: string;
+  owner?: string;
+  source?: "manual" | "sql" | "catalog";
+  sqlRunId?: string;
+  title?: string;
+};
+
+type CreateDashboardResponse = {
+  dashboard: SavedDashboardCard;
+};
+
 function splitTags(tags: string) {
   return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
+}
+
+function formatDashboardTimestamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function dateValue(value?: string) {
@@ -155,6 +172,36 @@ export async function listDashboards(query: DashboardListQuery, mockDashboards: 
   const response = await apiClient.post<DashboardListResponse | DashboardPageResponse>("/api/dashboards/query", toDashboardQueryPayload(query));
   if ("dashboards" in response) return normalizeDashboardPageResponse(response);
   return normalizeDashboardListResponse(response);
+}
+
+export async function createDashboard(input: CreateDashboardInput = {}): Promise<CreateDashboardResponse> {
+  if (apiConfig.useMock) {
+    const createdAt = new Date();
+    const createdAtValue = createdAt.toISOString();
+    return {
+      dashboard: normalizeDashboardCard({
+        createdAt: formatDashboardTimestamp(createdAt),
+        createdAtValue,
+        datasetId: input.datasetId,
+        hasPublishedRevision: false,
+        id: `dash_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+        meta: "0개 위젯 · 수동 생성",
+        name: input.title?.trim() || `새 대시보드 ${formatDashboardTimestamp(createdAt)}`,
+        owner: input.owner?.trim() || "Admin User",
+        sourceRunId: input.sqlRunId,
+        status: "draft",
+        tags: "초안 · Dashboard",
+        updated: "방금 전",
+        updatedAtValue: createdAtValue,
+        widgets: [],
+      }),
+    };
+  }
+
+  const response = await apiClient.post<CreateDashboardResponse>("/api/dashboards", input);
+  return {
+    dashboard: normalizeDashboardCard(response.dashboard),
+  };
 }
 
 export async function deleteDashboard(dashboardId: string): Promise<DeleteDashboardResponse> {

@@ -67,6 +67,11 @@
   flex: 0 0 auto;
 }
 
+.dashboard-header-actions .dashboard-create-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .dashboard-filter-bar,
 .dashboard-metric-card,
 .dashboard-chart-card,

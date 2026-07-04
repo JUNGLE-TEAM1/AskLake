@@ -40,7 +40,7 @@ import {
   publishDashboard as publishRuntimeDashboard,
   saveDraftLayouts,
 } from "../../services/dashboardRuntimeApi";
-import { deleteDashboard } from "../../services/dashboardApi";
+import { createDashboard, deleteDashboard } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
@@ -97,6 +97,8 @@ export function DashboardPage({
   const [isPublished, setIsPublished] = useState(false);
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetType>("bar");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [dashboardCreateError, setDashboardCreateError] = useState<string | null>(null);
+  const [isCreatingDashboard, setIsCreatingDashboard] = useState(false);
   const [dashboardDeleteTarget, setDashboardDeleteTarget] = useState<SavedDashboardCard | null>(null);
   const [dashboardDeleteError, setDashboardDeleteError] = useState<string | null>(null);
   const [deletingDashboardId, setDeletingDashboardId] = useState<string | null>(null);
@@ -350,6 +352,35 @@ export function DashboardPage({
     setSelectedDashboard(null);
     setView("builder");
     onAction("dashboard.create_clicked", "/api/dashboards", dataset.id);
+  };
+
+  const createDashboardFromLanding = async () => {
+    if (isCreatingDashboard) return;
+
+    const now = new Date();
+    const title = `새 대시보드 ${formatDashboardTimestamp(now)}`;
+    setIsCreatingDashboard(true);
+    setDashboardCreateError(null);
+    setRuntimeNotice(null);
+
+    try {
+      const { dashboard } = await createDashboard({ source: "manual", title });
+      const nextDashboard = normalizeSavedDashboardCard(dashboard);
+      setSelectedDashboard(null);
+      setSavedDashboards((cards) => [nextDashboard, ...cards.filter((card) => card.id !== nextDashboard.id)]);
+      dashboardList.reloadDashboards();
+      setRuntimeShareLink(null);
+      setSelectedWidgetId(null);
+      setSelectedRuntimePageId(null);
+      onAction("dashboard.created", "/api/dashboards", nextDashboard.id);
+      openRuntimeDashboard(nextDashboard.id, "published");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "대시보드 생성에 실패했습니다.";
+      setDashboardCreateError(message);
+      onAction("dashboard.create_failed", "/api/dashboards", dataset.id, "failed");
+    } finally {
+      setIsCreatingDashboard(false);
+    }
   };
 
   const backToList = () => {
@@ -712,17 +743,19 @@ export function DashboardPage({
     return (
       <DashboardLandingPage
         currentPage={dashboardList.safeDashboardPage}
+        createError={dashboardCreateError}
         dashboardCount={dashboardList.dashboardCount}
         deleteError={dashboardDeleteError}
         deleteTarget={dashboardDeleteTarget}
         deletingDashboardId={deletingDashboardId}
         dashboards={dashboardList.visibleDashboards}
         error={dashboardList.dashboardError}
+        isCreatingDashboard={isCreatingDashboard}
         isLoading={dashboardList.dashboardLoading}
         onCancelDelete={cancelDashboardDelete}
         onClearTags={dashboardList.clearDashboardTags}
         onConfirmDelete={confirmDashboardDelete}
-        onCreateDashboard={openBuilder}
+        onCreateDashboard={createDashboardFromLanding}
         onNextPage={dashboardList.goToNextDashboardPage}
         onOpenDashboard={openDashboardFromList}
         onPreviousPage={dashboardList.goToPreviousDashboardPage}

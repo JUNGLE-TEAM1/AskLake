@@ -8,6 +8,7 @@ import type { SavedDashboardCard } from "../../types";
 
 export function DashboardLandingPage({
   currentPage,
+  createError,
   dashboardCount,
   deleteError,
   deleteTarget,
@@ -15,6 +16,7 @@ export function DashboardLandingPage({
   dashboards,
   error,
   isLoading,
+  isCreatingDashboard,
   onClearTags,
   onCreateDashboard,
   onCancelDelete,
@@ -40,6 +42,7 @@ export function DashboardLandingPage({
   totalPages,
 }: {
   currentPage: number;
+  createError: string | null;
   dashboardCount: number;
   deleteError: string | null;
   deleteTarget: SavedDashboardCard | null;
@@ -47,6 +50,7 @@ export function DashboardLandingPage({
   dashboards: SavedDashboardCard[];
   error: string | null;
   isLoading: boolean;
+  isCreatingDashboard: boolean;
   onClearTags: () => void;
   onCancelDelete: () => void;
   onConfirmDelete: () => void;
@@ -78,7 +82,14 @@ export function DashboardLandingPage({
           <h1>대시보드</h1>
         </div>
         <div className="dashboard-header-actions">
-          <button className="primary-button dashboard-create-button" type="button" onClick={onCreateDashboard}><Plus size={24} /> 새 대시보드 생성</button>
+          <button
+            className="primary-button dashboard-create-button"
+            disabled={isCreatingDashboard}
+            type="button"
+            onClick={onCreateDashboard}
+          >
+            <Plus size={24} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+          </button>
         </div>
       </header>
 
@@ -102,6 +113,7 @@ export function DashboardLandingPage({
         <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
         {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
         {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
+        {createError && <div className="dashboard-list-count">대시보드 생성 오류: {createError}</div>}
         <DashboardTable
           dashboards={dashboards}
           deletingDashboardId={deletingDashboardId}

@@ -685,12 +685,18 @@ Error:
 
 `POST /api/dashboards`
 
+대시보드 랜딩 페이지의 `새 대시보드 생성` 버튼에서 호출한다.
+생성 즉시 `dashboards` 테이블에 `status: "draft"` 카드 정보를 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다.
+실제 편집용 draft revision/page/widget은 사용자가 내부 화면에서 `위젯 편집`을 눌렀을 때 `POST /api/dashboards/{dashboardId}/draft/ensure`로 준비한다.
+`게시` 동작은 `POST /api/dashboards/{dashboardId}/publish`를 호출하며, 이때 목록 status가 `published`로 바뀐다.
+
 Request:
 
 ```ts
 type CreateDashboardDraftRequest = {
-  datasetId: string;
-  source: "sql" | "catalog";
+  title?: string;
+  source?: "manual" | "sql" | "catalog";
+  datasetId?: string;
   sqlRunId?: string;
 };
 ```
@@ -699,9 +705,8 @@ Request 예시:
 
 ```json
 {
-  "datasetId": "ds_customer_review_silver",
-  "source": "sql",
-  "sqlRunId": "sql_01J1Z8W2V7KX"
+  "title": "새 대시보드 2026-07-05 16:42",
+  "source": "manual"
 }
 ```
 
@@ -709,34 +714,28 @@ Response `201 Created`:
 
 ```json
 {
-  "dashboardId": "dash_01J1Z8W5ABCD",
-  "view": "builder",
-  "widgets": [
-    {
-      "type": "table",
-      "title": "SQL 결과 테이블",
-      "fields": {
-        "columns": "review_id, rating, sentiment",
-        "sort": "review_id ASC"
-      }
-    },
-    {
-      "type": "bar",
-      "title": "sentiment별 rating",
-      "fields": {
-        "x": "sentiment",
-        "y": "rating",
-        "aggregation": "AVG"
-      }
-    }
-  ]
+  "dashboard": {
+    "id": "dash_1751710920000_ab12cd34",
+    "name": "새 대시보드 2026-07-05 16:42",
+    "owner": "Admin User",
+    "meta": "0개 위젯 · 수동 생성",
+    "status": "draft",
+    "tags": "초안 · Dashboard",
+    "createdAt": "2026-07-05 16:42",
+    "createdAtValue": "2026-07-05T07:42:00.000Z",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z",
+    "hasPublishedRevision": false,
+    "widgets": []
+  }
 }
 ```
 
 현재 프론트 동작:
 
-- SQL에서 넘어온 경우 `SqlResultDraft` 기준으로 `table`, `bar` 위젯을 기본 배치합니다.
-- 백엔드 연결 시 위젯 추천 결과를 이 응답으로 대체하면 됩니다.
+- 랜딩 페이지에서 새 대시보드 생성 시 빈 dashboard card를 `draft`로 생성합니다.
+- 생성 응답의 `dashboard.id`를 사용해 `/dashboards/{dashboardId}` 조회 화면으로 이동합니다.
+- 위젯 추가와 draft revision 생성은 내부 화면의 `위젯 편집` 이후 별도 runtime API에서 처리합니다.
 
 ### 8.5 대시보드 revision runtime
 
