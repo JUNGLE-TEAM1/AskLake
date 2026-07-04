@@ -177,7 +177,7 @@ export function SqlAnalysisPage({
       setAutocompleteIndex((index) => (index - 1 + autocompleteCandidates.length) % autocompleteCandidates.length);
       return;
     }
-    if (event.key === "Tab" || event.key === "Enter") {
+    if (event.key === "Tab") {
       event.preventDefault();
       applyAutocompleteCandidate(autocompleteCandidates[autocompleteIndex] ?? autocompleteCandidates[0]);
       return;
@@ -428,7 +428,7 @@ export function SqlAnalysisPage({
                   onBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
                   onKeyDown={handleQueryKeyDown}
                   onKeyUp={(event) => {
-                    if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return;
+                    if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
                     updateCursorFromTextarea(event.currentTarget);
                   }}
                   onScroll={syncLineNumberScroll}
