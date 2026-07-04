@@ -534,6 +534,15 @@
   box-shadow: none;
 }
 
+.catalog-lineage-loading {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .lineage-table-node {
   overflow: hidden;
   border: 1px solid #d9e2ee;

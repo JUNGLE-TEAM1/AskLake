@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
+import type { ELK, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -54,6 +55,11 @@ type LineageTableNodeData = Record<string, unknown> & {
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
 };
+
+let lineageLayoutPromise: Promise<ELK> | null = null;
+const lineageNodeWidth = 306;
+const lineageNodeHeaderHeight = 90;
+const lineageColumnRowHeight = 46;
 
 export function CatalogPage({
   datasets,
@@ -391,8 +397,19 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
-  const { edges, nodes } = buildLineageGraph(dataset);
+  const [graph, setGraph] = useState<{ edges: Edge[]; nodes: Node[] } | null>(null);
   const statusMeta = datasetStatusMeta[dataset.status];
+
+  useEffect(() => {
+    let isMounted = true;
+    setGraph(null);
+    layoutLineageGraph(dataset).then((nextGraph) => {
+      if (isMounted) setGraph(nextGraph);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [dataset]);
 
   return (
     <section className="catalog-lineage-card">
@@ -404,21 +421,25 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
         </div>
       </div>
       <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
-        <ReactFlow
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.14 }}
-          maxZoom={1.35}
-          minZoom={0.45}
-          nodes={nodes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          nodeTypes={lineageNodeTypes}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color="#d5dde8" gap={22} />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+        {graph ? (
+          <ReactFlow
+            edges={graph.edges}
+            fitView
+            fitViewOptions={{ padding: 0.12 }}
+            maxZoom={1.35}
+            minZoom={0.25}
+            nodes={graph.nodes}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            nodeTypes={lineageNodeTypes}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#d5dde8" gap={22} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        ) : (
+          <div className="catalog-lineage-loading">리니지 레이아웃 계산 중...</div>
+        )}
       </div>
       <div className="catalog-lineage-footer">
         <span>Upstream <strong>{dataset.upstream.length} Datasets</strong></span>
@@ -429,13 +450,53 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
+async function layoutLineageGraph(dataset: CatalogDataset): Promise<{ edges: Edge[]; nodes: Node[] }> {
+  const graph = buildLineageGraph(dataset);
+  const layout = await getLineageLayout();
+  const layoutGraph: ElkNode = {
+    id: "catalog-lineage",
+    children: graph.nodes.map((node) => ({
+      id: node.id,
+      width: lineageNodeWidth,
+      height: getLineageNodeHeight(node),
+    })),
+    edges: buildLayoutEdges(graph.nodes, dataset),
+    layoutOptions: {
+      "elk.algorithm": "layered",
+      "elk.direction": "RIGHT",
+      "elk.edgeRouting": "ORTHOGONAL",
+      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "150",
+      "elk.spacing.nodeNode": "44",
+    },
+  };
+  const layouted = await layout.layout(layoutGraph);
+  const layoutById = new Map((layouted.children ?? []).map((node) => [node.id, node]));
+
+  return {
+    edges: graph.edges,
+    nodes: graph.nodes.map((node) => {
+      const layoutNode = layoutById.get(node.id);
+      return {
+        ...node,
+        position: {
+          x: layoutNode?.x ?? node.position.x,
+          y: layoutNode?.y ?? node.position.y,
+        },
+      };
+    }),
+  };
+}
+
+function getLineageLayout(): Promise<ELK> {
+  if (!lineageLayoutPromise) {
+    lineageLayoutPromise = import("elkjs/lib/elk.bundled.js").then(({ default: Elk }) => new Elk());
+  }
+  return lineageLayoutPromise;
+}
+
 function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Node[] } {
   const primaryColumns = buildLineageColumns(dataset.schema);
-  const rowHeight = 318;
-  const sourceX = 0;
-  const currentX = 430;
-  const downstreamX = 860;
-  const currentY = Math.max(0, ((Math.max(dataset.upstream.length, 1) - 1) * rowHeight) / 2);
 
   const upstreamNodes: Node<LineageTableNodeData>[] = dataset.upstream.map((item, index) => {
     const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
@@ -448,7 +509,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
         tone: sourceMeta.tone,
       },
       id: `upstream-${index}`,
-      position: { x: sourceX, y: index * rowHeight },
+      position: { x: 0, y: 0 },
       type: "lineageTable",
     };
   });
@@ -461,7 +522,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       tone: getLayerTone(dataset.layer),
     },
     id: "current-dataset",
-    position: { x: currentX, y: currentY },
+    position: { x: 0, y: 0 },
     type: "lineageTable",
   };
   const downstreamNodes: Node<LineageTableNodeData>[] = dataset.downstream.map((item, index) => ({
@@ -473,7 +534,7 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
       tone: "downstream",
     },
     id: `downstream-${index}`,
-    position: { x: downstreamX, y: index * rowHeight },
+    position: { x: 0, y: 0 },
     type: "lineageTable",
   }));
   const upstreamEdges = upstreamNodes.flatMap((node, nodeIndex) => {
@@ -509,6 +570,29 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     edges: [...upstreamEdges, ...downstreamEdges],
     nodes: [...upstreamNodes, currentNode, ...downstreamNodes],
   };
+}
+
+function buildLayoutEdges(nodes: Node[], dataset: CatalogDataset): ElkExtendedEdge[] {
+  const currentNode = nodes.find((node) => node.id === "current-dataset");
+  if (!currentNode) return [];
+
+  const upstreamEdges = dataset.upstream.map((_, index) => ({
+    id: `layout-upstream-${index}`,
+    sources: [`upstream-${index}`],
+    targets: [currentNode.id],
+  }));
+  const downstreamEdges = dataset.downstream.map((_, index) => ({
+    id: `layout-downstream-${index}`,
+    sources: [currentNode.id],
+    targets: [`downstream-${index}`],
+  }));
+
+  return [...upstreamEdges, ...downstreamEdges];
+}
+
+function getLineageNodeHeight(node: Node): number {
+  const columns = (node.data as LineageTableNodeData).columns ?? [];
+  return lineageNodeHeaderHeight + columns.length * lineageColumnRowHeight + 16;
 }
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
