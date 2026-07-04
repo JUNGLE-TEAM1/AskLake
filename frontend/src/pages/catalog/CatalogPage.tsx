@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type React from "react";
 import {
   BarChart3,
   BookOpen,
@@ -48,6 +49,7 @@ export function CatalogPage({
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
+  const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const tags = ["#customer", "#sales", "#behavior", "#marketing", "#dw", "#growth", "#클릭", "#실시간", "#고객 주문", "#스트림", "#RAG", "#사용자 지표"];
 
   useEffect(() => {
@@ -147,12 +149,21 @@ export function CatalogPage({
               {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
             </tbody>
           </table>
-          <button className="catalog-text-button" type="button" onClick={() => onDatasetOpen(previewDataset)}>전체 스키마 상세 보기</button>
+          <button className="catalog-text-button" type="button" onClick={() => {
+            onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
+            setActiveModal("schema");
+          }}>전체 스키마 상세 보기</button>
         </article>
 
         <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
           onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-          onDatasetOpen(previewDataset);
+          setActiveModal("lineage");
+        }} onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
+            setActiveModal("lineage");
+          }
         }}>
           <ExternalLink size={16} />
           <div>
@@ -168,6 +179,45 @@ export function CatalogPage({
         <button className="secondary-button catalog-wide-button" type="button" onClick={() => onAction("catalog.dataset.saved", `/api/catalog/datasets/${previewDataset.id}/saved`, previewDataset.id)}>내 저장소 보관</button>
         <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
       </aside>
+      {activeModal && (
+        <CatalogModal
+          dataset={previewDataset}
+          onClose={() => setActiveModal(null)}
+          title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
+        >
+          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} />}
+        </CatalogModal>
+      )}
+    </div>
+  );
+}
+
+function CatalogModal({
+  children,
+  dataset,
+  onClose,
+  title,
+}: {
+  children: React.ReactNode;
+  dataset: CatalogDataset;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="catalog-modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="catalog-modal" role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
+        <header className="catalog-modal-header">
+          <div>
+            <span>{dataset.layer} Dataset</span>
+            <h2>{dataset.name}</h2>
+            <p>{title}</p>
+          </div>
+          <button type="button" onClick={onClose}>닫기</button>
+        </header>
+        <div className="catalog-modal-body">
+          {children}
+        </div>
+      </section>
     </div>
   );
 }
