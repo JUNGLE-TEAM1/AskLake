@@ -50,6 +50,15 @@ import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFl
 import type { QualityRuleDraft, TransformStepDraft } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityMockData";
 
+type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
+type RepeatScheduleDraft = {
+  cron: string;
+  day: string;
+  frequency: RepeatFrequency;
+  minute: string;
+  time: string;
+};
+
 export function SchedulePage({
   draftScheduleLabel,
   mode,
