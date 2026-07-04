@@ -66,6 +66,7 @@ VITE_USE_MOCK_API=false
 
 ## 6) PR 체크리스트
 
+- [ ] GitHub 기본 PR 템플릿을 채웠다.
 - [ ] 변경 목적이 명확하다.
 - [ ] `npm run build`를 실행했거나 실행하지 못한 이유를 남겼다.
 - [ ] API/interface 변경이 있으면 `docs/03-api-reference.md`와 `docs/api-contract.md`가 최신 상태다.
@@ -106,3 +107,4 @@ VITE_USE_MOCK_API=false
 - API/interface 변경: `docs/03-api-reference.md`, `docs/api-contract.md`
 - 개발 명령/검증/브랜치 규칙 변경: 이 문서
 - CI/ruleset/platform guardrail 변경: `docs/system-guardrails.md`
+- GitHub PR/Issue 템플릿 변경: 이 문서와 `docs/system-guardrails.md`
