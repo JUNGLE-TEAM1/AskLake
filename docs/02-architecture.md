@@ -31,7 +31,7 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
-| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal with column-level handles, selected-column emphasis, and upstream expansion |
+| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | Backend | TBD | planned | API contract exists |

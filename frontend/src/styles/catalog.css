@@ -484,9 +484,9 @@
 
 .catalog-lineage-flow {
   width: 100%;
-  height: 640px;
-  min-height: 560px;
-  flex: 0 0 640px;
+  height: 590px;
+  min-height: 520px;
+  flex: 0 0 590px;
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -580,13 +580,6 @@
   min-width: 0;
 }
 
-.lineage-table-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .lineage-table-header span,
 .lineage-table-header em {
   color: #475569;
@@ -613,22 +606,6 @@
   font-size: 17px;
   line-height: 1.25;
   overflow-wrap: anywhere;
-}
-
-.lineage-expand-button {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  background: #fff;
-  color: #2563eb;
-  cursor: pointer;
-}
-
-.lineage-expand-button:hover {
-  background: #eff6ff;
 }
 
 .lineage-table-header svg {
