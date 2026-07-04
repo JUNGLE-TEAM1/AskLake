@@ -15,6 +15,8 @@ type RuntimeNotice = {
 
 export function DashboardRuntimeShell({
   children,
+  datasetSidebar,
+  datasetSidebarOpen = false,
   hasPublishedRevision,
   inspector,
   isAddingPage,
@@ -31,12 +33,15 @@ export function DashboardRuntimeShell({
   onRefresh,
   onSelectPage,
   onShare,
+  onToggleDatasetSidebar,
   pages,
   selectedPageId,
   shareLink,
   title,
 }: {
   children: React.ReactNode;
+  datasetSidebar?: React.ReactNode;
+  datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
   inspector?: React.ReactNode;
   isAddingPage?: boolean;
@@ -53,11 +58,20 @@ export function DashboardRuntimeShell({
   onRefresh?: () => void;
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
+  onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
   selectedPageId: string | null;
   shareLink?: string | null;
   title: string;
 }) {
+  const hasDatasetSidebar = Boolean(datasetSidebar);
+  const workspaceClassName = [
+    "asklake-dashboard-workspace",
+    hasDatasetSidebar && "has-dataset-sidebar",
+    hasDatasetSidebar && datasetSidebarOpen && "dataset-sidebar-open",
+    inspector && "has-inspector",
+  ].filter(Boolean).join(" ");
+
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
@@ -88,10 +102,17 @@ export function DashboardRuntimeShell({
         </div>
       )}
       <div className="asklake-dashboard-subnav">
-        <div className="asklake-dashboard-data-tab">
+        <button
+          aria-controls={hasDatasetSidebar ? "asklake-dashboard-dataset-sidebar" : undefined}
+          aria-pressed={hasDatasetSidebar ? datasetSidebarOpen : undefined}
+          className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
+          disabled={!onToggleDatasetSidebar}
+          type="button"
+          onClick={onToggleDatasetSidebar}
+        >
           <span aria-hidden="true">▦</span>
           데이터
-        </div>
+        </button>
         <button className="asklake-dashboard-filter-button" type="button" aria-label="필터">
           <Filter size={17} />
         </button>
@@ -108,7 +129,8 @@ export function DashboardRuntimeShell({
       <div className="asklake-dashboard-filter-row">
         <span className="asklake-dashboard-filter-chip">필터가 설정되지 않았습니다</span>
       </div>
-      <div className={inspector ? "asklake-dashboard-workspace has-inspector" : "asklake-dashboard-workspace"}>
+      <div className={workspaceClassName}>
+        {datasetSidebar}
         <main className={mode === "draft" ? "asklake-dashboard-canvas-wrap edit" : "asklake-dashboard-canvas-wrap"}>
           {children}
         </main>

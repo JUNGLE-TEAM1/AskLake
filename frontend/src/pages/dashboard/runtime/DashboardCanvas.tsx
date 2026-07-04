@@ -1,12 +1,17 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
+import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
+const noReflowCompactor = {
+  ...noCompactor,
+  preventCollision: true,
+};
 
 function scaleLayout(layout: LayoutItem[], cols: number) {
   return layout.map((item) => {
@@ -26,17 +31,20 @@ function scaleLayout(layout: LayoutItem[], cols: number) {
 export function DashboardCanvas({
   editable,
   onLayoutCommit,
+  onLayoutRejected,
   onSelectWidget,
   selectedWidgetId,
   widgets,
 }: {
   editable: boolean;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
+  onLayoutRejected?: () => void;
   onSelectWidget?: (widgetId: string) => void;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
 }) {
   const { containerRef, mounted, width } = useContainerWidth({ initialWidth: 1200 });
+  const [resetKey, setResetKey] = useState(0);
   const layout = useMemo(
     () =>
       widgets.map((widget) => ({
@@ -63,6 +71,29 @@ export function DashboardCanvas({
     }),
     [layout],
   );
+  const changedMultipleItems = (nextLayout: readonly LayoutItem[]) => {
+    const startById = new Map(layout.map((item) => [item.i, item]));
+    let changedCount = 0;
+
+    for (const item of nextLayout) {
+      const startItem = startById.get(item.i);
+      if (!startItem) continue;
+      const changed = item.x !== startItem.x || item.y !== startItem.y || item.w !== startItem.w || item.h !== startItem.h;
+      if (changed) changedCount += 1;
+      if (changedCount > 1) return true;
+    }
+
+    return false;
+  };
+  const commitLayout = (nextLayout: readonly LayoutItem[]) => {
+    if (hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
+      setResetKey((key) => key + 1);
+      onLayoutRejected?.();
+      return;
+    }
+
+    onLayoutCommit?.([...nextLayout]);
+  };
 
   if (widgets.length === 0) {
     return (
@@ -76,20 +107,25 @@ export function DashboardCanvas({
     <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
       {mounted && (
         <Responsive
-          key={editable ? "draft" : "published"}
+          key={`${editable ? "draft" : "published"}-${resetKey}`}
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
-          compactor={noCompactor}
+          compactor={noReflowCompactor}
           containerPadding={[0, 0]}
-          dragConfig={{ enabled: editable, threshold: 3 }}
+          dragConfig={{
+            bounded: true,
+            cancel: ".widget-control, button, input, select, textarea, a",
+            enabled: editable,
+            threshold: 6,
+          }}
           layouts={responsiveLayouts}
           margin={[12, 12]}
           resizeConfig={{ enabled: editable, handles: ["se"] }}
           rowHeight={48}
           width={width}
-          onDragStop={(nextLayout) => onLayoutCommit?.([...nextLayout])}
-          onResizeStop={(nextLayout) => onLayoutCommit?.([...nextLayout])}
+          onDragStop={(nextLayout) => commitLayout([...nextLayout])}
+          onResizeStop={(nextLayout) => commitLayout([...nextLayout])}
         >
           {widgets.map((widget) => (
             <div key={widget.id}>

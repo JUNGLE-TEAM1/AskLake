@@ -11,9 +11,14 @@ import {
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardCanvas } from "./runtime/DashboardCanvas";
+import { DatasetSidebar } from "./runtime/DatasetSidebar";
 import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
 import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import { WidgetFrame } from "./runtime/WidgetFrame";
+import { WidgetConfigPanel } from "./runtime/WidgetConfigPanel";
+import { findNextAvailableLayout, hasAnyLayoutCollision, toCollisionLayout } from "./runtime/dashboardLayoutUtils";
+import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
+import type { CreateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -61,14 +66,6 @@ type RuntimeNotice = {
   tone: "success" | "info" | "error";
 };
 
-const draftWidgetLabels: Record<DashboardRuntimeWidgetType, string> = {
-  bar_chart: "막대 차트",
-  donut_chart: "도넛 차트",
-  line_chart: "라인 차트",
-  metric: "지표",
-  table: "테이블",
-};
-
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
@@ -76,8 +73,6 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
 };
-
-const draftWidgetPalette: DashboardRuntimeWidgetType[] = ["metric", "bar_chart", "line_chart", "donut_chart", "table"];
 
 export function DashboardPage({
   dataset,
@@ -117,10 +112,13 @@ export function DashboardPage({
   const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
+  const [isCreatingDatasetWidget, setIsCreatingDatasetWidget] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
+  const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
@@ -188,6 +186,15 @@ export function DashboardPage({
   const activeDashboardId = selectedDashboard?.id ?? dashboardId;
   const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
   const activeDashboardWidgets = selectedDashboard?.widgets?.length ? selectedDashboard.widgets : snapshotWidgets;
+  const {
+    datasets: dashboardDatasets,
+    error: dashboardDatasetsError,
+    isLoading: dashboardDatasetsLoading,
+  } = useDashboardDatasets();
+  const selectedDataset = useMemo(
+    () => dashboardDatasets.find((datasetOption) => datasetOption.id === selectedDatasetId) ?? null,
+    [dashboardDatasets, selectedDatasetId],
+  );
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -211,17 +218,12 @@ export function DashboardPage({
       : [],
     [publishedRuntime?.revision, publishedRuntime?.widgetsByPageId, runtimeSelection.mode, selectedRuntimePageId],
   );
-  const selectedDraftWidget = selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null;
-  const selectedDraftWidgetConfigRows = selectedDraftWidget
-    ? ["xKey", "yKey", "valueKey", "labelKey", "columns"]
-      .map((key) => {
-        const value = selectedDraftWidget.config[key];
-        if (Array.isArray(value)) return [key, value.join(", ")] as const;
-        if (value === null || value === undefined || value === "") return null;
-        return [key, String(value)] as const;
-      })
-      .filter((row): row is readonly [string, string] => Boolean(row))
-    : [];
+
+  useEffect(() => {
+    if (!selectedDatasetId) return;
+    if (dashboardDatasets.some((datasetOption) => datasetOption.id === selectedDatasetId)) return;
+    setSelectedDatasetId(null);
+  }, [dashboardDatasets, selectedDatasetId]);
 
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
@@ -546,30 +548,47 @@ export function DashboardPage({
     }
   };
 
-  const addDraftWidget = async (type: DashboardRuntimeWidgetType) => {
-    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId) return;
-    const nextY = selectedDraftWidgets.reduce((bottom, widget) => Math.max(bottom, widget.layout.y + widget.layout.h), 0);
-    const layout = {
-      ...defaultDraftWidgetLayout[type],
-      y: nextY,
-    };
+  const addDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
+    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId || isCreatingDatasetWidget) return;
+    const layout = findNextAvailableLayout(
+      toCollisionLayout(selectedDraftWidgets),
+      defaultDraftWidgetLayout[input.type],
+    );
 
+    setIsCreatingDatasetWidget(true);
+    setDraftError(null);
     try {
       const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
+        datasetId: input.datasetId,
         layout,
-        title: draftWidgetLabels[type],
-        type,
+        title: input.title,
+        type: input.type,
+        config: {
+          color: input.color,
+          description: input.description,
+          xKey: input.xKey,
+          yKey: input.yKey,
+        },
       });
       await loadDraftRuntime(runtimeSelection.dashboardId);
       setSelectedWidgetId(widget.id);
-      onAction("dashboard.widget.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, type);
+      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
+      onAction("dashboard.widget.dataset_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, input.datasetId);
     } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a draft widget.");
+      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
+      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
+    } finally {
+      setIsCreatingDatasetWidget(false);
     }
   };
 
   const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
     if (!selectedRuntimePageId) return;
+    if (hasAnyLayoutCollision(layout)) {
+      setRuntimeNotice({ message: "위젯이 겹쳐 레이아웃을 저장하지 않았습니다. 위치를 다시 조정해 주세요.", tone: "error" });
+      return;
+    }
+
     const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
 
     setDraftRuntime((currentRuntime) => {
@@ -829,6 +848,7 @@ export function DashboardPage({
           selectedWidgetId={selectedWidgetId}
           widgets={selectedDraftWidgets}
           onLayoutCommit={updateDraftWidgetLayouts}
+          onLayoutRejected={() => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" })}
           onSelectWidget={setSelectedWidgetId}
         />
       )
@@ -885,52 +905,29 @@ export function DashboardPage({
     return (
       <div className="dashboard-page dashboard-runtime-page">
         <DashboardRuntimeShell
+          datasetSidebar={isDraftMode ? (
+            <DatasetSidebar
+              datasets={dashboardDatasets}
+              error={dashboardDatasetsError}
+              isOpen={isDatasetSidebarOpen}
+              isLoading={dashboardDatasetsLoading}
+              selectedDatasetId={selectedDatasetId}
+              onSelectDataset={setSelectedDatasetId}
+            />
+          ) : undefined}
+          datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
           hasPublishedRevision={runtimeHasPublishedRevision}
           isAddingPage={isAddingRuntimePage}
           isPublishing={isPublishingRuntime}
           isRefreshing={isRefreshingRuntime}
           inspector={isDraftMode ? (
             <aside className="asklake-dashboard-inspector">
-              <section>
-                <strong>위젯 추가</strong>
-                <span>선택한 페이지에 기본 위젯을 추가합니다.</span>
-                <div className="asklake-widget-add-list">
-                  {draftWidgetPalette.map((type) => (
-                    <button
-                      disabled={!selectedRuntimePageId || draftLoading}
-                      key={type}
-                      type="button"
-                      onClick={() => void addDraftWidget(type)}
-                    >
-                      + {draftWidgetLabels[type]}
-                    </button>
-                  ))}
-                </div>
-              </section>
-              <section>
-                {selectedDraftWidget ? (
-                  <>
-                    <strong>{selectedDraftWidget.title || "제목 없는 위젯"}</strong>
-                    <div className="asklake-inspector-details">
-                      <p><span>유형</span><strong>{draftWidgetLabels[selectedDraftWidget.type]}</strong></p>
-                      <p><span>x / y</span><strong>{selectedDraftWidget.layout.x} / {selectedDraftWidget.layout.y}</strong></p>
-                      <p><span>w / h</span><strong>{selectedDraftWidget.layout.w} / {selectedDraftWidget.layout.h}</strong></p>
-                      <p><span>data rows</span><strong>{selectedDraftWidget.data.length}</strong></p>
-                      {selectedDraftWidgetConfigRows.map(([key, value]) => (
-                        <p key={key}><span>{key}</span><strong>{value}</strong></p>
-                      ))}
-                    </div>
-                    <button className="asklake-inspector-danger-button" type="button" disabled>
-                      삭제 준비 중
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <strong>구성할 위젯을 선택하세요</strong>
-                    <span>캔버스의 위젯을 클릭하면 위치와 크기 정보가 표시됩니다.</span>
-                  </>
-                )}
-              </section>
+              <WidgetConfigPanel
+                isCreating={isCreatingDatasetWidget}
+                selectedDataset={selectedDataset}
+                selectedDatasetId={selectedDatasetId}
+                onCreateWidget={addDatasetDraftWidget}
+              />
             </aside>
           ) : undefined}
           mode={runtimeSelection.mode}
@@ -948,6 +945,7 @@ export function DashboardPage({
           onRefresh={refreshRuntimeDashboard}
           onSelectPage={setSelectedRuntimePageId}
           onShare={shareRuntimeDashboard}
+          onToggleDatasetSidebar={isDraftMode ? () => setIsDatasetSidebarOpen((open) => !open) : undefined}
         >
           {runtimeCanvas}
         </DashboardRuntimeShell>
