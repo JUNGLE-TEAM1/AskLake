@@ -143,6 +143,7 @@ VITE_USE_MOCK_API=false
 | --- | --- | --- |
 | SQL 실행 | mock result 생성 | `POST /api/query/runs` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
+| 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 접근 가능한 mock dataset 목록에서 검색하고 `FROM`/`JOIN` 뒤 후보 삽입 | `GET /api/catalog/datasets?q=` 또는 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
 | 결과 Lake 저장 | 후속 실제 동작 구현 예정 | `POST /api/query/results/lake` |
@@ -150,7 +151,7 @@ VITE_USE_MOCK_API=false
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | 후속 확장으로 분리 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
 
-SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
 ### 4.5 대시보드
 

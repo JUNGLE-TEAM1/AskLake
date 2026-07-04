@@ -29,15 +29,23 @@ export function SqlAnalysisPage({
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
   const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(dataset.id);
+  const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
+  const [showReferencedOnly, setShowReferencedOnly] = useState(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
+    const contextDatasets = datasets.filter((item) => {
+      if (item.id === baseDataset.id) return false;
+      if (showReferencedOnly && !referenceDatasetIdSet.has(item.id)) return false;
+      return true;
+    });
     const searchableDatasets = keyword
-      ? datasets.filter((item) => {
+      ? contextDatasets.filter((item) => {
           const searchableText = [
             item.name,
             item.description,
@@ -49,11 +57,14 @@ export function SqlAnalysisPage({
           ].join(" ").toLowerCase();
           return searchableText.includes(keyword);
         })
-      : datasets;
+      : contextDatasets;
 
-    return searchableDatasets.filter((item) => item.id !== baseDataset.id).slice(0, 4);
-  }, [baseDataset.id, datasetSearch, datasets]);
-  const tableCompletion = useMemo(() => getTableCompletion(query, datasets), [datasets, query]);
+    return searchableDatasets.slice(0, 4);
+  }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
+  const tableCompletion = useMemo(
+    () => getTableCompletion(query, datasets, baseDataset.id, referenceDatasetIds),
+    [baseDataset.id, datasets, query, referenceDatasetIds],
+  );
 
   useEffect(() => {
     setBaseDatasetId(dataset.id);
@@ -65,8 +76,15 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setExecutionMs(null);
     setOpenSchemaDatasetId(baseDataset.id);
+    setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset.id, defaultQuery]);
+
+  const queryContextPath = () => {
+    const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
+    referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
+    return `/api/query/runs?${params.toString()}`;
+  };
 
   const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
 
@@ -91,9 +109,9 @@ export function SqlAnalysisPage({
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", `/api/query/runs`, baseDataset.id);
+      onAction("analysis.query.executed", queryContextPath(), baseDataset.id);
     } catch {
-      onAction("analysis.query.failed", `/api/query/runs`, baseDataset.id, "failed");
+      onAction("analysis.query.failed", queryContextPath(), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
@@ -135,15 +153,43 @@ export function SqlAnalysisPage({
       insertSqlText(targetDataset.name);
     }
     setOpenSchemaDatasetId(targetDataset.id);
+    if (targetDataset.id !== baseDataset.id) {
+      setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
+    }
     onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
   };
 
   const changeBaseDataset = (targetDataset: CatalogDataset) => {
     setBaseDatasetId(targetDataset.id);
+    setReferenceDatasetIds((ids) => ids.filter((id) => id !== targetDataset.id));
     setOpenSchemaDatasetId(targetDataset.id);
     setQuery(buildDefaultQuery(targetDataset));
     resetResultState();
     onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
+  };
+
+  const toggleReferenceDataset = (targetDataset: CatalogDataset) => {
+    if (targetDataset.id === baseDataset.id) return;
+    const isReferenced = referenceDatasetIdSet.has(targetDataset.id);
+    setReferenceDatasetIds((ids) => (
+      isReferenced ? ids.filter((id) => id !== targetDataset.id) : [...ids, targetDataset.id]
+    ));
+    resetResultState();
+    onAction(
+      isReferenced ? "analysis.context.reference_removed" : "analysis.context.reference_added",
+      `/api/query/context/reference-datasets/${targetDataset.id}`,
+      targetDataset.id,
+    );
+  };
+
+  const toggleReferencedOnly = () => {
+    const nextValue = !showReferencedOnly;
+    setShowReferencedOnly(nextValue);
+    onAction(
+      nextValue ? "analysis.context.references_filtered" : "analysis.context.references_filter_cleared",
+      "/api/query/context/reference-datasets",
+      baseDataset.id,
+    );
   };
 
   const toggleSchema = (targetDataset: CatalogDataset) => {
@@ -215,18 +261,35 @@ export function SqlAnalysisPage({
           />
         </label>
         <section className="sql-dataset-search-results">
-          <h2>table search</h2>
+          <div className="sql-section-heading">
+            <h2>table search</h2>
+            <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
+              {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
+            </button>
+          </div>
           <div>
             {filteredDatasets.map((item) => (
-              <article className={item.id === openSchemaDatasetId ? "sql-table-card active" : "sql-table-card"} key={item.id}>
+              <article
+                className={[
+                  "sql-table-card",
+                  item.id === openSchemaDatasetId ? "active" : "",
+                  referenceDatasetIdSet.has(item.id) ? "referenced" : "",
+                ].filter(Boolean).join(" ")}
+                key={item.id}
+              >
                 <div className="sql-table-card-main">
                   <span>{item.layer}</span>
                   <strong>{item.name}</strong>
-                  <small>{item.schema.slice(0, 3).map(([name]) => name).join(" · ")}</small>
+                  <small>
+                    {referenceDatasetIdSet.has(item.id) ? "referenced · " : ""}
+                    {item.schema.slice(0, 3).map(([name]) => name).join(" · ")}
+                  </small>
                 </div>
                 <div className="sql-table-card-actions">
                   <button type="button" onClick={() => changeBaseDataset(item)} disabled={item.id === baseDataset.id}>Base로 설정</button>
-                  <button type="button" onClick={() => insertTableName(item)}>SQL에 삽입</button>
+                  <button type="button" onClick={() => toggleReferenceDataset(item)}>
+                    {referenceDatasetIdSet.has(item.id) ? "참조 해제" : "참조 추가"}
+                  </button>
                   <button type="button" onClick={() => toggleSchema(item)} aria-expanded={openSchemaDatasetId === item.id}>{openSchemaDatasetId === item.id ? "Schema 닫기" : "Schema"}</button>
                 </div>
                 {openSchemaDatasetId === item.id && (
@@ -234,7 +297,9 @@ export function SqlAnalysisPage({
                 )}
               </article>
             ))}
-            {filteredDatasets.length === 0 && <p>검색 결과가 없습니다.</p>}
+            {filteredDatasets.length === 0 && (
+              <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
+            )}
           </div>
         </section>
       </aside>
@@ -279,7 +344,7 @@ export function SqlAnalysisPage({
             )}
           </div>
           <div className="sql-editor-footer">
-            <span>접근 가능한 테이블을 검색하거나 `FROM` 뒤에 입력하면 후보가 표시됩니다.</span>
+            <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
           </div>
         </section>
@@ -346,15 +411,28 @@ FROM ${dataset.name}
 LIMIT 100;`;
 }
 
-function getTableCompletion(query: string, datasets: CatalogDataset[]) {
+function getTableCompletion(
+  query: string,
+  datasets: CatalogDataset[],
+  baseDatasetId: string,
+  referenceDatasetIds: string[],
+) {
   const match = query.match(/(?:^|\s)(?:from|join)\s+([a-zA-Z0-9_.-]*)$/i);
   if (!match) return null;
   const keyword = match[1] ?? "";
   const normalizedKeyword = keyword.toLowerCase();
+  const referenceDatasetIdSet = new Set(referenceDatasetIds);
   const candidates = datasets
     .filter((item) => item.name.toLowerCase().includes(normalizedKeyword))
+    .sort((left, right) => getDatasetContextRank(left.id, baseDatasetId, referenceDatasetIdSet) - getDatasetContextRank(right.id, baseDatasetId, referenceDatasetIdSet))
     .slice(0, 5);
   return candidates.length > 0 ? { candidates, keyword } : null;
+}
+
+function getDatasetContextRank(datasetId: string, baseDatasetId: string, referenceDatasetIdSet: Set<string>) {
+  if (datasetId === baseDatasetId) return 0;
+  if (referenceDatasetIdSet.has(datasetId)) return 1;
+  return 2;
 }
 
 function applyTableCompletion(query: string, tableName: string) {
