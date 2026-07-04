@@ -1,77 +1,88 @@
-import { useEffect, useMemo, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BarChart3,
-  BookOpen,
-  Bot,
-  Calendar,
-  Check,
-  CircleUser,
-  Clock3,
-  Database,
   Download,
-  ExternalLink,
-  FileText,
-  HardDrive,
-  Info,
-  LayoutGrid,
-  Maximize2,
-  Minus,
   PlayCircle,
-  Plus,
-  RefreshCw,
-  Repeat2,
-  Save,
-  Star,
+  RotateCcw,
   Search,
-  Settings,
-  Share2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Table2,
-  TerminalSquare,
 } from "lucide-react";
-import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { executeQueryDraft } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
+
+type AutocompleteKind = "keyword" | "table" | "column";
+
+type AutocompleteCandidate = {
+  id: string;
+  type: AutocompleteKind;
+  label: string;
+  insertText: string;
+  detail: string;
+  datasetId?: string;
+};
+
+type AutocompleteContext = {
+  token: string;
+  start: number;
+  end: number;
+  mode: "table" | "column" | "general";
+  key: string;
+};
 
 export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
-  onDashboard,
   onResultChange,
 }: {
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDashboard: (result: SqlResultDraft) => void;
-  onResultChange: (result: SqlResultDraft) => void;
+  onResultChange: (result: SqlResultDraft | null) => void;
 }) {
-  const defaultQuery = useMemo(() => {
-    const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
-    return `SELECT ${columns}
-FROM ${dataset.name}
-LIMIT 100;`;
-  }, [dataset.name, dataset.schema]);
+  const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
+  const baseDataset = useMemo(
+    () => datasets.find((item) => item.id === baseDatasetId) ?? dataset,
+    [baseDatasetId, dataset, datasets],
+  );
+  const defaultQuery = useMemo(() => buildDefaultQuery(baseDataset), [baseDataset]);
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
+  const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(dataset.id);
+  const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
+  const [showReferencedOnly, setShowReferencedOnly] = useState(false);
+  const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
-  const relatedDatasets = useMemo(() => [dataset, ...datasets.filter((item) => item.id !== dataset.id).slice(0, 2)], [dataset, datasets]);
-  const scopeDatasets = relatedDatasets.map((item, index) => ({ checked: index < 2, label: index === 0 ? "BASE" : "JOIN", name: item.name }));
-  const schemaChips = dataset.schema.slice(0, 5).map(([name]) => name);
-  const resultColumns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const resultRows = dataset.sampleRows.map((row) => row.slice(0, Math.max(resultColumns.length, 1)));
-  const savedQueries = [
-    ["Risk score Top 100", "product_health_gold", "성공", "방금 전"],
-    ["Behavior join 검증", "silver_behavior_events", "성공", "2026-07-02 10:11"],
-    ["Commerce orders 매핑", "commerce.orders", "성공", "2026-07-02 01:05"],
-  ];
+  const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
+  const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+  const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lineNumberRef = useRef<HTMLPreElement | null>(null);
+  const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
+  const lineNumbers = useMemo(() => {
+    const lineCount = Math.max(query.split("\n").length, 7);
+    return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  }, [query]);
+  const autocompleteContext = useMemo(() => getAutocompleteContext(query, cursorIndex), [cursorIndex, query]);
+  const autocompleteCandidates = useMemo(() => {
+    if (dismissedAutocompleteKey === autocompleteContext.key) return [];
+    return buildAutocompleteCandidates({
+      baseDataset,
+      context: autocompleteContext,
+      datasets,
+      referenceDatasetIdSet,
+    });
+  }, [autocompleteContext, baseDataset, datasets, dismissedAutocompleteKey, referenceDatasetIdSet]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
+    const contextDatasets = datasets.filter((item) => {
+      if (item.id === baseDataset.id) return false;
+      if (showReferencedOnly && !referenceDatasetIdSet.has(item.id)) return false;
+      return true;
+    });
     const searchableDatasets = keyword
-      ? datasets.filter((item) => {
+      ? contextDatasets.filter((item) => {
           const searchableText = [
             item.name,
             item.description,
@@ -83,71 +94,251 @@ LIMIT 100;`;
           ].join(" ").toLowerCase();
           return searchableText.includes(keyword);
         })
-      : datasets;
+      : contextDatasets;
 
     return searchableDatasets.slice(0, 4);
-  }, [datasetSearch, datasets]);
+  }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
+  useEffect(() => {
+    setBaseDatasetId(dataset.id);
+  }, [dataset.id]);
 
   useEffect(() => {
     setExecuted(false);
     setQuery(defaultQuery);
-  }, [defaultQuery, dataset.id]);
+    setCursorIndex(defaultQuery.length);
+    setResultDraft(null);
+    setExecutionMs(null);
+    setOpenSchemaDatasetId(baseDataset.id);
+    setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
+    onResultChange(null);
+  }, [baseDataset.id, defaultQuery]);
 
-  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(dataset, query);
+  const queryContextPath = () => {
+    const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
+    referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
+    return `/api/query/runs?${params.toString()}`;
+  };
+
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [autocompleteCandidates.length, autocompleteContext.key]);
+
+  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
+
+  const resetResultState = () => {
+    setExecuted(false);
+    setResultDraft(null);
+    setExecutionMs(null);
+    onResultChange(null);
+  };
+
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    resetResultState();
+  };
+
+  const updateCursorFromTextarea = (textarea: HTMLTextAreaElement) => {
+    setCursorIndex(textarea.selectionStart);
+    syncLineNumberScroll();
+  };
+
+  const syncLineNumberScroll = () => {
+    if (!textareaRef.current || !lineNumberRef.current) return;
+    lineNumberRef.current.scrollTop = textareaRef.current.scrollTop;
+  };
+
+  const applyAutocompleteCandidate = (candidate: AutocompleteCandidate) => {
+    const nextQuery = `${query.slice(0, autocompleteContext.start)}${candidate.insertText}${query.slice(autocompleteContext.end)}`;
+    const nextCursorIndex = autocompleteContext.start + candidate.insertText.length;
+    updateQuery(nextQuery);
+    setCursorIndex(nextCursorIndex);
+    setDismissedAutocompleteKey(null);
+    if (candidate.type === "table" && candidate.datasetId && candidate.datasetId !== baseDataset.id) {
+      const datasetId = candidate.datasetId;
+      setReferenceDatasetIds((ids) => (ids.includes(datasetId) ? ids : [...ids, datasetId]));
+    }
+    onAction("analysis.autocomplete.inserted", `/api/query/autocomplete/${candidate.type}/${encodeURIComponent(candidate.label)}`, candidate.datasetId ?? baseDataset.id);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+      syncLineNumberScroll();
+    });
+  };
+
+  const handleQueryKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (autocompleteCandidates.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index + 1) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index - 1 + autocompleteCandidates.length) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      applyAutocompleteCandidate(autocompleteCandidates[autocompleteIndex] ?? autocompleteCandidates[0]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDismissedAutocompleteKey(autocompleteContext.key);
+    }
+  };
 
   const executeQuery = async () => {
+    const startedAt = performance.now();
     setQueryPending(true);
     try {
       const resultDraft = await buildResultDraft();
       setExecuted(true);
+      setExecutionMs(Math.round(performance.now() - startedAt));
+      setResultDraft(resultDraft);
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", `/api/query/runs`, dataset.id);
+      onAction("analysis.query.executed", queryContextPath(), baseDataset.id);
     } catch {
-      onAction("analysis.query.failed", `/api/query/runs`, dataset.id, "failed");
+      onAction("analysis.query.failed", queryContextPath(), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
   };
 
-  const formatQuery = () => {
-    setQuery(defaultQuery);
-    onAction("analysis.query.formatted", "/api/query/format", dataset.id);
+  const resetQuery = () => {
+    updateQuery(defaultQuery);
+    setCursorIndex(defaultQuery.length);
+    onAction("analysis.query.reset", "/api/query/reset", baseDataset.id);
   };
 
   const toggleContext = () => {
     const nextCollapsed = !contextCollapsed;
     setContextCollapsed(nextCollapsed);
-    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", dataset.id);
+    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", baseDataset.id);
   };
 
-  const createDashboard = async () => {
-    setQueryPending(true);
-    try {
-      const resultDraft = await buildResultDraft();
-      onResultChange(resultDraft);
-      onDashboard(resultDraft);
-    } catch {
-      onAction("analysis.dashboard.create_failed", "/api/dashboards", dataset.id, "failed");
-    } finally {
-      setQueryPending(false);
+  const insertSqlText = (text: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      updateQuery(`${query.replace(/;$/, "")} ${text};`);
+      return;
     }
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const nextQuery = `${query.slice(0, selectionStart)}${text}${query.slice(selectionEnd)}`;
+    const caret = selectionStart + text.length;
+    updateQuery(nextQuery);
+    setCursorIndex(caret);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(caret, caret);
+    });
   };
 
-  const openDatasetInQuery = (targetDataset: CatalogDataset) => {
-    setQuery(`SELECT *\nFROM ${targetDataset.name}\nLIMIT 100;`);
-    onAction("analysis.context.dataset_selected", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
+  const insertTableName = (targetDataset: CatalogDataset) => {
+    insertSqlText(targetDataset.name);
+    setOpenSchemaDatasetId(targetDataset.id);
+    if (targetDataset.id !== baseDataset.id) {
+      setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
+    }
+    onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
+  };
+
+  const changeBaseDataset = (targetDataset: CatalogDataset) => {
+    setBaseDatasetId(targetDataset.id);
+    setReferenceDatasetIds((ids) => ids.filter((id) => id !== targetDataset.id));
+    setOpenSchemaDatasetId(targetDataset.id);
+    const nextDefaultQuery = buildDefaultQuery(targetDataset);
+    setQuery(nextDefaultQuery);
+    setCursorIndex(nextDefaultQuery.length);
+    resetResultState();
+    onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
+  };
+
+  const toggleReferenceDataset = (targetDataset: CatalogDataset) => {
+    if (targetDataset.id === baseDataset.id) return;
+    const isReferenced = referenceDatasetIdSet.has(targetDataset.id);
+    setReferenceDatasetIds((ids) => (
+      isReferenced ? ids.filter((id) => id !== targetDataset.id) : [...ids, targetDataset.id]
+    ));
+    resetResultState();
+    onAction(
+      isReferenced ? "analysis.context.reference_removed" : "analysis.context.reference_added",
+      `/api/query/context/reference-datasets/${targetDataset.id}`,
+      targetDataset.id,
+    );
+  };
+
+  const toggleReferencedOnly = () => {
+    const nextValue = !showReferencedOnly;
+    setShowReferencedOnly(nextValue);
+    onAction(
+      nextValue ? "analysis.context.references_filtered" : "analysis.context.references_filter_cleared",
+      "/api/query/context/reference-datasets",
+      baseDataset.id,
+    );
+  };
+
+  const toggleSchema = (targetDataset: CatalogDataset) => {
+    const willOpen = openSchemaDatasetId !== targetDataset.id;
+    setOpenSchemaDatasetId(willOpen ? targetDataset.id : null);
+    onAction(
+      willOpen ? "analysis.context.schema_opened" : "analysis.context.schema_closed",
+      `/api/query/context/datasets/${targetDataset.id}/schema`,
+      targetDataset.id,
+    );
+  };
+
+  const insertColumnName = (targetDataset: CatalogDataset, columnName: string) => {
+    insertSqlText(columnName);
+    onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
+  };
+
+  const downloadCsv = () => {
+    if (!resultDraft) return;
+    const csv = [
+      resultDraft.columns.map(escapeCsvCell).join(","),
+      ...resultDraft.rows.map((row) => resultDraft.columns.map((_, index) => escapeCsvCell(row[index] ?? "")).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${resultDraft.datasetName}_${resultDraft.runId}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
   return (
     <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
       <aside className="sql-dataset-panel" aria-hidden={contextCollapsed}>
         <div className="sql-panel-header">
-          <span>SQL CONTEXT</span>
+          <span>TABLE SEARCH</span>
           <div>
-            <strong>선택 데이터셋</strong>
-          <em>{scopeDatasets.filter((item) => item.checked).length} checked</em>
+            <strong>분석 테이블</strong>
+            <em>{datasets.length} tables</em>
           </div>
         </div>
+        <section className="sql-base-table">
+          <h2>BASE DATASET</h2>
+          <article className={openSchemaDatasetId === baseDataset.id ? "sql-table-card active" : "sql-table-card"}>
+            <div className="sql-table-card-main">
+              <span>{baseDataset.layer}</span>
+              <strong>{baseDataset.name}</strong>
+              <small>{baseDataset.schema.length} columns · {baseDataset.owner}</small>
+            </div>
+            <div className="sql-table-card-actions two-actions">
+              <button type="button" onClick={() => insertTableName(baseDataset)}>SQL에 삽입</button>
+              <button type="button" onClick={() => toggleSchema(baseDataset)} aria-expanded={openSchemaDatasetId === baseDataset.id}>{openSchemaDatasetId === baseDataset.id ? "Schema 닫기" : "Schema"}</button>
+            </div>
+            {openSchemaDatasetId === baseDataset.id && (
+              <SchemaColumnList dataset={baseDataset} onColumnClick={insertColumnName} />
+            )}
+          </article>
+        </section>
         <label className="sql-context-search">
           <Search size={15} />
           <input
@@ -157,51 +348,47 @@ LIMIT 100;`;
           />
         </label>
         <section className="sql-dataset-search-results">
-          <h2>dataset search</h2>
+          <div className="sql-section-heading">
+            <h2>table search</h2>
+            <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
+              {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
+            </button>
+          </div>
           <div>
             {filteredDatasets.map((item) => (
-              <button key={item.id} type="button" onClick={() => openDatasetInQuery(item)}>
-                <span>{item.layer}</span>
-                <strong>{item.name}</strong>
-                <small>{item.schema.slice(0, 3).map(([name]) => name).join(" · ")}</small>
-              </button>
+              <article
+                className={[
+                  "sql-table-card",
+                  item.id === openSchemaDatasetId ? "active" : "",
+                  referenceDatasetIdSet.has(item.id) ? "referenced" : "",
+                ].filter(Boolean).join(" ")}
+                key={item.id}
+              >
+                <div className="sql-table-card-main">
+                  <span>{item.layer}</span>
+                  <strong>{item.name}</strong>
+                  <small>
+                    {referenceDatasetIdSet.has(item.id) ? "referenced · " : ""}
+                    {item.schema.slice(0, 3).map(([name]) => name).join(" · ")}
+                  </small>
+                </div>
+                <div className="sql-table-card-actions">
+                  <button type="button" onClick={() => changeBaseDataset(item)} disabled={item.id === baseDataset.id}>Base로 설정</button>
+                  <button type="button" onClick={() => toggleReferenceDataset(item)}>
+                    {referenceDatasetIdSet.has(item.id) ? "참조 해제" : "참조 추가"}
+                  </button>
+                  <button type="button" onClick={() => toggleSchema(item)} aria-expanded={openSchemaDatasetId === item.id}>{openSchemaDatasetId === item.id ? "Schema 닫기" : "Schema"}</button>
+                </div>
+                {openSchemaDatasetId === item.id && (
+                  <SchemaColumnList dataset={item} onColumnClick={insertColumnName} />
+                )}
+              </article>
             ))}
-            {filteredDatasets.length === 0 && <p>검색 결과가 없습니다.</p>}
+            {filteredDatasets.length === 0 && (
+              <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
+            )}
           </div>
         </section>
-        <div className="sql-selected-list">
-          {scopeDatasets.map((item) => (
-            <article className={item.checked ? "sql-selected-item active" : "sql-selected-item"} key={item.name}>
-              <span>{item.label}</span>
-              <strong>{item.name}</strong>
-              <i className={item.checked ? "sql-checkmark checked" : "sql-checkmark"} aria-label={item.checked ? "checked" : "unchecked"} />
-            </article>
-          ))}
-        </div>
-        <section className="sql-schema-panel chip-mode">
-          <h2>schema</h2>
-          <div>
-            {schemaChips.map((name, index) => (
-              <button key={`${name}-${index}`} type="button" onClick={() => setQuery(`${query.replace(/;$/, "")}\n-- ${name};`)}>
-                {name}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="sql-mini-result">
-          <h2>result table</h2>
-          <div className="sql-mini-result-scroll">
-            <table>
-              <thead><tr>{resultColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{resultRows.map((row, rowIndex) => <tr key={`mini-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
-        </section>
-        <div className="sql-context-source">
-          <span>선택 데이터셋</span>
-          <strong>{dataset.name}</strong>
-          <DatasetStatusBadge dataset={dataset} />
-        </div>
       </aside>
 
       <button className="sql-collapse-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "SQL context 펼치기" : "SQL context 접기"}>
@@ -212,107 +399,248 @@ LIMIT 100;`;
         <header className="sql-page-header">
           <span>Analyze / Dataset-scoped SQL</span>
           <h1>읽기 전용 SQL 실행</h1>
-          <p>{dataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 저장/내보냅니다.</p>
+          <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
         </header>
 
         <section className="sql-editor-card">
           <div className="sql-editor-header">
             <div>
               <span>QUERY EDITOR</span>
-              <h2>선택 데이터셋 기준 SQL</h2>
+              <h2>Base Dataset 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
               <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
-              <button className="secondary-button" type="button" onClick={() => onAction("analysis.query.saved", "/api/query/saved", dataset.id)}><Save size={15} /> 저장</button>
-              <span><Check size={13} /> policy passed</span>
             </div>
           </div>
           <div className="sql-editor-layout">
             <div className="sql-editor-surface">
-              <pre aria-hidden="true">1{`\n`}2{`\n`}3{`\n`}4{`\n`}5{`\n`}6{`\n`}7</pre>
-              <textarea value={query} onChange={(event) => setQuery(event.target.value)} spellCheck={false} />
-            </div>
-            <aside className="sql-preflight-panel">
-              <div>
-                <span>RUN PREFLIGHT</span>
-                <strong>실행 전 확인</strong>
-                <em>ready</em>
+              <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
+              <div className="sql-editor-input-wrap">
+                <textarea
+                  ref={textareaRef}
+                  value={query}
+                  onChange={(event) => {
+                    updateQuery(event.target.value);
+                    setCursorIndex(event.target.selectionStart);
+                    setDismissedAutocompleteKey(null);
+                  }}
+                  onClick={(event) => updateCursorFromTextarea(event.currentTarget)}
+                  onBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
+                  onKeyDown={handleQueryKeyDown}
+                  onKeyUp={(event) => {
+                    if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
+                    updateCursorFromTextarea(event.currentTarget);
+                  }}
+                  onScroll={syncLineNumberScroll}
+                  spellCheck={false}
+                />
+                {autocompleteCandidates.length > 0 && (
+                  <div className="sql-autocomplete-popover">
+                    {autocompleteCandidates.map((candidate, index) => (
+                      <button
+                        className={index === autocompleteIndex ? "active" : ""}
+                        key={candidate.id}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => applyAutocompleteCandidate(candidate)}
+                      >
+                        <strong>{candidate.label}</strong>
+                        <span>{candidate.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              {[
-                ["선택 데이터셋", `${scopeDatasets.filter((item) => item.checked).length} checked / ${relatedDatasets.length} queryable`],
-                ["Join key", dataset.schema[0]?.[0] ? `${dataset.schema[0][0]} available` : "schema pending"],
-                ["Scan", dataset.size === "Pending" ? "queued / limit 5GB" : `${dataset.size} / limit 5GB`],
-                ["Locked source", "MongoDB 제외"],
-              ].map(([label, value]) => (
-                <p key={label}><Check size={14} /><span>{label}</span><strong>{value}</strong></p>
-              ))}
-            </aside>
+            </div>
           </div>
           <div className="sql-editor-footer">
-            <span>SQL 실행 범위: {scopeDatasets.filter((item) => item.checked).length} checked datasets · {dataset.layer.toLowerCase()} / {dataset.name}</span>
-            <button className="secondary-button" type="button" onClick={formatQuery}>Format SQL</button>
+            <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+            <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
           </div>
-        </section>
-
-        <section className="sql-estimation-bar">
-          <strong>Estimation</strong>
-          <span>예상 14초 · 1.8GB scan · DuckDB adapter</span>
-          <div><span style={{ width: "32%" }} /></div>
-          <em>32%</em>
         </section>
 
         <section className="sql-result-card">
           <div className="sql-result-header">
             <div>
-              <span>RESULT PREVIEW</span>
-              <h2>100 rows returned</h2>
+              <span>QUERY RESULT</span>
+              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "실행 후 결과가 표시됩니다"}</h2>
             </div>
             <div className="sql-result-status">
               <span>{queryPending ? "running" : executed ? "success" : "ready"}</span>
-              <span>3.2s</span>
-            </div>
-            <div className="sql-result-actions">
-              <button type="button" onClick={() => onAction("analysis.result.saved_to_lake", "/api/query/results/lake", dataset.id)}>Lake로 저장</button>
-              <button type="button" onClick={() => onAction("analysis.result.opened_in_sheets", "/api/query/results/sheets", dataset.id)}>Sheets</button>
-              <button type="button" onClick={() => onAction("analysis.result.downloaded", "/api/query/results/download", dataset.id)}>CSV</button>
-              <button type="button" onClick={createDashboard}>대시보드 생성</button>
+              {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
-          <div className="sql-result-scroll">
-            <table className="schema-table">
-              <thead><tr>{resultColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{resultRows.map((row, rowIndex) => <tr key={`result-${rowIndex}`}>{row.slice(0, resultColumns.length).map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-            </table>
-          </div>
+          {resultDraft ? (
+            <>
+              <div className="sql-result-toolbar">
+                <span>Run ID {resultDraft.runId}</span>
+                <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+              </div>
+              <div className="sql-result-scroll">
+                <table className="schema-table">
+                  <thead><tr>{resultDraft.columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
+                  <tbody>{resultDraft.rows.map((row, rowIndex) => <tr key={`result-${rowIndex}`}>{row.slice(0, resultDraft.columns.length).map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            <div className="sql-result-empty">
+              <strong>아직 실행 결과가 없습니다.</strong>
+              <span>SQL을 실행하면 이 영역에 결과 테이블이 표시됩니다.</span>
+            </div>
+          )}
         </section>
       </main>
-
-      <aside className="sql-history-panel">
-        <section>
-          <h2>최근 실행</h2>
-          {savedQueries.map(([name, source, status, lastRun], index) => (
-            <button key={`${name}-${index}`} type="button" onClick={() => {
-              setQuery(`SELECT *\nFROM ${source}\nLIMIT 100;`);
-              onAction("analysis.history.selected", "/api/query/history", source);
-            }}>
-              <strong>{name}</strong>
-              <span>{source}</span>
-              <small>{status} · {lastRun}</small>
-            </button>
-          ))}
-        </section>
-        <section>
-          <h2>저장된 쿼리</h2>
-          <button type="button" onClick={() => {
-            setQuery("SELECT *\nFROM customer_orders_gold\nORDER BY order_count DESC\nLIMIT 100;");
-            onAction("analysis.saved_query_opened", "/api/query/saved/customer-orders-top100", "customer_orders_gold");
-          }}><FileText size={14} /> 고객 주문 Top 100</button>
-          <button type="button" onClick={() => {
-            setQuery(`SELECT sentiment, COUNT(*) AS review_count\nFROM ${dataset.name}\nGROUP BY sentiment;`);
-            onAction("analysis.saved_query_opened", "/api/query/saved/review-sentiment", dataset.id);
-          }}><FileText size={14} /> 리뷰 감성 분포</button>
-        </section>
-      </aside>
     </div>
   );
+}
+
+function SchemaColumnList({
+  dataset,
+  onColumnClick,
+}: {
+  dataset: CatalogDataset;
+  onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
+}) {
+  return (
+    <div className="sql-card-schema">
+      {dataset.schema.map(([name, type], index) => (
+        <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
+          <span>{name}</span>
+          <em>{type}</em>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function buildDefaultQuery(dataset: CatalogDataset) {
+  const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
+  return `SELECT ${columns}
+FROM ${dataset.name}
+LIMIT 100;`;
+}
+
+const SQL_AUTOCOMPLETE_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT JOIN",
+  "INNER JOIN",
+  "GROUP BY",
+  "ORDER BY",
+  "LIMIT",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+];
+
+function getAutocompleteContext(query: string, cursorIndex: number): AutocompleteContext {
+  const end = Math.max(0, Math.min(cursorIndex, query.length));
+  const beforeCursor = query.slice(0, end);
+  const tokenMatch = beforeCursor.match(/[a-zA-Z0-9_.-]*$/);
+  const token = tokenMatch?.[0] ?? "";
+  const start = end - token.length;
+  const beforeToken = query.slice(0, start);
+  const statementPrefix = beforeToken.split(";").pop() ?? "";
+  const tableContext = /(?:^|[\s,(])(?:from|join)\s*$/i.test(statementPrefix);
+  const columnContext = /(?:^|[\s,(])(?:select|where|on|having|and|or)\s*$/i.test(statementPrefix)
+    || /\b(?:select|where|on|group\s+by|order\s+by|having)\b/i.test(statementPrefix);
+  const mode = tableContext ? "table" : columnContext ? "column" : "general";
+  return {
+    token,
+    start,
+    end,
+    mode,
+    key: `${start}:${end}:${mode}:${token}`,
+  };
+}
+
+function buildAutocompleteCandidates({
+  baseDataset,
+  context,
+  datasets,
+  referenceDatasetIdSet,
+}: {
+  baseDataset: CatalogDataset;
+  context: AutocompleteContext;
+  datasets: CatalogDataset[];
+  referenceDatasetIdSet: Set<string>;
+}) {
+  const token = context.token.toLowerCase();
+  if (!token && context.mode === "general") return [];
+  const canShowForToken = (value: string) => !token || value.toLowerCase().includes(token);
+  const contextDatasets = [
+    baseDataset,
+    ...datasets.filter((item) => referenceDatasetIdSet.has(item.id) && item.id !== baseDataset.id),
+  ];
+  const tableCandidates: AutocompleteCandidate[] = contextDatasets
+    .filter((item) => canShowForToken(item.name))
+    .sort((left, right) => getDatasetContextRank(left.id, baseDataset.id, referenceDatasetIdSet) - getDatasetContextRank(right.id, baseDataset.id, referenceDatasetIdSet))
+    .map((item) => ({
+      id: `table-${item.id}`,
+      type: "table",
+      label: item.name,
+      insertText: item.name,
+      detail: item.id === baseDataset.id ? "table · base" : referenceDatasetIdSet.has(item.id) ? "table · referenced" : "table",
+      datasetId: item.id,
+    }));
+  const columnCandidates = contextDatasets.flatMap((item) => item.schema.flatMap(([name, type]) => {
+    const candidates: AutocompleteCandidate[] = [];
+    if (canShowForToken(name)) {
+      candidates.push({
+        id: `column-${item.id}-${name}`,
+        type: "column",
+        label: name,
+        insertText: name,
+        detail: `column · ${item.name} · ${type}`,
+        datasetId: item.id,
+      });
+    }
+    const qualifiedName = `${item.name}.${name}`;
+    if (context.token.includes(".") && canShowForToken(qualifiedName)) {
+      candidates.push({
+        id: `column-qualified-${item.id}-${name}`,
+        type: "column",
+        label: qualifiedName,
+        insertText: qualifiedName,
+        detail: `column · ${type}`,
+        datasetId: item.id,
+      });
+    }
+    return candidates;
+  }));
+  const keywordCandidates: AutocompleteCandidate[] = SQL_AUTOCOMPLETE_KEYWORDS
+    .filter((keyword) => canShowForToken(keyword))
+    .map((keyword) => ({
+      id: `keyword-${keyword}`,
+      type: "keyword",
+      label: keyword,
+      insertText: `${keyword} `,
+      detail: "keyword",
+    }));
+  const groups = context.mode === "table"
+    ? [tableCandidates, columnCandidates, keywordCandidates]
+    : context.mode === "column"
+      ? [columnCandidates, tableCandidates, keywordCandidates]
+      : [keywordCandidates, tableCandidates, columnCandidates];
+  return groups.flat().slice(0, 8);
+}
+
+function getDatasetContextRank(datasetId: string, baseDatasetId: string, referenceDatasetIdSet: Set<string>) {
+  if (datasetId === baseDatasetId) return 0;
+  if (referenceDatasetIdSet.has(datasetId)) return 1;
+  return 2;
+}
+
+function escapeCsvCell(value: string) {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }

@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   Maximize2,
   Minus,
+  Pin,
   PlayCircle,
   Plus,
   RefreshCw,
@@ -442,25 +443,36 @@ export function CatalogPage({
           </div>
 
           <div className="catalog-result-list">
-            {paginatedDatasets.map((dataset) => (
-              <button
-                className={dataset.id === previewDataset.id ? "catalog-result-card active" : "catalog-result-card"}
-                key={dataset.id}
-                type="button"
-                onClick={() => setPreviewDataset(dataset)}
-                onDoubleClick={() => onDatasetOpen(dataset)}
-              >
-                <div className="catalog-result-title">
-                  <strong>{dataset.name}</strong>
-                  <DatasetStatusBadge dataset={dataset} />
-                </div>
-                <p>{dataset.description}</p>
-                <div className="catalog-result-tags">
-                  {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
-                  {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
-                </div>
-              </button>
-            ))}
+            {paginatedDatasets.map((dataset) => {
+              const isPinned = pinnedDatasetIds.includes(dataset.id);
+              const isActive = dataset.id === previewDataset.id;
+
+              return (
+                <button
+                  className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
+                  key={dataset.id}
+                  type="button"
+                  onClick={() => setPreviewDataset(dataset)}
+                  onDoubleClick={() => onDatasetOpen(dataset)}
+                >
+                  {isPinned && (
+                    <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
+                      <Pin size={13} />
+                      고정됨
+                    </span>
+                  )}
+                  <div className="catalog-result-title">
+                    <strong>{dataset.name}</strong>
+                    <DatasetStatusBadge dataset={dataset} />
+                  </div>
+                  <p>{dataset.description}</p>
+                  <div className="catalog-result-tags">
+                    {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
+                    {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
+                  </div>
+                </button>
+              );
+            })}
             {!hasCatalogResults && (
               <div className="catalog-empty-state">
                 <strong>검색 결과가 없습니다.</strong>

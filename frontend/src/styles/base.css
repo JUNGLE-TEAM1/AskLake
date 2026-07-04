@@ -3,7 +3,7 @@
   --layout-main-width: 1240px;
   --layout-wide-width: 1360px;
   --layout-page-padding: 40px;
-  --sql-context-width: 280px;
+  --sql-context-width: 320px;
   color: #171a1f;
   background: #f9fbfc;
   font-family:
@@ -126,7 +126,10 @@ p {
 }
 
 .main-shell {
+  display: flex;
+  min-height: 100vh;
   min-width: 0;
+  flex-direction: column;
 }
 
 .topbar {
@@ -395,6 +398,7 @@ p {
 }
 
 .page-body {
+  flex: 1;
   padding: 24px var(--layout-page-padding) 40px;
 }
 
