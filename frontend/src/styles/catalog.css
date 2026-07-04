@@ -98,7 +98,9 @@
 }
 
 .catalog-results-section {
-  min-height: 800px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 834px;
   overflow: hidden;
 }
 
@@ -147,14 +149,99 @@
   font-weight: 700;
 }
 
+.catalog-sort-control {
+  position: relative;
+}
+
+.catalog-filter-row .catalog-sort-button {
+  color: #475569;
+}
+
+.catalog-sort-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  min-width: 150px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgb(15 23 42 / 14%);
+  padding: 6px;
+}
+
+.catalog-filter-row .catalog-sort-menu button {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  width: 100%;
+  align-items: center;
+  border-radius: 6px;
+  color: #475569;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.catalog-filter-row .catalog-sort-menu button:hover,
+.catalog-filter-row .catalog-sort-menu button.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .catalog-result-list {
   display: grid;
-  min-height: 716px;
+  min-height: 720px;
   gap: 12px;
-  max-height: 716px;
+  max-height: 720px;
   align-content: start;
   overflow-y: auto;
   padding: 16px 20px;
+}
+
+.catalog-pagination {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e2e8f0;
+  padding: 0 20px;
+}
+
+.catalog-pagination span,
+.catalog-pagination strong {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.catalog-pagination div {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.catalog-pagination button {
+  min-width: 58px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+}
+
+.catalog-pagination button:not(:disabled):hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.catalog-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .catalog-result-card {
