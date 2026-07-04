@@ -381,7 +381,7 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
         <h2>{dataset.name}</h2>
         <span>DATA LINEAGE</span>
       </div>
-      <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
+      <div className="catalog-lineage-flow" style={{ height: 440, width: "100%" }} aria-label={`${dataset.name} lineage graph`}>
         <ReactFlow
           edges={edges}
           fitView
