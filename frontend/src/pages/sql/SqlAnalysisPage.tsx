@@ -28,7 +28,7 @@ export function SqlAnalysisPage({
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
-  const [activeSchemaDatasetId, setActiveSchemaDatasetId] = useState(dataset.id);
+  const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(dataset.id);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
@@ -51,12 +51,8 @@ export function SqlAnalysisPage({
         })
       : datasets;
 
-    return searchableDatasets.slice(0, 4);
-  }, [datasetSearch, datasets]);
-  const activeSchemaDataset = useMemo(
-    () => datasets.find((item) => item.id === activeSchemaDatasetId) ?? dataset,
-    [activeSchemaDatasetId, dataset, datasets],
-  );
+    return searchableDatasets.filter((item) => item.id !== baseDataset.id).slice(0, 4);
+  }, [baseDataset.id, datasetSearch, datasets]);
   const tableCompletion = useMemo(() => getTableCompletion(query, datasets), [datasets, query]);
 
   useEffect(() => {
@@ -68,7 +64,7 @@ export function SqlAnalysisPage({
     setQuery(defaultQuery);
     setResultDraft(null);
     setExecutionMs(null);
-    setActiveSchemaDatasetId(baseDataset.id);
+    setOpenSchemaDatasetId(baseDataset.id);
     onResultChange(null);
   }, [baseDataset.id, defaultQuery]);
 
@@ -138,21 +134,31 @@ export function SqlAnalysisPage({
     } else {
       insertSqlText(targetDataset.name);
     }
-    setActiveSchemaDatasetId(targetDataset.id);
+    setOpenSchemaDatasetId(targetDataset.id);
     onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
   };
 
   const changeBaseDataset = (targetDataset: CatalogDataset) => {
     setBaseDatasetId(targetDataset.id);
-    setActiveSchemaDatasetId(targetDataset.id);
+    setOpenSchemaDatasetId(targetDataset.id);
     setQuery(buildDefaultQuery(targetDataset));
     resetResultState();
     onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
   };
 
-  const insertColumnName = (columnName: string) => {
+  const toggleSchema = (targetDataset: CatalogDataset) => {
+    const willOpen = openSchemaDatasetId !== targetDataset.id;
+    setOpenSchemaDatasetId(willOpen ? targetDataset.id : null);
+    onAction(
+      willOpen ? "analysis.context.schema_opened" : "analysis.context.schema_closed",
+      `/api/query/context/datasets/${targetDataset.id}/schema`,
+      targetDataset.id,
+    );
+  };
+
+  const insertColumnName = (targetDataset: CatalogDataset, columnName: string) => {
     insertSqlText(columnName);
-    onAction("analysis.context.column_inserted", `/api/query/context/datasets/${activeSchemaDataset.id}/columns/${columnName}`, activeSchemaDataset.id);
+    onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
   };
 
   const downloadCsv = () => {
@@ -185,11 +191,20 @@ export function SqlAnalysisPage({
         </div>
         <section className="sql-base-table">
           <h2>BASE DATASET</h2>
-          <button className="sql-base-table-card" type="button" onClick={() => setActiveSchemaDatasetId(baseDataset.id)}>
-            <span>{baseDataset.layer}</span>
-            <strong>{baseDataset.name}</strong>
-            <small>{baseDataset.schema.length} columns · {baseDataset.owner}</small>
-          </button>
+          <article className={openSchemaDatasetId === baseDataset.id ? "sql-table-card active" : "sql-table-card"}>
+            <div className="sql-table-card-main">
+              <span>{baseDataset.layer}</span>
+              <strong>{baseDataset.name}</strong>
+              <small>{baseDataset.schema.length} columns · {baseDataset.owner}</small>
+            </div>
+            <div className="sql-table-card-actions two-actions">
+              <button type="button" onClick={() => insertTableName(baseDataset)}>SQL에 삽입</button>
+              <button type="button" onClick={() => toggleSchema(baseDataset)} aria-expanded={openSchemaDatasetId === baseDataset.id}>{openSchemaDatasetId === baseDataset.id ? "Schema 닫기" : "Schema"}</button>
+            </div>
+            {openSchemaDatasetId === baseDataset.id && (
+              <SchemaColumnList dataset={baseDataset} onColumnClick={insertColumnName} />
+            )}
+          </article>
         </section>
         <label className="sql-context-search">
           <Search size={15} />
@@ -203,7 +218,7 @@ export function SqlAnalysisPage({
           <h2>table search</h2>
           <div>
             {filteredDatasets.map((item) => (
-              <article className={item.id === activeSchemaDataset.id ? "sql-table-card active" : "sql-table-card"} key={item.id}>
+              <article className={item.id === openSchemaDatasetId ? "sql-table-card active" : "sql-table-card"} key={item.id}>
                 <div className="sql-table-card-main">
                   <span>{item.layer}</span>
                   <strong>{item.name}</strong>
@@ -212,21 +227,14 @@ export function SqlAnalysisPage({
                 <div className="sql-table-card-actions">
                   <button type="button" onClick={() => changeBaseDataset(item)} disabled={item.id === baseDataset.id}>Base로 설정</button>
                   <button type="button" onClick={() => insertTableName(item)}>SQL에 삽입</button>
-                  <button type="button" onClick={() => setActiveSchemaDatasetId(item.id)}>Schema</button>
+                  <button type="button" onClick={() => toggleSchema(item)} aria-expanded={openSchemaDatasetId === item.id}>{openSchemaDatasetId === item.id ? "Schema 닫기" : "Schema"}</button>
                 </div>
+                {openSchemaDatasetId === item.id && (
+                  <SchemaColumnList dataset={item} onColumnClick={insertColumnName} />
+                )}
               </article>
             ))}
             {filteredDatasets.length === 0 && <p>검색 결과가 없습니다.</p>}
-          </div>
-        </section>
-        <section className="sql-schema-panel chip-mode">
-          <h2>{activeSchemaDataset.name} schema</h2>
-          <div>
-            {activeSchemaDataset.schema.map(([name, type], index) => (
-              <button key={`${name}-${index}`} type="button" onClick={() => insertColumnName(name)}>
-                {name}<span>{type}</span>
-              </button>
-            ))}
           </div>
         </section>
       </aside>
@@ -308,6 +316,25 @@ export function SqlAnalysisPage({
           )}
         </section>
       </main>
+    </div>
+  );
+}
+
+function SchemaColumnList({
+  dataset,
+  onColumnClick,
+}: {
+  dataset: CatalogDataset;
+  onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
+}) {
+  return (
+    <div className="sql-card-schema">
+      {dataset.schema.map(([name, type], index) => (
+        <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
+          <span>{name}</span>
+          <em>{type}</em>
+        </button>
+      ))}
     </div>
   );
 }
