@@ -602,6 +602,7 @@
   justify-content: space-between;
   gap: 14px;
   border-bottom: 1px solid #eef2f7;
+  cursor: pointer;
   margin: -2px 0 20px;
   padding-bottom: 16px;
 }
@@ -869,6 +870,19 @@
   color: #c2410c;
 }
 
+.hegun-error-pill.error,
+.hegun-error-pill.fail-run,
+.hegun-error-pill.quarantine {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.hegun-error-pill.warning,
+.hegun-error-pill.warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .hegun-row-actions {
   display: flex;
   align-items: center;
@@ -904,6 +918,10 @@
 .hegun-recipe-table th:nth-child(7),
 .hegun-recipe-table td:nth-child(7) {
   width: 84px;
+}
+
+.hegun-recipe-table tr.selected td {
+  background: #f8f8ff;
 }
 
 .hegun-header-button {
@@ -972,6 +990,16 @@
   align-items: center;
   gap: 6px;
   color: #166534;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.hegun-warning-state {
+  display: inline-flex;
+  justify-self: end;
+  align-items: center;
+  gap: 6px;
+  color: #b45309;
   font-size: 12px;
   font-weight: 850;
 }
