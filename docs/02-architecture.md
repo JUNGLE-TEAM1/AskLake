@@ -33,8 +33,8 @@ AskLake/
 | UI icons | lucide-react | implemented | package dependency |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | TBD | planned | API contract exists |
-| Database | TBD | planned | persistence model not implemented |
+| Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
+| Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
 
@@ -61,10 +61,15 @@ flowchart LR
 - catalog 화면: `frontend/src/pages/catalog/`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
+- dashboard runtime shell: `frontend/src/pages/dashboard/runtime/`
 - mock data: `frontend/src/data/mockData.ts`
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
+- dashboard list/runtime API adapters: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
+Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
 
 ## 5) Backend Target Boundary
 
@@ -95,7 +100,7 @@ flowchart LR
 | ETL Job | `JobRowData` mock | persisted job resource |
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
-| Dashboard | `DashboardEntry` and local builder state | dashboard resource |
+| Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
 
 ## 7) API Boundary
@@ -119,6 +124,16 @@ P1 hydrate API:
 - `GET /api/etl/jobs/{jobId}`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
+
+Dashboard runtime API:
+
+- `GET /api/dashboards`
+- `POST /api/dashboards/query`
+- `GET /api/dashboards/{dashboardId}/published`
+- `POST /api/dashboards/{dashboardId}/draft/ensure`
+- `POST /api/dashboards/{dashboardId}/draft/pages`
+- `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+- `POST /api/dashboards/{dashboardId}/publish`
 
 ## 8) 설계 원칙
 

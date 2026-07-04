@@ -86,12 +86,15 @@ VITE_USE_MOCK_API=false
 
 | 기능 | API 후보 |
 | --- | --- |
-| 대시보드 초안 생성 | `POST /api/dashboards` |
-| 대시보드 저장 | `PATCH /api/dashboards/{dashboardId}` |
+| 대시보드 초안 생성 | `POST /api/dashboards` 또는 `POST /api/dashboards/{dashboardId}/draft/ensure` |
+| 대시보드 저장 | `PATCH /api/dashboards/{dashboardId}` 또는 draft revision page/widget/layout API |
 | 대시보드 게시 | `POST /api/dashboards/{dashboardId}/publish` |
 | 저장된 대시보드 첫 목록 | `GET /api/dashboards` |
 | 저장된 대시보드 검색/필터 목록 | `POST /api/dashboards/query` |
-| 대시보드 상세 | `GET /api/dashboards/{dashboardId}` |
+| 게시 대시보드 상세 | `GET /api/dashboards/{dashboardId}/published` |
+| 초안 편집 상세 | `POST /api/dashboards/{dashboardId}/draft/ensure` |
+| 페이지 추가 | `POST /api/dashboards/{dashboardId}/draft/pages` |
+| 레이아웃 저장 | `PATCH /api/dashboards/{dashboardId}/draft/layouts` |
 | 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
 | 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 | 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
@@ -160,8 +163,12 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 위젯 타입 선택 | 프론트 상태 변경 | 없음 |
 | 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
-| 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
+| Draft 조회/생성 | local builder state | `POST /api/dashboards/{id}/draft/ensure` |
+| Page 추가 | local tab state | `POST /api/dashboards/{id}/draft/pages` |
+| Layout 저장 | local canvas state | `PATCH /api/dashboards/{id}/draft/layouts` |
+| 저장 | localStorage snapshot과 감사 로그 기록 | draft revision page/widget/layout API 또는 `PATCH /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
+| Published 조회 | local published snapshot | `GET /api/dashboards/{id}/published` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
@@ -189,11 +196,15 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 4. `GET /api/catalog/datasets`
 5. `POST /api/query/runs`
 
-대시보드까지 실제 저장하려면 아래 3개를 추가합니다.
+대시보드까지 실제 저장하려면 아래 API를 추가합니다.
 
-1. `POST /api/dashboards`
-2. `PATCH /api/dashboards/{dashboardId}`
-3. `POST /api/dashboards/{dashboardId}/publish`
+1. `GET /api/dashboards`
+2. `POST /api/dashboards/query`
+3. `GET /api/dashboards/{dashboardId}/published`
+4. `POST /api/dashboards/{dashboardId}/draft/ensure`
+5. `POST /api/dashboards/{dashboardId}/draft/pages`
+6. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+7. `POST /api/dashboards/{dashboardId}/publish`
 
 ## 7. 프론트에서 다음에 할 작업
 

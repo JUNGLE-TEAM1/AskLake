@@ -2,8 +2,11 @@ import http from "node:http";
 import { URL } from "node:url";
 import {
   databaseUrl,
+  createDraftDashboardPage,
   ensureSchema,
+  ensureDraftDashboardRuntime,
   getDataset,
+  getPublishedDashboardRuntime,
   getJob,
   listDashboards,
   listDatasets,
@@ -11,7 +14,9 @@ import {
   nextJobId,
   pool,
   queryDashboards,
+  publishDashboardRuntime,
   saveDashboard,
+  saveDraftDashboardLayouts,
   saveDataset,
   saveJob,
   saveSqlRun,
@@ -283,6 +288,70 @@ async function route(request, response) {
 
   if (request.method === "POST" && path === "/api/dashboards/query") {
     sendJson(response, 200, await queryDashboards(await readJson(request)));
+    return;
+  }
+
+  const publishedDashboardMatch = path.match(/^\/api\/dashboards\/([^/]+)\/published$/);
+  if (request.method === "GET" && publishedDashboardMatch) {
+    const dashboardId = decodeURIComponent(publishedDashboardMatch[1]);
+    const payload = await getPublishedDashboardRuntime(dashboardId);
+    if (!payload) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
+      return;
+    }
+    sendJson(response, 200, payload);
+    return;
+  }
+
+  const draftEnsureMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/ensure$/);
+  if (request.method === "POST" && draftEnsureMatch) {
+    const dashboardId = decodeURIComponent(draftEnsureMatch[1]);
+    const payload = await ensureDraftDashboardRuntime(dashboardId);
+    if (!payload) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
+      return;
+    }
+    sendJson(response, 200, payload);
+    return;
+  }
+
+  const draftPagesMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/pages$/);
+  if (request.method === "POST" && draftPagesMatch) {
+    const dashboardId = decodeURIComponent(draftPagesMatch[1]);
+    const page = await createDraftDashboardPage(dashboardId, await readJson(request));
+    if (!page) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard draft not found");
+      return;
+    }
+    sendJson(response, 201, page);
+    return;
+  }
+
+  const draftLayoutsMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/layouts$/);
+  if (request.method === "PATCH" && draftLayoutsMatch) {
+    const dashboardId = decodeURIComponent(draftLayoutsMatch[1]);
+    const result = await saveDraftDashboardLayouts(dashboardId, await readJson(request));
+    if (!result) {
+      sendError(response, 404, "NOT_FOUND", "Draft page or widgets not found");
+      return;
+    }
+    sendJson(response, 200, result);
+    return;
+  }
+
+  const publishDashboardMatch = path.match(/^\/api\/dashboards\/([^/]+)\/publish$/);
+  if (request.method === "POST" && publishDashboardMatch) {
+    const dashboardId = decodeURIComponent(publishDashboardMatch[1]);
+    const result = await publishDashboardRuntime(dashboardId);
+    if (!result) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
+      return;
+    }
+    if (result.error) {
+      sendError(response, result.error.status, result.error.code, result.error.message);
+      return;
+    }
+    sendJson(response, 200, result);
     return;
   }
 

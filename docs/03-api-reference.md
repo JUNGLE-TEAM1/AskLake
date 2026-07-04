@@ -64,6 +64,10 @@ Canonical status values:
 | `POST` | `/api/dashboards/query` | dashboard 검색/필터/정렬/pagination JSON 요청, 서버 SQL로 처리 |
 | `POST` | `/api/dashboards` | dashboard draft 생성 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard 저장 |
+| `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 dashboard runtime 조회 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft revision에 page 추가 |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
@@ -78,10 +82,51 @@ Canonical status values:
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
 | SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
-| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, dashboard builder APIs |
+| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published revision runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 ## 8) Pair Handoff Contracts
+
+### Dashboard Runtime Contract
+
+Dashboard 상세/편집 runtime은 dashboard meta와 revision snapshot을 분리한다.
+
+```ts
+type DashboardRuntimeResponse = {
+  dashboard: {
+    id: string;
+    title: string;
+    status: "draft" | "published";
+    hasPublishedRevision: boolean;
+    updatedAt: string;
+  };
+  mode: "published" | "draft";
+  revision: {
+    id: string;
+    kind: "published" | "draft";
+    version: number;
+    publishedAt?: string | null;
+  } | null;
+  pages: Array<{
+    id: string;
+    title: string;
+    orderIndex: number;
+  }>;
+  widgetsByPageId: Record<string, Array<{
+    id: string;
+    pageId: string;
+    type: "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+    title: string | null;
+    layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
+    config: Record<string, unknown>;
+    data: Array<Record<string, unknown>>;
+  }>>;
+  filters: Array<{ id: string; label: string; value: unknown }>;
+};
+```
+
+`GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 응답한다.
+`POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent하며 draft가 없으면 published snapshot 또는 빈 revision과 기본 page를 만든다.
 
 Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.

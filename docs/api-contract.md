@@ -705,6 +705,153 @@ Response `201 Created`:
 - SQL에서 넘어온 경우 `SqlResultDraft` 기준으로 `table`, `bar` 위젯을 기본 배치합니다.
 - 백엔드 연결 시 위젯 추천 결과를 이 응답으로 대체하면 됩니다.
 
+### 8.5 대시보드 revision runtime
+
+Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/published revision snapshot을 저장합니다.
+현재 demo API는 PostgreSQL JSONB 기반 서버 스타일에 맞춰 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`, `dashboard_tags` 테이블을 idempotent하게 생성합니다.
+
+공통 response:
+
+```ts
+type DashboardRuntimeResponse = {
+  dashboard: {
+    id: string;
+    title: string;
+    status: "draft" | "published";
+    hasPublishedRevision: boolean;
+    updatedAt: string;
+  };
+  mode: "published" | "draft";
+  revision: {
+    id: string;
+    kind: "published" | "draft";
+    version: number;
+    publishedAt?: string | null;
+  } | null;
+  pages: Array<{
+    id: string;
+    title: string;
+    orderIndex: number;
+  }>;
+  widgetsByPageId: Record<string, Array<{
+    id: string;
+    pageId: string;
+    type: "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+    title: string | null;
+    layout: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      minW?: number;
+      minH?: number;
+    };
+    config: Record<string, unknown>;
+    data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
+  }>>;
+  filters: Array<{ id: string; label: string; value: unknown }>;
+};
+```
+
+#### 8.5.1 Published 조회
+
+`GET /api/dashboards/{dashboardId}/published`
+
+Response `200 OK`:
+
+- published revision이 있으면 해당 revision의 pages/widgets를 반환합니다.
+- published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 정상 응답합니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.2 Draft 조회/생성
+
+`POST /api/dashboards/{dashboardId}/draft/ensure`
+
+동작:
+
+1. draft revision이 있으면 그대로 반환합니다.
+2. draft가 없고 published revision이 있으면 published revision을 복사해 draft를 만듭니다.
+3. 둘 다 없으면 빈 draft revision과 기본 page 1개를 만듭니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.3 Draft page 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages`
+
+Request:
+
+```json
+{
+  "title": "제목 없는 페이지"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "제목 없는 페이지",
+  "orderIndex": 1
+}
+```
+
+#### 8.5.4 Draft layout batch 저장
+
+`PATCH /api/dashboards/{dashboardId}/draft/layouts`
+
+Request:
+
+```json
+{
+  "pageId": "dashpage_...",
+  "layouts": [
+    { "widgetId": "dashwidget_...", "x": 0, "y": 0, "w": 6, "h": 4, "minW": 2, "minH": 2 }
+  ]
+}
+```
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
+
+#### 8.5.5 Publish
+
+`POST /api/dashboards/{dashboardId}/publish`
+
+동작:
+
+1. 현재 draft revision을 깊은 복사합니다.
+2. 새 revision을 `kind = "published"`로 저장합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+
+Response `200 OK`:
+
+```json
+{
+  "dashboardId": "dash_...",
+  "publishedRevisionId": "dashrev_published_...",
+  "publishedAt": "2026-07-04T12:00:00.000Z"
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- draft revision이 없으면 `422 NO_DRAFT_REVISION`.
+
 ## 9. P2 API
 
 ### 9.1 감사 로그 저장
