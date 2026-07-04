@@ -12,7 +12,7 @@ import { JobDagPage, JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
+import type { AuditTargetType, CatalogDataset, DashboardEntry, DashboardRuntimeMode, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
 type PlaceholderAction = "requirements" | "status" | "primary";
@@ -35,10 +35,42 @@ const placeholderAuditConfig: Record<PlaceholderFlow, { targetType: AuditTargetT
   },
 };
 
+type DashboardRouteState =
+  | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
+  | { view: "list" };
+
+function parseDashboardRoute(pathname: string): DashboardRouteState | null {
+  const segments = pathname.split("/").filter(Boolean);
+  if (segments[0] !== "dashboards") return null;
+  if (segments.length === 1) return { view: "list" };
+  if (segments.length === 2) return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "published", view: "runtime" };
+  if (segments.length === 3 && segments[2] === "edit") return { dashboardId: decodeURIComponent(segments[1]), runtimeMode: "draft", view: "runtime" };
+  return null;
+}
+
+function dashboardEntryFromRoute(route: DashboardRouteState, version: number): DashboardEntry {
+  if (route.view === "list") return { source: "sidebar", view: "list", version };
+  return {
+    dashboardId: route.dashboardId,
+    runtimeMode: route.runtimeMode,
+    source: "internal",
+    view: "runtime",
+    version,
+  };
+}
+
+function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
+  const encodedId = encodeURIComponent(dashboardId);
+  return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
+}
+
 export function App() {
-  const [activeFlow, setActiveFlow] = useState<FlowId>("jobs");
+  const initialDashboardRoute = parseDashboardRoute(window.location.pathname);
+  const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : "jobs");
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>("repeat");
-  const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>({ source: "sidebar", view: "list", version: 0 });
+  const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
+    initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
+  ));
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
   const {
     apiPending,
@@ -74,6 +106,18 @@ export function App() {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeFlow, selectedJob?.id]);
 
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = parseDashboardRoute(window.location.pathname);
+      if (!route) return;
+      setDashboardEntry((entry) => dashboardEntryFromRoute(route, entry.version + 1));
+      setActiveFlow("dashboard");
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
   const moveToFlow = (flow: FlowId) => {
     if (flow === "repeat" || flow === "manual" || flow === "once") {
       setLastScheduleFlow(flow);
@@ -92,9 +136,25 @@ export function App() {
   const navigateSidebar = (item: NavItem) => {
     writeAuditLog("ui.menu.clicked", `/app/${item.id}`, item.label);
     if (item.id === "dashboard") {
+      if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
       setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
+    } else if (window.location.pathname.startsWith("/dashboards")) {
+      window.history.pushState(null, "", "/");
     }
     moveToFlow(item.flow);
+  };
+
+  const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
+    const path = getDashboardPath(dashboardId, mode);
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+    setDashboardEntry((entry) => ({
+      dashboardId,
+      runtimeMode: mode,
+      source: "internal",
+      view: "runtime",
+      version: entry.version + 1,
+    }));
+    moveToFlow("dashboard");
   };
 
   const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
@@ -174,7 +234,7 @@ export function App() {
           {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onDatasetOpen={openDataset} onOpenSql={openDatasetInSql} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onCreateDashboard={() => openDashboardBuilder("catalog", "catalog.dashboard.create_requested", `/api/catalog/datasets/${selectedDataset.id}/dashboards`)} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onResultChange={setSqlResultDraft} onDashboard={openDashboardFromSql} />}
-          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} />}
+          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
             </>

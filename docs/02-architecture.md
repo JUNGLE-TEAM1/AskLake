@@ -31,10 +31,11 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
+| Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor drag/resize canvas |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | TBD | planned | API contract exists |
-| Database | TBD | planned | persistence model not implemented |
+| Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
+| Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
 
@@ -61,10 +62,15 @@ flowchart LR
 - catalog 화면: `frontend/src/pages/catalog/`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
+- dashboard runtime shell: `frontend/src/pages/dashboard/runtime/`
 - mock data: `frontend/src/data/mockData.ts`
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
+- dashboard list/runtime API adapters: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
+Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
 
 ## 5) Backend Target Boundary
 
@@ -95,7 +101,7 @@ flowchart LR
 | ETL Job | `JobRowData` mock | persisted job resource |
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
-| Dashboard | `DashboardEntry` and local builder state | dashboard resource |
+| Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
 
 ## 7) API Boundary
@@ -119,6 +125,21 @@ P1 hydrate API:
 - `GET /api/etl/jobs/{jobId}`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
+
+Dashboard runtime API:
+
+- `GET /api/dashboards`
+- `POST /api/dashboards/query`
+- `GET /api/dashboards/{dashboardId}/published`
+- `POST /api/dashboards/{dashboardId}/draft/ensure`
+- `POST /api/dashboards/{dashboardId}/draft/pages`
+- `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+- `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+- `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+- `POST /api/dashboards/{dashboardId}/publish`
+
+Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제와 widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
+Phase 06 runtime UX는 별도 share API 없이 프론트에서 공유 링크를 복사한다. Published revision이 있으면 `/dashboards/{dashboardId}`를, draft만 있으면 `/dashboards/{dashboardId}/edit`를 복사하며, publish 성공 후 목록 상태도 다시 갱신한다.
 
 ## 8) 설계 원칙
 
