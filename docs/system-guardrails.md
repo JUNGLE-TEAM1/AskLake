@@ -28,7 +28,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
-| Protected default branch | GitHub branch ruleset | `unknown` | block direct push or force push | repo admin | branch protection 여부 확인 필요 |
+| Protected default branch | GitHub repository ruleset on `main` | `enabled` | block direct push or force push to `main`; require changes through PR | repo admin | ruleset: `Protect main with PRs` |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
 ## 3) Team Guide
@@ -39,7 +39,8 @@
 
 | Rule | What it means for people |
 | --- | --- |
-| `[아직 실제 hard block 없음]` | 현재 repository에서 확인된 hard gate는 아직 없다. |
+| Direct push to `main` | `main` 변경은 직접 push하지 않고 PR로 병합한다. |
+| Force push to `main` | `main` history rewrite는 차단한다. |
 
 ### What Is Warning Only
 
@@ -70,12 +71,12 @@
 | Branch/workspace start | developer | branch naming check | task notes or PR description |
 | PR open | developer / GitHub | PR checklist, linked issue candidate | PR body |
 | PR review/merge readiness | CI / reviewer | frontend build, API contract checks | PR checks and docs updates |
-| PR merge/finalize | maintainer | protected branch, required checks | merge summary |
+| PR merge/finalize | maintainer | protected `main` ruleset, required checks when available | merge summary |
 | Drift recovery | maintainer | read-only audit or manual review | follow-up issue or docs update |
 
 ## 5) Follow-Up Candidates
 
-- Repository admin이 default branch protection과 secret scanning 상태를 확인한다.
+- Repository admin이 secret scanning 상태를 확인한다.
 - CI가 추가되면 `frontend build`를 required check 후보로 등록한다.
 - 백엔드 scaffold가 생기면 backend test/build check를 추가한다.
 - API adapter가 늘어나면 contract drift check script를 검토한다.
