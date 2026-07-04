@@ -8,7 +8,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     owner: draft.permission.owner,
     permissionSummary: draft.permission.summary,
     rag: draft.target.rag,
-    ruleSummary: draft.transform.summary || draft.quality.summary,
+    ruleSummary: combineSummaries(draft.transform.summary, draft.quality.summary),
     scheduleLabel: draft.schedule.label,
     schemaSummary: draft.schema.summary,
     sourceConfig: draft.source.sourceConfig,
@@ -56,4 +56,8 @@ function scheduleModeFromLabel(label: string): ScheduleDraft["mode"] {
   if (label.includes("수동")) return "manual";
   if (label.includes("1회")) return "once";
   return "repeat";
+}
+
+function combineSummaries(...summaries: string[]): string {
+  return Array.from(new Set(summaries.map((summary) => summary.trim()).filter(Boolean))).join(" · ");
 }
