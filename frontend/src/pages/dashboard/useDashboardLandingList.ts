@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { SavedDashboardCard } from "../../types";
-import {
-  filterAndSortDashboardCards,
-  getDashboardOwners,
-  getDashboardPage,
-  getDashboardTags,
-} from "./dashboardListUtils";
+import { getMockDashboardListResponse, listDashboards } from "../../services/dashboardApi";
+import type { DashboardListQuery, DashboardListResponse, SavedDashboardCard } from "../../types";
+import { dashboardPageSize } from "./dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 
 type DashboardListAction = (action: string, apiPath: string, targetId: string) => void;
@@ -17,41 +13,64 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   const [sortOption, setSortOption] = useState<DashboardSortOption>("updated-desc");
   const [openListControl, setOpenListControl] = useState<DashboardListControl | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [dashboardResponse, setDashboardResponse] = useState<DashboardListResponse>(() => getMockDashboardListResponse({
+    page: 1,
+    pageSize: dashboardPageSize,
+    sort: "updated-desc",
+  }, dashboards));
 
-  const dashboardOwners = useMemo(() => getDashboardOwners(dashboards), [dashboards]);
-  const dashboardTags = useMemo(() => getDashboardTags(dashboards), [dashboards]);
-  const filteredDashboards = useMemo(() => filterAndSortDashboardCards({
-    dashboards,
-    ownerFilter,
-    searchQuery,
-    selectedTags,
-    sortOption,
-  }), [dashboards, ownerFilter, searchQuery, selectedTags, sortOption]);
-  const dashboardPage = useMemo(() => getDashboardPage(filteredDashboards, currentPage), [currentPage, filteredDashboards]);
+  const dashboardQuery = useMemo<DashboardListQuery>(() => ({
+    owner: ownerFilter === "all" ? undefined : ownerFilter,
+    page: currentPage,
+    pageSize: dashboardPageSize,
+    search: searchQuery.trim() || undefined,
+    sort: sortOption,
+    tags: selectedTags.length ? selectedTags : undefined,
+  }), [currentPage, ownerFilter, searchQuery, selectedTags, sortOption]);
 
   useEffect(() => {
+    let ignore = false;
+
+    void listDashboards(dashboardQuery, dashboards)
+      .then((response) => {
+        if (ignore) return;
+        setDashboardResponse(response);
+        if (response.page !== currentPage) setCurrentPage(response.page);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      ignore = true;
+    };
+  }, [currentPage, dashboardQuery, dashboards]);
+
+  const resetPage = () => {
     setCurrentPage(1);
-  }, [ownerFilter, searchQuery, selectedTags, sortOption]);
+  };
 
   const selectDashboardOwner = (owner: string) => {
     setOwnerFilter(owner);
     setOpenListControl(null);
+    resetPage();
     onAction("dashboard.list.owner_filter_changed", "/api/dashboards/filters", owner);
   };
 
   const toggleDashboardTag = (tag: string) => {
     setSelectedTags((tags) => (tags.includes(tag) ? tags.filter((selectedTag) => selectedTag !== tag) : [...tags, tag]));
+    resetPage();
     onAction("dashboard.list.tag_filter_changed", "/api/dashboards/filters", tag);
   };
 
   const clearDashboardTags = () => {
     setSelectedTags([]);
+    resetPage();
     onAction("dashboard.list.tag_filter_cleared", "/api/dashboards/filters", "all-tags");
   };
 
   const selectDashboardSort = (nextSort: DashboardSortOption) => {
     setSortOption(nextSort);
     setOpenListControl(null);
+    resetPage();
     onAction("dashboard.list.sort_changed", "/api/dashboards/sort", nextSort);
   };
 
@@ -65,31 +84,38 @@ export function useDashboardLandingList(dashboards: SavedDashboardCard[], onActi
   };
 
   const goToNextDashboardPage = () => {
-    setCurrentPage((page) => Math.min(dashboardPage.totalPages, page + 1));
+    setCurrentPage((page) => Math.min(totalDashboardPages, page + 1));
     onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards");
   };
 
+  const totalDashboardPages = Math.max(1, Math.ceil(dashboardResponse.total / dashboardResponse.pageSize));
+  const dashboardPageStart = dashboardResponse.total === 0 ? 0 : (dashboardResponse.page - 1) * dashboardResponse.pageSize + 1;
+  const dashboardPageEnd = dashboardPageStart === 0 ? 0 : dashboardPageStart + dashboardResponse.items.length - 1;
+
   return {
     clearDashboardTags,
-    dashboardCount: filteredDashboards.length,
-    dashboardOwners,
-    dashboardPageEnd: dashboardPage.pageEnd,
-    dashboardPageStart: dashboardPage.pageStart,
-    dashboardTags,
+    dashboardCount: dashboardResponse.total,
+    dashboardOwners: dashboardResponse.filterOptions.owners,
+    dashboardPageEnd,
+    dashboardPageStart,
+    dashboardTags: dashboardResponse.filterOptions.tags,
     goToNextDashboardPage,
     goToPreviousDashboardPage,
     openListControl,
     ownerFilter,
-    safeDashboardPage: dashboardPage.safePage,
+    safeDashboardPage: dashboardResponse.page,
     searchQuery,
     selectDashboardOwner,
     selectDashboardSort,
     selectedTags,
-    setSearchQuery,
+    setSearchQuery: (value: string) => {
+      setSearchQuery(value);
+      resetPage();
+    },
     sortOption,
     toggleDashboardListControl,
     toggleDashboardTag,
-    totalDashboardPages: dashboardPage.totalPages,
-    visibleDashboards: dashboardPage.visibleDashboards,
+    totalDashboardPages,
+    visibleDashboards: dashboardResponse.items,
   };
 }
