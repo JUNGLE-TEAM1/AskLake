@@ -1,7 +1,8 @@
 const assert = require("node:assert/strict");
 const sync = require("../.github/scripts/notion-issue-sync.js");
 
-const { chooseSyncDirection, diffIssueAndRow, issueForGitHubSource, sameList } = sync._private;
+const { chooseSyncDirection, diffIssueAndRow, issueForGitHubSource, sameList, wantedProjectStatusForIssueEvent } =
+  sync._private;
 
 const baseIssue = {
   number: 7,
@@ -76,5 +77,33 @@ assert.equal(
 );
 
 assert.equal(issueForGitHubSource({ ...baseIssue, state: "closed", projectStatus: "Review" }).projectStatus, "Done");
+
+const statusConfig = {
+  openedProjectStatus: "Backlog",
+  reopenedProjectStatus: "Ready",
+  blockedProjectStatus: "Blocked",
+  reviewProjectStatus: "Review",
+};
+
+assert.equal(
+  wantedProjectStatusForIssueEvent({ issue: { ...baseIssue, projectStatus: null, eventAction: "opened" }, config: statusConfig }),
+  "Backlog",
+);
+assert.equal(
+  wantedProjectStatusForIssueEvent({ issue: { ...baseIssue, projectStatus: null, eventAction: "reopened" }, config: statusConfig }),
+  "Ready",
+);
+assert.equal(
+  wantedProjectStatusForIssueEvent({ issue: { ...baseIssue, labels: ["blocked"], projectStatus: null }, config: statusConfig }),
+  "Blocked",
+);
+assert.equal(
+  wantedProjectStatusForIssueEvent({ issue: { ...baseIssue, labels: ["needs review"], projectStatus: null }, config: statusConfig }),
+  "Review",
+);
+assert.equal(
+  wantedProjectStatusForIssueEvent({ issue: { ...baseIssue, state: "closed", projectStatus: null }, config: statusConfig }),
+  "Done",
+);
 
 console.log("notion-issue-sync hotfix smoke checks passed");
