@@ -1,0 +1,91 @@
+---
+name: 문서 / 운영 개선
+about: 문서, 하네스 운영, 검증 절차, 템플릿 개선을 제안합니다.
+title: "[문서/운영] "
+labels: ["documentation", "ops"]
+assignees: ""
+---
+
+## 1. 이슈 요약
+
+<!-- 어떤 문서나 운영 흐름을 개선하려는지 적어주세요. -->
+
+- 요약:
+- 불편한 점 또는 혼선:
+
+## 2. 목표
+
+<!-- 개선 후 협업자가 무엇을 더 쉽게 할 수 있어야 하는지 적습니다. -->
+
+-
+
+## 3. 작업 범위
+
+- [ ] 문서 내용 보강
+- [ ] 템플릿 개선
+- [ ] 검증 명령 또는 script 안내 개선
+- [ ] GitHub Issue / PR / Project 운영 개선
+- [ ] 기타:
+
+상세:
+
+-
+
+## 4. 제외 범위
+
+<!-- 제품 기능 구현, 큰 rewrite, 라이선스 변경 등 하지 않을 일을 적습니다. -->
+
+-
+
+## 5. 관련 문서 / Source of Truth
+
+- Product Planning:
+- Architecture:
+- API Reference:
+- Development Guide:
+- System Guardrails:
+- API Contract:
+- Backend Readiness:
+
+## 6. 예상 변경 파일
+
+-
+
+## 7. Acceptance Criteria
+
+- [ ] 문서 또는 템플릿이 한국어 협업 산출물 규칙을 따른다.
+- [ ] 변경된 절차를 사람이 따라 할 수 있다.
+- [ ] 기존 AskLake 개발 순서와 충돌하지 않는다.
+- [ ] 필요한 경우 관련 downstream 문서를 함께 확인했다.
+
+## 8. Regression / Failure Scenario
+
+- 깨지면 안 되는 운영 흐름:
+- 혼선을 만들 수 있는 표현:
+- 확인할 명령 또는 `rg` 검색:
+
+## 9. Manual Verification
+
+1. 변경된 문서 또는 템플릿을 GitHub Markdown 기준으로 읽는다.
+2. 새로 작성하는 사람이 빠뜨릴 수 있는 필수 정보가 질문으로 포함되어 있는지 확인한다.
+3. 하네스 규칙 자체가 의도 없이 변경되지 않았는지 확인한다.
+
+## 10. 영향도
+
+- [ ] 팀 협업 흐름
+- [ ] PR readiness
+- [ ] Issue / Project 운영
+- [ ] 문서 일관성
+- [ ] 영향도 낮음
+
+상세:
+
+-
+
+## 11. 필요한 결정 사항
+
+-
+
+## 12. 참고 링크 / 스크린샷 / 로그
+
+-

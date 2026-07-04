@@ -29,6 +29,7 @@
 | Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected default branch | GitHub repository ruleset on `main` | `enabled` | block direct push or force push to `main`; require changes through PR | repo admin | ruleset: `Protect main with PRs` |
+| Default PR and issue templates | GitHub `.github` templates | `enabled` | prompt contributors to document scope, verification, impact, and acceptance criteria | maintainer | advisory template, not a hard gate |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
 ## 3) Team Guide
@@ -48,6 +49,7 @@
 | --- | --- |
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
 | Frontend build risk | UI/API adapter 변경 후 `npm run build`를 실행한다. |
+| PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
 
 ### What Is Deferred
 
