@@ -1,0 +1,105 @@
+# 04. Development Guide
+
+이 문서는 AskLake 개발, 실행, 검증, 브랜치 작업 기준을 정리한다.
+
+## 1) 로컬 실행
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+기본 dev server는 Vite 설정을 따른다.
+
+## 2) 빌드
+
+```bash
+cd frontend
+npm run build
+```
+
+현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
+
+## 3) Backend Live Mode
+
+백엔드가 준비되면 `frontend/.env` 또는 로컬 env에 아래 값을 둔다.
+
+```bash
+VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=false
+```
+
+연결 전에는 `VITE_USE_MOCK_API=true` 또는 기본 mock mode로 프론트를 검증한다.
+
+## 4) 브랜치 전략
+
+권장 브랜치 타입:
+
+- `feature/<name>`
+- `fix/<name>`
+- `docs/<name>`
+- `test/<name>`
+- `chore/<name>`
+
+작업 분리 기준:
+
+- frontend screen/UI change
+- API contract change
+- backend scaffold/API implementation
+- mock removal/hydration
+- docs-only update
+- guardrail/CI update
+
+## 5) 구현 순서
+
+백엔드 연결 작업은 아래 순서를 기본으로 한다.
+
+1. 문서에서 endpoint와 response shape 확인
+2. backend API 또는 mock/live adapter 구현
+3. frontend loading/error/rollback 처리
+4. `npm run build` 실행
+5. 관련 docs 업데이트
+
+## 6) PR 체크리스트
+
+- [ ] 변경 목적이 명확하다.
+- [ ] `npm run build`를 실행했거나 실행하지 못한 이유를 남겼다.
+- [ ] API/interface 변경이 있으면 `docs/03-api-reference.md`와 `docs/api-contract.md`가 최신 상태다.
+- [ ] mock 제거 또는 backend 연결 순서 변경이 있으면 `docs/backend-integration-readiness.md`가 최신 상태다.
+- [ ] architecture, routing, state ownership 변경이 있으면 `docs/02-architecture.md`가 최신 상태다.
+- [ ] repository/CI/platform guardrail 변경이 있으면 `docs/system-guardrails.md`가 최신 상태다.
+
+## 7) 테스트 전략
+
+현재 최소 검증:
+
+- TypeScript build
+- Vite production build
+- 핵심 화면 manual smoke
+
+백엔드 도입 후 추가 후보:
+
+- API contract tests
+- adapter unit tests
+- backend endpoint tests
+- mock/live mode smoke tests
+- dashboard persistence regression tests
+
+## 8) Manual Smoke Checklist
+
+- 수집/처리 목록이 열린다.
+- 새 수집/처리 생성 flow가 Review까지 이동한다.
+- 생성 요청 후 job과 dataset이 반영된다.
+- job 명령 버튼이 상태를 바꾼다.
+- catalog 상세에서 SQL 화면으로 이동한다.
+- SQL 실행 결과로 dashboard builder를 열 수 있다.
+- audit log와 toast가 동작한다.
+
+## 9) 문서 업데이트 기준
+
+- 제품 범위 변경: `docs/01-product-planning.md`
+- 구조/상태/데이터 소유권 변경: `docs/02-architecture.md`
+- API/interface 변경: `docs/03-api-reference.md`, `docs/api-contract.md`
+- 개발 명령/검증/브랜치 규칙 변경: 이 문서
+- CI/ruleset/platform guardrail 변경: `docs/system-guardrails.md`
