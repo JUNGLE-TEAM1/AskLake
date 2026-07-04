@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type React from "react";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -64,10 +64,10 @@ const lineageNodeTypes = {
   lineageTable: LineageTableNode,
 };
 
-const lineageNodeWidth = 306;
-const lineageNodeHeaderHeight = 90;
-const lineageColumnRowHeight = 46;
-const lineageGroupGap = 36;
+const lineageNodeWidth = 220;
+const lineageNodeHeaderHeight = 76;
+const lineageColumnRowHeight = 32;
+const lineageGroupGap = 44;
 
 export function CatalogPage({
   datasets,
@@ -521,15 +521,19 @@ function buildLineageGraph(
   });
   const edges = graph.edges
     .filter((edge) => graphDatasets.some((dataset) => dataset.id === edge.fromDatasetId) && graphDatasets.some((dataset) => dataset.id === edge.toDatasetId))
-    .map((edge) => buildColumnEdge({
-      active: !selection || selection.edgeIds.has(lineageEdgeId(edge)),
-      selected: selectedColumnKey !== null,
-      id: `${edge.fromDatasetId}-${edge.fromColumnId}-to-${edge.toDatasetId}-${edge.toColumnId}`,
-      source: edge.fromDatasetId,
-      sourceHandle: lineageHandleId(edge.fromColumnId, "right"),
-      target: edge.toDatasetId,
-      targetHandle: lineageHandleId(edge.toColumnId, "left"),
-    }));
+    .map((edge) => {
+      const sourceColumn = findLineageColumn(graphDatasets, edge.fromDatasetId, edge.fromColumnId);
+      const targetColumn = findLineageColumn(graphDatasets, edge.toDatasetId, edge.toColumnId);
+      return buildColumnEdge({
+        active: !selection || selection.edgeIds.has(lineageEdgeId(edge)),
+        selected: selectedColumnKey !== null,
+        id: `${edge.fromDatasetId}-${edge.fromColumnId}-to-${edge.toDatasetId}-${edge.toColumnId}`,
+        source: edge.fromDatasetId,
+        sourceHandle: lineageHandleId(edge.fromDatasetId, sourceColumn?.name ?? edge.fromColumnId, "source"),
+        target: edge.toDatasetId,
+        targetHandle: lineageHandleId(edge.toDatasetId, targetColumn?.name ?? edge.toColumnId, "target"),
+      });
+    });
 
   return {
     edges,
@@ -551,21 +555,33 @@ function getLineageTableHeight(columnCount: number): number {
 }
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    updateNodeInternals(data.nodeId);
+  }, [data.nodeId, updateNodeInternals]);
+
   return (
     <article className={[
-      "lineage-table-node",
+      "xflow-schema-node",
       data.tone,
       data.dimmed ? "dimmed" : "",
       data.highlighted ? "highlighted" : "",
     ].filter(Boolean).join(" ")}>
-      <header className="lineage-table-header">
-        <div>
-          <span>{data.layerLabel}</span>
-          <strong><Table2 size={18} /> {data.tableName}</strong>
+      <header className="xflow-schema-header">
+        <div className="xflow-schema-icon">
+          <Table2 size={18} />
         </div>
-        <em>{data.engine}</em>
+        <div className="xflow-schema-title">
+          <strong title={data.tableName}>{data.tableName}</strong>
+          <span>{data.layerLabel} · {data.engine}</span>
+        </div>
       </header>
-      <div className="lineage-table-columns">
+      <div className="xflow-column-head">
+        <span>Column</span>
+        <span>Type</span>
+      </div>
+      <div className="xflow-schema-columns">
         {data.columns.map((column) => (
           <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
@@ -582,7 +598,7 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
   return (
     <button
       className={[
-        "lineage-column-row",
+        "xflow-column-row",
         isActive ? "active" : "",
         data.relatedColumnKeys && !isRelated ? "dimmed" : "",
         data.relatedColumnKeys && isRelated ? "related" : "",
@@ -595,8 +611,8 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
     >
       {(data.handleMode === "target" || data.handleMode === "both") && (
         <Handle
-          className="lineage-column-handle left target-handle"
-          id={lineageHandleId(column.id, "left")}
+          className="xflow-column-handle left target-handle"
+          id={lineageHandleId(data.nodeId, column.name, "target")}
           position={Position.Left}
           type="target"
         />
@@ -605,8 +621,8 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
       <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
       {(data.handleMode === "source" || data.handleMode === "both") && (
         <Handle
-          className="lineage-column-handle right source-handle"
-          id={lineageHandleId(column.id, "right")}
+          className="xflow-column-handle right source-handle"
+          id={lineageHandleId(data.nodeId, column.name, "source")}
           position={Position.Right}
           type="source"
         />
@@ -657,6 +673,10 @@ function buildLineageColumns(columns: LineageGraphDataset["columns"]): LineageCo
     name: column.name,
     type: column.type,
   }));
+}
+
+function findLineageColumn(datasets: LineageGraphDataset[], datasetId: string, columnId: string) {
+  return datasets.find((dataset) => dataset.id === datasetId)?.columns.find((column) => column.id === columnId);
 }
 
 function getLineageSelection(graph: LineageGraph, selectedColumnKey: string) {
@@ -765,8 +785,8 @@ function getColumnTypeTone(type: string): string {
   return "string";
 }
 
-function lineageHandleId(columnId: string, position: "left" | "right"): string {
-  return position === "left" ? `target-col:${columnId}` : `source-col:${columnId}`;
+function lineageHandleId(datasetId: string, columnName: string, kind: "source" | "target"): string {
+  return `${kind}-col:${datasetId}:${columnName}`;
 }
 
 function lineageColumnKey(datasetId: string, columnId: string): string {
