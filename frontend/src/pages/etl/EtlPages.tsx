@@ -36,6 +36,13 @@ import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, Creatio
 import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
+type RepeatScheduleDraft = {
+  cron: string;
+  day: string;
+  frequency: RepeatFrequency;
+  minute: string;
+  time: string;
+};
 
 export function SchedulePage({
   draftScheduleLabel,
@@ -63,12 +70,20 @@ export function SchedulePage({
   const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
-  const scheduleLabel = formatScheduleLabel(mode, { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime);
+  const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
+  const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
   const applyScheduleDraft = () => {
-    onDraftChange({ scheduleLabel });
+    const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
+    const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
+    setRepeatDay(normalizedRepeat.day);
+    setRepeatTime(normalizedRepeat.time);
+    setRepeatMinute(normalizedRepeat.minute);
+    setCustomCron(normalizedRepeat.cron);
+    setOnceDateTime(normalizedOnceDateTime);
+    onDraftChange({ scheduleLabel: formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime) });
   };
   const selectMode = (nextMode: ScheduleFlowId) => {
-    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDraft, onceDateTime) });
     onModeChange(nextMode);
   };
   const goNext = () => {
@@ -97,8 +112,13 @@ export function SchedulePage({
           </div>
         </section>
         {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
-          setCustomCron(cron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          const sanitizedCron = sanitizeCronInput(cron);
+          setCustomCron(sanitizedCron);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+        }} onCronCommit={() => {
+          const normalizedCron = normalizeCronExpression(customCron);
+          setCustomCron(normalizedCron);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
         }} onDayChange={(day) => {
           setRepeatDay(day);
           onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
@@ -108,6 +128,10 @@ export function SchedulePage({
         }} onMinuteChange={(minute) => {
           setRepeatMinute(minute);
           onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
+        }} onTimeCommit={() => {
+          const normalizedTime = normalizeTimeValue(repeatTime);
+          setRepeatTime(normalizedTime);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime) });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
           onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
@@ -116,6 +140,10 @@ export function SchedulePage({
         {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
           onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
+        }} onDateTimeCommit={() => {
+          const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
+          setOnceDateTime(normalizedDateTime);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
         }} />}
     </CreationFlowLayout>
   );
@@ -136,7 +164,9 @@ const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
-const DEFAULT_ONCE_DATE_TIME = "2026.07.05 10:00";
+const DEFAULT_ONCE_DATE_TIME = "2026-07-05T10:00";
+const validRepeatMinutes = ["00", "15", "30", "45"];
+const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
   hourly: "매시간",
   daily: "매일",
@@ -144,13 +174,14 @@ const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
   custom: "커스텀",
 };
 
-function formatScheduleLabel(mode: ScheduleFlowId, repeat: { cron: string; day: string; frequency: RepeatFrequency; minute: string; time: string }, onceDateTime: string) {
+function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, onceDateTime: string) {
+  const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
   if (mode === "manual") return "수동 실행";
-  if (mode === "once") return `${onceDateTime.trim() || DEFAULT_ONCE_DATE_TIME} 1회 실행`;
-  if (repeat.frequency === "hourly") return `매시간 ${repeat.minute || DEFAULT_REPEAT_MINUTE}분`;
-  if (repeat.frequency === "daily") return `매일 ${repeat.time || DEFAULT_REPEAT_TIME}`;
-  if (repeat.frequency === "custom") return `커스텀: ${repeat.cron.trim() || DEFAULT_CUSTOM_CRON}`;
-  return `매주 ${repeat.day || DEFAULT_REPEAT_DAY}요일 ${repeat.time || DEFAULT_REPEAT_TIME}`;
+  if (mode === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 1회 실행`;
+  if (normalizedRepeat.frequency === "hourly") return `매시간 ${normalizedRepeat.minute}분`;
+  if (normalizedRepeat.frequency === "daily") return `매일 ${normalizedRepeat.time}`;
+  if (normalizedRepeat.frequency === "custom") return `커스텀: ${normalizedRepeat.cron}`;
+  return `매주 ${normalizedRepeat.day}요일 ${normalizedRepeat.time}`;
 }
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
@@ -161,7 +192,7 @@ function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
 
 function parseOnceScheduleLabel(label: string) {
   if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
-  return label.replace(/\s*1회 실행\s*$/, "").trim() || DEFAULT_ONCE_DATE_TIME;
+  return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
 }
 
 function parseRepeatScheduleLabel(label: string) {
@@ -178,6 +209,43 @@ function parseRepeatScheduleLabel(label: string) {
     minute: hourlyMatch?.[1] ?? DEFAULT_REPEAT_MINUTE,
     time: weeklyMatch?.[2] ?? dailyMatch?.[1] ?? DEFAULT_REPEAT_TIME,
   };
+}
+
+function normalizeRepeatScheduleDraft(repeat: RepeatScheduleDraft): RepeatScheduleDraft {
+  return {
+    cron: normalizeCronExpression(repeat.cron),
+    day: validRepeatDays.includes(repeat.day) ? repeat.day : DEFAULT_REPEAT_DAY,
+    frequency: repeat.frequency,
+    minute: validRepeatMinutes.includes(repeat.minute) ? repeat.minute : DEFAULT_REPEAT_MINUTE,
+    time: normalizeTimeValue(repeat.time),
+  };
+}
+
+function normalizeTimeValue(value: string) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_REPEAT_TIME;
+}
+
+function normalizeDateTimeLocal(value: string) {
+  const normalizedValue = value.replace(".", "-").replace(".", "-").replace(" ", "T");
+  return /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(normalizedValue) ? normalizedValue : DEFAULT_ONCE_DATE_TIME;
+}
+
+function formatDateTimeLocalLabel(value: string) {
+  return normalizeDateTimeLocal(value).replace("T", " ").replaceAll("-", ".");
+}
+
+function sanitizeCronInput(value: string) {
+  return value.replace(/[^\d*,/\-\s]/g, "").replace(/\s+/g, " ").slice(0, 64);
+}
+
+function isValidCronExpression(value: string) {
+  const fields = value.trim().split(/\s+/);
+  return fields.length === 5 && fields.every((field) => /^[\d*,/\-]+$/.test(field));
+}
+
+function normalizeCronExpression(value: string) {
+  const sanitized = sanitizeCronInput(value).trim();
+  return isValidCronExpression(sanitized) ? sanitized : DEFAULT_CUSTOM_CRON;
 }
 
 export function SourceConnectionPage({
@@ -905,9 +973,11 @@ function RepeatSettings({
   frequency,
   minute,
   onCronChange,
+  onCronCommit,
   onDayChange,
   onFrequencyChange,
   onMinuteChange,
+  onTimeCommit,
   onTimeChange,
   selectedDay,
   time,
@@ -916,13 +986,16 @@ function RepeatSettings({
   frequency: RepeatFrequency;
   minute: string;
   onCronChange: (cron: string) => void;
+  onCronCommit: () => void;
   onDayChange: (day: string) => void;
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
+  onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
   selectedDay: string;
   time: string;
 }) {
+  const cronIsValid = isValidCronExpression(customCron);
   const preview =
     frequency === "hourly"
       ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.04 11:${minute}`
@@ -960,7 +1033,7 @@ function RepeatSettings({
         {frequency === "daily" && (
           <label className="field">
             <span>실행 시간</span>
-            <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
           </label>
         )}
         {frequency === "weekly" && (
@@ -978,13 +1051,13 @@ function RepeatSettings({
         {frequency === "weekly" && (
           <label className="field">
             <span>실행 시간</span>
-            <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
           </label>
         )}
         {frequency === "custom" && (
           <label className="field wide">
             <span>Cron 표현식</span>
-            <input className="input control-input" value={customCron} onChange={(event) => onCronChange(event.target.value)} />
+            <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
           </label>
         )}
         <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
@@ -992,6 +1065,7 @@ function RepeatSettings({
         <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
       </div>
       <InfoBox title="실행 미리보기" body={preview} />
+      {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
       <label className="policy-check-row">
         <input type="checkbox" defaultChecked />
         <span>
@@ -1028,7 +1102,7 @@ function ManualSettings() {
   );
 }
 
-function OnceSettings({ dateTime, onDateTimeChange }: { dateTime: string; onDateTimeChange: (dateTime: string) => void }) {
+function OnceSettings({ dateTime, onDateTimeChange, onDateTimeCommit }: { dateTime: string; onDateTimeChange: (dateTime: string) => void; onDateTimeCommit: () => void }) {
   return (
     <section className="panel">
       <div className="panel-header">
@@ -1038,11 +1112,11 @@ function OnceSettings({ dateTime, onDateTimeChange }: { dateTime: string; onDate
       <div className="form-grid">
         <label className="field">
           <span>실행 예정 일시</span>
-          <input className="input control-input" value={dateTime} onChange={(event) => onDateTimeChange(event.target.value)} />
+          <input className="input control-input" min="2026-07-04T00:00" type="datetime-local" value={normalizeDateTimeLocal(dateTime)} onBlur={onDateTimeCommit} onChange={(event) => onDateTimeChange(event.target.value)} onInput={(event) => onDateTimeChange(event.currentTarget.value)} />
         </label>
         <Field label="시간대" value="Asia/Seoul (GMT+09:00)" icon={<Clock3 size={16} />} />
       </div>
-      <InfoBox title="실행 미리보기" body={`${dateTime}에 한 번 실행됩니다. 실행 완료 후 반복되지 않습니다.`} />
+      <InfoBox title="실행 미리보기" body={`${formatDateTimeLocalLabel(dateTime)}에 한 번 실행됩니다. 실행 완료 후 반복되지 않습니다.`} />
       <div className="policy-section">
         <h3>실행 정책</h3>
         <label className="policy-check-row compact">
