@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  ChevronDown,
-  ChevronRight,
   Database,
-  Filter,
   Maximize2,
   Plus,
-  Search,
   Share2,
   ShieldCheck,
   SlidersHorizontal,
@@ -25,18 +18,15 @@ import {
   DashboardWorkspaceHeader,
   defaultDashboardCards,
 } from "./DashboardParts";
+import { DashboardLandingPage } from "./DashboardLandingPage";
 import type { ExpandedChart, SavedDashboardCard } from "./DashboardParts";
 import {
-  dashboardSortOptions,
   filterAndSortDashboardCards,
-  formatDashboardDateLabel,
   formatDashboardTimestamp,
   getDashboardOwners,
   getDashboardPage,
-  getDashboardSortLabel,
   getDashboardTags,
   hydrateSavedDashboardCards,
-  splitDashboardTags,
 } from "./dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
@@ -133,7 +123,6 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     totalPages: totalDashboardPages,
     visibleDashboards,
   } = dashboardPage;
-  const activeSortLabel = getDashboardSortLabel(sortOption);
 
   useEffect(() => {
     setView(entry.view);
@@ -179,6 +168,20 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     setSortOption(nextSort);
     setOpenListControl(null);
     onAction("dashboard.list.sort_changed", "/api/dashboards/sort", nextSort);
+  };
+
+  const toggleDashboardListControl = (control: DashboardListControl) => {
+    setOpenListControl((currentControl) => (currentControl === control ? null : control));
+  };
+
+  const goToPreviousDashboardPage = () => {
+    setCurrentPage((page) => Math.max(1, page - 1));
+    onAction("dashboard.list.page_previous", "/api/dashboards?page=previous", "dashboards");
+  };
+
+  const goToNextDashboardPage = () => {
+    setCurrentPage((page) => Math.min(totalDashboardPages, page + 1));
+    onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards");
   };
 
   const openBuilder = () => {
@@ -337,117 +340,31 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   if (view === "list") {
     return (
-      <div className="dashboard-page dashboard-list-page">
-        <header className="dashboard-header">
-          <div>
-            <h1>대시보드</h1>
-          </div>
-          <div className="dashboard-header-actions">
-            <button className="primary-button dashboard-create-button" type="button" onClick={openBuilder}><Plus size={24} /> 새 대시보드 생성</button>
-          </div>
-        </header>
-
-        <section className="dashboard-list-toolbar">
-          <div className="dashboard-list-search">
-            <Search size={16} />
-            <input aria-label="대시보드 검색" type="search" placeholder="대시보드 검색..." value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
-          </div>
-          <div className="dashboard-toolbar-actions">
-            <div className="dashboard-toolbar-menu">
-              <button className="dashboard-filter-button" type="button" aria-expanded={openListControl === "owner"} aria-haspopup="menu" onClick={() => setOpenListControl((control) => (control === "owner" ? null : "owner"))}>
-                <Filter size={22} />
-                <span>{ownerFilter === "all" ? "모든 소유자" : ownerFilter}</span>
-                <ChevronDown size={18} />
-              </button>
-              {openListControl === "owner" && (
-                <div className="dashboard-list-menu" role="menu">
-                  <button className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} type="button" role="menuitem" onClick={() => selectDashboardOwner("all")}>모든 소유자</button>
-                  {dashboardOwners.map((owner) => (
-                    <button className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"} key={owner} type="button" role="menuitem" onClick={() => selectDashboardOwner(owner)}>{owner}</button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="dashboard-toolbar-menu">
-              <button className="dashboard-filter-button" type="button" aria-expanded={openListControl === "tag"} aria-haspopup="menu" onClick={() => setOpenListControl((control) => (control === "tag" ? null : "tag"))}>
-                <span>{selectedTags.length ? `태그 ${selectedTags.length}개` : "태그 필터"}</span>
-                <ChevronRight size={18} />
-              </button>
-              {openListControl === "tag" && (
-                <div className="dashboard-list-menu" role="menu">
-                  <button className="dashboard-menu-option" type="button" role="menuitem" onClick={clearDashboardTags}>전체 태그</button>
-                  {dashboardTags.map((tag) => (
-                    <label className="dashboard-menu-option checkbox" key={tag}>
-                      <input type="checkbox" checked={selectedTags.includes(tag)} onChange={() => toggleDashboardTag(tag)} />
-                      <span>{tag}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            <span className="dashboard-toolbar-divider" aria-hidden="true" />
-            <div className="dashboard-toolbar-menu">
-              <button className="dashboard-sort-button" type="button" aria-label={`정렬 기준: ${activeSortLabel}`} aria-expanded={openListControl === "sort"} aria-haspopup="menu" title={activeSortLabel} onClick={() => setOpenListControl((control) => (control === "sort" ? null : "sort"))}>
-                <ArrowUpDown size={24} />
-              </button>
-              {openListControl === "sort" && (
-                <div className="dashboard-list-menu sort" role="menu">
-                  {dashboardSortOptions.map((option) => (
-                    <button className={sortOption === option.id ? "dashboard-menu-option active" : "dashboard-menu-option"} key={option.id} type="button" role="menuitem" aria-label={option.ariaLabel} onClick={() => selectDashboardSort(option.id)}>
-                      <span>{option.label}</span>
-                      {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="dashboard-table-list">
-          <div className="dashboard-list-count">전체 {filteredDashboards.length}개 중 {dashboardPageStart}-{dashboardPageEnd}개 표시</div>
-          <div className="dashboard-table-scroll">
-            <table className="schema-table">
-              <thead>
-                <tr>
-                  <th>이름</th>
-                  <th>소유자</th>
-                  <th>마지막 수정</th>
-                  <th>생성 일시</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleDashboards.map((dashboard) => (
-                  <tr key={dashboard.id}>
-                    <td>
-                      <button className="dashboard-row-link" type="button" onClick={() => openDetail(dashboard.name)}>{dashboard.name}</button>
-                      <span className="dashboard-row-tags">
-                        {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
-                          <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
-                        ))}
-                      </span>
-                    </td>
-                    <td>{dashboard.owner}</td>
-                    <td>{dashboard.updated}</td>
-                    <td>{formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="dashboard-pagination">
-            <button type="button" disabled={safeDashboardPage === 1} onClick={() => {
-              setCurrentPage((page) => Math.max(1, page - 1));
-              onAction("dashboard.list.page_previous", "/api/dashboards?page=previous", "dashboards");
-            }}>이전</button>
-            <span>{safeDashboardPage}</span>
-            <button type="button" disabled={safeDashboardPage === totalDashboardPages} onClick={() => {
-              setCurrentPage((page) => Math.min(totalDashboardPages, page + 1));
-              onAction("dashboard.list.page_next", "/api/dashboards?page=next", "dashboards");
-            }}>다음</button>
-          </div>
-        </section>
-      </div>
+      <DashboardLandingPage
+        currentPage={safeDashboardPage}
+        dashboardCount={filteredDashboards.length}
+        dashboards={visibleDashboards}
+        onClearTags={clearDashboardTags}
+        onCreateDashboard={openBuilder}
+        onNextPage={goToNextDashboardPage}
+        onOpenDashboard={openDetail}
+        onPreviousPage={goToPreviousDashboardPage}
+        onSearchQueryChange={setSearchQuery}
+        onSelectOwner={selectDashboardOwner}
+        onSelectSort={selectDashboardSort}
+        onToggleControl={toggleDashboardListControl}
+        onToggleTag={toggleDashboardTag}
+        openControl={openListControl}
+        ownerFilter={ownerFilter}
+        owners={dashboardOwners}
+        pageEnd={dashboardPageEnd}
+        pageStart={dashboardPageStart}
+        searchQuery={searchQuery}
+        selectedTags={selectedTags}
+        sortOption={sortOption}
+        tags={dashboardTags}
+        totalPages={totalDashboardPages}
+      />
     );
   }
 
