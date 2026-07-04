@@ -451,8 +451,9 @@ export function DashboardPage({
       setRuntimeNotice({ message: `${page.title} 페이지를 추가했습니다.`, tone: "success" });
       onAction("dashboard.page.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages`, runtimeSelection.dashboardId);
     } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a draft page.");
-      setRuntimeNotice({ message: "페이지를 추가하지 못했습니다.", tone: "error" });
+      const message = error instanceof Error ? error.message : "Failed to create a draft page.";
+      setDraftError(message);
+      setRuntimeNotice({ message: `페이지를 추가하지 못했습니다. ${message}`, tone: "error" });
     } finally {
       setIsAddingRuntimePage(false);
     }
