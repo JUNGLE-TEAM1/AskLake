@@ -99,10 +99,6 @@ export async function getJobs(): Promise<JobRowData[]> {
     return result.jobs.map(normalizeJob);
   }
 
-  return getMockJobs();
-}
-
-export async function getMockJobs(): Promise<JobRowData[]> {
   return resolveMock(etlJobs.map(normalizeJob));
 }
 
@@ -112,10 +108,6 @@ export async function getDatasets(): Promise<CatalogDataset[]> {
     return result.datasets.map(normalizeDataset);
   }
 
-  return getMockDatasets();
-}
-
-export async function getMockDatasets(): Promise<CatalogDataset[]> {
   return resolveMock(catalogDatasets.map(normalizeDataset));
 }
 

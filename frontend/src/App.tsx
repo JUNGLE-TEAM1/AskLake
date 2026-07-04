@@ -44,7 +44,6 @@ export function App() {
     apiPending,
     createPipeline,
     dataError,
-    dataFallbackReason,
     dataLoading,
     datasets,
     draftPipeline,
@@ -134,7 +133,6 @@ export function App() {
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs/customer_review_gold", "customer_review_gold")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        {dataFallbackReason && <div className="app-api-pending fallback">Mock fallback 활성화</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : "page-body"}>
           {dataLoading && (

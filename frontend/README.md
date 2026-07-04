@@ -39,7 +39,6 @@ VITE_USE_MOCK_API=true
 - `VITE_USE_MOCK_API=false`: `VITE_API_BASE_URL`을 기준으로 실제 백엔드 API를 호출합니다.
 
 환경변수를 바꾼 뒤에는 dev 서버를 재시작해야 합니다.
-live mode에서 초기 jobs/datasets hydrate가 실패하면 데모 흐름 유지를 위해 mock fallback 데이터로 복구하고 감사 로그에 fallback 사용을 남깁니다.
 
 ## 주요 구조
 

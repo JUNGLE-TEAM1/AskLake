@@ -75,7 +75,7 @@ VITE_USE_MOCK_API=false
 권장 방식:
 
 1. 앱 최초 로딩 시 jobs/datasets를 병렬 조회합니다.
-2. 조회 실패 시 사용자에게 연결 실패 토스트를 보여주고, 현재 프론트는 mock jobs/datasets로 fallback한 뒤 `data.hydrate.fallback_used` 감사 로그를 남깁니다.
+2. 조회 실패 시 사용자에게 연결 실패 토스트를 보여주고 mock fallback 여부를 결정합니다.
 3. 생성/명령 후에는 낙관적 업데이트보다 서버 응답값을 기준으로 상태를 갱신합니다.
 4. hydrate 응답의 `status`는 `docs/03-api-reference.md`의 canonical status values를 따라야 합니다.
 
@@ -205,7 +205,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 순서 | 작업 | 파일 |
 | --- | --- | --- |
 | 1 | `getJobs`, `getDatasets` API adapter 추가 | `frontend/src/services/mockApi.ts` |
-| 2 | hydrate fallback의 수동 smoke와 실패 fixture 정리 | `frontend/src/hooks/useAskLakeData.ts`, `docs/e2e-fallback-verification.md` |
+| 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
 | 3 | dashboard adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |

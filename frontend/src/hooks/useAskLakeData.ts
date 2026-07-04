@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createPipelineDraft, getDatasets, getJobs, getMockDatasets, getMockJobs, runJobCommand } from "../services/mockApi";
+import { createPipelineDraft, getDatasets, getJobs, runJobCommand } from "../services/mockApi";
 import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -44,7 +44,6 @@ export function useAskLakeData({
   const [apiPending, setApiPending] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [dataFallbackReason, setDataFallbackReason] = useState<string | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -59,25 +58,10 @@ export function useAskLakeData({
         setDatasets(nextDatasets);
         setSelectedJob((job) => job ?? nextJobs[1] ?? nextJobs[0] ?? null);
         setSelectedDataset((dataset) => dataset ?? nextDatasets[0] ?? null);
-        setDataFallbackReason(null);
       } catch (error) {
         if (canceled) return;
-        const message = error instanceof Error ? error.message : "Failed to load AskLake data.";
-        try {
-          const [fallbackJobs, fallbackDatasets] = await Promise.all([getMockJobs(), getMockDatasets()]);
-          if (canceled) return;
-          setJobs(fallbackJobs);
-          setDatasets(fallbackDatasets);
-          setSelectedJob((job) => job ?? fallbackJobs[1] ?? fallbackJobs[0] ?? null);
-          setSelectedDataset((dataset) => dataset ?? fallbackDatasets[0] ?? null);
-          setDataError(null);
-          setDataFallbackReason(message);
-          writeAuditLog("data.hydrate.fallback_used", "/api/bootstrap", "mock-data", "success", { targetType: "ui" });
-        } catch (fallbackError) {
-          if (canceled) return;
-          setDataError(fallbackError instanceof Error ? fallbackError.message : message);
-        }
-        showToast("DB API 연결 실패로 mock fallback 데이터를 사용합니다.", "info");
+        setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
+        showToast("DB API에서 초기 데이터를 불러오지 못했습니다.", "info");
       } finally {
         if (!canceled) setDataLoading(false);
       }
@@ -183,7 +167,6 @@ export function useAskLakeData({
     apiPending,
     createPipeline,
     dataError,
-    dataFallbackReason,
     dataLoading,
     datasets,
     draftPipeline,
