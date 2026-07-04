@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Check,
   PlayCircle,
   Search,
 } from "lucide-react";
@@ -172,7 +171,6 @@ LIMIT 100;`;
             </div>
             <div className="sql-editor-actions">
               <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
-              <span><Check size={13} /> policy passed</span>
             </div>
           </div>
           <div className="sql-editor-layout">
