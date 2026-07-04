@@ -581,12 +581,19 @@
 }
 
 .lineage-table-header span,
-.lineage-table-header em {
+.lineage-table-header em,
+.lineage-table-header small {
   color: #475569;
   font-size: 11px;
   font-style: normal;
   font-weight: 900;
   text-transform: uppercase;
+}
+
+.lineage-table-header small {
+  color: #64748b;
+  font-weight: 800;
+  text-transform: none;
 }
 
 .lineage-table-node.bronze .lineage-table-header span {

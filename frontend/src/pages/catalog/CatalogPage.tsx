@@ -51,6 +51,7 @@ type LineageTableNodeData = Record<string, unknown> & {
   layerLabel: string;
   onColumnSelect: (columnId: string | null) => void;
   selectedColumnId: string | null;
+  sourceHint?: string;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
 };
@@ -460,6 +461,7 @@ function buildLineageGraph(
 
   const upstreamNodes: Node<LineageTableNodeData>[] = dataset.upstream.map((item, index) => {
     const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
+    const sourceHint = getLineageSourceHint(dataset.upstream, item);
     return {
       data: {
         columns: buildSourceColumns(primaryColumns, item, index),
@@ -468,6 +470,7 @@ function buildLineageGraph(
         layerLabel: sourceMeta.layerLabel,
         onColumnSelect,
         selectedColumnId,
+        sourceHint,
         tableName: getLineageTableName(item),
         tone: sourceMeta.tone,
       },
@@ -533,6 +536,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
         <div>
           <span>{data.layerLabel}</span>
           <strong><Table2 size={18} /> {data.tableName}</strong>
+          {data.sourceHint && <small>{data.sourceHint}</small>}
         </div>
         <em>{data.engine}</em>
       </header>
@@ -648,6 +652,13 @@ function getLineageSourceMeta(
 function getLineageTableName(value: string): string {
   const parts = value.split(/[ /]/).filter(Boolean);
   return parts[parts.length - 1]?.replace(/\*\.csv$/, "events") ?? value;
+}
+
+function getLineageSourceHint(upstreamItems: string[], currentItem: string): string | undefined {
+  if (isRawSource(currentItem)) return undefined;
+  const rawSource = upstreamItems.find((item) => isRawSource(item));
+  if (!rawSource) return undefined;
+  return `Source ${getLineageTableName(rawSource)}`;
 }
 
 function getLayerTone(layer: CatalogDataset["layer"]): LineageTableNodeData["tone"] {
