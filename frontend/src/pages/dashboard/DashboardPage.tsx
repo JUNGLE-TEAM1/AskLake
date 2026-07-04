@@ -15,7 +15,9 @@ import { DatasetSidebar } from "./runtime/DatasetSidebar";
 import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
 import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
 import { WidgetFrame } from "./runtime/WidgetFrame";
+import { WidgetConfigPanel } from "./runtime/WidgetConfigPanel";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
+import type { CreateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -117,6 +119,7 @@ export function DashboardPage({
   const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
+  const [isCreatingDatasetWidget, setIsCreatingDatasetWidget] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
@@ -222,17 +225,6 @@ export function DashboardPage({
       : [],
     [publishedRuntime?.revision, publishedRuntime?.widgetsByPageId, runtimeSelection.mode, selectedRuntimePageId],
   );
-  const selectedDraftWidget = selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null;
-  const selectedDraftWidgetConfigRows = selectedDraftWidget
-    ? ["xKey", "yKey", "valueKey", "labelKey", "columns"]
-      .map((key) => {
-        const value = selectedDraftWidget.config[key];
-        if (Array.isArray(value)) return [key, value.join(", ")] as const;
-        if (value === null || value === undefined || value === "") return null;
-        return [key, String(value)] as const;
-      })
-      .filter((row): row is readonly [string, string] => Boolean(row))
-    : [];
 
   useEffect(() => {
     if (!selectedDatasetId) return;
@@ -553,6 +545,41 @@ export function DashboardPage({
       onAction("dashboard.widget.added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, type);
     } catch (error) {
       setDraftError(error instanceof Error ? error.message : "Failed to create a draft widget.");
+    }
+  };
+
+  const addDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
+    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId || isCreatingDatasetWidget) return;
+    const nextY = selectedDraftWidgets.reduce((bottom, widget) => Math.max(bottom, widget.layout.y + widget.layout.h), 0);
+    const layout = {
+      ...defaultDraftWidgetLayout[input.type],
+      y: nextY,
+    };
+
+    setIsCreatingDatasetWidget(true);
+    setDraftError(null);
+    try {
+      const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
+        datasetId: input.datasetId,
+        layout,
+        title: input.title,
+        type: input.type,
+        config: {
+          color: input.color,
+          description: input.description,
+          xKey: input.xKey,
+          yKey: input.yKey,
+        },
+      });
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setSelectedWidgetId(widget.id);
+      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
+      onAction("dashboard.widget.dataset_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, input.datasetId);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
+      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
+    } finally {
+      setIsCreatingDatasetWidget(false);
     }
   };
 
@@ -888,6 +915,12 @@ export function DashboardPage({
           isRefreshing={isRefreshingRuntime}
           inspector={isDraftMode ? (
             <aside className="asklake-dashboard-inspector">
+              <WidgetConfigPanel
+                isCreating={isCreatingDatasetWidget}
+                selectedDataset={selectedDataset}
+                selectedDatasetId={selectedDatasetId}
+                onCreateWidget={addDatasetDraftWidget}
+              />
               <section>
                 <strong>위젯 추가</strong>
                 <span>선택한 페이지에 기본 위젯을 추가합니다.</span>
@@ -903,51 +936,6 @@ export function DashboardPage({
                     </button>
                   ))}
                 </div>
-              </section>
-              <section>
-                {selectedDataset ? (
-                  <>
-                    <strong>{selectedDataset.name}</strong>
-                    <span>{selectedDataset.description}</span>
-                    <div className="asklake-inspector-details">
-                      <p><span>Layer</span><strong>{selectedDataset.layer.toUpperCase()}</strong></p>
-                      <p><span>Columns</span><strong>{selectedDataset.columns.length}</strong></p>
-                      <p>
-                        <span>Metrics</span>
-                        <strong>{selectedDataset.columns.filter((column) => column.type === "number").length}</strong>
-                      </p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <strong>데이터셋을 선택하세요</strong>
-                    <span>왼쪽에서 Gold 데이터셋을 선택하면 다음 단계에서 위젯 설정에 사용할 수 있습니다.</span>
-                  </>
-                )}
-              </section>
-              <section>
-                {selectedDraftWidget ? (
-                  <>
-                    <strong>{selectedDraftWidget.title || "제목 없는 위젯"}</strong>
-                    <div className="asklake-inspector-details">
-                      <p><span>유형</span><strong>{draftWidgetLabels[selectedDraftWidget.type]}</strong></p>
-                      <p><span>x / y</span><strong>{selectedDraftWidget.layout.x} / {selectedDraftWidget.layout.y}</strong></p>
-                      <p><span>w / h</span><strong>{selectedDraftWidget.layout.w} / {selectedDraftWidget.layout.h}</strong></p>
-                      <p><span>data rows</span><strong>{selectedDraftWidget.data.length}</strong></p>
-                      {selectedDraftWidgetConfigRows.map(([key, value]) => (
-                        <p key={key}><span>{key}</span><strong>{value}</strong></p>
-                      ))}
-                    </div>
-                    <button className="asklake-inspector-danger-button" type="button" disabled>
-                      삭제 준비 중
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <strong>구성할 위젯을 선택하세요</strong>
-                    <span>캔버스의 위젯을 클릭하면 위치와 크기 정보가 표시됩니다.</span>
-                  </>
-                )}
               </section>
             </aside>
           ) : undefined}

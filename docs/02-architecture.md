@@ -142,6 +142,7 @@ Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제와 
 Phase 06 runtime UX는 별도 share API 없이 프론트에서 공유 링크를 복사한다. Published revision이 있으면 `/dashboards/{dashboardId}`를, draft만 있으면 `/dashboards/{dashboardId}/edit`를 복사하며, publish 성공 후 목록 상태도 다시 갱신한다.
 Dashboard draft editor shell은 화면 높이 안에서 상단 바, 페이지 탭, 필터 행, 왼쪽 dataset sidebar, 오른쪽 inspector를 고정 흐름으로 유지하고, 위젯이 많아질 때 중앙 canvas 영역 안에서만 스크롤한다.
 Dataset 기반 위젯 생성 준비 단계에서는 draft editor가 transient `selectedDatasetId`를 소유하며, Gold dataset 목록은 `useDashboardDatasets` mock hook을 통해 공급한다. 이 hook은 이후 `GET /api/catalog/datasets` hydrate로 교체할 경계다.
+Dataset 기반 widget 생성 폼은 선택 dataset의 `string`/`date` 컬럼을 x축 후보로, `number` 컬럼을 y축 후보로 사용하며, `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`에 `datasetId`와 `config`를 함께 전송한다.
 
 ## 8) 설계 원칙
 

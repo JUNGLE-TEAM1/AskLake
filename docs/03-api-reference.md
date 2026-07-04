@@ -74,6 +74,8 @@ Canonical status values:
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard ?? œ. ?Œìœ ???ëŠ” ê´€ë¦¬ìë§??ˆìš© |
 | `POST` | `/api/audit-logs` | audit log ?œë²„ ?€??|
 
+Dataset-based widget creation sends top-level `datasetId` plus `config.xKey`, `config.yKey`, `config.color`, and `config.description`; the draft runtime response must preserve `queryId`, `datasetId`, and `config` on each widget.
+
 ## 7) ?”ë©´ë³??°ì´??ê³„ì•½
 
 | ?”ë©´ | ?„ì¬ ?°ì´??| Future API |
@@ -123,6 +125,8 @@ type DashboardRuntimeResponse = {
     layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
     config: Record<string, unknown>;
     data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
   }>>;
   filters: Array<{ id: string; label: string; value: unknown }>;
 };

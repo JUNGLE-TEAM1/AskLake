@@ -865,10 +865,16 @@ Request:
 
 ```json
 {
-  "type": "metric",
-  "title": "지표",
-  "layout": { "x": 0, "y": 0, "w": 3, "h": 3, "minW": 2, "minH": 2 },
-  "config": {}
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "bar_chart",
+  "title": "월별 물류비",
+  "layout": { "x": 0, "y": 0, "w": 6, "h": 5, "minW": 3, "minH": 3 },
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
 }
 ```
 
@@ -879,6 +885,8 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI는 `datasetId`를 별도 필드로 보내고 `config.xKey`, `config.yKey`, `config.color`, `config.description`을 함께 보냅니다.
+생성 후 draft runtime 조회 응답의 widget에는 `datasetId`와 `config`가 유지되어야 합니다.
 
 #### 8.5.6 Draft layout batch 저장
 
