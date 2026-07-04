@@ -34,8 +34,17 @@ VITE_USE_MOCK_API=false
 
 ## 4) 브랜치 전략
 
-`main`은 보호 브랜치다.
-모든 `main` 변경은 작업 브랜치에서 PR을 열고 병합해야 하며, 직접 push는 금지한다.
+`main`과 `dev`는 보호 브랜치다.
+직접 push는 금지하며, PR source branch 정책을 따른다.
+
+허용되는 병합 흐름:
+
+- `pair1` -> `dev`
+- `pair2` -> `dev`
+- `pair3` -> `dev`
+- `dev` -> `main`
+
+`main`으로 직접 여는 feature PR이나, `dev`로 직접 여는 임의 작업 브랜치 PR은 branch policy check에서 실패한다.
 
 권장 브랜치 타입:
 
