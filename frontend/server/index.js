@@ -2,6 +2,7 @@ import http from "node:http";
 import { URL } from "node:url";
 import {
   databaseUrl,
+  createDashboard,
   createDraftDashboardPage,
   createDraftDashboardWidget,
   deleteDraftDashboardPage,
@@ -303,6 +304,12 @@ async function route(request, response) {
 
   if (request.method === "POST" && path === "/api/dashboards/query") {
     sendJson(response, 200, await queryDashboards(await readJson(request)));
+    return;
+  }
+
+  if (request.method === "POST" && path === "/api/dashboards") {
+    const dashboard = await createDashboard(await readJson(request), getRequestActor(request));
+    sendJson(response, 201, { dashboard });
     return;
   }
 

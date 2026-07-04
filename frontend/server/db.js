@@ -30,6 +30,11 @@ function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
 }
 
+function formatDashboardTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function normalizeRuntimeWidgetType(type) {
   return runtimeWidgetTypeMap[type] ?? type ?? "table";
 }
@@ -325,6 +330,33 @@ export async function saveDataset(dataset) {
 
 export async function saveDashboard(dashboard) {
   await upsertJson("dashboards", dashboard);
+  return dashboard;
+}
+
+export async function createDashboard(input = {}, actor = {}) {
+  const createdAt = new Date();
+  const title = typeof input.title === "string" && input.title.trim()
+    ? input.title.trim()
+    : `새 대시보드 ${formatDashboardTimestamp(createdAt)}`;
+  const createdAtValue = createdAt.toISOString();
+  const dashboard = {
+    createdAt: formatDashboardTimestamp(createdAt),
+    createdAtValue,
+    datasetId: typeof input.datasetId === "string" ? input.datasetId : undefined,
+    hasPublishedRevision: false,
+    id: makeId("dash"),
+    meta: "0개 위젯 · 수동 생성",
+    name: title,
+    owner: typeof input.owner === "string" && input.owner.trim() ? input.owner.trim() : actor.name ?? "Admin User",
+    sourceRunId: typeof input.sqlRunId === "string" ? input.sqlRunId : undefined,
+    status: "draft",
+    tags: "초안 · Dashboard",
+    updated: "방금 전",
+    updatedAtValue: createdAtValue,
+    widgets: [],
+  };
+
+  await saveDashboard(dashboard);
   return dashboard;
 }
 
