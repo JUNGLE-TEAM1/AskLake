@@ -2,7 +2,9 @@ import http from "node:http";
 import { URL } from "node:url";
 import {
   databaseUrl,
+  deleteDashboard,
   ensureSchema,
+  getDashboard,
   getDataset,
   getJob,
   listDashboards,
@@ -22,7 +24,7 @@ const port = Number(process.env.PORT ?? 8080);
 
 function sendJson(response, status, payload) {
   response.writeHead(status, {
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, X-AskLake-User, X-AskLake-Role",
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Origin": "*",
     "Content-Type": "application/json",
@@ -32,6 +34,17 @@ function sendJson(response, status, payload) {
 
 function sendError(response, status, code, message) {
   sendJson(response, status, { error: { code, message } });
+}
+
+function getRequestActor(request) {
+  return {
+    name: String(request.headers["x-asklake-user"] ?? "Admin User"),
+    role: String(request.headers["x-asklake-role"] ?? "admin").toLowerCase(),
+  };
+}
+
+function canDeleteDashboard(actor, dashboard) {
+  return actor.role === "admin" || actor.name === dashboard.owner;
 }
 
 async function readJson(request) {
@@ -249,7 +262,7 @@ async function route(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   if (request.method === "OPTIONS") {
     response.writeHead(204, {
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, X-AskLake-User, X-AskLake-Role",
       "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       "Access-Control-Allow-Origin": "*",
     });
@@ -327,6 +340,25 @@ async function route(request, response) {
     const dashboard = { ...(await readJson(request)), id: dashboardId };
     await saveDashboard(dashboard);
     sendJson(response, 200, { dashboard });
+    return;
+  }
+
+  if (request.method === "DELETE" && dashboardMatch) {
+    const dashboardId = decodeURIComponent(dashboardMatch[1]);
+    const dashboard = await getDashboard(dashboardId);
+    if (!dashboard) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
+      return;
+    }
+
+    const actor = getRequestActor(request);
+    if (!canDeleteDashboard(actor, dashboard)) {
+      sendError(response, 403, "FORBIDDEN", "Only the dashboard owner or an admin can delete this dashboard");
+      return;
+    }
+
+    await deleteDashboard(dashboardId);
+    sendJson(response, 200, { deletedDashboardId: dashboardId });
     return;
   }
 

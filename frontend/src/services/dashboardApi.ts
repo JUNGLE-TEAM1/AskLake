@@ -16,6 +16,10 @@ type DashboardPageResponse = {
   };
 };
 
+type DeleteDashboardResponse = {
+  deletedDashboardId: string;
+};
+
 function splitTags(tags: string) {
   return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
 }
@@ -151,4 +155,10 @@ export async function listDashboards(query: DashboardListQuery, mockDashboards: 
   const response = await apiClient.post<DashboardListResponse | DashboardPageResponse>("/api/dashboards/query", toDashboardQueryPayload(query));
   if ("dashboards" in response) return normalizeDashboardPageResponse(response);
   return normalizeDashboardListResponse(response);
+}
+
+export async function deleteDashboard(dashboardId: string): Promise<DeleteDashboardResponse> {
+  if (apiConfig.useMock) return { deletedDashboardId: dashboardId };
+
+  return apiClient.delete<DeleteDashboardResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`);
 }

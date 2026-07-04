@@ -26,7 +26,9 @@ import {
   normalizeSavedDashboardCard,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
+import { deleteDashboard } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
+import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
 
@@ -36,9 +38,13 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   const [isPublished, setIsPublished] = useState(false);
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetType>("bar");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [dashboardDeleteTarget, setDashboardDeleteTarget] = useState<SavedDashboardCard | null>(null);
+  const [dashboardDeleteError, setDashboardDeleteError] = useState<string | null>(null);
+  const [deletingDashboardId, setDeletingDashboardId] = useState<string | null>(null);
   const [expandedChart, setExpandedChart] = useState<ExpandedChart | null>(null);
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
+  const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
     const stored = window.localStorage.getItem("asklake.dashboardCards");
     if (!stored) return defaultDashboardCards;
@@ -100,9 +106,13 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     runId: activeSqlResult.runId,
   } : undefined;
   const sidebarDashboards = dashboardList.visibleDashboards.length ? dashboardList.visibleDashboards : savedDashboards;
+  const activeDashboardId = selectedDashboard?.id ?? dashboardId;
+  const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
+  const activeDashboardWidgets = selectedDashboard?.widgets?.length ? selectedDashboard.widgets : snapshotWidgets;
 
   useEffect(() => {
     setView(entry.view);
+    if (entry.view !== "detail") setSelectedDashboard(null);
     if (entry.source === "sql" && sqlResult?.datasetId === dataset.id) {
       setBuilderWidgets(["table", "bar"]);
     }
@@ -121,18 +131,21 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   };
 
   const openBuilder = () => {
+    setSelectedDashboard(null);
     setView("builder");
     onAction("dashboard.create_clicked", "/api/dashboards", dataset.id);
   };
 
   const backToList = () => {
+    setSelectedDashboard(null);
     setView("list");
     onAction("dashboard.list_opened", "/api/dashboards", dataset.id);
   };
 
-  const openDetail = (name = dashboardTitle) => {
+  const openDetail = (dashboard?: SavedDashboardCard) => {
+    if (dashboard) setSelectedDashboard(dashboard);
     setView("detail");
-    onAction("dashboard.opened", `/api/dashboards/${dashboardId}`, name);
+    onAction("dashboard.opened", `/api/dashboards/${dashboard?.id ?? activeDashboardId}`, dashboard?.name ?? activeDashboardTitle);
   };
 
   const upsertDashboard = async (status: SavedDashboardCard["status"]) => {
@@ -188,31 +201,31 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   };
 
   const shareDashboard = () => {
-    const shareUrl = `${window.location.origin}/dashboards/${encodeURIComponent(dashboardTitle)}`;
+    const shareUrl = `${window.location.origin}/dashboards/${encodeURIComponent(activeDashboardId)}`;
     void navigator.clipboard?.writeText(shareUrl);
-    onAction("dashboard.shared", "/api/dashboards/share", dataset.id);
+    onAction("dashboard.shared", "/api/dashboards/share", activeDashboardId);
   };
 
   const exportDashboard = () => {
     const payload = {
-      datasetId: dataset.id,
-      id: dashboardId,
+      datasetId: selectedDashboard?.datasetId ?? dataset.id,
+      id: activeDashboardId,
       exportedAt: new Date().toISOString(),
       filters: { period, segment },
       sourceRunId,
       sqlResult: sqlResultSnapshot ?? null,
-      status: isPublished ? "published" : "draft",
-      title: dashboardTitle,
-      widgets: snapshotWidgets,
+      status: selectedDashboard?.status ?? (isPublished ? "published" : "draft"),
+      title: activeDashboardTitle,
+      widgets: activeDashboardWidgets,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `${dashboardTitle.replace(/[^a-z0-9가-힣_-]+/gi, "_")}.json`;
+    anchor.download = `${activeDashboardTitle.replace(/[^a-z0-9가-힣_-]+/gi, "_")}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    onAction("dashboard.exported", `/api/dashboards/${dashboardId}/export`, dashboardId);
+    onAction("dashboard.exported", `/api/dashboards/${activeDashboardId}/export`, activeDashboardId);
   };
 
   const openDashboardFullscreen = () => {
@@ -222,7 +235,43 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   const openPublishedView = () => {
     setView("detail");
-    onAction("dashboard.published_view_opened", `/api/dashboards/${dashboardId}/published`, dashboardId);
+    onAction("dashboard.published_view_opened", `/api/dashboards/${activeDashboardId}/published`, activeDashboardId);
+  };
+
+  const requestDashboardDelete = (dashboard: SavedDashboardCard) => {
+    setDashboardDeleteTarget(dashboard);
+    setDashboardDeleteError(null);
+    onAction("dashboard.delete_requested", `/api/dashboards/${dashboard.id}`, dashboard.id);
+  };
+
+  const cancelDashboardDelete = () => {
+    if (deletingDashboardId) return;
+    setDashboardDeleteTarget(null);
+    setDashboardDeleteError(null);
+  };
+
+  const confirmDashboardDelete = async () => {
+    const target = dashboardDeleteTarget;
+    if (!target) return;
+
+    setDeletingDashboardId(target.id);
+    setDashboardDeleteError(null);
+    try {
+      await deleteDashboard(target.id);
+      setSavedDashboards((cards) => cards.filter((card) => card.id !== target.id));
+      if (selectedDashboard?.id === target.id) setSelectedDashboard(null);
+      dashboardList.reloadDashboards();
+      setDashboardDeleteTarget(null);
+      onAction("dashboard.deleted", `/api/dashboards/${target.id}`, target.id);
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 403
+        ? "삭제 권한이 없습니다."
+        : "대시보드 삭제에 실패했습니다. API 서버와 DB 상태를 확인해 주세요.";
+      setDashboardDeleteError(message);
+      onAction("dashboard.delete_failed", `/api/dashboards/${target.id}`, target.id, "failed");
+    } finally {
+      setDeletingDashboardId(null);
+    }
   };
 
   const requestDelete = (target: string) => {
@@ -287,14 +336,20 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       <DashboardLandingPage
         currentPage={dashboardList.safeDashboardPage}
         dashboardCount={dashboardList.dashboardCount}
+        deleteError={dashboardDeleteError}
+        deleteTarget={dashboardDeleteTarget}
+        deletingDashboardId={deletingDashboardId}
         dashboards={dashboardList.visibleDashboards}
         error={dashboardList.dashboardError}
         isLoading={dashboardList.dashboardLoading}
+        onCancelDelete={cancelDashboardDelete}
         onClearTags={dashboardList.clearDashboardTags}
+        onConfirmDelete={confirmDashboardDelete}
         onCreateDashboard={openBuilder}
         onNextPage={dashboardList.goToNextDashboardPage}
         onOpenDashboard={openDetail}
         onPreviousPage={dashboardList.goToPreviousDashboardPage}
+        onRequestDelete={requestDashboardDelete}
         onSearchQueryChange={dashboardList.setSearchQuery}
         onSelectOwner={dashboardList.selectDashboardOwner}
         onSelectSort={dashboardList.selectDashboardSort}
@@ -453,8 +508,8 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
         onSave={saveDashboard}
         onShare={shareDashboard}
         onViewPublished={openPublishedView}
-        primaryTitle={isPublished ? "Published" : "Draft"}
-        title={dashboardTitle}
+        primaryTitle={selectedDashboard ? dashboardStatusMeta[selectedDashboard.status].label : isPublished ? "Published" : "Draft"}
+        title={activeDashboardTitle}
       />
 
       <section className="dashboard-publish-card">
@@ -568,7 +623,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
           <section>
             <h2>대시보드 목록</h2>
             {sidebarDashboards.slice(0, 3).map((dashboard) => (
-              <button key={dashboard.id} type="button" onClick={() => openDetail(dashboard.name)}>
+              <button key={dashboard.id} type="button" onClick={() => openDetail(dashboard)}>
                 <strong>{dashboard.name}</strong>
                 <span>{dashboardStatusMeta[dashboard.status].label}</span>
                 <small>{dashboard.meta}</small>
