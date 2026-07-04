@@ -126,7 +126,10 @@ p {
 }
 
 .main-shell {
+  display: flex;
+  min-height: 100vh;
   min-width: 0;
+  flex-direction: column;
 }
 
 .topbar {
@@ -395,6 +398,7 @@ p {
 }
 
 .page-body {
+  flex: 1;
   padding: 24px var(--layout-page-padding) 40px;
 }
 
