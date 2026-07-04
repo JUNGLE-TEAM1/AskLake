@@ -903,6 +903,41 @@ const schemaRoleOptions = [
   { label: "개인정보", value: "PII" },
 ];
 
+type SchemaBaseSnapshot = {
+  columns: SchemaColumnDraft[];
+  sampleRows: string[][];
+  sourceLabel: string;
+};
+
+type SchemaSampleScope = "current" | "slice1gb" | "full";
+type SchemaSampleScopeOption = {
+  label: string;
+  shortLabel: string;
+  value: SchemaSampleScope;
+};
+
+function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScopeOption[] {
+  if (sourceType === "MongoDB") {
+    return [
+      { label: "현재 문서", shortLabel: "현재", value: "current" },
+      { label: "10k 문서", shortLabel: "10k", value: "slice1gb" },
+      { label: "전체 컬렉션", shortLabel: "전체", value: "full" },
+    ];
+  }
+  if (sourceType === "PostgreSQL") {
+    return [
+      { label: "현재 행", shortLabel: "현재", value: "current" },
+      { label: "10k 행", shortLabel: "10k", value: "slice1gb" },
+      { label: "전체 테이블", shortLabel: "전체", value: "full" },
+    ];
+  }
+  return [
+    { label: "현재 샘플", shortLabel: "현재", value: "current" },
+    { label: "1GB 샘플", shortLabel: "1GB", value: "slice1gb" },
+    { label: "전체", shortLabel: "전체", value: "full" },
+  ];
+}
+
 function detectSchemaSourceFormat(draft: DraftPipeline) {
   const summary = draft.schema.summary.toLowerCase();
   const sampleObject = draft.source.sourceConfig.find(([label]) => label === "__Sample Object")?.[1]?.toLowerCase() ?? "";
@@ -946,6 +981,74 @@ function withUniqueTargetNames(columns: SchemaColumnDraft[]) {
       targetName: seen === 0 ? baseName : `${baseName}_${seen + 1}`,
     };
   });
+}
+
+function cloneSchemaColumns(columns: SchemaColumnDraft[]) {
+  return columns.map((column) => ({ ...column }));
+}
+
+function cloneSchemaRows(rows: string[][]) {
+  return rows.map((row) => [...row]);
+}
+
+function upsertConfigValue(config: Array<[string, string]>, label: string, value: string) {
+  const found = config.some(([fieldLabel]) => fieldLabel === label);
+  if (found) {
+    return config.map(([fieldLabel, fieldValue]) => (fieldLabel === label ? [fieldLabel, value] : [fieldLabel, fieldValue])) as Array<[string, string]>;
+  }
+  return [...config, [label, value]] as Array<[string, string]>;
+}
+
+function compactSchemaByPathDepth(columns: SchemaColumnDraft[], sampleRows: string[][], maxPathSegments: number) {
+  const safeDepth = Math.max(1, Math.trunc(maxPathSegments));
+  const groups = new Map<string, {
+    columns: Array<{ column: SchemaColumnDraft; index: number; relativePath: string }>;
+    firstIndex: number;
+    key: string;
+  }>();
+
+  columns.forEach((column, index) => {
+    const parts = column.sourceName.split(".").filter(Boolean);
+    const compactParts = parts.length > safeDepth ? parts.slice(0, safeDepth) : parts;
+    const key = compactParts.join(".") || column.sourceName || `column_${index + 1}`;
+    const relativePath = parts.slice(compactParts.length).join(".");
+    const group = groups.get(key);
+    if (group) {
+      group.columns.push({ column, index, relativePath });
+      return;
+    }
+    groups.set(key, { columns: [{ column, index, relativePath }], firstIndex: index, key });
+  });
+
+  const orderedGroups = Array.from(groups.values()).sort((a, b) => a.firstIndex - b.firstIndex);
+  const nextColumns = orderedGroups.map((group) => {
+    if (group.columns.length === 1 && !group.columns[0].relativePath) {
+      return { ...group.columns[0].column };
+    }
+    const confidenceValues = group.columns.map(({ column }) => column.confidence ?? 70);
+    return {
+      confidence: Math.min(...confidenceValues),
+      nullable: group.columns.some(({ column }) => column.nullable),
+      sourceName: group.key,
+      targetName: normalizeTargetColumnName(group.key),
+      type: "JSON",
+    } satisfies SchemaColumnDraft;
+  });
+
+  const nextRows = sampleRows.map((row) => orderedGroups.map((group) => {
+    if (group.columns.length === 1 && !group.columns[0].relativePath) {
+      return row[group.columns[0].index] ?? "";
+    }
+    const nested: Record<string, unknown> = {};
+    group.columns.forEach(({ column, index, relativePath }) => {
+      const value = row[index] ?? "";
+      if (!value.trim()) return;
+      setNestedPreviewValue(nested, relativePath || column.sourceName.split(".").at(-1) || "value", value);
+    });
+    return Object.keys(nested).length > 0 ? JSON.stringify(nested) : "";
+  }));
+
+  return { columns: nextColumns, sampleRows: nextRows };
 }
 
 function buildSourceShapePreview(columns: SchemaColumnDraft[], row: string[]) {
@@ -1047,6 +1150,11 @@ export function SchemaInferencePage({
   const [schemaFilter, setSchemaFilter] = useState("");
   const [schemaPreviewMode, setSchemaPreviewMode] = useState<"flat" | "raw">("flat");
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0);
+  const [flattenObjects, setFlattenObjects] = useState(true);
+  const [flattenDepth, setFlattenDepth] = useState(2);
+  const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
+  const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
+  const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
   const schemaSampleRows = draft.schema.sampleRows;
@@ -1056,9 +1164,12 @@ export function SchemaInferencePage({
     : 0;
   const sourceFormat = detectSchemaSourceFormat(draft);
   const isFlattenedJson = schemaColumns.some((column) => column.sourceName.includes(".")) || ["JSON", "JSONL"].includes(sourceFormat);
+  const nestedFieldCount = schemaColumns.filter((column) => column.sourceName.includes(".")).length;
   const mappingModeText = hasInferredSchema
     ? isFlattenedJson
-      ? `${sourceFormat} 원본 필드를 출력 테이블 컬럼으로 평탄화`
+      ? flattenObjects
+        ? `${sourceFormat} 원본 필드를 최대 ${flattenDepth}단계까지 출력 컬럼으로 평탄화`
+        : `${sourceFormat} 중첩 객체를 JSON 컬럼으로 유지`
       : `${sourceFormat} 원본 컬럼을 출력 테이블 컬럼으로 매핑`
     : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
   const previewRow = schemaSampleRows[0] ?? [];
@@ -1066,6 +1177,8 @@ export function SchemaInferencePage({
   const outputTableMinWidth = Math.max(880, schemaColumns.length * 148);
   const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
   const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
+  const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
+  const selectedSampleScopeLabel = sampleScopeOptions.find((option) => option.value === schemaSampleScope)?.label ?? sampleScopeOptions[0].label;
   const schemaFingerprint = buildSchemaFingerprint(schemaColumns);
   const selectedIndex = schemaColumns.length ? Math.min(selectedSchemaIndex, schemaColumns.length - 1) : 0;
   const selectedColumn = schemaColumns[selectedIndex];
@@ -1103,6 +1216,59 @@ export function SchemaInferencePage({
         summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
       },
     });
+  };
+
+  const currentSourceLabel = draft.source.sourceLabel || draft.source.sourceType || "source";
+
+  const getFlattenBaseSchema = () => {
+    if (flattenBaseSchema?.sourceLabel === currentSourceLabel && flattenBaseSchema.columns.length > 0) {
+      return flattenBaseSchema;
+    }
+    const base = {
+      columns: cloneSchemaColumns(schemaColumns),
+      sampleRows: cloneSchemaRows(schemaSampleRows),
+      sourceLabel: currentSourceLabel,
+    };
+    setFlattenBaseSchema(base);
+    return base;
+  };
+
+  const applyFlattenSettings = (nextFlattenObjects: boolean, nextDepth = flattenDepth) => {
+    if (!hasInferredSchema) {
+      onNotify("변경할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return;
+    }
+    const base = getFlattenBaseSchema();
+    const maxPathSegments = nextFlattenObjects ? nextDepth : 1;
+    const nextSchema = compactSchemaByPathDepth(base.columns, base.sampleRows, maxPathSegments);
+    setFlattenObjects(nextFlattenObjects);
+    setFlattenDepth(nextDepth);
+    patchSchemaColumns(nextSchema.columns, nextSchema.sampleRows);
+    setSelectedSchemaIndex(0);
+    onAction(
+      nextFlattenObjects ? "etl.schema.flatten_enabled" : "etl.schema.flatten_disabled",
+      "/api/etl/schema-inference/flattening",
+      draft.source.sourceLabel || "schema",
+    );
+    onNotify(nextFlattenObjects
+      ? `중첩 객체를 최대 ${nextDepth}단계까지 출력 컬럼으로 펼쳤습니다.`
+      : "중첩 객체를 JSON 컬럼으로 유지합니다.");
+  };
+
+  const selectSampleScope = (scope: SchemaSampleScope) => {
+    const option = sampleScopeOptions.find((item) => item.value === scope) ?? sampleScopeOptions[0];
+    setSchemaSampleScope(scope);
+    onDraftChange({
+      source: {
+        sourceConfig: upsertConfigValue(
+          upsertConfigValue(draft.source.sourceConfig, "__Schema Sample Scope", option.value),
+          "__Schema Sample Scope Label",
+          option.label,
+        ),
+      },
+    });
+    onAction("etl.schema.sample_scope_changed", "/api/etl/schema-inference/sample-scope", option.label);
+    onNotify(`${option.label} 기준으로 스키마 확인 범위를 설정했습니다.`);
   };
 
   const updateSchemaColumn = (index: number, patch: Partial<SchemaColumnDraft>) => {
@@ -1189,13 +1355,31 @@ export function SchemaInferencePage({
     onNotify(`${selectedColumn.targetName || selectedColumn.sourceName} 필드 변경사항을 적용했습니다.`);
   };
 
-  const rerunCurrentInference = () => {
-    if (!applySchemaDraft(approvedSummary)) {
-      onNotify("확인할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+  const rerunCurrentInference = async () => {
+    if (!draft.source.sourceType || draft.source.sourceConfig.length === 0) {
+      onNotify("다시 확인할 소스 연결 정보가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
       return;
     }
-    onAction("etl.schema.inference_checked", "/api/etl/schema-inference", draft.source.sourceLabel || "source");
-    onNotify("현재 샘플 기준 스키마를 다시 확인했습니다.");
+    setIsRecheckingSchema(true);
+    const sourceConfig = upsertConfigValue(
+      upsertConfigValue(draft.source.sourceConfig, "__Schema Sample Scope", schemaSampleScope),
+      "__Schema Sample Scope Label",
+      selectedSampleScopeLabel,
+    );
+    try {
+      const result = await testSourceConnector(draft.source.sourceType, sourceConfig);
+      onDraftChange(result.draftPatch);
+      setFlattenBaseSchema(null);
+      setSelectedSchemaIndex(0);
+      onAction("etl.schema.inference_checked", "/api/etl/schema-inference", draft.source.sourceLabel || "source", result.status === "failed" ? "failed" : "success");
+      onNotify(`${selectedSampleScopeLabel} 기준으로 스키마를 다시 확인했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "스키마 재확인 중 오류가 발생했습니다.";
+      onAction("etl.schema.inference_failed", "/api/etl/schema-inference", draft.source.sourceLabel || "source", "failed");
+      onNotify(message);
+    } finally {
+      setIsRecheckingSchema(false);
+    }
   };
 
   return (
@@ -1219,7 +1403,7 @@ export function SchemaInferencePage({
             <RefreshCw size={15} /> 매핑 초기화
           </button>
           <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
-            <Check size={15} /> 안전 필드 승인
+            <Check size={15} /> 스키마 승인
           </button>
         </div>
       </section>
@@ -1249,8 +1433,18 @@ export function SchemaInferencePage({
           <div className="schema-segment-field">
             <span>샘플 범위</span>
             <div>
-              {["현재 샘플", "1GB Slice", "전체"].map((label) => (
-                <button className={label === "현재 샘플" ? "active" : ""} key={label} type="button">{label}</button>
+              {sampleScopeOptions.map((option) => (
+                <button
+                  className={option.value === schemaSampleScope ? "active" : ""}
+                  disabled={isRecheckingSchema}
+                  aria-label={option.label}
+                  key={option.value}
+                  onClick={() => selectSampleScope(option.value)}
+                  title={option.label}
+                  type="button"
+                >
+                  {option.shortLabel}
+                </button>
               ))}
             </div>
           </div>
@@ -1259,15 +1453,29 @@ export function SchemaInferencePage({
               <label className="schema-check-row">
                 <span>
                   <strong>중첩 객체 평탄화</strong>
-                  <small>profile.city → city 형태로 컬럼화</small>
+                  <small>{flattenObjects ? `${nestedFieldCount}개 중첩 필드를 출력 컬럼으로 펼침` : "중첩 객체를 JSON 컬럼으로 유지"}</small>
                 </span>
-                <input type="checkbox" checked readOnly />
+                <input
+                  aria-label="중첩 객체 평탄화"
+                  checked={flattenObjects}
+                  disabled={!hasInferredSchema}
+                  onChange={(event) => applyFlattenSettings(event.currentTarget.checked)}
+                  type="checkbox"
+                />
               </label>
               <div className="schema-segment-field">
                 <span>평탄화 깊이</span>
                 <div>
                   {["1", "2", "3"].map((depth) => (
-                    <button className={depth === "2" ? "active" : ""} key={depth} type="button">{depth}</button>
+                    <button
+                      className={Number(depth) === flattenDepth ? "active" : ""}
+                      disabled={!hasInferredSchema || !flattenObjects}
+                      key={depth}
+                      onClick={() => applyFlattenSettings(true, Number(depth))}
+                      type="button"
+                    >
+                      {depth}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -1279,8 +1487,8 @@ export function SchemaInferencePage({
               </label>
             </>
           )}
-          <button className="secondary-button schema-wide-button" type="button" disabled={!hasInferredSchema} onClick={rerunCurrentInference}>
-            <RefreshCw size={15} /> 현재 샘플 다시 확인
+          <button className="secondary-button schema-wide-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
+            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "선택 범위 다시 확인"}
           </button>
         </aside>
 

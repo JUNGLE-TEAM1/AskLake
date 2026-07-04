@@ -567,7 +567,9 @@
 }
 
 .page-body > .schema-workbench {
-  max-width: var(--layout-wide-width);
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
 }
 
 .schema-workbench {
@@ -663,7 +665,7 @@
   display: grid;
   min-width: 0;
   min-height: 650px;
-  grid-template-columns: 300px minmax(0, 1fr) 320px;
+  grid-template-columns: 280px minmax(760px, 1fr) 320px;
 }
 
 .schema-settings-panel,
@@ -734,8 +736,13 @@
   border-radius: 8px;
   background: #fff;
   color: #374151;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 750;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .schema-segment-field button.active {
@@ -744,13 +751,30 @@
   color: #fff;
 }
 
+.schema-segment-field button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .schema-check-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   border-top: 1px solid #e5e7eb;
+  cursor: pointer;
   padding-top: 16px;
+}
+
+.schema-check-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: #636ae8;
+  cursor: pointer;
+}
+
+.schema-check-row input:disabled {
+  cursor: not-allowed;
 }
 
 .schema-check-row span {
@@ -830,9 +854,10 @@
 
 .schema-field-table {
   width: 100%;
-  min-width: 820px;
+  min-width: 760px;
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: fixed;
 }
 
 .schema-field-table th {
@@ -855,6 +880,37 @@
 .schema-field-table th:first-child,
 .schema-field-table td:first-child {
   padding-left: 16px;
+}
+
+.schema-field-table th:nth-child(1),
+.schema-field-table td:nth-child(1) {
+  width: 54px;
+}
+
+.schema-field-table th:nth-child(2),
+.schema-field-table td:nth-child(2) {
+  width: 58px;
+}
+
+.schema-field-table th:nth-child(5),
+.schema-field-table td:nth-child(5) {
+  width: 96px;
+}
+
+.schema-field-table th:nth-child(6),
+.schema-field-table td:nth-child(6) {
+  width: 72px;
+}
+
+.schema-field-table th:nth-child(7),
+.schema-field-table td:nth-child(7) {
+  width: 92px;
+}
+
+.schema-field-table th:nth-child(8),
+.schema-field-table td:nth-child(8) {
+  width: 56px;
+  text-align: center;
 }
 
 .schema-field-table tr {

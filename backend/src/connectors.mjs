@@ -29,6 +29,7 @@ export async function testObjectStorageSource(fields) {
   const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
   const objects = await listObjects(client, bucket, prefix);
   const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
+  const samplePolicy = samplePolicyForFields(fields, "object");
   return buildObjectStorageAnalysis({
     bucket,
     client,
@@ -38,6 +39,7 @@ export async function testObjectStorageSource(fields) {
     objects,
     prefix,
     region,
+    samplePolicy,
     sampleObject,
     sourceType: "File / S3",
   });
@@ -177,6 +179,7 @@ export async function testPostgresSource(fields) {
   const user = fieldValue(fields, "Username") || process.env.ASKLAKE_SOURCE_PGUSER || "asklake";
   const password = fieldValue(fields, "Password / Auth Token") || process.env.ASKLAKE_SOURCE_PGPASSWORD || "";
   const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
+  const samplePolicy = samplePolicyForFields(fields, "rows");
 
   const client = new Client({ database, host, password, port, user });
   await client.connect();
@@ -191,7 +194,7 @@ export async function testPostgresSource(fields) {
       throw apiError("POSTGRES_TABLE_NOT_FOUND", `${schema}.${table} 테이블을 찾지 못했습니다.`, 404);
     }
 
-    const sample = await client.query(`select * from ${quoteIdent(schema)}.${quoteIdent(table)} limit 10`);
+    const sample = await client.query(`select * from ${quoteIdent(schema)}.${quoteIdent(table)} limit ${samplePolicy.rowLimit}`);
     const columns = sample.fields.map((field) => field.name);
     const rows = sample.rows.map((row) => columns.map((column) => stringifyCell(row[column])));
     const parsedSample = { columns, format: "postgres", rows };
@@ -204,6 +207,9 @@ export async function testPostgresSource(fields) {
       ["Database Name", database],
       ["Schema", schema],
       ["Username", user],
+      ["__Schema Sample Scope", samplePolicy.scope],
+      ["__Schema Sample Scope Label", samplePolicy.label],
+      ["__Sample Row Limit", String(samplePolicy.rowLimit)],
       ["__Source ID", id],
       ["__Run ID", runId],
       ["__Source Unit Count", String(tableResult.rows.length)],
@@ -232,6 +238,7 @@ export async function testPostgresSource(fields) {
         `PostgreSQL 연결 성공: ${host}:${port}/${database}`,
         `선택 테이블: ${schema}.${table}`,
         `프로파일 스냅샷 추론: ${schemaColumns.length}개 필드, 샘플 행 ${rows.length}개`,
+        `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}행)`,
       ],
       message: `PostgreSQL 연결 성공: ${schema}.${table}`,
       previewColumns: columns,
@@ -253,6 +260,7 @@ export async function testMongoSource(fields) {
   const username = fieldValue(fields, "Username") || process.env.ASKLAKE_MONGO_USER || "";
   const password = fieldValue(fields, "Password / Auth Token") || process.env.ASKLAKE_MONGO_PASSWORD || "";
   const collectionSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR") || fieldValue(fields, "Collection");
+  const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
   const uri = fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
   const client = new MongoClient(uri, {
@@ -273,7 +281,7 @@ export async function testMongoSource(fields) {
       throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
     }
 
-    const docs = await db.collection(collection).find({}, { limit: 10 }).toArray();
+    const docs = await db.collection(collection).find({}, { limit: samplePolicy.rowLimit }).toArray();
     const parsedSample = {
       columns: Array.from(new Set(docs.flatMap((doc) => Object.keys(flattenMongoDocument(doc))))),
       format: "mongodb",
@@ -289,6 +297,9 @@ export async function testMongoSource(fields) {
       ["Port", String(port)],
       ["Database Name", database],
       ["Username", username],
+      ["__Schema Sample Scope", samplePolicy.scope],
+      ["__Schema Sample Scope Label", samplePolicy.label],
+      ["__Sample Row Limit", String(samplePolicy.rowLimit)],
       ["__Source ID", id],
       ["__Run ID", runId],
       ["__Source Unit Count", String(collections.length)],
@@ -317,6 +328,7 @@ export async function testMongoSource(fields) {
         `MongoDB 연결 성공: ${endpoint}:${port}/${database}`,
         `선택 컬렉션: ${database}.${collection}`,
         `문서 샘플 추론: ${schemaColumns.length}개 필드, 샘플 문서 ${docs.length}개`,
+        `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}문서)`,
       ],
       message: `MongoDB 연결 성공: ${database}.${collection}`,
       previewColumns: parsedSample.columns,
@@ -395,7 +407,7 @@ export async function testKafkaSource(fields) {
   }
 }
 
-async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, forcePathStyle, objects, prefix, region, sampleObject, sourceType }) {
+async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, forcePathStyle, objects, prefix, region, sampleObject, samplePolicy, sourceType }) {
   const logs = [
     `MinIO/S3 오브젝트 목록 조회 성공: bucket=${bucket}, prefix=${prefix || "(root)"}`,
     `소스 단위 감지: ${objects.length}개`,
@@ -403,12 +415,20 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
 
   let parsedSample = { columns: [], format: "unknown", rows: [] };
   let sampleKey = "";
+  let requestedBytes = 0;
   if (sampleObject?.Key && hasTextExtension(sampleObject.Key)) {
     sampleKey = sampleObject.Key;
-    const objectResult = await client.send(new GetObjectCommand({ Bucket: bucket, Key: sampleObject.Key, Range: "bytes=0-524287" }));
+    const objectSize = Number(sampleObject.Size ?? 0);
+    requestedBytes = sampleObjectRangeBytes(samplePolicy, objectSize);
+    const objectResult = await client.send(new GetObjectCommand({
+      Bucket: bucket,
+      Key: sampleObject.Key,
+      Range: requestedBytes > 0 ? `bytes=0-${Math.max(0, requestedBytes - 1)}` : undefined,
+    }));
     const text = await objectResult.Body?.transformToString();
-    parsedSample = parseSourceSample(sampleObject.Key, text ?? "");
+    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
+    logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
     logs.push(`프로파일 스냅샷 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
   } else if (sampleObject?.Key) {
     sampleKey = sampleObject.Key;
@@ -429,6 +449,9 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ["Bucket / Stage Name", bucket],
     ["Path / Prefix", prefix],
     ["Use Path Style", String(forcePathStyle)],
+    ["__Schema Sample Scope", samplePolicy.scope],
+    ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Sample Requested Bytes", String(requestedBytes)],
     ["__Source ID", id],
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
@@ -497,6 +520,55 @@ function normalizePrefix(prefix) {
 function hasTextExtension(key) {
   const lower = key.toLowerCase();
   return textFileExtensions.some((extension) => lower.endsWith(extension));
+}
+
+function samplePolicyForFields(fields, kind) {
+  const rawScope = fieldValue(fields, "__Schema Sample Scope").toLowerCase();
+  const scope = ["slice1gb", "full"].includes(rawScope) ? rawScope : "current";
+  const label = fieldValue(fields, "__Schema Sample Scope Label") || defaultSampleLabel(scope, kind);
+  const rowLimit = sampleRowLimit(scope, kind);
+  return { kind, label, rowLimit, scope };
+}
+
+function defaultSampleLabel(scope, kind) {
+  if (kind === "documents") {
+    if (scope === "slice1gb") return "10k 문서";
+    if (scope === "full") return "전체 컬렉션";
+    return "현재 문서";
+  }
+  if (kind === "rows") {
+    if (scope === "slice1gb") return "10k 행";
+    if (scope === "full") return "전체 테이블";
+    return "현재 행";
+  }
+  if (scope === "slice1gb") return "1GB 샘플";
+  if (scope === "full") return "전체";
+  return "현재 샘플";
+}
+
+function sampleRowLimit(scope, kind) {
+  if (kind === "object") {
+    if (scope === "slice1gb") return 10000;
+    if (scope === "full") return 50000;
+    return 10;
+  }
+  if (scope === "slice1gb") return 10000;
+  if (scope === "full") return 50000;
+  return 10;
+}
+
+function sampleObjectRangeBytes(policy, objectSize) {
+  const currentBytes = Number(process.env.ASKLAKE_SOURCE_CURRENT_SAMPLE_BYTES || 512 * 1024);
+  const oneGbBytes = Number(process.env.ASKLAKE_SOURCE_1GB_SAMPLE_BYTES || 1024 * 1024 * 1024);
+  const fullCapBytes = Number(process.env.ASKLAKE_SOURCE_FULL_SAMPLE_CAP_BYTES || oneGbBytes);
+  const desiredBytes = policy.scope === "slice1gb"
+    ? oneGbBytes
+    : policy.scope === "full"
+      ? Math.min(Number.isFinite(objectSize) && objectSize > 0 ? objectSize : fullCapBytes, fullCapBytes)
+      : currentBytes;
+  if (!Number.isFinite(desiredBytes) || desiredBytes <= 0) return currentBytes;
+  if (Number.isFinite(objectSize) && objectSize > 0) return Math.min(objectSize, desiredBytes);
+  return desiredBytes;
 }
 
 function parseBoolean(value, fallback) {

@@ -1,17 +1,18 @@
-export function parseSourceSample(name, text) {
+export function parseSourceSample(name, text, options = {}) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return { columns: [], format: "empty", rows: [] };
   const lowerName = String(name ?? "").toLowerCase();
+  const maxRows = normalizeMaxRows(options.maxRows);
 
   if (lowerName.endsWith(".json") || lowerName.endsWith(".jsonl") || trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    return parseJsonSample(trimmed, lowerName.endsWith(".jsonl") ? "jsonl" : "json");
+    return parseJsonSample(trimmed, lowerName.endsWith(".jsonl") ? "jsonl" : "json", maxRows);
   }
 
   if (lowerName.endsWith(".txt")) {
-    return parseTextSample(trimmed);
+    return parseTextSample(trimmed, maxRows);
   }
 
-  return parseDelimitedSample(trimmed, lowerName.endsWith(".tsv") ? "\t" : ",");
+  return parseDelimitedSample(trimmed, lowerName.endsWith(".tsv") ? "\t" : ",", maxRows);
 }
 
 export function inferSchemaColumns(sample) {
@@ -69,10 +70,10 @@ export function normalizeColumnName(value) {
     .toLowerCase() || "column";
 }
 
-function parseDelimitedSample(text, delimiter) {
-  const rows = text.split(/\r?\n/).slice(0, 51).map((line) => parseDelimitedLine(line, delimiter));
+function parseDelimitedSample(text, delimiter, maxRows) {
+  const rows = text.split(/\r?\n/).slice(0, maxRows + 1).map((line) => parseDelimitedLine(line, delimiter));
   const header = rows[0] ?? [];
-  const dataRows = rows.slice(1, 11);
+  const dataRows = rows.slice(1, maxRows + 1);
   return {
     columns: header.map((column, index) => column.trim() || `column_${index + 1}`),
     format: delimiter === "\t" ? "tsv" : "csv",
@@ -80,8 +81,8 @@ function parseDelimitedSample(text, delimiter) {
   };
 }
 
-function parseTextSample(text) {
-  const rows = text.split(/\r?\n/).slice(0, 10).map((line, index) => [String(index + 1), line]);
+function parseTextSample(text, maxRows) {
+  const rows = text.split(/\r?\n/).slice(0, maxRows).map((line, index) => [String(index + 1), line]);
   return {
     columns: ["line_number", "value"],
     format: "txt",
@@ -89,14 +90,14 @@ function parseTextSample(text) {
   };
 }
 
-function parseJsonSample(text, format) {
+function parseJsonSample(text, format, maxRows) {
   const values = [];
   try {
     const parsed = JSON.parse(text);
-    if (Array.isArray(parsed)) values.push(...parsed.slice(0, 10));
+    if (Array.isArray(parsed)) values.push(...parsed.slice(0, maxRows));
     else values.push(parsed);
   } catch {
-    for (const line of text.split(/\r?\n/).slice(0, 10)) {
+    for (const line of text.split(/\r?\n/).slice(0, maxRows)) {
       if (!line.trim()) continue;
       try {
         values.push(JSON.parse(line));
@@ -114,6 +115,12 @@ function parseJsonSample(text, format) {
     format,
     rows: flattened.map((record) => columns.map((column) => stringifyCell(record[column]))),
   };
+}
+
+function normalizeMaxRows(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 10;
+  return Math.min(Math.max(Math.trunc(parsed), 1), 50000);
 }
 
 function inferType(values) {
