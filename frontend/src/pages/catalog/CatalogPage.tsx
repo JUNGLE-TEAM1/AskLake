@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
-import type { Edge, Node } from "@xyflow/react";
+import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -76,6 +76,16 @@ type CatalogSearchQuery = {
   tags: string[];
 };
 
+type CatalogSortMode = "default" | "name" | "updated" | "quality";
+
+const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
+  { label: "기본순", mode: "default" },
+  { label: "이름순", mode: "name" },
+  { label: "최근 갱신순", mode: "updated" },
+  { label: "품질 높은순", mode: "quality" },
+];
+
+const catalogPageSize = 5;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
 const lineageColumnRowHeight = 32;
@@ -170,6 +180,38 @@ function datasetMatchesFilters(dataset: CatalogDataset, filters: CatalogFilterSt
   return matchesStatus && matchesRag;
 }
 
+function parseCatalogDateTime(value: string) {
+  if (value.includes("현재")) return Number.POSITIVE_INFINITY;
+
+  const parsedTime = Date.parse(value.replace(" ", "T"));
+  return Number.isNaN(parsedTime) ? 0 : parsedTime;
+}
+
+function parseCatalogQualityScore(value: string) {
+  const [score] = value.match(/\d+(?:\.\d+)?/) ?? [];
+  return score ? Number(score) : 0;
+}
+
+function compareCatalogDatasetsBySort(
+  left: { dataset: CatalogDataset; index: number },
+  right: { dataset: CatalogDataset; index: number },
+  sortMode: CatalogSortMode,
+) {
+  if (sortMode === "name") {
+    return left.dataset.name.localeCompare(right.dataset.name, "ko");
+  }
+
+  if (sortMode === "updated") {
+    return parseCatalogDateTime(right.dataset.lastUpdated) - parseCatalogDateTime(left.dataset.lastUpdated);
+  }
+
+  if (sortMode === "quality") {
+    return parseCatalogQualityScore(right.dataset.quality) - parseCatalogQualityScore(left.dataset.quality);
+  }
+
+  return 0;
+}
+
 export function CatalogPage({
   datasets,
   onAction,
@@ -186,12 +228,17 @@ export function CatalogPage({
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
+  const [currentPage, setCurrentPage] = useState(1);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
+  const sortMenuRef = useRef<HTMLDivElement>(null);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const topTags = useMemo(() => tags.slice(0, 10), [tags]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
   const selectedSearchTags = useMemo(() => new Set(searchQuery.tags), [searchQuery.tags]);
+  const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -209,23 +256,54 @@ export function CatalogPage({
 
       if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
       if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
+      const sortResult = compareCatalogDatasetsBySort(left, right, sortMode);
+      if (sortResult !== 0) return sortResult;
       return left.index - right.index;
     })
-    .map(({ dataset }) => dataset), [datasets, filterState, pinnedDatasetIds, searchQuery]);
+    .map(({ dataset }) => dataset), [datasets, filterState, pinnedDatasetIds, searchQuery, sortMode]);
   const hasCatalogResults = filteredDatasets.length > 0;
+  const totalCatalogPages = Math.max(1, Math.ceil(filteredDatasets.length / catalogPageSize));
+  const currentCatalogPage = Math.min(Math.max(currentPage, 1), totalCatalogPages);
+  const currentPageStartIndex = (currentCatalogPage - 1) * catalogPageSize;
+  const paginatedDatasets = useMemo(
+    () => filteredDatasets.slice(currentPageStartIndex, currentPageStartIndex + catalogPageSize),
+    [currentPageStartIndex, filteredDatasets],
+  );
+  const currentPageEndIndex = currentPageStartIndex + paginatedDatasets.length;
   const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
 
   useEffect(() => {
-    if (!hasCatalogResults) return;
+    setCurrentPage(1);
+  }, [filterState.approvalRequired, filterState.available, filterState.rag, searchText, sortMode]);
 
-    const selectedInResults = filteredDatasets.find((dataset) => dataset.id === selectedDataset.id);
-    const previewInResults = filteredDatasets.find((dataset) => dataset.id === previewDataset.id);
-    const nextPreview = previewInResults ?? selectedInResults ?? filteredDatasets[0];
+  useEffect(() => {
+    if (currentPage === currentCatalogPage) return;
+    setCurrentPage(currentCatalogPage);
+  }, [currentCatalogPage, currentPage]);
+
+  useEffect(() => {
+    if (!isSortMenuOpen) return undefined;
+
+    const closeSortMenu = (event: MouseEvent) => {
+      if (sortMenuRef.current?.contains(event.target as Node)) return;
+      setIsSortMenuOpen(false);
+    };
+
+    document.addEventListener("mousedown", closeSortMenu);
+    return () => document.removeEventListener("mousedown", closeSortMenu);
+  }, [isSortMenuOpen]);
+
+  useEffect(() => {
+    if (!hasCatalogResults || paginatedDatasets.length === 0) return;
+
+    const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
+    const previewInResults = paginatedDatasets.find((dataset) => dataset.id === previewDataset.id);
+    const nextPreview = previewInResults ?? selectedInResults ?? paginatedDatasets[0];
 
     if (nextPreview.id !== previewDataset.id) {
       setPreviewDataset(nextPreview);
     }
-  }, [filteredDatasets, hasCatalogResults, previewDataset.id, selectedDataset.id]);
+  }, [hasCatalogResults, paginatedDatasets, previewDataset.id, selectedDataset.id]);
 
   const handleSearchSubmit = () => {
     const query = searchText.trim();
@@ -249,6 +327,18 @@ export function CatalogPage({
   const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
     setFilterState((filters) => ({ ...filters, [filterName]: checked }));
     onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  };
+
+  const updateSortMode = (nextSortMode: CatalogSortMode) => {
+    setSortMode(nextSortMode);
+    setIsSortMenuOpen(false);
+    onAction("catalog.sort_changed", `/api/catalog/search/sort?sort=${nextSortMode}`, nextSortMode);
+  };
+
+  const updateResultPage = (nextPage: number) => {
+    const normalizedPage = Math.min(Math.max(nextPage, 1), totalCatalogPages);
+    setCurrentPage(normalizedPage);
+    onAction("catalog.page_changed", `/api/catalog/datasets?page=${normalizedPage}&pageSize=${catalogPageSize}`, String(normalizedPage));
   };
 
   const togglePinnedDataset = () => {
@@ -318,12 +408,42 @@ export function CatalogPage({
                 <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
                 RAG 여부
               </label>
-              <button type="button" onClick={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")}>정렬 기준 ▾</button>
+              <div className="catalog-sort-control" ref={sortMenuRef}>
+                <button
+                  aria-expanded={isSortMenuOpen}
+                  aria-haspopup="menu"
+                  className="catalog-sort-button"
+                  type="button"
+                  onClick={() => {
+                    setIsSortMenuOpen((isOpen) => !isOpen);
+                    onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                  }}
+                >
+                  정렬: {selectedSortOption.label} ▾
+                </button>
+                {isSortMenuOpen && (
+                  <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
+                    {catalogSortOptions.map((option) => (
+                      <button
+                        aria-checked={sortMode === option.mode}
+                        className={sortMode === option.mode ? "active" : ""}
+                        key={option.mode}
+                        role="menuitemradio"
+                        type="button"
+                        onClick={() => updateSortMode(option.mode)}
+                      >
+                        <span>{sortMode === option.mode ? "✓" : ""}</span>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
           <div className="catalog-result-list">
-            {filteredDatasets.map((dataset) => {
+            {paginatedDatasets.map((dataset) => {
               const isPinned = pinnedDatasetIds.includes(dataset.id);
               const isActive = dataset.id === previewDataset.id;
 
@@ -360,6 +480,29 @@ export function CatalogPage({
               </div>
             )}
           </div>
+
+          {hasCatalogResults && (
+            <div className="catalog-pagination" aria-label="검색 결과 페이지">
+              <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
+              <div>
+                <button
+                  type="button"
+                  disabled={currentCatalogPage === 1}
+                  onClick={() => updateResultPage(currentCatalogPage - 1)}
+                >
+                  이전
+                </button>
+                <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
+                <button
+                  type="button"
+                  disabled={currentCatalogPage === totalCatalogPages}
+                  onClick={() => updateResultPage(currentCatalogPage + 1)}
+                >
+                  다음
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       </div>
 
@@ -706,7 +849,7 @@ function buildLineageGraph(
   graph: LineageGraph,
   selectedColumnKey: string | null,
   onColumnSelect: (columnKey: string | null) => void,
-): { edges: Edge[]; nodes: Node[] } {
+): { edges: Edge[]; nodes: FlowNode[] } {
   const graphDatasets = graph.datasets;
   const depthByDatasetId = getLineageDepths(graph);
   const groupedDatasets = groupLineageDatasets(graphDatasets, depthByDatasetId);
@@ -714,7 +857,7 @@ function buildLineageGraph(
   const nodeIdsWithIncoming = new Set(graph.edges.map((edge) => edge.toDatasetId));
   const nodeIdsWithOutgoing = new Set(graph.edges.map((edge) => edge.fromDatasetId));
   const selection = selectedColumnKey ? getLineageSelection(graph, selectedColumnKey) : null;
-  const nodes: Node<LineageTableNodeData>[] = groupedDatasets.flatMap((group, groupIndex) => {
+  const nodes: FlowNode<LineageTableNodeData>[] = groupedDatasets.flatMap((group, groupIndex) => {
     const groupColumnCount = getMaxColumnCount(group);
     const groupHeight = getLineageStackHeight(group.length, groupColumnCount);
     const groupStartY = (maxGroupHeight - groupHeight) / 2;
