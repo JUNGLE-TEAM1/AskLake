@@ -157,13 +157,15 @@ INTERNAL_ERROR
 
 프론트는 ID를 opaque string으로 취급합니다.
 표시용 이름은 `name`, `jobName`, `targetDataset`을 사용합니다.
+API, mock fixture, frontend internal state의 상태값은 영어 canonical value를 사용합니다.
+한국어 배지/버튼 문구는 프론트 UI mapper에서 변환합니다.
 
 ## 6. 데이터 모델 요약
 
 ### JobRowData
 
 ```ts
-type JobStatus = "스케줄됨" | "실패" | "실행 중" | "일시정지";
+type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 
 type JobRowData = {
   id: string;
@@ -193,7 +195,7 @@ type CatalogDataset = {
   description: string;
   owner: string;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
-  status: "사용 가능" | "승인 필요";
+  status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
   source: string;
   rows: string;
@@ -298,7 +300,7 @@ Response 예시:
     "id": "JOB-001",
     "name": "customer_review_daily_ingest",
     "owner": "Data Engineer Group",
-    "status": "스케줄됨",
+    "status": "scheduled",
     "tag": "[리뷰]",
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
@@ -313,7 +315,7 @@ Response 예시:
     "description": "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
     "owner": "Data Engineer Group",
     "layer": "SILVER",
-    "status": "사용 가능",
+    "status": "available",
     "freshness": "latest",
     "source": "customer_review_daily_ingest",
     "rows": "0 rows",
@@ -394,7 +396,7 @@ Response 예시:
     "id": "JOB-001",
     "name": "customer_review_daily_ingest",
     "owner": "Data Engineer Group",
-    "status": "실행 중",
+    "status": "running",
     "tag": "[리뷰]",
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
@@ -414,10 +416,10 @@ Response 예시:
 
 | command | action | 상태 변경 |
 | --- | --- | --- |
-| `run` | `etl.run.requested` | `실행 중` |
-| `retry` | `etl.run.retry_requested` | `실행 중` |
-| `pause` | `etl.job.pause_requested` | `일시정지` |
-| `cancel` | `etl.run.cancel_requested` | `스케줄됨` 또는 이전 안정 상태 |
+| `run` | `etl.run.requested` | `running` |
+| `retry` | `etl.run.retry_requested` | `running` |
+| `pause` | `etl.job.pause_requested` | `paused` |
+| `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
 
 Validation:
 
@@ -518,7 +520,7 @@ Response `200 OK`:
       "description": "고객 리뷰 정제 데이터셋",
       "owner": "Data Engineer Group",
       "layer": "SILVER",
-      "status": "사용 가능",
+      "status": "available",
       "freshness": "latest",
       "source": "customer_review_daily_ingest",
       "rows": "128,420 rows",

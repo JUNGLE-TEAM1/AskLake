@@ -21,6 +21,7 @@ import {
 } from "./DashboardParts";
 import type { ExpandedChart, SavedDashboardCard } from "./DashboardParts";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SqlResultDraft } from "../../types";
+import { dashboardStatusMeta, normalizeDashboardStatus } from "../../utils/statusMeta";
 
 export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset: CatalogDataset; entry: DashboardEntry; sqlResult: SqlResultDraft | null; onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void }) {
   const [view, setView] = useState<DashboardView>(entry.view);
@@ -35,13 +36,16 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     const stored = window.localStorage.getItem("asklake.dashboardCards");
     if (!stored) return defaultDashboardCards;
     try {
-      return JSON.parse(stored) as SavedDashboardCard[];
+      const cards = JSON.parse(stored) as SavedDashboardCard[];
+      return cards.map((card) => ({ ...card, status: normalizeDashboardStatus(card.status) }));
     } catch {
       return defaultDashboardCards;
     }
   });
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
+  const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
+  const sourceRunId = activeSqlResult?.runId;
   const dashboardColumns = activeSqlResult?.columns.length ? activeSqlResult.columns : dataset.schema.slice(0, 5).map(([column]) => column);
   const dashboardRowsPreview = activeSqlResult?.rows.length ? activeSqlResult.rows : dataset.sampleRows;
   const metricCards = [
@@ -113,15 +117,17 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   const openDetail = (name = dashboardTitle) => {
     setView("detail");
-    onAction("dashboard.opened", "/api/dashboards", name);
+    onAction("dashboard.opened", `/api/dashboards/${dashboardId}`, name);
   };
 
   const upsertDashboard = (status: SavedDashboardCard["status"]) => {
     const nextCard: SavedDashboardCard = {
-      id: `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`,
-      meta: `${Math.max(builderWidgets.length, activeSqlResult ? 2 : 1)}개 위젯 · ${dataset.layer} source`,
+      datasetId: dataset.id,
+      id: dashboardId,
+      meta: `${Math.max(builderWidgets.length, activeSqlResult ? 2 : 1)}개 위젯 · ${sourceRunId ? `sourceRunId ${sourceRunId}` : `${dataset.layer} source`}`,
       name: dashboardTitle,
       owner: dataset.owner,
+      sourceRunId,
       status,
       tags: activeSqlResult ? "SQL Result · Dashboard" : `${dataset.layer} · Dashboard`,
       updated: "방금 전",
@@ -142,13 +148,13 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   const publishDashboard = () => {
     setIsPublished(true);
-    upsertDashboard("Published");
-    onAction("dashboard.published", "/api/dashboards/publish", dataset.id);
+    upsertDashboard("published");
+    onAction("dashboard.published", `/api/dashboards/${dashboardId}/publish`, dashboardId);
   };
 
   const saveDashboard = () => {
-    upsertDashboard(isPublished ? "Published" : "Draft");
-    onAction("dashboard.saved", "/api/dashboards", dataset.id);
+    upsertDashboard(isPublished ? "published" : "draft");
+    onAction("dashboard.saved", `/api/dashboards/${dashboardId}`, dashboardId);
   };
 
   const shareDashboard = () => {
@@ -160,8 +166,17 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   const exportDashboard = () => {
     const payload = {
       datasetId: dataset.id,
+      id: dashboardId,
       exportedAt: new Date().toISOString(),
       filters: { period, segment },
+      sourceRunId,
+      sqlResult: activeSqlResult ? {
+        columns: activeSqlResult.columns,
+        query: activeSqlResult.query,
+        rowCount: activeSqlResult.rowCount,
+        runId: activeSqlResult.runId,
+      } : null,
+      status: isPublished ? "published" : "draft",
       title: dashboardTitle,
       widgets: builderWidgets.length ? builderWidgets : ["category", "orders", "channels", "table"],
     };
@@ -172,7 +187,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     anchor.download = `${dashboardTitle.replace(/[^a-z0-9가-힣_-]+/gi, "_")}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
-    onAction("dashboard.exported", "/api/dashboards/export", dataset.id);
+    onAction("dashboard.exported", `/api/dashboards/${dashboardId}/export`, dashboardId);
   };
 
   const openDashboardFullscreen = () => {
@@ -182,7 +197,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
 
   const openPublishedView = () => {
     setView("detail");
-    onAction("dashboard.published_view_opened", "/api/dashboards/published", dataset.id);
+    onAction("dashboard.published_view_opened", `/api/dashboards/${dashboardId}/published`, dashboardId);
   };
 
   const requestDelete = (target: string) => {
@@ -292,7 +307,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
                   <tr key={dashboard.id}>
                     <td>
                       <button className="dashboard-row-link" type="button" onClick={() => openDetail(dashboard.name)}>{dashboard.name}</button>
-                      <span className="dashboard-row-tags">{dashboard.tags} · {dashboard.status}</span>
+                      <span className="dashboard-row-tags">{dashboard.tags} · {dashboardStatusMeta[dashboard.status].label}</span>
                     </td>
                     <td>{dashboard.owner}</td>
                     <td>{dashboard.updated}</td>
@@ -384,7 +399,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
                 </div>
                 <button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>
               </div>
-              <DashboardWidgetPreview type={selectedWidgetType} />
+              <DashboardWidgetPreview columns={dashboardColumns} rows={dashboardRowsPreview} type={selectedWidgetType} />
               <button className="primary-button" type="button" onClick={addWidgetToCanvas}><Plus size={16} /> 캔버스에 추가</button>
             </section>
             <section className="dashboard-canvas-draft">
@@ -411,7 +426,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
                         <strong>{widgetConfig[type].title}</strong>
                         <span>{widgetTypes.find((widget) => widget.id === type)?.label} · {activeSqlResult ? activeSqlResult.datasetName : dataset.name}</span>
                       </div>
-                      <DashboardWidgetPreview type={type} compact />
+                      <DashboardWidgetPreview columns={dashboardColumns} compact rows={dashboardRowsPreview} type={type} />
                       <div className="dashboard-draft-actions">
                         <button type="button" onClick={() => {
                           setSelectedWidgetType(type);
@@ -568,7 +583,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
             {savedDashboards.slice(0, 3).map((dashboard) => (
               <button key={dashboard.id} type="button" onClick={() => openDetail(dashboard.name)}>
                 <strong>{dashboard.name}</strong>
-                <span>{dashboard.status}</span>
+                <span>{dashboardStatusMeta[dashboard.status].label}</span>
                 <small>{dashboard.meta}</small>
               </button>
             ))}

@@ -2,6 +2,9 @@
 
 이 문서는 현재 프론트엔드를 백엔드와 연결하기 전에 남은 작업, mock 제거 순서, 화면별 API 연결 범위를 정리한 체크 문서입니다.
 상세 요청/응답 타입은 `docs/api-contract.md`를 기준으로 합니다.
+API, mock fixture, frontend internal state는 영어 canonical status value를 사용하고, 한국어 화면 문구는 프론트 mapper에서 변환합니다.
+E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 기준으로 합니다.
+10GB demo evidence가 필요한 경우 `docs/10gb-fallback-verification.md`를 추가로 참조합니다.
 
 ## 1. 현재 상태 요약
 
@@ -74,6 +77,7 @@ VITE_USE_MOCK_API=false
 1. 앱 최초 로딩 시 jobs/datasets를 병렬 조회합니다.
 2. 조회 실패 시 사용자에게 연결 실패 토스트를 보여주고 mock fallback 여부를 결정합니다.
 3. 생성/명령 후에는 낙관적 업데이트보다 서버 응답값을 기준으로 상태를 갱신합니다.
+4. hydrate 응답의 `status`는 `docs/03-api-reference.md`의 canonical status values를 따라야 합니다.
 
 ### 3.3 3차: 대시보드 저장 모델 연결
 

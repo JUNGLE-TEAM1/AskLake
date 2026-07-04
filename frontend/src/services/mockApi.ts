@@ -1,4 +1,5 @@
 import type { CatalogDataset, DraftPipeline, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
 export type PipelineCreationResult = {
@@ -14,6 +15,25 @@ export type JobCommandResult = {
 
 const mockLatencyMs = 120;
 
+function normalizeJob(job: JobRowData): JobRowData {
+  return { ...job, status: normalizeJobStatus(job.status) };
+}
+
+function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
+  return { ...dataset, status: normalizeDatasetStatus(dataset.status) };
+}
+
+function normalizePipelineCreationResult(result: PipelineCreationResult): PipelineCreationResult {
+  return {
+    dataset: normalizeDataset(result.dataset),
+    job: normalizeJob(result.job),
+  };
+}
+
+function normalizeJobCommandResult(result: JobCommandResult): JobCommandResult {
+  return result.job ? { ...result, job: normalizeJob(result.job) } : result;
+}
+
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
@@ -21,11 +41,12 @@ async function resolveMock<T>(payload: T): Promise<T> {
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {
   if (!apiConfig.useMock) {
-    return apiClient.post<PipelineCreationResult>("/api/etl/jobs", draftPipeline);
+    const result = await apiClient.post<PipelineCreationResult>("/api/etl/jobs", draftPipeline);
+    return normalizePipelineCreationResult(result);
   }
 
   const job: JobRowData = {
-    status: "스케줄됨",
+    status: "scheduled",
     name: draftPipeline.jobName,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
     owner: draftPipeline.owner,
@@ -55,7 +76,7 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     schema: [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
     size: "Pending",
     source: draftPipeline.jobName,
-    status: "사용 가능",
+    status: "available",
     tags: ["#customer", "#RAG", "#리뷰"],
     upstream: [draftPipeline.sourceLabel, draftPipeline.jobName],
   };
@@ -65,7 +86,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
 
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {
   if (!apiConfig.useMock) {
-    return apiClient.post<JobCommandResult>(`/api/etl/jobs/${job.id}/commands`, { command });
+    const result = await apiClient.post<JobCommandResult>(`/api/etl/jobs/${job.id}/commands`, { command });
+    return normalizeJobCommandResult(result);
   }
 
   const actionByCommand: Record<Exclude<JobCommand, "edit" | "delete">, { action: string; apiPath: string }> = {
@@ -81,7 +103,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       ...audit,
       job: {
         ...job,
-        status: "실행 중",
+        status: "running",
         lastRun: "현재 실행 중",
         lastState: command === "retry" ? "재실행 중 · Source 연결" : "1/8 단계 · Source 연결",
         nextRun: "-",
@@ -95,7 +117,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       ...audit,
       job: {
         ...job,
-        status: "일시정지",
+        status: "paused",
         lastState: "사용자 일시정지",
         nextRun: "재개 대기",
         progress: job.progress ?? { label: "일시정지됨", value: 50 },
@@ -107,7 +129,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     ...audit,
     job: {
       ...job,
-      status: "스케줄됨",
+      status: "scheduled",
       lastRun: "방금 취소",
       lastState: "취소됨",
       nextRun: job.schedule === "수동 실행" ? "-" : "다음 예약 대기",

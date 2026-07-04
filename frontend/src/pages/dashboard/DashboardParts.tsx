@@ -1,13 +1,15 @@
 import type React from "react";
 import { Download, Maximize2, Save, Share2 } from "lucide-react";
-import type { DashboardWidgetType } from "../../types";
+import type { DashboardStatus, DashboardWidgetType } from "../../types";
 
 export type SavedDashboardCard = {
+  datasetId?: string;
   id: string;
   meta: string;
   name: string;
   owner: string;
-  status: "Draft" | "Published";
+  sourceRunId?: string;
+  status: DashboardStatus;
   tags: string;
   updated: string;
 };
@@ -19,11 +21,11 @@ export type ExpandedChart = {
 };
 
 export const defaultDashboardCards: SavedDashboardCard[] = [
-  { id: "dash_sales_demo", name: "Sales Analytics Demo 2026-06-26 22:04:05", tags: "Sales · Revenue · Demo", owner: "Admin User", updated: "2시간 전", status: "Published", meta: "최근 7일 · 자동 갱신" },
-  { id: "dash_marketing_roi", name: "Marketing Campaign ROI Tracking", tags: "Marketing · ROI", owner: "Jane Doe", updated: "어제", status: "Draft", meta: "권한 검토 필요" },
-  { id: "dash_qbr", name: "Executive QBR Dashboard", tags: "Executive · Quarterly", owner: "Robert Wilson", updated: "3일 전", status: "Published", meta: "GOLD mart 연결" },
-  { id: "dash_apac_sales", name: "Regional Sales Performance - APAC", tags: "Regional · Sales", owner: "Sarah Kim", updated: "1주일 전", status: "Published", meta: "APAC 영업팀 공유" },
-  { id: "dash_inventory_leakage", name: "Inventory Leakage Report", tags: "Inventory · Ops", owner: "Michael Chen", updated: "2주일 전", status: "Draft", meta: "운영 검토 중" },
+  { id: "dash_sales_demo", name: "Sales Analytics Demo 2026-06-26 22:04:05", tags: "Sales · Revenue · Demo", owner: "Admin User", updated: "2시간 전", status: "published", meta: "최근 7일 · 자동 갱신" },
+  { id: "dash_marketing_roi", name: "Marketing Campaign ROI Tracking", tags: "Marketing · ROI", owner: "Jane Doe", updated: "어제", status: "draft", meta: "권한 검토 필요" },
+  { id: "dash_qbr", name: "Executive QBR Dashboard", tags: "Executive · Quarterly", owner: "Robert Wilson", updated: "3일 전", status: "published", meta: "GOLD mart 연결" },
+  { id: "dash_apac_sales", name: "Regional Sales Performance - APAC", tags: "Regional · Sales", owner: "Sarah Kim", updated: "1주일 전", status: "published", meta: "APAC 영업팀 공유" },
+  { id: "dash_inventory_leakage", name: "Inventory Leakage Report", tags: "Inventory · Ops", owner: "Michael Chen", updated: "2주일 전", status: "draft", meta: "운영 검토 중" },
 ];
 
 export function DashboardWorkspaceHeader({
@@ -81,7 +83,17 @@ export function DashboardFooterMeta() {
   );
 }
 
-export function DashboardWidgetPreview({ compact, type }: { compact?: boolean; type: DashboardWidgetType }) {
+export function DashboardWidgetPreview({
+  columns,
+  compact,
+  rows,
+  type,
+}: {
+  columns?: string[];
+  compact?: boolean;
+  rows?: string[][];
+  type: DashboardWidgetType;
+}) {
   if (type === "kpi") {
     return (
       <div className={compact ? "dashboard-widget-preview kpi compact" : "dashboard-widget-preview kpi"}>
@@ -111,13 +123,19 @@ export function DashboardWidgetPreview({ compact, type }: { compact?: boolean; t
   }
 
   if (type === "table") {
+    const previewColumns = columns?.length ? columns.slice(0, 3) : ["product_id", "category", "risk"];
+    const previewRows = rows?.length ? rows.slice(0, 2).map((row) => row.slice(0, 3)) : [["sku_8842", "appliance", "92"], ["sku_8820", "digital", "89"]];
+
     return (
       <div className={compact ? "dashboard-widget-preview table compact" : "dashboard-widget-preview table"}>
         <table>
-          <thead><tr><th>product_id</th><th>category</th><th>risk</th></tr></thead>
+          <thead><tr>{previewColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
           <tbody>
-            <tr><td>sku_8842</td><td>appliance</td><td>92</td></tr>
-            <tr><td>sku_8820</td><td>digital</td><td>89</td></tr>
+            {previewRows.map((row, rowIndex) => (
+              <tr key={`preview-row-${rowIndex}`}>
+                {previewColumns.map((_, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{row[cellIndex] ?? "-"}</td>)}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

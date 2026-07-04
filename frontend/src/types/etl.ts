@@ -1,4 +1,4 @@
-export type JobStatus = "스케줄됨" | "실패" | "실행 중" | "일시정지";
+export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancel" | "delete";
 
 export type JobRowData = {
