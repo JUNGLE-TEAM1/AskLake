@@ -215,7 +215,7 @@ export function CatalogPage({
           onClose={() => setActiveModal(null)}
           title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
         >
-          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} />}
+          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
         </CatalogModal>
       )}
     </div>
@@ -400,7 +400,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
-function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
+function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
   const { edges, nodes } = lineageGraph
@@ -426,18 +426,22 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   }, [dataset.id]);
 
   return (
-    <section className="catalog-lineage-card">
-      <div className="catalog-lineage-title">
-        <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
-        <div>
-          <h2>{dataset.name}</h2>
-          <span>DATA LINEAGE</span>
+    <section className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
+      {!compact && (
+        <div className="catalog-lineage-title">
+          <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
+          <div>
+            <h2>{dataset.name}</h2>
+            <span>DATA LINEAGE</span>
+          </div>
         </div>
-      </div>
+      )}
       {lineageGraph ? (
         <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
           <ReactFlow
             edges={edges}
+            fitView
+            fitViewOptions={{ maxZoom: 0.92, padding: 0.18 }}
             maxZoom={1.1}
             minZoom={0.35}
             nodes={nodes}
@@ -497,7 +501,7 @@ function buildLineageGraph(
         },
         id: lineageDataset.id,
         position: {
-          x: groupIndex * 390 + 20,
+          x: groupIndex * 420 + 20,
           y: groupStartY + getLineageStackOffset(itemIndex, lineageDataset.columns.length),
         },
         type: "lineageTable",
@@ -602,11 +606,12 @@ function buildColumnEdge({
     animated: false,
     className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
-    markerEnd: { color: selected && active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
+    markerEnd: { color: selected && active ? "#2563eb" : "#fb923c", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
     style: {
-      stroke: selected && active ? "#2563eb" : "#94a3b8",
+      stroke: selected && active ? "#2563eb" : "#fb923c",
+      strokeDasharray: "6 5",
       strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
