@@ -86,6 +86,7 @@
 }
 
 .sql-selected-list,
+.sql-base-table,
 .sql-dataset-search-results,
 .sql-dataset-search-results > div,
 .sql-schema-panel,
@@ -130,25 +131,38 @@
   line-height: 1.35;
 }
 
-.sql-dataset-search-results button {
+.sql-base-table h2 {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.sql-base-table button,
+.sql-table-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 5px 8px;
   width: 100%;
-  min-height: 64px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
+}
+
+.sql-base-table button {
+  min-height: 64px;
   padding: 11px 12px;
   text-align: left;
 }
 
-.sql-dataset-search-results button:hover {
+.sql-base-table button:hover,
+.sql-table-card:hover,
+.sql-table-card.active {
   border-color: #bfdbfe;
   background: #eff6ff;
 }
 
-.sql-dataset-search-results button span {
+.sql-base-table button span,
+.sql-table-card-main span {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
@@ -160,7 +174,8 @@
   padding: 3px 7px;
 }
 
-.sql-dataset-search-results button strong {
+.sql-base-table button strong,
+.sql-table-card-main strong {
   grid-column: 1;
   color: #0f172a;
   font-size: 13px;
@@ -168,7 +183,8 @@
   overflow-wrap: anywhere;
 }
 
-.sql-dataset-search-results button small {
+.sql-base-table button small,
+.sql-table-card-main small {
   grid-column: 1 / -1;
   color: #64748b;
   font-size: 11px;
@@ -185,66 +201,35 @@
   padding: 12px;
 }
 
-.sql-selected-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px;
-  gap: 5px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #f8fafc;
-  padding: 12px;
-}
-
-.sql-selected-item.active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  box-shadow: inset 3px 0 0 #2563eb;
-}
-
-.sql-selected-item span,
-.sql-selected-item small {
-  grid-column: 1;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.sql-selected-item strong {
-  grid-column: 1;
-  color: #0f172a;
-  font-size: 13px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.sql-checkmark {
+.sql-table-card {
   position: relative;
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
-  justify-self: end;
-  width: 22px;
-  height: 22px;
-  border: 2px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fff;
+  padding: 0;
 }
 
-.sql-checkmark.checked {
-  border-color: #2563eb;
-  background: #2563eb;
+.sql-table-card-main {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 8px;
+  min-height: 64px;
+  border: 0;
+  background: transparent;
+  padding: 12px;
+  text-align: left;
 }
 
-.sql-checkmark.checked::after {
+.sql-inline-action {
   position: absolute;
-  top: 2px;
-  left: 6px;
-  width: 6px;
-  height: 11px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  content: "";
-  transform: rotate(45deg);
+  right: 10px;
+  bottom: 8px;
+  min-height: 24px;
+  border: 1px solid #d8dee8;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 0 8px;
 }
 
 .sql-schema-panel h2 {
@@ -454,6 +439,38 @@
   padding: 16px;
 }
 
+.sql-table-completion {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 12px;
+}
+
+.sql-table-completion > span {
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sql-table-completion div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sql-table-completion button {
+  min-height: 30px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
 .sql-editor-footer {
   display: flex;
   min-height: 40px;
@@ -471,6 +488,38 @@
   font-size: 11px;
   font-weight: 800;
   padding: 5px 8px;
+}
+
+.sql-result-toolbar {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 0 12px;
+}
+
+.sql-result-toolbar span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sql-result-toolbar button {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 9px;
 }
 
 .sql-result-scroll {
