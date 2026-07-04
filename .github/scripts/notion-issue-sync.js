@@ -1381,10 +1381,9 @@ function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
     return statusDecision(config.blockedProjectStatus, "blocked label or body field", { targetBranch });
   }
 
-  if (pullRequest?.merged && issue.state !== "closed") {
-    return statusDecision(config.previewProjectStatus, "PR merged to target branch while issue is still open", {
+  if (pullRequest?.state === "closed") {
+    return statusDecision(CLOSED_PROJECT_STATUS, pullRequest.merged ? "linked PR merged" : "linked PR closed", {
       targetBranch,
-      fallbacks: [config.readyProjectStatus, config.inProgressProjectStatus],
     });
   }
 
@@ -1397,10 +1396,6 @@ function inferProjectStatusFromIssue(issue, config, pullRequest = null) {
 
   if (pullRequest?.draft) {
     return statusDecision(config.inProgressProjectStatus, "draft PR", { targetBranch });
-  }
-
-  if (pullRequest && pullRequest.state === "closed" && !pullRequest.merged) {
-    return statusDecision(config.inProgressProjectStatus, "PR closed without merge", { targetBranch });
   }
 
   if (pullRequest && pullRequest.state === "open") {
