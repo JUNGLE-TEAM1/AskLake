@@ -457,6 +457,7 @@
 }
 
 .sql-editor-surface textarea {
+  width: 100%;
   min-width: 0;
   min-height: 276px;
   max-height: 560px;
@@ -471,36 +472,58 @@
   padding: 16px;
 }
 
-.sql-table-completion {
+.sql-editor-input-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.sql-autocomplete-popover {
+  position: absolute;
+  z-index: 5;
+  right: 14px;
+  bottom: 14px;
   display: grid;
-  gap: 8px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #eff6ff;
-  padding: 12px;
-}
-
-.sql-table-completion > span {
-  color: #1d4ed8;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.sql-table-completion div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.sql-table-completion button {
-  min-height: 30px;
-  border: 1px solid #bfdbfe;
+  width: min(420px, calc(100% - 28px));
+  max-height: 232px;
+  overflow-y: auto;
+  border: 1px solid #334155;
   border-radius: 8px;
   background: #fff;
-  color: #1e40af;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.28);
+  padding: 6px;
+}
+
+.sql-autocomplete-popover button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 32px;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #0f172a;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.sql-autocomplete-popover button:hover,
+.sql-autocomplete-popover button.active {
+  background: #eff6ff;
+}
+
+.sql-autocomplete-popover strong {
+  min-width: 0;
+  font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sql-autocomplete-popover span {
+  color: #64748b;
+  font-size: 10px;
   font-weight: 800;
-  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .sql-editor-footer {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Download,
   PlayCircle,
@@ -7,6 +7,25 @@ import {
 } from "lucide-react";
 import { executeQueryDraft } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
+
+type AutocompleteKind = "keyword" | "table" | "column";
+
+type AutocompleteCandidate = {
+  id: string;
+  type: AutocompleteKind;
+  label: string;
+  insertText: string;
+  detail: string;
+  datasetId?: string;
+};
+
+type AutocompleteContext = {
+  token: string;
+  start: number;
+  end: number;
+  mode: "table" | "column" | "general";
+  key: string;
+};
 
 export function SqlAnalysisPage({
   dataset,
@@ -34,7 +53,10 @@ export function SqlAnalysisPage({
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
+  const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+  const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
@@ -42,6 +64,16 @@ export function SqlAnalysisPage({
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
   }, [query]);
+  const autocompleteContext = useMemo(() => getAutocompleteContext(query, cursorIndex), [cursorIndex, query]);
+  const autocompleteCandidates = useMemo(() => {
+    if (dismissedAutocompleteKey === autocompleteContext.key) return [];
+    return buildAutocompleteCandidates({
+      baseDataset,
+      context: autocompleteContext,
+      datasets,
+      referenceDatasetIdSet,
+    });
+  }, [autocompleteContext, baseDataset, datasets, dismissedAutocompleteKey, referenceDatasetIdSet]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
     const contextDatasets = datasets.filter((item) => {
@@ -66,11 +98,6 @@ export function SqlAnalysisPage({
 
     return searchableDatasets.slice(0, 4);
   }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
-  const tableCompletion = useMemo(
-    () => getTableCompletion(query, datasets, baseDataset.id, referenceDatasetIds),
-    [baseDataset.id, datasets, query, referenceDatasetIds],
-  );
-
   useEffect(() => {
     setBaseDatasetId(dataset.id);
   }, [dataset.id]);
@@ -78,6 +105,7 @@ export function SqlAnalysisPage({
   useEffect(() => {
     setExecuted(false);
     setQuery(defaultQuery);
+    setCursorIndex(defaultQuery.length);
     setResultDraft(null);
     setExecutionMs(null);
     setOpenSchemaDatasetId(baseDataset.id);
@@ -90,6 +118,10 @@ export function SqlAnalysisPage({
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
     return `/api/query/runs?${params.toString()}`;
   };
+
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [autocompleteCandidates.length, autocompleteContext.key]);
 
   const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
 
@@ -105,9 +137,55 @@ export function SqlAnalysisPage({
     resetResultState();
   };
 
+  const updateCursorFromTextarea = (textarea: HTMLTextAreaElement) => {
+    setCursorIndex(textarea.selectionStart);
+    syncLineNumberScroll();
+  };
+
   const syncLineNumberScroll = () => {
     if (!textareaRef.current || !lineNumberRef.current) return;
     lineNumberRef.current.scrollTop = textareaRef.current.scrollTop;
+  };
+
+  const applyAutocompleteCandidate = (candidate: AutocompleteCandidate) => {
+    const nextQuery = `${query.slice(0, autocompleteContext.start)}${candidate.insertText}${query.slice(autocompleteContext.end)}`;
+    const nextCursorIndex = autocompleteContext.start + candidate.insertText.length;
+    updateQuery(nextQuery);
+    setCursorIndex(nextCursorIndex);
+    setDismissedAutocompleteKey(null);
+    if (candidate.type === "table" && candidate.datasetId && candidate.datasetId !== baseDataset.id) {
+      const datasetId = candidate.datasetId;
+      setReferenceDatasetIds((ids) => (ids.includes(datasetId) ? ids : [...ids, datasetId]));
+    }
+    onAction("analysis.autocomplete.inserted", `/api/query/autocomplete/${candidate.type}/${encodeURIComponent(candidate.label)}`, candidate.datasetId ?? baseDataset.id);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
+      syncLineNumberScroll();
+    });
+  };
+
+  const handleQueryKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (autocompleteCandidates.length === 0) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index + 1) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setAutocompleteIndex((index) => (index - 1 + autocompleteCandidates.length) % autocompleteCandidates.length);
+      return;
+    }
+    if (event.key === "Tab" || event.key === "Enter") {
+      event.preventDefault();
+      applyAutocompleteCandidate(autocompleteCandidates[autocompleteIndex] ?? autocompleteCandidates[0]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDismissedAutocompleteKey(autocompleteContext.key);
+    }
   };
 
   const executeQuery = async () => {
@@ -129,6 +207,7 @@ export function SqlAnalysisPage({
 
   const resetQuery = () => {
     updateQuery(defaultQuery);
+    setCursorIndex(defaultQuery.length);
     onAction("analysis.query.reset", "/api/query/reset", baseDataset.id);
   };
 
@@ -147,21 +226,17 @@ export function SqlAnalysisPage({
     const selectionStart = textarea.selectionStart;
     const selectionEnd = textarea.selectionEnd;
     const nextQuery = `${query.slice(0, selectionStart)}${text}${query.slice(selectionEnd)}`;
+    const caret = selectionStart + text.length;
     updateQuery(nextQuery);
+    setCursorIndex(caret);
     requestAnimationFrame(() => {
       textarea.focus();
-      const caret = selectionStart + text.length;
       textarea.setSelectionRange(caret, caret);
     });
   };
 
   const insertTableName = (targetDataset: CatalogDataset) => {
-    const completedQuery = applyTableCompletion(query, targetDataset.name);
-    if (completedQuery !== query) {
-      updateQuery(completedQuery);
-    } else {
-      insertSqlText(targetDataset.name);
-    }
+    insertSqlText(targetDataset.name);
     setOpenSchemaDatasetId(targetDataset.id);
     if (targetDataset.id !== baseDataset.id) {
       setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
@@ -173,7 +248,9 @@ export function SqlAnalysisPage({
     setBaseDatasetId(targetDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== targetDataset.id));
     setOpenSchemaDatasetId(targetDataset.id);
-    setQuery(buildDefaultQuery(targetDataset));
+    const nextDefaultQuery = buildDefaultQuery(targetDataset);
+    setQuery(nextDefaultQuery);
+    setCursorIndex(nextDefaultQuery.length);
     resetResultState();
     onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
   };
@@ -338,20 +415,43 @@ export function SqlAnalysisPage({
           <div className="sql-editor-layout">
             <div className="sql-editor-surface">
               <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
-              <textarea ref={textareaRef} value={query} onChange={(event) => updateQuery(event.target.value)} onScroll={syncLineNumberScroll} spellCheck={false} />
-            </div>
-            {tableCompletion && (
-              <div className="sql-table-completion">
-                <span>{tableCompletion.keyword ? `"${tableCompletion.keyword}" 후보` : "테이블 후보"}</span>
-                <div>
-                  {tableCompletion.candidates.map((item) => (
-                    <button key={item.id} type="button" onClick={() => insertTableName(item)}>
-                      {item.name}
-                    </button>
-                  ))}
-                </div>
+              <div className="sql-editor-input-wrap">
+                <textarea
+                  ref={textareaRef}
+                  value={query}
+                  onChange={(event) => {
+                    updateQuery(event.target.value);
+                    setCursorIndex(event.target.selectionStart);
+                    setDismissedAutocompleteKey(null);
+                  }}
+                  onClick={(event) => updateCursorFromTextarea(event.currentTarget)}
+                  onBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
+                  onKeyDown={handleQueryKeyDown}
+                  onKeyUp={(event) => {
+                    if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(event.key)) return;
+                    updateCursorFromTextarea(event.currentTarget);
+                  }}
+                  onScroll={syncLineNumberScroll}
+                  spellCheck={false}
+                />
+                {autocompleteCandidates.length > 0 && (
+                  <div className="sql-autocomplete-popover">
+                    {autocompleteCandidates.map((candidate, index) => (
+                      <button
+                        className={index === autocompleteIndex ? "active" : ""}
+                        key={candidate.id}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => applyAutocompleteCandidate(candidate)}
+                      >
+                        <strong>{candidate.label}</strong>
+                        <span>{candidate.detail}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
           <div className="sql-editor-footer">
             <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
@@ -421,32 +521,119 @@ FROM ${dataset.name}
 LIMIT 100;`;
 }
 
-function getTableCompletion(
-  query: string,
-  datasets: CatalogDataset[],
-  baseDatasetId: string,
-  referenceDatasetIds: string[],
-) {
-  const match = query.match(/(?:^|\s)(?:from|join)\s+([a-zA-Z0-9_.-]*)$/i);
-  if (!match) return null;
-  const keyword = match[1] ?? "";
-  const normalizedKeyword = keyword.toLowerCase();
-  const referenceDatasetIdSet = new Set(referenceDatasetIds);
-  const candidates = datasets
-    .filter((item) => item.name.toLowerCase().includes(normalizedKeyword))
-    .sort((left, right) => getDatasetContextRank(left.id, baseDatasetId, referenceDatasetIdSet) - getDatasetContextRank(right.id, baseDatasetId, referenceDatasetIdSet))
-    .slice(0, 5);
-  return candidates.length > 0 ? { candidates, keyword } : null;
+const SQL_AUTOCOMPLETE_KEYWORDS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT JOIN",
+  "INNER JOIN",
+  "GROUP BY",
+  "ORDER BY",
+  "LIMIT",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+];
+
+function getAutocompleteContext(query: string, cursorIndex: number): AutocompleteContext {
+  const end = Math.max(0, Math.min(cursorIndex, query.length));
+  const beforeCursor = query.slice(0, end);
+  const tokenMatch = beforeCursor.match(/[a-zA-Z0-9_.-]*$/);
+  const token = tokenMatch?.[0] ?? "";
+  const start = end - token.length;
+  const beforeToken = query.slice(0, start);
+  const statementPrefix = beforeToken.split(";").pop() ?? "";
+  const tableContext = /(?:^|[\s,(])(?:from|join)\s*$/i.test(statementPrefix);
+  const columnContext = /(?:^|[\s,(])(?:select|where|on|having|and|or)\s*$/i.test(statementPrefix)
+    || /\b(?:select|where|on|group\s+by|order\s+by|having)\b/i.test(statementPrefix);
+  const mode = tableContext ? "table" : columnContext ? "column" : "general";
+  return {
+    token,
+    start,
+    end,
+    mode,
+    key: `${start}:${end}:${mode}:${token}`,
+  };
+}
+
+function buildAutocompleteCandidates({
+  baseDataset,
+  context,
+  datasets,
+  referenceDatasetIdSet,
+}: {
+  baseDataset: CatalogDataset;
+  context: AutocompleteContext;
+  datasets: CatalogDataset[];
+  referenceDatasetIdSet: Set<string>;
+}) {
+  const token = context.token.toLowerCase();
+  if (!token && context.mode === "general") return [];
+  const canShowForToken = (value: string) => !token || value.toLowerCase().includes(token);
+  const tableCandidates: AutocompleteCandidate[] = datasets
+    .filter((item) => canShowForToken(item.name))
+    .sort((left, right) => getDatasetContextRank(left.id, baseDataset.id, referenceDatasetIdSet) - getDatasetContextRank(right.id, baseDataset.id, referenceDatasetIdSet))
+    .map((item) => ({
+      id: `table-${item.id}`,
+      type: "table",
+      label: item.name,
+      insertText: item.name,
+      detail: item.id === baseDataset.id ? "table · base" : referenceDatasetIdSet.has(item.id) ? "table · referenced" : "table",
+      datasetId: item.id,
+    }));
+  const contextDatasets = [
+    baseDataset,
+    ...datasets.filter((item) => referenceDatasetIdSet.has(item.id) && item.id !== baseDataset.id),
+  ];
+  const columnCandidates = contextDatasets.flatMap((item) => item.schema.flatMap(([name, type]) => {
+    const candidates: AutocompleteCandidate[] = [];
+    if (canShowForToken(name)) {
+      candidates.push({
+        id: `column-${item.id}-${name}`,
+        type: "column",
+        label: name,
+        insertText: name,
+        detail: `column · ${item.name} · ${type}`,
+        datasetId: item.id,
+      });
+    }
+    const qualifiedName = `${item.name}.${name}`;
+    if (context.token.includes(".") && canShowForToken(qualifiedName)) {
+      candidates.push({
+        id: `column-qualified-${item.id}-${name}`,
+        type: "column",
+        label: qualifiedName,
+        insertText: qualifiedName,
+        detail: `column · ${type}`,
+        datasetId: item.id,
+      });
+    }
+    return candidates;
+  }));
+  const keywordCandidates: AutocompleteCandidate[] = SQL_AUTOCOMPLETE_KEYWORDS
+    .filter((keyword) => canShowForToken(keyword))
+    .map((keyword) => ({
+      id: `keyword-${keyword}`,
+      type: "keyword",
+      label: keyword,
+      insertText: `${keyword} `,
+      detail: "keyword",
+    }));
+  const groups = context.mode === "table"
+    ? [tableCandidates, columnCandidates, keywordCandidates]
+    : context.mode === "column"
+      ? [columnCandidates, tableCandidates, keywordCandidates]
+      : [keywordCandidates, tableCandidates, columnCandidates];
+  return groups.flat().slice(0, 8);
 }
 
 function getDatasetContextRank(datasetId: string, baseDatasetId: string, referenceDatasetIdSet: Set<string>) {
   if (datasetId === baseDatasetId) return 0;
   if (referenceDatasetIdSet.has(datasetId)) return 1;
   return 2;
-}
-
-function applyTableCompletion(query: string, tableName: string) {
-  return query.replace(/((?:^|\s)(?:from|join)\s+)([a-zA-Z0-9_.-]*)$/i, `$1${tableName}`);
 }
 
 function escapeCsvCell(value: string) {
