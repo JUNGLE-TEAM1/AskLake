@@ -697,40 +697,6 @@
   padding: 0 9px;
 }
 
-.dashboard-row-actions {
-  width: 1%;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.dashboard-row-delete {
-  display: inline-flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
-  background: #fff;
-  color: #b91c1c;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 10px;
-}
-
-.dashboard-row-delete:hover {
-  background: #fef2f2;
-}
-
-.dashboard-row-delete:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.dashboard-row-delete svg {
-  flex: 0 0 auto;
-}
-
 .dashboard-pagination {
   display: flex;
   align-items: center;

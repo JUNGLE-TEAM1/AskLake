@@ -92,7 +92,6 @@ VITE_USE_MOCK_API=false
 | 저장된 대시보드 첫 목록 | `GET /api/dashboards` |
 | 저장된 대시보드 검색/필터 목록 | `POST /api/dashboards/query` |
 | 대시보드 상세 | `GET /api/dashboards/{dashboardId}` |
-| 대시보드 삭제 | `DELETE /api/dashboards/{dashboardId}` |
 | 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
 | 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
 | 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
@@ -162,7 +161,6 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 | 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
 | 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
 | 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
-| 목록 삭제 | local list에서 제거 후 실패 시 rollback | `DELETE /api/dashboards/{id}` |
 | Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
 | Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
@@ -196,7 +194,6 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다.
 1. `POST /api/dashboards`
 2. `PATCH /api/dashboards/{dashboardId}`
 3. `POST /api/dashboards/{dashboardId}/publish`
-4. `DELETE /api/dashboards/{dashboardId}`
 
 ## 7. 프론트에서 다음에 할 작업
 

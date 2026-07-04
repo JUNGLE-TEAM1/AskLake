@@ -9,12 +9,10 @@ export function DashboardLandingPage({
   currentPage,
   dashboardCount,
   dashboards,
-  deletingDashboardId,
   error,
   isLoading,
   onClearTags,
   onCreateDashboard,
-  onDeleteDashboard,
   onNextPage,
   onOpenDashboard,
   onPreviousPage,
@@ -37,12 +35,10 @@ export function DashboardLandingPage({
   currentPage: number;
   dashboardCount: number;
   dashboards: SavedDashboardCard[];
-  deletingDashboardId: string | null;
   error: string | null;
   isLoading: boolean;
   onClearTags: () => void;
   onCreateDashboard: () => void;
-  onDeleteDashboard: (dashboard: SavedDashboardCard) => void;
   onNextPage: () => void;
   onOpenDashboard: (name: string) => void;
   onPreviousPage: () => void;
@@ -93,7 +89,7 @@ export function DashboardLandingPage({
         <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
         {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
         {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
-        <DashboardTable deletingDashboardId={deletingDashboardId} dashboards={dashboards} onDeleteDashboard={onDeleteDashboard} onOpenDetail={onOpenDashboard} />
+        <DashboardTable dashboards={dashboards} onOpenDetail={onOpenDashboard} />
         <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
       </section>
     </div>

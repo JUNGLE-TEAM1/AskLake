@@ -26,7 +26,6 @@ import {
   normalizeSavedDashboardCard,
 } from "./dashboardListUtils";
 import { useDashboardLandingList } from "./useDashboardLandingList";
-import { deleteDashboardCard } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardView, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
@@ -37,8 +36,6 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
   const [isPublished, setIsPublished] = useState(false);
   const [selectedWidgetType, setSelectedWidgetType] = useState<DashboardWidgetType>("bar");
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
-  const [deletingDashboardId, setDeletingDashboardId] = useState<string | null>(null);
-  const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [expandedChart, setExpandedChart] = useState<ExpandedChart | null>(null);
   const [period, setPeriod] = useState("최근 7일");
   const [segment, setSegment] = useState("전체 채널");
@@ -52,7 +49,7 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
       return defaultDashboardCards;
     }
   });
-  const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
+  const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version);
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
@@ -190,28 +187,6 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
     onAction("dashboard.saved", `/api/dashboards/${dashboardId}`, dashboardId);
   };
 
-  const deleteSavedDashboard = (dashboard: SavedDashboardCard) => {
-    const confirmed = window.confirm(`"${dashboard.name}" 대시보드를 삭제할까요?`);
-    if (!confirmed) return;
-
-    const previousDashboards = savedDashboards;
-    setDeletingDashboardId(dashboard.id);
-    setSavedDashboards((cards) => cards.filter((card) => card.id !== dashboard.id));
-
-    void deleteDashboardCard(dashboard.id)
-      .then(() => {
-        setDashboardListRefreshKey((key) => key + 1);
-        onAction("dashboard.deleted", `/api/dashboards/${dashboard.id}`, dashboard.id);
-      })
-      .catch(() => {
-        setSavedDashboards(previousDashboards);
-        onAction("dashboard.delete_failed", `/api/dashboards/${dashboard.id}`, dashboard.id, "failed");
-      })
-      .finally(() => {
-        setDeletingDashboardId(null);
-      });
-  };
-
   const shareDashboard = () => {
     const shareUrl = `${window.location.origin}/dashboards/${encodeURIComponent(dashboardTitle)}`;
     void navigator.clipboard?.writeText(shareUrl);
@@ -313,12 +288,10 @@ export function DashboardPage({ dataset, entry, sqlResult, onAction }: { dataset
         currentPage={dashboardList.safeDashboardPage}
         dashboardCount={dashboardList.dashboardCount}
         dashboards={dashboardList.visibleDashboards}
-        deletingDashboardId={deletingDashboardId}
         error={dashboardList.dashboardError}
         isLoading={dashboardList.dashboardLoading}
         onClearTags={dashboardList.clearDashboardTags}
         onCreateDashboard={openBuilder}
-        onDeleteDashboard={deleteSavedDashboard}
         onNextPage={dashboardList.goToNextDashboardPage}
         onOpenDashboard={openDetail}
         onPreviousPage={dashboardList.goToPreviousDashboardPage}

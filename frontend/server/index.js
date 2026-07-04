@@ -2,7 +2,6 @@ import http from "node:http";
 import { URL } from "node:url";
 import {
   databaseUrl,
-  deleteDashboard,
   ensureSchema,
   getDataset,
   getJob,
@@ -29,15 +28,6 @@ function sendJson(response, status, payload) {
     "Content-Type": "application/json",
   });
   response.end(JSON.stringify(payload));
-}
-
-function sendNoContent(response) {
-  response.writeHead(204, {
-    "Access-Control-Allow-Headers": "Content-Type",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Origin": "*",
-  });
-  response.end();
 }
 
 function sendError(response, status, code, message) {
@@ -332,17 +322,6 @@ async function route(request, response) {
   }
 
   const dashboardMatch = path.match(/^\/api\/dashboards\/([^/]+)$/);
-  if (request.method === "DELETE" && dashboardMatch) {
-    const dashboardId = decodeURIComponent(dashboardMatch[1]);
-    const deleted = await deleteDashboard(dashboardId);
-    if (!deleted) {
-      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
-      return;
-    }
-    sendNoContent(response);
-    return;
-  }
-
   if ((request.method === "PUT" || request.method === "PATCH") && dashboardMatch) {
     const dashboardId = decodeURIComponent(dashboardMatch[1]);
     const dashboard = { ...(await readJson(request)), id: dashboardId };
