@@ -597,7 +597,47 @@ GET /api/catalog/datasets/{datasetId}/lineage
 
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 모두 포함해서 표시합니다.
 
-### 8.3 대시보드 초안 생성
+### 8.3 대시보드 목록 조회
+
+`GET /api/dashboards`
+
+Query parameters:
+
+| 이름 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `search` | string | no | dashboard 이름, 소유자, 태그 검색어 |
+| `owner` | string | no | 특정 소유자 필터 |
+| `tags` | comma-separated string | no | 선택된 태그 목록. 예: `Marketing,ROI` |
+| `sort` | string | yes | `name-asc`, `name-desc`, `updated-asc`, `updated-desc`, `created-asc`, `created-desc` |
+| `page` | number | yes | 1부터 시작하는 page 번호 |
+| `pageSize` | number | yes | 한 page에 표시할 dashboard 개수 |
+
+Request 예시:
+
+```text
+GET /api/dashboards?search=roi&owner=Jane%20Doe&tags=Marketing,ROI&sort=updated-desc&page=1&pageSize=10
+```
+
+Response `200 OK`:
+
+```ts
+type DashboardListResponse = {
+  items: SavedDashboardCard[];
+  total: number;
+  page: number;
+  pageSize: number;
+  filterOptions: {
+    owners: string[];
+    tags: string[];
+  };
+};
+```
+
+`items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
+프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
+`filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
+
+### 8.4 대시보드 초안 생성
 
 `POST /api/dashboards`
 
