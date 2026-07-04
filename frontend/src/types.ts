@@ -12,6 +12,8 @@ export type {
   JobStatus,
   PermissionDraft,
   QualityDraft,
+  RetryFailureAction,
+  RetryPolicyDraft,
   ScheduleDraft,
   SchemaDraft,
   SourceDraft,
