@@ -9,7 +9,7 @@
 
 ## 반영 브랜치
 
-`<!-- 예: feat-#4-profile-edit -> dev -->`
+<!-- 예: feat-#4-profile-edit -> dev -->
 
 ## 변경 내용
 
