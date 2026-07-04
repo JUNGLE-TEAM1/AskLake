@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
+import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -84,6 +84,14 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   };
 
   return resolveMock({ dataset, job });
+}
+
+export async function getDatasetLineageGraph(dataset: CatalogDataset): Promise<LineageGraph> {
+  if (!apiConfig.useMock) {
+    return apiClient.get<LineageGraph>(`/api/catalog/datasets/${dataset.id}/lineage`);
+  }
+
+  return resolveMock(dataset.lineageGraph ?? buildFallbackLineageGraph(dataset));
 }
 
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {
@@ -231,4 +239,73 @@ export async function executeQueryDraft(dataset: CatalogDataset, query: string):
     rows,
     runId: `sql_${Date.now()}`,
   });
+}
+
+function buildFallbackLineageGraph(dataset: CatalogDataset): LineageGraph {
+  const currentNode: LineageGraphDataset = {
+    columns: dataset.schema.map(([name, type]) => ({ id: normalizeLineageId(name), name, type })),
+    engine: "ICEBERG",
+    id: dataset.id,
+    layer: dataset.layer,
+    name: dataset.name,
+  };
+  const upstreamNodes = dataset.upstream.map((item, index): LineageGraphDataset => {
+    const layer = inferLineageLayer(item, dataset.layer, index);
+    return {
+      columns: currentNode.columns.map((column) => ({
+        ...column,
+        id: normalizeLineageId(`${index}-${column.name}`),
+        name: layer === "SOURCE" && index > 0 ? column.name.replace(/^order_/, "").replace(/^customer_/, "user_") : column.name,
+      })),
+      engine: inferLineageEngine(item, layer),
+      id: normalizeLineageId(`${dataset.id}-${item}`),
+      layer,
+      name: getLineageTableName(item),
+    };
+  });
+  const edges = upstreamNodes.flatMap((sourceNode, index) => {
+    const targetNode = upstreamNodes[index + 1] ?? currentNode;
+    return targetNode.columns.map((targetColumn, columnIndex) => {
+      const sourceColumn = sourceNode.columns[columnIndex % sourceNode.columns.length];
+      return {
+        fromColumnId: sourceColumn.id,
+        fromDatasetId: sourceNode.id,
+        toColumnId: targetColumn.id,
+        toDatasetId: targetNode.id,
+      };
+    });
+  });
+
+  return {
+    datasetId: dataset.id,
+    datasets: [...upstreamNodes, currentNode],
+    edges,
+  };
+}
+
+function inferLineageEngine(value: string, layer: LineageLayer): string {
+  const lower = value.toLowerCase();
+  if (lower.includes("postgres")) return "POSTGRESQL";
+  if (lower.includes("kafka")) return "KAFKA";
+  if (lower.includes("s3")) return "S3";
+  if (layer === "SOURCE" || layer === "RAW") return "LAKE";
+  return "ICEBERG";
+}
+
+function inferLineageLayer(value: string, currentLayer: CatalogDataset["layer"], index: number): LineageLayer {
+  const lower = value.toLowerCase();
+  if (lower.includes("postgres") || lower.includes("kafka") || lower.includes("s3")) return "SOURCE";
+  if (lower.includes("raw")) return "RAW";
+  if (lower.includes("bronze") || (currentLayer === "SILVER" && index > 0)) return "BRONZE";
+  if (lower.includes("silver") || currentLayer === "GOLD") return "SILVER";
+  return "BRONZE";
+}
+
+function getLineageTableName(value: string): string {
+  const parts = value.split(/[ /]/).filter(Boolean);
+  return parts[parts.length - 1]?.replace(/\*\.csv$/, "events") ?? value;
+}
+
+function normalizeLineageId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "lineage";
 }

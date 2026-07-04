@@ -236,8 +236,38 @@ type CatalogDataset = {
   sampleRows: string[][];
   upstream: string[];
   downstream: string[];
+  lineageGraph?: LineageGraph;
 };
 ```
+
+### LineageGraph
+
+```ts
+type LineageGraph = {
+  datasetId: string;
+  datasets: Array<{
+    id: string;
+    name: string;
+    layer: "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+    engine: string;
+    columns: Array<{
+      id: string;
+      name: string;
+      type: string;
+    }>;
+  }>;
+  edges: Array<{
+    fromDatasetId: string;
+    fromColumnId: string;
+    toDatasetId: string;
+    toColumnId: string;
+  }>;
+};
+```
+
+`LineageGraph`는 화면 좌표나 렌더링 스타일을 포함하지 않습니다.
+백엔드는 dataset/column/edge 관계만 반환하고, 프론트는 이를 React Flow node/edge와 column row handle로 변환합니다.
+`CatalogDataset.upstream`과 `CatalogDataset.downstream`은 요약/fallback context로 유지할 수 있습니다.
 
 ### SqlResultDraft
 
@@ -595,7 +625,50 @@ GET /api/catalog/datasets/{datasetId}/sample-rows
 GET /api/catalog/datasets/{datasetId}/lineage
 ```
 
-현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 모두 포함해서 표시합니다.
+`GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
+
+```ts
+type DatasetLineageResponse = LineageGraph;
+```
+
+Response 예시:
+
+```json
+{
+  "datasetId": "ds_customer_orders_gold",
+  "datasets": [
+    {
+      "id": "source-commerce-orders",
+      "name": "commerce.orders",
+      "layer": "SOURCE",
+      "engine": "POSTGRESQL",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    },
+    {
+      "id": "ds_customer_orders_gold",
+      "name": "orders_clean",
+      "layer": "GOLD",
+      "engine": "ICEBERG",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "fromDatasetId": "source-commerce-orders",
+      "fromColumnId": "order_id",
+      "toDatasetId": "ds_customer_orders_gold",
+      "toColumnId": "order_id"
+    }
+  ]
+}
+```
+
+현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
+Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
 ### 8.3 대시보드 초안 생성
 

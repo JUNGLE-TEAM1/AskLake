@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -35,7 +35,8 @@ import {
   X,
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
-import type { AuditResult, CatalogDataset } from "../../types";
+import { getDatasetLineageGraph } from "../../services/mockApi";
+import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -46,12 +47,16 @@ type LineageColumn = {
 };
 
 type LineageTableNodeData = Record<string, unknown> & {
+  activeColumnKey: string | null;
   columns: LineageColumn[];
+  dimmed: boolean;
   engine: string;
   handleMode: "source" | "target" | "both";
+  highlighted: boolean;
   layerLabel: string;
-  onColumnSelect: (columnId: string | null) => void;
-  selectedColumnId: string | null;
+  nodeId: string;
+  onColumnSelect: (columnKey: string | null) => void;
+  relatedColumnKeys: string[] | null;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
 };
@@ -66,10 +71,10 @@ type CatalogFilterState = {
   rag: boolean;
 };
 
-const lineageNodeWidth = 306;
-const lineageNodeHeaderHeight = 90;
-const lineageColumnRowHeight = 46;
-const lineageGroupGap = 36;
+const lineageNodeWidth = 220;
+const lineageNodeHeaderHeight = 76;
+const lineageColumnRowHeight = 32;
+const lineageGroupGap = 44;
 
 function normalizeCatalogText(value: string) {
   return value.trim().toLowerCase();
@@ -371,7 +376,7 @@ export function CatalogPage({
           onClose={() => setActiveModal(null)}
           title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
         >
-          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} />}
+          {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
         </CatalogModal>
       )}
     </div>
@@ -556,42 +561,69 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
-function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
-  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
-  const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId);
+function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
+  const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
+  const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
+  const { edges, nodes } = lineageGraph
+    ? buildLineageGraph(lineageGraph, selectedColumnKey, setSelectedColumnKey)
+    : { edges: [], nodes: [] };
   const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
-    setSelectedColumnId(null);
+    let isActive = true;
+    setLineageGraph(dataset.lineageGraph ?? null);
+    setSelectedColumnKey(null);
+    getDatasetLineageGraph(dataset)
+      .then((graph) => {
+        if (isActive) setLineageGraph(graph);
+      })
+      .catch(() => {
+        if (isActive) setLineageGraph(null);
+      });
+
+    return () => {
+      isActive = false;
+    };
   }, [dataset.id]);
 
   return (
-    <section className="catalog-lineage-card">
-      <div className="catalog-lineage-title">
-        <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
-        <div>
-          <h2>{dataset.name}</h2>
-          <span>DATA LINEAGE</span>
+    <section className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
+      {!compact && (
+        <div className="catalog-lineage-title">
+          <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
+          <div>
+            <h2>{dataset.name}</h2>
+            <span>DATA LINEAGE</span>
+          </div>
         </div>
-      </div>
-      <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
-        <ReactFlow
-          edges={edges}
-          maxZoom={1.1}
-          minZoom={0.35}
-          nodes={nodes}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          nodeTypes={lineageNodeTypes}
-          onPaneClick={() => setSelectedColumnId(null)}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background color="#d5dde8" gap={22} />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-      </div>
+      )}
+      {lineageGraph ? (
+        <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
+          <ReactFlow
+            edges={edges}
+            fitView
+            fitViewOptions={{ maxZoom: 0.9, padding: 0.2 }}
+            maxZoom={1}
+            minZoom={0.35}
+            nodes={nodes}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            nodeTypes={lineageNodeTypes}
+            onPaneClick={() => setSelectedColumnKey(null)}
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background color="#d5dde8" gap={22} />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
+      ) : (
+        <div className="catalog-lineage-empty">
+          <strong>Lineage graph unavailable</strong>
+          <span>백엔드 lineage contract 또는 mock fallback을 확인해 주세요.</span>
+        </div>
+      )}
       <div className="catalog-lineage-footer">
-        <span>Upstream <strong>{dataset.upstream.length} Datasets</strong></span>
+        <span>Upstream <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)} Datasets</strong></span>
         <span>Layer <strong>{dataset.layer}</strong></span>
         <span>Status <strong>{statusMeta.label}</strong></span>
       </div>
@@ -600,115 +632,70 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function buildLineageGraph(
-  dataset: CatalogDataset,
-  selectedColumnId: string | null,
-  onColumnSelect: (columnId: string | null) => void,
+  graph: LineageGraph,
+  selectedColumnKey: string | null,
+  onColumnSelect: (columnKey: string | null) => void,
 ): { edges: Edge[]; nodes: Node[] } {
-  const primaryColumns = buildLineageColumns(dataset.schema);
-  const rawItems = dataset.upstream.filter((item) => isRawSource(item));
-  const transformItems = dataset.upstream.filter((item) => !isRawSource(item));
-  const hasTransformStage = transformItems.length > 0;
-  const hasRawStage = rawItems.length > 0;
-  const rawHeight = getLineageStackHeight(rawItems.length, primaryColumns.length);
-  const transformHeight = getLineageStackHeight(transformItems.length, primaryColumns.length);
-  const currentHeight = getLineageTableHeight(primaryColumns.length);
-  const graphHeight = Math.max(rawHeight, transformHeight, currentHeight);
-  const rawStartY = (graphHeight - rawHeight) / 2;
-  const transformStartY = (graphHeight - transformHeight) / 2;
-  const currentY = (graphHeight - currentHeight) / 2;
-  const sourceX = hasTransformStage ? 20 : 390;
-  const transformX = 410;
-  const currentX = 800;
-
-  const rawNodes: Node<LineageTableNodeData>[] = rawItems.map((item, index) => {
-    const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
-    return {
-      data: {
-        columns: buildSourceColumns(primaryColumns, item, index),
-        engine: sourceMeta.engine,
-        handleMode: "source",
-        layerLabel: sourceMeta.layerLabel,
-        onColumnSelect,
-        selectedColumnId,
-        tableName: getLineageTableName(item),
-        tone: sourceMeta.tone,
-      },
-      id: `raw-source-${index}`,
-      position: { x: sourceX, y: rawStartY + getLineageStackOffset(index, primaryColumns.length) },
-      type: "lineageTable",
-    };
-  });
-  const transformNodes: Node<LineageTableNodeData>[] = transformItems.map((item, index) => {
-    const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
-    return {
-      data: {
-        columns: buildSourceColumns(primaryColumns, item, index + rawItems.length),
-        engine: sourceMeta.engine,
-        handleMode: hasRawStage ? "both" : "source",
-        layerLabel: sourceMeta.layerLabel,
-        onColumnSelect,
-        selectedColumnId,
-        tableName: getLineageTableName(item),
-        tone: sourceMeta.tone,
-      },
-      id: `upstream-transform-${index}`,
-      position: { x: transformX, y: transformStartY + getLineageStackOffset(index, primaryColumns.length) },
-      type: "lineageTable",
-    };
-  });
-  const currentNode: Node<LineageTableNodeData> = {
-    data: {
-      columns: primaryColumns,
-      engine: "ICEBERG",
-      handleMode: "target",
-      layerLabel: `${dataset.layer} LAYER`,
-      onColumnSelect,
-      selectedColumnId,
-      tableName: dataset.name,
-      tone: getLayerTone(dataset.layer),
-    },
-    id: "current-dataset",
-    position: { x: currentX, y: currentY },
-    type: "lineageTable",
-  };
-  const transformInputEdges = hasTransformStage
-    ? rawNodes.flatMap((sourceNode) => transformNodes.flatMap((targetNode) => {
-      const sourceColumns = sourceNode.data.columns as LineageColumn[];
-      const targetColumns = targetNode.data.columns as LineageColumn[];
-      return targetColumns.map((targetColumn, columnIndex) => {
-        const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
-        return buildColumnEdge({
-          active: targetColumn.baseId === selectedColumnId,
-          selected: selectedColumnId !== null,
-          id: `${sourceNode.id}-${sourceColumn.id}-to-${targetNode.id}-${targetColumn.id}`,
-          source: sourceNode.id,
-          sourceHandle: lineageHandleId(sourceColumn.id, "right"),
-          target: targetNode.id,
-          targetHandle: lineageHandleId(targetColumn.id, "left"),
-        });
-      });
-    }))
-    : [];
-  const currentInputNodes = hasTransformStage ? transformNodes : rawNodes;
-  const currentInputEdges = currentInputNodes.flatMap((node) => {
-    const sourceColumns = node.data.columns as LineageColumn[];
-    return primaryColumns.map((targetColumn, columnIndex) => {
-      const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
-      return buildColumnEdge({
-        active: targetColumn.baseId === selectedColumnId,
-        selected: selectedColumnId !== null,
-        id: `${node.id}-${sourceColumn.id}-to-current-${targetColumn.id}`,
-        source: node.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "right"),
-        target: currentNode.id,
-        targetHandle: lineageHandleId(targetColumn.id, "left"),
-      });
+  const graphDatasets = graph.datasets;
+  const depthByDatasetId = getLineageDepths(graph);
+  const groupedDatasets = groupLineageDatasets(graphDatasets, depthByDatasetId);
+  const maxGroupHeight = Math.max(...groupedDatasets.map((group) => getLineageStackHeight(group.length, getMaxColumnCount(group))), 0);
+  const nodeIdsWithIncoming = new Set(graph.edges.map((edge) => edge.toDatasetId));
+  const nodeIdsWithOutgoing = new Set(graph.edges.map((edge) => edge.fromDatasetId));
+  const selection = selectedColumnKey ? getLineageSelection(graph, selectedColumnKey) : null;
+  const nodes: Node<LineageTableNodeData>[] = groupedDatasets.flatMap((group, groupIndex) => {
+    const groupColumnCount = getMaxColumnCount(group);
+    const groupHeight = getLineageStackHeight(group.length, groupColumnCount);
+    const groupStartY = (maxGroupHeight - groupHeight) / 2;
+    return group.map((lineageDataset, itemIndex) => {
+      const columns = buildLineageColumns(lineageDataset.columns);
+      const hasIncoming = nodeIdsWithIncoming.has(lineageDataset.id);
+      const hasOutgoing = nodeIdsWithOutgoing.has(lineageDataset.id);
+      const isRelated = !selection || selection.nodeIds.has(lineageDataset.id);
+      const relatedColumnKeys = selection?.columnKeysByNodeId.get(lineageDataset.id) ?? null;
+      return {
+        data: {
+          activeColumnKey: selectedColumnKey,
+          columns,
+          dimmed: !isRelated,
+          engine: lineageDataset.engine,
+          handleMode: getLineageHandleMode(hasIncoming, hasOutgoing),
+          highlighted: Boolean(selection && isRelated),
+          layerLabel: getLineageLayerLabel(lineageDataset.layer),
+          nodeId: lineageDataset.id,
+          onColumnSelect,
+          relatedColumnKeys: relatedColumnKeys ? Array.from(relatedColumnKeys) : null,
+          tableName: lineageDataset.name,
+          tone: getLayerTone(lineageDataset.layer),
+        },
+        id: lineageDataset.id,
+        position: {
+          x: groupIndex * 315 + 20,
+          y: groupStartY + getLineageStackOffset(itemIndex, groupColumnCount),
+        },
+        type: "lineageTable",
+      };
     });
   });
+  const edges = graph.edges
+    .filter((edge) => graphDatasets.some((dataset) => dataset.id === edge.fromDatasetId) && graphDatasets.some((dataset) => dataset.id === edge.toDatasetId))
+    .map((edge) => {
+      const sourceColumn = findLineageColumn(graphDatasets, edge.fromDatasetId, edge.fromColumnId);
+      const targetColumn = findLineageColumn(graphDatasets, edge.toDatasetId, edge.toColumnId);
+      return buildColumnEdge({
+        active: !selection || selection.edgeIds.has(lineageEdgeId(edge)),
+        selected: selectedColumnKey !== null,
+        id: `${edge.fromDatasetId}-${edge.fromColumnId}-to-${edge.toDatasetId}-${edge.toColumnId}`,
+        source: edge.fromDatasetId,
+        sourceHandle: lineageHandleId(edge.fromDatasetId, sourceColumn?.name ?? edge.fromColumnId, "source"),
+        target: edge.toDatasetId,
+        targetHandle: lineageHandleId(edge.toDatasetId, targetColumn?.name ?? edge.toColumnId, "target"),
+      });
+    });
 
   return {
-    edges: [...transformInputEdges, ...currentInputEdges],
-    nodes: [...rawNodes, ...transformNodes, currentNode],
+    edges,
+    nodes,
   };
 }
 
@@ -726,48 +713,79 @@ function getLineageTableHeight(columnCount: number): number {
 }
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    updateNodeInternals(data.nodeId);
+  }, [data.nodeId, updateNodeInternals]);
+
   return (
-    <article className={["lineage-table-node", data.tone].join(" ")}>
-      <header className="lineage-table-header">
-        <div>
-          <span>{data.layerLabel}</span>
-          <strong><Table2 size={18} /> {data.tableName}</strong>
+    <article className={[
+      "xflow-schema-node",
+      data.tone,
+      data.dimmed ? "dimmed" : "",
+      data.highlighted ? "highlighted" : "",
+    ].filter(Boolean).join(" ")}>
+      <header className="xflow-schema-header">
+        <div className="xflow-schema-icon">
+          <Table2 size={18} />
         </div>
-        <em>{data.engine}</em>
+        <div className="xflow-schema-title">
+          <strong title={data.tableName}>{data.tableName}</strong>
+          <span>{data.layerLabel} · {data.engine}</span>
+        </div>
       </header>
-      <div className="lineage-table-columns">
+      <div className="xflow-column-head">
+        <span>Column</span>
+        <span>Type</span>
+      </div>
+      <div className="xflow-schema-columns">
         {data.columns.map((column) => (
-          <button
-            className={column.baseId === data.selectedColumnId ? "lineage-column-row active" : "lineage-column-row"}
-            key={column.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              data.onColumnSelect(column.baseId);
-            }}
-            type="button"
-          >
-            {(data.handleMode === "target" || data.handleMode === "both") && (
-              <Handle
-                className="lineage-column-handle left target-handle"
-                id={lineageHandleId(column.id, "left")}
-                position={Position.Left}
-                type="target"
-              />
-            )}
-            <span>{column.name}</span>
-            <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
-            {(data.handleMode === "source" || data.handleMode === "both") && (
-              <Handle
-                className="lineage-column-handle right source-handle"
-                id={lineageHandleId(column.id, "right")}
-                position={Position.Right}
-                type="source"
-              />
-            )}
-          </button>
+          <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
       </div>
     </article>
+  );
+}
+
+function LineageColumnRow({ column, data }: { column: LineageColumn; data: LineageTableNodeData }) {
+  const columnKey = lineageColumnKey(data.nodeId, column.id);
+  const isActive = data.activeColumnKey === columnKey;
+  const isRelated = !data.relatedColumnKeys || data.relatedColumnKeys.includes(columnKey);
+
+  return (
+    <button
+      className={[
+        "xflow-column-row",
+        isActive ? "active" : "",
+        data.relatedColumnKeys && !isRelated ? "dimmed" : "",
+        data.relatedColumnKeys && isRelated ? "related" : "",
+      ].filter(Boolean).join(" ")}
+      onClick={(event) => {
+        event.stopPropagation();
+        data.onColumnSelect(isActive ? null : columnKey);
+      }}
+      type="button"
+    >
+      {(data.handleMode === "target" || data.handleMode === "both") && (
+        <Handle
+          className="xflow-column-handle left target-handle"
+          id={lineageHandleId(data.nodeId, column.name, "target")}
+          position={Position.Left}
+          type="target"
+        />
+      )}
+      <span>{column.name}</span>
+      <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
+      {(data.handleMode === "source" || data.handleMode === "both") && (
+        <Handle
+          className="xflow-column-handle right source-handle"
+          id={lineageHandleId(data.nodeId, column.name, "source")}
+          position={Position.Right}
+          type="source"
+        />
+      )}
+    </button>
   );
 }
 
@@ -792,11 +810,12 @@ function buildColumnEdge({
     animated: false,
     className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
-    markerEnd: { color: selected && active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
+    markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
     style: {
-      stroke: selected && active ? "#2563eb" : "#94a3b8",
+      stroke: "#fb923c",
+      strokeDasharray: "6 5",
       strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
@@ -805,54 +824,113 @@ function buildColumnEdge({
   };
 }
 
-function buildLineageColumns(schema: CatalogDataset["schema"]): LineageColumn[] {
-  return schema.slice(0, 7).map(([name, type]) => ({
-    baseId: normalizeLineageId(name),
-    id: normalizeLineageId(name),
-    name,
-    type,
+function buildLineageColumns(columns: LineageGraphDataset["columns"]): LineageColumn[] {
+  return columns.slice(0, 7).map((column) => ({
+    baseId: column.id,
+    id: column.id,
+    name: column.name,
+    type: column.type,
   }));
 }
 
-function buildSourceColumns(columns: LineageColumn[], sourceName: string, sourceIndex: number): LineageColumn[] {
-  if (isRawSource(sourceName)) {
-    return columns.map((column) => ({
-      ...column,
-      name: sourceIndex === 0 ? column.name : column.name.replace(/^order_/, "").replace(/^customer_/, "user_"),
-      id: normalizeLineageId(`${sourceIndex}-${column.name}`),
-    }));
+function findLineageColumn(datasets: LineageGraphDataset[], datasetId: string, columnId: string) {
+  return datasets.find((dataset) => dataset.id === datasetId)?.columns.find((column) => column.id === columnId);
+}
+
+function getLineageSelection(graph: LineageGraph, selectedColumnKey: string) {
+  const edgeIds = new Set<string>();
+  const nodeIds = new Set<string>();
+  const columnKeys = new Set<string>([selectedColumnKey]);
+  const columnKeysByNodeId = new Map<string, Set<string>>();
+  const adjacency = new Map<string, Array<{ edgeId: string; key: string }>>();
+
+  const registerColumnKey = (key: string) => {
+    const [nodeId] = key.split("::");
+    if (!nodeId) return;
+    nodeIds.add(nodeId);
+    if (!columnKeysByNodeId.has(nodeId)) columnKeysByNodeId.set(nodeId, new Set());
+    columnKeysByNodeId.get(nodeId)?.add(key);
+  };
+  const addAdjacency = (from: string, to: string, edgeId: string) => {
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    adjacency.get(from)?.push({ edgeId, key: to });
+  };
+
+  graph.edges.forEach((edge) => {
+    const edgeId = lineageEdgeId(edge);
+    const sourceKey = lineageColumnKey(edge.fromDatasetId, edge.fromColumnId);
+    const targetKey = lineageColumnKey(edge.toDatasetId, edge.toColumnId);
+    addAdjacency(sourceKey, targetKey, edgeId);
+    addAdjacency(targetKey, sourceKey, edgeId);
+  });
+
+  const queue = [selectedColumnKey];
+  const visited = new Set<string>();
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    columnKeys.add(current);
+    registerColumnKey(current);
+
+    (adjacency.get(current) ?? []).forEach(({ edgeId, key }) => {
+      edgeIds.add(edgeId);
+      if (!visited.has(key)) queue.push(key);
+    });
   }
 
-  return columns.map((column) => ({
-    ...column,
-    id: normalizeLineageId(`${sourceIndex}-${column.name}`),
-  }));
+  return { columnKeys, columnKeysByNodeId, edgeIds, nodeIds };
 }
 
-function getLineageSourceMeta(
-  sourceName: string,
-  currentLayer: CatalogDataset["layer"],
-  index: number,
-): Pick<LineageTableNodeData, "engine" | "layerLabel" | "tone"> {
-  const lower = sourceName.toLowerCase();
-  if (lower.includes("postgres")) return { engine: "POSTGRESQL", layerLabel: "SOURCE", tone: "source" };
-  if (lower.includes("kafka")) return { engine: "KAFKA", layerLabel: "SOURCE", tone: "source" };
-  if (lower.includes("s3")) return { engine: "S3", layerLabel: "SOURCE", tone: "source" };
-  if (lower.includes("raw")) return { engine: "LAKE", layerLabel: "RAW LAYER", tone: "source" };
-  if (lower.includes("bronze") || (currentLayer === "SILVER" && index > 0)) return { engine: "ICEBERG", layerLabel: "BRONZE LAYER", tone: "bronze" };
-  if (lower.includes("silver") || currentLayer === "GOLD") return { engine: "ICEBERG", layerLabel: "SILVER LAYER", tone: "silver" };
-  return { engine: "PIPELINE", layerLabel: "BRONZE LAYER", tone: "bronze" };
+function getLineageDepths(graph: LineageGraph): Map<string, number> {
+  const depths = new Map(graph.datasets.map((dataset) => [dataset.id, 0]));
+  for (let pass = 0; pass < graph.datasets.length; pass += 1) {
+    let changed = false;
+    graph.edges.forEach((edge) => {
+      const sourceDepth = depths.get(edge.fromDatasetId) ?? 0;
+      const targetDepth = depths.get(edge.toDatasetId) ?? 0;
+      if (sourceDepth + 1 > targetDepth) {
+        depths.set(edge.toDatasetId, sourceDepth + 1);
+        changed = true;
+      }
+    });
+    if (!changed) break;
+  }
+  return depths;
 }
 
-function getLineageTableName(value: string): string {
-  const parts = value.split(/[ /]/).filter(Boolean);
-  return parts[parts.length - 1]?.replace(/\*\.csv$/, "events") ?? value;
+function groupLineageDatasets(datasets: LineageGraphDataset[], depthByDatasetId: Map<string, number>): LineageGraphDataset[][] {
+  const groups = new Map<number, LineageGraphDataset[]>();
+  datasets.forEach((dataset) => {
+    const depth = depthByDatasetId.get(dataset.id) ?? 0;
+    groups.set(depth, [...(groups.get(depth) ?? []), dataset]);
+  });
+  return Array.from(groups.entries())
+    .sort(([leftDepth], [rightDepth]) => leftDepth - rightDepth)
+    .map(([, group]) => group);
 }
 
-function getLayerTone(layer: CatalogDataset["layer"]): LineageTableNodeData["tone"] {
+function getMaxColumnCount(datasets: LineageGraphDataset[]): number {
+  return Math.max(...datasets.map((dataset) => dataset.columns.length), 1);
+}
+
+function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): LineageTableNodeData["handleMode"] {
+  if (hasIncoming && hasOutgoing) return "both";
+  if (hasIncoming) return "target";
+  return "source";
+}
+
+function getLineageLayerLabel(layer: LineageLayer): string {
+  if (layer === "SOURCE") return "SOURCE";
+  if (layer === "CONSUMER") return "CONSUMER";
+  return `${layer} LAYER`;
+}
+
+function getLayerTone(layer: LineageLayer): LineageTableNodeData["tone"] {
   if (layer === "GOLD") return "gold";
   if (layer === "SILVER") return "silver";
   if (layer === "BRONZE") return "bronze";
+  if (layer === "CONSUMER") return "downstream";
   return "source";
 }
 
@@ -865,17 +943,16 @@ function getColumnTypeTone(type: string): string {
   return "string";
 }
 
-function isRawSource(value: string): boolean {
-  const lower = value.toLowerCase();
-  return lower.includes("postgres") || lower.includes("kafka") || lower.includes("s3") || lower.includes("raw");
+function lineageHandleId(datasetId: string, columnName: string, kind: "source" | "target"): string {
+  return `${kind}-col:${datasetId}:${columnName}`;
 }
 
-function lineageHandleId(columnId: string, position: "left" | "right"): string {
-  return `${columnId}-${position}`;
+function lineageColumnKey(datasetId: string, columnId: string): string {
+  return `${datasetId}::${columnId}`;
 }
 
-function normalizeLineageId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "column";
+function lineageEdgeId(edge: LineageGraph["edges"][number]): string {
+  return `${edge.fromDatasetId}::${edge.fromColumnId}->${edge.toDatasetId}::${edge.toColumnId}`;
 }
 
 function CatalogLineageMini({ dataset }: { dataset: CatalogDataset }) {
