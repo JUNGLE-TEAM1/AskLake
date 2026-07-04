@@ -319,13 +319,12 @@ export function CatalogDetailPage({
 
 export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
   const statusMeta = datasetStatusMeta[dataset.status];
-  const statusClass = dataset.status === "approval_required" ? statusMeta.className : dataset.freshness === "stale" ? "stale" : statusMeta.className;
 
   return (
-    <span className={`dataset-status-badge ${statusClass}`}>
-      {dataset.rag && <span>RAG</span>}
-      {statusMeta.label}
-    </span>
+    <>
+      {dataset.rag && <span className="dataset-rag-badge">RAG</span>}
+      <span className={`dataset-status-badge ${statusMeta.className}`}>{statusMeta.label}</span>
+    </>
   );
 }
 

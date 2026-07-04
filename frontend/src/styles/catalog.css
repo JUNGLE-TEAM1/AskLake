@@ -195,6 +195,7 @@
   font-weight: 700;
 }
 
+.dataset-rag-badge,
 .dataset-status-badge {
   display: inline-flex;
   min-height: 20px;
@@ -206,9 +207,9 @@
   padding: 4px 8px;
 }
 
-.dataset-status-badge span {
-  color: inherit;
-  font-size: 10px;
+.dataset-rag-badge {
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .dataset-status-badge.available {
@@ -219,11 +220,6 @@
 .dataset-status-badge.approval {
   background: #fff7ed;
   color: #c2410c;
-}
-
-.dataset-status-badge.stale {
-  background: #f1f5f9;
-  color: #64748b;
 }
 
 .catalog-preview-panel {
