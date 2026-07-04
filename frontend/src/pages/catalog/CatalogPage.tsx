@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
-import type { ELK, ElkExtendedEdge, ElkNode } from "elkjs/lib/elk-api";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -40,6 +39,7 @@ import type { AuditResult, CatalogDataset } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
+  baseId: string;
   id: string;
   name: string;
   type: string;
@@ -48,7 +48,10 @@ type LineageColumn = {
 type LineageTableNodeData = Record<string, unknown> & {
   columns: LineageColumn[];
   engine: string;
+  handleMode: "source" | "target" | "both";
   layerLabel: string;
+  onColumnSelect: (columnId: string | null) => void;
+  selectedColumnId: string | null;
   tableName: string;
   tone: "source" | "bronze" | "silver" | "gold" | "downstream";
 };
@@ -63,10 +66,10 @@ type CatalogFilterState = {
   rag: boolean;
 };
 
-let lineageLayoutPromise: Promise<ELK> | null = null;
 const lineageNodeWidth = 306;
 const lineageNodeHeaderHeight = 90;
 const lineageColumnRowHeight = 46;
+const lineageGroupGap = 36;
 
 function normalizeCatalogText(value: string) {
   return value.trim().toLowerCase();
@@ -554,19 +557,13 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
-  const [graph, setGraph] = useState<{ edges: Edge[]; nodes: Node[] } | null>(null);
+  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
+  const { edges, nodes } = buildLineageGraph(dataset, selectedColumnId, setSelectedColumnId);
   const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
-    let isMounted = true;
-    setGraph(null);
-    layoutLineageGraph(dataset).then((nextGraph) => {
-      if (isMounted) setGraph(nextGraph);
-    });
-    return () => {
-      isMounted = false;
-    };
-  }, [dataset]);
+    setSelectedColumnId(null);
+  }, [dataset.id]);
 
   return (
     <section className="catalog-lineage-card">
@@ -578,25 +575,20 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
         </div>
       </div>
       <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
-        {graph ? (
-          <ReactFlow
-            edges={graph.edges}
-            fitView
-            fitViewOptions={{ padding: 0.12 }}
-            maxZoom={1.35}
-            minZoom={0.25}
-            nodes={graph.nodes}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            nodeTypes={lineageNodeTypes}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#d5dde8" gap={22} />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        ) : (
-          <div className="catalog-lineage-loading">리니지 레이아웃 계산 중...</div>
-        )}
+        <ReactFlow
+          edges={edges}
+          maxZoom={1.1}
+          minZoom={0.35}
+          nodes={nodes}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          nodeTypes={lineageNodeTypes}
+          onPaneClick={() => setSelectedColumnId(null)}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background color="#d5dde8" gap={22} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
       </div>
       <div className="catalog-lineage-footer">
         <span>Upstream <strong>{dataset.upstream.length} Datasets</strong></span>
@@ -607,66 +599,60 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
-async function layoutLineageGraph(dataset: CatalogDataset): Promise<{ edges: Edge[]; nodes: Node[] }> {
-  const graph = buildLineageGraph(dataset);
-  const layout = await getLineageLayout();
-  const layoutGraph: ElkNode = {
-    id: "catalog-lineage",
-    children: graph.nodes.map((node) => ({
-      id: node.id,
-      width: lineageNodeWidth,
-      height: getLineageNodeHeight(node),
-    })),
-    edges: buildLayoutEdges(graph.nodes, dataset),
-    layoutOptions: {
-      "elk.algorithm": "layered",
-      "elk.direction": "RIGHT",
-      "elk.edgeRouting": "ORTHOGONAL",
-      "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "150",
-      "elk.spacing.nodeNode": "44",
-    },
-  };
-  const layouted = await layout.layout(layoutGraph);
-  const layoutById = new Map((layouted.children ?? []).map((node) => [node.id, node]));
-
-  return {
-    edges: graph.edges,
-    nodes: graph.nodes.map((node) => {
-      const layoutNode = layoutById.get(node.id);
-      return {
-        ...node,
-        position: {
-          x: layoutNode?.x ?? node.position.x,
-          y: layoutNode?.y ?? node.position.y,
-        },
-      };
-    }),
-  };
-}
-
-function getLineageLayout(): Promise<ELK> {
-  if (!lineageLayoutPromise) {
-    lineageLayoutPromise = import("elkjs/lib/elk.bundled.js").then(({ default: Elk }) => new Elk());
-  }
-  return lineageLayoutPromise;
-}
-
-function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Node[] } {
+function buildLineageGraph(
+  dataset: CatalogDataset,
+  selectedColumnId: string | null,
+  onColumnSelect: (columnId: string | null) => void,
+): { edges: Edge[]; nodes: Node[] } {
   const primaryColumns = buildLineageColumns(dataset.schema);
+  const rawItems = dataset.upstream.filter((item) => isRawSource(item));
+  const transformItems = dataset.upstream.filter((item) => !isRawSource(item));
+  const hasTransformStage = transformItems.length > 0;
+  const hasRawStage = rawItems.length > 0;
+  const rawHeight = getLineageStackHeight(rawItems.length, primaryColumns.length);
+  const transformHeight = getLineageStackHeight(transformItems.length, primaryColumns.length);
+  const currentHeight = getLineageTableHeight(primaryColumns.length);
+  const graphHeight = Math.max(rawHeight, transformHeight, currentHeight);
+  const rawStartY = (graphHeight - rawHeight) / 2;
+  const transformStartY = (graphHeight - transformHeight) / 2;
+  const currentY = (graphHeight - currentHeight) / 2;
+  const sourceX = hasTransformStage ? 20 : 390;
+  const transformX = 410;
+  const currentX = 800;
 
-  const upstreamNodes: Node<LineageTableNodeData>[] = dataset.upstream.map((item, index) => {
+  const rawNodes: Node<LineageTableNodeData>[] = rawItems.map((item, index) => {
     const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
     return {
       data: {
         columns: buildSourceColumns(primaryColumns, item, index),
         engine: sourceMeta.engine,
+        handleMode: "source",
         layerLabel: sourceMeta.layerLabel,
+        onColumnSelect,
+        selectedColumnId,
         tableName: getLineageTableName(item),
         tone: sourceMeta.tone,
       },
-      id: `upstream-${index}`,
-      position: { x: 0, y: 0 },
+      id: `raw-source-${index}`,
+      position: { x: sourceX, y: rawStartY + getLineageStackOffset(index, primaryColumns.length) },
+      type: "lineageTable",
+    };
+  });
+  const transformNodes: Node<LineageTableNodeData>[] = transformItems.map((item, index) => {
+    const sourceMeta = getLineageSourceMeta(item, dataset.layer, index);
+    return {
+      data: {
+        columns: buildSourceColumns(primaryColumns, item, index + rawItems.length),
+        engine: sourceMeta.engine,
+        handleMode: hasRawStage ? "both" : "source",
+        layerLabel: sourceMeta.layerLabel,
+        onColumnSelect,
+        selectedColumnId,
+        tableName: getLineageTableName(item),
+        tone: sourceMeta.tone,
+      },
+      id: `upstream-transform-${index}`,
+      position: { x: transformX, y: transformStartY + getLineageStackOffset(index, primaryColumns.length) },
       type: "lineageTable",
     };
   });
@@ -674,87 +660,74 @@ function buildLineageGraph(dataset: CatalogDataset): { edges: Edge[]; nodes: Nod
     data: {
       columns: primaryColumns,
       engine: "ICEBERG",
+      handleMode: "target",
       layerLabel: `${dataset.layer} LAYER`,
+      onColumnSelect,
+      selectedColumnId,
       tableName: dataset.name,
       tone: getLayerTone(dataset.layer),
     },
     id: "current-dataset",
-    position: { x: 0, y: 0 },
+    position: { x: currentX, y: currentY },
     type: "lineageTable",
   };
-  const downstreamNodes: Node<LineageTableNodeData>[] = dataset.downstream.map((item, index) => ({
-    data: {
-      columns: primaryColumns,
-      engine: getDownstreamEngine(item),
-      layerLabel: "CONSUMER",
-      tableName: getLineageTableName(item),
-      tone: "downstream",
-    },
-    id: `downstream-${index}`,
-    position: { x: 0, y: 0 },
-    type: "lineageTable",
-  }));
-  const upstreamEdges = upstreamNodes.flatMap((node, nodeIndex) => {
+  const transformInputEdges = hasTransformStage
+    ? rawNodes.flatMap((sourceNode) => transformNodes.flatMap((targetNode) => {
+      const sourceColumns = sourceNode.data.columns as LineageColumn[];
+      const targetColumns = targetNode.data.columns as LineageColumn[];
+      return targetColumns.map((targetColumn, columnIndex) => {
+        const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
+        return buildColumnEdge({
+          active: targetColumn.baseId === selectedColumnId,
+          selected: selectedColumnId !== null,
+          id: `${sourceNode.id}-${sourceColumn.id}-to-${targetNode.id}-${targetColumn.id}`,
+          source: sourceNode.id,
+          sourceHandle: lineageHandleId(sourceColumn.id, "right"),
+          target: targetNode.id,
+          targetHandle: lineageHandleId(targetColumn.id, "left"),
+        });
+      });
+    }))
+    : [];
+  const currentInputNodes = hasTransformStage ? transformNodes : rawNodes;
+  const currentInputEdges = currentInputNodes.flatMap((node) => {
     const sourceColumns = node.data.columns as LineageColumn[];
     return primaryColumns.map((targetColumn, columnIndex) => {
       const sourceColumn = sourceColumns[columnIndex % sourceColumns.length];
       return buildColumnEdge({
+        active: targetColumn.baseId === selectedColumnId,
+        selected: selectedColumnId !== null,
         id: `${node.id}-${sourceColumn.id}-to-current-${targetColumn.id}`,
         source: node.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "out"),
+        sourceHandle: lineageHandleId(sourceColumn.id, "right"),
         target: currentNode.id,
-        targetHandle: lineageHandleId(targetColumn.id, "in"),
-        edgeIndex: nodeIndex + columnIndex,
-      });
-    });
-  });
-  const downstreamEdges = downstreamNodes.flatMap((node, nodeIndex) => {
-    const targetColumns = node.data.columns as LineageColumn[];
-    return primaryColumns.map((sourceColumn, columnIndex) => {
-      const targetColumn = targetColumns[columnIndex % targetColumns.length];
-      return buildColumnEdge({
-        id: `current-${sourceColumn.id}-to-${node.id}-${targetColumn.id}`,
-        source: currentNode.id,
-        sourceHandle: lineageHandleId(sourceColumn.id, "out"),
-        target: node.id,
-        targetHandle: lineageHandleId(targetColumn.id, "in"),
-        edgeIndex: nodeIndex + columnIndex,
+        targetHandle: lineageHandleId(targetColumn.id, "left"),
       });
     });
   });
 
   return {
-    edges: [...upstreamEdges, ...downstreamEdges],
-    nodes: [...upstreamNodes, currentNode, ...downstreamNodes],
+    edges: [...transformInputEdges, ...currentInputEdges],
+    nodes: [...rawNodes, ...transformNodes, currentNode],
   };
 }
 
-function buildLayoutEdges(nodes: Node[], dataset: CatalogDataset): ElkExtendedEdge[] {
-  const currentNode = nodes.find((node) => node.id === "current-dataset");
-  if (!currentNode) return [];
-
-  const upstreamEdges = dataset.upstream.map((_, index) => ({
-    id: `layout-upstream-${index}`,
-    sources: [`upstream-${index}`],
-    targets: [currentNode.id],
-  }));
-  const downstreamEdges = dataset.downstream.map((_, index) => ({
-    id: `layout-downstream-${index}`,
-    sources: [currentNode.id],
-    targets: [`downstream-${index}`],
-  }));
-
-  return [...upstreamEdges, ...downstreamEdges];
+function getLineageStackHeight(nodeCount: number, columnCount: number): number {
+  if (nodeCount === 0) return 0;
+  return nodeCount * getLineageTableHeight(columnCount) + (nodeCount - 1) * lineageGroupGap;
 }
 
-function getLineageNodeHeight(node: Node): number {
-  const columns = (node.data as LineageTableNodeData).columns ?? [];
-  return lineageNodeHeaderHeight + columns.length * lineageColumnRowHeight + 16;
+function getLineageStackOffset(index: number, columnCount: number): number {
+  return index * (getLineageTableHeight(columnCount) + lineageGroupGap);
+}
+
+function getLineageTableHeight(columnCount: number): number {
+  return lineageNodeHeaderHeight + columnCount * lineageColumnRowHeight + 16;
 }
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   return (
-    <article className={`lineage-table-node ${data.tone}`}>
+    <article className={["lineage-table-node", data.tone].join(" ")}>
       <header className="lineage-table-header">
         <div>
           <span>{data.layerLabel}</span>
@@ -763,25 +736,35 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
         <em>{data.engine}</em>
       </header>
       <div className="lineage-table-columns">
-        {data.columns.map((column, index) => (
-          <div className="lineage-column-row" key={column.id}>
-            <Handle
-              className="lineage-column-handle left"
-              id={lineageHandleId(column.id, "in")}
-              position={Position.Left}
-              style={{ top: `${82 + index * 46}px` }}
-              type="target"
-            />
+        {data.columns.map((column) => (
+          <button
+            className={column.baseId === data.selectedColumnId ? "lineage-column-row active" : "lineage-column-row"}
+            key={column.id}
+            onClick={(event) => {
+              event.stopPropagation();
+              data.onColumnSelect(column.baseId);
+            }}
+            type="button"
+          >
+            {(data.handleMode === "target" || data.handleMode === "both") && (
+              <Handle
+                className="lineage-column-handle left target-handle"
+                id={lineageHandleId(column.id, "left")}
+                position={Position.Left}
+                type="target"
+              />
+            )}
             <span>{column.name}</span>
             <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
-            <Handle
-              className="lineage-column-handle right"
-              id={lineageHandleId(column.id, "out")}
-              position={Position.Right}
-              style={{ top: `${82 + index * 46}px` }}
-              type="source"
-            />
-          </div>
+            {(data.handleMode === "source" || data.handleMode === "both") && (
+              <Handle
+                className="lineage-column-handle right source-handle"
+                id={lineageHandleId(column.id, "right")}
+                position={Position.Right}
+                type="source"
+              />
+            )}
+          </button>
         ))}
       </div>
     </article>
@@ -789,28 +772,33 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
 }
 
 function buildColumnEdge({
-  edgeIndex,
+  active,
   id,
+  selected,
   source,
   sourceHandle,
   target,
   targetHandle,
 }: {
-  edgeIndex: number;
+  active: boolean;
   id: string;
+  selected: boolean;
   source: string;
   sourceHandle: string;
   target: string;
   targetHandle: string;
 }): Edge {
   return {
-    animated: edgeIndex % 3 === 0,
-    className: "lineage-column-edge",
+    animated: false,
+    className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
-    markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
+    markerEnd: { color: selected && active ? "#2563eb" : "#94a3b8", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
-    style: { stroke: "#fb923c", strokeDasharray: "6 5", strokeWidth: 2 },
+    style: {
+      stroke: selected && active ? "#2563eb" : "#94a3b8",
+      strokeWidth: selected && active ? 2.4 : 1.5,
+    },
     target,
     targetHandle,
     type: "smoothstep",
@@ -819,6 +807,7 @@ function buildColumnEdge({
 
 function buildLineageColumns(schema: CatalogDataset["schema"]): LineageColumn[] {
   return schema.slice(0, 7).map(([name, type]) => ({
+    baseId: normalizeLineageId(name),
     id: normalizeLineageId(name),
     name,
     type,
@@ -867,14 +856,6 @@ function getLayerTone(layer: CatalogDataset["layer"]): LineageTableNodeData["ton
   return "source";
 }
 
-function getDownstreamEngine(value: string): string {
-  const lower = value.toLowerCase();
-  if (lower.includes("sql")) return "SQL";
-  if (lower.includes("dashboard")) return "BI";
-  if (lower.includes("ai")) return "AI";
-  return "MART";
-}
-
 function getColumnTypeTone(type: string): string {
   const normalized = type.toLowerCase();
   if (["int", "integer", "bigint"].includes(normalized)) return "integer";
@@ -889,8 +870,8 @@ function isRawSource(value: string): boolean {
   return lower.includes("postgres") || lower.includes("kafka") || lower.includes("s3") || lower.includes("raw");
 }
 
-function lineageHandleId(columnId: string, direction: "in" | "out"): string {
-  return `${columnId}-${direction}`;
+function lineageHandleId(columnId: string, position: "left" | "right"): string {
+  return `${columnId}-${position}`;
 }
 
 function normalizeLineageId(value: string): string {

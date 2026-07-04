@@ -96,7 +96,8 @@ type CreateJobResponse = {
 필수 확인:
 
 - `dataset.id`, `dataset.name`, `dataset.schema`, `dataset.sampleRows`, `dataset.rows`, `dataset.size`가 있어야 SQL context를 만들 수 있다.
-- `dataset.upstream`과 `dataset.downstream`이 있으면 Lineage fallback을 만들 수 있다.
+- `dataset.upstream`이 있으면 Catalog lineage modal의 source/upstream -> current fallback을 만들 수 있다.
+- `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 
 ### Pair A -> Pair C
@@ -161,6 +162,7 @@ type LineageContext = {
 ```
 
 Lineage API가 없으면 `CatalogDataset.upstream`과 `CatalogDataset.downstream`으로 fallback context를 만든다.
+현재 Catalog lineage modal은 source/upstream -> current 흐름을 우선 표시하고, downstream 소비처는 별도 영향도 context로 분리할 수 있다.
 
 ### Optional Large-Scale Evidence Extension
 
