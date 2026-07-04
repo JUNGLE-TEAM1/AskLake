@@ -22,7 +22,7 @@ assignees: ""
 
 ## 3. 기대 동작
 
-<!-- Source of Truth 또는 사용자 기대 기준에서 맞아야 하는 동작을 적습니다. -->
+<!-- 사용자 기대 기준에서 맞아야 하는 동작을 적습니다. -->
 
 -
 
@@ -44,46 +44,36 @@ assignees: ""
 - Runtime:
 - 관련 env var:
 
-## 6. 관련 문서 / Source of Truth
-
-- Product Planning:
-- Architecture:
-- API Reference:
-- Development Guide:
-- System Guardrails:
-- API Contract:
-- Backend Readiness:
-
-## 7. 예상 원인 또는 의심 영역
+## 6. 예상 원인 또는 의심 영역
 
 <!-- 추측은 추측이라고 표시합니다. -->
 
 -
 
-## 8. 예상 변경 파일
+## 7. 예상 변경 파일
 
 -
 
-## 9. Acceptance Criteria
+## 8. Acceptance Criteria
 
 - [ ] 버그가 재현 절차에서 더 이상 발생하지 않는다.
 - [ ] 관련 regression guard를 확인했다.
 - [ ] 필요한 manual verification을 완료했다.
 - [ ] 오류 메시지 또는 로그가 개선되었으면 문서/테스트에 반영했다.
 
-## 10. Regression / Failure Scenario
+## 9. Regression / Failure Scenario
 
 - 깨지면 안 되는 기존 동작:
 - 추가해야 할 regression guard:
 - 실패 시 되돌릴 방법 또는 fallback:
 
-## 11. Manual Verification
+## 10. Manual Verification
 
 1.
 2.
 3.
 
-## 12. 영향도
+## 11. 영향도
 
 - [ ] 사용자 기능 차단
 - [ ] data 손상 가능성
@@ -96,7 +86,7 @@ assignees: ""
 
 -
 
-## 13. 참고 링크 / 스크린샷 / 로그
+## 12. 참고 링크 / 스크린샷 / 로그
 
 <!-- secret, token, private key, 개인 정보는 제거하고 붙입니다. -->
 

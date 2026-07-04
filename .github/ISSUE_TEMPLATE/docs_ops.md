@@ -37,40 +37,30 @@ assignees: ""
 
 -
 
-## 5. 관련 문서 / Source of Truth
-
-- Product Planning:
-- Architecture:
-- API Reference:
-- Development Guide:
-- System Guardrails:
-- API Contract:
-- Backend Readiness:
-
-## 6. 예상 변경 파일
+## 5. 예상 변경 파일
 
 -
 
-## 7. Acceptance Criteria
+## 6. Acceptance Criteria
 
 - [ ] 문서 또는 템플릿이 한국어 협업 산출물 규칙을 따른다.
 - [ ] 변경된 절차를 사람이 따라 할 수 있다.
 - [ ] 기존 AskLake 개발 순서와 충돌하지 않는다.
 - [ ] 필요한 경우 관련 downstream 문서를 함께 확인했다.
 
-## 8. Regression / Failure Scenario
+## 7. Regression / Failure Scenario
 
 - 깨지면 안 되는 운영 흐름:
 - 혼선을 만들 수 있는 표현:
 - 확인할 명령 또는 `rg` 검색:
 
-## 9. Manual Verification
+## 8. Manual Verification
 
 1. 변경된 문서 또는 템플릿을 GitHub Markdown 기준으로 읽는다.
 2. 새로 작성하는 사람이 빠뜨릴 수 있는 필수 정보가 질문으로 포함되어 있는지 확인한다.
 3. 하네스 규칙 자체가 의도 없이 변경되지 않았는지 확인한다.
 
-## 10. 영향도
+## 9. 영향도
 
 - [ ] 팀 협업 흐름
 - [ ] PR readiness
@@ -82,10 +72,10 @@ assignees: ""
 
 -
 
-## 11. 필요한 결정 사항
+## 10. 필요한 결정 사항
 
 -
 
-## 12. 참고 링크 / 스크린샷 / 로그
+## 11. 참고 링크 / 스크린샷 / 로그
 
 -
