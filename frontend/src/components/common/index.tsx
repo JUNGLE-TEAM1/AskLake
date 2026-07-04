@@ -50,14 +50,23 @@ export function StatusTile({ label, value, status }: { label: string; value: str
   );
 }
 
-export function RetryPolicy({ onChange, value }: { onChange: (policy: RetryPolicyDraft) => void; value: RetryPolicyDraft }) {
+const DEFAULT_RETRY_POLICY: RetryPolicyDraft = {
+  failureAction: "retry_then_fail",
+  maxRetries: 3,
+  retryIntervalMinutes: 10,
+  timeoutMinutes: 60,
+};
+
+export function RetryPolicy({ onChange, value }: { onChange?: (policy: RetryPolicyDraft) => void; value?: RetryPolicyDraft }) {
+  const retryPolicy = value ?? DEFAULT_RETRY_POLICY;
+  const updatePolicy = onChange ?? (() => {});
   const normalizeNumber = (value: string, fallback: string, min: number, max: number) => {
     const parsed = Number.parseInt(value, 10);
     if (Number.isNaN(parsed)) return fallback;
     return String(Math.min(Math.max(parsed, min), max));
   };
   const updateNumber = (key: "maxRetries" | "retryIntervalMinutes" | "timeoutMinutes", nextValue: string, fallback: string, min: number, max: number) => {
-    onChange({ ...value, [key]: Number(normalizeNumber(nextValue, fallback, min, max)) });
+    updatePolicy({ ...retryPolicy, [key]: Number(normalizeNumber(nextValue, fallback, min, max)) });
   };
   const blockNumberControlText = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (["e", "E", "+", "-", "."].includes(event.key)) {
@@ -78,7 +87,7 @@ export function RetryPolicy({ onChange, value }: { onChange: (policy: RetryPolic
               max="10"
               min="0"
               type="number"
-              value={value.maxRetries}
+              value={retryPolicy.maxRetries}
               onBlur={(event) => updateNumber("maxRetries", event.currentTarget.value, "3", 0, 10)}
               onChange={(event) => updateNumber("maxRetries", event.target.value, "3", 0, 10)}
               onInput={(event) => updateNumber("maxRetries", event.currentTarget.value, "3", 0, 10)}
@@ -96,7 +105,7 @@ export function RetryPolicy({ onChange, value }: { onChange: (policy: RetryPolic
               max="1440"
               min="1"
               type="number"
-              value={value.retryIntervalMinutes}
+              value={retryPolicy.retryIntervalMinutes}
               onBlur={(event) => updateNumber("retryIntervalMinutes", event.currentTarget.value, "10", 1, 1440)}
               onChange={(event) => updateNumber("retryIntervalMinutes", event.target.value, "10", 1, 1440)}
               onInput={(event) => updateNumber("retryIntervalMinutes", event.currentTarget.value, "10", 1, 1440)}
@@ -114,7 +123,7 @@ export function RetryPolicy({ onChange, value }: { onChange: (policy: RetryPolic
               max="1440"
               min="1"
               type="number"
-              value={value.timeoutMinutes}
+              value={retryPolicy.timeoutMinutes}
               onBlur={(event) => updateNumber("timeoutMinutes", event.currentTarget.value, "60", 1, 1440)}
               onChange={(event) => updateNumber("timeoutMinutes", event.target.value, "60", 1, 1440)}
               onInput={(event) => updateNumber("timeoutMinutes", event.currentTarget.value, "60", 1, 1440)}
@@ -125,7 +134,7 @@ export function RetryPolicy({ onChange, value }: { onChange: (policy: RetryPolic
         </label>
         <label className="field wide">
           <span>최종 실패 처리</span>
-          <select className="input control-input" value={value.failureAction} onChange={(event) => onChange({ ...value, failureAction: event.target.value as RetryPolicyDraft["failureAction"] })}>
+          <select className="input control-input" value={retryPolicy.failureAction} onChange={(event) => updatePolicy({ ...retryPolicy, failureAction: event.target.value as RetryPolicyDraft["failureAction"] })}>
             {Object.entries(retryFailureActionLabels).map(([optionValue, label]) => (
               <option key={optionValue} value={optionValue}>{label}</option>
             ))}
