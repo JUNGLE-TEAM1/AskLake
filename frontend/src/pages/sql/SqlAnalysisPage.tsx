@@ -36,7 +36,12 @@ export function SqlAnalysisPage({
   const [query, setQuery] = useState(defaultQuery);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
+  const lineNumbers = useMemo(() => {
+    const lineCount = Math.max(query.split("\n").length, 7);
+    return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  }, [query]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
     const contextDatasets = datasets.filter((item) => {
@@ -98,6 +103,11 @@ export function SqlAnalysisPage({
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     resetResultState();
+  };
+
+  const syncLineNumberScroll = () => {
+    if (!textareaRef.current || !lineNumberRef.current) return;
+    lineNumberRef.current.scrollTop = textareaRef.current.scrollTop;
   };
 
   const executeQuery = async () => {
@@ -327,8 +337,8 @@ export function SqlAnalysisPage({
           </div>
           <div className="sql-editor-layout">
             <div className="sql-editor-surface">
-              <pre aria-hidden="true">1{`\n`}2{`\n`}3{`\n`}4{`\n`}5{`\n`}6{`\n`}7</pre>
-              <textarea ref={textareaRef} value={query} onChange={(event) => updateQuery(event.target.value)} spellCheck={false} />
+              <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
+              <textarea ref={textareaRef} value={query} onChange={(event) => updateQuery(event.target.value)} onScroll={syncLineNumberScroll} spellCheck={false} />
             </div>
             {tableCompletion && (
               <div className="sql-table-completion">
