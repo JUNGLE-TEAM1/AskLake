@@ -1,5 +1,5 @@
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
-import type { SavedDashboardCard } from "../DashboardParts";
+import type { SavedDashboardCard } from "../dashboardListData";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 
 export function DashboardTable({

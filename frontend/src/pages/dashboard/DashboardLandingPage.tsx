@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import type { SavedDashboardCard } from "./DashboardParts";
+import type { SavedDashboardCard } from "./dashboardListData";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
 import { DashboardTable } from "./components/DashboardTable";

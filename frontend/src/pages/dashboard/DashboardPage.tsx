@@ -16,10 +16,11 @@ import {
   DashboardFooterMeta,
   DashboardWidgetPreview,
   DashboardWorkspaceHeader,
-  defaultDashboardCards,
 } from "./DashboardParts";
 import { DashboardLandingPage } from "./DashboardLandingPage";
-import type { ExpandedChart, SavedDashboardCard } from "./DashboardParts";
+import type { ExpandedChart } from "./DashboardParts";
+import { defaultDashboardCards } from "./dashboardListData";
+import type { SavedDashboardCard } from "./dashboardListData";
 import {
   filterAndSortDashboardCards,
   formatDashboardTimestamp,

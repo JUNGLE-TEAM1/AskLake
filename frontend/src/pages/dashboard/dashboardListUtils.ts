@@ -1,5 +1,5 @@
-import { defaultDashboardCards } from "./DashboardParts";
-import type { SavedDashboardCard } from "./DashboardParts";
+import { defaultDashboardCards } from "./dashboardListData";
+import type { SavedDashboardCard } from "./dashboardListData";
 import { normalizeDashboardStatus } from "../../utils/statusMeta";
 
 export type DashboardListControl = "owner" | "tag" | "sort";
