@@ -35,6 +35,8 @@ import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../compon
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
 
+type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
+
 export function SchedulePage({
   draftScheduleLabel,
   mode,
@@ -53,17 +55,20 @@ export function SchedulePage({
   onSave: () => void;
 }) {
   const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
+  const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(initialRepeat.frequency);
   const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
+  const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
+  const [customCron, setCustomCron] = useState(initialRepeat.cron);
   const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
-  const scheduleLabel = formatScheduleLabel(mode, repeatDay, repeatTime, onceDateTime);
+  const scheduleLabel = formatScheduleLabel(mode, { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime);
   const applyScheduleDraft = () => {
     onDraftChange({ scheduleLabel });
   };
   const selectMode = (nextMode: ScheduleFlowId) => {
-    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDay, repeatTime, onceDateTime) });
+    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
     onModeChange(nextMode);
   };
   const goNext = () => {
@@ -91,17 +96,26 @@ export function SchedulePage({
             <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings selectedDay={repeatDay} time={repeatTime} onDayChange={(day) => {
+        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
+          setCustomCron(cron);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+        }} onDayChange={(day) => {
           setRepeatDay(day);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", day, repeatTime, onceDateTime) });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+        }} onFrequencyChange={(frequency) => {
+          setRepeatFrequency(frequency);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+        }} onMinuteChange={(minute) => {
+          setRepeatMinute(minute);
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", repeatDay, time, onceDateTime) });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
         }} />}
         {mode === "manual" && <ManualSettings />}
         {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDay, repeatTime, dateTime) });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
         }} />}
     </CreationFlowLayout>
   );
@@ -120,12 +134,23 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
 
 const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
+const DEFAULT_REPEAT_MINUTE = "00";
+const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
 const DEFAULT_ONCE_DATE_TIME = "2026.07.05 10:00";
+const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
+  hourly: "매시간",
+  daily: "매일",
+  weekly: "매주",
+  custom: "커스텀",
+};
 
-function formatScheduleLabel(mode: ScheduleFlowId, repeatDay: string, repeatTime: string, onceDateTime: string) {
+function formatScheduleLabel(mode: ScheduleFlowId, repeat: { cron: string; day: string; frequency: RepeatFrequency; minute: string; time: string }, onceDateTime: string) {
   if (mode === "manual") return "수동 실행";
   if (mode === "once") return `${onceDateTime.trim() || DEFAULT_ONCE_DATE_TIME} 1회 실행`;
-  return `매주 ${repeatDay || DEFAULT_REPEAT_DAY}요일 ${repeatTime || DEFAULT_REPEAT_TIME}`;
+  if (repeat.frequency === "hourly") return `매시간 ${repeat.minute || DEFAULT_REPEAT_MINUTE}분`;
+  if (repeat.frequency === "daily") return `매일 ${repeat.time || DEFAULT_REPEAT_TIME}`;
+  if (repeat.frequency === "custom") return `커스텀: ${repeat.cron.trim() || DEFAULT_CUSTOM_CRON}`;
+  return `매주 ${repeat.day || DEFAULT_REPEAT_DAY}요일 ${repeat.time || DEFAULT_REPEAT_TIME}`;
 }
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
@@ -140,10 +165,18 @@ function parseOnceScheduleLabel(label: string) {
 }
 
 function parseRepeatScheduleLabel(label: string) {
-  const match = label.match(/매주\s+(.+?)요일\s+(.+)$/);
+  const weeklyMatch = label.match(/매주\s+(.+?)요일\s+(.+)$/);
+  const dailyMatch = label.match(/매일\s+(.+)$/);
+  const hourlyMatch = label.match(/매시간\s+(.+?)분$/);
+  const customMatch = label.match(/^커스텀:\s*(.+)$/);
+  const frequency: RepeatFrequency = customMatch ? "custom" : hourlyMatch ? "hourly" : dailyMatch ? "daily" : "weekly";
+
   return {
-    day: match?.[1] ?? DEFAULT_REPEAT_DAY,
-    time: match?.[2] ?? DEFAULT_REPEAT_TIME,
+    cron: customMatch?.[1] ?? DEFAULT_CUSTOM_CRON,
+    day: weeklyMatch?.[1] ?? DEFAULT_REPEAT_DAY,
+    frequency,
+    minute: hourlyMatch?.[1] ?? DEFAULT_REPEAT_MINUTE,
+    time: weeklyMatch?.[2] ?? dailyMatch?.[1] ?? DEFAULT_REPEAT_TIME,
   };
 }
 
@@ -868,16 +901,37 @@ export function RuleApplicationPage({
 }
 
 function RepeatSettings({
+  customCron,
+  frequency,
+  minute,
+  onCronChange,
   onDayChange,
+  onFrequencyChange,
+  onMinuteChange,
   onTimeChange,
   selectedDay,
   time,
 }: {
+  customCron: string;
+  frequency: RepeatFrequency;
+  minute: string;
+  onCronChange: (cron: string) => void;
   onDayChange: (day: string) => void;
+  onFrequencyChange: (frequency: RepeatFrequency) => void;
+  onMinuteChange: (minute: string) => void;
   onTimeChange: (time: string) => void;
   selectedDay: string;
   time: string;
 }) {
+  const preview =
+    frequency === "hourly"
+      ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.04 11:${minute}`
+      : frequency === "daily"
+        ? `매일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.05 ${time}`
+        : frequency === "custom"
+          ? `커스텀 cron(${customCron}) 규칙으로 실행됩니다. 저장 전에 표현식을 검증해야 합니다.`
+          : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.09 ${time}`;
+
   return (
     <section className="panel">
       <div className="panel-header">
@@ -885,26 +939,59 @@ function RepeatSettings({
         <h2>반복 실행 상세 설정</h2>
       </div>
       <div className="form-grid">
-        <Field label="반복 주기" value="매주" />
-        <div className="field wide">
-          <span>실행 요일</span>
-          <div className="weekday-group">
-            {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
-              <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
-                {day}
-              </button>
-            ))}
-          </div>
-        </div>
         <label className="field">
-          <span>실행 시간</span>
-          <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+          <span>반복 주기</span>
+          <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+            {Object.entries(repeatFrequencyLabels).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
         </label>
+        {frequency === "hourly" && (
+          <label className="field">
+            <span>실행 분</span>
+            <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+              {["00", "15", "30", "45"].map((value) => (
+                <option key={value} value={value}>{value}분</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {frequency === "daily" && (
+          <label className="field">
+            <span>실행 시간</span>
+            <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+          </label>
+        )}
+        {frequency === "weekly" && (
+          <div className="field wide">
+            <span>실행 요일</span>
+            <div className="weekday-group">
+              {["월", "화", "수", "목", "금", "토", "일"].map((day) => (
+                <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
+                  {day}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {frequency === "weekly" && (
+          <label className="field">
+            <span>실행 시간</span>
+            <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
+          </label>
+        )}
+        {frequency === "custom" && (
+          <label className="field wide">
+            <span>Cron 표현식</span>
+            <input className="input control-input" value={customCron} onChange={(event) => onCronChange(event.target.value)} />
+          </label>
+        )}
         <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
         <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
         <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
       </div>
-      <InfoBox title="실행 미리보기" body={`매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.09 ${time}`} />
+      <InfoBox title="실행 미리보기" body={preview} />
       <label className="policy-check-row">
         <input type="checkbox" defaultChecked />
         <span>
