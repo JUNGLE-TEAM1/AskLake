@@ -129,7 +129,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     ...audit,
     job: {
       ...job,
-      status: "scheduled",
+      status: "canceled",
       lastRun: "방금 취소",
       lastState: "취소됨",
       nextRun: job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
