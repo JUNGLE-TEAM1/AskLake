@@ -60,7 +60,7 @@ Slice 소유권:
 | `schema` | Pair A 1번 | columns, sample rows, schema summary, schema fingerprint |
 | `transform` | Pair A 2번 | transform steps, output columns, transform summary |
 | `quality` | Pair A 2번 | quality rules, score/status, invalid row preview, quality summary |
-| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run |
+| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run, retry policy |
 | `permission` | Pair A 2번 | owner, permission summary |
 | `target` | Pair A 2번 | target dataset, layer, format, RAG flag |
 
@@ -76,6 +76,13 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  retryPolicy: {
+    maxRetries: number;
+    retryIntervalMinutes: number;
+    timeoutMinutes: number;
+    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  };
+  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -337,6 +344,13 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  retryPolicy: {
+    maxRetries: number;
+    retryIntervalMinutes: number;
+    timeoutMinutes: number;
+    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  };
+  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -362,6 +376,13 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
+  "retryPolicy": {
+    "maxRetries": 3,
+    "retryIntervalMinutes": 10,
+    "timeoutMinutes": 60,
+    "failureAction": "retry_then_fail"
+  },
+  "retryPolicySummary": "3회 재시도 · 10분 간격 · 60분 제한 · 재시도 후 실패 처리",
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",

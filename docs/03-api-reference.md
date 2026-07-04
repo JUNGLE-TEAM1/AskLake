@@ -196,6 +196,7 @@ Pair A의 생성 flow는 A0 공동 계약을 먼저 따른다.
 
 - Frontend wizard state: `DraftPipeline = { source, schema, transform, quality, schedule, permission, target }`
 - Submit request: `CreatePipelineRequest`
+- Schedule submit fields include `scheduleLabel`, `retryPolicy`, and `retryPolicySummary`.
 - Mapper: `frontend/src/services/draftPipelineContract.ts`
 - Response: `{ job, dataset }`
 
