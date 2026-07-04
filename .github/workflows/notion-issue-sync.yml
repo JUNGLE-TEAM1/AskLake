@@ -1,0 +1,59 @@
+name: Notion Issue Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Log the planned sync without writing to GitHub or Notion"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "*/5 * * * *"
+  issues:
+    types:
+      - opened
+      - edited
+      - closed
+      - reopened
+      - assigned
+      - unassigned
+      - labeled
+      - unlabeled
+      - deleted
+  repository_dispatch:
+    types:
+      - notion-issue-sync
+
+permissions:
+  contents: read
+  issues: write
+  repository-projects: write
+
+concurrency:
+  group: notion-issue-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync GitHub Project issues and Notion board
+        uses: actions/github-script@v7
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          GITHUB_PROJECT_OWNER: JUNGLE-TEAM1
+          GITHUB_PROJECT_NUMBER: "3"
+          GITHUB_PROJECT_STATUS_FIELD: Status
+          NOTION_PROJECT_STATUS_PROPERTY: Project Status
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        with:
+          github-token: ${{ secrets.ISSUE_SYNC_PAT || github.token }}
+          script: |
+            const sync = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/notion-issue-sync.js`);
+            await sync({ github, context, core });
