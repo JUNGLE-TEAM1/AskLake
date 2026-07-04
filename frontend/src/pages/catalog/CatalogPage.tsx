@@ -445,8 +445,8 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
           <ReactFlow
             edges={edges}
             fitView
-            fitViewOptions={{ maxZoom: 0.92, padding: 0.18 }}
-            maxZoom={1.1}
+            fitViewOptions={{ maxZoom: 0.9, padding: 0.2 }}
+            maxZoom={1}
             minZoom={0.35}
             nodes={nodes}
             nodesDraggable={false}
@@ -512,7 +512,7 @@ function buildLineageGraph(
         },
         id: lineageDataset.id,
         position: {
-          x: groupIndex * 420 + 20,
+          x: groupIndex * 315 + 20,
           y: groupStartY + getLineageStackOffset(itemIndex, lineageDataset.columns.length),
         },
         type: "lineageTable",
