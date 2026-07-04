@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type React from "react";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
-import type { Edge, Node } from "@xyflow/react";
+import { Background, BaseEdge, Controls, Handle, MarkerType, Position, ReactFlow } from "@xyflow/react";
+import type { Edge, EdgeProps, Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -53,6 +53,10 @@ type LineageTableNodeData = Record<string, unknown> & {
 
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
+};
+
+const lineageEdgeTypes = {
+  lineageColumn: LineageColumnEdge,
 };
 
 const lineageNodeWidth = 306;
@@ -418,6 +422,7 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
           nodes={nodes}
           nodesDraggable={false}
           nodesConnectable={false}
+          edgeTypes={lineageEdgeTypes}
           nodeTypes={lineageNodeTypes}
           proOptions={{ hideAttribution: true }}
         >
@@ -568,6 +573,28 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   );
 }
 
+function LineageColumnEdge({
+  id,
+  markerEnd,
+  sourceX,
+  sourceY,
+  style,
+  targetX,
+  targetY,
+}: EdgeProps) {
+  const direction = targetX >= sourceX ? 1 : -1;
+  const horizontalDistance = Math.abs(targetX - sourceX);
+  const controlOffset = Math.max(110, horizontalDistance * 0.52);
+  const path = [
+    `M ${sourceX},${sourceY}`,
+    `C ${sourceX + controlOffset * direction},${sourceY}`,
+    `${targetX - controlOffset * direction},${targetY}`,
+    `${targetX},${targetY}`,
+  ].join(" ");
+
+  return <BaseEdge id={id} markerEnd={markerEnd} path={path} style={style} />;
+}
+
 function buildColumnEdge({
   id,
   source,
@@ -591,7 +618,7 @@ function buildColumnEdge({
     style: { stroke: "#fb923c", strokeDasharray: "6 5", strokeWidth: 2 },
     target,
     targetHandle,
-    type: "straight",
+    type: "lineageColumn",
   };
 }
 
