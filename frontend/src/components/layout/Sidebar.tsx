@@ -1,5 +1,5 @@
 import { CircleUser } from "lucide-react";
-import { navItems } from "../../data/mockData";
+import { navItems } from "../../data/appShellData";
 import type { NavId, NavItem } from "../../types";
 
 export function Sidebar({ activeNavId, onAccount, onNavigate }: { activeNavId: NavId; onAccount: () => void; onNavigate: (item: NavItem) => void }) {

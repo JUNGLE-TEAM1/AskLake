@@ -1,5 +1,5 @@
 import { Check, CircleUser, RefreshCw, Search } from "lucide-react";
-import { navItems, steps } from "../../data/mockData";
+import { navItems, steps } from "../../data/appShellData";
 import type { NavId, NavItem } from "../../types";
 
 export function Stepper({ activeIndex }: { activeIndex: number }) {

@@ -1,90 +1,102 @@
 # 03. API Reference
 
-이 문서는 AskLake API/interface 계약의 상위 진입점이다.
-상세 request/response shape는 기존 문서인 `docs/api-contract.md`를 기준으로 한다.
-백엔드 연결 순서와 mock 제거 계획은 `docs/backend-integration-readiness.md`를 기준으로 한다.
+Base URL is configured by `VITE_API_BASE_URL`, usually `http://localhost:8080`.
 
-## 1) 현재 상태
+All request and response bodies are JSON unless a source system returns a sampled payload internally to the backend connector.
 
-- 현재 앱은 frontend-only baseline이다.
-- `frontend/src/services/mockApi.ts`가 mock/live 전환 지점이다.
-- `frontend/src/services/apiClient.ts`가 live API 호출 wrapper다.
-- `VITE_USE_MOCK_API=false`일 때 P0 API는 실제 backend로 호출된다.
+## 1. Implemented Endpoints
 
-## 2) 환경 변수
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Backend health check |
+| `GET` | `/api/etl/jobs` | Hydrate ETL jobs; starts as `[]` |
+| `GET` | `/api/catalog/datasets` | Hydrate catalog datasets; starts as `[]` |
+| `GET` | `/api/harness/rest-sample` | Local REST fixture endpoint |
+| `POST` | `/api/etl/sources/test` | Test source connector and return bounded sample/schema draft patch |
+| `POST` | `/api/etl/schema-inference` | Return schema portion from source profiling |
+| `POST` | `/api/etl/jobs` | Create pipeline and return `{ job, dataset }` |
+| `POST` | `/api/etl/jobs/{jobId}/commands` | Run, retry, pause, or cancel a job |
+| `POST` | `/api/query/runs` | Return read result for a selected dataset |
 
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
+## 2. Source Test Request
+
+```ts
+type SourceTestRequest = {
+  sourceType: "File / S3" | "REST API" | "PostgreSQL" | "MongoDB" | "Data Lake" | "Stream / Kafka";
+  sourceConfig: Array<[string, string]>;
+};
 ```
 
-## 3) 공통 규칙
+Response:
 
-- Base Path: `/api`
-- Body format: JSON
-- Response format: JSON
-- ID type: opaque string
-- Time format: ISO 8601 string
-- Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
-- Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
+```ts
+type SourceTestResponse = {
+  status: "success" | "error";
+  title: string;
+  description: string;
+  nextAction: string;
+  assets: string[];
+  preview: string;
+  logs: string[];
+  draftPatch: {
+    source?: Partial<SourceDraft>;
+    schema?: Partial<SchemaDraft>;
+  };
+};
+```
 
-## 4) P0 API
+## 3. Create Pipeline Contract
 
-| Method | Endpoint | Auth | 설명 | 상세 문서 |
-| --- | --- | --- | --- | --- |
-| `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
-| `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 취소 | `docs/api-contract.md` |
-| `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
+Submit uses `frontend/src/services/draftPipelineContract.ts` to convert nested `DraftPipeline` into flat `CreatePipelineRequest`.
 
-## 5) P1 API
+Required person-1 fields:
 
-| Method | Endpoint | Auth | 설명 | 상세 문서 |
-| --- | --- | --- | --- | --- |
-| `GET` | `/api/etl/jobs` | TBD | job 목록 hydrate | `docs/backend-integration-readiness.md` |
-| `GET` | `/api/etl/jobs/{jobId}` | TBD | job 상세 hydrate | `docs/backend-integration-readiness.md` |
-| `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
-| `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
+- `sourceType`
+- `sourceLabel`
+- `sourceConfig`
+- `schemaColumns`
+- `schemaSampleRows`
+- `schemaFingerprint`
+- `schemaSummary`
 
-## 6) P2 / 확장 API
+Response:
 
-| Method | Endpoint | 설명 |
-| --- | --- | --- |
-| `POST` | `/api/dashboards` | dashboard draft 생성 |
-| `PATCH` | `/api/dashboards/{dashboardId}` | dashboard 저장 |
-| `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
-| `POST` | `/api/audit-logs` | audit log 서버 저장 |
+```ts
+type CreateJobResponse = {
+  job: JobRowData;
+  dataset: CatalogDataset;
+};
+```
 
-## 7) 화면별 데이터 계약
+After success the frontend prepends `job` and `dataset` and updates `selectedJob` and `selectedDataset`.
 
-| 화면 | 현재 데이터 | Future API |
-| --- | --- | --- |
-| 수집/처리 목록 | `etlJobs` mock | `GET /api/etl/jobs` |
-| 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
-| 생성 flow | A0 nested `DraftPipeline` state -> flat `CreatePipelineRequest` mapper | `POST /api/etl/jobs` |
-| 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
-| 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
-| SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
-| 대시보드 | local builder state | dashboard APIs |
-| 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
+## 4. Job Command Contract
 
-## 8) 변경 규칙
+```ts
+type JobCommandRequest = {
+  command: "run" | "retry" | "pause" | "cancel";
+};
+```
 
-- Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
-- Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
-- Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
+Response includes:
 
-## 9) Pair A A0 계약
+- `action`
+- `apiPath`
+- updated `job`
+- `run`
+- `dagSteps`
 
-Pair A의 생성 flow는 A0 공동 계약을 먼저 따른다.
+Pair A person-2 owns full run/history/DAG behavior.
 
-- Frontend wizard state: `DraftPipeline = { source, schema, transform, quality, schedule, permission, target }`
-- Submit request: `CreatePipelineRequest`
-- Schedule submit fields include `scheduleLabel`, `retryPolicy`, and `retryPolicySummary`.
-- Mapper: `frontend/src/services/draftPipelineContract.ts`
-- Response: `{ job, dataset }`
+## 5. Error Envelope
 
-1번 사람은 `source`, `schema`, create submit, `{ job, dataset }` mapper 결과 반영, `jobs/datasets` prepend, `selectedJob/selectedDataset` 갱신을 책임진다.
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "field is required"
+  }
+}
+```
 
-2번 사람은 `transform`, `quality`, `schedule`, `permission`, `target` 값을 책임진다.
-
-API가 준비되지 않아도 mock/live는 같은 `CreatePipelineRequest`와 `{ job, dataset }` shape를 써야 한다.
+Frontend should show the message to the user and preserve the previous stable state when a write fails.

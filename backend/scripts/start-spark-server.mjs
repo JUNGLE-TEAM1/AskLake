@@ -1,0 +1,114 @@
+import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const image = process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1";
+const network = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
+const masterName = process.env.ASKLAKE_SPARK_MASTER_CONTAINER || "asklake-spark-master";
+const workerName = process.env.ASKLAKE_SPARK_WORKER_CONTAINER || "asklake-spark-worker";
+const publishUi = process.env.ASKLAKE_SPARK_PUBLISH_UI !== "false";
+const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
+const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
+mkdirSync(sampleHostDir, { recursive: true });
+
+ensureMaster();
+ensureWorker();
+console.log("Spark standalone server ready: spark://asklake-spark-master:7077");
+console.log("Spark master UI: http://127.0.0.1:18080");
+console.log("Spark worker UI: http://127.0.0.1:18081");
+console.log(`Spark sample mount: ${sampleHostDir} -> ${sampleContainerDir}`);
+
+function ensureMaster() {
+  if (containerNeedsCreate(masterName)) {
+    run("docker", createMasterArgs());
+  } else {
+    run("docker", ["start", masterName], { allowFailure: true });
+  }
+}
+
+function ensureWorker() {
+  if (containerNeedsCreate(workerName)) {
+    run("docker", createWorkerArgs());
+  } else {
+    run("docker", ["start", workerName], { allowFailure: true });
+  }
+}
+
+function createMasterArgs() {
+  return [
+      "run",
+      "-d",
+      "--name",
+      masterName,
+      "--network",
+      network,
+      "--label",
+      "asklake.role=spark-master",
+      ...sampleMountArgs(),
+      ...uiPortArgs("18080", "8080"),
+      image,
+      "/opt/spark/bin/spark-class",
+      "org.apache.spark.deploy.master.Master",
+      "--host",
+      masterName,
+      "--port",
+      "7077",
+      "--webui-port",
+      "8080",
+  ];
+}
+
+function createWorkerArgs() {
+  return [
+      "run",
+      "-d",
+      "--name",
+      workerName,
+      "--network",
+      network,
+      "--label",
+      "asklake.role=spark-worker",
+      ...sampleMountArgs(),
+      ...uiPortArgs("18081", "8081"),
+      image,
+      "/opt/spark/bin/spark-class",
+      "org.apache.spark.deploy.worker.Worker",
+      `spark://${masterName}:7077`,
+      "--webui-port",
+      "8081",
+  ];
+}
+
+function containerNeedsCreate(name) {
+  const inspect = run("docker", ["inspect", name], { allowFailure: true, quiet: true });
+  if (inspect.status !== 0) return true;
+  const [metadata] = JSON.parse(inspect.stdout || "[]");
+  const expectedSource = normalizePath(sampleHostDir);
+  const mounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
+  if (mounted) return false;
+  run("docker", ["rm", "-f", name], { allowFailure: true });
+  return true;
+}
+
+function uiPortArgs(hostPort, containerPort) {
+  return publishUi ? ["-p", `${hostPort}:${containerPort}`] : [];
+}
+
+function sampleMountArgs() {
+  return ["-v", `${sampleHostDir}:${sampleContainerDir}:ro`];
+}
+
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (result.status !== 0 && !options.allowFailure) {
+    throw new Error(`${command} ${args.join(" ")} failed\n${result.stdout}\n${result.stderr}`);
+  }
+  if (!options.quiet && result.stdout) process.stdout.write(result.stdout);
+  if (!options.quiet && result.stderr) process.stderr.write(result.stderr);
+  return result;
+}
+
+function normalizePath(value) {
+  return path.resolve(value).toLowerCase();
+}

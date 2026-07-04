@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { flowTabs, navItems, wizardFlows } from "./data/mockData";
+import { flowTabs, navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";

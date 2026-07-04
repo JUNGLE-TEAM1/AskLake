@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+backend/tmp/
+__pycache__/
+*.pyc
+.playwright-cli/

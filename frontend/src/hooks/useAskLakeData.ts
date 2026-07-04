@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
-import { createPipelineDraft, runJobCommand } from "../services/mockApi";
+import { apiClient } from "../services/apiClient";
+import { createPipelineDraft, runJobCommand } from "../services/pipelineApi";
 import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -16,7 +17,7 @@ const initialDraftPipeline: DraftPipeline = {
     rules: [],
     score: 94.2,
     status: "pass",
-    summary: "5 quality rules · quarantine invalid rows",
+    summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
   },
   schedule: {
     label: "매주 목요일 10:30",
@@ -32,10 +33,10 @@ const initialDraftPipeline: DraftPipeline = {
   schema: {
     columns: [],
     sampleRows: [],
-    summary: "Schema inference pending",
+    summary: "스키마 추론 대기",
   },
   source: {
-    connectionMessage: "Source connection test is required before review.",
+    connectionMessage: "검토 전에 소스 연결 테스트가 필요합니다.",
     connectionStatus: "idle",
     sourceConfig: [
       ["Storage Provider", "MinIO"],
@@ -59,7 +60,7 @@ const initialDraftPipeline: DraftPipeline = {
   transform: {
     outputColumns: [],
     steps: [],
-    summary: "5 quality rules · quarantine invalid rows",
+    summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
   },
 };
 
@@ -117,6 +118,32 @@ export function useAskLakeData({
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    setApiPending(true);
+    Promise.all([
+      apiClient.get<JobRowData[]>("/api/etl/jobs"),
+      apiClient.get<CatalogDataset[]>("/api/catalog/datasets"),
+    ])
+      .then(([nextJobs, nextDatasets]) => {
+        if (cancelled) return;
+        setJobs(nextJobs);
+        setDatasets(nextDatasets);
+        setSelectedJob(nextJobs[0] ?? emptySelectedJob);
+        setSelectedDataset(nextDatasets[0] ?? emptySelectedDataset);
+      })
+      .catch(() => {
+        if (!cancelled) showToast("백엔드 초기 데이터를 불러오지 못했습니다.", "info");
+      })
+      .finally(() => {
+        if (!cancelled) setApiPending(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
@@ -136,7 +163,7 @@ export function useAskLakeData({
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const { dataset, job } = await createPipelineDraft(draftPipeline, jobs.length);
+      const { dataset, job } = await createPipelineDraft(draftPipeline);
       setJobs((items) => [job, ...items.filter((item) => item.name !== job.name)]);
       setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
       setSelectedJob(job);

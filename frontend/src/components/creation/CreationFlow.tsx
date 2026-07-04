@@ -1,6 +1,6 @@
 import type React from "react";
 import { FileText } from "lucide-react";
-import { summaryByFlow } from "../../data/mockData";
+import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
 export function CreationFlowLayout({

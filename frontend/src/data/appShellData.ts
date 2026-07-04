@@ -1,5 +1,5 @@
 import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
-import type { CatalogDataset, FlowId, JobRowData, NavItem } from "../types";
+import type { FlowId, NavItem } from "../types";
 
 export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
 
@@ -31,10 +31,6 @@ export const navItems = [
 export const ingestFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "jobDag", "source", "schema", "rules", "repeat", "manual", "once", "target", "permission", "review"];
 export const jobManagerFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "jobDag"];
 export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "once", "permission", "target", "review"];
-
-export const etlJobs: JobRowData[] = [];
-
-export const catalogDatasets: CatalogDataset[] = [];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [
