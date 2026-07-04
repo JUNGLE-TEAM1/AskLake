@@ -36,6 +36,7 @@ import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, Creatio
 import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
 
 export function SchedulePage({
+  draftScheduleLabel,
   mode,
   onDraftChange,
   onModeChange,
@@ -43,6 +44,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
+  draftScheduleLabel: string;
   mode: ScheduleFlowId;
   onDraftChange: (patch: Partial<DraftPipeline>) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -50,14 +52,19 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [repeatDay, setRepeatDay] = useState("화");
-  const [repeatTime, setRepeatTime] = useState("10:30");
-  const [onceDateTime, setOnceDateTime] = useState("2026.07.02 10:30");
+  const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
+  const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
+  const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
+  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
-  const scheduleLabel = mode === "repeat" ? `매주 ${repeatDay}요일 ${repeatTime}` : mode === "manual" ? "수동 실행" : `${onceDateTime} 1회 실행`;
+  const scheduleLabel = formatScheduleLabel(mode, repeatDay, repeatTime, onceDateTime);
   const applyScheduleDraft = () => {
     onDraftChange({ scheduleLabel });
+  };
+  const selectMode = (nextMode: ScheduleFlowId) => {
+    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDay, repeatTime, onceDateTime) });
+    onModeChange(nextMode);
   };
   const goNext = () => {
     applyScheduleDraft();
@@ -79,22 +86,22 @@ export function SchedulePage({
             <h2>실행 방식 설정</h2>
           </div>
           <div className="option-grid">
-            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => onModeChange("manual")} />
-            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => onModeChange("once")} />
-            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => onModeChange("repeat")} />
+            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => selectMode("manual")} />
+            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => selectMode("once")} />
+            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
         {mode === "repeat" && <RepeatSettings selectedDay={repeatDay} time={repeatTime} onDayChange={(day) => {
           setRepeatDay(day);
-          onDraftChange({ scheduleLabel: `매주 ${day}요일 ${repeatTime}` });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", day, repeatTime, onceDateTime) });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          onDraftChange({ scheduleLabel: `매주 ${repeatDay}요일 ${time}` });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", repeatDay, time, onceDateTime) });
         }} />}
         {mode === "manual" && <ManualSettings />}
         {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: `${dateTime} 1회 실행` });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDay, repeatTime, dateTime) });
         }} />}
     </CreationFlowLayout>
   );
@@ -109,6 +116,35 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
       <span>{desc}</span>
     </button>
   );
+}
+
+const DEFAULT_REPEAT_DAY = "목";
+const DEFAULT_REPEAT_TIME = "10:30";
+const DEFAULT_ONCE_DATE_TIME = "2026.07.05 10:00";
+
+function formatScheduleLabel(mode: ScheduleFlowId, repeatDay: string, repeatTime: string, onceDateTime: string) {
+  if (mode === "manual") return "수동 실행";
+  if (mode === "once") return `${onceDateTime.trim() || DEFAULT_ONCE_DATE_TIME} 1회 실행`;
+  return `매주 ${repeatDay || DEFAULT_REPEAT_DAY}요일 ${repeatTime || DEFAULT_REPEAT_TIME}`;
+}
+
+function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
+  if (label.includes("수동")) return "manual";
+  if (label.includes("1회")) return "once";
+  return "repeat";
+}
+
+function parseOnceScheduleLabel(label: string) {
+  if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
+  return label.replace(/\s*1회 실행\s*$/, "").trim() || DEFAULT_ONCE_DATE_TIME;
+}
+
+function parseRepeatScheduleLabel(label: string) {
+  const match = label.match(/매주\s+(.+?)요일\s+(.+)$/);
+  return {
+    day: match?.[1] ?? DEFAULT_REPEAT_DAY,
+    time: match?.[2] ?? DEFAULT_REPEAT_TIME,
+  };
 }
 
 export function SourceConnectionPage({
@@ -1215,6 +1251,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
     ["created_at", "TIMESTAMP", "NO", "CURRENT_TIMESTAMP()"],
   ];
   const sourceSummary = draft.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
+  const scheduleEditFlow = getScheduleFlowFromLabel(draft.scheduleLabel);
 
   return (
     <CreationFlowLayout
@@ -1242,7 +1279,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
             ["소스", `${draft.sourceType} · ${sourceSummary || draft.sourceLabel}`, "source"],
             ["스키마", draft.schemaSummary, "schema"],
             ["처리 규칙", draft.ruleSummary, "rules"],
-            ["스케줄", draft.scheduleLabel, "repeat"],
+            ["스케줄", draft.scheduleLabel, scheduleEditFlow],
             ["권한", draft.permissionSummary, "permission"],
             ["타겟 저장소", `${draft.targetLayer} / ${draft.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
