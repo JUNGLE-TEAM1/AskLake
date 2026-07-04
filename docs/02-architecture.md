@@ -65,6 +65,22 @@ flowchart LR
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
+- Pair A A0 draft contract and mapper: `frontend/src/types/etl.ts`, `frontend/src/services/draftPipelineContract.ts`
+
+ETL 생성 flow의 frontend 내부 상태는 A0 계약을 따른다.
+
+```text
+DraftPipeline
+  source       Pair A 1번
+  schema       Pair A 1번
+  transform    Pair A 2번
+  quality      Pair A 2번
+  schedule     Pair A 2번
+  permission   Pair A 2번
+  target       Pair A 2번
+```
+
+`POST /api/etl/jobs` 호출 직전에는 `DraftPipeline`을 flat `CreatePipelineRequest`로 변환한다. Review Summary도 같은 mapper 결과를 표시해서 화면 값과 submit payload가 어긋나지 않게 한다.
 
 ## 5) Backend Target Boundary
 

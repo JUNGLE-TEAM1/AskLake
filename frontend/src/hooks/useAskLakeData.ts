@@ -1,29 +1,55 @@
 import { useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
+import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import { createPipelineDraft, runJobCommand } from "../services/mockApi";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "customer_review_gold",
-  jobName: "customer_review_gold_pipeline",
-  sourceConfig: [
-    ["Storage Provider", "Amazon S3"],
-    ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
-    ["Path / Prefix", "data/inventory/daily/"],
-  ],
-  sourceType: "File / S3",
-  sourceLabel: "S3 Raw reviews",
-  schemaSummary: "24 fields inferred · 3 need review",
-  ruleSummary: "5 quality rules · quarantine invalid rows",
-  scheduleLabel: "매주 목요일 10:30",
-  permissionSummary: "Data Engineer Group · 조직 내부",
-  targetDataset: "customer_review_gold",
-  targetLayer: "GOLD",
-  targetFormat: "Parquet",
-  owner: "data-team-01",
-  rag: true,
+  permission: {
+    owner: "data-team-01",
+    summary: "Data Engineer Group · 조직 내부",
+  },
+  quality: {
+    invalidRows: [],
+    rules: [],
+    score: 94.2,
+    status: "pass",
+    summary: "5 quality rules · quarantine invalid rows",
+  },
+  schedule: {
+    label: "매주 목요일 10:30",
+    mode: "repeat",
+    nextRun: "다음 예약 대기",
+  },
+  schema: {
+    columns: [],
+    sampleRows: [],
+    summary: "24 fields inferred · 3 need review",
+  },
+  source: {
+    connectionStatus: "success",
+    sourceConfig: [
+      ["Storage Provider", "Amazon S3"],
+      ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
+      ["Path / Prefix", "data/inventory/daily/"],
+    ],
+    sourceLabel: "S3 Raw reviews",
+    sourceType: "File / S3",
+  },
+  target: {
+    datasetName: "customer_review_gold",
+    format: "Parquet",
+    layer: "GOLD",
+    rag: true,
+  },
+  transform: {
+    outputColumns: [],
+    steps: [],
+    summary: "5 quality rules · quarantine invalid rows",
+  },
 };
 
 export function useAskLakeData({
@@ -43,8 +69,8 @@ export function useAskLakeData({
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
 
-  const updateDraftPipeline = (patch: Partial<DraftPipeline>) => {
-    setDraftPipeline((draft) => ({ ...draft, ...patch }));
+  const updateDraftPipeline = (patch: DraftPipelinePatch) => {
+    setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
   const createPipeline = async () => {

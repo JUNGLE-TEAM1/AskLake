@@ -33,7 +33,8 @@ import {
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
-import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
+import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
 
 export function SchedulePage({
   mode,
@@ -44,7 +45,7 @@ export function SchedulePage({
   onSave,
 }: {
   mode: ScheduleFlowId;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -120,7 +121,7 @@ export function SourceConnectionPage({
   onSave,
 }: {
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onNotify: (message: string) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -439,7 +440,7 @@ export function SchemaInferencePage({
   onPrev,
   onSave,
 }: {
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
   onNext: () => void;
@@ -585,7 +586,7 @@ export function RuleApplicationPage({
   onPrev,
   onSave,
 }: {
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
   onNext: () => void;
@@ -943,17 +944,17 @@ export function TargetPage({
   onSave,
 }: {
   draft: DraftPipeline;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [selectedLayer, setSelectedLayer] = useState<DraftPipeline["targetLayer"]>(draft.targetLayer);
-  const [targetDataset, setTargetDataset] = useState(draft.targetDataset);
-  const [targetOwner, setTargetOwner] = useState(draft.owner);
+  const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(draft.target.layer);
+  const [targetDataset, setTargetDataset] = useState(draft.target.datasetName);
+  const [targetOwner, setTargetOwner] = useState(draft.permission.owner);
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
-  const [targetFormat, setTargetFormat] = useState(draft.targetFormat);
-  const [ragEnabled, setRagEnabled] = useState(draft.rag);
+  const [targetFormat, setTargetFormat] = useState(draft.target.format);
+  const [ragEnabled, setRagEnabled] = useState(draft.target.rag);
   const applyTargetDraft = () => {
     onDraftChange({
       jobName: `${targetDataset}_pipeline`,
@@ -965,7 +966,7 @@ export function TargetPage({
     });
   };
   const selectLayer = (format: string) => {
-    const layer = format.toUpperCase() as DraftPipeline["targetLayer"];
+    const layer = format.toUpperCase() as TargetLayer;
     setSelectedLayer(layer);
     onDraftChange({ targetLayer: layer });
   };
@@ -1085,7 +1086,7 @@ export function PermissionPage({
   onSave,
 }: {
   draft: DraftPipeline;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onNext: () => void;
   onPrev: () => void;
   onSave: () => void;
@@ -1097,7 +1098,7 @@ export function PermissionPage({
   ];
   const [permissionTemplate, setPermissionTemplate] = useState("Data Engineer Group");
   const [visibility, setVisibility] = useState("조직 내부");
-  const [dataOwner, setDataOwner] = useState(draft.owner || "data-team-01");
+  const [dataOwner, setDataOwner] = useState(draft.permission.owner || "data-team-01");
   const [approvalStatus, setApprovalStatus] = useState("승인 검토");
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => Object.fromEntries(roles.map((role) => [role.name, role.checked])));
   const permissionSummary = `${permissionTemplate} · ${visibility} · ${approvalStatus}`;
@@ -1206,6 +1207,7 @@ export function PermissionPage({
 }
 
 export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
+  const request = toCreatePipelineRequest(draft);
   const schemaRows = [
     ["review_id", "BIGINT", "NO", "SOURCE.id"],
     ["product_id", "STRING", "NO", "SOURCE.p_code"],
@@ -1214,7 +1216,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
     ["review_text", "STRING", "YES", "REGEXP_REPLACE(SOURCE.content, \"[\\n\\r]\", \" \")"],
     ["created_at", "TIMESTAMP", "NO", "CURRENT_TIMESTAMP()"],
   ];
-  const sourceSummary = draft.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
+  const sourceSummary = request.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
 
   return (
     <CreationFlowLayout
@@ -1238,13 +1240,13 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
         <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
         <div className="review-card-grid">
           {[
-            ["기본 정보", draft.targetDataset, "target"],
-            ["소스", `${draft.sourceType} · ${sourceSummary || draft.sourceLabel}`, "source"],
-            ["스키마", draft.schemaSummary, "schema"],
-            ["처리 규칙", draft.ruleSummary, "rules"],
-            ["스케줄", draft.scheduleLabel, "repeat"],
-            ["권한", draft.permissionSummary, "permission"],
-            ["타겟 저장소", `${draft.targetLayer} / ${draft.targetFormat}`, "target"],
+            ["기본 정보", request.targetDataset, "target"],
+            ["소스", `${request.sourceType} · ${sourceSummary || request.sourceLabel}`, "source"],
+            ["스키마", request.schemaSummary, "schema"],
+            ["처리 규칙", request.ruleSummary, "rules"],
+            ["스케줄", request.scheduleLabel, "repeat"],
+            ["권한", request.permissionSummary, "permission"],
+            ["타겟 저장소", `${request.targetLayer} / ${request.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -1258,7 +1260,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
           <div className="panel-header">
             <Database size={18} />
             <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{draft.schemaSummary}</span>
+            <span className="panel-note">{request.schemaSummary}</span>
           </div>
           <table className="schema-table">
             <thead>
