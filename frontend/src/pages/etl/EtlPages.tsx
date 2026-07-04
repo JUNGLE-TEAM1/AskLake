@@ -35,7 +35,8 @@ import {
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
-import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
+import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, TargetLayer } from "../../types";
 
 export function SchedulePage({
   draftScheduleLabel,
@@ -48,7 +49,7 @@ export function SchedulePage({
 }: {
   draftScheduleLabel: string;
   mode: ScheduleFlowId;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -154,13 +155,13 @@ const DEFAULT_VISIBILITY = "조직 내부";
 const DEFAULT_APPROVAL_STATUS = "승인 검토";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
-const DEFAULT_TARGET_LAYER: DraftPipeline["targetLayer"] = "GOLD";
+const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT = "Parquet";
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
-const TARGET_LAYER_OPTIONS: DraftPipeline["targetLayer"][] = ["RAW", "BRONZE", "SILVER", "GOLD"];
+const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
@@ -182,7 +183,10 @@ type PermissionDraftSlice = {
 };
 
 type TargetDraftSlice = {
+  datasetName?: string;
+  format?: string;
   jobName?: string;
+  layer?: string;
   owner?: string;
   rag?: boolean;
   targetDataset?: string;
@@ -191,8 +195,15 @@ type TargetDraftSlice = {
 };
 
 type DraftPipelineWithSlices = DraftPipeline & {
+  jobName?: string;
+  owner?: string;
   permission?: PermissionDraftSlice;
+  permissionSummary?: string;
+  rag?: boolean;
   target?: TargetDraftSlice;
+  targetDataset?: string;
+  targetFormat?: string;
+  targetLayer?: string;
 };
 
 function getDisplayText(value: string | undefined, fallback: string) {
@@ -205,7 +216,7 @@ function getKnownOption<T extends string>(value: string | undefined, options: re
   return options.find((option) => option === trimmed) ?? fallback;
 }
 
-function normalizeTargetLayer(value: string | undefined): DraftPipeline["targetLayer"] {
+function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
@@ -228,15 +239,16 @@ function parsePermissionSummary(summary: string | undefined) {
 }
 
 function getPermissionDraftValues(draft: DraftPipeline) {
-  const permission = (draft as DraftPipelineWithSlices).permission;
-  const parsed = parsePermissionSummary(permission?.permissionSummary ?? permission?.summary ?? draft.permissionSummary);
+  const compatDraft = draft as DraftPipelineWithSlices;
+  const permission = compatDraft.permission;
+  const parsed = parsePermissionSummary(permission?.permissionSummary ?? permission?.summary ?? compatDraft.permissionSummary);
   const permissionTemplate = getKnownOption(permission?.permissionTemplate ?? permission?.template ?? parsed.permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
   const visibility = getKnownOption(permission?.visibility ?? parsed.visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
   const approvalStatus = getKnownOption(permission?.approvalStatus ?? parsed.approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
 
   return {
     approvalStatus,
-    owner: getDisplayText(permission?.owner ?? draft.owner, DEFAULT_OWNER),
+    owner: getDisplayText(permission?.owner ?? compatDraft.owner, DEFAULT_OWNER),
     permissionSummary: buildPermissionSummary(permissionTemplate, visibility, approvalStatus),
     permissionTemplate,
     visibility,
@@ -244,17 +256,18 @@ function getPermissionDraftValues(draft: DraftPipeline) {
 }
 
 function getTargetDraftValues(draft: DraftPipeline) {
-  const target = (draft as DraftPipelineWithSlices).target;
-  const targetDataset = getDisplayText(target?.targetDataset ?? draft.targetDataset, DEFAULT_TARGET_DATASET);
-  const targetFormat = getKnownOption(target?.targetFormat ?? draft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+  const compatDraft = draft as DraftPipelineWithSlices;
+  const target = compatDraft.target;
+  const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
+  const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
 
   return {
-    jobName: getDisplayText(target?.jobName ?? draft.jobName, buildJobName(targetDataset)),
-    owner: getDisplayText(target?.owner ?? draft.owner, DEFAULT_OWNER),
-    rag: typeof target?.rag === "boolean" ? target.rag : draft.rag,
+    jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
+    owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
+    rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
     targetDataset,
     targetFormat,
-    targetLayer: normalizeTargetLayer(target?.targetLayer ?? draft.targetLayer),
+    targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
   };
 }
 
@@ -267,7 +280,7 @@ export function SourceConnectionPage({
   onSave,
 }: {
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onNotify: (message: string) => void;
   onPrev: () => void;
   onNext: () => void;
@@ -586,7 +599,7 @@ export function SchemaInferencePage({
   onPrev,
   onSave,
 }: {
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
   onNext: () => void;
@@ -817,7 +830,7 @@ export function RuleApplicationPage({
   onPrev,
   onSave,
 }: {
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
   onNext: () => void;
@@ -1324,13 +1337,13 @@ export function TargetPage({
   onSave,
 }: {
   draft: DraftPipeline;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
 }) {
   const initialTarget = getTargetDraftValues(draft);
-  const [selectedLayer, setSelectedLayer] = useState<DraftPipeline["targetLayer"]>(initialTarget.targetLayer);
+  const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(initialTarget.targetLayer);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
@@ -1341,7 +1354,7 @@ export function TargetPage({
     rag: boolean;
     targetDataset: string;
     targetFormat: string;
-    targetLayer: DraftPipeline["targetLayer"];
+    targetLayer: TargetLayer;
   }> = {}) => {
     const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
     const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
@@ -1358,7 +1371,7 @@ export function TargetPage({
       rag: nextRag,
     });
   };
-  const selectLayer = (layer: DraftPipeline["targetLayer"]) => {
+  const selectLayer = (layer: TargetLayer) => {
     setSelectedLayer(layer);
     applyTargetDraft({ targetLayer: layer });
   };
@@ -1478,7 +1491,7 @@ export function PermissionPage({
   onSave,
 }: {
   draft: DraftPipeline;
-  onDraftChange: (patch: Partial<DraftPipeline>) => void;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
   onNext: () => void;
   onPrev: () => void;
   onSave: () => void;
@@ -1606,7 +1619,8 @@ export function PermissionPage({
 }
 
 export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
-  const scheduleEditFlow = getScheduleFlowFromLabel(draft.scheduleLabel);
+  const request = toCreatePipelineRequest(draft);
+  const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
   const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
@@ -1618,7 +1632,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
     ["review_text", "STRING", "YES", "REGEXP_REPLACE(SOURCE.content, \"[\\n\\r]\", \" \")"],
     ["created_at", "TIMESTAMP", "NO", "CURRENT_TIMESTAMP()"],
   ];
-  const sourceSummary = draft.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
+  const sourceSummary = request.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
 
   return (
     <CreationFlowLayout
@@ -1643,10 +1657,10 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
         <div className="review-card-grid">
           {[
             ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
-            ["소스", `${draft.sourceType} · ${sourceSummary || draft.sourceLabel}`, "source"],
-            ["스키마", draft.schemaSummary, "schema"],
-            ["처리 규칙", draft.ruleSummary, "rules"],
-            ["스케줄", draft.scheduleLabel, scheduleEditFlow],
+            ["소스", `${request.sourceType} · ${sourceSummary || request.sourceLabel}`, "source"],
+            ["스키마", request.schemaSummary, "schema"],
+            ["처리 규칙", request.ruleSummary, "rules"],
+            ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
             ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
           ].map(([label, value, flow]) => (
@@ -1691,7 +1705,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
           <div className="panel-header">
             <Database size={18} />
             <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{draft.schemaSummary}</span>
+            <span className="panel-note">{request.schemaSummary}</span>
           </div>
           <table className="schema-table">
             <thead>

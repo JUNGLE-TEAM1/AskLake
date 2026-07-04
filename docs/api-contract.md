@@ -33,6 +33,67 @@ P1/P2 API는 다음 연결 단계에서 프론트 hydrate와 저장 흐름을 �
 - dashboard view: `frontend/src/types/dashboard.ts`
 - audit/error: `frontend/src/types/audit.ts`
 
+## 2.1. Pair A A0 Draft Contract
+
+Pair A는 frontend/backend로 나누지 않고 기능 slice별로 end-to-end 책임을 나눈다. 따라서 ETL 생성 wizard의 공통 상태는 먼저 A0 계약으로 고정한다.
+
+Frontend 내부 draft는 step별 소유권이 보이도록 nested shape를 쓴다.
+
+```ts
+type DraftPipeline = {
+  id: string;
+  source: SourceDraft;
+  schema: SchemaDraft;
+  transform: TransformDraft;
+  quality: QualityDraft;
+  schedule: ScheduleDraft;
+  permission: PermissionDraft;
+  target: TargetDraft;
+};
+```
+
+Slice 소유권:
+
+| Slice | 주 소유자 | 포함 값 |
+| --- | --- | --- |
+| `source` | Pair A 1번 | source type, source label, source config, connection status |
+| `schema` | Pair A 1번 | columns, sample rows, schema summary, schema fingerprint |
+| `transform` | Pair A 2번 | transform steps, output columns, transform summary |
+| `quality` | Pair A 2번 | quality rules, score/status, invalid row preview, quality summary |
+| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run |
+| `permission` | Pair A 2번 | owner, permission summary |
+| `target` | Pair A 2번 | target dataset, layer, format, RAG flag |
+
+Create submit 직전에는 `frontend/src/services/draftPipelineContract.ts`의 mapper가 nested draft를 flat `CreatePipelineRequest`로 변환한다.
+
+```ts
+type CreatePipelineRequest = {
+  id: string;
+  jobName: string;
+  sourceConfig: Array<[string, string]>;
+  sourceType: string;
+  sourceLabel: string;
+  schemaSummary: string;
+  ruleSummary: string;
+  scheduleLabel: string;
+  permissionSummary: string;
+  targetDataset: string;
+  targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
+  targetFormat: string;
+  owner: string;
+  rag: boolean;
+};
+```
+
+규칙:
+
+- Review Summary는 `DraftPipeline`에서 파생한 `CreatePipelineRequest` 값을 표시한다.
+- `POST /api/etl/jobs`는 flat `CreatePipelineRequest`를 받는다.
+- `ruleSummary`는 `transform.summary`와 `quality.summary`를 합친 값이며, 둘 중 하나가 다른 하나를 덮어쓰면 안 된다.
+- 성공 응답은 `{ job, dataset }` shape를 유지한다.
+- 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
+- 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
+
 ## 3. 환경변수
 
 `frontend/.env`

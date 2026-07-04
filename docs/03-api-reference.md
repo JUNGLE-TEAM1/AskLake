@@ -71,7 +71,7 @@ Canonical status values:
 | --- | --- | --- |
 | 수집/처리 목록 | `etlJobs` mock | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
-| 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
+| 생성 flow | A0 nested `DraftPipeline` state -> flat `CreatePipelineRequest` mapper | `POST /api/etl/jobs` |
 | 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
@@ -189,3 +189,18 @@ type DataProcessingResult = {
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
+
+## 9) Pair A A0 계약
+
+Pair A의 생성 flow는 A0 공동 계약을 먼저 따른다.
+
+- Frontend wizard state: `DraftPipeline = { source, schema, transform, quality, schedule, permission, target }`
+- Submit request: `CreatePipelineRequest`
+- Mapper: `frontend/src/services/draftPipelineContract.ts`
+- Response: `{ job, dataset }`
+
+1번 사람은 `source`, `schema`, create submit, `{ job, dataset }` mapper 결과 반영, `jobs/datasets` prepend, `selectedJob/selectedDataset` 갱신을 책임진다.
+
+2번 사람은 `transform`, `quality`, `schedule`, `permission`, `target` 값을 책임진다.
+
+API가 준비되지 않아도 mock/live는 같은 `CreatePipelineRequest`와 `{ job, dataset }` shape를 써야 한다.

@@ -1,5 +1,6 @@
 import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
+import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { apiClient, apiConfig } from "./apiClient";
 
 export type PipelineCreationResult = {
@@ -42,45 +43,46 @@ async function resolveMock<T>(payload: T): Promise<T> {
 }
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {
+  const request = toCreatePipelineRequest(draftPipeline);
   if (!apiConfig.useMock) {
-    const result = await apiClient.post<PipelineCreationResult>("/api/etl/jobs", draftPipeline);
+    const result = await apiClient.post<PipelineCreationResult>("/api/etl/jobs", request);
     return normalizePipelineCreationResult(result);
   }
 
   const job: JobRowData = {
     status: "scheduled",
-    name: draftPipeline.jobName,
+    name: request.jobName,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
-    owner: draftPipeline.owner,
+    owner: request.owner,
     tag: "[리뷰]",
-    source: `${draftPipeline.sourceType} / ${draftPipeline.sourceLabel}`,
-    target: draftPipeline.targetDataset,
-    schedule: draftPipeline.scheduleLabel,
+    source: `${request.sourceType} / ${request.sourceLabel}`,
+    target: request.targetDataset,
+    schedule: request.scheduleLabel,
     lastRun: "생성됨",
     lastState: "대기 중",
-    nextRun: draftPipeline.scheduleLabel === "수동 실행" ? "-" : "다음 예약 대기",
+    nextRun: request.scheduleLabel === "수동 실행" ? "-" : "다음 예약 대기",
   };
 
   const dataset: CatalogDataset = {
     description: "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
-    downstream: ["SQL 분석", "대시보드", draftPipeline.rag ? "AI 활용" : "카탈로그"],
+    downstream: ["SQL 분석", "대시보드", request.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
-    id: `ds_${draftPipeline.targetDataset}`,
-    layer: draftPipeline.targetLayer,
+    id: `ds_${request.targetDataset}`,
+    layer: request.targetLayer,
     lastUpdated: "방금 생성됨",
-    name: draftPipeline.targetDataset,
-    nextRefresh: draftPipeline.scheduleLabel,
-    owner: draftPipeline.owner,
+    name: request.targetDataset,
+    nextRefresh: request.scheduleLabel,
+    owner: request.owner,
     quality: "95% (Draft verified)",
-    rag: draftPipeline.rag,
+    rag: request.rag,
     rows: "0 rows",
     sampleRows: [["-", "-", "-", "-", "Pipeline queued"]],
     schema: [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
     size: "Pending",
-    source: draftPipeline.jobName,
+    source: request.jobName,
     status: "available",
     tags: ["#customer", "#RAG", "#리뷰"],
-    upstream: [draftPipeline.sourceLabel, draftPipeline.jobName],
+    upstream: [request.sourceLabel, request.jobName],
   };
 
   return resolveMock({ dataset, job });
