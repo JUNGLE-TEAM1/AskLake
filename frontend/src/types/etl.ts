@@ -1,5 +1,7 @@
-export type JobStatus = "스케줄됨" | "실패" | "실행 중" | "일시정지";
+export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancel" | "delete";
+export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
 
 export type JobRowData = {
   status: JobStatus;
@@ -34,4 +36,29 @@ export type DraftPipeline = {
   targetFormat: string;
   owner: string;
   rag: boolean;
+};
+
+export type JobRunSummary = {
+  duration: string;
+  endedAt: string;
+  errorSummary: string;
+  failedStage: string;
+  inputRows: string;
+  outputRows: string;
+  runId: string;
+  startedAt: string;
+  status: JobRunStatus;
+};
+
+export type JobDagStep = {
+  id: string;
+  meta: string;
+  note?: string;
+  status: JobDagStepStatus;
+  title: string;
+};
+
+export type JobExecutionEvidence = {
+  dagSteps: JobDagStep[];
+  runs: JobRunSummary[];
 };

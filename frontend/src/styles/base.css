@@ -126,6 +126,10 @@ p {
 }
 
 .main-shell {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+  flex-direction: column;
   min-width: 0;
 }
 
@@ -136,22 +140,10 @@ p {
   display: flex;
   min-height: 64px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   border-bottom: 1px solid #dee1e6;
   background: #fff;
   padding: 0 32px;
-}
-
-.search-box {
-  display: flex;
-  width: 360px;
-  height: 36px;
-  align-items: center;
-  gap: 10px;
-  border-radius: 8px;
-  background: #f9fbfc;
-  color: #9095a1;
-  padding: 0 14px;
 }
 
 .topbar-actions {
@@ -395,6 +387,9 @@ p {
 }
 
 .page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 24px var(--layout-page-padding) 40px;
 }
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { createPipelineDraft, runJobCommand } from "../services/mockApi";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
@@ -40,6 +40,7 @@ export function useAskLakeData({
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(catalogDatasets[0]);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(etlJobs[1]);
+  const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
 
@@ -91,9 +92,21 @@ export function useAskLakeData({
 
     setApiPending(true);
     try {
-      const { action, apiPath, job: updatedJob } = await runJobCommand(job, command);
+      const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) updateJobState(job.id, () => updatedJob);
+      if (run || dagSteps) {
+        setJobExecutionEvidence((evidence) => {
+          const previous = evidence[job.id] ?? { dagSteps: [], runs: [] };
+          return {
+            ...evidence,
+            [job.id]: {
+              dagSteps: dagSteps ?? previous.dagSteps,
+              runs: run ? [run, ...previous.runs.filter((item) => item.runId !== run.runId)] : previous.runs,
+            },
+          };
+        });
+      }
     } catch {
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");
@@ -126,6 +139,7 @@ export function useAskLakeData({
     datasets,
     draftPipeline,
     handleJobCommand,
+    jobExecutionEvidence,
     jobs,
     openDataset,
     openDatasetInSql,

@@ -34,25 +34,13 @@ assignees: ""
 
 -
 
-## 5. 관련 문서 / Source of Truth
-
-<!-- 관련 문서가 있으면 경로를 적습니다. 모르면 비워두어도 됩니다. -->
-
-- Product Planning:
-- Architecture:
-- API Reference:
-- Development Guide:
-- System Guardrails:
-- API Contract:
-- Backend Readiness:
-
-## 6. 예상 변경 파일
+## 5. 예상 변경 파일
 
 <!-- 예상되는 파일이나 디렉터리를 적습니다. 확실하지 않으면 후보로 적습니다. -->
 
 -
 
-## 7. Acceptance Criteria
+## 6. Acceptance Criteria
 
 <!-- 완료 여부를 판단할 수 있는 관찰 가능한 기준으로 적습니다. -->
 
@@ -60,14 +48,14 @@ assignees: ""
 - [ ]
 - [ ]
 
-## 8. Regression / Failure Scenario
+## 7. Regression / Failure Scenario
 
 <!-- 이 변경으로 깨지면 안 되는 기존 동작이나 실패 시나리오를 적습니다. -->
 
 - 깨지면 안 되는 것:
 - 확인해야 할 실패 시나리오:
 
-## 9. Manual Verification
+## 8. Manual Verification
 
 <!-- 사람이 직접 확인할 수 있는 절차를 적습니다. -->
 
@@ -75,7 +63,7 @@ assignees: ""
 2.
 3.
 
-## 10. 영향도
+## 9. 영향도
 
 <!-- 해당하는 항목에 체크하고 필요한 설명을 적습니다. -->
 
@@ -91,13 +79,13 @@ assignees: ""
 
 -
 
-## 11. 필요한 결정 사항
+## 10. 필요한 결정 사항
 
 <!-- 사람 확인이 필요한 선택지가 있으면 적습니다. -->
 
 -
 
-## 12. 참고 링크 / 스크린샷 / 로그
+## 11. 참고 링크 / 스크린샷 / 로그
 
 <!-- 링크, 이미지, 명령 출력, 오류 메시지가 있으면 붙입니다. secret은 포함하지 마세요. -->
 
