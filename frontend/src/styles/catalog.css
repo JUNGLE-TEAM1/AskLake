@@ -566,6 +566,16 @@
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 10px 24px rgb(15 23 42 / 10%);
+  transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+
+.lineage-table-node.dimmed {
+  opacity: 0.34;
+}
+
+.lineage-table-node.highlighted {
+  border-color: #fb923c;
+  box-shadow: 0 14px 34px rgb(251 146 60 / 14%);
 }
 
 .lineage-table-node.gold {
@@ -667,9 +677,17 @@
   background: #f8fafc;
 }
 
+.lineage-column-row.dimmed {
+  opacity: 0.32;
+}
+
+.lineage-column-row.related {
+  background: #fff7ed;
+}
+
 .lineage-column-row.active {
-  background: #eff6ff;
-  box-shadow: inset 3px 0 0 #2563eb;
+  background: #ffedd5;
+  box-shadow: inset 3px 0 0 #fb923c;
 }
 
 .lineage-column-row span {
@@ -751,7 +769,7 @@
 }
 
 .catalog-lineage-flow .react-flow__edge.active .react-flow__edge-path {
-  stroke: #2563eb;
+  stroke: #f97316;
   stroke-dasharray: 0;
   stroke-width: 2.4;
 }
