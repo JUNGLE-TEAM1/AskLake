@@ -6,6 +6,8 @@ import {
   Bot,
   Calendar,
   Check,
+  ChevronDown,
+  ChevronUp,
   CircleUser,
   Clock3,
   Database,
@@ -36,6 +38,7 @@ import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, Creatio
 import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
 
 export function SchedulePage({
+  draftScheduleLabel,
   mode,
   onDraftChange,
   onModeChange,
@@ -43,6 +46,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
+  draftScheduleLabel: string;
   mode: ScheduleFlowId;
   onDraftChange: (patch: Partial<DraftPipeline>) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -50,14 +54,19 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [repeatDay, setRepeatDay] = useState("화");
-  const [repeatTime, setRepeatTime] = useState("10:30");
-  const [onceDateTime, setOnceDateTime] = useState("2026.07.02 10:30");
+  const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
+  const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
+  const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
+  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
-  const scheduleLabel = mode === "repeat" ? `매주 ${repeatDay}요일 ${repeatTime}` : mode === "manual" ? "수동 실행" : `${onceDateTime} 1회 실행`;
+  const scheduleLabel = formatScheduleLabel(mode, repeatDay, repeatTime, onceDateTime);
   const applyScheduleDraft = () => {
     onDraftChange({ scheduleLabel });
+  };
+  const selectMode = (nextMode: ScheduleFlowId) => {
+    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDay, repeatTime, onceDateTime) });
+    onModeChange(nextMode);
   };
   const goNext = () => {
     applyScheduleDraft();
@@ -79,9 +88,9 @@ export function SchedulePage({
             <h2>실행 방식 설정</h2>
           </div>
           <div className="option-grid">
-            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => onModeChange("manual")} />
-            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => onModeChange("once")} />
-            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => onModeChange("repeat")} />
+            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => selectMode("manual")} />
+            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => selectMode("once")} />
+            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
         {mode === "repeat" && <RepeatSettings selectedDay={repeatDay} time={repeatTime} onDayChange={(day) => {
@@ -109,6 +118,144 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
       <span>{desc}</span>
     </button>
   );
+}
+
+const DEFAULT_REPEAT_DAY = "목";
+const DEFAULT_REPEAT_TIME = "10:30";
+const DEFAULT_ONCE_DATE_TIME = "2026.07.05 10:00";
+
+function formatScheduleLabel(mode: ScheduleFlowId, repeatDay: string, repeatTime: string, onceDateTime: string) {
+  if (mode === "manual") return "수동 실행";
+  if (mode === "once") return `${onceDateTime.trim() || DEFAULT_ONCE_DATE_TIME} 1회 실행`;
+  return `매주 ${repeatDay || DEFAULT_REPEAT_DAY}요일 ${repeatTime || DEFAULT_REPEAT_TIME}`;
+}
+
+function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
+  if (label.includes("수동")) return "manual";
+  if (label.includes("1회")) return "once";
+  return "repeat";
+}
+
+function parseOnceScheduleLabel(label: string) {
+  if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
+  return label.replace(/\s*1회 실행\s*$/, "").trim() || DEFAULT_ONCE_DATE_TIME;
+}
+
+function parseRepeatScheduleLabel(label: string) {
+  const match = label.match(/매주\s+(.+?)요일\s+(.+)$/);
+  return {
+    day: match?.[1] ?? DEFAULT_REPEAT_DAY,
+    time: match?.[2] ?? DEFAULT_REPEAT_TIME,
+  };
+}
+
+const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
+const DEFAULT_VISIBILITY = "조직 내부";
+const DEFAULT_APPROVAL_STATUS = "승인 검토";
+const DEFAULT_OWNER = "data-team-01";
+const DEFAULT_TARGET_DATASET = "customer_review_gold";
+const DEFAULT_TARGET_LAYER: DraftPipeline["targetLayer"] = "GOLD";
+const DEFAULT_TARGET_FORMAT = "Parquet";
+
+const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
+const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
+const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
+const TARGET_LAYER_OPTIONS: DraftPipeline["targetLayer"][] = ["RAW", "BRONZE", "SILVER", "GOLD"];
+const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
+
+const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
+
+const PERMISSION_ROLES = [
+  { name: "Data Engineer Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "파이프라인 운영 및 장애 대응 권한" },
+  { name: "Data Analyst Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "분석 업무용 표준 접근 권한" },
+  { name: "ML Team", access: PERMISSION_ACCESS_ITEMS, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
+];
+
+type PermissionDraftSlice = {
+  approvalStatus?: string;
+  owner?: string;
+  permissionSummary?: string;
+  permissionTemplate?: string;
+  summary?: string;
+  template?: string;
+  visibility?: string;
+};
+
+type TargetDraftSlice = {
+  jobName?: string;
+  owner?: string;
+  rag?: boolean;
+  targetDataset?: string;
+  targetFormat?: string;
+  targetLayer?: string;
+};
+
+type DraftPipelineWithSlices = DraftPipeline & {
+  permission?: PermissionDraftSlice;
+  target?: TargetDraftSlice;
+};
+
+function getDisplayText(value: string | undefined, fallback: string) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+}
+
+function getKnownOption<T extends string>(value: string | undefined, options: readonly T[], fallback: T): T {
+  const trimmed = value?.trim();
+  return options.find((option) => option === trimmed) ?? fallback;
+}
+
+function normalizeTargetLayer(value: string | undefined): DraftPipeline["targetLayer"] {
+  return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
+}
+
+function buildJobName(targetDataset: string) {
+  return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
+}
+
+function buildPermissionSummary(permissionTemplate: string, visibility: string, approvalStatus: string) {
+  return `${permissionTemplate} · ${visibility} · ${approvalStatus}`;
+}
+
+function parsePermissionSummary(summary: string | undefined) {
+  const [template, visibility, approvalStatus] = (summary ?? "").split(/[·/]/).map((part) => part.trim()).filter(Boolean);
+
+  return {
+    approvalStatus: getKnownOption(approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS),
+    permissionTemplate: getKnownOption(template, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE),
+    visibility: getKnownOption(visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY),
+  };
+}
+
+function getPermissionDraftValues(draft: DraftPipeline) {
+  const permission = (draft as DraftPipelineWithSlices).permission;
+  const parsed = parsePermissionSummary(permission?.permissionSummary ?? permission?.summary ?? draft.permissionSummary);
+  const permissionTemplate = getKnownOption(permission?.permissionTemplate ?? permission?.template ?? parsed.permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+  const visibility = getKnownOption(permission?.visibility ?? parsed.visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
+  const approvalStatus = getKnownOption(permission?.approvalStatus ?? parsed.approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
+
+  return {
+    approvalStatus,
+    owner: getDisplayText(permission?.owner ?? draft.owner, DEFAULT_OWNER),
+    permissionSummary: buildPermissionSummary(permissionTemplate, visibility, approvalStatus),
+    permissionTemplate,
+    visibility,
+  };
+}
+
+function getTargetDraftValues(draft: DraftPipeline) {
+  const target = (draft as DraftPipelineWithSlices).target;
+  const targetDataset = getDisplayText(target?.targetDataset ?? draft.targetDataset, DEFAULT_TARGET_DATASET);
+  const targetFormat = getKnownOption(target?.targetFormat ?? draft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+
+  return {
+    jobName: getDisplayText(target?.jobName ?? draft.jobName, buildJobName(targetDataset)),
+    owner: getDisplayText(target?.owner ?? draft.owner, DEFAULT_OWNER),
+    rag: typeof target?.rag === "boolean" ? target.rag : draft.rag,
+    targetDataset,
+    targetFormat,
+    targetLayer: normalizeTargetLayer(target?.targetLayer ?? draft.targetLayer),
+  };
 }
 
 export function SourceConnectionPage({
@@ -577,6 +724,91 @@ export function SchemaInferencePage({
   );
 }
 
+type RuleCategory = "transform" | "quality";
+type RuleActionHandler = (action: string, path: string, ruleSummary?: string) => void;
+type RuleStepDraft = {
+  input: string;
+  onError: string;
+  operation: string;
+  output: string;
+  params: string;
+};
+type RecipeStep = RuleStepDraft & {
+  id: string;
+};
+
+const RULE_METRIC_DEFS: Array<{ icon: React.ReactNode; label: string; value: (stats: RuleStats) => string }> = [
+  { icon: <SlidersHorizontal size={18} />, label: "Total Rules", value: (stats) => String(stats.totalRules) },
+  { icon: <Database size={18} />, label: "Affected Columns", value: (stats) => String(stats.affectedColumns) },
+  { icon: <Clock3 size={18} />, label: "Transformation Coverage", value: (stats) => `${stats.coverage}%` },
+  { icon: <Info size={18} />, label: "Invalid Data Rows", value: (stats) => String(stats.invalidRows) },
+];
+
+const RULE_CATEGORIES: Array<{
+  id: RuleCategory;
+  label: string;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+}> = [
+  {
+    id: "transform",
+    label: "변환",
+    title: "Transform",
+    description: "Modify, clean, and format data fields before storing them in the Lake.",
+    icon: <SlidersHorizontal size={20} />,
+  },
+  {
+    id: "quality",
+    label: "품질 체크",
+    title: "Quality Check",
+    description: "Enforce data integrity with validation rules and row-level constraints.",
+    icon: <ShieldCheck size={20} />,
+  },
+];
+
+const INITIAL_RECIPE_STEPS: RecipeStep[] = [
+  { id: "1", input: "meta_json", operation: "Extract JSONPath", output: "user_email", params: "$.user.contact.email", onError: "Set Null" },
+  { id: "2", input: "user_email", operation: "Lowercase + Trim", output: "user_email", params: "lower(), trim()", onError: "Warn" },
+  { id: "3", input: "price_usd", operation: "Cast Decimal", output: "price_usd", params: "decimal(10,2)", onError: "Drop Row" },
+  { id: "4", input: "created_at", operation: "Parse Timestamp", output: "created_at_utc", params: "string to UTC", onError: "Set Null" },
+  { id: "5", input: "phone_number", operation: "Mask", output: "phone_masked", params: "keep first 3 digits", onError: "Warn" },
+];
+const INITIAL_AFFECTED_COLUMNS = 12;
+const INITIAL_TRANSFORMATION_COVERAGE = 84;
+
+const DEFAULT_RULE_STEP_BY_CATEGORY: Record<RuleCategory, RuleStepDraft> = {
+  transform: { input: "raw_value", operation: "Extract JSONPath", output: "normalized_value", params: "$.value", onError: "Set Null" },
+  quality: { input: "user_email", operation: "Regex Match", output: "quality_status", params: "email pattern", onError: "Warn" },
+};
+
+const INVALID_RULE_ROWS = [
+  ["Row #1025", "price_usd", "Non-positive value", "Drop Row"],
+  ["Row #1027", "user_id", "Missing required value", "Fail Run"],
+  ["Row #1031", "country", "Not in allowed values", "Warn"],
+];
+
+type RuleStats = {
+  affectedColumns: number;
+  coverage: number;
+  invalidRows: number;
+  totalRules: number;
+};
+
+function getRuleStats(steps: RecipeStep[], invalidRows: number): RuleStats {
+  const ruleCountDelta = steps.length - INITIAL_RECIPE_STEPS.length;
+  return {
+    affectedColumns: Math.max(0, INITIAL_AFFECTED_COLUMNS + ruleCountDelta),
+    coverage: Math.min(100, Math.max(0, INITIAL_TRANSFORMATION_COVERAGE + ruleCountDelta * 2)),
+    invalidRows,
+    totalRules: steps.length,
+  };
+}
+
+function formatRuleSummary(stats: RuleStats) {
+  return `${stats.totalRules} rules configured · ${stats.affectedColumns} affected columns · ${stats.invalidRows} invalid rows`;
+}
+
 export function RuleApplicationPage({
   onDraftChange,
   onAction,
@@ -592,32 +824,19 @@ export function RuleApplicationPage({
   onPrev: () => void;
   onSave: () => void;
 }) {
-  const rules = [
-    ["1", "meta_json", "Extract JSONPath", "user_email", "$.user.contact.email", "Set Null"],
-    ["2", "user_email", "Lowercase + Trim", "user_email", "lower(), trim()", "Warn"],
-    ["3", "price_usd", "Cast Decimal", "price_usd", "decimal(10,2)", "Drop Row"],
-    ["4", "created_at", "Parse Timestamp", "created_at_utc", "string to UTC", "Set Null"],
-    ["5", "phone_number", "Mask", "phone_masked", "keep first 3 digits", "Quarantine"],
-  ];
-  const qualityRules = [
-    ["user_id", "Must not be null", "Error", "Fail Run"],
-    ["price_usd", "Must be greater than 0", "Error", "Drop Row"],
-    ["country", "Must be one of USA, KOR, JPN", "Warning", "Warn"],
-    ["user_email", "Must match email regex pattern", "Warning", "Quarantine"],
-    ["order_id", "Must be unique across set", "Error", "Fail Run"],
-  ];
-  const validationRows = [
-    ["Row #1024", "Pass", "All checks passed"],
-    ["Row #1025", "Fail", "price_usd (-15.0) < 0"],
-    ["Row #1026", "Pass", "All checks passed"],
-    ["Row #1027", "Fail", "user_id is NULL"],
-    ["Row #1028", "Pass", "All checks passed"],
-  ];
+  const [selectedRuleCategory, setSelectedRuleCategory] = useState<RuleCategory>("transform");
+  const [recipeSteps, setRecipeSteps] = useState<RecipeStep[]>(INITIAL_RECIPE_STEPS);
+  const [selectedPreviewStepId, setSelectedPreviewStepId] = useState(INITIAL_RECIPE_STEPS[0].id);
+  const [showInvalidRows, setShowInvalidRows] = useState(false);
+  const invalidRowCount = INVALID_RULE_ROWS.length;
+  const ruleStats = getRuleStats(recipeSteps, invalidRowCount);
+  const ruleSummary = formatRuleSummary(ruleStats);
+  const selectedPreviewStep = recipeSteps.find((step) => step.id === selectedPreviewStepId) ?? recipeSteps[0] ?? INITIAL_RECIPE_STEPS[0];
 
   const testRules = () => {
     onAction("etl.transform.tested", "/api/etl/transform-rules/test", "customer_review_raw");
-    onDraftChange({ ruleSummary: "5 rules tested · 94.2% pass · 3 invalid rows" });
-    onNotify("샘플 Transform 테스트가 통과되었습니다.");
+    onDraftChange({ ruleSummary: `${ruleSummary} · sample tested` });
+    onNotify(`${ruleStats.totalRules}개 rule 샘플 테스트가 완료되었습니다.`);
   };
 
   const ruleAction = (action: string, path: string, ruleSummary?: string) => {
@@ -628,206 +847,368 @@ export function RuleApplicationPage({
   };
 
   const saveRuleDraft = () => {
-    onDraftChange({ ruleSummary: "5 quality rules · quarantine invalid rows" });
+    onDraftChange({ ruleSummary });
     onSave();
   };
 
   const goNext = () => {
-    onDraftChange({ ruleSummary: "5 quality rules · quarantine invalid rows" });
+    onDraftChange({ ruleSummary });
     onNext();
   };
 
+  const previewRecipeStep = (step: RecipeStep) => {
+    setSelectedPreviewStepId(step.id);
+    ruleAction("etl.rules.step_previewed", `/api/etl/rules/steps/${step.id}/preview`, `step ${step.id} previewed · ${step.output}`);
+  };
+
+  const removeRecipeStep = (step: RecipeStep) => {
+    const nextSteps = recipeSteps.filter((currentStep) => currentStep.id !== step.id);
+    if (nextSteps.length === 0) {
+      onNotify("최소 1개 rule은 유지해야 합니다.");
+      return;
+    }
+    setRecipeSteps(nextSteps);
+    if (!nextSteps.some((nextStep) => nextStep.id === selectedPreviewStepId)) {
+      setSelectedPreviewStepId(nextSteps[0].id);
+    }
+    ruleAction("etl.rules.step_removed", `/api/etl/rules/steps/${step.id}`, formatRuleSummary(getRuleStats(nextSteps, invalidRowCount)));
+  };
+
+  const addRecipeStep = (draft: RuleStepDraft) => {
+    const fallback = DEFAULT_RULE_STEP_BY_CATEGORY[selectedRuleCategory];
+    const nextStepNumber = String(Math.max(...recipeSteps.map((step) => Number(step.id)), 0) + 1);
+    const nextStep: RecipeStep = {
+      id: nextStepNumber,
+      input: draft.input.trim() || fallback.input,
+      onError: draft.onError.trim() || fallback.onError,
+      operation: draft.operation.trim() || fallback.operation,
+      output: draft.output.trim() || fallback.output,
+      params: draft.params.trim() || fallback.params,
+    };
+    const nextSteps = [...recipeSteps, nextStep];
+    setRecipeSteps(nextSteps);
+    setSelectedPreviewStepId(nextStep.id);
+    ruleAction("etl.rules.step_added", "/api/etl/rules/steps", formatRuleSummary(getRuleStats(nextSteps, invalidRowCount)));
+    onNotify("새 rule step이 추가되었습니다.");
+  };
+
+  const toggleInvalidRows = () => {
+    setShowInvalidRows((visible) => !visible);
+    ruleAction("etl.rules.invalid_rows_toggled", "/api/etl/rules/invalid-rows", `${invalidRowCount} invalid rows reviewed`);
+  };
+
   return (
-    <CreationFlowLayout
-      side={<CreationSummaryPanel flow="rules" title="처리 요약" onPrev={onPrev} onNext={goNext} onSave={saveRuleDraft} />}
-    >
-        <PageTitle title="Rule Application" description="필드 매핑, 타입 변환, Null 처리, 검증 규칙을 적용해 Lake 저장 전 데이터를 정리합니다." />
-        <div className="review-card-grid compact-cards">
-          {[
-            ["Active Rules", "5"],
-            ["Affected Cols", "12/48"],
-            ["Health", "94.2% Passed"],
-            ["Invalid Rows", "3 Invalid Rows Detected"],
-          ].map(([label, value]) => (
-            <article className="review-mini-card" key={label}>
-              <strong>{label}</strong>
-              <span>{value}</span>
-            </article>
-          ))}
+    <div className="hegun-rule-page">
+      <RuleMetrics stats={ruleStats} />
+      <div className="hegun-rule-workspace">
+        <RuleCategoryRail activeCategory={selectedRuleCategory} onSelect={(category) => {
+          setSelectedRuleCategory(category);
+          ruleAction("etl.rules.category_selected", `/api/etl/rules/categories/${category}`, `${category} rule category selected`);
+        }} />
+        <div className="hegun-rule-main-stack">
+          <RecipeStepsTable steps={recipeSteps} onPreview={previewRecipeStep} onRemove={removeRecipeStep} />
+          <RuleStepBuilder category={selectedRuleCategory} onAction={ruleAction} onAddStep={addRecipeStep} />
+          <StepPreviewAnalysis invalidRowCount={invalidRowCount} step={selectedPreviewStep} onAction={ruleAction} />
+          {showInvalidRows && <InvalidRowsPanel invalidRows={INVALID_RULE_ROWS} onAction={ruleAction} />}
         </div>
-        <div className="hegun-rule-layout">
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <BookOpen size={18} />
-              <h2>Rule Library</h2>
-              <span className="panel-note">Transformation · Quality & Validation</span>
-            </div>
-            <div className="hegun-rule-library">
-              <article><strong>Transformation</strong><span>Type Cast, Map</span></article>
-              <article><strong>Quality & Validation</strong><span>Check Integrity</span></article>
-              <article className="wide"><strong>Auto-Validation</strong><span>Real-time quality checks are enabled. Every rule change triggers a preview update on the sampled 1k rows.</span></article>
-            </div>
-          </section>
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <Settings size={18} />
-              <h2>Configure New Quality Rule</h2>
-              <span className="panel-note">Define validation logic for a specific data field.</span>
-            </div>
-            <div className="hegun-rule-builder">
-              <label className="hegun-rule-field wide">
-                <span>Validation Type</span>
-                <div className="hegun-rule-options">
-                  {["Not Null", "Range Check", "Accepted Values", "Unique", "Regex"].map((option) => (
-                    <button className={option === "Range Check" ? "active" : ""} key={option} type="button" onClick={() => ruleAction("etl.rules.validation_type_selected", `/api/etl/rules/types/${option}`, `${option} rule selected`) }>{option}</button>
-                  ))}
-                </div>
-              </label>
-              <label className="hegun-rule-field">
-                <span>Target Column</span>
-                <div className="hegun-rule-select">
-                  <strong>price_usd</strong>
-                  <em>Decimal · 98.4% valid</em>
-                </div>
-              </label>
-              <label className="hegun-rule-field">
-                <span>Severity Level</span>
-                <div className="hegun-rule-toggle">
-                  <button type="button" onClick={() => ruleAction("etl.rules.severity_selected", "/api/etl/rules/severity/warning", "5 quality rules · warning severity selected")}>Warning</button>
-                  <button className="active" type="button" onClick={() => ruleAction("etl.rules.severity_selected", "/api/etl/rules/severity/error", "5 quality rules · error severity selected")}>Error</button>
-                </div>
-              </label>
-              <label className="hegun-rule-field wide">
-                <span>Failure Action</span>
-                <div className="hegun-rule-options compact">
-                  {["Warn", "Drop Row", "Quarantine", "Fail Run"].map((option) => (
-                    <button className={option === "Quarantine" ? "active" : ""} key={option} type="button" onClick={() => ruleAction("etl.rules.failure_action_selected", `/api/etl/rules/failure-actions/${option}`, `${option} failure action selected`)}>{option}</button>
-                  ))}
-                </div>
-              </label>
-              <label className="hegun-rule-field wide">
-                <span>Condition / Value Expression</span>
-                <div className="hegun-rule-expression">
-                  <code>value &gt;= 0 AND value &lt;= 10000</code>
-                  <em>sample pass rate 97.8%</em>
-                </div>
-              </label>
-            </div>
-            <div className="hegun-rule-footer">
-              <div>
-                <strong>Preview changes in real-time</strong>
-                <span>1,000 sampled rows · 22 rows will be quarantined</span>
-              </div>
-              <button className="primary-button" type="button" onClick={() => ruleAction("etl.rules.added", "/api/etl/rules", "6 quality rules · price_usd range check added")}>Add Rule</button>
-            </div>
-          </section>
+      </div>
+      <RuleBottomBar invalidRowCount={invalidRowCount} invalidRowsVisible={showInvalidRows} onInvalidRows={toggleInvalidRows} onNext={goNext} onPrev={onPrev} onSave={saveRuleDraft} onTest={testRules} />
+    </div>
+  );
+}
+
+function RuleMetrics({ stats }: { stats: RuleStats }) {
+  return (
+    <div className="hegun-rule-metrics">
+      {RULE_METRIC_DEFS.map(({ icon, label, value }) => (
+        <article className="hegun-rule-metric" key={label}>
+          <span className="hegun-rule-metric-icon">{icon}</span>
+          <div>
+            <span>{label}</span>
+            <strong>{value(stats)}</strong>
+          </div>
+        </article>
+      ))}
+      <div className="hegun-draft-chip">
+        <i />
+        Draft: Unsaved Changes
+      </div>
+    </div>
+  );
+}
+
+function RuleCategoryRail({ activeCategory, onSelect }: { activeCategory: RuleCategory; onSelect: (category: RuleCategory) => void }) {
+  return (
+    <aside className="hegun-rule-rail">
+      <label className="hegun-rule-search">
+        <Search size={16} />
+        <input aria-label="Search rule types" placeholder="Search rule types..." />
+      </label>
+      <span className="hegun-rail-eyebrow">Rule Categories</span>
+      <div className="hegun-rule-category-list">
+        {RULE_CATEGORIES.map((category) => (
+          <button className={category.id === activeCategory ? "hegun-rule-category active" : "hegun-rule-category"} key={category.id} type="button" onClick={() => onSelect(category.id)}>
+            <span className="hegun-rule-category-icon">{category.icon}</span>
+            <strong>{category.label}</strong>
+            <em>{category.description}</em>
+          </button>
+        ))}
+      </div>
+      <div className="hegun-rail-note">
+        <BookOpen size={16} />
+        <span>Sample first, full dataset during execution.</span>
+      </div>
+    </aside>
+  );
+}
+
+function RecipeStepsTable({
+  onPreview,
+  onRemove,
+  steps,
+}: {
+  onPreview: (step: RecipeStep) => void;
+  onRemove: (step: RecipeStep) => void;
+  steps: RecipeStep[];
+}) {
+  return (
+    <section className="panel hegun-console-panel hegun-recipe-panel">
+      <div className="hegun-section-title">
+        <h2>Transformation Recipe Steps</h2>
+        <p>Rules are applied sequentially to sample data first, then to the full dataset during execution.</p>
+      </div>
+      <div className="hegun-table-scroll">
+        <table className="schema-table hegun-recipe-table">
+          <thead>
+            <tr>
+              <th>Step</th>
+              <th>Input</th>
+              <th>Operation</th>
+              <th>Output</th>
+              <th>Params</th>
+              <th>On Error</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((row) => (
+              <tr key={`${row.id}-${row.input}`}>
+                <td><strong>{row.id}</strong></td>
+                <td><span className="hegun-data-chip">{row.input}</span></td>
+                <td>{row.operation}</td>
+                <td><span className="hegun-data-chip muted">{row.output}</span></td>
+                <td>{row.params}</td>
+                <td><span className={`hegun-error-pill ${row.onError.toLowerCase().replace(/\s/g, "-")}`}>{row.onError}</span></td>
+                <td>
+                  <div className="hegun-row-actions">
+                    <button aria-label={`Preview step ${row.id}`} type="button" onClick={() => onPreview(row)}>
+                      <Search size={15} />
+                    </button>
+                    <button aria-label={`Remove step ${row.id}`} type="button" onClick={() => onRemove(row)}>
+                      <Minus size={15} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RuleStepBuilder({
+  category,
+  onAddStep,
+  onAction,
+}: {
+  category: RuleCategory;
+  onAddStep: (draft: RuleStepDraft) => void;
+  onAction: RuleActionHandler;
+}) {
+  const isTransform = category === "transform";
+  const [collapsed, setCollapsed] = useState(false);
+  const [draft, setDraft] = useState<RuleStepDraft>({
+    input: "",
+    onError: "",
+    operation: "",
+    output: "",
+    params: "",
+  });
+  const updateDraft = (field: keyof RuleStepDraft, value: string) => {
+    setDraft((currentDraft) => ({ ...currentDraft, [field]: value }));
+  };
+  const toggleCollapsed = () => {
+    setCollapsed((isCollapsed) => !isCollapsed);
+    onAction(collapsed ? "etl.rules.builder_expanded" : "etl.rules.builder_collapsed", "/api/etl/rules/builder", collapsed ? "rule builder expanded" : "rule builder collapsed");
+  };
+  const previewDraft = () => {
+    onAction("etl.rules.step_previewed", "/api/etl/rules/steps/preview", "draft step previewed");
+  };
+  const addDraftStep = () => {
+    onAddStep(draft);
+    setDraft({ input: "", onError: "", operation: "", output: "", params: "" });
+  };
+
+  return (
+    <section className={collapsed ? "panel hegun-console-panel hegun-builder-panel collapsed" : "panel hegun-console-panel hegun-builder-panel"}>
+      <div className="hegun-builder-header">
+        <div>
+          <span className="hegun-builder-icon"><Plus size={20} /></span>
+          <div>
+            <h2>{isTransform ? "Add Transformation Step" : "Add Quality Check"}</h2>
+            <p>{isTransform ? "Define a new rule to process your data pipeline" : "Define a validation rule before execution"}</p>
+          </div>
         </div>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <Settings size={18} />
-            <h2>Transformation Recipe Steps</h2>
-            <span className="panel-note">sample first, full dataset during execution</span>
+        <button className="icon-button hegun-builder-collapse" aria-expanded={!collapsed} aria-label={collapsed ? "Expand add step" : "Collapse add step"} type="button" onClick={toggleCollapsed}>
+          {collapsed ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
+        </button>
+      </div>
+      {!collapsed && (
+        <>
+          <div className="hegun-rule-builder">
+            <label className="hegun-rule-field">
+              <span>Input Column</span>
+              <input className="input control-input" value={draft.input} onChange={(event) => updateDraft("input", event.target.value)} />
+            </label>
+            <label className="hegun-rule-field">
+              <span>Operation</span>
+              <input className="input control-input" value={draft.operation} onChange={(event) => updateDraft("operation", event.target.value)} />
+            </label>
+            <label className="hegun-rule-field">
+              <span>Output Column</span>
+              <input className="input control-input" placeholder={isTransform ? "e.g. user_email" : "e.g. validation_status"} value={draft.output} onChange={(event) => updateDraft("output", event.target.value)} />
+            </label>
+            <label className="hegun-rule-field">
+              <span>Parameters</span>
+              <input className="input control-input" placeholder={isTransform ? "e.g. $.user.id" : "e.g. value > 0"} value={draft.params} onChange={(event) => updateDraft("params", event.target.value)} />
+            </label>
+            <label className="hegun-rule-field">
+              <span>On Error</span>
+              <input className="input control-input" value={draft.onError} onChange={(event) => updateDraft("onError", event.target.value)} />
+            </label>
+            <div className="hegun-rule-checkboxes">
+              <label><input type="checkbox" /> Add optional condition</label>
+              <label><input type="checkbox" defaultChecked /> Live Preview</label>
+            </div>
           </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table">
-              <thead>
-                <tr>
-                  <th>Step</th>
-                  <th>Input</th>
-                  <th>Operation</th>
-                  <th>Output</th>
-                  <th>Params</th>
-                  <th>On Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.map((row) => (
-                  <tr key={`${row[0]}-${row[1]}`}>
-                    {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="hegun-rule-form-actions">
+            <button className="secondary-button" type="button" onClick={previewDraft}>Preview Step</button>
+            <button className="primary-button" type="button" onClick={addDraftStep}>Add Step</button>
           </div>
-        </section>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>Applied Quality Rules</h2>
-            <span className="panel-note">Real-time validation enabled</span>
-          </div>
-          <div className="hegun-toolbar">
-            <button className="secondary-button" type="button" onClick={() => ruleAction("etl.rules.revalidated", "/api/etl/rules/revalidate", "5 rules revalidated · 94.2% pass · 3 invalid rows")}>Re-validate</button>
-            <button className="secondary-button" type="button" onClick={() => ruleAction("etl.rules.cleared", "/api/etl/rules/clear", "0 active rules · validation disabled")}>Clear All</button>
-          </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table">
-              <thead>
-                <tr>
-                  <th>Column</th>
-                  <th>Rule</th>
-                  <th>Severity</th>
-                  <th>Failure Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {qualityRules.map((row) => (
-                  <tr key={`${row[0]}-${row[1]}`}>
-                    {row.map((cell, index) => <td key={`${row[0]}-${index}`}>{index === 3 ? `Action: ${cell}` : cell}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <FileText size={18} />
-            <h2>Before / After Preview</h2>
-          </div>
-          <div className="form-grid">
-            <Field label="Input Value" value={'{ "user": { "contact": { "email": "Jane.Doe@Acme.com" } } }'} wide />
-            <Field label="Output Value" value="Jane.Doe@Acme.com" />
-            <Field label="Sample Rows" value="1,000" />
-            <Field label="Matched Rows" value="997" />
-            <Field label="Generated Spec" value="json_path($.user.contact.email) → lower() → trim()" wide />
-          </div>
-          <InfoBox title="테스트 결과" body="샘플 1,000건 기준 변환 성공 998건, 검토 필요 2건입니다." />
-        </section>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <Check size={18} />
-            <h2>Validation Results</h2>
-            <span className="panel-note">SAMPLE N=1000</span>
-          </div>
-          <div className="hegun-validation-summary">
-            <strong>3 Rows Failed Validation</strong>
-            <span>Missing user_id (2 rows)</span>
-            <span>Non-positive price_usd (1 row)</span>
-          </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table">
-              <thead>
-                <tr>
-                  <th>Row</th>
-                  <th>Status</th>
-                  <th>Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {validationRows.map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <div className="form-actions inline">
-          <button className="secondary-button" type="button" onClick={testRules}>룰 테스트</button>
+        </>
+      )}
+    </section>
+  );
+}
+
+function RuleBottomBar({
+  invalidRowCount,
+  invalidRowsVisible,
+  onInvalidRows,
+  onNext,
+  onPrev,
+  onSave,
+  onTest,
+}: {
+  invalidRowCount: number;
+  invalidRowsVisible: boolean;
+  onInvalidRows: () => void;
+  onNext: () => void;
+  onPrev: () => void;
+  onSave: () => void;
+  onTest: () => void;
+}) {
+  return (
+    <div className="hegun-rule-bottom-bar">
+      <button className="secondary-button" type="button" onClick={onPrev}>스키마로 돌아가기</button>
+      <button className="ghost-button hegun-bottom-command" type="button" onClick={onTest}>
+        <Search size={16} />
+        샘플 테스트 (1,000개 행)
+      </button>
+      <button className={invalidRowsVisible ? "ghost-button hegun-bottom-command active" : "ghost-button hegun-bottom-command"} type="button" onClick={onInvalidRows}>
+        <Info size={16} />
+        유효하지 않은 행 보기 ({invalidRowCount})
+      </button>
+      <span className="hegun-target-engine">TARGET ENGINE<br /><strong>AWS Athena (Presto)</strong></span>
+      <button className="secondary-button" type="button" onClick={onSave}>임시 저장</button>
+      <button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</button>
+    </div>
+  );
+}
+
+function StepPreviewAnalysis({ invalidRowCount, onAction, step }: { invalidRowCount: number; onAction: RuleActionHandler; step: RecipeStep }) {
+  const inputValue = step.input === "meta_json" ? '{ "user": { "contact": { "email": "Jane.Doe@Acme.com" } } }' : `Sample value from ${step.input}`;
+  const outputValue = step.output === "user_email" ? "Jane.Doe@Acme.com" : `Preview ${step.output}`;
+  const matchedRows = Math.max(0, 1000 - invalidRowCount);
+  return (
+    <section className="panel hegun-console-panel">
+      <div className="panel-header">
+        <RefreshCw size={18} />
+        <h2>단계 미리보기 및 분석 (Step Preview & Analysis)</h2>
+        <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows", "new sample rows fetched")}>새 샘플 행 가져오기</button>
+      </div>
+      <div className="hegun-preview-grid">
+        <div className="hegun-preview-column">
+          <h3>Step Details</h3>
+          <Field label="Input Column" value={step.input} />
+          <Field label="Output Column" value={step.output} />
+          <Field label="Operation" value={step.operation} />
+          <Field label="On Error" value={step.onError} />
+          <Field label="Params" value={step.params} wide />
         </div>
-    </CreationFlowLayout>
+        <div className="hegun-preview-column hegun-before-after">
+          <h3>Before / After</h3>
+          <Field label="Input Value" value={inputValue} wide />
+          <div className="hegun-preview-arrow">→</div>
+          <Field label="Output Value" value={outputValue} wide />
+          <span className="hegun-success-state"><Check size={14} /> Success</span>
+        </div>
+        <div className="hegun-preview-column">
+          <h3>Sample Stats</h3>
+          <StatusTile label="Sample Rows" value="1,000" status="Tested" />
+          <StatusTile label="Matched Rows" value={matchedRows.toLocaleString()} status="Matched" />
+          <StatusTile label="Failed Rows" value={String(invalidRowCount)} status="Review" />
+          <StatusTile label="Affected Column" value={step.output} status="Output" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InvalidRowsPanel({ invalidRows, onAction }: { invalidRows: string[][]; onAction: RuleActionHandler }) {
+  return (
+    <section className="panel hegun-console-panel hegun-invalid-panel">
+      <div className="panel-header">
+        <Info size={18} />
+        <h2>Invalid Data Rows</h2>
+        <span className="panel-note">{invalidRows.length} rows need review</span>
+      </div>
+      <div className="hegun-table-scroll">
+        <table className="schema-table">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Column</th>
+              <th>Reason</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invalidRows.map((row) => (
+              <tr key={row[0]}>
+                {row.map((cell, index) => <td key={`${row[0]}-${cell}`}>{index === 3 ? <span className="hegun-data-chip muted">{cell}</span> : cell}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="hegun-rule-form-actions">
+        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export", "invalid rows exported")}>Export Rows</button>
+        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review", `${invalidRows.length} invalid rows marked reviewed`)}>Mark Reviewed</button>
+      </div>
+    </section>
   );
 }
 
@@ -948,31 +1329,43 @@ export function TargetPage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [selectedLayer, setSelectedLayer] = useState<DraftPipeline["targetLayer"]>(draft.targetLayer);
-  const [targetDataset, setTargetDataset] = useState(draft.targetDataset);
-  const [targetOwner, setTargetOwner] = useState(draft.owner);
+  const initialTarget = getTargetDraftValues(draft);
+  const [selectedLayer, setSelectedLayer] = useState<DraftPipeline["targetLayer"]>(initialTarget.targetLayer);
+  const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
+  const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
-  const [targetFormat, setTargetFormat] = useState(draft.targetFormat);
-  const [ragEnabled, setRagEnabled] = useState(draft.rag);
-  const applyTargetDraft = () => {
+  const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
+  const [ragEnabled, setRagEnabled] = useState(initialTarget.rag);
+  const applyTargetDraft = (patch: Partial<{
+    owner: string;
+    rag: boolean;
+    targetDataset: string;
+    targetFormat: string;
+    targetLayer: DraftPipeline["targetLayer"];
+  }> = {}) => {
+    const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
+    const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+    const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
+    const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
+    const nextRag = patch.rag ?? ragEnabled;
+
     onDraftChange({
-      jobName: `${targetDataset}_pipeline`,
-      owner: targetOwner,
-      targetDataset,
-      targetFormat,
-      targetLayer: selectedLayer,
-      rag: ragEnabled,
+      jobName: buildJobName(nextTargetDataset),
+      owner: nextOwner,
+      targetDataset: nextTargetDataset,
+      targetFormat: nextTargetFormat,
+      targetLayer: nextTargetLayer,
+      rag: nextRag,
     });
   };
-  const selectLayer = (format: string) => {
-    const layer = format.toUpperCase() as DraftPipeline["targetLayer"];
+  const selectLayer = (layer: DraftPipeline["targetLayer"]) => {
     setSelectedLayer(layer);
-    onDraftChange({ targetLayer: layer });
+    applyTargetDraft({ targetLayer: layer });
   };
   const toggleRag = () => {
     const next = !ragEnabled;
     setRagEnabled(next);
-    onDraftChange({ rag: next });
+    applyTargetDraft({ rag: next });
   };
   const goNext = () => {
     applyTargetDraft();
@@ -996,15 +1389,17 @@ export function TargetPage({
             <label className="field">
               <span>타겟 데이터셋 이름</span>
               <input className="input control-input" value={targetDataset} onChange={(event) => {
-                setTargetDataset(event.target.value);
-                onDraftChange({ jobName: `${event.target.value}_pipeline`, targetDataset: event.target.value });
+                const nextTargetDataset = event.target.value;
+                setTargetDataset(nextTargetDataset);
+                applyTargetDraft({ targetDataset: nextTargetDataset });
               }} />
             </label>
             <label className="field">
               <span>소유자</span>
               <input className="input control-input" value={targetOwner} onChange={(event) => {
-                setTargetOwner(event.target.value);
-                onDraftChange({ owner: event.target.value });
+                const nextOwner = event.target.value;
+                setTargetOwner(nextOwner);
+                applyTargetDraft({ owner: nextOwner });
               }} />
             </label>
             <label className="field wide">
@@ -1025,9 +1420,9 @@ export function TargetPage({
             <h2>저장소 및 포맷 설정</h2>
           </div>
           <div className="format-grid">
-            {["RAW", "Bronze", "Silver", "Gold"].map((format) => (
-              <button className={format.toUpperCase() === selectedLayer ? "format-card active" : "format-card"} key={format} type="button" onClick={() => selectLayer(format)}>
-                {format}
+            {TARGET_LAYER_OPTIONS.map((layer) => (
+              <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
+                {layer}
               </button>
             ))}
           </div>
@@ -1036,13 +1431,11 @@ export function TargetPage({
             <label className="field">
               <span>파일 포맷</span>
               <select className="input control-input" value={targetFormat} onChange={(event) => {
-                setTargetFormat(event.target.value);
-                onDraftChange({ targetFormat: event.target.value });
+                const nextTargetFormat = getKnownOption(event.target.value, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+                setTargetFormat(nextTargetFormat);
+                applyTargetDraft({ targetFormat: nextTargetFormat });
               }}>
-                <option>Parquet</option>
-                <option>Delta</option>
-                <option>Iceberg</option>
-                <option>CSV</option>
+                {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
               </select>
             </label>
             <Field label="파티션" value="year/month/region" />
@@ -1090,22 +1483,30 @@ export function PermissionPage({
   onPrev: () => void;
   onSave: () => void;
 }) {
-  const roles = [
-    { name: "Data Engineer Group", access: ["조회", "쿼리 실행", "메타데이터", "관리"], checked: true, note: "파이프라인 운영 및 장애 대응 권한" },
-    { name: "Data Analyst Group", access: ["조회", "쿼리 실행", "메타데이터"], checked: true, note: "분석 업무용 표준 접근 권한" },
-    { name: "ML Team", access: ["조회", "메타데이터"], checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
-  ];
-  const [permissionTemplate, setPermissionTemplate] = useState("Data Engineer Group");
-  const [visibility, setVisibility] = useState("조직 내부");
-  const [dataOwner, setDataOwner] = useState(draft.owner || "data-team-01");
-  const [approvalStatus, setApprovalStatus] = useState("승인 검토");
-  const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => Object.fromEntries(roles.map((role) => [role.name, role.checked])));
-  const permissionSummary = `${permissionTemplate} · ${visibility} · ${approvalStatus}`;
+  const initialPermission = getPermissionDraftValues(draft);
+  const [permissionTemplate, setPermissionTemplate] = useState(initialPermission.permissionTemplate);
+  const [visibility, setVisibility] = useState(initialPermission.visibility);
+  const [dataOwner, setDataOwner] = useState(initialPermission.owner);
+  const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
+  const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
+    ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
+    [initialPermission.permissionTemplate]: true,
+  }));
 
-  const applyPermissionDraft = () => {
+  const applyPermissionDraft = (patch: Partial<{
+    approvalStatus: string;
+    owner: string;
+    permissionTemplate: string;
+    visibility: string;
+  }> = {}) => {
+    const nextPermissionTemplate = getKnownOption(patch.permissionTemplate ?? permissionTemplate, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+    const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
+    const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
+    const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
+
     onDraftChange({
-      owner: dataOwner,
-      permissionSummary,
+      owner: nextOwner,
+      permissionSummary: buildPermissionSummary(nextPermissionTemplate, nextVisibility, nextApprovalStatus),
     });
   };
   const goNext = () => {
@@ -1142,41 +1543,40 @@ export function PermissionPage({
             <label className="field">
               <span>권한 템플릿</span>
               <select className="input control-input" value={permissionTemplate} onChange={(event) => {
-                setPermissionTemplate(event.target.value);
-                onDraftChange({ permissionSummary: `${event.target.value} · ${visibility} · ${approvalStatus}` });
+                const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+                setPermissionTemplate(nextPermissionTemplate);
+                setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
+                applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
               }}>
-                <option>Data Engineer Group</option>
-                <option>Data Analyst Group</option>
-                <option>ML Team</option>
+                {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
               </select>
             </label>
             <label className="field">
               <span>공개 범위</span>
               <select className="input control-input" value={visibility} onChange={(event) => {
-                setVisibility(event.target.value);
-                onDraftChange({ permissionSummary: `${permissionTemplate} · ${event.target.value} · ${approvalStatus}` });
+                const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
+                setVisibility(nextVisibility);
+                applyPermissionDraft({ visibility: nextVisibility });
               }}>
-                <option>조직 내부</option>
-                <option>프로젝트 멤버</option>
-                <option>외부 공유</option>
+                {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
             <label className="field">
               <span>데이터 오너</span>
               <input className="input control-input" value={dataOwner} onChange={(event) => {
-                setDataOwner(event.target.value);
-                onDraftChange({ owner: event.target.value });
+                const nextOwner = event.target.value;
+                setDataOwner(nextOwner);
+                applyPermissionDraft({ owner: nextOwner });
               }} />
             </label>
             <label className="field">
               <span>승인 상태</span>
               <select className="input control-input" value={approvalStatus} onChange={(event) => {
-                setApprovalStatus(event.target.value);
-                onDraftChange({ permissionSummary: `${permissionTemplate} · ${visibility} · ${event.target.value}` });
+                const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
+                setApprovalStatus(nextApprovalStatus);
+                applyPermissionDraft({ approvalStatus: nextApprovalStatus });
               }}>
-                <option>승인 검토</option>
-                <option>승인 완료</option>
-                <option>오너 승인 필요</option>
+                {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
               </select>
             </label>
           </div>
@@ -1184,16 +1584,16 @@ export function PermissionPage({
         <section className="panel">
           <h2 className="panel-title">세부 권한</h2>
           <div className="permission-list">
-            {roles.map((role) => (
-              <label className="permission-row detailed" key={role.name}>
+            {PERMISSION_ROLES.map((role) => (
+              <label className={role.name === permissionTemplate ? "permission-row detailed active" : "permission-row detailed"} key={role.name}>
                 <input type="checkbox" checked={roleChecks[role.name]} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
                 <span>
                   <strong>{role.name}</strong>
                   <small>{role.note}</small>
                 </span>
                 <div className="permission-chip-row">
-                  {["조회", "쿼리 실행", "메타데이터", "관리"].map((item) => (
-                    <em className={role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
+                  {PERMISSION_ACCESS_ITEMS.map((item) => (
+                    <em className={roleChecks[role.name] && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
                   ))}
                 </div>
               </label>
@@ -1206,6 +1606,10 @@ export function PermissionPage({
 }
 
 export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
+  const scheduleEditFlow = getScheduleFlowFromLabel(draft.scheduleLabel);
+  const permissionReview = getPermissionDraftValues(draft);
+  const targetReview = getTargetDraftValues(draft);
+  const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const schemaRows = [
     ["review_id", "BIGINT", "NO", "SOURCE.id"],
     ["product_id", "STRING", "NO", "SOURCE.p_code"],
@@ -1238,13 +1642,13 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
         <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
         <div className="review-card-grid">
           {[
-            ["기본 정보", draft.targetDataset, "target"],
+            ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
             ["소스", `${draft.sourceType} · ${sourceSummary || draft.sourceLabel}`, "source"],
             ["스키마", draft.schemaSummary, "schema"],
             ["처리 규칙", draft.ruleSummary, "rules"],
-            ["스케줄", draft.scheduleLabel, "repeat"],
-            ["권한", draft.permissionSummary, "permission"],
-            ["타겟 저장소", `${draft.targetLayer} / ${draft.targetFormat}`, "target"],
+            ["스케줄", draft.scheduleLabel, scheduleEditFlow],
+            ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -1254,6 +1658,35 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
             </article>
           ))}
         </div>
+        <section className="panel">
+          <div className="panel-header">
+            <ShieldCheck size={18} />
+            <h2>권한 draft 상세</h2>
+            <span className="panel-note">Review 카드 반영값</span>
+          </div>
+          <div className="form-grid">
+            <Field label="권한 템플릿" value={permissionReview.permissionTemplate} />
+            <Field label="공개 범위" value={permissionReview.visibility} />
+            <Field label="승인 상태" value={permissionReview.approvalStatus} />
+            <Field label="데이터 오너" value={permissionReview.owner} />
+            <Field label="권한 요약" value={permissionReview.permissionSummary} wide />
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <HardDrive size={18} />
+            <h2>타겟 draft 상세</h2>
+            <span className="panel-note">Review 카드 반영값</span>
+          </div>
+          <div className="form-grid">
+            <Field label="생성될 Job 이름" value={buildJobName(targetReview.targetDataset)} />
+            <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
+            <Field label="타겟 Layer" value={targetReview.targetLayer} />
+            <Field label="타겟 Format" value={targetReview.targetFormat} />
+            <Field label="RAG 인덱싱" value={ragReviewLabel} />
+            <Field label="데이터 오너" value={targetReview.owner} />
+          </div>
+        </section>
         <section className="panel">
           <div className="panel-header">
             <Database size={18} />
