@@ -162,7 +162,9 @@ type LineageContext = {
 ```
 
 Lineage API가 없으면 `CatalogDataset.upstream`과 `CatalogDataset.downstream`으로 fallback context를 만든다.
-현재 Catalog lineage modal은 source/upstream -> current 흐름을 우선 표시하고, downstream 소비처는 별도 영향도 context로 분리할 수 있다.
+현재 Catalog lineage modal은 source/upstream -> current 흐름을 우선 표시하고, expandable upstream node를 클릭하면 mock graph contract 기준으로 한 depth씩 추가 표시한다.
+향후 Lineage API는 전체 문자열 배열보다 `nodes`, `edges`, `columns`, `expandable`, `loadedDepth`를 가진 graph response를 반환해야 한다.
+`downstream` 소비처는 별도 영향도 context로 분리할 수 있다.
 
 ### Optional Large-Scale Evidence Extension
 
