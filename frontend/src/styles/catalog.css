@@ -289,8 +289,32 @@
 
 .catalog-preview-title {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 18px;
+  grid-template-columns: 20px minmax(0, 1fr) 32px;
   gap: 12px;
+}
+
+.catalog-favorite-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #0f172a;
+}
+
+.catalog-favorite-button:hover {
+  background: #f8fafc;
+}
+
+.catalog-favorite-button.active {
+  background: #fef9c3;
+  color: #eab308;
+}
+
+.catalog-favorite-button.active svg {
+  fill: currentColor;
 }
 
 .catalog-preview-title h2,

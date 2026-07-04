@@ -119,17 +119,33 @@ export function CatalogPage({
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
+  const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [searchText, setSearchText] = useState("");
   const tags = ["#customer", "#sales", "#behavior", "#marketing", "#dw", "#growth", "#클릭", "#실시간", "#고객 주문", "#스트림", "#RAG", "#사용자 지표"];
   const normalizedSearchText = useMemo(() => normalizeCatalogText(searchText), [searchText]);
-  const filteredDatasets = useMemo(() => datasets.filter((dataset) => {
-    const matchesSearch = datasetMatchesSearch(dataset, normalizedSearchText);
-    const matchesTag = !activeTag || dataset.tags.includes(activeTag);
-    const matchesFilters = datasetMatchesFilters(dataset, filterState);
+  const filteredDatasets = useMemo(() => datasets
+    .map((dataset, index) => ({ dataset, index }))
+    .filter(({ dataset }) => {
+      const isPinned = pinnedDatasetIds.includes(dataset.id);
+      const matchesSearch = datasetMatchesSearch(dataset, normalizedSearchText);
+      const matchesTag = !activeTag || dataset.tags.includes(activeTag);
+      const matchesFilters = datasetMatchesFilters(dataset, filterState);
 
-    return matchesSearch && matchesTag && matchesFilters;
-  }), [activeTag, datasets, filterState, normalizedSearchText]);
+      return isPinned || (matchesSearch && matchesTag && matchesFilters);
+    })
+    .sort((left, right) => {
+      const leftPinnedIndex = pinnedDatasetIds.indexOf(left.dataset.id);
+      const rightPinnedIndex = pinnedDatasetIds.indexOf(right.dataset.id);
+      const leftPinned = leftPinnedIndex !== -1;
+      const rightPinned = rightPinnedIndex !== -1;
+
+      if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+      if (leftPinned && rightPinned) return leftPinnedIndex - rightPinnedIndex;
+      return left.index - right.index;
+    })
+    .map(({ dataset }) => dataset), [activeTag, datasets, filterState, normalizedSearchText, pinnedDatasetIds]);
   const hasCatalogResults = filteredDatasets.length > 0;
+  const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
 
   useEffect(() => {
     if (!hasCatalogResults) return;
@@ -157,6 +173,12 @@ export function CatalogPage({
   const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
     setFilterState((filters) => ({ ...filters, [filterName]: checked }));
     onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
+  };
+
+  const togglePinnedDataset = () => {
+    const nextPinned = !isPreviewPinned;
+    setPinnedDatasetIds((ids) => nextPinned ? [previewDataset.id, ...ids.filter((id) => id !== previewDataset.id)] : ids.filter((id) => id !== previewDataset.id));
+    onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", `/api/catalog/datasets/${previewDataset.id}/pin`, previewDataset.id);
   };
 
   return (
@@ -269,7 +291,16 @@ export function CatalogPage({
               <h2>{previewDataset.name}</h2>
               <p>{previewDataset.description}</p>
             </div>
-            <Star size={18} />
+            <button
+              aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+              aria-pressed={isPreviewPinned}
+              className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
+              title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+              type="button"
+              onClick={togglePinnedDataset}
+            >
+              <Star size={18} />
+            </button>
           </div>
 
           <div className="catalog-preview-metrics">
@@ -322,7 +353,6 @@ export function CatalogPage({
           <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
             <ExternalLink size={16} /> 쿼리 편집기에서 열기
           </button>
-          <button className="secondary-button catalog-wide-button" type="button" onClick={() => onAction("catalog.dataset.saved", `/api/catalog/datasets/${previewDataset.id}/saved`, previewDataset.id)}>내 저장소 보관</button>
           <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
         </aside>
       ) : (
