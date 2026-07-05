@@ -1,4 +1,5 @@
 from app.core.database import engine
+import app.models  # noqa: F401
 from app.models.base import Base
 
 
