@@ -51,6 +51,7 @@ type DerivedDatasetDraft = {
 };
 
 const PREVIEW_ROW_LIMIT = 100;
+const SQL_CONTEXT_PAGE_SIZE = 8;
 const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
 
@@ -81,6 +82,7 @@ export function SqlAnalysisPage({
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
+  const [contextPage, setContextPage] = useState(1);
   const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
   const [showReferencedOnly, setShowReferencedOnly] = useState(false);
@@ -144,8 +146,12 @@ export function SqlAnalysisPage({
         })
       : contextDatasets;
 
-    return searchableDatasets.slice(0, 4);
+    return searchableDatasets;
   }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
+  const totalContextPages = Math.max(1, Math.ceil(filteredDatasets.length / SQL_CONTEXT_PAGE_SIZE));
+  const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
+  const contextPageStartIndex = (currentContextPage - 1) * SQL_CONTEXT_PAGE_SIZE;
+  const paginatedContextDatasets = filteredDatasets.slice(contextPageStartIndex, contextPageStartIndex + SQL_CONTEXT_PAGE_SIZE);
   useEffect(() => {
     setBaseDatasetId(dataset.id);
   }, [dataset.id]);
@@ -175,6 +181,15 @@ export function SqlAnalysisPage({
   useEffect(() => {
     setAutocompleteIndex(0);
   }, [autocompleteCandidates.length, autocompleteContext.key]);
+
+  useEffect(() => {
+    setContextPage(1);
+  }, [baseDataset.id, datasetSearch, showReferencedOnly]);
+
+  useEffect(() => {
+    if (contextPage === currentContextPage) return;
+    setContextPage(currentContextPage);
+  }, [contextPage, currentContextPage]);
 
   useEffect(() => {
     const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
@@ -450,8 +465,8 @@ export function SqlAnalysisPage({
               {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
             </button>
           </div>
-          <div>
-            {filteredDatasets.map((item) => (
+          <div className="sql-context-result-list">
+            {paginatedContextDatasets.map((item) => (
               <SqlDatasetRow
                 dataset={item}
                 expanded={openSchemaDatasetId === item.id}
@@ -468,6 +483,28 @@ export function SqlAnalysisPage({
               <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
             )}
           </div>
+          {filteredDatasets.length > SQL_CONTEXT_PAGE_SIZE && (
+            <div className="sql-context-pagination" aria-label="table search pagination">
+              <span>{contextPageStartIndex + 1}-{contextPageStartIndex + paginatedContextDatasets.length} / {filteredDatasets.length}</span>
+              <div>
+                <button
+                  type="button"
+                  disabled={currentContextPage === 1}
+                  onClick={() => setContextPage((page) => Math.max(1, page - 1))}
+                >
+                  이전
+                </button>
+                <strong>{currentContextPage} / {totalContextPages}</strong>
+                <button
+                  type="button"
+                  disabled={currentContextPage === totalContextPages}
+                  onClick={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
+                >
+                  다음
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       </aside>
 

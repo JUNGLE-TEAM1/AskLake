@@ -35,8 +35,8 @@
   top: 65px;
   left: var(--sidebar-width);
   display: grid;
-  align-content: start;
-  grid-auto-rows: max-content;
+  align-content: stretch;
+  grid-template-rows: max-content max-content max-content minmax(0, 1fr);
   width: var(--sql-context-width);
   height: calc(100vh - 121px);
   max-height: none;
@@ -94,7 +94,6 @@
 
 .sql-base-table,
 .sql-dataset-search-results,
-.sql-dataset-search-results > div,
 .sql-dataset-metrics,
 .sql-workspace {
   display: grid;
@@ -134,6 +133,19 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
+}
+
+.sql-dataset-search-results {
+  grid-template-rows: max-content minmax(0, 1fr) max-content;
+}
+
+.sql-context-result-list {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .sql-base-table h2 {
@@ -274,6 +286,53 @@
   font-size: 12px;
   font-weight: 700;
   padding: 12px;
+}
+
+.sql-context-pagination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}
+
+.sql-context-pagination span,
+.sql-context-pagination strong {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.sql-context-pagination div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sql-context-pagination button {
+  min-height: 24px;
+  border: 1px solid #d8dee8;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.sql-context-pagination button:not(:disabled):hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sql-context-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .sql-table-card {
