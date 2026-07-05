@@ -1187,11 +1187,18 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
 }
 
 function buildSchemaFingerprint(columns: SchemaColumnDraft[]) {
-  return columns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`).join("|");
+  return columns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}:${isSchemaColumnIncluded(column) ? "included" : "excluded"}`).join("|");
 }
 
 function summarizeSchemaColumns(columns: SchemaColumnDraft[], lowConfidenceCount: number, sourceFormat: string) {
-  return `${columns.length}개 출력 컬럼 구성 · ${lowConfidenceCount}개 검토 필요 · ${sourceFormat} 샘플 기준`;
+  const includedCount = columns.filter(isSchemaColumnIncluded).length;
+  const excludedCount = Math.max(0, columns.length - includedCount);
+  const excludedSummary = excludedCount > 0 ? ` · ${excludedCount}개 출력 제외` : "";
+  return `${includedCount}개 출력 컬럼 구성${excludedSummary} · ${lowConfidenceCount}개 검토 필요 · ${sourceFormat} 샘플 기준`;
+}
+
+function isSchemaColumnIncluded(column: SchemaColumnDraft) {
+  return column.included !== false;
 }
 
 function normalizeTargetColumnName(value: string) {
@@ -1260,6 +1267,7 @@ function compactSchemaByPathDepth(columns: SchemaColumnDraft[], sampleRows: stri
     const confidenceValues = group.columns.map(({ column }) => column.confidence ?? 70);
     return {
       confidence: Math.min(...confidenceValues),
+      included: group.columns.some(({ column }) => isSchemaColumnIncluded(column)),
       nullable: group.columns.some(({ column }) => column.nullable),
       sourceName: group.key,
       targetName: normalizeTargetColumnName(group.key),
@@ -1360,6 +1368,7 @@ function compactSchemaPreviewValue(value: string, maxLength = 44) {
 
 function schemaTransformLabel(column: SchemaColumnDraft) {
   const actions: string[] = [];
+  if (!isSchemaColumnIncluded(column)) actions.push("출력 제외");
   if (column.sourceName.includes(".")) actions.push("평탄화");
   if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
   actions.push(`${column.type} 캐스팅`);
@@ -1369,6 +1378,7 @@ function schemaTransformLabel(column: SchemaColumnDraft) {
 
 function schemaTransformShortLabel(column: SchemaColumnDraft) {
   const actions: string[] = [];
+  if (!isSchemaColumnIncluded(column)) actions.push("제외");
   if (column.sourceName.includes(".")) actions.push("평탄화");
   if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
   if (column.type) actions.push("타입 변환");
@@ -1431,8 +1441,12 @@ export function SchemaInferencePage({
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
+  const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
+  const includedSchemaColumnItems = schemaColumns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => isSchemaColumnIncluded(column));
   const schemaSampleRows = draft.schema.sampleRows;
-  const lowConfidenceCount = schemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
+  const lowConfidenceCount = includedSchemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
   const averageConfidence = schemaColumns.length
     ? Math.round(schemaColumns.reduce((sum, column) => sum + (column.confidence ?? 70), 0) / schemaColumns.length)
     : 0;
@@ -1448,7 +1462,7 @@ export function SchemaInferencePage({
     : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
   const previewRow = schemaSampleRows[0] ?? [];
   const sourcePreviewText = buildSourceShapePreview(schemaColumns, previewRow);
-  const outputTableMinWidth = Math.max(880, schemaColumns.length * 148);
+  const outputTableMinWidth = Math.max(880, includedSchemaColumns.length * 148);
   const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
   const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
   const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
@@ -1581,6 +1595,11 @@ export function SchemaInferencePage({
     if (!hasInferredSchema) {
       onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
       onNotify("확정할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return false;
+    }
+    if (includedSchemaColumns.length === 0) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
+      onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
       return false;
     }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
@@ -1838,11 +1857,11 @@ export function SchemaInferencePage({
                 {visibleSchemaColumns.map(({ column, index }) => {
                   const confidence = column.confidence ?? 70;
                   return (
-                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
+                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""} ${isSchemaColumnIncluded(column) ? "" : "excluded"}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
                       <td>
-                        <input aria-label={`${column.targetName} 포함`} checked type="checkbox" onChange={(event) => {
+                        <input aria-label={`${column.targetName} 포함`} checked={isSchemaColumnIncluded(column)} type="checkbox" onChange={(event) => {
                           event.stopPropagation();
-                          if (!event.currentTarget.checked) deleteSchemaColumn(index);
+                          updateSchemaColumn(index, { included: event.currentTarget.checked });
                         }} onClick={(event) => event.stopPropagation()} />
                       </td>
                       <td>#{index + 1}</td>
@@ -1859,7 +1878,7 @@ export function SchemaInferencePage({
                       <td>{column.nullable ? "허용" : "필수"}</td>
                       <td>{schemaRoleLabel(column.role)}</td>
                       <td>
-                        <button className="schema-table-delete" type="button" title="출력 컬럼에서 제외" onClick={(event) => {
+                        <button className="schema-table-delete" type="button" title="컬럼 삭제" onClick={(event) => {
                           event.stopPropagation();
                           deleteSchemaColumn(index);
                         }}>
@@ -1953,7 +1972,9 @@ export function SchemaInferencePage({
               </div>
               <div className="schema-inspector-actions">
                 <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-                <button className="secondary-button schema-wide-button" type="button" onClick={() => deleteSchemaColumn(selectedIndex)}>출력 컬럼에서 제외</button>
+                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>
+                  {isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}
+                </button>
               </div>
             </>
           ) : (
@@ -1975,16 +1996,16 @@ export function SchemaInferencePage({
             <table className="schema-table schema-output-preview-table" style={{ minWidth: outputTableMinWidth }}>
               <thead>
                 <tr>
-                  {schemaColumns.map((column, index) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
+                  {includedSchemaColumnItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {schemaSampleRows.slice(0, 8).map((row, rowIndex) => (
                   <tr key={`schema-preview-${rowIndex}`}>
-                    {schemaColumns.map((column, columnIndex) => <td key={`${column.sourceName}-${columnIndex}`} title={row[columnIndex] ?? ""}>{row[columnIndex] ?? ""}</td>)}
+                    {includedSchemaColumnItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}
                   </tr>
                 ))}
-                {schemaColumns.length === 0 && <tr><td>소스 연결과 스키마 추론이 완료되면 출력 미리보기가 표시됩니다.</td></tr>}
+                {includedSchemaColumnItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -2203,7 +2224,7 @@ function schemaColumnOutputName(column: SchemaColumnDraft) {
 }
 
 function getRuleSourceColumns(columns: SchemaColumnDraft[]) {
-  return columns.map(schemaColumnOutputName).filter(Boolean);
+  return columns.filter(isSchemaColumnIncluded).map(schemaColumnOutputName).filter(Boolean);
 }
 
 function getRuleDatasetId(draft: DraftPipeline) {
@@ -2220,6 +2241,7 @@ function schemaRowsToRuleSampleRows(columns: SchemaColumnDraft[], rows: string[]
   return rows.map((row, rowIndex) => {
     const nextRow: TransformQualitySampleRow = { row_id: String(rowIndex + 1) };
     columns.forEach((column, columnIndex) => {
+      if (!isSchemaColumnIncluded(column)) return;
       const value = row[columnIndex] ?? "";
       const outputName = schemaColumnOutputName(column);
       if (outputName) nextRow[outputName] = value;
@@ -2255,7 +2277,7 @@ function isCountryLikeColumn(column: SchemaColumnDraft) {
 }
 
 function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
-  const columns = draft.schema.columns;
+  const columns = draft.schema.columns.filter(isSchemaColumnIncluded);
   if (columns.length === 0) return FALLBACK_RECIPE_STEPS.slice(0, 1);
   const candidates: RecipeStep[] = [];
   const addStep = (column: SchemaColumnDraft, operation: TransformOperation, output?: string, params?: string, onError: TransformFailurePolicy = "Warn") => {
@@ -2286,7 +2308,7 @@ function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
 }
 
 function buildDefaultQualityRules(draft: DraftPipeline): QualityRule[] {
-  const columns = draft.schema.columns;
+  const columns = draft.schema.columns.filter(isSchemaColumnIncluded);
   if (columns.length === 0) return FALLBACK_QUALITY_RULES.slice(0, 1);
   const rules: QualityRule[] = [];
   const addRule = (
@@ -2315,7 +2337,7 @@ function buildDefaultQualityRules(draft: DraftPipeline): QualityRule[] {
 }
 
 function typeForOutputColumn(name: string, steps: RecipeStep[], schemaColumns: SchemaColumnDraft[], previewRows: TransformQualitySampleRow[]) {
-  const sourceColumn = schemaColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
+  const sourceColumn = schemaColumns.find((column) => isSchemaColumnIncluded(column) && (schemaColumnOutputName(column) === name || column.sourceName === name));
   const producingStep = steps.find((step) => step.output === name);
   if (producingStep) {
     const operation = producingStep.operation.toLowerCase();
@@ -4449,9 +4471,10 @@ export function ReviewPage({
   onSave: () => void;
 }) {
   const request = toCreatePipelineRequest(draft);
+  const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
   const schemaRows = draft.transform.outputColumns.length > 0
     ? draft.transform.outputColumns.map(([name, type]) => {
-        const sourceColumn = draft.schema.columns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
+        const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
         return [
           name,
           type,
@@ -4459,7 +4482,7 @@ export function ReviewPage({
           sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
         ];
       })
-    : draft.schema.columns.map((column) => [
+    : includedReviewColumns.map((column) => [
         column.targetName,
         column.type,
         column.nullable ? "예" : "아니오",
@@ -4473,13 +4496,13 @@ export function ReviewPage({
   const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", draft.schema.columns.length > 0 ? "확정됨" : "추론 필요"],
+    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
     ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
     ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
     ["실패 처리 정책", request.retryPolicySummary ? "유효함" : "확인 필요"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
   ];
-  const canCreate = draft.source.connectionStatus === "success" && draft.schema.columns.length > 0;
+  const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
   const createDisabled = createPending || !canCreate;
   const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 

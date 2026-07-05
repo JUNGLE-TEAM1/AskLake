@@ -163,6 +163,9 @@ function validateCreatePipelineRequest(request) {
   if (!request.targetLayer) missing.push("targetLayer");
   if (!request.owner) missing.push("owner");
   if (!Array.isArray(request.schemaColumns) || request.schemaColumns.length === 0) missing.push("schemaColumns");
+  if (Array.isArray(request.schemaColumns) && request.schemaColumns.length > 0 && validRequestSchemaColumns(request).length === 0) {
+    missing.push("schemaColumns[included]");
+  }
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
 }
 
@@ -467,7 +470,9 @@ function schemaFromJob(job) {
     return job.transformOutputColumns;
   }
   if (Array.isArray(job.schemaColumns) && job.schemaColumns.length > 0) {
-    return job.schemaColumns.map((column) => [column.targetName ?? column.sourceName, column.type ?? "string"]);
+    return job.schemaColumns
+      .filter(isSchemaColumnIncluded)
+      .map((column) => [column.targetName ?? column.sourceName, column.type ?? "string"]);
   }
   return [];
 }
@@ -594,7 +599,15 @@ function parsePositiveInteger(value) {
 function validRequestSchemaColumns(request) {
   return request.schemaColumns
     .map((column, sourceIndex) => ({ column, sourceIndex }))
-    .filter(({ column }) => String(column?.targetName ?? "").trim());
+    .filter(({ column }) => isSchemaColumnIncluded(column) && String(column?.targetName ?? "").trim());
+}
+
+function isSchemaColumnIncluded(column) {
+  const value = column?.included ?? true;
+  if (typeof value === "string") {
+    return !["false", "0", "no", "off"].includes(value.trim().toLowerCase());
+  }
+  return value !== false;
 }
 
 function datasetSchemaFromRequest(request) {

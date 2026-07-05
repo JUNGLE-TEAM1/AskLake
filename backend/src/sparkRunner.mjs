@@ -219,14 +219,37 @@ function writeRowsSource(runId, columns, rows) {
   const content = rows.map((row, rowIndex) => {
     const item = { row_id: String(rowIndex + 1) };
     outputColumns.forEach((column) => {
-      const value = row[column.index] ?? "";
-      item[column.targetName] = value;
-      if (column.sourceName && column.sourceName !== column.targetName) item[column.sourceName] = value;
+      const value = sourceRowValue(row, column);
+      setSourceField(item, column.targetName, value);
+      setSourceField(item, normalizeColumnName(column.targetName), value);
+      setSourceField(item, column.sourceName, value);
+      setSourceField(item, normalizeColumnName(column.sourceName), value);
     });
     return JSON.stringify(item);
   }).join("\n");
   writeFileSync(filePath, `${content}\n`, "utf8");
   return filePath;
+}
+
+function sourceRowValue(row, column) {
+  if (Array.isArray(row)) return row[column.index] ?? "";
+  if (!row || typeof row !== "object") return "";
+  const names = [
+    column.sourceName,
+    column.targetName,
+    normalizeColumnName(column.sourceName),
+    normalizeColumnName(column.targetName),
+  ].filter(Boolean);
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(row, name)) return row[name] ?? "";
+  }
+  return "";
+}
+
+function setSourceField(item, name, value) {
+  const key = String(name || "").trim();
+  if (!key || Object.prototype.hasOwnProperty.call(item, key)) return;
+  item[key] = value;
 }
 
 function sparkOutputPath(job, runId) {

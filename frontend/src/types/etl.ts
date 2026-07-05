@@ -61,6 +61,7 @@ export type SourceDraft = {
 
 export type SchemaColumnDraft = {
   confidence?: number;
+  included?: boolean;
   nullable: boolean;
   role?: string;
   sourceName: string;

@@ -366,7 +366,17 @@ def schema_from_job(job: ETLJobModel) -> list[list[str]]:
     return [
         [str(column.get("targetName") or column.get("sourceName") or f"column_{index + 1}"), str(column.get("type") or "string")]
         for index, column in enumerate(job.schema_columns or [])
+        if schema_column_included(column)
     ]
+
+
+def schema_column_included(column: Any) -> bool:
+    if not isinstance(column, dict):
+        return True
+    value = column.get("included", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return value is not False
 
 
 def quality_summary_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> str:
@@ -437,6 +447,10 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
         missing.append("targetLayer")
     if not request.owner:
         missing.append("owner")
+    if not request.schema_columns:
+        missing.append("schemaColumns")
+    elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
+        missing.append("schemaColumns[included]")
     if missing:
         raise ApiError(
             ErrorCode.VALIDATION_ERROR,
@@ -607,14 +621,14 @@ def dataset_schema_from_request(request: CreatePipelineRequest) -> list[tuple[st
     return [
         (column.target_name, (column.type or "string").lower())
         for column in request.schema_columns
-        if column.target_name.strip()
+        if column.included and column.target_name.strip()
     ]
 
 
 def dataset_sample_rows_from_request(request: CreatePipelineRequest, schema: list[tuple[str, str]]) -> list[list[str]]:
     if not request.schema_sample_rows:
         return []
-    columns = [(column, index) for index, column in enumerate(request.schema_columns) if column.target_name.strip()]
+    columns = [(column, index) for index, column in enumerate(request.schema_columns) if column.included and column.target_name.strip()]
     source_index_by_output_name = {
         name: index
         for column, index in columns

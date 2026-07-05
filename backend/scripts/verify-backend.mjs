@@ -77,6 +77,34 @@ try {
     validationType: "Not Null",
   }];
 
+  await assertPostFails("/api/etl/jobs", {
+    id: "pair_a_verify_all_excluded",
+    jobName: "pair_a_verify_all_excluded_pipeline",
+    owner: "data-team-01",
+    permissionSummary: "verify",
+    rag: false,
+    retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 10, timeoutMinutes: 60 },
+    retryPolicySummary: "no retry",
+    ruleSummary: "schema rejected",
+    transformOutputColumns: [],
+    transformSteps: [],
+    qualityInvalidRows: [],
+    qualityRules: [],
+    qualityScore: 100,
+    qualityStatus: "pass",
+    scheduleLabel: "manual",
+    schemaColumns: minio.draftPatch.schema.columns.map((column) => ({ ...column, included: false })),
+    schemaFingerprint: "all-excluded",
+    schemaSampleRows: minio.draftPatch.schema.sampleRows,
+    schemaSummary: "all excluded schema should fail",
+    sourceConfig: minio.draftPatch.source.sourceConfig,
+    sourceLabel: minio.draftPatch.source.sourceLabel,
+    sourceType: minio.draftPatch.source.sourceType,
+    targetDataset: "pair_a_verify_all_excluded_gold",
+    targetFormat: "Parquet",
+    targetLayer: "GOLD",
+  }, 400, "All-excluded schema should be rejected.");
+
   const createRequest = {
     id: "pair_a_verify",
     jobName: "pair_a_verify_pipeline",

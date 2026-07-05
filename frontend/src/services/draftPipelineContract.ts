@@ -33,9 +33,25 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetDataset,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
-    transformOutputColumns: draft.transform.outputColumns,
+    transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
+}
+
+function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {
+  const includedBaseColumns = new Set(
+    draft.schema.columns
+      .filter((column) => column.included !== false)
+      .map((column) => (column.targetName || column.sourceName || "").trim())
+      .filter(Boolean),
+  );
+  const transformOutputs = new Set(
+    draft.transform.steps
+      .filter((step) => step.enabled !== false)
+      .map((step) => step.output.trim())
+      .filter(Boolean),
+  );
+  return draft.transform.outputColumns.filter(([name]) => includedBaseColumns.has(name) || transformOutputs.has(name));
 }
 
 export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipelinePatch): DraftPipeline {

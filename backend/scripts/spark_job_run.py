@@ -154,10 +154,15 @@ def apply_schema_contract(frame, schema_columns):
     if not schema_columns:
         return frame
 
+    included_columns = [column for column in schema_columns if schema_column_included(column)]
+    if not included_columns:
+        raise ValueError("Approved schema has no included output columns.")
+
     expressions = []
     missing_required = []
+    required_targets = []
     used_names = set()
-    for index, column in enumerate(schema_columns):
+    for index, column in enumerate(included_columns):
         source_name = str(column.get("sourceName") or column.get("targetName") or "").strip()
         target_name = unique_column_name(normalize_column_name(column.get("targetName") or source_name) or f"column_{index + 1}", used_names)
         logical_type = str(column.get("type") or "String")
@@ -169,13 +174,30 @@ def apply_schema_contract(frame, schema_columns):
             else:
                 missing_required.append(source_name or target_name)
             continue
+        if not nullable:
+            required_targets.append(target_name)
         expressions.append(cast_for_schema(frame, resolved, logical_type).alias(target_name))
 
     if missing_required:
         raise ValueError(f"Approved schema required columns missing from Spark input: {', '.join(missing_required)}")
     if not expressions:
-        return frame
-    return frame.select(*expressions)
+        raise ValueError("Approved schema has no output expressions.")
+    contracted = frame.select(*expressions)
+    null_required = [
+        target
+        for target in required_targets
+        if contracted.filter(F.col(quote_identifier(target)).isNull()).limit(1).count() > 0
+    ]
+    if null_required:
+        raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
+    return contracted
+
+
+def schema_column_included(column):
+    value = column.get("included", True)
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", "off"}
+    return value is not False
 
 
 def unique_column_name(name, used_names):

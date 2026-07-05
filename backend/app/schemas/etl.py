@@ -34,6 +34,7 @@ class JobStats(CamelModel):
 
 class SchemaColumnDraft(CamelModel):
     confidence: int | None = None
+    included: bool = True
     nullable: bool = False
     role: str | None = None
     source_name: str
