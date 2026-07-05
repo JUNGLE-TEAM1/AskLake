@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
-import type { Edge, Node as FlowNode } from "@xyflow/react";
+import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -782,6 +782,8 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const { edges, nodes } = lineageGraph
     ? buildLineageGraph(lineageGraph, selectedColumnKey, setSelectedColumnKey)
     : { edges: [], nodes: [] };
@@ -804,6 +806,35 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     };
   }, [dataset.id]);
 
+  useEffect(() => {
+    if (!flowInstance || !lineageGraph) return;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      void flowInstance.fitView({ maxZoom: 0.9, padding: 0.2 });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [edges.length, flowInstance, lineageGraph, nodes.length]);
+
+  useEffect(() => {
+    if (!flowInstance || !flowWrapperRef.current || !lineageGraph || typeof ResizeObserver === "undefined") return;
+
+    let animationFrame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        void flowInstance.fitView({ maxZoom: 0.9, padding: 0.2 });
+      });
+    });
+
+    observer.observe(flowWrapperRef.current);
+
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+    };
+  }, [flowInstance, lineageGraph]);
+
   return (
     <section className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
       {!compact && (
@@ -816,7 +847,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       )}
       {lineageGraph ? (
-        <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
+        <div className="catalog-lineage-flow" ref={flowWrapperRef} aria-label={`${dataset.name} lineage graph`}>
           <ReactFlow
             edges={edges}
             fitView
@@ -827,6 +858,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
             nodesDraggable={false}
             nodesConnectable={false}
             nodeTypes={lineageNodeTypes}
+            onInit={setFlowInstance}
             onPaneClick={() => setSelectedColumnKey(null)}
             proOptions={{ hideAttribution: true }}
           >
