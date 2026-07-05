@@ -1,7 +1,8 @@
 .jobs-landing {
   display: grid;
   gap: 18px;
-  max-width: var(--layout-main-width);
+  width: 100%;
+  max-width: none;
   font-family: "Gothic A1", "Apple SD Gothic Neo", "Noto Sans KR", Inter, system-ui, sans-serif;
 }
 
@@ -225,8 +226,8 @@
     "title title"
     "progress progress"
     "details actions";
-  grid-template-columns: minmax(0, 1fr) 195px;
-  column-gap: 20px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 24px;
   row-gap: 8px;
   align-items: start;
   min-width: 0;
@@ -294,8 +295,8 @@
 .job-row-details {
   grid-area: details;
   display: grid;
-  grid-template-columns: minmax(150px, 1.08fr) minmax(128px, 0.9fr) minmax(110px, 0.75fr) minmax(160px, 1fr) minmax(124px, 0.78fr);
-  gap: 14px;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.1fr) minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(170px, 0.9fr);
+  gap: 18px;
   margin: 0;
 }
 

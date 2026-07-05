@@ -622,7 +622,7 @@ p {
 }
 
 .page-body.jobs-body > * {
-  max-width: var(--layout-main-width);
+  max-width: none;
 }
 
 .flow-switch {
