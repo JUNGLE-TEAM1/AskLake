@@ -32,6 +32,22 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
+### FastAPI scaffold
+
+FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
+기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+```
+
+로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다.
+FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
+
 ## 4) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.
@@ -124,6 +140,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - API contract tests
 - adapter unit tests
 - backend endpoint tests
+- FastAPI `/api/health` smoke test
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests
