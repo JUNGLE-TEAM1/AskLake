@@ -106,6 +106,7 @@ export function SqlAnalysisPage({
     [baseDataset.id, query, referenceDatasetIds],
   );
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
+  const canRequestPreview = query.trim().length > 0 && !queryPending;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
@@ -260,12 +261,8 @@ export function SqlAnalysisPage({
   };
 
   const executePreview = async () => {
-    if (!canRunPreview) {
-      setPreflightResult({
-        key: queryValidationKey,
-        canExecute: false,
-        messages: [{ tone: "error", text: "먼저 SQL 점검을 통과해 주세요. SQL 또는 참조 데이터셋이 바뀌면 다시 점검해야 합니다." }],
-      });
+    const currentPreflight = canRunPreview ? preflightResult : runPreflightCheck();
+    if (!currentPreflight.canExecute) {
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
       return;
     }
@@ -523,7 +520,7 @@ export function SqlAnalysisPage({
               <button className="secondary-button" type="button" onClick={runPreflightCheck} disabled={queryPending}>
                 <CheckCircle size={16} /> SQL 점검
               </button>
-              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRequestPreview}>
                 <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
               </button>
             </div>
