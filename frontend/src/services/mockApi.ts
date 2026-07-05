@@ -285,11 +285,12 @@ export async function createDerivedDatasetFromSql({
   }
 
   const normalizedName = name.trim() || `${sourceDataset.name}_analysis`;
+  const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
   const dataset: CatalogDataset = {
     description: `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`,
     downstream: ["SQL 분석", "대시보드"],
     freshness: "latest",
-    id: `ds_${normalizeDerivedDatasetId(normalizedName)}`,
+    id: derivedDatasetId,
     layer,
     lastUpdated: "방금 생성됨",
     name: normalizedName,
@@ -306,6 +307,7 @@ export async function createDerivedDatasetFromSql({
     tags: Array.from(new Set([...sourceDataset.tags, "#sql-derived"])),
     upstream: [sourceDataset.name, sqlResult.runId],
   };
+  dataset.lineageGraph = buildDerivedDatasetLineageGraph(sourceDataset, dataset, sqlResult);
 
   return resolveMock(dataset);
 }
@@ -316,6 +318,55 @@ function inferColumnType(dataset: CatalogDataset, columnName: string) {
 
 function normalizeDerivedDatasetId(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "sql_derived";
+}
+
+function buildDerivedDatasetLineageGraph(
+  sourceDataset: CatalogDataset,
+  derivedDataset: CatalogDataset,
+  sqlResult: SqlResultDraft,
+): LineageGraph {
+  const sourceGraph = sourceDataset.lineageGraph;
+  const derivedNode: LineageGraphDataset = {
+    columns: derivedDataset.schema.map(([name, type]) => ({ id: normalizeLineageId(`${derivedDataset.id}-${name}`), name, type })),
+    engine: "ICEBERG",
+    id: derivedDataset.id,
+    layer: derivedDataset.layer,
+    name: derivedDataset.name,
+  };
+  const sourceNode = sourceGraph?.datasets.find((node) => node.id === sourceDataset.id)
+    ?? buildLineageDatasetNode(sourceDataset);
+  const sourceGraphDatasets = sourceGraph?.datasets.filter((node) => node.id !== derivedDataset.id) ?? [];
+  const baseDatasets = sourceGraph
+    ? sourceGraphDatasets.some((node) => node.id === sourceNode.id) ? sourceGraphDatasets : [...sourceGraphDatasets, sourceNode]
+    : [sourceNode];
+  const baseEdges = sourceGraph?.edges.filter((edge) => edge.toDatasetId !== derivedDataset.id && edge.fromDatasetId !== derivedDataset.id) ?? [];
+  const derivedEdges = derivedNode.columns.map((targetColumn, index) => {
+    const sourceColumn = sourceNode.columns.find((column) => column.name === targetColumn.name)
+      ?? sourceNode.columns[index % Math.max(sourceNode.columns.length, 1)]
+      ?? targetColumn;
+    return {
+      fromColumnId: sourceColumn.id,
+      fromDatasetId: sourceNode.id,
+      toColumnId: targetColumn.id,
+      toDatasetId: derivedNode.id,
+    };
+  });
+
+  return {
+    datasetId: derivedDataset.id,
+    datasets: [...baseDatasets, derivedNode],
+    edges: [...baseEdges, ...derivedEdges],
+  };
+}
+
+function buildLineageDatasetNode(dataset: CatalogDataset): LineageGraphDataset {
+  return {
+    columns: dataset.schema.map(([name, type]) => ({ id: normalizeLineageId(`${dataset.id}-${name}`), name, type })),
+    engine: "ICEBERG",
+    id: dataset.id,
+    layer: dataset.layer,
+    name: dataset.name,
+  };
 }
 
 function buildFallbackLineageGraph(dataset: CatalogDataset): LineageGraph {

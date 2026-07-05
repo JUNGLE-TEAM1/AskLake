@@ -607,6 +607,8 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
 - `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
+- `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
 - 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API
