@@ -203,6 +203,26 @@
   overflow-wrap: anywhere;
 }
 
+.input-value-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.input.compact-value {
+  max-height: 76px;
+  align-items: flex-start;
+  overflow: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.4;
+}
+
+.input.compact-value .input-value-text {
+  display: block;
+  white-space: pre-wrap;
+}
+
 .input.muted {
   color: #9095a1;
 }
@@ -217,6 +237,20 @@
 input.control-input,
 select.control-input {
   appearance: none;
+}
+
+.input-with-unit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.input-with-unit > span {
+  color: #565d6d;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .control-toggle {

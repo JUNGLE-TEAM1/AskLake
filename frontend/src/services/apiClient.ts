@@ -50,4 +50,3 @@ export const apiClient = {
   post: <T>(path: string, body: unknown) => request<T>(path, { body, method: "POST" }),
   put: <T>(path: string, body: unknown) => request<T>(path, { body, method: "PUT" }),
 };
-

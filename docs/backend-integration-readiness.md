@@ -1,131 +1,125 @@
 # AskLake Backend Integration Readiness
 
-이 문서는 현재 프론트엔드를 백엔드와 연결하기 전에 남은 작업, mock 제거 순서, 화면별 API 연결 범위를 정리한 체크 문서입니다.
-상세 요청/응답 타입은 `docs/api-contract.md`를 기준으로 합니다.
-API, mock fixture, frontend internal state는 영어 canonical status value를 사용하고, 한국어 화면 문구는 프론트 mapper에서 변환합니다.
-E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 기준으로 합니다.
-10GB demo evidence가 필요한 경우 `docs/10gb-fallback-verification.md`를 추가로 참조합니다.
+이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 live backend를 기준으로 검증한다.
 
-## 1. 현재 상태 요약
+상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
-현재 프론트엔드는 단순 정적 화면이 아니라, 아래 흐름은 React 상태와 mock API로 이어져 있습니다.
+## 1. 현재 연결 상태
 
-| 흐름 | 현재 상태 | 백엔드 연결 상태 |
+| 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | mock jobs 표시, 상세/실행/수정/삭제 버튼 연결 | P0 일부 준비 |
-| 새 수집/처리 생성 | Source → Schema → Rule → Schedule → Permission → Target → Review 진행 | `POST /api/etl/jobs` 전환 가능 |
-| 작업 명령 | 즉시 실행, 재실행, 일시정지, 취소 상태 반영 | `POST /api/etl/jobs/{jobId}/commands` 전환 가능 |
-| 작업 상세/실행 이력/DAG | mock 상세 정보, DAG 버튼, 상세 패널 표시 | 조회 API 필요 |
-| 카탈로그 | mock datasets 목록/상세/리니지 표시 | hydrate API 필요 |
-| SQL 분석 | dataset 기준 read-only SQL 실행 mock | `POST /api/query/runs` 전환 가능 |
-| 대시보드 | SQL 결과 기반 builder/publish UI 표시 | 저장/조회 API 필요 |
-| AI 활용 | placeholder 화면 | 백엔드/기획 미정 |
-| 관리 | placeholder 화면 | 백엔드/기획 미정 |
-| 감사 로그 | local state/localStorage 기록 | `POST /api/audit-logs` 필요 |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. 서버 상태가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 persistence |
+| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결 | 중간 단계별 서버 저장 API는 후속 범위 |
+| Source/Schema | `POST /api/etl/sources/test`로 실제 connector 확인 및 schema/sampleRows 반영 | Kafka message payload sampling, Parquet physical schema inference |
+| Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
+| Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
+| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과 반영 | 상세/lineage/search persistence |
+| SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
+| Dashboard | frontend flow 유지 | dashboard 저장/게시 persistence |
+| Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
-## 2. 백엔드 연결 전 반드시 끝낼 것
+## 2. Pair A Live Contract
 
-| 우선순위 | 작업 | 이유 |
-| --- | --- | --- |
-| P0 | `POST /api/etl/jobs` 구현 | 생성 플로우의 최종 제출 지점 |
-| P0 | `POST /api/etl/jobs/{jobId}/commands` 구현 | 실행/재실행/일시정지/취소 버튼의 실제 상태 전이 |
-| P0 | `POST /api/query/runs` 구현 | SQL 실행 결과를 대시보드로 넘기는 핵심 흐름 |
-| P1 | `GET /api/etl/jobs`와 `GET /api/etl/jobs/{jobId}` 구현 | 수집/처리 목록과 상세를 서버 데이터로 hydrate |
-| P1 | `GET /api/catalog/datasets`와 상세 API 구현 | 카탈로그/SQL/dashboards의 공통 데이터 원천 |
-| P1 | `POST /api/dashboards`, `PATCH /api/dashboards/{id}` 구현 | 대시보드 저장/게시가 실제 리소스로 남도록 처리 |
-| P2 | 감사 로그 서버 저장 | 발표/운영용 추적성 확보 |
-| P2 | AI 활용/관리 메뉴 API 결정 | 현재는 placeholder라 범위 확정 필요 |
+Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
-## 3. mock 제거 순서
+필수 create payload:
 
-### 3.1 1차: P0 write API 연결
+- Source: `sourceType`, `sourceLabel`, `sourceConfig`
+- Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
+- Transform: `transformSteps`, `transformOutputColumns`
+- Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
+- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
 
-이미 `frontend/src/services/mockApi.ts`에 mock/live 전환 지점이 있습니다.
+Backend create response:
 
-`.env`:
-
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
+```ts
+type CreateJobResponse = {
+  job: JobRowData;
+  dataset: CatalogDataset;
+};
 ```
 
-전환 시 실제 호출되는 API:
+Backend command response:
 
-| 프론트 함수 | 실제 API |
-| --- | --- |
-| `createPipelineDraft` | `POST /api/etl/jobs` |
-| `runJobCommand` | `POST /api/etl/jobs/{jobId}/commands` |
-| `executeQueryDraft` | `POST /api/query/runs` |
+```ts
+type JobCommandResponse = {
+  action: string;
+  apiPath: string;
+  job: JobRowData;
+  run: JobRunSummary;
+  dagSteps: JobDagStep[];
+};
+```
 
-이 단계에서는 초기 목록은 아직 mock으로 두고, 생성/명령/SQL 실행만 백엔드에 붙입니다.
+## 3. Source Credential Handling
 
-### 3.2 2차: hydrate API 연결
+Backend connector 응답은 secret field를 redacted value로 내려준다. 프론트는 응답 metadata, schema, sampleRows는 반영하되 브라우저 세션에 사용자가 입력한 credential 값은 다음 connector 호출을 위해 유지해야 한다.
 
-다음 단계에서는 `frontend/src/hooks/useAskLakeData.ts`의 초기 상태를 mock import 대신 서버 조회로 바꿉니다.
+적용 기준:
 
-대상:
+- 첫 연결 테스트 성공 후 Schema 단계의 다시 확인이 credential 없이 실패하면 안 된다.
+- 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
+- PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-| 현재 mock | 교체 API |
-| --- | --- |
-| `etlJobs` | `GET /api/etl/jobs` |
-| `catalogDatasets` | `GET /api/catalog/datasets` |
-| `selectedJob` 상세 정보 | `GET /api/etl/jobs/{jobId}` |
-| `selectedDataset` 상세 정보 | `GET /api/catalog/datasets/{datasetId}` |
+## 4. Spark Run Path
 
-권장 방식:
+`POST /api/etl/jobs/{jobId}/commands`는 Spark runner를 호출한다.
 
-1. 앱 최초 로딩 시 jobs/datasets를 병렬 조회합니다.
-2. 조회 실패 시 사용자에게 연결 실패 토스트를 보여주고 mock fallback 여부를 결정합니다.
-3. 생성/명령 후에는 낙관적 업데이트보다 서버 응답값을 기준으로 상태를 갱신합니다.
-4. hydrate 응답의 `status`는 `docs/03-api-reference.md`의 canonical status values를 따라야 합니다.
+Spark runner 입력:
 
-### 3.3 3차: 대시보드 저장 모델 연결
+- File / S3, Data Lake: object path를 Spark source로 직접 사용
+- REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
+- `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
+- `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 
-현재 대시보드는 화면 내 상태로 builder/published view를 전환합니다.
-백엔드 연결 시 아래 리소스가 필요합니다.
+Spark runner 결과:
 
-| 기능 | API 후보 |
-| --- | --- |
-| 대시보드 초안 생성 | `POST /api/dashboards` |
-| 대시보드 저장 | `PATCH /api/dashboards/{dashboardId}` |
-| 대시보드 게시 | `POST /api/dashboards/{dashboardId}/publish` |
-| 저장된 대시보드 목록 | `GET /api/dashboards` |
-| 대시보드 상세 | `GET /api/dashboards/{dashboardId}` |
-| 위젯 추가 | `POST /api/dashboards/{dashboardId}/widgets` |
-| 위젯 수정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
-| 위젯 삭제 | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
+- transformed Parquet output
+- output schema
+- input/output row count
+- quality summary
+- run status
+- DAG step status
 
-## 4. 화면별 연결 범위
+## 5. 검증 명령
 
-### 4.1 수집/처리
+Backend:
 
-| 버튼/기능 | 현재 동작 | 필요한 백엔드 |
-| --- | --- | --- |
-| `+ 새 수집/처리 생성` | 생성 플로우 이동 | 없음 |
-| `상세` | selectedJob 설정 후 상세 이동 | `GET /api/etl/jobs/{jobId}` |
-| `즉시 실행` | mock 상태를 실행 중으로 변경 | `POST /api/etl/jobs/{jobId}/commands` |
-| `재실행` | mock 상태를 재실행 중으로 변경 | `POST /api/etl/jobs/{jobId}/commands` |
-| `일시정지` | mock 상태를 일시정지로 변경 | `POST /api/etl/jobs/{jobId}/commands` |
-| `취소` | mock 상태를 취소됨으로 변경 | `POST /api/etl/jobs/{jobId}/commands` |
-| `삭제` | 프론트 목록에서 제거 | `DELETE /api/etl/jobs/{jobId}` |
-| 실행 이력 | mock run rows 표시 | `GET /api/etl/jobs/{jobId}/runs` |
-| DAG | mock step graph 표시 | `GET /api/etl/jobs/{jobId}/dag` |
+```powershell
+cd backend
+npm run verify
+npm run verify:sources
+npm run verify:spark-run
+```
 
-### 4.2 새 수집/처리 생성
+Frontend:
 
-| 단계 | 현재 동작 | 필요한 백엔드 |
-| --- | --- | --- |
-| Source | connector 선택, 테스트/미리보기 mock | `POST /api/etl/sources/test`, `POST /api/etl/sources/preview` |
-| Schema | 추론/승인 UI mock | `POST /api/etl/schema-inference`, `POST /api/etl/schema-inference/confirm` |
-| Rule | rule 추가/검증 UI mock | `POST /api/etl/rules`, `POST /api/etl/rules/revalidate` |
-| Schedule | 스케줄 선택 상태 저장 | 생성 request에 포함 또는 `PUT /api/etl/jobs/{jobId}/schedule` |
-| Permission | 권한 선택 상태 저장 | 생성 request에 포함 또는 `PUT /api/etl/jobs/{jobId}/permissions` |
-| Target Review | 최종 생성 | `POST /api/etl/jobs` |
+```powershell
+cd frontend
+npm run build
+```
 
-초기 백엔드 연결에서는 중간 단계 API를 모두 구현하지 않아도 됩니다.
-발표/데모 기준으로는 최종 `POST /api/etl/jobs`가 draft 전체를 받아 처리하면 충분합니다.
+Browser smoke:
 
-### 4.3 카탈로그
+- backend server를 켠다.
+- frontend dev server를 켠다.
+- 수집/처리 목록이 처음에는 비어 있는지 확인한다.
+- 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
+- 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
+
+## 6. 완료 기준
+
+- ETL/Catalog 초기 목록은 서버가 비어 있으면 빈 상태로 표시된다.
+- Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
+- Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
+- Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
+- Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
+
+## 7. Catalog/SQL 연결 범위
+
+### Catalog
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -137,7 +131,7 @@ VITE_USE_MOCK_API=false
 | 리니지 | `LineageGraph` contract를 React Flow로 렌더링, 없으면 upstream fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL로 열기 | SQL 화면 이동 | 없음, datasetId 유지 |
 
-### 4.4 SQL 분석
+### SQL 분석
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -154,7 +148,7 @@ VITE_USE_MOCK_API=false
 
 SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
-### 4.5 대시보드
+## 8. 대시보드
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -167,7 +161,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
-## 5. 아직 실제 저장되지 않는 기능
+## 9. 아직 실제 저장되지 않는 기능
 
 아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
 
@@ -180,7 +174,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 대시보드 | 위젯 저장, 게시 상태 유지, 공유, 내보내기 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-## 6. 백엔드 팀에 넘길 최소 구현 범위
+## 10. 백엔드 팀에 넘길 최소 구현 범위
 
 최소 데모 연동만 목표라면 아래 5개면 충분합니다.
 
@@ -196,7 +190,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 2. `PATCH /api/dashboards/{dashboardId}`
 3. `POST /api/dashboards/{dashboardId}/publish`
 
-## 7. 프론트에서 다음에 할 작업
+## 11. 프론트에서 다음에 할 작업
 
 백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
 
@@ -208,7 +202,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
-## 8. 인수 기준
+## 12. 인수 기준
 
 백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
@@ -220,3 +214,13 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 - 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
+
+## 13. 남은 작업
+
+- Kafka message payload schema sampling
+- Parquet physical schema inference endpoint
+- ETL job/dataset/run persistence
+- 삭제/수정 API persistence
+- SQL engine read-only guard 고도화
+- Dashboard save/publish persistence
+- Audit log server persistence
