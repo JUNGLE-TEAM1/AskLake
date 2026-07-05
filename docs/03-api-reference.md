@@ -93,6 +93,17 @@ Canonical status values:
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
+Pair3 Dashboard FastAPI 구현은 두 lane으로 나눈다.
+
+| Lane | 목적 | Endpoint 범위 | Backend 파일 기준 |
+| --- | --- | --- | --- |
+| Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
+| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
+
+Card/List lane은 `DashboardCard`와 `DashboardListResponse`를 기준으로 한다.
+Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준으로 한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 자세한 table 경계는 `docs/api-contract.md`의 Dashboard FastAPI 구현 경계를 따른다.
+
 ## 7) 화면별 데이터 계약
 
 | 화면 | 현재 데이터 | Future API |

@@ -111,6 +111,11 @@ FastAPI 전환은 `backend/app/`를 기준으로 한다.
 | Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
 
+Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
+Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
+Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
+두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
+
 ## 7) API Boundary
 
 현재 live mode 진입점:
@@ -140,12 +145,15 @@ Dashboard runtime API:
 - `POST /api/dashboards`
 - `POST /api/dashboards/query`
 - `PATCH /api/dashboards/{dashboardId}`
+- `DELETE /api/dashboards/{dashboardId}`
 - `GET /api/dashboards/{dashboardId}/published`
 - `POST /api/dashboards/{dashboardId}/draft/ensure`
 - `POST /api/dashboards/{dashboardId}/draft/pages`
 - `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
 - `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
 - `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+- `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+- `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
 
