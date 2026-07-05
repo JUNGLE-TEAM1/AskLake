@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
   Maximize2,
@@ -10,15 +9,10 @@ import {
   Table2,
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
-import { DashboardCanvas } from "./runtime/DashboardCanvas";
-import { DatasetSidebar } from "./runtime/DatasetSidebar";
-import { EmptyDashboardCanvas } from "./runtime/EmptyDashboardCanvas";
-import { DashboardRuntimeShell } from "./runtime/DashboardRuntimeShell";
-import { WidgetFrame } from "./runtime/WidgetFrame";
-import { WidgetConfigPanel } from "./runtime/WidgetConfigPanel";
-import { findNextAvailableLayout, hasAnyLayoutCollision, toCollisionLayout } from "./runtime/dashboardLayoutUtils";
+import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
-import type { CreateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
+import { useDraftWidgetCreator } from "./runtime/useDraftWidgetCreator";
+import { useDraftWidgetLayouts } from "./runtime/useDraftWidgetLayouts";
 import {
   DashboardChartCard,
   DashboardChartModal,
@@ -38,12 +32,10 @@ import {
 import { useDashboardLandingList } from "./useDashboardLandingList";
 import {
   createDraftPage,
-  createDraftWidget,
   deleteDraftPage,
   ensureDraftDashboard,
   getPublishedDashboard,
   publishDashboard as publishRuntimeDashboard,
-  saveDraftLayouts,
 } from "../../services/dashboardRuntimeApi";
 import { createDashboard, deleteDashboard } from "../../services/dashboardApi";
 import { saveDashboardCard } from "../../services/mockApi";
@@ -112,7 +104,6 @@ export function DashboardPage({
   const [draftError, setDraftError] = useState<string | null>(null);
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
-  const [isCreatingDatasetWidget, setIsCreatingDatasetWidget] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
@@ -271,6 +262,31 @@ export function DashboardPage({
       setDraftLoading(false);
     }
   };
+
+  const {
+    createDatasetDraftWidget,
+    isCreatingDatasetWidget,
+  } = useDraftWidgetCreator({
+    dashboardId: runtimeSelection.dashboardId,
+    defaultLayouts: defaultDraftWidgetLayout,
+    mode: runtimeSelection.mode,
+    onAction,
+    reloadDraftRuntime: loadDraftRuntime,
+    selectedPageId: selectedRuntimePageId,
+    selectedWidgets: selectedDraftWidgets,
+    setDraftError,
+    setRuntimeNotice,
+    setSelectedWidgetId,
+  });
+
+  const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
+    dashboardId: runtimeSelection.dashboardId,
+    onAction,
+    selectedPageId: selectedRuntimePageId,
+    setDraftError,
+    setDraftRuntime,
+    setRuntimeNotice,
+  });
 
   useEffect(() => {
     setView(entry.view);
@@ -548,91 +564,6 @@ export function DashboardPage({
     }
   };
 
-  const addDatasetDraftWidget = async (input: CreateDraftWidgetFormInput) => {
-    if (runtimeSelection.mode !== "draft" || !selectedRuntimePageId || isCreatingDatasetWidget) return;
-    const layout = findNextAvailableLayout(
-      toCollisionLayout(selectedDraftWidgets),
-      defaultDraftWidgetLayout[input.type],
-    );
-
-    setIsCreatingDatasetWidget(true);
-    setDraftError(null);
-    try {
-      const widget = await createDraftWidget(runtimeSelection.dashboardId, selectedRuntimePageId, {
-        datasetId: input.datasetId,
-        layout,
-        title: input.title,
-        type: input.type,
-        config: {
-          color: input.color,
-          description: input.description,
-          xKey: input.xKey,
-          yKey: input.yKey,
-        },
-      });
-      await loadDraftRuntime(runtimeSelection.dashboardId);
-      setSelectedWidgetId(widget.id);
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
-      onAction("dashboard.widget.dataset_added", `/api/dashboards/${runtimeSelection.dashboardId}/draft/pages/${selectedRuntimePageId}/widgets`, input.datasetId);
-    } catch (error) {
-      setDraftError(error instanceof Error ? error.message : "Failed to create a dataset widget.");
-      setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가하지 못했습니다.", tone: "error" });
-    } finally {
-      setIsCreatingDatasetWidget(false);
-    }
-  };
-
-  const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
-    if (!selectedRuntimePageId) return;
-    if (hasAnyLayoutCollision(layout)) {
-      setRuntimeNotice({ message: "위젯이 겹쳐 레이아웃을 저장하지 않았습니다. 위치를 다시 조정해 주세요.", tone: "error" });
-      return;
-    }
-
-    const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
-
-    setDraftRuntime((currentRuntime) => {
-      if (!currentRuntime) return currentRuntime;
-      const widgets = currentRuntime.widgetsByPageId[selectedRuntimePageId] ?? [];
-      return {
-        ...currentRuntime,
-        widgetsByPageId: {
-          ...currentRuntime.widgetsByPageId,
-          [selectedRuntimePageId]: widgets.map((widget) => {
-            const nextLayout = layoutByWidgetId.get(widget.id);
-            if (!nextLayout) return widget;
-            return {
-              ...widget,
-              layout: {
-                ...widget.layout,
-                h: nextLayout.h,
-                minH: widget.layout.minH,
-                minW: widget.layout.minW,
-                w: nextLayout.w,
-                x: nextLayout.x,
-                y: nextLayout.y,
-              },
-            };
-          }),
-        },
-      };
-    });
-
-    void saveDraftLayouts(runtimeSelection.dashboardId, {
-      layouts: layout.map((item) => ({
-        h: item.h,
-        w: item.w,
-        widgetId: item.i,
-        x: item.x,
-        y: item.y,
-      })),
-      pageId: selectedRuntimePageId,
-    }).catch((error) => {
-      setDraftError(error instanceof Error ? error.message : "Failed to save widget layout.");
-    });
-    onAction("dashboard.layout.saved", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId);
-  };
-
   const exportDashboard = () => {
     const payload = {
       datasetId: selectedDashboard?.datasetId ?? dataset.id,
@@ -799,157 +730,62 @@ export function DashboardPage({
   }
 
   if (view === "runtime") {
-    const isDraftMode = runtimeSelection.mode === "draft";
-    const openDraftAction = (
-      <button className="asklake-dashboard-empty-action" type="button" onClick={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}>
-        위젯 편집
-      </button>
-    );
-    const retryAction = (
-      <button className="asklake-dashboard-empty-action" type="button" onClick={() => void loadPublishedRuntime(runtimeSelection.dashboardId)}>
-        다시 시도
-      </button>
-    );
-    const draftRetryAction = (
-      <button className="asklake-dashboard-empty-action" type="button" onClick={() => void loadDraftRuntime(runtimeSelection.dashboardId)}>
-        다시 시도
-      </button>
-    );
-    const runtimeCanvas = isDraftMode ? (
-      draftLoading ? (
-        <div className="asklake-dashboard-empty-canvas edit">
-          <EmptyDashboardCanvas
-            editable
-            title="초안 대시보드를 불러오는 중입니다"
-            description="초안 revision, 페이지, 위젯 레이아웃을 준비하고 있습니다."
-          />
-        </div>
-      ) : draftError ? (
-        <div className="asklake-dashboard-empty-canvas edit">
-          <EmptyDashboardCanvas
-            action={draftRetryAction}
-            editable
-            title="초안 대시보드를 불러오지 못했습니다"
-            description={draftError}
-          />
-        </div>
-      ) : !draftRuntime?.revision ? (
-        <div className="asklake-dashboard-empty-canvas edit">
-          <EmptyDashboardCanvas
-            action={draftRetryAction}
-            editable
-            title="초안 revision이 없습니다"
-            description="새로고침으로 초안 revision을 다시 생성해 보세요."
-          />
-        </div>
-      ) : (
-        <DashboardCanvas
-          editable
-          selectedWidgetId={selectedWidgetId}
-          widgets={selectedDraftWidgets}
-          onLayoutCommit={updateDraftWidgetLayouts}
-          onLayoutRejected={() => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" })}
-          onSelectWidget={setSelectedWidgetId}
-        />
-      )
-    ) : runtimeLoading ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas
-          editable={false}
-          title="게시된 대시보드를 불러오는 중입니다"
-          description="최신 게시 revision, 페이지, 위젯을 가져오고 있습니다."
-        />
-      </div>
-    ) : runtimeError ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas
-          action={retryAction}
-          editable={false}
-          title="게시된 대시보드를 불러오지 못했습니다"
-          description={runtimeError}
-        />
-      </div>
-    ) : !publishedRuntime?.revision ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas
-          action={openDraftAction}
-          editable={false}
-          title="위젯을 추가해 주세요"
-          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
-        />
-      </div>
-    ) : !runtimePages.length ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas
-          action={openDraftAction}
-          editable={false}
-          title="위젯을 추가해 주세요"
-          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
-        />
-      </div>
-    ) : selectedPublishedWidgets.length === 0 ? (
-      <div className="asklake-dashboard-empty-canvas">
-        <EmptyDashboardCanvas
-          action={openDraftAction}
-          editable={false}
-          title="위젯을 추가해 주세요"
-          description="왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다"
-        />
-      </div>
-    ) : (
-      <div className="asklake-dashboard-widget-grid" aria-label="Published dashboard widgets">
-        {selectedPublishedWidgets.map((widget) => <WidgetFrame key={widget.id} widget={widget} />)}
-      </div>
-    );
+    const runtimeViewActions = {
+      addPage: addRuntimePage,
+      closeSharePanel: () => setRuntimeShareLink(null),
+      createDatasetWidget: createDatasetDraftWidget,
+      deletePage: deleteRuntimePage,
+      layoutCommit: updateDraftWidgetLayouts,
+      layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
+      openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
+      openPublished: () => openRuntimeDashboard(runtimeSelection.dashboardId, "published"),
+      publishDraft: publishDraftRuntime,
+      refresh: refreshRuntimeDashboard,
+      retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
+      retryPublished: () => void loadPublishedRuntime(runtimeSelection.dashboardId),
+      selectDataset: setSelectedDatasetId,
+      selectPage: setSelectedRuntimePageId,
+      selectWidget: setSelectedWidgetId,
+      share: shareRuntimeDashboard,
+      toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
+    };
+    const runtimeDatasetState = {
+      datasets: dashboardDatasets,
+      error: dashboardDatasetsError,
+      isCreatingWidget: isCreatingDatasetWidget,
+      isLoading: dashboardDatasetsLoading,
+      selectedDataset,
+      selectedDatasetId,
+    };
+    const runtimeViewState = {
+      draftError,
+      draftLoading,
+      draftRuntime,
+      hasPublishedRevision: runtimeHasPublishedRevision,
+      isAddingPage: isAddingRuntimePage,
+      isDatasetSidebarOpen,
+      isPublishing: isPublishingRuntime,
+      isRefreshing: isRefreshingRuntime,
+      mode: runtimeSelection.mode,
+      notice: runtimeNotice,
+      pages: runtimePages,
+      publishedRuntime,
+      runtimeError,
+      runtimeLoading,
+      selectedDraftWidgets,
+      selectedPageId: selectedRuntimePageId,
+      selectedPublishedWidgets,
+      selectedWidgetId,
+      shareLink: runtimeShareLink,
+      title: runtimeTitle,
+    };
 
     return (
-      <div className="dashboard-page dashboard-runtime-page">
-        <DashboardRuntimeShell
-          datasetSidebar={isDraftMode ? (
-            <DatasetSidebar
-              datasets={dashboardDatasets}
-              error={dashboardDatasetsError}
-              isOpen={isDatasetSidebarOpen}
-              isLoading={dashboardDatasetsLoading}
-              selectedDatasetId={selectedDatasetId}
-              onSelectDataset={setSelectedDatasetId}
-            />
-          ) : undefined}
-          datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
-          hasPublishedRevision={runtimeHasPublishedRevision}
-          isAddingPage={isAddingRuntimePage}
-          isPublishing={isPublishingRuntime}
-          isRefreshing={isRefreshingRuntime}
-          inspector={isDraftMode ? (
-            <aside className="asklake-dashboard-inspector">
-              <WidgetConfigPanel
-                isCreating={isCreatingDatasetWidget}
-                selectedDataset={selectedDataset}
-                selectedDatasetId={selectedDatasetId}
-                onCreateWidget={addDatasetDraftWidget}
-              />
-            </aside>
-          ) : undefined}
-          mode={runtimeSelection.mode}
-          notice={runtimeNotice}
-          pages={runtimePages}
-          selectedPageId={selectedRuntimePageId}
-          shareLink={runtimeShareLink}
-          title={runtimeTitle}
-          onAddPage={addRuntimePage}
-          onCloseSharePanel={() => setRuntimeShareLink(null)}
-          onDeletePage={deleteRuntimePage}
-          onOpenDraft={() => openRuntimeDashboard(runtimeSelection.dashboardId, "draft")}
-          onOpenPublished={() => openRuntimeDashboard(runtimeSelection.dashboardId, "published")}
-          onPublishDraft={publishDraftRuntime}
-          onRefresh={refreshRuntimeDashboard}
-          onSelectPage={setSelectedRuntimePageId}
-          onShare={shareRuntimeDashboard}
-          onToggleDatasetSidebar={isDraftMode ? () => setIsDatasetSidebarOpen((open) => !open) : undefined}
-        >
-          {runtimeCanvas}
-        </DashboardRuntimeShell>
-      </div>
+      <DashboardRuntimeView
+        actions={runtimeViewActions}
+        datasets={runtimeDatasetState}
+        runtime={runtimeViewState}
+      />
     );
   }
 
