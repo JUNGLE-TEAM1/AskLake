@@ -34,8 +34,8 @@ AskLake/
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | TBD | planned | API contract exists |
-| Database | TBD | planned | persistence model not implemented |
+| Backend | Node HTTP demo API + FastAPI target scaffold | partial | `frontend/server/`는 demo adapter로 유지하고, production backend 전환 의사결정은 `docs/backend-fastapi-transition-plan.md`를 따른다. |
+| Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
 
@@ -78,6 +78,10 @@ flowchart LR
 - dashboard 저장/게시
 - audit log 저장
 - 인증/권한이 도입될 경우 actor와 access policy 판정
+
+FastAPI 전환은 `backend/app/`를 기준으로 한다.
+1차 scaffold는 FastAPI 앱, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health`까지를 범위로 두고, 실제 기능 endpoint 구현은 Pair별 후속 PR에서 진행한다.
+구체적인 폴더 구조와 기술 선택은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 프론트가 계속 소유할 책임:
 

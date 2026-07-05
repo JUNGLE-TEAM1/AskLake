@@ -83,6 +83,9 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 }
 ```
 
+FastAPI 구현에서도 모든 성공 응답을 `{ ok, data }` 같은 단일 envelope로 강제하지 않습니다.
+각 endpoint는 이 문서에 적힌 response shape를 우선하고, 목록 API처럼 pagination 정보가 필요한 경우에만 resource 배열과 page metadata를 함께 반환합니다.
+
 목록 API처럼 확장 필드가 필요한 경우에는 아래처럼 리소스 배열을 감싸서 반환합니다.
 
 ```json
@@ -94,6 +97,20 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
   }
 }
 ```
+
+page 번호 기반 목록 API는 아래 필드명을 사용합니다.
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+FastAPI 공통 schema에서는 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`를 재사용할 수 있습니다.
+단, 실제 resource key가 `items`가 아니라 `datasets`, `dashboards`처럼 정해진 endpoint는 해당 상세 계약을 우선합니다.
 
 ### Error Envelope
 
@@ -113,6 +130,7 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 
 프론트의 현재 필수 필드는 `code`, `message`입니다.
 `details`는 선택입니다.
+FastAPI 구현은 `backend/app/schemas/common.py`의 `ErrorResponse`와 `ErrorDetail`을 기준으로 이 envelope를 생성합니다.
 
 ### 상태 코드
 
