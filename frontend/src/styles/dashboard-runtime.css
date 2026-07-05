@@ -45,6 +45,13 @@
   gap: 4px;
 }
 
+.asklake-dashboard-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .asklake-dashboard-title span {
   color: var(--dash-text-muted);
   font-size: 12px;
@@ -58,6 +65,54 @@
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.asklake-dashboard-title-edit {
+  display: flex;
+  min-width: min(520px, 58vw);
+  align-items: center;
+  gap: 6px;
+}
+
+.asklake-dashboard-title-edit input {
+  width: 100%;
+  min-width: 220px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1.2;
+  padding: 6px 9px;
+}
+
+.asklake-dashboard-title-edit button,
+.asklake-dashboard-title-edit-button {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #475569;
+}
+
+.asklake-dashboard-title-edit button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.asklake-dashboard-title-edit-button {
+  border-color: transparent;
+  color: #94a3b8;
+}
+
+.asklake-dashboard-title-edit-button:hover {
+  border-color: var(--dash-border-strong);
+  color: #2563eb;
 }
 
 .asklake-dashboard-actions {
@@ -101,8 +156,14 @@
 .asklake-dashboard-data-tab:focus-visible,
 .asklake-dashboard-filter-button:focus-visible,
 .asklake-dashboard-tab-button:focus-visible,
+.asklake-dashboard-tab-edit input:focus-visible,
+.asklake-dashboard-tab-edit button:focus-visible,
 .asklake-dashboard-tab-delete:focus-visible,
+.asklake-dashboard-tab-rename:focus-visible,
 .asklake-dashboard-tab-add:focus-visible,
+.asklake-dashboard-title-edit input:focus-visible,
+.asklake-dashboard-title-edit button:focus-visible,
+.asklake-dashboard-title-edit-button:focus-visible,
 .asklake-dataset-option:focus-visible,
 .asklake-widget-config-form input:focus-visible,
 .asklake-widget-config-form select:focus-visible,
@@ -278,6 +339,49 @@
   font-size: 14px;
   font-weight: 800;
   padding: 0 12px;
+}
+
+.asklake-dashboard-tab-edit {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+}
+
+.asklake-dashboard-tab-edit input {
+  width: 150px;
+  max-width: 24vw;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 5px;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 5px 7px;
+}
+
+.asklake-dashboard-tab-edit button,
+.asklake-dashboard-tab-rename {
+  display: grid;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #94a3b8;
+}
+
+.asklake-dashboard-tab-edit button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.asklake-dashboard-tab-rename:hover {
+  background: #dbeafe;
+  color: #2563eb;
 }
 
 .asklake-dashboard-page-tab.active {

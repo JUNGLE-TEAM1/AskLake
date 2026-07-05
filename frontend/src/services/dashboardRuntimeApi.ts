@@ -33,6 +33,13 @@ export function deleteDraftPage(dashboardId: string, pageId: string) {
   );
 }
 
+export function updateDraftPageTitle(dashboardId: string, pageId: string, input: { title: string }) {
+  return apiClient.patch<{ id: string; orderIndex: number; title: string }>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}`,
+    input,
+  );
+}
+
 export function saveDraftLayouts(
   dashboardId: string,
   input: {

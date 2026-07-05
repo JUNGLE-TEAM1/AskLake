@@ -67,6 +67,7 @@ Canonical status values:
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 dashboard runtime 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 ?�는 ?�성 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft revision??page 추�? |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page 이름 수정 |
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page?� ?�위 widgets ??�� |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` | draft page??widget 추�? |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch ?�??|
@@ -133,6 +134,8 @@ type DashboardRuntimeResponse = {
 ```
 
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
+`PATCH /api/dashboards/{dashboardId}`는 dashboard card의 표시 제목을 수정한다.
+`PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`는 현재 draft revision에 속한 page 제목만 수정한다.
 
 `GET /api/dashboards/{dashboardId}/published`??published revision???�으�?`revision: null`, `pages: []`, `widgetsByPageId: {}`�??�답?�다.
 `POST /api/dashboards/{dashboardId}/draft/ensure`??idempotent?�며 draft가 ?�으�?published snapshot ?�는 �?revision�?기본 page�?만든??
