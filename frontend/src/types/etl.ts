@@ -1,8 +1,8 @@
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancel" | "delete";
+export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
-export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 
 export type JobRowData = {
   status: JobStatus;
@@ -13,6 +13,12 @@ export type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  sourceConfig?: Array<[string, string]>;
+  sourceLabel?: string;
+  sourceType?: string;
+  targetFormat?: string;
+  targetLayer?: TargetLayer;
+  targetPath?: string;
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -20,6 +26,23 @@ export type JobRowData = {
     label: string;
     value: number;
   };
+  stats?: JobStats;
+  runHistory?: JobRunSummary[];
+  dagSteps?: JobDagStep[];
+};
+
+export type JobStats = {
+  averageDuration: string;
+  currentStage: string;
+  inputRows: string;
+  lastSuccess: string;
+  outputRows: string;
+  outputPath?: string;
+  sampleScope: string;
+  schemaColumns: string;
+  sourceUnits: string;
+  successRate: string;
+  totalRuns: string;
 };
 
 export type SourceDraft = {
@@ -116,6 +139,9 @@ export type DraftPipeline = {
 export type CreatePipelineRequest = {
   id: string;
   jobName: string;
+  schemaColumns: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows: string[][];
   sourceConfig: Array<[string, string]>;
   sourceType: string;
   sourceLabel: string;
@@ -132,6 +158,19 @@ export type CreatePipelineRequest = {
   rag: boolean;
 };
 
+export type DraftPipelineSlicePatch = {
+  id?: string;
+  permission?: Partial<PermissionDraft>;
+  quality?: Partial<QualityDraft>;
+  schedule?: Partial<ScheduleDraft>;
+  schema?: Partial<SchemaDraft>;
+  source?: Partial<SourceDraft>;
+  target?: Partial<TargetDraft>;
+  transform?: Partial<TransformDraft>;
+};
+
+export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;
+
 export type JobRunSummary = {
   duration: string;
   endedAt: string;
@@ -139,6 +178,7 @@ export type JobRunSummary = {
   failedStage: string;
   inputRows: string;
   outputRows: string;
+  outputPath?: string;
   runId: string;
   startedAt: string;
   status: JobRunStatus;
@@ -156,16 +196,3 @@ export type JobExecutionEvidence = {
   dagSteps: JobDagStep[];
   runs: JobRunSummary[];
 };
-
-export type DraftPipelineSlicePatch = {
-  id?: string;
-  permission?: Partial<PermissionDraft>;
-  quality?: Partial<QualityDraft>;
-  schedule?: Partial<ScheduleDraft>;
-  schema?: Partial<SchemaDraft>;
-  source?: Partial<SourceDraft>;
-  target?: Partial<TargetDraft>;
-  transform?: Partial<TransformDraft>;
-};
-
-export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;

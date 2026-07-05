@@ -75,11 +75,37 @@
 
   .hegun-source-grid,
   .hegun-schema-grid,
+  .hegun-rule-layout,
+  .schema-designer {
+    grid-template-columns: 1fr;
+  }
+
+  .source-picker-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .schema-settings-panel,
+  .schema-inspector-panel {
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .schema-status-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .schema-status-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    border-top: 1px solid #e5e7eb;
+    padding: 12px 24px;
+  }
+
   .hegun-preview-grid {
     grid-template-columns: 1fr;
   }
 
-  .hegun-rule-layout,
   .hegun-rule-workspace {
     grid-template-columns: 260px minmax(0, 1fr);
   }
@@ -258,8 +284,14 @@
   .dashboard-canvas,
   .dashboard-donut-area,
   .hegun-connector-grid,
+  .source-picker-strip,
   .hegun-field-grid,
   .hegun-rule-metrics,
+  .schema-output-editor,
+  .schema-transform-overview,
+  .schema-bottom-bar,
+  .schema-field-toolbar,
+  .schema-status-strip,
   .hegun-rule-builder,
   .hegun-test-strip,
   .hegun-rule-library,
@@ -286,7 +318,50 @@
     padding: 20px;
   }
 
-  .hegun-builder-header,
+  .schema-status-item {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .schema-status-actions,
+  .schema-bottom-bar,
+  .schema-bottom-bar span,
+  .schema-preview-tabs span {
+    text-align: left;
+  }
+
+  .source-active-heading {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .source-active-heading span {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+
+  .schema-bottom-bar button,
+  .schema-status-actions button {
+    width: 100%;
+  }
+
+  .schema-preview-tabs {
+    grid-template-columns: 1fr;
+    padding: 10px 16px;
+  }
+
+  .schema-mapping-row {
+    grid-template-columns: 1fr;
+  }
+
+  .schema-row-arrow,
+  .schema-transform-arrow {
+    transform: rotate(90deg);
+  }
+
+  .schema-delete-button {
+    width: 100%;
+  }
+
   .hegun-rule-footer {
     align-items: stretch;
     flex-direction: column;

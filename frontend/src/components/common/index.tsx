@@ -17,15 +17,23 @@ export function PageTitle({ title, description, icon }: { title: string; descrip
 }
 
 export function Field({ label, value, icon, muted, wide }: { label: string; value: string; icon?: React.ReactNode; muted?: boolean; wide?: boolean }) {
+  const compactValue = isCompactFieldValue(value);
+  const inputClassName = [muted ? "input muted" : "input", compactValue ? "compact-value" : ""].filter(Boolean).join(" ");
+
   return (
     <label className={wide ? "field wide" : "field"}>
       <span>{label}</span>
-      <div className={muted ? "input muted" : "input"}>
-        {value}
+      <div className={inputClassName} title={value}>
+        <span className="input-value-text">{value}</span>
         {icon}
       </div>
     </label>
   );
+}
+
+function isCompactFieldValue(value: string) {
+  const trimmed = value.trim();
+  return value.length > 72 || trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.includes("json_path(");
 }
 
 export function InfoBox({ title, body }: { title: string; body: string }) {

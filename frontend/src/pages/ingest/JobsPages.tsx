@@ -32,7 +32,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
-import type { AuditResult, FlowId, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStatus } from "../../types";
+import type { AuditResult, FlowId, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -73,7 +73,7 @@ export function JobsLandingPage({
     ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
     ["스케줄됨", String(jobs.filter((job) => job.status === "scheduled").length)],
     ["실패", String(jobs.filter((job) => job.status === "failed").length)],
-    ["최신 아님", "4"],
+    ["최신 아님", "0"],
   ];
 
   return (
@@ -88,6 +88,14 @@ export function JobsLandingPage({
         </div>
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
         <section className="job-table" aria-label="ETL 작업 목록">
+          {jobs.length === 0 && (
+            <div className="job-empty-state">
+              <Plus size={22} />
+              <strong>생성된 수집/처리 작업이 없습니다.</strong>
+              <p>Source 연결과 Schema 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다.</p>
+              <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
+            </div>
+          )}
           {jobs.map((job) => (
             <JobRow
               job={job}
@@ -99,13 +107,15 @@ export function JobsLandingPage({
               onRun={() => onCommand(job, job.status === "failed" ? "retry" : "run")}
             />
           ))}
-          <div className="job-table-footer">
-            <span>1-{jobs.length} of {jobs.length}</span>
-            <div>
-              <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
-              <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+          {jobs.length > 0 && (
+            <div className="job-table-footer">
+              <span>1-{jobs.length} of {jobs.length}</span>
+              <div>
+                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
+                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+              </div>
             </div>
-          </div>
+          )}
         </section>
       </div>
     </div>
@@ -208,6 +218,64 @@ function JobProgress({ label, value }: { label: string; value: number }) {
   );
 }
 
+type SchemaDetailRow = [string, string, string, string, string, string];
+type RuleDetailRow = [string, string, string, string];
+
+function fallbackJobStats(job: JobRowData): JobStats {
+  const runs = job.runHistory ?? [];
+  const successRuns = runs.filter((run) => run.status === "success").length;
+  const latestRun = runs[0];
+  const lastSuccess = runs.find((run) => run.status === "success");
+
+  return {
+    averageDuration: latestRun?.duration ?? "-",
+    currentStage: job.progress?.label ?? jobStatusMeta[job.status].summaryLabel,
+    inputRows: latestRun?.inputRows ?? "-",
+    lastSuccess: lastSuccess?.endedAt ?? "-",
+    outputRows: latestRun?.outputRows ?? "-",
+    sampleScope: "-",
+    schemaColumns: "-",
+    sourceUnits: "-",
+    successRate: runs.length > 0 ? `${Math.round((successRuns / runs.length) * 100)}%` : "-",
+    totalRuns: String(runs.length),
+  };
+}
+
+function schemaRowsForJob(job: JobRowData, stats: JobStats): SchemaDetailRow[] {
+  const sourcePath = job.source.split(" / ")[1] ?? job.source;
+  const run = job.runHistory?.[0];
+  const issue = job.status === "failed" ? job.lastState : job.status === "running" ? "처리 중" : "정상";
+
+  return [
+    ["1", "source", sourcePath, "raw_payload", "String", issue],
+    ["2", "schema columns", stats.schemaColumns, "inferred_schema", "JSON", issue],
+    ["3", "input rows", stats.inputRows, "source_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
+    ["4", "output rows", stats.outputRows, "target_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
+    ["5", "sample scope", stats.sampleScope, "sample_window", "String", "생성 시점 metadata"],
+  ];
+}
+
+function ruleRowsForJob(job: JobRowData): RuleDetailRow[] {
+  const steps = job.dagSteps ?? [];
+  if (steps.length > 0) {
+    return steps.map((step) => [
+      step.title,
+      step.meta,
+      step.note ?? "-",
+      step.status.toUpperCase(),
+    ]);
+  }
+
+  const stage = job.progress?.label ?? jobStatusMeta[job.status].summaryLabel;
+  const state = job.status === "failed" ? "FAILED" : job.status === "running" ? "RUNNING" : job.status === "canceled" ? "CANCELED" : "PENDING";
+
+  return [
+    ["Source validation", job.source, "backend connector result", state],
+    ["Schema inference", stage, "inferred metadata", state],
+    ["Create handoff", job.target, "job/dataset response", state],
+  ];
+}
+
 function DetailStatusStrip({ body, title, tone }: { body: string; title: string; tone: "danger" | "running" | "scheduled" | "canceled" }) {
   return (
     <section className={`detail-status-strip ${tone}`}>
@@ -295,65 +363,26 @@ export function JobDetailPage({
   const sourceType = job.source.split(" / ")[0] ?? job.source;
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
   const statusText = jobStatusMeta[job.status].summaryLabel;
-  const issueText = job.status === "failed" ? "age 필드 TYPE_CAST 규칙 실패" : job.status === "running" || job.status === "paused" || job.status === "canceled" ? job.lastState : "최근 실행 성공";
-  const averageDuration = job.status === "running" ? "12.0m" : job.status === "failed" ? "14.1m" : "3.8m";
-  const totalRuns = job.status === "running" ? "128회" : job.status === "failed" ? "47회" : "86회";
-  const lastSuccess = job.status === "failed" ? "2026-07-02 08:03" : job.lastRun;
-  const successRate = job.status === "failed" ? "94.2%" : job.status === "running" ? "진행 중" : "99.1%";
-  const recentFailure = job.status === "failed" ? "run_002" : job.status === "running" ? "없음" : "-";
-  const currentStage = job.status === "failed" ? "Transform Rule 적용" : job.status === "running" ? job.progress?.label ?? "Load to Lake" : job.status === "paused" ? "재개 대기" : job.status === "canceled" ? "취소됨" : "대기 중";
-  const lastChangedBy = job.status === "failed" ? "data-team" : job.owner;
+  const stats = job.stats ?? fallbackJobStats(job);
+  const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
+  const issueText = job.status === "failed" ? job.lastState : job.status === "running" || job.status === "paused" || job.status === "canceled" ? stats.currentStage : "실행 전";
+  const recentFailure = job.runHistory?.find((run) => run.status === "failed" || run.status === "canceled")?.runId ?? "-";
+  const lastChangedBy = job.owner;
   const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
   const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
   const stripBody = job.status === "failed"
-    ? "run_002 · Transform Rule 적용 단계에서 TYPE_CAST 실패가 발생했습니다. DAG에서 영향 단계를 확인하세요."
+    ? `${job.lastState} · 실행 이력과 DAG에서 영향 단계를 확인하세요.`
     : job.status === "running"
-      ? `${job.progress?.label ?? "Load to Lake"} · 현재 처리 중이며 실행 흐름에서 단계별 로그를 확인할 수 있습니다.`
+      ? `${job.progress?.label ?? stats.currentStage} · 현재 처리 중이며 실행 흐름에서 단계별 로그를 확인할 수 있습니다.`
       : job.status === "paused"
-        ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 mock 실행을 재개할 수 있습니다."
+        ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 실행을 재개할 수 있습니다."
         : job.status === "canceled"
           ? "사용자 요청으로 실행이 취소되었습니다. 다시 실행하면 새 Run으로 처리 흐름을 재개할 수 있습니다."
-      : `${job.nextRun}에 다음 실행이 예약되어 있고 최근 실행 상태는 정상입니다.`;
-  const schemaRows = job.status === "failed"
-    ? [
-      ["1", "user_id", "user_id", "String", "No", "-"],
-      ["2", "age", "age", "Mixed", "Yes", "TYPE_CAST 실패"],
-      ["3", "event_name", "event_name", "String", "No", "-"],
-      ["4", "event_time", "event_time", "timestamp", "No", "-"],
-      ["5", "raw_value", "raw_value", "String", "Yes", "-"],
-    ]
-    : job.status === "running"
-      ? [
-        ["1", "event_id", "event_id", "String", "No", "검증 완료"],
-        ["2", "user_id", "user_id", "String", "No", "검증 완료"],
-        ["3", "event_time", "event_time", "timestamp", "No", "처리 중"],
-        ["4", "page_url", "page_url", "String", "Yes", "검증 대기"],
-        ["5", "raw_payload", "raw_payload", "JSON", "Yes", "처리 중"],
-      ]
-      : [
-        ["1", "id", "id", "String", "No", "정상"],
-        ["2", "created_at", "created_at", "timestamp", "No", "정상"],
-        ["3", "amount", "amount", "Decimal", "Yes", "정상"],
-        ["4", "status", "status", "String", "No", "정상"],
-        ["5", "region", "region", "String", "Yes", "-"],
-      ];
-  const ruleRows = job.status === "failed"
-    ? [
-      ["TYPE_CAST", "age", "integer", "FAILED"],
-      ["VALIDATION", "age", "age >= 0", "SKIPPED"],
-      ["DEDUP", "user_id,event_time", "latest", "SKIPPED"],
-    ]
-    : job.status === "running"
-      ? [
-        ["NORMALIZE", "event_time", "UTC timestamp", "RUNNING"],
-        ["PARSE_JSON", "raw_payload", "flatten selected keys", "RUNNING"],
-        ["VALIDATION", "event_id", "not null", "PENDING"],
-      ]
-      : [
-        ["TYPE_CAST", "amount", "decimal(18,2)", "정상 적용"],
-        ["VALIDATION", "created_at", "not null", "정상 적용"],
-        ["DEDUP", "id", "latest", "정상 적용"],
-      ];
+          : job.runHistory?.length
+            ? `${stats.currentStage} · 최근 실행 이력을 기준으로 표시합니다.`
+            : "아직 실행 이력이 없습니다. 생성 시 검증된 Source/Schema metadata만 표시합니다.";
+  const schemaRows = schemaRowsForJob(job, stats);
+  const ruleRows = ruleRowsForJob(job);
 
   return (
     <div className="job-detail-page">
@@ -387,13 +416,13 @@ export function JobDetailPage({
               <h3>실행 통계</h3>
             </div>
             <div className="detail-metric-grid">
-              <DetailMetricCard label="성공률" tone={stripTone} value={successRate} />
-              <DetailMetricCard label="평균 실행시간" value={averageDuration} />
-              <DetailMetricCard label="총 실행" value={totalRuns} />
-              <DetailMetricCard label={job.status === "failed" ? "최근 실패" : "현재 단계"} tone={stripTone} value={job.status === "failed" ? recentFailure : currentStage} />
+              <DetailMetricCard label="성공률" tone={stripTone} value={stats.successRate} />
+              <DetailMetricCard label="평균 실행시간" value={stats.averageDuration} />
+              <DetailMetricCard label="총 실행" value={stats.totalRuns} />
+              <DetailMetricCard label={job.status === "failed" || job.status === "canceled" ? "최근 실패/취소" : "현재 단계"} tone={stripTone} value={job.status === "failed" || job.status === "canceled" ? recentFailure : stats.currentStage} />
             </div>
             <div className="detail-meta-line">
-              <span>마지막 성공: {lastSuccess}</span>
+              <span>마지막 성공: {stats.lastSuccess}</span>
               <span>다음 실행: {job.nextRun}</span>
             </div>
             {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
@@ -411,8 +440,8 @@ export function JobDetailPage({
             <div className="detail-kv-grid">
               <Field label="Source 유형" value={sourceType} />
               <Field label="Source 경로" value={sourcePath} />
-              <Field label="연결 상태" value={job.status === "failed" ? "AccessGranted · 처리 실패" : "AccessGranted"} />
-              <Field label="인증 방식" value={sourceType === "S3" ? "IAM Role" : sourceType === "Kafka" ? "SASL/SCRAM" : "Service Account"} />
+              <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 Source 검증 완료"} />
+              <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "MinIO/S3 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
               <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
             </div>
           </article>
@@ -420,7 +449,7 @@ export function JobDetailPage({
             <h3>Target 저장 설정</h3>
             <div className="detail-kv-grid">
               <Field label="타깃 데이터셋" value={job.target} />
-              <Field label="Lake 경로" value={`lake/${job.target}`} />
+              <Field label="Lake 경로" value={physicalOutputPath} />
               <Field label="저장 포맷" value="Parquet" />
               <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
               <Field label="품질 체크" value={job.status === "failed" ? "Transform 전 중단" : "row count / schema check"} />
@@ -526,12 +555,7 @@ export function JobRunsPage({
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onDag: () => void;
 }) {
-  const defaultRuns: JobRunSummary[] = [
-    { duration: "12m", endedAt: "-", errorSummary: "-", failedStage: "-", inputRows: "142,030", outputRows: "130,410", runId: "run_003", startedAt: "10:00", status: "running" },
-    { duration: "18s", endedAt: "10:10", errorSummary: "age 필드 타입 변환 실패", failedStage: "Transform Rule 적용", inputRows: "21,840", outputRows: "0", runId: "run_002", startedAt: "10:10", status: "failed" },
-    { duration: "3m", endedAt: "08:03", errorSummary: "-", failedStage: "-", inputRows: "21,040", outputRows: "21,038", runId: "run_001", startedAt: "08:00", status: "success" },
-  ];
-  const runs = evidence?.runs.length ? evidence.runs : defaultRuns;
+  const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
 
   return (
     <div className="job-detail-page job-runs-page">
@@ -567,6 +591,11 @@ export function JobRunsPage({
               </tr>
             </thead>
             <tbody>
+              {runs.length === 0 && (
+                <tr className="run-row">
+                  <td colSpan={10}>아직 실행 이력이 없습니다. 작업을 실행하면 이 표에 Run이 추가됩니다.</td>
+                </tr>
+              )}
               {runs.map((row) => (
                 <tr className={row.status === "failed" || row.status === "canceled" ? "run-row failed" : "run-row"} key={row.runId}>
                   <td>{row.runId}</td>
@@ -587,7 +616,7 @@ export function JobRunsPage({
           </table>
           </div>
           <div className="runs-pagination">
-            <span>Showing 1-{runs.length} of {runs.length}</span>
+            <span>Showing {runs.length ? `1-${runs.length}` : "0"} of {runs.length}</span>
             <div>
               <button type="button" aria-label="이전 페이지" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</button>
               <button type="button" aria-label="다음 페이지" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</button>
@@ -598,9 +627,9 @@ export function JobRunsPage({
         <article className="runs-stats-summary">
           <h2>실행 통계 요약</h2>
           <div>
-            <RunSummaryMetric label="7일 성공률" value="94.2%" />
-            <RunSummaryMetric label="평균 소요시간" value="14.1m" />
-            <RunSummaryMetric label="총 실행" value={`${runs.length}회`} />
+            <RunSummaryMetric label="성공률" value={job.stats?.successRate ?? "-"} />
+            <RunSummaryMetric label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
+            <RunSummaryMetric label="총 실행" value={job.stats?.totalRuns ?? `${runs.length}회`} />
           </div>
         </article>
       </section>

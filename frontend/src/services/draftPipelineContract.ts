@@ -19,6 +19,9 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
     ruleSummary: combineSummaries(draft.transform.summary, draft.quality.summary),
     scheduleLabel: draft.schedule.label,
+    schemaColumns: draft.schema.columns,
+    schemaFingerprint: draft.schema.schemaFingerprint,
+    schemaSampleRows: draft.schema.sampleRows,
     schemaSummary: draft.schema.summary,
     sourceConfig: draft.source.sourceConfig,
     sourceLabel: draft.source.sourceLabel,
@@ -45,6 +48,9 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.sourceConfig !== undefined) next.source.sourceConfig = patch.sourceConfig;
   if (patch.sourceLabel !== undefined) next.source.sourceLabel = patch.sourceLabel;
   if (patch.sourceType !== undefined) next.source.sourceType = patch.sourceType;
+  if (patch.schemaColumns !== undefined) next.schema.columns = patch.schemaColumns;
+  if (patch.schemaFingerprint !== undefined) next.schema.schemaFingerprint = patch.schemaFingerprint;
+  if (patch.schemaSampleRows !== undefined) next.schema.sampleRows = patch.schemaSampleRows;
   if (patch.schemaSummary !== undefined) next.schema.summary = patch.schemaSummary;
   if (patch.ruleSummary !== undefined) next.transform.summary = patch.ruleSummary;
   if (patch.scheduleLabel !== undefined) {
