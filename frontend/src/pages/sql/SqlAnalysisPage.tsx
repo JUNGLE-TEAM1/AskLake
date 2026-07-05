@@ -81,7 +81,7 @@ export function SqlAnalysisPage({
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
-  const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(dataset.id);
+  const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
   const [showReferencedOnly, setShowReferencedOnly] = useState(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
@@ -159,7 +159,7 @@ export function SqlAnalysisPage({
     setPreflightResult(null);
     setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
     setDerivedDatasetDraft(null);
-    setOpenSchemaDatasetId(baseDataset.id);
+    setOpenSchemaDatasetId(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset.id, defaultQuery]);
@@ -690,6 +690,7 @@ function SqlDatasetRow({
   onSchemaToggle: (dataset: CatalogDataset) => void;
 }) {
   const columnSummary = dataset.schema.slice(0, 3).map(([name]) => name).join(" · ");
+  const summary = isBase ? `base · ${dataset.schema.length} columns · ${dataset.owner}` : `${isReferenced ? "referenced · " : ""}${columnSummary}`;
   const rowClasses = [
     "sql-table-card",
     expanded ? "active" : "",
@@ -703,9 +704,12 @@ function SqlDatasetRow({
         <span className="sql-table-toggle">{expanded ? "▾" : "▸"}</span>
         <span className="sql-table-name">
           <strong>{dataset.name}</strong>
-          <small>{isBase ? `${dataset.schema.length} columns · ${dataset.owner}` : `${isReferenced ? "referenced · " : ""}${columnSummary}`}</small>
+          <small>{summary}</small>
         </span>
-        <span className="sql-table-layer">{dataset.layer}</span>
+        <span className="sql-table-pills">
+          {isBase && <span className="sql-table-base-pill">BASE</span>}
+          <span className="sql-table-layer">{dataset.layer}</span>
+        </span>
       </button>
       {expanded && (
         <div className="sql-table-expanded">
