@@ -6,6 +6,7 @@ import {
   RotateCcw,
   Search,
 } from "lucide-react";
+import postgresqlParser from "node-sql-parser/build/postgresql.js";
 import { executeQueryPreview } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
 
@@ -50,6 +51,8 @@ type DerivedDatasetDraft = {
 };
 
 const PREVIEW_ROW_LIMIT = 100;
+const { Parser: SqlParser } = postgresqlParser;
+const sqlParser = new SqlParser();
 
 export function SqlAnalysisPage({
   dataset,
@@ -707,7 +710,26 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
     };
   }
 
-  if (!/^(select|with)\b/i.test(normalizedQuery)) {
+  const parsedQuery = parseSqlQuery(normalizedQuery);
+  if (!parsedQuery.ok) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: parsedQuery.message }],
+    };
+  }
+
+  const statements = Array.isArray(parsedQuery.ast) ? parsedQuery.ast : [parsedQuery.ast];
+  if (statements.length !== 1) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: "Preview는 단일 SELECT 문만 실행할 수 있습니다." }],
+    };
+  }
+
+  const statement = statements[0];
+  if (!isSelectStatement(statement)) {
     return {
       key,
       canExecute: false,
@@ -715,28 +737,18 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
     };
   }
 
-  const syntaxIssue = findSqlSyntaxIssue(normalizedQuery);
-  if (syntaxIssue) {
+  const limitIssue = findLimitIssue(statement);
+  if (limitIssue) {
     return {
       key,
       canExecute: false,
-      messages: [{ tone: "error", text: syntaxIssue }],
-    };
-  }
-
-  const queryForKeywordScan = maskSqlStringLiterals(normalizedQuery);
-  const mutationKeyword = queryForKeywordScan.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
-  if (mutationKeyword) {
-    return {
-      key,
-      canExecute: false,
-      messages: [{ tone: "error", text: `${mutationKeyword.toUpperCase()} 문은 분석 화면에서 실행할 수 없습니다.` }],
+      messages: [{ tone: "error", text: limitIssue }],
     };
   }
 
   const allowedTableNames = new Set([baseDataset.name, ...referenceDatasets.map((item) => item.name)].map(normalizeSqlIdentifier));
-  const cteNames = extractCteNames(normalizedQuery);
-  const referencedTableNames = extractReferencedTableNames(normalizedQuery);
+  const cteNames = extractCteNames(statement);
+  const referencedTableNames = extractReferencedTableNames(statement);
   const unknownTableNames = referencedTableNames.filter((name) => {
     const normalizedName = normalizeSqlIdentifier(name);
     return !allowedTableNames.has(normalizedName) && !cteNames.has(normalizedName);
@@ -765,64 +777,86 @@ function stripSqlComments(query: string) {
     .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-function maskSqlStringLiterals(query: string) {
-  return query.replace(/'([^']|'')*'|"([^"]|"")*"/g, (literal) => " ".repeat(literal.length));
-}
-
-function maskSqlSingleQuotedLiterals(query: string) {
-  return query.replace(/'([^']|'')*'/g, (literal) => " ".repeat(literal.length));
-}
-
-function findSqlSyntaxIssue(query: string) {
-  const sanitizedQuery = maskSqlStringLiterals(query);
-  if (/[^\x09\x0a\x0d\x20-\x7e]/.test(sanitizedQuery)) {
-    return "SQL 문장에 지원하지 않는 문자가 있습니다.";
-  }
-  if (/;\s*\S/.test(sanitizedQuery)) {
-    return "세미콜론 뒤에 추가 문자가 있습니다. SQL 문장을 정리해 주세요.";
-  }
-  const limitMatch = sanitizedQuery.match(/\blimit\b\s+([^\s;]+)/i);
-  if (limitMatch && !/^\d+$/.test(limitMatch[1])) {
-    return "LIMIT에는 숫자만 입력할 수 있습니다.";
-  }
-  if (/\blimit\b\s+\d+\s+\S/i.test(sanitizedQuery)) {
-    return "LIMIT 절 뒤에 알 수 없는 문자가 있습니다.";
-  }
-  return null;
-}
-
 function normalizeSqlIdentifier(identifier: string) {
   return identifier.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
 }
 
-function extractCteNames(query: string) {
-  const cteNames = new Set<string>();
-  const withMatch = query.match(/^\s*with\s+([\s\S]+?)\bselect\b/i);
-  if (!withMatch) return cteNames;
-  const ctePattern = /(?:^|,)\s*([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)\s+as\s*\(/gi;
-  let match: RegExpExecArray | null;
-  while ((match = ctePattern.exec(withMatch[1])) !== null) {
-    cteNames.add(normalizeSqlIdentifier(match[1]));
+type SqlAstNode = {
+  columns?: unknown;
+  db?: string | null;
+  from?: SqlAstNode[] | null;
+  limit?: { value?: Array<{ type?: string; value?: unknown }> } | null;
+  name?: { value?: string } | string;
+  stmt?: SqlAstNode;
+  table?: string | null;
+  type?: string;
+  with?: SqlAstNode[] | null;
+};
+
+function parseSqlQuery(query: string): { ast: SqlAstNode | SqlAstNode[]; ok: true } | { message: string; ok: false } {
+  try {
+    return { ast: sqlParser.astify(query, { database: "postgresql" }) as SqlAstNode | SqlAstNode[], ok: true };
+  } catch (error) {
+    return {
+      message: `SQL 문법 오류입니다. ${getParserErrorHint(error)}`,
+      ok: false,
+    };
   }
+}
+
+function getParserErrorHint(error: unknown) {
+  if (isParserSyntaxError(error)) {
+    const found = error.found ? ` "${error.found}"` : "";
+    return `${error.location.start.line}:${error.location.start.column} 위치의${found} 토큰을 확인해 주세요.`;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("but") && message.includes("found")) {
+    return message.replace(/\s+/g, " ");
+  }
+  return "문장을 확인해 주세요.";
+}
+
+function isParserSyntaxError(error: unknown): error is { found?: string; location: { start: { column: number; line: number } } } {
+  return typeof error === "object"
+    && error !== null
+    && "location" in error
+    && typeof (error as { location?: { start?: { column?: unknown; line?: unknown } } }).location?.start?.line === "number"
+    && typeof (error as { location?: { start?: { column?: unknown; line?: unknown } } }).location?.start?.column === "number";
+}
+
+function isSelectStatement(statement: SqlAstNode) {
+  return statement.type === "select";
+}
+
+function findLimitIssue(statement: SqlAstNode) {
+  const limitValues = statement.limit?.value ?? [];
+  const invalidLimit = limitValues.find((item) => item.type !== "number" || !Number.isFinite(Number(item.value)));
+  return invalidLimit ? "LIMIT에는 숫자만 입력할 수 있습니다." : null;
+}
+
+function extractCteNames(statement: SqlAstNode) {
+  const cteNames = new Set<string>();
+  statement.with?.forEach((cte) => {
+    const cteName = typeof cte.name === "string" ? cte.name : cte.name?.value;
+    if (cteName) cteNames.add(normalizeSqlIdentifier(cteName));
+  });
   return cteNames;
 }
 
-function extractReferencedTableNames(query: string) {
+function extractReferencedTableNames(statement: SqlAstNode) {
   const tableNames = new Set<string>();
-  const sanitizedQuery = maskSqlSingleQuotedLiterals(query);
-  const tablePattern = /\b(?:from|join)\s+([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/gi;
-  let match: RegExpExecArray | null;
-  while ((match = tablePattern.exec(sanitizedQuery)) !== null) {
-    tableNames.add(normalizeSqlIdentifier(match[1]));
-  }
-  const fromPattern = /\bfrom\s+([\s\S]+?)(?=\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\bhaving\b|\blimit\b|\bunion\b|;|$)/gi;
-  while ((match = fromPattern.exec(sanitizedQuery)) !== null) {
-    const fromClause = match[1];
-    fromClause.split(",").slice(1).forEach((tableExpression) => {
-      const tableName = tableExpression.trim().match(/^([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/)?.[1];
-      if (tableName) tableNames.add(normalizeSqlIdentifier(tableName));
+  const collectFromStatement = (node: SqlAstNode) => {
+    node.from?.forEach((fromItem) => {
+      if (fromItem.table) {
+        const qualifiedName = fromItem.db ? `${fromItem.db}.${fromItem.table}` : fromItem.table;
+        tableNames.add(normalizeSqlIdentifier(qualifiedName));
+      }
     });
-  }
+    node.with?.forEach((cte) => {
+      if (cte.stmt) collectFromStatement(cte.stmt);
+    });
+  };
+  collectFromStatement(statement);
   return Array.from(tableNames);
 }
 
