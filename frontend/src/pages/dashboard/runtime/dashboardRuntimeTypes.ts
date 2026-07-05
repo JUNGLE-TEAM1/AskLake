@@ -1,4 +1,4 @@
-import type { DashboardRuntimeWidgetType } from "../../../types";
+import type { DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
 
 export type DashboardDatasetColumn = {
   name: string;
@@ -14,11 +14,15 @@ export type DashboardDatasetOption = {
 };
 
 export type CreateDraftWidgetFormInput = {
-  color: string;
+  config: DashboardRuntimeWidgetConfig;
   datasetId: string;
-  description?: string;
   title: string;
   type: DashboardRuntimeWidgetType;
-  xKey: string;
-  yKey: string;
+};
+
+export type UpdateDraftWidgetFormInput = {
+  config: DashboardRuntimeWidgetConfig;
+  datasetId?: string | null;
+  title: string;
+  type: DashboardRuntimeWidgetType;
 };

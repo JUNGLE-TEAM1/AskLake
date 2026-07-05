@@ -53,16 +53,11 @@ export function useDraftWidgetCreator({
     setDraftError(null);
     try {
       const widget = await createDraftWidget(dashboardId, selectedPageId, {
+        config: input.config,
         datasetId: input.datasetId,
         layout,
         title: input.title,
         type: input.type,
-        config: {
-          color: input.color,
-          description: input.description,
-          xKey: input.xKey,
-          yKey: input.yKey,
-        },
       });
       await reloadDraftRuntime(dashboardId);
       setSelectedWidgetId(widget.id);

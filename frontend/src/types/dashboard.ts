@@ -5,10 +5,12 @@ export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
 export type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
 export type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 export type DashboardWidgetDateUnit = "day" | "month" | "year";
+export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 
 export type DashboardWidgetConfigBase = {
+  color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
@@ -17,11 +19,13 @@ export type DashboardWidgetConfigBase = {
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
   color: string;
+  format?: DashboardWidgetFormat;
   valueKey: string;
 };
 
 export type TableWidgetConfig = DashboardWidgetConfigBase & {
   columns: string[];
+  limit?: number;
   sortDirection?: DashboardWidgetSortDirection;
   sortKey?: string;
 };
@@ -29,6 +33,7 @@ export type TableWidgetConfig = DashboardWidgetConfigBase & {
 export type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
   color: string;
+  groupKey?: string;
   xKey: string;
   yKey: string;
 };
@@ -37,6 +42,7 @@ export type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
   color: string;
   dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
   xKey: string;
   yKey: string;
 };

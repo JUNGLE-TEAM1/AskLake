@@ -11,7 +11,7 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
-import type { CreateDraftWidgetFormInput, DashboardDatasetOption } from "./dashboardRuntimeTypes";
+import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 
 type RuntimeNotice = {
   message: string;
@@ -19,6 +19,7 @@ type RuntimeNotice = {
 };
 
 type DashboardRuntimeState = {
+  deletingWidgetId: string | null;
   draftError: string | null;
   draftLoading: boolean;
   draftRuntime: DashboardRuntimeResponse | null;
@@ -36,11 +37,13 @@ type DashboardRuntimeState = {
   runtimeError: string | null;
   runtimeLoading: boolean;
   selectedDraftWidgets: DashboardRuntimeWidget[];
+  selectedDraftWidget: DashboardRuntimeWidget | null;
   selectedPageId: string | null;
   selectedPublishedWidgets: DashboardRuntimeWidget[];
   selectedWidgetId: string | null;
   shareLink: string | null;
   title: string;
+  updatingWidgetId: string | null;
 };
 
 type DashboardRuntimeDatasetState = {
@@ -54,9 +57,11 @@ type DashboardRuntimeDatasetState = {
 
 type DashboardRuntimeViewActions = {
   addPage: () => void;
+  clearWidgetSelection: () => void;
   closeSharePanel: () => void;
   createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   deletePage: (pageId: string) => void;
+  deleteWidget: (widgetId: string) => void;
   layoutCommit: (layout: LayoutItem[]) => void;
   layoutRejected: () => void;
   openDraft: () => void;
@@ -72,6 +77,7 @@ type DashboardRuntimeViewActions = {
   selectWidget: (widgetId: string) => void;
   share: () => void;
   toggleDatasetSidebar: () => void;
+  updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
 };
 
 type DashboardRuntimeViewProps = {
@@ -91,6 +97,7 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const {
+    deletingWidgetId,
     draftError,
     draftLoading,
     draftRuntime,
@@ -108,11 +115,13 @@ export function DashboardRuntimeView({
     runtimeError,
     runtimeLoading,
     selectedDraftWidgets,
+    selectedDraftWidget,
     selectedPageId,
     selectedPublishedWidgets,
     selectedWidgetId,
     shareLink,
     title,
+    updatingWidgetId,
   } = runtime;
   const {
     datasets: dashboardDatasets,
@@ -124,9 +133,11 @@ export function DashboardRuntimeView({
   } = datasets;
   const {
     addPage: onAddPage,
+    clearWidgetSelection: onClearWidgetSelection,
     closeSharePanel: onCloseSharePanel,
     createDatasetWidget: onCreateDatasetWidget,
     deletePage: onDeletePage,
+    deleteWidget: onDeleteWidget,
     layoutCommit: onLayoutCommit,
     layoutRejected: onLayoutRejected,
     openDraft: onOpenDraft,
@@ -142,6 +153,7 @@ export function DashboardRuntimeView({
     selectWidget: onSelectWidget,
     share: onShare,
     toggleDatasetSidebar: onToggleDatasetSidebar,
+    updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
   const openDraftAction = (
@@ -189,9 +201,11 @@ export function DashboardRuntimeView({
       </div>
     ) : (
       <DashboardCanvas
+        deletingWidgetId={deletingWidgetId}
         editable
         selectedWidgetId={selectedWidgetId}
         widgets={selectedDraftWidgets}
+        onDeleteWidget={onDeleteWidget}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onSelectWidget={onSelectWidget}
@@ -254,10 +268,14 @@ export function DashboardRuntimeView({
         inspector={isDraftMode ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
+              editingWidget={selectedDraftWidget}
               isCreating={isCreatingDatasetWidget}
+              isUpdating={updatingWidgetId === selectedDraftWidget?.id}
+              onCancelEdit={onClearWidgetSelection}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
               onCreateWidget={onCreateDatasetWidget}
+              onUpdateWidget={onUpdateWidget}
             />
           </aside>
         ) : undefined}

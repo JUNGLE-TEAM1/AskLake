@@ -1,3 +1,4 @@
+import { Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { WidgetRenderer } from "./WidgetRenderer";
 
@@ -19,12 +20,16 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export function WidgetFrame({
+  deleteDisabled = false,
   editable = false,
+  onDelete,
   onSelect,
   selected = false,
   widget,
 }: {
+  deleteDisabled?: boolean;
   editable?: boolean;
+  onDelete?: (widgetId: string) => void;
   onSelect?: (widgetId: string) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
@@ -50,6 +55,21 @@ export function WidgetFrame({
           <span>{widgetTypeLabels[widget.type]}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
+        {editable && selected && (
+          <button
+            aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
+            className="asklake-widget-delete-button widget-control"
+            disabled={deleteDisabled}
+            title="위젯 삭제"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete?.(widget.id);
+            }}
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
       </header>
       <div className="asklake-widget-frame-body">
         <WidgetRenderer widget={widget} />

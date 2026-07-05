@@ -44,11 +44,6 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
-function getConfigString(config: Record<string, unknown>, key: string) {
-  const value = config[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
 function firstNumericKey(row: SimpleRow | undefined) {
   if (!row) return null;
   return Object.keys(row).find((key) => typeof row[key] === "number") ?? null;
@@ -219,8 +214,11 @@ function MetricWidget({ widget }: { widget: RuntimeWidgetByType<"metric"> }) {
 function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
   const rows = rowsFromWidget(widget);
   const availableColumns = Object.keys(rows[0] ?? {});
-  const configuredColumns = widget.config.columns.filter((column) => availableColumns.includes(column));
+  const configuredColumns = Array.isArray(widget.config.columns)
+    ? widget.config.columns.filter((column) => availableColumns.includes(column))
+    : [];
   const columns = (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
+  const limit = Math.max(1, Math.min(widget.config.limit ?? 10, 100));
   if (!rows.length || !columns.length) return <EmptyWidgetData />;
   const sortedRows = sortRows(rows, widget.config.sortKey, widget.config.sortDirection);
 
@@ -231,7 +229,7 @@ function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
           <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
         </thead>
         <tbody>
-          {sortedRows.slice(0, 10).map((row, rowIndex) => (
+          {sortedRows.slice(0, limit).map((row, rowIndex) => (
             <tr key={`runtime-row-${rowIndex}`}>
               {columns.map((column) => <td key={column}>{formatCell(row[column])}</td>)}
             </tr>
