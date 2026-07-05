@@ -57,29 +57,30 @@ class CatalogService:
         self,
         request: CreateDerivedDatasetRequest,
     ) -> CatalogDatasetResponse:
-        source_dataset = self.get_dataset(request.source_dataset_id)
+        request_source_dataset = self.get_dataset(request.source_dataset_id)
         sql_result = self.get_sql_result(request.source_run_id)
         validate_derived_dataset_request(request, sql_result)
+        result_source_dataset = self.get_dataset(sql_result.dataset_id)
 
         reference_datasets = [
             self.get_dataset(reference_dataset_id)
             for reference_dataset_id in unique_values(request.reference_dataset_ids)
         ]
-        schema_source_datasets = [
-            source_dataset,
+        schema_source_datasets = unique_datasets_by_id([
+            result_source_dataset,
             *reference_datasets,
-            *self.get_optional_result_dataset(sql_result.dataset_id),
-        ]
+            request_source_dataset,
+        ])
         dataset_payload = build_derived_dataset_payload(
             request,
-            source_dataset,
+            result_source_dataset,
             sql_result,
             schema_source_datasets,
             self.repository,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
         lineage_graph = build_derived_dataset_lineage_graph(
-            source_dataset,
+            result_source_dataset,
             derived_dataset,
         )
         dataset_payload["lineageGraph"] = lineage_graph.model_dump(
@@ -100,16 +101,6 @@ class CatalogService:
                 {"sourceRunId": run_id},
             )
         return QueryRunResponse.model_validate(payload)
-
-    def get_optional_result_dataset(
-        self,
-        dataset_id: str,
-    ) -> list[CatalogDatasetResponse]:
-        payload = self.repository.get_dataset_payload(dataset_id)
-        if payload is None:
-            return []
-        return [CatalogDatasetResponse.model_validate(payload)]
-
 
 def validate_derived_dataset_request(
     request: CreateDerivedDatasetRequest,
@@ -172,17 +163,22 @@ def validate_derived_dataset_request(
 
 def build_derived_dataset_payload(
     request: CreateDerivedDatasetRequest,
-    source_dataset: CatalogDatasetResponse,
+    result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
     repository: CatalogRepository,
 ) -> dict[str, object]:
-    dataset_name = request.dataset.name.strip() or f"{source_dataset.name}_analysis"
+    dataset_name = request.dataset.name.strip() or f"{result_source_dataset.name}_analysis"
     dataset_description = (
         request.dataset.description.strip()
-        or f"{source_dataset.name} SQL Preview 결과로 생성한 분석 데이터셋"
+        or f"{result_source_dataset.name} SQL Preview 결과로 생성한 분석 데이터셋"
     )
     dataset_id = build_unique_derived_dataset_id(dataset_name, repository)
+    upstream_reference_ids = [
+        reference_dataset_id
+        for reference_dataset_id in unique_values(request.reference_dataset_ids)
+        if reference_dataset_id != result_source_dataset.id
+    ]
 
     return {
         "description": dataset_description,
@@ -193,7 +189,7 @@ def build_derived_dataset_payload(
         "lastUpdated": current_utc_timestamp(),
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
-        "owner": source_dataset.owner,
+        "owner": result_source_dataset.owner,
         "quality": "Preview verified",
         "rag": request.dataset.rag,
         "rows": f"{sql_result.row_count:,} preview rows",
@@ -207,8 +203,8 @@ def build_derived_dataset_payload(
         "status": "available",
         "tags": normalize_derived_dataset_tags(request.dataset.tags),
         "upstream": [
-            source_dataset.name,
-            *unique_values(request.reference_dataset_ids),
+            result_source_dataset.name,
+            *upstream_reference_ids,
             request.source_run_id,
         ],
     }
@@ -348,6 +344,19 @@ def unique_values(values: list[str]) -> list[str]:
         unique_items.append(value)
         seen_items.add(value)
     return unique_items
+
+
+def unique_datasets_by_id(
+    datasets: list[CatalogDatasetResponse],
+) -> list[CatalogDatasetResponse]:
+    unique_datasets: list[CatalogDatasetResponse] = []
+    seen_dataset_ids: set[str] = set()
+    for dataset in datasets:
+        if dataset.id in seen_dataset_ids:
+            continue
+        unique_datasets.append(dataset)
+        seen_dataset_ids.add(dataset.id)
+    return unique_datasets
 
 
 def current_utc_timestamp() -> str:
