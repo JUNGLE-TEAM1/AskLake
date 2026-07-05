@@ -907,8 +907,8 @@ function getRuleStats(steps: RecipeStep[], qualityRules: QualityRule[], invalidR
   };
 }
 
-function formatRuleSummary(stats: RuleStats, validation: TransformQualityValidationResult) {
-  return `${stats.transformSteps} transform steps · ${stats.qualityRules} quality rules · ${validation.qualityScore}% quality score · ${stats.invalidRows} invalid rows`;
+function formatTransformSummary(stats: RuleStats) {
+  return `${stats.transformSteps} transform steps · ${stats.affectedColumns} affected columns · ${stats.coverage}% coverage`;
 }
 
 function getTransformStepKind(operation: string): TransformStepDraft["kind"] {
@@ -1122,12 +1122,11 @@ export function RuleApplicationPage({
 
   const buildRuleDraftPatch = (steps: RecipeStep[] = recipeSteps, rules: QualityRule[] = qualityRules): DraftPipelinePatch => {
     const nextValidation = steps === recipeSteps && rules === qualityRules ? validationResult : runTransformQualitySamplePreview(steps, rules).validation;
-    const nextSummary = formatRuleSummary(getRuleStats(steps, rules, nextValidation.invalidRowCount), nextValidation);
+    const nextStats = getRuleStats(steps, rules, nextValidation.invalidRowCount);
     return {
-      ruleSummary: nextSummary,
       transform: {
         steps: toDraftTransformSteps(steps),
-        summary: nextSummary,
+        summary: formatTransformSummary(nextStats),
       },
       quality: {
         invalidRows: toDraftInvalidRows(nextValidation.failedRows),
