@@ -140,6 +140,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - adapter unit tests
 - backend endpoint tests
 - FastAPI `/api/health` smoke test
+- Pair2 FastAPI Catalog / Lineage / SQL smoke: `cd backend && npm run verify:fastapi-pair2`
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests
