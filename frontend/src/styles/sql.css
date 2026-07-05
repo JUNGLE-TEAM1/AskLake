@@ -526,69 +526,6 @@
   white-space: nowrap;
 }
 
-.sql-preflight-panel {
-  display: grid;
-  gap: 8px;
-  border: 1px solid #bfdbfe;
-  border-radius: 8px;
-  background: #eff6ff;
-  padding: 12px;
-}
-
-.sql-preflight-panel.error {
-  border-color: #fecaca;
-  background: #fef2f2;
-}
-
-.sql-preflight-panel > span {
-  color: #334155;
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.sql-preflight-panel ul {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-}
-
-.sql-preflight-panel li {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.45;
-  list-style: none;
-}
-
-.sql-preflight-panel li::before {
-  flex: 0 0 auto;
-  font-weight: 900;
-}
-
-.sql-preflight-panel li.success::before {
-  color: #059669;
-  content: "OK";
-}
-
-.sql-preflight-panel li.info::before {
-  color: #2563eb;
-  content: "i";
-}
-
-.sql-preflight-panel li.warning::before {
-  color: #d97706;
-  content: "!";
-}
-
-.sql-preflight-panel li.error::before {
-  color: #dc2626;
-  content: "!";
-}
-
 .sql-editor-footer {
   display: flex;
   min-height: 40px;
@@ -597,6 +534,40 @@
   gap: 12px;
   color: #64748b;
   font-size: 12px;
+}
+
+.sql-editor-status-line {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.sql-check-pill {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 0 9px;
+}
+
+.sql-check-pill.success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.sql-check-pill.error {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.sql-check-detail {
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .sql-result-status span {

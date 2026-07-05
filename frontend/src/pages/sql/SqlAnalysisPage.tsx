@@ -1,6 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CheckCircle,
   Database,
   Download,
   PlayCircle,
@@ -251,19 +250,6 @@ export function SqlAnalysisPage({
     }
   };
 
-  const runPreflightCheck = () => {
-    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
-    const result = runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey);
-    setPreflightResult(result);
-    onAction(
-      result.canExecute ? "analysis.query.preflight_passed" : "analysis.query.preflight_failed",
-      queryContextPath("preflight"),
-      baseDataset.id,
-      result.canExecute ? "success" : "failed",
-    );
-    return result;
-  };
-
   const executePreview = async () => {
     if (!canRunPreview) {
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
@@ -290,6 +276,8 @@ export function SqlAnalysisPage({
       setQueryPending(false);
     }
   };
+
+  const preflightSummary = getPreflightSummary(preflightResult);
 
   const resetQuery = () => {
     updateQuery(defaultQuery);
@@ -520,9 +508,6 @@ export function SqlAnalysisPage({
               <h2>Base Dataset 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="secondary-button" type="button" onClick={runPreflightCheck} disabled={queryPending}>
-                <CheckCircle size={16} /> SQL 점검
-              </button>
               <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
                 <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
               </button>
@@ -569,18 +554,16 @@ export function SqlAnalysisPage({
               </div>
             </div>
           </div>
-          {preflightResult && (
-            <div className={preflightResult.canExecute ? "sql-preflight-panel" : "sql-preflight-panel error"}>
-              <span>SQL 점검</span>
-              <ul>
-                {preflightResult.messages.map((message, index) => (
-                  <li className={message.tone} key={`${message.tone}-${index}`}>{message.text}</li>
-                ))}
-              </ul>
-            </div>
-          )}
           <div className="sql-editor-footer">
-            <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+            <div className="sql-editor-status-line">
+              <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+              {preflightSummary && (
+                <span className={`sql-check-pill ${preflightSummary.tone}`}>
+                  {preflightSummary.label}
+                </span>
+              )}
+              {preflightSummary?.detail && <span className="sql-check-detail">{preflightSummary.detail}</span>}
+            </div>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
           </div>
         </section>
@@ -702,6 +685,15 @@ LIMIT 100;`;
 
 function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
   return `${dataset.name}_analysis`;
+}
+
+function getPreflightSummary(result: SqlPreflightResult | null) {
+  if (!result) return null;
+  if (result.canExecute) {
+    return { detail: "", label: "점검 통과", tone: "success" as const };
+  }
+  const errorMessage = result.messages.find((message) => message.tone === "error")?.text ?? "SQL을 확인해 주세요.";
+  return { detail: errorMessage, label: "점검 필요", tone: "error" as const };
 }
 
 function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[], key: string): SqlPreflightResult {
