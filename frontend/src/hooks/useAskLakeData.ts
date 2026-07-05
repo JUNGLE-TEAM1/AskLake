@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
+import { apiConfig } from "../services/apiClient";
 import { createDerivedDatasetFromSql, createPipelineDraft, runJobCommand } from "../services/mockApi";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
+import type { AuditResult, AuditTargetType, CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
+
+const derivedDatasetStorageKey = "asklake.derivedDatasets";
+const maxStoredDerivedDatasets = 30;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "customer_review_gold",
@@ -26,6 +30,49 @@ const initialDraftPipeline: DraftPipeline = {
   rag: true,
 };
 
+function isCatalogDataset(value: unknown): value is CatalogDataset {
+  if (!value || typeof value !== "object") return false;
+  const dataset = value as Partial<CatalogDataset>;
+  return typeof dataset.id === "string"
+    && typeof dataset.name === "string"
+    && Array.isArray(dataset.schema)
+    && Array.isArray(dataset.sampleRows)
+    && Array.isArray(dataset.tags);
+}
+
+function loadStoredDerivedDatasets() {
+  if (!apiConfig.useMock || typeof window === "undefined") return [];
+
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(derivedDatasetStorageKey) ?? "[]");
+    return Array.isArray(stored) ? stored.filter(isCatalogDataset) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeCatalogDatasets(baseDatasets: CatalogDataset[], derivedDatasets: CatalogDataset[]) {
+  const uniqueDerivedDatasets = derivedDatasets.filter((dataset, index, items) => (
+    items.findIndex((item) => item.id === dataset.id) === index
+  ));
+  const derivedDatasetIds = new Set(uniqueDerivedDatasets.map((dataset) => dataset.id));
+
+  return [
+    ...uniqueDerivedDatasets,
+    ...baseDatasets.filter((dataset) => !derivedDatasetIds.has(dataset.id)),
+  ];
+}
+
+function saveStoredDerivedDataset(dataset: CatalogDataset) {
+  if (!apiConfig.useMock || typeof window === "undefined") return;
+
+  const previousDatasets = loadStoredDerivedDatasets();
+  const nextDatasets = [dataset, ...previousDatasets.filter((item) => item.id !== dataset.id)]
+    .slice(0, maxStoredDerivedDatasets);
+
+  window.localStorage.setItem(derivedDatasetStorageKey, JSON.stringify(nextDatasets));
+}
+
 export function useAskLakeData({
   onFlowChange,
   showToast,
@@ -36,7 +83,7 @@ export function useAskLakeData({
   writeAuditLog: WriteAuditLog;
 }) {
   const [jobs, setJobs] = useState<JobRowData[]>(etlJobs);
-  const [datasets, setDatasets] = useState<CatalogDataset[]>(catalogDatasets);
+  const [datasets, setDatasets] = useState<CatalogDataset[]>(() => mergeCatalogDatasets(catalogDatasets, loadStoredDerivedDatasets()));
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(catalogDatasets[0]);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(etlJobs[1]);
@@ -68,26 +115,26 @@ export function useAskLakeData({
     }
   };
 
-  const createSqlDerivedDataset = async ({
-    layer,
-    name,
-    sourceDataset,
-    sqlResult,
-  }: {
-    layer: CatalogDataset["layer"];
-    name: string;
-    sourceDataset: CatalogDataset;
-    sqlResult: SqlResultDraft;
-  }) => {
+  const createSqlDerivedDataset = async (request: CreateDerivedDatasetRequest) => {
     setApiPending(true);
     try {
-      const dataset = await createDerivedDatasetFromSql({ layer, name, sourceDataset, sqlResult });
+      const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
+      const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
+
+      if (!sourceDataset || !currentSqlResult) {
+        writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
+        showToast("Lake Dataset 생성에 필요한 Preview 결과를 찾지 못했습니다.", "info");
+        return null;
+      }
+
+      const dataset = await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult: currentSqlResult });
+      saveStoredDerivedDataset(dataset);
       setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
       writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);
       showToast("SQL 결과 기반 Lake Dataset이 생성되었습니다.");
       return dataset;
     } catch {
-      writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", sourceDataset.id, "failed");
+      writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
       showToast("Lake Dataset 생성에 실패했습니다.", "info");
       return null;
     } finally {

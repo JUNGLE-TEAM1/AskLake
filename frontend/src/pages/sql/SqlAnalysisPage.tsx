@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import postgresqlParser from "node-sql-parser/build/postgresql.js";
 import { executeQueryPreview } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 
 type AutocompleteKind = "keyword" | "table" | "column";
 
@@ -43,11 +43,15 @@ type SqlPreflightResult = {
 type DerivedDatasetDraft = {
   columnCount: number;
   datasetId?: string;
-  layer: CatalogDataset["layer"];
+  description: string;
+  layer: DerivedDatasetLayer;
   name: string;
+  rag: boolean;
+  refreshPolicy: "manual";
   rowCount: number;
   sourceDatasetId: string;
   sourceRunId: string;
+  tags: string[];
 };
 
 const PREVIEW_ROW_LIMIT = 100;
@@ -64,12 +68,7 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCreateDerivedDataset: (request: {
-    layer: CatalogDataset["layer"];
-    name: string;
-    sourceDataset: CatalogDataset;
-    sqlResult: SqlResultDraft;
-  }) => Promise<CatalogDataset | null>;
+  onCreateDerivedDataset: (request: CreateDerivedDatasetRequest) => Promise<CatalogDataset | null>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
@@ -91,7 +90,10 @@ export function SqlAnalysisPage({
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [derivedDatasetName, setDerivedDatasetName] = useState(buildDefaultDerivedDatasetName(baseDataset));
-  const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<CatalogDataset["layer"]>("GOLD");
+  const [derivedDatasetDescription, setDerivedDatasetDescription] = useState(buildDefaultDerivedDatasetDescription(baseDataset));
+  const [derivedDatasetTags, setDerivedDatasetTags] = useState(buildDefaultDerivedDatasetTags(baseDataset));
+  const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<DerivedDatasetLayer>("GOLD");
+  const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
   const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
@@ -107,6 +109,7 @@ export function SqlAnalysisPage({
     }),
     [baseDataset.id, query, referenceDatasetIds],
   );
+  const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -158,6 +161,9 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
+    setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
+    setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
+    setDerivedDatasetRag(baseDataset.rag);
     setDerivedDatasetDraft(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
@@ -391,23 +397,39 @@ export function SqlAnalysisPage({
 
   const createDerivedDataset = async () => {
     if (!resultDraft) return;
-    setDerivedDatasetPending(true);
-    try {
-      const dataset = await onCreateDerivedDataset({
+    const request: CreateDerivedDatasetRequest = {
+      dataset: {
+        description: derivedDatasetDescription.trim() || buildDefaultDerivedDatasetDescription(baseDataset),
         layer: derivedDatasetLayer,
         name: derivedDatasetName.trim(),
-        sourceDataset: baseDataset,
-        sqlResult: resultDraft,
-      });
+        rag: derivedDatasetRag,
+        refreshPolicy: "manual",
+        tags: derivedDatasetTagList,
+      },
+      previewLimit: resultDraft.previewLimit,
+      query: resultDraft.query,
+      referenceDatasetIds: resultDraft.referenceDatasetIds ?? [],
+      sourceDatasetId: baseDataset.id,
+      sourceRunId: resultDraft.runId,
+      validationKey: resultDraft.validationKey,
+    };
+
+    setDerivedDatasetPending(true);
+    try {
+      const dataset = await onCreateDerivedDataset(request);
       if (!dataset) return;
       setDerivedDatasetDraft({
         columnCount: resultDraft.columns.length,
         datasetId: dataset.id,
-        layer: dataset.layer,
+        description: dataset.description,
+        layer: request.dataset.layer,
         name: dataset.name,
+        rag: dataset.rag,
+        refreshPolicy: "manual",
         rowCount: resultDraft.rowCount,
-        sourceDatasetId: resultDraft.datasetId,
+        sourceDatasetId: request.sourceDatasetId,
         sourceRunId: resultDraft.runId,
+        tags: dataset.tags,
       });
     } finally {
       setDerivedDatasetPending(false);
@@ -621,12 +643,36 @@ export function SqlAnalysisPage({
                   value={derivedDatasetName}
                 />
               </label>
+              <label className="wide">
+                <span>Description</span>
+                <textarea
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetDescription(event.target.value);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  rows={2}
+                  value={derivedDatasetDescription}
+                />
+              </label>
+              <label className="wide">
+                <span>Tags</span>
+                <input
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetTags(event.target.value);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  placeholder="#sql-derived #analysis"
+                  value={derivedDatasetTags}
+                />
+              </label>
               <label>
                 <span>Layer</span>
                 <select
                   disabled={!resultDraft}
                   onChange={(event) => {
-                    setDerivedDatasetLayer(event.target.value as CatalogDataset["layer"]);
+                    setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
                     setDerivedDatasetDraft(null);
                   }}
                   value={derivedDatasetLayer}
@@ -635,9 +681,21 @@ export function SqlAnalysisPage({
                   <option value="GOLD">GOLD</option>
                 </select>
               </label>
+              <label className="sql-materialize-checkbox">
+                <input
+                  checked={derivedDatasetRag}
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetRag(event.target.checked);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  type="checkbox"
+                />
+                <span>RAG 사용 가능</span>
+              </label>
               <button
                 className="primary-button"
-                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetPending || Boolean(derivedDatasetDraft)}
+                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0 || derivedDatasetPending || Boolean(derivedDatasetDraft)}
                 onClick={createDerivedDataset}
                 type="button"
               >
@@ -646,9 +704,9 @@ export function SqlAnalysisPage({
             </div>
             <div className="sql-materialize-summary">
               {derivedDatasetDraft ? (
-                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.datasetId}</span>
+                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
               ) : resultDraft ? (
-                <span>{resultDraft.rowCount} preview rows · source {resultDraft.runId}</span>
+                <span>{resultDraft.rowCount} preview rows · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
               ) : (
                 <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
               )}
@@ -688,6 +746,24 @@ LIMIT 100;`;
 
 function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
   return `${dataset.name}_analysis`;
+}
+
+function buildDefaultDerivedDatasetDescription(dataset: CatalogDataset) {
+  return `${dataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+}
+
+function buildDefaultDerivedDatasetTags(dataset: CatalogDataset) {
+  return Array.from(new Set(["#sql-derived", ...dataset.tags])).slice(0, 4).join(" ");
+}
+
+function parseDerivedDatasetTags(value: string) {
+  const tags = value
+    .split(/[\s,]+/)
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`);
+
+  return Array.from(new Set(tags));
 }
 
 function getPreflightSummary(result: SqlPreflightResult | null) {
