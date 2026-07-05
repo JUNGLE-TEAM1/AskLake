@@ -781,46 +781,52 @@ Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/pu
 type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 
 type DashboardWidgetConfigBase = {
+  color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
 };
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
-  valueKey: string;
   aggregation: DashboardWidgetAggregation;
   color: string;
+  format?: DashboardWidgetFormat;
+  valueKey: string;
 };
 
 type TableWidgetConfig = DashboardWidgetConfigBase & {
   columns: string[];
-  sortKey?: string;
+  limit?: number;
   sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
 };
 
 type BarChartWidgetConfig = DashboardWidgetConfigBase & {
-  xKey: string;
-  yKey: string;
   aggregation: DashboardWidgetAggregation;
   color: string;
+  groupKey?: string;
+  xKey: string;
+  yKey: string;
 };
 
 type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
   xKey: string;
   yKey: string;
-  aggregation: DashboardWidgetAggregation;
-  dateUnit?: DashboardWidgetDateUnit;
-  color: string;
 };
 
 type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
-  labelKey: string;
-  valueKey: string;
   aggregation: DashboardWidgetAggregation;
   color: string;
+  labelKey: string;
+  valueKey: string;
 };
 
 type DashboardRuntimeWidgetConfigByType = {
