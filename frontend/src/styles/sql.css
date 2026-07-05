@@ -11,10 +11,6 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-.sql-page.context-collapsed .sql-workspace {
-  margin-left: 0;
-}
-
 .sql-page.context-collapsed .sql-dataset-panel {
   pointer-events: none;
   opacity: 0;
@@ -441,10 +437,6 @@
 
 .sql-page.context-collapsed .sql-collapse-button {
   left: var(--sidebar-width);
-}
-
-.sql-workspace {
-  margin-left: calc(var(--sql-context-width) + 28px);
 }
 
 .sql-page-header {
