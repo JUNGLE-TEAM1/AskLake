@@ -35,7 +35,7 @@ AskLake/
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
+| Backend | Node HTTP demo API + FastAPI target scaffold | partial | `frontend/server/`는 demo adapter로 유지하고, production backend 전환 의사결정은 `docs/backend-fastapi-transition-plan.md`를 따른다. |
 | Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
@@ -85,6 +85,10 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 - audit log 저장
 - 인증/권한이 도입될 경우 actor와 access policy 판정
 
+FastAPI 전환은 `backend/app/`를 기준으로 한다.
+1차 scaffold는 FastAPI 앱, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health`까지를 범위로 두고, 실제 기능 endpoint 구현은 Pair별 후속 PR에서 진행한다.
+구체적인 폴더 구조와 기술 선택은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
+
 프론트가 계속 소유할 책임:
 
 - 화면 상태와 사용자 interaction
@@ -106,6 +110,11 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
 | Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
+
+Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
+Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
+Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
+두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
 
 ## 7) API Boundary
 
@@ -136,12 +145,15 @@ Dashboard runtime API:
 - `POST /api/dashboards`
 - `POST /api/dashboards/query`
 - `PATCH /api/dashboards/{dashboardId}`
+- `DELETE /api/dashboards/{dashboardId}`
 - `GET /api/dashboards/{dashboardId}/published`
 - `POST /api/dashboards/{dashboardId}/draft/ensure`
 - `POST /api/dashboards/{dashboardId}/draft/pages`
 - `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
 - `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
 - `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+- `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+- `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
 

@@ -34,6 +34,14 @@ VITE_USE_MOCK_API=true
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
 
+FastAPI schema 구현 기준:
+
+- 공통 Pydantic schema는 `backend/app/schemas/common.py`에 둔다.
+- 각 도메인 schema는 `CamelModel`을 상속해 Python 내부에서는 `snake_case`, API request/response에서는 `camelCase`를 사용한다.
+- 실패 응답은 `ErrorResponse` / `ErrorDetail`을 사용하고, code 값은 `docs/api-contract.md`의 권장 에러 코드를 우선한다.
+- 목록형 API는 필요에 따라 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`, `SortDirection`을 재사용한다.
+- 모든 성공 응답을 하나의 envelope로 강제하지 않는다. 각 endpoint의 성공 response shape는 `docs/api-contract.md`의 상세 계약을 따른다.
+
 Canonical status values:
 
 | Resource | Field | Values |
@@ -84,6 +92,17 @@ Canonical status values:
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
+
+Pair3 Dashboard FastAPI 구현은 두 lane으로 나눈다.
+
+| Lane | 목적 | Endpoint 범위 | Backend 파일 기준 |
+| --- | --- | --- | --- |
+| Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
+| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
+
+Card/List lane은 `DashboardCard`와 `DashboardListResponse`를 기준으로 한다.
+Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준으로 한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 자세한 table 경계는 `docs/api-contract.md`의 Dashboard FastAPI 구현 경계를 따른다.
 
 ## 7) 화면별 데이터 계약
 

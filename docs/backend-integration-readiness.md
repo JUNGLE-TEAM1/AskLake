@@ -1,6 +1,7 @@
 # AskLake Backend Integration Readiness
 
 이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
+FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
@@ -18,6 +19,10 @@
 | SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
 | Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
+
+FastAPI 1차 scaffold의 범위는 기능 endpoint 구현이 아니라 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이다.
+이후 ETL/Catalog/SQL/Dashboard API는 Pair별 후속 PR에서 구현한다.
+FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
 
 ## 2. Pair A Live Contract
 
@@ -175,6 +180,19 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
 Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
+
+Pair3 FastAPI 구현은 아래 순서로 분리한다.
+
+1. Dashboard 계약/schema skeleton 정리: `backend/app/schemas/dashboard.py`
+2. Card/List API: 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제
+3. Runtime 조회 API: published 조회, draft ensure
+4. Draft page API: page 추가/이름 수정/삭제
+5. Draft widget/layout/publish API: widget 생성/수정/삭제, layout 저장, publish
+6. Frontend adapter E2E: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
+Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
+두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
 
 ## 9. 아직 실제 저장되지 않는 기능
 

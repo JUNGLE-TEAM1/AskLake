@@ -83,6 +83,9 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 }
 ```
 
+FastAPI 구현에서도 모든 성공 응답을 `{ ok, data }` 같은 단일 envelope로 강제하지 않습니다.
+각 endpoint는 이 문서에 적힌 response shape를 우선하고, 목록 API처럼 pagination 정보가 필요한 경우에만 resource 배열과 page metadata를 함께 반환합니다.
+
 목록 API처럼 확장 필드가 필요한 경우에는 아래처럼 리소스 배열을 감싸서 반환합니다.
 
 ```json
@@ -94,6 +97,20 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
   }
 }
 ```
+
+page 번호 기반 목록 API는 아래 필드명을 사용합니다.
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+FastAPI 공통 schema에서는 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`를 재사용할 수 있습니다.
+단, 실제 resource key가 `items`가 아니라 `datasets`, `dashboards`처럼 정해진 endpoint는 해당 상세 계약을 우선합니다.
 
 ### Error Envelope
 
@@ -113,6 +130,7 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 
 프론트의 현재 필수 필드는 `code`, `message`입니다.
 `details`는 선택입니다.
+FastAPI 구현은 `backend/app/schemas/common.py`의 `ErrorResponse`와 `ErrorDetail`을 기준으로 이 envelope를 생성합니다.
 
 ### 상태 코드
 
@@ -790,6 +808,70 @@ Response 예시:
 
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
+
+### 8.2 Pair3 Dashboard FastAPI 구현 경계
+
+Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해서 구현한다.
+목록 화면은 card metadata만 사용하고, 대시보드 내부 화면은 draft/published revision snapshot을 사용한다.
+공통 Pydantic schema skeleton은 `backend/app/schemas/dashboard.py`를 기준으로 한다.
+
+#### 8.2.1 작업 lane
+
+| Lane | 담당 범위 | 주요 schema | 주요 endpoint |
+| --- | --- | --- | --- |
+| Dashboard card/list | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `DashboardCard`, `DashboardListQuery`, `DashboardListResponse`, `CreateDashboardRequest`, `UpdateDashboardRequest` | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` |
+| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish | `DashboardRuntimeResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
+
+Card/list lane은 `dashboards`와 `dashboard_tags` 중심으로 작업한다.
+Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` 중심으로 작업한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 서로의 DB 쿼리를 직접 수정하지 않는다.
+
+#### 8.2.2 DB table 방향
+
+초기 FastAPI 구현의 table 방향은 아래처럼 둔다.
+정식 migration 파일은 후속 PR에서 작성하되, repository/service는 이 소유 경계를 기준으로 나눈다.
+
+| Table | 소유 lane | 역할 | 핵심 필드 |
+| --- | --- | --- | --- |
+| `dashboards` | card/list | 목록 card의 source of truth | `id`, `name`, `owner`, `status`, `dataset_id`, `source_run_id`, `published_revision_id`, `has_published_revision`, `created_at`, `updated_at`, `payload` |
+| `dashboard_tags` | card/list | 목록 필터용 tag normalize | `dashboard_id`, `tag` |
+| `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at` |
+| `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index` |
+| `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data` |
+
+`layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
+API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
+
+#### 8.2.3 publish 규칙
+
+Published 조회는 published revision만 읽는다.
+Draft 변경은 published revision을 직접 수정하지 않는다.
+
+```text
+위젯 편집 진입
+↓
+POST /api/dashboards/{dashboardId}/draft/ensure
+↓
+draft revision/page/widget 수정
+↓
+POST /api/dashboards/{dashboardId}/publish
+↓
+draft snapshot을 새 published revision으로 복사
+↓
+dashboards.published_revision_id, has_published_revision, status, updated_at 갱신
+```
+
+published revision이 없는 dashboard의 published 조회는 오류가 아니라 빈 runtime 응답으로 처리한다.
+즉 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다.
+
+#### 8.2.4 PR 순서
+
+1. Dashboard 계약/schema skeleton 정리
+2. Dashboard card/list API 구현
+3. Published 조회와 draft ensure API 구현
+4. Draft page API 구현
+5. Draft widget/layout/publish API 구현
+6. Frontend API adapter와 FastAPI E2E 확인
 
 ### 8.3 대시보드 목록 조회
 
