@@ -364,6 +364,7 @@ export function JobDetailPage({
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
   const statusText = jobStatusMeta[job.status].summaryLabel;
   const stats = job.stats ?? fallbackJobStats(job);
+  const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
   const issueText = job.status === "failed" ? job.lastState : job.status === "running" || job.status === "paused" || job.status === "canceled" ? stats.currentStage : "실행 전";
   const recentFailure = job.runHistory?.find((run) => run.status === "failed" || run.status === "canceled")?.runId ?? "-";
   const lastChangedBy = job.owner;
@@ -448,7 +449,7 @@ export function JobDetailPage({
             <h3>Target 저장 설정</h3>
             <div className="detail-kv-grid">
               <Field label="타깃 데이터셋" value={job.target} />
-              <Field label="Lake 경로" value={`lake/${job.target}`} />
+              <Field label="Lake 경로" value={physicalOutputPath} />
               <Field label="저장 포맷" value="Parquet" />
               <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
               <Field label="품질 체크" value={job.status === "failed" ? "Transform 전 중단" : "row count / schema check"} />

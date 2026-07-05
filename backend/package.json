@@ -8,6 +8,7 @@
     "start": "node src/server.mjs",
     "verify": "node scripts/verify-backend.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
+    "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",
     "sources:fixtures": "node scripts/setup-source-fixtures.mjs",
     "spark:start": "node scripts/start-spark-server.mjs",

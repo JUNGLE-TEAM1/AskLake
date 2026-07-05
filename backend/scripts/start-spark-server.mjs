@@ -10,8 +10,11 @@ const workerName = process.env.ASKLAKE_SPARK_WORKER_CONTAINER || "asklake-spark-
 const publishUi = process.env.ASKLAKE_SPARK_PUBLISH_UI !== "false";
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
+const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
+const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
 mkdirSync(sampleHostDir, { recursive: true });
 
+ensureOutputVolumeWritable();
 ensureMaster();
 ensureWorker();
 console.log("Spark standalone server ready: spark://asklake-spark-master:7077");
@@ -46,6 +49,7 @@ function createMasterArgs() {
       "--label",
       "asklake.role=spark-master",
       ...sampleMountArgs(),
+      ...outputMountArgs(),
       ...uiPortArgs("18080", "8080"),
       image,
       "/opt/spark/bin/spark-class",
@@ -70,6 +74,7 @@ function createWorkerArgs() {
       "--label",
       "asklake.role=spark-worker",
       ...sampleMountArgs(),
+      ...outputMountArgs(),
       ...uiPortArgs("18081", "8081"),
       image,
       "/opt/spark/bin/spark-class",
@@ -85,8 +90,9 @@ function containerNeedsCreate(name) {
   if (inspect.status !== 0) return true;
   const [metadata] = JSON.parse(inspect.stdout || "[]");
   const expectedSource = normalizePath(sampleHostDir);
-  const mounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
-  if (mounted) return false;
+  const sampleMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
+  const outputMounted = metadata?.Mounts?.some((mount) => mount.Name === outputVolumeName && mount.Destination === outputContainerDir);
+  if (sampleMounted && outputMounted) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
 }
@@ -97,6 +103,23 @@ function uiPortArgs(hostPort, containerPort) {
 
 function sampleMountArgs() {
   return ["-v", `${sampleHostDir}:${sampleContainerDir}:ro`];
+}
+
+function outputMountArgs() {
+  return ["-v", `${outputVolumeName}:${outputContainerDir}`];
+}
+
+function ensureOutputVolumeWritable() {
+  run("docker", [
+    "run",
+    "--rm",
+    "-v",
+    `${outputVolumeName}:${outputContainerDir}`,
+    "alpine:3.20",
+    "sh",
+    "-c",
+    `mkdir -p ${outputContainerDir} && chmod -R 777 ${outputContainerDir}`,
+  ]);
 }
 
 function run(command, args, options = {}) {

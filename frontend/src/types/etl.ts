@@ -13,6 +13,12 @@ export type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  sourceConfig?: Array<[string, string]>;
+  sourceLabel?: string;
+  sourceType?: string;
+  targetFormat?: string;
+  targetLayer?: TargetLayer;
+  targetPath?: string;
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -31,6 +37,7 @@ export type JobStats = {
   inputRows: string;
   lastSuccess: string;
   outputRows: string;
+  outputPath?: string;
   sampleScope: string;
   schemaColumns: string;
   sourceUnits: string;
@@ -171,6 +178,7 @@ export type JobRunSummary = {
   failedStage: string;
   inputRows: string;
   outputRows: string;
+  outputPath?: string;
   runId: string;
   startedAt: string;
   status: JobRunStatus;

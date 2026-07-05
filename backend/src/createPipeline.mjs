@@ -1,4 +1,5 @@
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
+import { runSparkPipeline } from "./sparkRunner.mjs";
 
 const jobs = [];
 const datasets = [];
@@ -30,10 +31,15 @@ export function createPipeline(request) {
     runHistory: [],
     schedule: request.scheduleLabel,
     source: `${request.sourceType} / ${request.sourceLabel}`,
+    sourceConfig: request.sourceConfig,
+    sourceLabel: request.sourceLabel,
+    sourceType: request.sourceType,
     stats: initialJobStats(sourceMetrics),
     status: "scheduled",
     tag: "[생성]",
     target: request.targetDataset,
+    targetFormat: request.targetFormat,
+    targetLayer: request.targetLayer,
   };
 
   const dataset = {
@@ -76,9 +82,30 @@ export function commandJob(jobId, command) {
   };
   if (!actionByCommand[command]) throw validationError(`지원하지 않는 작업 명령입니다: ${command}`);
 
-  const nextJob = applyJobCommand(job, command);
-  Object.assign(job, nextJob);
+  const startedJob = applyJobCommand(job, command);
+  Object.assign(job, startedJob);
   const run = runFromCommand(job, command);
+  if (run && (command === "run" || command === "retry")) {
+    let sparkResult;
+    try {
+      sparkResult = runSparkPipeline(job, command, run.runId);
+    } catch (error) {
+      sparkResult = {
+        endedAt: new Date().toISOString(),
+        error: error.message || "Spark job failed.",
+        inputRows: 0,
+        outputPath: "-",
+        outputRows: 0,
+        runId: run.runId,
+        sourcePath: job.source,
+        startedAt: run.startedAt,
+        status: "failed",
+      };
+    }
+    Object.assign(run, runFromSparkResult(run, sparkResult));
+    Object.assign(job, finalizeJobFromSparkResult(job, command, sparkResult));
+    updateDatasetFromSparkResult(job, sparkResult);
+  }
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
@@ -145,10 +172,10 @@ function applyJobCommand(job, command) {
     return {
       ...job,
       lastRun: now,
-      lastState: command === "retry" ? "재실행 완료 · Source/Schema/Create 검증" : "실행 완료 · Source/Schema/Create 검증",
-      nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
-      progress: undefined,
-      status: "scheduled",
+      lastState: command === "retry" ? "Spark 재실행 중" : "Spark 실행 중",
+      nextRun: "-",
+      progress: { label: "Spark ETL 실행 중", value: 66 },
+      status: "running",
     };
   }
 
@@ -250,16 +277,59 @@ function runFromCommand(job, command) {
     };
   }
   return {
-    duration: "완료",
-    endedAt: now.toISOString(),
+    duration: "실행 중",
+    endedAt: "-",
     errorSummary: "-",
     failedStage: "-",
     inputRows,
-    outputRows: inputRows,
+    outputPath: "-",
+    outputRows: "0",
     runId,
     startedAt: now.toISOString(),
-    status: "success",
+    status: "running",
   };
+}
+
+function runFromSparkResult(run, result) {
+  const success = result.status === "success";
+  return {
+    ...run,
+    duration: formatDuration(result.durationMs),
+    endedAt: result.endedAt ?? new Date().toISOString(),
+    errorSummary: success ? "-" : result.error ?? "Spark job failed.",
+    failedStage: success ? "-" : "Spark ETL",
+    inputRows: formatRows(result.inputRows),
+    outputPath: result.outputPath ?? "-",
+    outputRows: formatRows(result.outputRows),
+    startedAt: result.startedAt ?? run.startedAt,
+    status: success ? "success" : "failed",
+  };
+}
+
+function finalizeJobFromSparkResult(job, command, result) {
+  const success = result.status === "success";
+  return {
+    ...job,
+    lastRun: result.endedAt ?? new Date().toISOString(),
+    lastState: success
+      ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark Parquet 적재`
+      : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
+    nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+    progress: undefined,
+    status: success ? "scheduled" : "failed",
+    targetPath: result.outputPath ?? job.targetPath,
+  };
+}
+
+function updateDatasetFromSparkResult(job, result) {
+  const dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
+  if (!dataset || result.status !== "success") return;
+  dataset.lastUpdated = result.endedAt ?? new Date().toISOString();
+  dataset.rows = formatRows(result.outputRows);
+  dataset.size = result.outputPath ?? dataset.size;
+  dataset.source = job.name;
+  dataset.status = "available";
+  dataset.upstream = Array.from(new Set([...(dataset.upstream ?? []), result.sourcePath ?? job.source]));
 }
 
 function statsFromRuns(job, runs) {
@@ -272,6 +342,7 @@ function statsFromRuns(job, runs) {
     averageDuration: latestRun?.duration ?? "-",
     currentStage: job.lastState,
     lastSuccess,
+    outputPath: latestRun?.outputPath ?? job.stats?.outputPath ?? "-",
     outputRows: latestRun?.outputRows ?? job.stats?.outputRows ?? "0",
     successRate: totalRuns > 0 ? `${Math.round((successRuns / totalRuns) * 100)}%` : "-",
     totalRuns: `${totalRuns.toLocaleString()}회`,
@@ -281,12 +352,13 @@ function statsFromRuns(job, runs) {
 function dagStepsFromCommand(job, command, run) {
   const canceled = command === "cancel";
   if (!canceled) {
+    const failed = run.status === "failed";
     return [
-      { id: "source", meta: job.source, status: "success", title: "1. Source 연결" },
-      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: "success", title: "2. Schema 확인" },
-      { id: "read", meta: run.inputRows, status: "success", title: "3. Source 읽기" },
-      { id: "create", meta: job.id, status: "success", title: "4. Job 실행 기록" },
-      { id: "catalog", meta: job.target, status: "success", title: "5. Catalog Dataset 확인" },
+      { id: "source", meta: job.source, status: failed ? "blocked" : "success", title: "1. Source 연결" },
+      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: failed ? "blocked" : "success", title: "2. Schema 확인" },
+      { id: "read", meta: run.inputRows, status: failed ? "failed" : "success", title: "3. Spark Source 읽기" },
+      { id: "write", meta: run.outputPath ?? "-", status: failed ? "blocked" : "success", title: "4. Parquet 적재" },
+      { id: "catalog", meta: job.target, status: failed ? "blocked" : "success", title: "5. Catalog Dataset 갱신" },
     ];
   }
   return [
@@ -304,6 +376,20 @@ function sourceUnitLabel(sourceType) {
   if (sourceType === "PostgreSQL") return "테이블";
   if (sourceType === "Stream / Kafka") return "파티션";
   return "오브젝트";
+}
+
+function formatRows(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return String(value ?? "0");
+  return `${Math.trunc(parsed).toLocaleString()}행`;
+}
+
+function formatDuration(durationMs) {
+  const parsed = Number(durationMs);
+  if (!Number.isFinite(parsed) || parsed < 0) return "-";
+  if (parsed < 1000) return `${Math.trunc(parsed)}ms`;
+  if (parsed < 60 * 1000) return `${(parsed / 1000).toFixed(1)}s`;
+  return `${(parsed / 60000).toFixed(1)}m`;
 }
 
 function parsePositiveInteger(value) {
