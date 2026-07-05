@@ -791,16 +791,106 @@ Response 예시:
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
-### 8.3 대시보드 초안 생성
+### 8.3 대시보드 목록 조회
+
+`POST /api/dashboards/query`
+
+첫 진입은 `GET /api/dashboards`가 기본 정렬 기준으로 10개만 반환합니다.
+검색, 필터, 정렬, 다음 page 요청은 프론트가 JSON body를 보내고 서버가 SQL 조건을 구성해 조회합니다.
+
+Request body:
+
+| 이름 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `search` | string | no | dashboard 이름, 소유자, 태그 검색어 |
+| `searchQuery` | string | no | local API 호환 검색어. `search`와 같은 의미 |
+| `owner` | string | no | 특정 소유자 필터 |
+| `tags` | string[] | no | 선택된 태그 목록. 예: `["Marketing", "ROI"]` |
+| `sort` | string | yes | `name-asc`, `name-desc`, `updated-asc`, `updated-desc`, `created-asc`, `created-desc` |
+| `page` | number | yes | 1부터 시작하는 page 번호 |
+| `pageSize` | number | yes | 한 page에 표시할 dashboard 개수 |
+
+Request 예시:
+
+```json
+{
+  "searchQuery": "roi",
+  "owner": "Jane Doe",
+  "tags": ["Marketing", "ROI"],
+  "sort": "updated-desc",
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+Response `200 OK`:
+
+```ts
+type DashboardListResponse = {
+  items: SavedDashboardCard[];
+  total: number;
+  page: number;
+  pageSize: number;
+  filterOptions: {
+    owners: string[];
+    tags: string[];
+  };
+};
+```
+
+`items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
+프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
+`filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
+
+### 8.4 대시보드 삭제
+
+`DELETE /api/dashboards/{dashboardId}`
+
+대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
+서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+
+Request body는 없습니다.
+
+로컬 API 서버의 임시 권한 입력:
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
+| `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
+
+Response `200 OK`:
+
+```json
+{
+  "deletedDashboardId": "dash_sales_analytics_demo"
+}
+```
+
+Error:
+
+| Status | Code | 상황 |
+| --- | --- | --- |
+| `403` | `FORBIDDEN` | 삭제 권한이 없는 사용자 |
+| `404` | `NOT_FOUND` | 존재하지 않는 dashboard |
+
+삭제 성공 후 프론트는 dashboard 목록을 다시 조회합니다.
+
+### 8.5 대시보드 초안 생성
 
 `POST /api/dashboards`
+
+대시보드 랜딩 페이지의 `새 대시보드 생성` 버튼에서 호출한다.
+생성 즉시 `dashboards` 테이블에 `status: "draft"` 카드 정보를 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다.
+실제 편집용 draft revision/page/widget은 사용자가 내부 화면에서 `위젯 편집`을 눌렀을 때 `POST /api/dashboards/{dashboardId}/draft/ensure`로 준비한다.
+`게시` 동작은 `POST /api/dashboards/{dashboardId}/publish`를 호출하며, 이때 목록 status가 `published`로 바뀐다.
 
 Request:
 
 ```ts
 type CreateDashboardDraftRequest = {
-  datasetId: string;
-  source: "sql" | "catalog";
+  title?: string;
+  source?: "manual" | "sql" | "catalog";
+  datasetId?: string;
   sqlRunId?: string;
 };
 ```
@@ -809,9 +899,8 @@ Request 예시:
 
 ```json
 {
-  "datasetId": "ds_customer_review_silver",
-  "source": "sql",
-  "sqlRunId": "sql_01J1Z8W2V7KX"
+  "title": "새 대시보드 2026-07-05 16:42",
+  "source": "manual"
 }
 ```
 
@@ -819,34 +908,419 @@ Response `201 Created`:
 
 ```json
 {
-  "dashboardId": "dash_01J1Z8W5ABCD",
-  "view": "builder",
-  "widgets": [
-    {
-      "type": "table",
-      "title": "SQL 결과 테이블",
-      "fields": {
-        "columns": "review_id, rating, sentiment",
-        "sort": "review_id ASC"
-      }
-    },
-    {
-      "type": "bar",
-      "title": "sentiment별 rating",
-      "fields": {
-        "x": "sentiment",
-        "y": "rating",
-        "aggregation": "AVG"
-      }
-    }
-  ]
+  "dashboard": {
+    "id": "dash_1751710920000_ab12cd34",
+    "name": "새 대시보드 2026-07-05 16:42",
+    "owner": "Admin User",
+    "meta": "0개 위젯 · 수동 생성",
+    "status": "draft",
+    "tags": "초안 · Dashboard",
+    "createdAt": "2026-07-05 16:42",
+    "createdAtValue": "2026-07-05T07:42:00.000Z",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z",
+    "hasPublishedRevision": false,
+    "widgets": []
+  }
 }
 ```
 
 현재 프론트 동작:
 
-- SQL에서 넘어온 경우 `SqlResultDraft` 기준으로 `table`, `bar` 위젯을 기본 배치합니다.
-- 백엔드 연결 시 위젯 추천 결과를 이 응답으로 대체하면 됩니다.
+- 랜딩 페이지에서 새 대시보드 생성 시 빈 dashboard card를 `draft`로 생성합니다.
+- 생성 응답의 `dashboard.id`를 사용해 `/dashboards/{dashboardId}` 조회 화면으로 이동합니다.
+- 위젯 추가와 draft revision 생성은 내부 화면의 `위젯 편집` 이후 별도 runtime API에서 처리합니다.
+
+### 8.5.0 대시보드 제목 수정
+
+`PATCH /api/dashboards/{dashboardId}`
+
+대시보드 내부 draft 편집 화면에서 상단 제목을 수정할 때 사용합니다.
+서버는 기존 dashboard card payload를 유지하고 `name`, `title`, `updated`, `updatedAtValue`만 갱신합니다.
+
+Request:
+
+```json
+{
+  "title": "월별 물류비 대시보드"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "dashboard": {
+    "id": "dash_...",
+    "name": "월별 물류비 대시보드",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z"
+  }
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
+### 8.5 대시보드 revision runtime
+
+Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/published revision snapshot을 저장합니다.
+현재 demo API는 PostgreSQL JSONB 기반 서버 스타일에 맞춰 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`, `dashboard_tags` 테이블을 idempotent하게 생성합니다.
+
+공통 response:
+
+```ts
+type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
+type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetFormat = "number" | "currency" | "percent";
+type DashboardWidgetSortDirection = "asc" | "desc";
+
+type DashboardWidgetConfigBase = {
+  color?: string;
+  description?: string;
+  error?: string;
+  errorMessage?: string;
+};
+
+type MetricWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  format?: DashboardWidgetFormat;
+  valueKey: string;
+};
+
+type TableWidgetConfig = DashboardWidgetConfigBase & {
+  columns: string[];
+  limit?: number;
+  sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
+};
+
+type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  groupKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type DashboardRuntimeWidgetConfigByType = {
+  metric: MetricWidgetConfig;
+  table: TableWidgetConfig;
+  bar_chart: BarChartWidgetConfig;
+  line_chart: LineChartWidgetConfig;
+  donut_chart: DonutChartWidgetConfig;
+};
+
+type DashboardRuntimeWidget = {
+  [Type in DashboardRuntimeWidgetType]: {
+    id: string;
+    pageId: string;
+    type: Type;
+    title: string | null;
+    layout: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      minW?: number;
+      minH?: number;
+    };
+    config: DashboardRuntimeWidgetConfigByType[Type];
+    data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
+  };
+}[DashboardRuntimeWidgetType];
+
+type DashboardRuntimeResponse = {
+  dashboard: {
+    id: string;
+    title: string;
+    status: "draft" | "published";
+    hasPublishedRevision: boolean;
+    updatedAt: string;
+  };
+  mode: "published" | "draft";
+  revision: {
+    id: string;
+    kind: "published" | "draft";
+    version: number;
+    publishedAt?: string | null;
+  } | null;
+  pages: Array<{
+    id: string;
+    title: string;
+    orderIndex: number;
+  }>;
+  widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
+  filters: Array<{ id: string; label: string; value: unknown }>;
+};
+```
+
+#### 8.5.1 Published 조회
+
+`GET /api/dashboards/{dashboardId}/published`
+
+Response `200 OK`:
+
+- published revision이 있으면 해당 revision의 pages/widgets를 반환합니다.
+- published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 정상 응답합니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.2 Draft 조회/생성
+
+`POST /api/dashboards/{dashboardId}/draft/ensure`
+
+동작:
+
+1. draft revision이 있으면 그대로 반환합니다.
+2. draft가 없고 published revision이 있으면 published revision을 복사해 draft를 만듭니다.
+3. 둘 다 없으면 빈 draft revision과 기본 page 1개를 만듭니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.3 Draft page 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages`
+
+Request:
+
+```json
+{
+  "title": "제목 없는 페이지"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "제목 없는 페이지",
+  "orderIndex": 1
+}
+```
+
+#### 8.5.4 Draft page 이름 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+현재 draft revision에 속한 page의 표시 이름을 수정합니다.
+Published revision의 page 이름은 이 API로 직접 수정하지 않고, 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 draft snapshot이 published로 복사됩니다.
+
+Request:
+
+```json
+{
+  "title": "월별 비용"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "월별 비용",
+  "orderIndex": 0
+}
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
+#### 8.5.5 Draft page 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+동작:
+
+1. 현재 draft revision에 속한 page만 삭제합니다.
+2. 해당 page의 widgets는 cascade로 함께 삭제합니다.
+3. 남은 page의 `orderIndex`를 다시 정렬합니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.6 Draft widget 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+
+Request:
+
+```json
+{
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "bar_chart",
+  "title": "월별 물류비",
+  "layout": { "x": 0, "y": 0, "w": 6, "h": 5, "minW": 3, "minH": 3 },
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "aggregation": "sum",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
+}
+```
+
+`data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
+현재 demo backend는 실제 rows API가 없으므로 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
+
+Response `201 Created`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`, common `color`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
+생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
+dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
+
+#### 8.5.7 Draft widget 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+Request:
+
+```json
+{
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "line_chart",
+  "title": "월별 물류비 추이",
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "aggregation": "sum",
+    "dateUnit": "month",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
+}
+```
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 수정합니다.
+2. `type`, `title`, `datasetId`, `config`를 갱신합니다.
+3. published revision의 widget은 직접 수정하지 않습니다.
+4. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 수정된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.8 Draft widget 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 삭제합니다.
+2. published revision의 widget은 직접 삭제하지 않습니다.
+3. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 삭제된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true, "deletedWidgetId": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.9 Draft layout batch 저장
+
+`PATCH /api/dashboards/{dashboardId}/draft/layouts`
+
+Request:
+
+```json
+{
+  "pageId": "dashpage_...",
+  "layouts": [
+    { "widgetId": "dashwidget_...", "x": 0, "y": 0, "w": 6, "h": 4, "minW": 2, "minH": 2 }
+  ]
+}
+```
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
+
+#### 8.5.10 Publish
+
+`POST /api/dashboards/{dashboardId}/publish`
+
+동작:
+
+1. 현재 draft revision을 깊은 복사합니다.
+2. 새 revision을 `kind = "published"`로 저장합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+
+Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
+
+Response `200 OK`:
+
+```json
+{
+  "dashboardId": "dash_...",
+  "publishedRevisionId": "dashrev_published_...",
+  "publishedAt": "2026-07-04T12:00:00.000Z"
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- draft revision이 없으면 `422 NO_DRAFT_REVISION`.
 
 ## 9. P2 API
 

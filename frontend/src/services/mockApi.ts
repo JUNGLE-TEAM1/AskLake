@@ -1,4 +1,6 @@
-import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
+import { catalogDatasets, etlJobs } from "../data/mockData";
+import { defaultDashboardCards } from "../pages/dashboard/dashboardListData";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DashboardListResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SavedDashboardCard, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -13,6 +15,56 @@ export type JobCommandResult = {
   dagSteps?: JobDagStep[];
   job?: JobRowData;
   run?: JobRunSummary;
+};
+
+type PageEnvelope = {
+  page?: {
+    cursor: string | null;
+    hasNext: boolean;
+  };
+};
+
+type JobsResponse = PageEnvelope & {
+  jobs: JobRowData[];
+};
+
+type DatasetsResponse = PageEnvelope & {
+  datasets: CatalogDataset[];
+};
+
+type DashboardsResponse = PageEnvelope & {
+  dashboards: SavedDashboardCard[];
+};
+
+type DashboardResponse = {
+  dashboard: SavedDashboardCard;
+};
+
+export type DashboardQuery = {
+  owner?: string;
+  page?: number;
+  pageSize?: number;
+  searchQuery?: string;
+  sort?: string;
+  tags?: string[];
+};
+
+export type DashboardPageResult = {
+  dashboards: SavedDashboardCard[];
+  facets: {
+    owners: string[];
+    tags: string[];
+  };
+  page: {
+    current: number;
+    end: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+    pageSize: number;
+    start: number;
+    total: number;
+    totalPages: number;
+  };
 };
 
 const mockLatencyMs = 120;
@@ -39,6 +91,124 @@ function normalizeJobCommandResult(result: JobCommandResult): JobCommandResult {
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
+}
+
+export async function getJobs(): Promise<JobRowData[]> {
+  if (!apiConfig.useMock) {
+    const result = await apiClient.get<JobsResponse | JobRowData[]>("/api/etl/jobs");
+    const jobs = Array.isArray(result) ? result : result.jobs;
+    return jobs.map(normalizeJob);
+  }
+
+  return resolveMock(etlJobs.map(normalizeJob));
+}
+
+export async function getDatasets(): Promise<CatalogDataset[]> {
+  if (!apiConfig.useMock) {
+    const result = await apiClient.get<DatasetsResponse | CatalogDataset[]>("/api/catalog/datasets");
+    const datasets = Array.isArray(result) ? result : result.datasets;
+    return datasets.map(normalizeDataset);
+  }
+
+  return resolveMock(catalogDatasets.map(normalizeDataset));
+}
+
+function splitDashboardTags(tags: string) {
+  return tags.split("|").flatMap((tag) => tag.split("·")).map((tag) => tag.trim()).filter(Boolean);
+}
+
+function sortDashboards(cards: SavedDashboardCard[], sort = "updated-desc") {
+  const dateValue = (value?: string) => {
+    const parsed = Date.parse(value ?? "");
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+
+  return [...cards].sort((first, second) => {
+    if (sort === "name-asc") return first.name.localeCompare(second.name);
+    if (sort === "name-desc") return second.name.localeCompare(first.name);
+    if (sort === "created-asc") return dateValue(first.createdAtValue) - dateValue(second.createdAtValue);
+    if (sort === "created-desc") return dateValue(second.createdAtValue) - dateValue(first.createdAtValue);
+    if (sort === "updated-asc") return dateValue(first.updatedAtValue) - dateValue(second.updatedAtValue);
+    return dateValue(second.updatedAtValue) - dateValue(first.updatedAtValue);
+  });
+}
+
+function getMockDashboards(query: DashboardQuery = {}): DashboardPageResult {
+  const pageSize = Math.max(1, Math.min(50, query.pageSize ?? 10));
+  const current = Math.max(1, query.page ?? 1);
+  const searchQuery = query.searchQuery?.trim().toLowerCase() ?? "";
+  const owner = query.owner && query.owner !== "all" ? query.owner : "";
+  const tags = query.tags ?? [];
+  const filteredCards = defaultDashboardCards.filter((dashboard) => {
+    const dashboardTags = splitDashboardTags(dashboard.tags);
+    const matchesSearch = !searchQuery || [dashboard.name, dashboard.owner, dashboard.tags].some((value) => value.toLowerCase().includes(searchQuery));
+    const matchesOwner = !owner || dashboard.owner === owner;
+    const matchesTags = tags.every((tag) => dashboardTags.includes(tag));
+    return matchesSearch && matchesOwner && matchesTags;
+  });
+  const sortedCards = sortDashboards(filteredCards, query.sort);
+  const startIndex = (current - 1) * pageSize;
+  const visibleCards = sortedCards.slice(startIndex, startIndex + pageSize);
+  const owners = Array.from(new Set(defaultDashboardCards.map((dashboard) => dashboard.owner))).sort((first, second) => first.localeCompare(second));
+  const allTags = Array.from(new Set(defaultDashboardCards.flatMap((dashboard) => splitDashboardTags(dashboard.tags)))).sort((first, second) => first.localeCompare(second));
+
+  return {
+    dashboards: visibleCards,
+    facets: {
+      owners,
+      tags: allTags,
+    },
+    page: {
+      current,
+      end: sortedCards.length === 0 ? 0 : Math.min(sortedCards.length, startIndex + visibleCards.length),
+      hasNext: startIndex + pageSize < sortedCards.length,
+      hasPrevious: current > 1,
+      pageSize,
+      start: sortedCards.length === 0 ? 0 : startIndex + 1,
+      total: sortedCards.length,
+      totalPages: Math.max(1, Math.ceil(sortedCards.length / pageSize)),
+    },
+  };
+}
+
+function toDashboardPageResult(response: DashboardListResponse): DashboardPageResult {
+  const pageSize = Math.max(1, response.pageSize);
+  const totalPages = Math.max(1, Math.ceil(response.total / pageSize));
+  const current = Math.min(Math.max(1, response.page), totalPages);
+  const start = response.total === 0 ? 0 : (current - 1) * pageSize + 1;
+
+  return {
+    dashboards: response.items,
+    facets: response.filterOptions,
+    page: {
+      current,
+      end: start === 0 ? 0 : start + response.items.length - 1,
+      hasNext: current < totalPages,
+      hasPrevious: current > 1,
+      pageSize,
+      start,
+      total: response.total,
+      totalPages,
+    },
+  };
+}
+
+export async function getDashboards(query: DashboardQuery = {}): Promise<DashboardPageResult> {
+  if (!apiConfig.useMock) {
+    const response = await apiClient.post<DashboardListResponse>("/api/dashboards/query", query);
+    return toDashboardPageResult(response);
+  }
+
+  return resolveMock(getMockDashboards(query));
+}
+
+export async function saveDashboardCard(card: SavedDashboardCard): Promise<SavedDashboardCard> {
+  if (!apiConfig.useMock) {
+    const result = await apiClient.put<DashboardResponse>(`/api/dashboards/${encodeURIComponent(card.id)}`, card);
+    return result.dashboard;
+  }
+
+  return resolveMock(card);
 }
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount: number): Promise<PipelineCreationResult> {

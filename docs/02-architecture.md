@@ -31,11 +31,12 @@ AskLake/
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
+| Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor drag/resize canvas |
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | TBD | planned | API contract exists |
-| Database | TBD | planned | persistence model not implemented |
+| Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
+| Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
 
@@ -63,10 +64,15 @@ flowchart LR
 - lineage graph API/mock boundary: `frontend/src/services/mockApi.ts`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
+- dashboard runtime shell: `frontend/src/pages/dashboard/runtime/`
 - mock data: `frontend/src/data/mockData.ts`
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
+- dashboard list/runtime API adapters: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
+Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
 
 ## 5) Backend Target Boundary
 
@@ -75,7 +81,7 @@ flowchart LR
 - ETL job 생성과 상태 전이
 - dataset catalog hydrate
 - SQL query run 생성과 결과 반환
-- dashboard 저장/게시
+- dashboard 저장/게시/삭제
 - audit log 저장
 - 인증/권한이 도입될 경우 actor와 access policy 판정
 
@@ -98,7 +104,7 @@ flowchart LR
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
 | Dataset Lineage | `LineageGraph` mock/fallback | column-level lineage graph resource |
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
-| Dashboard | `DashboardEntry` and local builder state | dashboard resource |
+| Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
 
 ## 7) API Boundary
@@ -123,6 +129,32 @@ P1 hydrate API:
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
 - `GET /api/catalog/datasets/{datasetId}/lineage`
+
+Dashboard runtime API:
+
+- `GET /api/dashboards`
+- `POST /api/dashboards`
+- `POST /api/dashboards/query`
+- `PATCH /api/dashboards/{dashboardId}`
+- `GET /api/dashboards/{dashboardId}/published`
+- `POST /api/dashboards/{dashboardId}/draft/ensure`
+- `POST /api/dashboards/{dashboardId}/draft/pages`
+- `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+- `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+- `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+- `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+- `POST /api/dashboards/{dashboardId}/publish`
+
+랜딩 페이지의 새 대시보드 생성은 `POST /api/dashboards`로 dashboard card를 `draft` 상태로 먼저 저장하고, 프론트는 응답받은 id로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제, widget 생성/수정/삭제, widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
+Draft editor에서 dashboard title은 `PATCH /api/dashboards/{dashboardId}`로 dashboard card payload에 저장하고, page tab title은 `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`로 현재 draft revision의 page row에 저장한다.
+Phase 06 runtime UX는 별도 share API 없이 프론트에서 공유 링크를 복사한다. Published revision이 있으면 `/dashboards/{dashboardId}`를, draft만 있으면 `/dashboards/{dashboardId}/edit`를 복사하며, publish 성공 후 목록 상태도 다시 갱신한다.
+Dashboard draft editor shell은 화면 높이 안에서 상단 바, 페이지 탭, 필터 행, 왼쪽 dataset sidebar, 오른쪽 inspector를 고정 흐름으로 유지하고, 위젯이 많아질 때 중앙 canvas 영역 안에서만 스크롤한다.
+Dataset 기반 위젯 생성 준비 단계에서는 draft editor가 transient `selectedDatasetId`를 소유하며, Gold dataset 목록은 `useDashboardDatasets` mock hook을 통해 공급한다. 이 hook은 이후 `GET /api/catalog/datasets` hydrate로 교체할 경계다.
+Dataset 기반 widget 생성 폼은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 5개 runtime type으로 고정한다. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`는 `datasetId`와 type별 `config`를 함께 전송하며, config 계약은 `MetricWidgetConfig`, `TableWidgetConfig`, `BarChartWidgetConfig`, `LineChartWidgetConfig`, `DonutChartWidgetConfig`를 기준으로 한다.
+Dashboard widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Draft runtime 조회는 이 `widget.data`를 그대로 반환하며, chart 계산/렌더링 레이어는 이미 내려온 `widget.data`를 소비하는 책임만 가진다.
+Runtime widget renderer는 `widget.data`를 그대로 그리지 않고, type별 `config`와 `aggregation`을 기준으로 표시용 값을 계산한다. `metric`은 단일 집계값, `table`은 컬럼/정렬, `bar_chart`/`line_chart`/`donut_chart`는 label key 기준 grouping과 `sum`/`avg`/`count`/`min`/`max` 집계를 프론트에서 처리한다.
+Draft grid는 위젯 카드 전체에서 drag를 시작할 수 있게 유지하되, no-reflow collision guard로 다른 위젯이 과하게 아래로 밀리는 layout을 막는다. 새 위젯은 현재 page layout에서 충돌하지 않는 첫 빈 위치에 배치하고, drag/resize stop 시 충돌 layout은 draft state와 `PATCH /api/dashboards/{dashboardId}/draft/layouts`에 저장하지 않고 되돌린다.
+Dashboard runtime 프론트 구조는 `DashboardPage.tsx`가 목록/생성/삭제/런타임 진입 같은 상위 흐름을 소유하고, `runtime/DashboardRuntimeView.tsx`가 runtime shell, page tab, dataset sidebar, canvas, inspector 조립을 담당한다. Dataset 기반 위젯 생성 API 흐름은 `runtime/useDraftWidgetCreator.ts`, draft widget layout 저장과 collision 실패 처리는 `runtime/useDraftWidgetLayouts.ts`가 담당한다.
 
 ## 8) 설계 원칙
 

@@ -11,6 +11,7 @@ npm run dev
 ```
 
 기본 dev server는 Vite 설정을 따른다.
+Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
 
 ## 2) 빌드
 
@@ -126,6 +127,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests
+- dashboard publish/share/refresh runtime smoke tests
 
 ## 10) Manual Smoke Checklist
 
@@ -136,6 +138,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - catalog 상세에서 SQL 화면으로 이동한다.
 - SQL 실행 결과로 dashboard builder를 열 수 있다.
 - audit log와 toast가 동작한다.
+- dashboard draft를 publish하면 viewer로 이동하고, 공유 링크 복사와 새로고침 feedback이 보인다.
 
 ## 11) 문서 업데이트 기준
 
