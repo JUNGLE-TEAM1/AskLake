@@ -276,7 +276,15 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  scheduleSummary: string;
+  startDate: string;
+  endDate?: string;
+  timezone: string;
   permissionSummary: string;
+  storageType: "S3" | "Local" | "HDFS";
+  partition: string;
+  compression: "Snappy" | "Gzip" | "None";
+  storagePath: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;
@@ -301,7 +309,14 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
+  "scheduleSummary": "매일 09:00 · 시작 2026.07.02 · 종료일 없음 · (GMT+09:00) Seoul, Tokyo",
+  "startDate": "2026-07-02",
+  "timezone": "(GMT+09:00) Seoul, Tokyo",
   "permissionSummary": "Data Engineer Group / 조직 내부",
+  "storageType": "S3",
+  "partition": "year/month/region",
+  "compression": "Snappy",
+  "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
@@ -377,6 +392,7 @@ Validation:
 
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
+- `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
 ### 7.2 작업 명령

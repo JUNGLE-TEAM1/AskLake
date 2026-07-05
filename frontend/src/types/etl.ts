@@ -30,7 +30,15 @@ export type DraftPipeline = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
+  scheduleSummary: string;
+  startDate: string;
+  endDate?: string;
+  timezone: string;
   permissionSummary: string;
+  storageType: "S3" | "Local" | "HDFS";
+  partition: string;
+  compression: "Snappy" | "Gzip" | "None";
+  storagePath: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;

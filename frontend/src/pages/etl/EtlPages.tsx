@@ -36,6 +36,7 @@ import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, Creatio
 import type { AuditResult, DraftPipeline, FlowId, ScheduleFlowId } from "../../types";
 
 export function SchedulePage({
+  draft,
   mode,
   onDraftChange,
   onModeChange,
@@ -43,6 +44,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
+  draft: DraftPipeline;
   mode: ScheduleFlowId;
   onDraftChange: (patch: Partial<DraftPipeline>) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -50,14 +52,19 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [repeatDay, setRepeatDay] = useState("화");
-  const [repeatTime, setRepeatTime] = useState("10:30");
-  const [onceDateTime, setOnceDateTime] = useState("2026.07.02 10:30");
+  const initialRepeat = parseRepeatScheduleLabel(draft.scheduleLabel);
+  const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
+  const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
+  const [onceDateTime, setOnceDateTime] = useState(draft.scheduleLabel.includes("1회") ? draft.scheduleLabel.replace(/\s*1회 실행$/, "") : "2026.07.02 10:30");
+  const startDate = normalizeScheduleDate(draft.startDate, DEFAULT_SCHEDULE_START_DATE);
+  const endDate = normalizeOptionalScheduleDate(draft.endDate);
+  const timezone = normalizeTimezone(draft.timezone);
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const scheduleLabel = mode === "repeat" ? `매주 ${repeatDay}요일 ${repeatTime}` : mode === "manual" ? "수동 실행" : `${onceDateTime} 1회 실행`;
+  const scheduleSummary = buildScheduleSummary(scheduleLabel, mode, startDate, endDate, timezone);
   const applyScheduleDraft = () => {
-    onDraftChange({ scheduleLabel });
+    onDraftChange({ scheduleLabel, scheduleSummary, startDate, endDate, timezone });
   };
   const goNext = () => {
     applyScheduleDraft();
@@ -70,7 +77,7 @@ export function SchedulePage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} summaryRows={mode === "repeat" ? buildScheduleSummaryRows(scheduleLabel, startDate, endDate, timezone) : undefined} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
         <section className="panel">
@@ -86,15 +93,27 @@ export function SchedulePage({
         </section>
         {mode === "repeat" && <RepeatSettings selectedDay={repeatDay} time={repeatTime} onDayChange={(day) => {
           setRepeatDay(day);
-          onDraftChange({ scheduleLabel: `매주 ${day}요일 ${repeatTime}` });
+          const nextLabel = `매주 ${day}요일 ${repeatTime}`;
+          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: buildScheduleSummary(nextLabel, mode, startDate, endDate, timezone) });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          onDraftChange({ scheduleLabel: `매주 ${repeatDay}요일 ${time}` });
-        }} />}
+          const nextLabel = `매주 ${repeatDay}요일 ${time}`;
+          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: buildScheduleSummary(nextLabel, mode, startDate, endDate, timezone) });
+        }} startDate={startDate} endDate={endDate} timezone={timezone} onStartDateChange={(nextStartDate) => onDraftChange({
+          startDate: nextStartDate,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, normalizeScheduleDate(nextStartDate, DEFAULT_SCHEDULE_START_DATE), endDate, timezone),
+        })} onEndDateChange={(nextEndDate) => onDraftChange({
+          endDate: nextEndDate,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, normalizeOptionalScheduleDate(nextEndDate), timezone),
+        })} onTimezoneChange={(nextTimezone) => onDraftChange({
+          timezone: nextTimezone,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, endDate, normalizeTimezone(nextTimezone)),
+        })} />}
         {mode === "manual" && <ManualSettings />}
         {mode === "once" && <OnceSettings dateTime={onceDateTime} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: `${dateTime} 1회 실행` });
+          const nextLabel = `${dateTime} 1회 실행`;
+          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: nextLabel });
         }} />}
     </CreationFlowLayout>
   );
@@ -109,6 +128,57 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
       <span>{desc}</span>
     </button>
   );
+}
+
+const DEFAULT_SCHEDULE_START_DATE = "2026-07-02";
+const DEFAULT_SCHEDULE_TIMEZONE = "(GMT+09:00) Seoul, Tokyo";
+const SCHEDULE_TIMEZONE_OPTIONS = [
+  DEFAULT_SCHEDULE_TIMEZONE,
+  "(GMT+00:00) UTC",
+  "(GMT-08:00) Pacific Time",
+];
+
+function parseRepeatScheduleLabel(label: string) {
+  const match = label.match(/매주\s+(.+?)요일\s+(.+)$/);
+  return {
+    day: match?.[1] ?? "목",
+    time: match?.[2] ?? "10:30",
+  };
+}
+
+function buildScheduleSummary(label: string, mode: ScheduleFlowId, startDate: string, endDate: string | undefined, timezone: string) {
+  if (mode !== "repeat") return label;
+  const endLabel = endDate ? `종료 ${formatScheduleDate(endDate)}` : "종료일 없음";
+  return `${label} · 시작 ${formatScheduleDate(startDate)} · ${endLabel} · ${timezone}`;
+}
+
+function buildScheduleSummaryRows(label: string, startDate: string, endDate: string | undefined, timezone: string): Array<[string, string]> {
+  return [
+    ["실행 방식", label],
+    ["시작 일시", formatScheduleDate(startDate)],
+    ["시간대", timezone],
+    ["종료 일시", endDate ? formatScheduleDate(endDate) : "종료일 없음"],
+  ];
+}
+
+function normalizeScheduleDate(value: string | undefined, fallback: string) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function normalizeOptionalScheduleDate(value: string | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+function normalizeTimezone(value: string | undefined) {
+  return value && SCHEDULE_TIMEZONE_OPTIONS.includes(value) ? value : DEFAULT_SCHEDULE_TIMEZONE;
+}
+
+function formatScheduleDate(value: string) {
+  return value.replaceAll("-", ".");
+}
+
+function buildStoragePath(targetDataset: string, targetLayer: DraftPipeline["targetLayer"]) {
+  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 export function SourceConnectionPage({
@@ -832,16 +902,29 @@ export function RuleApplicationPage({
 }
 
 function RepeatSettings({
+  endDate,
+  onEndDateChange,
   onDayChange,
+  onStartDateChange,
   onTimeChange,
+  onTimezoneChange,
   selectedDay,
+  startDate,
   time,
+  timezone,
 }: {
+  endDate: string;
+  onEndDateChange: (endDate: string) => void;
   onDayChange: (day: string) => void;
+  onStartDateChange: (startDate: string) => void;
   onTimeChange: (time: string) => void;
+  onTimezoneChange: (timezone: string) => void;
   selectedDay: string;
+  startDate: string;
   time: string;
+  timezone: string;
 }) {
+  const endLabel = endDate ? formatScheduleDate(endDate) : "종료일 없음";
   return (
     <section className="panel">
       <div className="panel-header">
@@ -864,11 +947,24 @@ function RepeatSettings({
           <span>실행 시간</span>
           <input className="input control-input" value={time} onChange={(event) => onTimeChange(event.target.value)} />
         </label>
-        <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
-        <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
-        <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
+        <label className="field">
+          <span>시간대</span>
+          <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+            {SCHEDULE_TIMEZONE_OPTIONS.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>시작 날짜</span>
+          <input className="input control-input" type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>종료 날짜</span>
+          <input className="input control-input" type="date" value={endDate} onChange={(event) => onEndDateChange(event.target.value)} />
+        </label>
       </div>
-      <InfoBox title="실행 미리보기" body={`매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.09 ${time}`} />
+      <InfoBox title="실행 미리보기" body={`${formatScheduleDate(startDate)}부터 매주 ${selectedDay}요일 ${time}에 실행됩니다. 종료: ${endLabel}`} />
       <label className="policy-check-row">
         <input type="checkbox" defaultChecked />
         <span>
@@ -954,10 +1050,15 @@ export function TargetPage({
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
   const [targetFormat, setTargetFormat] = useState(draft.targetFormat);
   const [ragEnabled, setRagEnabled] = useState(draft.rag);
+  const storagePath = buildStoragePath(targetDataset, selectedLayer);
   const applyTargetDraft = () => {
     onDraftChange({
       jobName: `${targetDataset}_pipeline`,
       owner: targetOwner,
+      storagePath,
+      storageType: draft.storageType,
+      partition: draft.partition,
+      compression: draft.compression,
       targetDataset,
       targetFormat,
       targetLayer: selectedLayer,
@@ -967,7 +1068,7 @@ export function TargetPage({
   const selectLayer = (format: string) => {
     const layer = format.toUpperCase() as DraftPipeline["targetLayer"];
     setSelectedLayer(layer);
-    onDraftChange({ targetLayer: layer });
+    onDraftChange({ storagePath: buildStoragePath(targetDataset, layer), targetLayer: layer });
   };
   const toggleRag = () => {
     const next = !ragEnabled;
@@ -997,7 +1098,7 @@ export function TargetPage({
               <span>타겟 데이터셋 이름</span>
               <input className="input control-input" value={targetDataset} onChange={(event) => {
                 setTargetDataset(event.target.value);
-                onDraftChange({ jobName: `${event.target.value}_pipeline`, targetDataset: event.target.value });
+                onDraftChange({ jobName: `${event.target.value}_pipeline`, storagePath: buildStoragePath(event.target.value, selectedLayer), targetDataset: event.target.value });
               }} />
             </label>
             <label className="field">
@@ -1032,7 +1133,7 @@ export function TargetPage({
             ))}
           </div>
           <div className="form-grid">
-            <Field label="저장소 유형" value="S3" />
+            <Field label="저장소 유형" value={draft.storageType} />
             <label className="field">
               <span>파일 포맷</span>
               <select className="input control-input" value={targetFormat} onChange={(event) => {
@@ -1045,9 +1146,9 @@ export function TargetPage({
                 <option>CSV</option>
               </select>
             </label>
-            <Field label="파티션" value="year/month/region" />
-            <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
+            <Field label="파티션" value={draft.partition} />
+            <Field label="압축" value={draft.compression} />
+            <Field label="저장 경로" value={storagePath} wide />
           </div>
           <div className="target-status-grid">
             <StatusTile label="카탈로그 등록" value="생성 후 자동 등록" status="Ready" />
@@ -1242,7 +1343,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
             ["소스", `${draft.sourceType} · ${sourceSummary || draft.sourceLabel}`, "source"],
             ["스키마", draft.schemaSummary, "schema"],
             ["처리 규칙", draft.ruleSummary, "rules"],
-            ["스케줄", draft.scheduleLabel, "repeat"],
+            ["스케줄", draft.scheduleSummary || buildScheduleSummary(draft.scheduleLabel, "repeat", normalizeScheduleDate(draft.startDate, DEFAULT_SCHEDULE_START_DATE), normalizeOptionalScheduleDate(draft.endDate), normalizeTimezone(draft.timezone)), "repeat"],
             ["권한", draft.permissionSummary, "permission"],
             ["타겟 저장소", `${draft.targetLayer} / ${draft.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (

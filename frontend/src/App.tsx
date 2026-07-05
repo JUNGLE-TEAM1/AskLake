@@ -77,6 +77,7 @@ export function App() {
       setLastScheduleFlow(flow);
       updateDraftPipeline({
         scheduleLabel: flow === "repeat" ? "매주 화요일 10:30" : flow === "manual" ? "수동 실행" : "2026.07.02 10:30 1회 실행",
+        scheduleSummary: flow === "repeat" ? draftPipeline.scheduleSummary : flow === "manual" ? "수동 실행" : "2026.07.02 10:30 1회 실행",
       });
     }
     setActiveFlow(flow);
@@ -129,9 +130,9 @@ export function App() {
           {activeFlow === "source" && <SourceConnectionPage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("rules")} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "rules" && <RuleApplicationPage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "repeat" && <SchedulePage mode="repeat" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("repeat")} />}
-          {activeFlow === "manual" && <SchedulePage mode="manual" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("manual")} />}
-          {activeFlow === "once" && <SchedulePage mode="once" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("once")} />}
+          {activeFlow === "repeat" && <SchedulePage draft={draftPipeline} mode="repeat" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("repeat")} />}
+          {activeFlow === "manual" && <SchedulePage draft={draftPipeline} mode="manual" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("manual")} />}
+          {activeFlow === "once" && <SchedulePage draft={draftPipeline} mode="once" onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft("once")} />}
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
