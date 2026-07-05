@@ -34,6 +34,14 @@ VITE_USE_MOCK_API=true
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
 
+FastAPI schema 구현 기준:
+
+- 공통 Pydantic schema는 `backend/app/schemas/common.py`에 둔다.
+- 각 도메인 schema는 `CamelModel`을 상속해 Python 내부에서는 `snake_case`, API request/response에서는 `camelCase`를 사용한다.
+- 실패 응답은 `ErrorResponse` / `ErrorDetail`을 사용하고, code 값은 `docs/api-contract.md`의 권장 에러 코드를 우선한다.
+- 목록형 API는 필요에 따라 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`, `SortDirection`을 재사용한다.
+- 모든 성공 응답을 하나의 envelope로 강제하지 않는다. 각 endpoint의 성공 response shape는 `docs/api-contract.md`의 상세 계약을 따른다.
+
 Canonical status values:
 
 | Resource | Field | Values |

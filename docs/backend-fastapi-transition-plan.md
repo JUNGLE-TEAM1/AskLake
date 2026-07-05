@@ -94,18 +94,22 @@ API 파일에서 DB를 직접 많이 만지지 않는다.
 - API request/response field는 frontend 계약에 맞춰 camelCase를 사용한다.
 - DB column은 snake_case를 사용한다.
 - status 값은 영어 canonical value를 사용한다.
+- `backend/app/schemas/common.py`의 `CamelModel`을 공통 base schema로 사용한다.
+- 목록 API에는 필요에 따라 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`, `SortDirection`을 재사용한다.
+- 모든 성공 응답을 단일 envelope로 강제하지 않고, endpoint별 성공 shape는 `docs/api-contract.md`를 따른다.
 - 에러 응답은 아래 envelope를 따른다.
 
 ```json
 {
   "error": {
-    "code": "RESOURCE_NOT_FOUND",
+    "code": "NOT_FOUND",
     "message": "Resource not found"
   }
 }
 ```
 
-FastAPI 내부 exception은 공통 handler에서 위 형식으로 변환한다.
+FastAPI 내부 exception은 `backend/app/core/errors.py`의 공통 handler에서 위 형식으로 변환한다.
+에러 code 값은 `docs/api-contract.md`의 권장 에러 코드(`VALIDATION_ERROR`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT`, `INVALID_JOB_STATE`, `SQL_SYNTAX_ERROR`, `BACKEND_TIMEOUT`, `INTERNAL_ERROR`)를 우선한다.
 
 ## 6. DB/ORM 결정
 

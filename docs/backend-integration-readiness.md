@@ -22,6 +22,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 FastAPI 1차 scaffold의 범위는 기능 endpoint 구현이 아니라 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이다.
 이후 ETL/Catalog/SQL/Dashboard API는 Pair별 후속 PR에서 구현한다.
+FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
 
 ## 2. Pair A Live Contract
 
