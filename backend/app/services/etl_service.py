@@ -359,7 +359,7 @@ def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[l
 
 def compact_spark_logs(result: dict[str, Any]) -> list[str]:
     lines = "\n".join(str(result.get(key) or "") for key in ["error", "stderr", "stdout"]).splitlines()
-    return [line for line in lines if line][-24:]
+    return [line for line in lines if line.strip()][-80:]
 
 
 def schema_from_job(job: ETLJobModel) -> list[list[str]]:

@@ -1385,15 +1385,27 @@ function schemaTransformShortLabel(column: SchemaColumnDraft) {
   return actions.length > 0 ? actions.join(" + ") : "그대로";
 }
 
+function schemaChangeStats(columns: SchemaColumnDraft[]) {
+  const included = columns.filter(isSchemaColumnIncluded);
+  return {
+    casted: included.length,
+    excluded: columns.length - included.length,
+    flattened: included.filter((column) => column.sourceName.includes(".")).length,
+    included: included.length,
+    renamed: included.filter((column) => (column.targetName || "") !== normalizeTargetColumnName(column.sourceName)).length,
+  };
+}
+
 function schemaFlowWindow(columns: SchemaColumnDraft[], sampleRows: string[][], selectedIndex: number) {
-  const maxItems = 4;
+  const maxItems = 6;
   const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(columns.length - 1, 0)));
-  const start = Math.max(0, Math.min(safeSelectedIndex - 2, Math.max(columns.length - maxItems, 0)));
+  const start = Math.max(0, Math.min(safeSelectedIndex - 3, Math.max(columns.length - maxItems, 0)));
   return columns.slice(start, start + maxItems).map((column, offset) => {
     const index = start + offset;
     return {
       action: schemaTransformLabel(column),
       actionShort: schemaTransformShortLabel(column),
+      included: isSchemaColumnIncluded(column),
       index,
       nullable: column.nullable ? "Null 허용" : "필수",
       sample: compactSchemaPreviewValue(sampleRows[0]?.[index] ?? ""),
@@ -1432,7 +1444,6 @@ export function SchemaInferencePage({
   onSave: () => void;
 }) {
   const [schemaFilter, setSchemaFilter] = useState("");
-  const [schemaPreviewMode, setSchemaPreviewMode] = useState<"flat" | "raw">("flat");
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0);
   const [flattenObjects, setFlattenObjects] = useState(true);
   const [flattenDepth, setFlattenDepth] = useState(2);
@@ -1462,7 +1473,6 @@ export function SchemaInferencePage({
     : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
   const previewRow = schemaSampleRows[0] ?? [];
   const sourcePreviewText = buildSourceShapePreview(schemaColumns, previewRow);
-  const outputTableMinWidth = Math.max(880, includedSchemaColumns.length * 148);
   const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
   const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
   const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
@@ -1475,6 +1485,10 @@ export function SchemaInferencePage({
   const selectedDistribution = selectedColumn ? valueDistribution(selectedSampleValues) : [];
   const schemaFlowItems = schemaFlowWindow(schemaColumns, schemaSampleRows, selectedIndex);
   const selectedFlowItem = schemaFlowItems.find((item) => item.index === selectedIndex) ?? schemaFlowItems[0];
+  const schemaStats = schemaChangeStats(schemaColumns);
+  const previewOutputItems = includedSchemaColumnItems.slice(0, 8);
+  const hiddenPreviewColumnCount = Math.max(0, includedSchemaColumnItems.length - previewOutputItems.length);
+  const previewOutputRows = schemaSampleRows.slice(0, 4);
   const visibleSchemaColumns = schemaColumns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => {
@@ -1714,11 +1728,28 @@ export function SchemaInferencePage({
             <strong>{selectedFlowItem ? `${selectedFlowItem.sourceName} -> ${selectedFlowItem.targetName}` : "소스 연결 후 변환 흐름 표시"}</strong>
           </div>
           <em>{selectedFlowItem ? selectedFlowItem.action : hasInferredSchema ? `${schemaColumns.length}개 출력 컬럼 · ${nestedFieldCount}개 중첩 필드` : "스키마 추론 대기"}</em>
+          <div className="schema-flow-stat-grid">
+            <span><strong>{schemaStats.included}</strong> 출력</span>
+            <span><strong>{schemaStats.renamed}</strong> 이름 변경</span>
+            <span><strong>{schemaStats.flattened}</strong> 평탄화</span>
+            <span><strong>{schemaStats.excluded}</strong> 제외</span>
+          </div>
         </div>
         <div className="schema-flow-map">
+          {schemaFlowItems.length > 0 && (
+            <div className="schema-flow-column-head">
+              <span>원본 샘플</span>
+              <span>Spark 실행 계약</span>
+              <span>출력 컬럼</span>
+            </div>
+          )}
           {schemaFlowItems.map((item) => (
             <button
-              className={item.index === selectedIndex ? "schema-flow-card selected" : "schema-flow-card"}
+              className={[
+                "schema-flow-card",
+                item.index === selectedIndex ? "selected" : "",
+                item.included ? "" : "excluded",
+              ].filter(Boolean).join(" ")}
               key={`${item.sourceName}-${item.index}`}
               onClick={() => setSelectedSchemaIndex(item.index)}
               title={`${item.sourceName} -> ${item.targetName}`}
@@ -1731,10 +1762,10 @@ export function SchemaInferencePage({
               </span>
               <span className="schema-flow-arrow">
                 <ArrowRight size={15} />
-                <small>{item.actionShort}</small>
+                <small>{item.included ? item.actionShort : "출력 제외"}</small>
               </span>
               <span className="schema-flow-target">
-                <small>출력</small>
+                <small>{item.included ? "출력" : "제외됨"}</small>
                 <strong>{item.targetName}</strong>
                 <em>{item.type} · {item.nullable}</em>
               </span>
@@ -1985,31 +2016,42 @@ export function SchemaInferencePage({
 
       <section className="schema-preview-panel">
         <div className="schema-preview-tabs">
-          <button className={schemaPreviewMode === "raw" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("raw")}>원본 샘플</button>
-          <button className={schemaPreviewMode === "flat" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("flat")}>평탄화 미리보기</button>
+          <strong>원본 → 출력 미리보기</strong>
           <span>{mappingModeText}</span>
         </div>
-        {schemaPreviewMode === "raw" ? (
-          <pre className="schema-raw-preview">{sourcePreviewText}</pre>
-        ) : (
-          <div className="hegun-table-scroll">
-            <table className="schema-table schema-output-preview-table" style={{ minWidth: outputTableMinWidth }}>
-              <thead>
-                <tr>
-                  {includedSchemaColumnItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {schemaSampleRows.slice(0, 8).map((row, rowIndex) => (
-                  <tr key={`schema-preview-${rowIndex}`}>
-                    {includedSchemaColumnItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}
-                  </tr>
-                ))}
-                {includedSchemaColumnItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
-              </tbody>
-            </table>
+        <div className="schema-preview-comparison-grid">
+          <div className="schema-preview-card raw">
+            <div className="schema-preview-card-title">
+              <FileText size={15} />
+              <span>원본 구조</span>
+            </div>
+            <pre className="schema-raw-preview">{sourcePreviewText}</pre>
           </div>
-        )}
+          <div className="schema-preview-card output">
+            <div className="schema-preview-card-title">
+              <Table2 size={15} />
+              <span>출력 테이블</span>
+              {hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}
+            </div>
+            <div className="hegun-table-scroll">
+              <table className="schema-table schema-output-preview-table" style={{ minWidth: Math.max(680, previewOutputItems.length * 132) }}>
+                <thead>
+                  <tr>
+                    {previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewOutputRows.map((row, rowIndex) => (
+                    <tr key={`schema-preview-${rowIndex}`}>
+                      {previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}
+                    </tr>
+                  ))}
+                  {previewOutputItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="schema-bottom-bar">

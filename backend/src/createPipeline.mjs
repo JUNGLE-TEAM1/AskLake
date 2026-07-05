@@ -564,9 +564,8 @@ function compactSparkLogs(result) {
   const lines = [result?.error, result?.stderr, result?.stdout]
     .filter(Boolean)
     .flatMap((value) => String(value).split(/\r?\n/))
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return Array.from(new Set(lines)).slice(-24);
+    .filter((line) => line.trim());
+  return lines.slice(-80);
 }
 
 function sourceUnitLabel(sourceType) {

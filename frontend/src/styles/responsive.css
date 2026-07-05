@@ -52,6 +52,15 @@
     border-bottom: 1px solid #e5e7eb;
   }
 
+  .schema-flow-column-head,
+  .schema-flow-card {
+    grid-template-columns: minmax(0, 1fr) 118px minmax(0, 1fr);
+  }
+
+  .schema-preview-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
@@ -507,7 +516,16 @@
   }
 
   .dag-step-inspector {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "title"
+      "meta"
+      "details"
+      "error"
+      "logs";
     max-height: 280px;
+    overflow: auto;
   }
 
   .dag-output-strip > span,

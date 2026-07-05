@@ -51,12 +51,12 @@
 }
 
 .job-dag-page {
-  gap: 24px;
+  gap: 16px;
 }
 
 .dag-body-content {
   display: grid;
-  gap: 24px;
+  gap: 12px;
 }
 
 .dag-run-select {
@@ -160,18 +160,18 @@
 .dag-summary-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 16px;
+  gap: 10px;
 }
 
 .dag-summary-card {
   display: grid;
-  min-height: 96px;
+  min-height: 72px;
   align-content: start;
-  gap: 8px;
+  gap: 5px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  padding: 16px;
+  padding: 12px;
 }
 
 .dag-summary-card span {
@@ -182,7 +182,7 @@
 
 .dag-summary-card strong {
   color: #0f172a;
-  font-size: 22px;
+  font-size: 19px;
   font-weight: 800;
   line-height: 1.2;
   overflow-wrap: anywhere;
@@ -204,11 +204,11 @@
 
 .dag-flow-topbar {
   display: flex;
-  min-height: 60px;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px;
+  padding: 10px 14px;
 }
 
 .dag-flow-topbar h2 {
@@ -274,7 +274,7 @@
 }
 
 .dag-canvas-scroll {
-  min-height: 330px;
+  min-height: 255px;
   overflow: hidden;
   cursor: grab;
   padding: 0;
@@ -285,12 +285,12 @@
 .dag-workspace-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  padding: 0 16px 16px;
+  gap: 10px;
+  padding: 0 14px 12px;
 }
 
 .dag-workspace-grid.with-inspector {
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .dag-canvas-scroll.dragging {
@@ -311,18 +311,24 @@
 }
 
 .dag-step-inspector {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(190px, 0.72fr) minmax(0, 1fr);
+  grid-template-areas:
+    "head logs"
+    "title logs"
+    "meta logs"
+    "details logs"
+    "error logs";
   box-sizing: border-box;
-  height: 320px;
-  max-height: 320px;
-  gap: 8px;
-  overflow: auto;
+  min-height: 174px;
+  max-height: 235px;
+  gap: 8px 14px;
+  overflow: hidden;
   border: 1px solid #e2e8f0;
   border-left: 3px solid #64748b;
   border-radius: 8px;
   background: #fff;
-  padding: 14px;
+  padding: 12px;
 }
 
 .dag-step-inspector.success {
@@ -358,6 +364,7 @@
 }
 
 .dag-step-inspector-heading {
+  grid-area: head;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -374,6 +381,7 @@
 }
 
 .dag-step-inspector h3 {
+  grid-area: title;
   min-height: 0;
   margin: 0;
   overflow: hidden;
@@ -387,6 +395,7 @@
 }
 
 .dag-step-inspector > p {
+  grid-area: meta;
   display: -webkit-box;
   min-height: 0;
   margin: 0;
@@ -401,7 +410,7 @@
 }
 
 .dag-step-inspector dl {
-  flex: 0 0 auto;
+  grid-area: details;
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
   gap: 5px 10px;
@@ -428,7 +437,7 @@
 }
 
 .dag-step-error-log {
-  flex: 0 0 auto;
+  grid-area: error;
   display: grid;
   gap: 6px;
   min-height: 0;
@@ -459,10 +468,11 @@
 }
 
 .dag-step-log-list {
+  grid-area: logs;
   display: grid;
   gap: 5px;
-  flex: 1 1 auto;
   min-height: 0;
+  max-height: 210px;
   overflow: auto;
   overscroll-behavior: contain;
   border-radius: 8px;
@@ -473,14 +483,15 @@
 
 .dag-step-log-list code {
   display: block;
-  width: max-content;
+  width: auto;
   min-width: 100%;
   overflow: visible;
   color: #dbeafe;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 11px;
   line-height: 1.4;
-  white-space: pre;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .dag-canvas-scroll.dragging .dag-canvas-expanded {

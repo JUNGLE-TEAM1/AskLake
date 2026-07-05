@@ -444,7 +444,7 @@
 .job-detail-page {
   display: grid;
   gap: 20px;
-  max-width: var(--layout-main-width);
+  max-width: none;
   font-family: "Gothic A1", "Noto Sans KR", "Apple SD Gothic Neo", Inter, system-ui, sans-serif;
 }
 
