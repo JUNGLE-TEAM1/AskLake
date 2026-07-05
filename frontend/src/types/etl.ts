@@ -19,6 +19,12 @@ export type JobRowData = {
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
+  transformOutputColumns?: Array<[string, string]>;
+  transformSteps?: TransformStepDraft[];
+  qualityInvalidRows?: string[][];
+  qualityRules?: QualityRuleDraft[];
+  qualityScore?: number;
+  qualityStatus?: QualityDraft["status"];
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -72,8 +78,13 @@ export type SchemaDraft = {
 export type TransformStepDraft = {
   enabled: boolean;
   id: string;
+  input: string;
   kind: "rename" | "cast" | "trim" | "jsonPath" | "mask" | "derive";
   label: string;
+  onError: string;
+  operation: string;
+  output: string;
+  params: string;
 };
 
 export type TransformDraft = {
@@ -84,9 +95,12 @@ export type TransformDraft = {
 
 export type QualityRuleDraft = {
   enabled: boolean;
+  failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;
   kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+  severity: "Warning" | "Error";
   targetColumn: string;
+  validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
 };
 
 export type QualityDraft = {
@@ -147,6 +161,12 @@ export type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  transformOutputColumns: Array<[string, string]>;
+  transformSteps: TransformStepDraft[];
+  qualityInvalidRows: string[][];
+  qualityRules: QualityRuleDraft[];
+  qualityScore?: number;
+  qualityStatus: QualityDraft["status"];
   scheduleLabel: string;
   retryPolicy: RetryPolicyDraft;
   retryPolicySummary: string;

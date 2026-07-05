@@ -51,6 +51,32 @@ try {
   assert(rest.status === "success", "REST source test should succeed.");
   assert(rest.draftPatch.schema.columns.length > 0, "REST schema inference should produce columns.");
 
+  const firstColumn = minio.draftPatch.schema.columns[0]?.targetName ?? minio.draftPatch.schema.columns[0]?.sourceName;
+  const transformSteps = [{
+    enabled: true,
+    id: "verify-transform-1",
+    input: firstColumn,
+    kind: "trim",
+    label: `Lowercase + Trim: ${firstColumn} -> ${firstColumn}_normalized`,
+    onError: "Warn",
+    operation: "Lowercase + Trim",
+    output: `${firstColumn}_normalized`,
+    params: "lower(), trim()",
+  }];
+  const transformOutputColumns = [
+    ...minio.draftPatch.schema.columns.map((column) => [column.targetName, column.type]),
+    [`${firstColumn}_normalized`, "string"],
+  ];
+  const qualityRules = [{
+    enabled: true,
+    failureAction: "Warn",
+    id: "verify-quality-1",
+    kind: "notNull",
+    severity: "Warning",
+    targetColumn: firstColumn,
+    validationType: "Not Null",
+  }];
+
   const created = await post("/api/etl/jobs", {
     id: "pair_a_verify",
     jobName: "pair_a_verify_pipeline",
@@ -60,6 +86,12 @@ try {
     retryPolicy: { failureAction: "retry_then_fail", maxRetries: 3, retryIntervalMinutes: 10, timeoutMinutes: 60 },
     retryPolicySummary: "3 retries",
     ruleSummary: "schema verified",
+    transformOutputColumns,
+    transformSteps,
+    qualityInvalidRows: [],
+    qualityRules,
+    qualityScore: 100,
+    qualityStatus: "pass",
     scheduleLabel: "manual",
     schemaColumns: minio.draftPatch.schema.columns,
     schemaFingerprint: minio.draftPatch.schema.schemaFingerprint,
@@ -73,7 +105,9 @@ try {
     targetLayer: "GOLD",
   });
   assert(created.job && created.dataset, "Create job should return { job, dataset }.");
-  assert(created.dataset.schema.length === minio.draftPatch.schema.columns.length, "Dataset schema should map inferred schema.");
+  assert(created.job.transformSteps?.length === 1, "Created job should preserve transform steps.");
+  assert(created.job.qualityRules?.length === 1, "Created job should preserve quality rules.");
+  assert(created.dataset.schema.length === transformOutputColumns.length, "Dataset schema should map transform output schema.");
 
   const jobs = await get("/api/etl/jobs");
   const datasets = await get("/api/catalog/datasets");

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
@@ -18,7 +18,7 @@ export function runSparkPipeline(job, command, runId) {
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(localOutputDir, { recursive: true });
 
-  const source = sparkSourceFromJob(job);
+  const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `/work/reports/${runId}.json`;
@@ -38,9 +38,9 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || "http://m3-minio:9000"}`,
     "-e",
-    `MINIO_ACCESS_KEY=${minioAccessKey()}`,
+    `MINIO_ACCESS_KEY=${fieldValue(job.sourceConfig ?? [], "Access Key") || minioAccessKey()}`,
     "-e",
-    `MINIO_SECRET_KEY=${minioSecretKey()}`,
+    `MINIO_SECRET_KEY=${fieldValue(job.sourceConfig ?? [], "Secret Key") || minioSecretKey()}`,
     "-e",
     `MINIO_REGION=${process.env.MINIO_REGION || "us-east-1"}`,
     "-e",
@@ -53,6 +53,10 @@ export function runSparkPipeline(job, command, runId) {
     `ASKLAKE_SPARK_RUN_ROW_LIMIT=${sparkRowLimitFromJob(job)}`,
     "-e",
     `ASKLAKE_SPARK_RUN_ID=${runId}`,
+    "-e",
+    `ASKLAKE_SPARK_TRANSFORM_STEPS=${JSON.stringify(job.transformSteps ?? [])}`,
+    "-e",
+    `ASKLAKE_SPARK_QUALITY_RULES=${JSON.stringify(job.qualityRules ?? [])}`,
     "-e",
     `ASKLAKE_SPARK_REPORT_FILE=${dockerReportPath}`,
     "-e",
@@ -109,7 +113,7 @@ function ensureSparkServer() {
   }
 }
 
-function sparkSourceFromJob(job) {
+function sparkSourceFromJob(job, runId) {
   const sourceType = job.sourceType || "";
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
   if (sourceType === "File / S3") {
@@ -133,7 +137,38 @@ function sparkSourceFromJob(job) {
     };
   }
 
-  throw sparkError(`Spark execution is currently wired for File / S3 and Data Lake jobs. Unsupported sourceType=${sourceType}`);
+  const samplePath = writeSampleRowsSource(job, runId);
+  if (samplePath) {
+    return {
+      format: "jsonl",
+      path: `file:///work/reports/${path.basename(samplePath)}`,
+    };
+  }
+
+  throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function writeSampleRowsSource(job, runId) {
+  const rows = Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [];
+  const columns = Array.isArray(job.schemaColumns) ? job.schemaColumns : [];
+  if (rows.length === 0 || columns.length === 0) return "";
+  const outputColumns = columns.map((column, index) => ({
+    index,
+    sourceName: String(column?.sourceName || ""),
+    targetName: String(column?.targetName || column?.sourceName || `column_${index + 1}`),
+  }));
+  const filePath = path.join(reportDir, `${runId}-source.jsonl`);
+  const content = rows.map((row, rowIndex) => {
+    const item = { row_id: String(rowIndex + 1) };
+    outputColumns.forEach((column) => {
+      const value = row[column.index] ?? "";
+      item[column.targetName] = value;
+      if (column.sourceName && column.sourceName !== column.targetName) item[column.sourceName] = value;
+    });
+    return JSON.stringify(item);
+  }).join("\n");
+  writeFileSync(filePath, `${content}\n`, "utf8");
+  return filePath;
 }
 
 function sparkOutputPath(job, runId) {

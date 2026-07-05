@@ -18,6 +18,7 @@ export type {
   JobStatus,
   PermissionDraft,
   QualityDraft,
+  QualityRuleDraft,
   RetryFailureAction,
   RetryPolicyDraft,
   ScheduleDraft,
@@ -27,6 +28,7 @@ export type {
   TargetDraft,
   TargetLayer,
   TransformDraft,
+  TransformStepDraft,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { SqlResultDraft } from "./types/sql";
