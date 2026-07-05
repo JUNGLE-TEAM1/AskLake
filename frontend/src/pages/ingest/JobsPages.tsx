@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import {
   BarChart3,
@@ -68,6 +68,17 @@ export function JobsLandingPage({
   onDetail: (job: JobRowData) => void;
   onRuns: () => void;
 }) {
+  const jobsPageSize = 3;
+  const [pageIndex, setPageIndex] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(jobs.length / jobsPageSize));
+  const currentPageIndex = Math.min(pageIndex, totalPages - 1);
+  const pageStart = currentPageIndex * jobsPageSize;
+  const visibleJobs = jobs.slice(pageStart, pageStart + jobsPageSize);
+
+  useEffect(() => {
+    if (pageIndex > totalPages - 1) setPageIndex(totalPages - 1);
+  }, [pageIndex, totalPages]);
+
   const metrics = [
     ["전체 작업", String(jobs.length)],
     ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
@@ -96,7 +107,7 @@ export function JobsLandingPage({
               <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
             </div>
           )}
-          {jobs.map((job) => (
+          {visibleJobs.map((job) => (
             <JobRow
               job={job}
               key={job.id}
@@ -109,10 +120,16 @@ export function JobsLandingPage({
           ))}
           {jobs.length > 0 && (
             <div className="job-table-footer">
-              <span>1-{jobs.length} of {jobs.length}</span>
+              <span>{pageStart + 1}-{Math.min(pageStart + visibleJobs.length, jobs.length)} of {jobs.length}</span>
               <div>
-                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
-                <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+                <button className="ghost-link" disabled={currentPageIndex === 0} type="button" onClick={() => {
+                  setPageIndex((index) => Math.max(0, index - 1));
+                  onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs");
+                }}>← 이전</button>
+                <button className="ghost-link" disabled={currentPageIndex >= totalPages - 1} type="button" onClick={() => {
+                  setPageIndex((index) => Math.min(totalPages - 1, index + 1));
+                  onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs");
+                }}>다음 →</button>
               </div>
             </div>
           )}
@@ -186,9 +203,7 @@ function JobRow({
         <dl className="job-row-details">
           <div><dt>소스</dt><dd title={job.source}>{job.source}</dd></div>
           <div><dt>타깃</dt><dd title={job.target}>{job.target}</dd></div>
-          <div><dt>스케줄</dt><dd title={job.schedule}>{job.schedule}</dd></div>
-          <div><dt>마지막 실행</dt><dd title={job.lastRun}>{lastRunLabel}</dd><dd className={job.lastState === "실패" ? "danger-text" : ""} title={job.lastState}>{job.lastState}</dd></div>
-          <div><dt>다음 실행</dt><dd title={job.nextRun}>{job.nextRun}</dd></div>
+          <div><dt>최근 상태</dt><dd title={`${job.lastRun} · ${job.lastState}`}>{lastRunLabel} · {job.lastState}</dd></div>
         </dl>
         <div className="job-row-actions">
           <button className="job-action-button" type="button" onClick={onDetail}>상세</button>
@@ -221,6 +236,14 @@ function JobProgress({ label, value }: { label: string; value: number }) {
 
 type SchemaDetailRow = [string, string, string, string, string, string];
 type RuleDetailRow = [string, string, string, string];
+type JobDetailPane = "overview" | "storage" | "schema" | "schedule";
+
+const jobDetailPanes: Array<{ id: JobDetailPane; label: string }> = [
+  { id: "overview", label: "개요" },
+  { id: "storage", label: "소스/저장" },
+  { id: "schema", label: "스키마/규칙" },
+  { id: "schedule", label: "일정/권한" },
+];
 
 function fallbackJobStats(job: JobRowData): JobStats {
   const runs = job.runHistory ?? [];
@@ -369,6 +392,7 @@ export function JobDetailPage({
   onEdit: () => void;
   onRuns: () => void;
 }) {
+  const [detailPane, setDetailPane] = useState<JobDetailPane>("overview");
   const sourceType = job.source.split(" / ")[0] ?? job.source;
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
   const statusText = jobStatusMeta[job.status].summaryLabel;
@@ -392,6 +416,10 @@ export function JobDetailPage({
             : "아직 실행 이력이 없습니다. 생성 시 검증된 소스/스키마 메타데이터만 표시합니다.";
   const schemaRows = schemaRowsForJob(job, stats);
   const ruleRows = ruleRowsForJob(job);
+  const selectDetailPane = (pane: JobDetailPane) => {
+    setDetailPane(pane);
+    onAction("etl.job.detail_pane_selected", `/api/etl/jobs/${job.id}/detail/${pane}`, job.id);
+  };
 
   return (
     <div className="job-detail-page">
@@ -399,6 +427,15 @@ export function JobDetailPage({
 
       <DetailStatusStrip body={stripBody} title={stripTitle} tone={stripTone} />
 
+      <nav className="job-detail-subnav" aria-label="작업 상세 섹션">
+        {jobDetailPanes.map((pane) => (
+          <button className={detailPane === pane.id ? "active" : ""} key={pane.id} type="button" onClick={() => selectDetailPane(pane.id)}>
+            {pane.label}
+          </button>
+        ))}
+      </nav>
+
+      {detailPane === "overview" && (
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
           <h2>작업 핵심 정보</h2>
@@ -438,7 +475,9 @@ export function JobDetailPage({
           </article>
         </div>
       </section>
+      )}
 
+      {detailPane === "storage" && (
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
           <h2>소스 / 타겟 설정</h2>
@@ -469,7 +508,9 @@ export function JobDetailPage({
           </article>
         </div>
       </section>
+      )}
 
+      {detailPane === "schema" && (
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
           <h2>스키마 / 변환</h2>
@@ -519,7 +560,9 @@ export function JobDetailPage({
           </table>
         </article>
       </section>
+      )}
 
+      {detailPane === "schedule" && (
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
           <h2>Schedule / Permission</h2>
@@ -545,6 +588,7 @@ export function JobDetailPage({
           </article>
         </div>
       </section>
+      )}
     </div>
   );
 }
@@ -745,9 +789,16 @@ export function JobDagPage({
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const [dagFullscreenOpen, setDagFullscreenOpen] = useState(false);
   const [dagZoom, setDagZoom] = useState(0);
+  const [dagPan, setDagPan] = useState({ x: 0, y: 0 });
+  const [dagDrag, setDagDrag] = useState<{ originX: number; originY: number; pointerId: number; startX: number; startY: number } | null>(null);
+  const [selectedDagStepId, setSelectedDagStepId] = useState<string | undefined>();
+  const [runSelectorOpen, setRunSelectorOpen] = useState(false);
+  const [localRunId, setLocalRunId] = useState<string | undefined>();
+  const dagViewportRef = useRef<HTMLDivElement | null>(null);
+  const dagFullscreenViewportRef = useRef<HTMLDivElement | null>(null);
   const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
   const runHistory = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
-  const currentRun = runHistory[0] ?? {
+  const currentRun = runHistory.find((run) => run.runId === localRunId) ?? runHistory[0] ?? {
     duration: "-",
     endedAt: "-",
     errorSummary: "-",
@@ -758,9 +809,22 @@ export function JobDagPage({
     startedAt: "-",
     status: "queued" as JobRunStatus,
   };
+
+  useEffect(() => {
+    if (runHistory.length > 0 && localRunId && !runHistory.some((run) => run.runId === localRunId)) {
+      setLocalRunId(undefined);
+    }
+  }, [localRunId, runHistory]);
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
+  const selectedDagStep = selectedDagStepId ? dagSteps.find((step) => step.id === selectedDagStepId) : undefined;
+  const dagZoomLevels = [1, 1.2, 1.45];
+  const dagScale = dagZoomLevels[dagZoom] ?? 1;
   const dagZoomClass = `zoom-${dagZoom}`;
+  const clampDagPan = (x: number, y: number) => ({
+    x: Math.max(-1100, Math.min(420, x)),
+    y: Math.max(-260, Math.min(180, y)),
+  });
   const zoomIn = () => {
     setDagZoom((zoom) => Math.min(2, zoom + 1));
     onAction("etl.dag.zoom_in", `/api/etl/jobs/${job.id}/dag/view`, job.id);
@@ -768,6 +832,11 @@ export function JobDagPage({
   const zoomOut = () => {
     setDagZoom((zoom) => Math.max(0, zoom - 1));
     onAction("etl.dag.zoom_out", `/api/etl/jobs/${job.id}/dag/view`, job.id);
+  };
+  const resetDagViewport = () => {
+    setDagZoom(0);
+    setDagPan({ x: 0, y: 0 });
+    onAction("etl.dag.viewport_reset", `/api/etl/jobs/${job.id}/dag/view`, job.id);
   };
   const toggleSearch = () => {
     setDagSearchOpen((open) => !open);
@@ -777,9 +846,64 @@ export function JobDagPage({
     setDagFullscreenOpen(true);
     onAction("etl.dag.fullscreen_opened", `/api/etl/jobs/${job.id}/dag/fullscreen`, job.id);
   };
+  const toggleRunSelector = () => {
+    setRunSelectorOpen((open) => !open);
+    onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+  };
+  const selectRunForDag = (run: JobRunSummary) => {
+    setLocalRunId(run.runId);
+    setRunSelectorOpen(false);
+    setSelectedDagStepId(undefined);
+    onAction("etl.dag.run_selected", `/api/etl/jobs/${job.id}/runs/${run.runId}/dag`, run.runId);
+  };
+  const outputPath = currentRun.outputPath ?? job.targetPath ?? job.stats?.outputPath ?? "-";
+  const selectedDagStepDetail = selectedDagStep ? buildDagStepDetail(selectedDagStep, currentRun, outputPath) : undefined;
+  const copyOutputPath = () => {
+    if (outputPath && outputPath !== "-") void navigator.clipboard?.writeText(outputPath);
+    onAction("etl.dag.output_path_copied", `/api/etl/jobs/${job.id}/runs/${currentRun.runId}/output`, currentRun.runId);
+  };
+  const startDagPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, a")) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDagDrag({
+      originX: dagPan.x,
+      originY: dagPan.y,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    });
+  };
+  const moveDagPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dagDrag || dagDrag.pointerId !== event.pointerId) return;
+    setDagPan(clampDagPan(dagDrag.originX + event.clientX - dagDrag.startX, dagDrag.originY + event.clientY - dagDrag.startY));
+  };
+  const stopDagPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dagDrag?.pointerId === event.pointerId && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDagDrag(null);
+  };
+  const selectDagStep = (step: JobDagStep) => {
+    const nextStepId = selectedDagStepId === step.id ? undefined : step.id;
+    setSelectedDagStepId(nextStepId);
+    onAction(nextStepId ? "etl.dag.node_selected" : "etl.dag.node_closed", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id);
+  };
+
+  useEffect(() => {
+    const viewports = [dagViewportRef.current, dagFullscreenViewportRef.current].filter(Boolean) as HTMLDivElement[];
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      setDagZoom((zoom) => Math.max(0, Math.min(2, zoom + (event.deltaY < 0 ? 1 : -1))));
+      onAction("etl.dag.wheel_zoom", `/api/etl/jobs/${job.id}/dag/view`, job.id);
+    };
+
+    viewports.forEach((viewport) => viewport.addEventListener("wheel", handleWheel, { passive: false }));
+    return () => viewports.forEach((viewport) => viewport.removeEventListener("wheel", handleWheel));
+  }, [dagFullscreenOpen, job.id, onAction]);
 
   const dagCanvas = (
-    <div className="dag-canvas-expanded">
+    <div className="dag-canvas-expanded" style={{ transform: `translate(${dagPan.x}px, ${dagPan.y}px) scale(${dagScale})` }}>
       <div className="dag-context-row">
         <strong>Run context</strong>
         <span>현재 Run의 단계별 상태와 처리 흐름을 확인합니다.</span>
@@ -791,9 +915,16 @@ export function JobDagPage({
       </div>
 
       <div className="dag-linear-graph">
+        {dagSteps.length === 0 && (
+          <div className="dag-empty-state">
+            <LayoutGrid size={22} />
+            <strong>표시할 DAG 단계가 없습니다.</strong>
+            <span>작업을 실행하면 같은 runId 기준으로 단계 흐름이 표시됩니다.</span>
+          </div>
+        )}
         {dagSteps.map((step, index) => (
           <Fragment key={step.id}>
-            <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} />
+            <DagStepNode onSelect={() => selectDagStep(step)} selected={selectedDagStep?.id === step.id} step={step} />
             {index < dagSteps.length - 1 && <div className="dag-arrow" />}
           </Fragment>
         ))}
@@ -806,10 +937,24 @@ export function JobDagPage({
       <JobDetailHeader activeTab="dag" job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <section className="dag-body-content">
-        <button className="dag-run-select" title={`${currentRun.runId} · ${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`} type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-          {currentRun.runId} · {formatRunTimestamp(currentRun.startedAt)} · {runStatusMeta[currentRun.status].label}
-          <span>▾</span>
-        </button>
+        <div className="dag-run-select-wrap">
+          <button aria-expanded={runSelectorOpen} className="dag-run-select" title={`${currentRun.runId} · ${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`} type="button" onClick={toggleRunSelector}>
+            {currentRun.runId} · {formatRunTimestamp(currentRun.startedAt)} · {runStatusMeta[currentRun.status].label}
+            <span>▾</span>
+          </button>
+          {runSelectorOpen && (
+            <div className="dag-run-menu" role="listbox" aria-label="DAG Run 선택">
+              {runHistory.length === 0 && <div className="dag-run-menu-empty">선택할 Run이 없습니다.</div>}
+              {runHistory.map((run) => (
+                <button aria-selected={run.runId === currentRun.runId} key={run.runId} role="option" type="button" onClick={() => selectRunForDag(run)}>
+                  <strong>{run.runId}</strong>
+                  <span>{formatRunTimestamp(run.startedAt)} · {runStatusMeta[run.status].label}</span>
+                  <em>{run.outputRows} rows</em>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="dag-summary-grid">
           <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
@@ -824,8 +969,9 @@ export function JobDagPage({
             <h2>실행 DAG / 단계 흐름</h2>
             <div className="dag-flow-controls">
               <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="DAG 검색" onClick={toggleSearch}><Search size={16} /></button>
-              <button type="button" aria-label="확대" onClick={zoomIn}><Plus size={16} /></button>
-              <button type="button" aria-label="축소" onClick={zoomOut}><Minus size={16} /></button>
+              <button type="button" aria-label="확대" disabled={dagZoom >= 2} onClick={zoomIn}><Plus size={16} /></button>
+              <button type="button" aria-label="축소" disabled={dagZoom <= 0} onClick={zoomOut}><Minus size={16} /></button>
+              <button type="button" aria-label="DAG 위치 초기화" onClick={resetDagViewport}><RefreshCw size={16} /></button>
               <button type="button" aria-label="전체화면" onClick={openFullscreen}><Maximize2 size={16} /></button>
             </div>
           </div>
@@ -837,13 +983,25 @@ export function JobDagPage({
             </div>
           )}
 
-          <div className={`dag-canvas-scroll ${dagZoomClass}`}>
-            {dagCanvas}
+          <div className={selectedDagStep ? "dag-workspace-grid with-inspector" : "dag-workspace-grid"}>
+            <div
+              className={`dag-canvas-scroll ${dagZoomClass}${dagDrag ? " dragging" : ""}`}
+              ref={dagViewportRef}
+              onPointerCancel={stopDagPan}
+              onPointerDown={startDagPan}
+              onPointerMove={moveDagPan}
+              onPointerUp={stopDagPan}
+            >
+              {dagCanvas}
+            </div>
+            {selectedDagStep && <DagStepInspector detail={selectedDagStepDetail} step={selectedDagStep} />}
           </div>
 
-          <div className="dag-selected-strip">
-            <span>선택: 노드를 클릭하면 실행 상세 패널이 열립니다 · ETL 작업 수정 링크는 상세 패널에서 제공합니다</span>
-            <strong>선택</strong>
+          <div className="dag-output-strip">
+            <HardDrive size={16} />
+            <span title={outputPath}>출력 위치: {outputPath}</span>
+            {selectedDagStep && <em title={`${selectedDagStep.title} · ${selectedDagStep.meta}`}>선택 단계: {selectedDagStep.title} · {selectedDagStepStatusMeta(selectedDagStep.status)}</em>}
+            <button type="button" onClick={copyOutputPath}>경로 복사</button>
           </div>
         </article>
       </section>
@@ -857,7 +1015,14 @@ export function JobDagPage({
               </div>
               <button type="button" onClick={() => setDagFullscreenOpen(false)}>닫기</button>
             </div>
-            <div className="dag-canvas-scroll zoom-2">
+            <div
+              className={`dag-canvas-scroll zoom-2${dagDrag ? " dragging" : ""}`}
+              ref={dagFullscreenViewportRef}
+              onPointerCancel={stopDagPan}
+              onPointerDown={startDagPan}
+              onPointerMove={moveDagPan}
+              onPointerUp={stopDagPan}
+            >
               {dagCanvas}
             </div>
           </section>
@@ -882,19 +1047,106 @@ function DagStatePill({ status }: { status: JobDagStepStatus }) {
   return <span className={`dag-state-pill ${statusMeta.className}`}>{statusMeta.label}</span>;
 }
 
+function selectedDagStepStatusMeta(status: JobDagStepStatus) {
+  return dagStepStatusMeta[status].label;
+}
+
+function buildDagStepDetail(step: JobDagStep, run: JobRunSummary, outputPath: string) {
+  const statusLabel = selectedDagStepStatusMeta(step.status);
+  const stepDetails = (step.details ?? []).filter(([label]) => !["출력 경로"].includes(label));
+  const baseDetails: Array<[string, string]> = [
+    ["상태", statusLabel],
+    ["Run ID", run.runId],
+    ["처리 행", `${run.inputRows} -> ${run.outputRows}`],
+  ];
+  const details = uniqueDetailRows([...stepDetails.slice(0, 2), ...baseDetails]).slice(0, 5);
+  const fallbackLogs = [
+    `${step.title} 단계 상태: ${statusLabel}`,
+    step.meta && step.meta !== "-" ? `단계 메타: ${step.meta}` : "",
+    run.status === "failed" && step.status === "failed" ? `실패 원인: ${run.errorSummary}` : "",
+    step.status === "blocked" ? `이전 실패 단계: ${run.failedStage}` : "",
+    run.outputPath && run.outputPath !== "-" ? `출력 경로: ${run.outputPath}` : "",
+  ].filter(Boolean);
+  const logs = step.logs?.length ? step.logs : fallbackLogs;
+  const error = step.status === "failed" && run.errorSummary !== "-" ? run.errorSummary : step.note;
+
+  return { details, error, logs, statusLabel };
+}
+
+function uniqueDetailRows(rows: Array<[string, string]>) {
+  const seen = new Set<string>();
+  return rows.filter(([label, value]) => {
+    const key = `${label}:${value}`;
+    if (!label || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function DagStepInspector({
+  detail,
+  step,
+}: {
+  detail?: ReturnType<typeof buildDagStepDetail>;
+  step?: JobDagStep;
+}) {
+  if (!step || !detail) {
+    return (
+      <aside className="dag-step-inspector empty">
+        <TerminalSquare size={18} />
+        <strong>단계를 선택하세요</strong>
+        <span>노드를 클릭하면 해당 단계의 실행 로그와 입출력 정보를 표시합니다.</span>
+      </aside>
+    );
+  }
+
+  const tone = dagStepStatusMeta[step.status].className;
+  return (
+    <aside className={`dag-step-inspector ${tone}`}>
+      <div className="dag-step-inspector-heading">
+        <TerminalSquare size={18} />
+        <span>{detail.statusLabel}</span>
+      </div>
+      <h3>{step.title}</h3>
+      <p title={step.meta}>{step.meta}</p>
+      <dl>
+        {detail.details.map(([label, value]) => (
+          <Fragment key={`${label}-${value}`}>
+            <dt>{label}</dt>
+            <dd title={value}>{value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      {detail.error && (
+        <div className="dag-step-error-log">
+          <strong>실패 로그</strong>
+          <p>{detail.error}</p>
+        </div>
+      )}
+      <div className="dag-step-log-list">
+        <strong>실행 로그</strong>
+        {detail.logs.map((line, index) => <code key={`${step.id}-log-${index}`}>{line}</code>)}
+        {detail.logs.length === 0 && <code>표시할 로그가 없습니다.</code>}
+      </div>
+    </aside>
+  );
+}
+
 function DagStepNode({
   onSelect,
+  selected,
   step,
   wide,
 }: {
   onSelect: () => void;
+  selected?: boolean;
   step: JobDagStep;
   wide?: boolean;
 }) {
   const tone = dagStepStatusMeta[step.status].className;
 
   return (
-    <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} title={`${step.title} · ${step.meta}`} type="button" onClick={onSelect}>
+    <button className={[wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`, selected ? "selected" : ""].filter(Boolean).join(" ")} title={`${step.title} · ${step.meta}`} type="button" onClick={onSelect}>
       <span className="dag-step-dot" />
       <strong>{step.title}</strong>
       <span className="dag-step-meta">{step.meta}</span>

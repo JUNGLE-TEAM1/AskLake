@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
+  ArrowRight,
   BarChart3,
   BookOpen,
   Bot,
@@ -16,6 +17,7 @@ import {
   FileText,
   HardDrive,
   Info,
+  GitBranch,
   LayoutGrid,
   Maximize2,
   Minus,
@@ -1345,6 +1347,48 @@ function valueDistribution(values: string[]) {
     .map(([label, count]) => ({ count, label, percent: max > 0 ? Math.max(8, Math.round((count / max) * 100)) : 0 }));
 }
 
+function compactSchemaPreviewValue(value: string, maxLength = 44) {
+  const normalized = value.trim() || "null";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(8, maxLength - 14))}...${normalized.slice(-8)}`;
+}
+
+function schemaTransformLabel(column: SchemaColumnDraft) {
+  const actions: string[] = [];
+  if (column.sourceName.includes(".")) actions.push("평탄화");
+  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
+  actions.push(`${column.type} 캐스팅`);
+  if (!column.nullable) actions.push("필수");
+  return actions.join(" · ");
+}
+
+function schemaTransformShortLabel(column: SchemaColumnDraft) {
+  const actions: string[] = [];
+  if (column.sourceName.includes(".")) actions.push("평탄화");
+  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
+  if (column.type) actions.push("타입 변환");
+  return actions.length > 0 ? actions.join(" + ") : "그대로";
+}
+
+function schemaFlowWindow(columns: SchemaColumnDraft[], sampleRows: string[][], selectedIndex: number) {
+  const maxItems = 4;
+  const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(columns.length - 1, 0)));
+  const start = Math.max(0, Math.min(safeSelectedIndex - 2, Math.max(columns.length - maxItems, 0)));
+  return columns.slice(start, start + maxItems).map((column, offset) => {
+    const index = start + offset;
+    return {
+      action: schemaTransformLabel(column),
+      actionShort: schemaTransformShortLabel(column),
+      index,
+      nullable: column.nullable ? "Null 허용" : "필수",
+      sample: compactSchemaPreviewValue(sampleRows[0]?.[index] ?? ""),
+      sourceName: column.sourceName,
+      targetName: column.targetName || `column_${index + 1}`,
+      type: column.type,
+    };
+  });
+}
+
 function schemaRoleLabel(role?: string) {
   return schemaRoleOptions.find((option) => option.value === (role ?? ""))?.label ?? role ?? "일반";
 }
@@ -1410,6 +1454,8 @@ export function SchemaInferencePage({
   const selectedSampleValues = selectedColumn ? sampleValuesForColumn(schemaSampleRows, selectedIndex) : [];
   const selectedNullRatio = selectedColumn ? estimateNullRatio(schemaSampleRows, selectedIndex) : 0;
   const selectedDistribution = selectedColumn ? valueDistribution(selectedSampleValues) : [];
+  const schemaFlowItems = schemaFlowWindow(schemaColumns, schemaSampleRows, selectedIndex);
+  const selectedFlowItem = schemaFlowItems.find((item) => item.index === selectedIndex) ?? schemaFlowItems[0];
   const visibleSchemaColumns = schemaColumns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => {
@@ -1636,6 +1682,46 @@ export function SchemaInferencePage({
         </div>
       </section>
 
+      <section className="schema-flow-preview" aria-label="스키마 변환 흐름">
+        <div className="schema-flow-summary">
+          <GitBranch size={16} />
+          <div>
+            <span>{sourceFormat} 변환 흐름</span>
+            <strong>{selectedFlowItem ? `${selectedFlowItem.sourceName} -> ${selectedFlowItem.targetName}` : "소스 연결 후 변환 흐름 표시"}</strong>
+          </div>
+          <em>{selectedFlowItem ? selectedFlowItem.action : hasInferredSchema ? `${schemaColumns.length}개 출력 컬럼 · ${nestedFieldCount}개 중첩 필드` : "스키마 추론 대기"}</em>
+        </div>
+        <div className="schema-flow-map">
+          {schemaFlowItems.map((item) => (
+            <button
+              className={item.index === selectedIndex ? "schema-flow-card selected" : "schema-flow-card"}
+              key={`${item.sourceName}-${item.index}`}
+              onClick={() => setSelectedSchemaIndex(item.index)}
+              title={`${item.sourceName} -> ${item.targetName}`}
+              type="button"
+            >
+              <span className="schema-flow-source">
+                <small>원본</small>
+                <strong>{formatSourceFieldPath(item.sourceName)}</strong>
+                <em>{item.sample}</em>
+              </span>
+              <span className="schema-flow-arrow">
+                <ArrowRight size={15} />
+                <small>{item.actionShort}</small>
+              </span>
+              <span className="schema-flow-target">
+                <small>출력</small>
+                <strong>{item.targetName}</strong>
+                <em>{item.type} · {item.nullable}</em>
+              </span>
+            </button>
+          ))}
+          {schemaFlowItems.length === 0 && (
+            <div className="schema-flow-empty">소스 연결 테스트 후 원본 필드가 어떤 출력 컬럼으로 바뀌는지 표시됩니다.</div>
+          )}
+        </div>
+      </section>
+
       <section className="schema-designer">
         <aside className="schema-settings-panel">
           <div className="schema-panel-title">
@@ -1791,75 +1877,79 @@ export function SchemaInferencePage({
         <aside className="schema-inspector-panel">
           {selectedColumn ? (
             <>
-              <div className="schema-inspector-heading">
-                <div>
-                  <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
-                  <span>필드 ID: {selectedIndex + 1}</span>
-                </div>
-                <em>{selectedColumn.confidence ?? 70}% 확신</em>
-              </div>
-              <label className="schema-setting-field">
-                <span>출력 필드명</span>
-                <input
-                  className="input control-input"
-                  value={selectedColumn.targetName}
-                  onBlur={(event) => {
-                    if (event.currentTarget.value.trim()) return;
-                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
-                  }}
-                  onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
-                />
-              </label>
-              <label className="schema-setting-field">
-                <span>타입 재정의</span>
-                <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
-                  {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                </select>
-              </label>
-              <label className="schema-setting-field">
-                <span>Null 정책</span>
-                <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
-                  <option value="false">필수</option>
-                  <option value="true">허용</option>
-                </select>
-              </label>
-              <label className="schema-setting-field">
-                <span>역할</span>
-                <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
-                  {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
-                </select>
-              </label>
-              <div className="schema-inspector-metrics">
-                <div>
-                  <span>Null 비율</span>
-                  <strong>{selectedNullRatio}%</strong>
-                </div>
-                <div>
-                  <span>샘플 값 수</span>
-                  <strong>{selectedSampleValues.length}</strong>
-                </div>
-              </div>
-              <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
-              <div className="schema-distribution">
-                <span>값 분포</span>
-                {selectedDistribution.map((item) => (
-                  <div key={item.label}>
-                    <strong title={item.label}>{item.label}</strong>
-                    <span><i style={{ width: `${item.percent}%` }} /></span>
-                    <em>{item.count}</em>
+              <div className="schema-inspector-scroll">
+                <div className="schema-inspector-heading">
+                  <div>
+                    <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
+                    <span>필드 ID: {selectedIndex + 1}</span>
                   </div>
-                ))}
-                {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
-              </div>
-              <div className="schema-sample-chips">
-                <span>샘플 값</span>
-                <div>
-                  {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
-                  {selectedSampleValues.length === 0 && <em>값 없음</em>}
+                  <em>{selectedColumn.confidence ?? 70}% 확신</em>
+                </div>
+                <label className="schema-setting-field">
+                  <span>출력 필드명</span>
+                  <input
+                    className="input control-input"
+                    value={selectedColumn.targetName}
+                    onBlur={(event) => {
+                      if (event.currentTarget.value.trim()) return;
+                      updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
+                    }}
+                    onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
+                  />
+                </label>
+                <label className="schema-setting-field">
+                  <span>타입 재정의</span>
+                  <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
+                    {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                <label className="schema-setting-field">
+                  <span>Null 정책</span>
+                  <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
+                    <option value="false">필수</option>
+                    <option value="true">허용</option>
+                  </select>
+                </label>
+                <label className="schema-setting-field">
+                  <span>역할</span>
+                  <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
+                    {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
+                  </select>
+                </label>
+                <div className="schema-inspector-metrics">
+                  <div>
+                    <span>Null 비율</span>
+                    <strong>{selectedNullRatio}%</strong>
+                  </div>
+                  <div>
+                    <span>샘플 값 수</span>
+                    <strong>{selectedSampleValues.length}</strong>
+                  </div>
+                </div>
+                <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
+                <div className="schema-distribution">
+                  <span>값 분포</span>
+                  {selectedDistribution.map((item) => (
+                    <div key={item.label}>
+                      <strong title={item.label}>{item.label}</strong>
+                      <span><i style={{ width: `${item.percent}%` }} /></span>
+                      <em>{item.count}</em>
+                    </div>
+                  ))}
+                  {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
+                </div>
+                <div className="schema-sample-chips">
+                  <span>샘플 값</span>
+                  <div>
+                    {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
+                    {selectedSampleValues.length === 0 && <em>값 없음</em>}
+                  </div>
                 </div>
               </div>
-              <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-              <button className="secondary-button schema-wide-button" type="button" onClick={() => deleteSchemaColumn(selectedIndex)}>출력 컬럼에서 제외</button>
+              <div className="schema-inspector-actions">
+                <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
+                <button className="secondary-button schema-wide-button" type="button" onClick={() => deleteSchemaColumn(selectedIndex)}>출력 컬럼에서 제외</button>
+              </div>
             </>
           ) : (
             <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>

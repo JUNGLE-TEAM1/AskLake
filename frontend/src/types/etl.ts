@@ -213,7 +213,9 @@ export type JobRunSummary = {
 };
 
 export type JobDagStep = {
+  details?: Array<[string, string]>;
   id: string;
+  logs?: string[];
   meta: string;
   note?: string;
   status: JobDagStepStatus;

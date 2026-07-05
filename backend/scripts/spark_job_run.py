@@ -23,14 +23,16 @@ def main():
         output_path = required_env("ASKLAKE_SPARK_OUTPUT_PATH")
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
         row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
+        schema_columns = load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         transform_steps = load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
         spark = make_spark()
-        source_df = read_source(spark, source_format, source_path)
+        source_df = read_source(spark, source_format, source_path, schema_columns)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
-        transformed_df = apply_transform_steps(normalized_df, transform_steps)
+        contracted_df = apply_schema_contract(normalized_df, schema_columns)
+        transformed_df = apply_transform_steps(contracted_df, transform_steps)
         quality = evaluate_quality_rules(transformed_df, quality_rules)
         if quality["status"] == "fail":
             ended_at = now_iso()
@@ -133,9 +135,10 @@ def make_spark():
     return spark
 
 
-def read_source(spark, source_format, source_path):
+def read_source(spark, source_format, source_path, schema_columns):
     if source_format == "csv":
-        return spark.read.option("header", "true").option("inferSchema", "true").csv(source_path)
+        infer_schema = "false" if schema_columns else "true"
+        return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
     if source_format == "jsonl":
         return spark.read.option("multiLine", "false").json(source_path)
     if source_format == "json":
@@ -145,6 +148,79 @@ def read_source(spark, source_format, source_path):
     if source_format in {"txt", "text"}:
         return spark.read.text(source_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def apply_schema_contract(frame, schema_columns):
+    if not schema_columns:
+        return frame
+
+    expressions = []
+    missing_required = []
+    used_names = set()
+    for index, column in enumerate(schema_columns):
+        source_name = str(column.get("sourceName") or column.get("targetName") or "").strip()
+        target_name = unique_column_name(normalize_column_name(column.get("targetName") or source_name) or f"column_{index + 1}", used_names)
+        logical_type = str(column.get("type") or "String")
+        nullable = bool(column.get("nullable", True))
+        resolved = resolve_column_name(frame, source_name) or resolve_column_name(frame, target_name)
+        if not resolved:
+            if nullable:
+                expressions.append(F.lit(None).cast(spark_sql_type(logical_type)).alias(target_name))
+            else:
+                missing_required.append(source_name or target_name)
+            continue
+        expressions.append(cast_for_schema(frame, resolved, logical_type).alias(target_name))
+
+    if missing_required:
+        raise ValueError(f"Approved schema required columns missing from Spark input: {', '.join(missing_required)}")
+    if not expressions:
+        return frame
+    return frame.select(*expressions)
+
+
+def unique_column_name(name, used_names):
+    candidate = name
+    suffix = 2
+    while candidate in used_names:
+        candidate = f"{name}_{suffix}"
+        suffix += 1
+    used_names.add(candidate)
+    return candidate
+
+
+def cast_for_schema(frame, column_name, logical_type):
+    normalized = str(logical_type or "").lower()
+    source = F.col(quote_identifier(column_name))
+    if "bool" in normalized:
+        return try_cast_type(column_name, "boolean")
+    if any(token in normalized for token in ["int", "long", "bigint"]):
+        return try_cast_type(column_name, "bigint")
+    if any(token in normalized for token in ["float", "double", "decimal", "number", "numeric"]):
+        return try_cast_type(column_name, "double")
+    if "timestamp" in normalized or "datetime" in normalized:
+        return F.to_timestamp(source.cast("string"))
+    if normalized == "date" or "date" in normalized:
+        return F.to_date(source.cast("string"))
+    return source.cast(spark_sql_type(logical_type))
+
+
+def try_cast_type(column_name, target_type):
+    return F.expr(f"try_cast({quote_identifier(column_name)} as {target_type})")
+
+
+def spark_sql_type(logical_type):
+    normalized = str(logical_type or "").lower()
+    if "bool" in normalized:
+        return "boolean"
+    if any(token in normalized for token in ["int", "long", "bigint"]):
+        return "bigint"
+    if any(token in normalized for token in ["float", "double", "decimal", "number", "numeric"]):
+        return "double"
+    if "timestamp" in normalized or "datetime" in normalized:
+        return "timestamp"
+    if normalized == "date" or "date" in normalized:
+        return "date"
+    return "string"
 
 
 def apply_transform_steps(frame, steps):

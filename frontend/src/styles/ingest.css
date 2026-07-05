@@ -172,13 +172,13 @@
   border: 1px solid #e8ecf0;
   border-radius: 8px;
   background: #fff;
-  padding: 15px 19px 13px 20px;
+  padding: 14px 19px 12px 20px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  min-height: 147px;
+  min-height: 118px;
 }
 
 .job-row:first-of-type {
-  min-height: 160px;
+  min-height: 118px;
 }
 
 .job-row::before {
@@ -210,7 +210,7 @@
 }
 
 .job-row.running {
-  min-height: 175px;
+  min-height: 138px;
 }
 
 .job-row-status {
@@ -295,7 +295,7 @@
 .job-row-details {
   grid-area: details;
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.1fr) minmax(150px, 0.8fr) minmax(190px, 1fr) minmax(170px, 0.9fr);
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) minmax(220px, 1fr);
   gap: 18px;
   margin: 0;
 }
@@ -426,6 +426,11 @@
   gap: 24px;
 }
 
+.job-table-footer .ghost-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .job-detail-page {
   display: grid;
   gap: 20px;
@@ -509,6 +514,34 @@
 .job-detail-tabs button.active {
   border-color: #2563eb;
   color: #2563eb;
+}
+
+.job-detail-subnav {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+}
+
+.job-detail-subnav button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.job-detail-subnav button.active {
+  background: #2563eb;
+  color: #fff;
 }
 
 .job-detail-section {

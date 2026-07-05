@@ -80,9 +80,81 @@
   white-space: nowrap;
 }
 
+.dag-run-select-wrap {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+
 .dag-run-select span {
   color: #94a3b8;
   font-size: 12px;
+}
+
+.dag-run-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: min(560px, calc(100vw - 48px));
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+  padding: 6px;
+}
+
+.dag-run-menu button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #334155;
+  padding: 10px;
+  text-align: left;
+}
+
+.dag-run-menu button:hover,
+.dag-run-menu button[aria-selected="true"] {
+  background: #eff6ff;
+}
+
+.dag-run-menu strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dag-run-menu span {
+  grid-column: 1;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dag-run-menu em {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.dag-run-menu-empty {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 12px;
 }
 
 .dag-summary-grid {
@@ -162,6 +234,11 @@
   color: #475569;
 }
 
+.dag-flow-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.36;
+}
+
 .dag-flow-controls button.active {
   border-color: #2563eb;
   background: #eff6ff;
@@ -197,8 +274,27 @@
 }
 
 .dag-canvas-scroll {
-  overflow: auto;
+  min-height: 330px;
+  overflow: hidden;
+  cursor: grab;
+  padding: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.dag-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   padding: 0 16px 16px;
+}
+
+.dag-workspace-grid.with-inspector {
+  grid-template-columns: minmax(0, 1fr) 380px;
+}
+
+.dag-canvas-scroll.dragging {
+  cursor: grabbing;
 }
 
 .dag-canvas-expanded {
@@ -209,6 +305,186 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #f8fafc;
+  transform-origin: 0 0;
+  transition: transform 140ms ease;
+  will-change: transform;
+}
+
+.dag-step-inspector {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 320px;
+  max-height: 320px;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #64748b;
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.dag-step-inspector.success {
+  border-left-color: #16a34a;
+}
+
+.dag-step-inspector.failed {
+  border-left-color: #dc2626;
+}
+
+.dag-step-inspector.paused {
+  border-left-color: #94a3b8;
+}
+
+.dag-step-inspector.empty {
+  min-height: 180px;
+  place-items: center;
+  align-content: center;
+  color: #64748b;
+  text-align: center;
+}
+
+.dag-step-inspector.empty strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.dag-step-inspector.empty span {
+  max-width: 210px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.dag-step-inspector-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+}
+
+.dag-step-inspector-heading span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 4px 8px;
+}
+
+.dag-step-inspector h3 {
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 20px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.dag-step-inspector > p {
+  display: -webkit-box;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.dag-step-inspector dl {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 5px 10px;
+  margin: 0;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 8px;
+}
+
+.dag-step-inspector dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.dag-step-inspector dd {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 11px;
+  font-weight: 800;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dag-step-error-log {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #991b1b;
+  padding: 10px;
+}
+
+.dag-step-error-log strong,
+.dag-step-log-list strong {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.dag-step-error-log p {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
+}
+
+.dag-step-log-list {
+  display: grid;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 9px;
+}
+
+.dag-step-log-list code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  overflow: visible;
+  color: #dbeafe;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre;
+}
+
+.dag-canvas-scroll.dragging .dag-canvas-expanded {
+  transition: none;
 }
 
 .dag-canvas-scroll.zoom-1 .dag-canvas-expanded {
@@ -274,9 +550,30 @@
 .dag-linear-graph {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 100%;
   padding: 18px 16px 28px;
+}
+
+.dag-empty-state {
+  display: grid;
+  min-width: 420px;
+  min-height: 150px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #64748b;
+  text-align: center;
+}
+
+.dag-empty-state strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.dag-empty-state span {
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .dag-step-node {
@@ -313,6 +610,11 @@
 
 .dag-step-node.failed {
   border-color: #fecaca;
+}
+
+.dag-step-node.selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 
 .dag-step-dot {
@@ -386,21 +688,21 @@
 .dag-arrow {
   position: relative;
   z-index: 1;
-  flex: 0 0 24px;
-  width: 24px;
+  flex: 0 0 16px;
+  width: 16px;
   height: 2px;
   background: #94a3b8;
 }
 
 .dag-arrow::after {
   position: absolute;
-  top: -5px;
-  right: -11px;
+  top: -4px;
+  right: -7px;
   width: 0;
   height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 12px solid #94a3b8;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 9px solid #94a3b8;
   content: "";
 }
 
@@ -513,25 +815,47 @@
   padding: 0 14px;
 }
 
-.dag-selected-strip {
+.dag-output-strip {
   display: flex;
   min-height: 37px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   border-top: 1px solid #e2e8f0;
   background: #fff;
   color: #64748b;
   font-size: 12px;
   font-weight: 700;
-  padding: 0 12px;
+  padding: 9px 12px;
 }
 
-.dag-selected-strip strong {
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 11px;
-  padding: 3px 8px;
+.dag-output-strip > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.dag-output-strip em {
+  flex: 0 1 280px;
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dag-output-strip button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
 }

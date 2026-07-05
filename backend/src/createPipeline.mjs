@@ -84,8 +84,8 @@ export function commandJob(jobId, command) {
   Object.assign(job, startedJob);
   const run = runFromCommand(job, command);
   let dataset;
+  let sparkResult;
   if (run && (command === "run" || command === "retry")) {
-    let sparkResult;
     try {
       sparkResult = runSparkPipeline(job, command, run.runId);
     } catch (error) {
@@ -108,7 +108,7 @@ export function commandJob(jobId, command) {
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
-    job.dagSteps = dagStepsFromCommand(job, command, run);
+    job.dagSteps = dagStepsFromCommand(job, command, run, sparkResult);
   }
   return {
     action: actionByCommand[command],
@@ -310,12 +310,27 @@ function initialDagSteps(request, metrics) {
   const transformCount = Array.isArray(request.transformSteps) ? request.transformSteps.length : 0;
   const qualityCount = Array.isArray(request.qualityRules) ? request.qualityRules.length : 0;
   return [
-    { id: "source", meta: `${request.sourceType} / ${request.sourceLabel}`, status: "success", title: "1. 소스 연결" },
-    { id: "schema", meta: `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, status: metrics.schemaColumns > 0 ? "success" : "pending", title: "2. 스키마 추론" },
-    { id: "create", meta: request.targetDataset, status: "success", title: "3. Job 생성" },
-    { id: "transform", meta: `${transformCount}개 규칙`, status: "pending", title: "4. 처리 규칙 대기" },
-    { id: "quality", meta: `${qualityCount}개 검사`, status: "pending", title: "5. 품질 검증 대기" },
-    { id: "run", meta: "아직 실행되지 않음", status: "pending", title: "6. 실행 대기" },
+    dagStep("source", "1. 소스 연결", `${request.sourceType} / ${request.sourceLabel}`, "success", [
+      ["커넥터", request.sourceType],
+      ["소스", request.sourceLabel],
+    ], [`${request.sourceType} 연결 테스트 결과로 Job이 생성되었습니다.`]),
+    dagStep("schema", "2. 스키마 추론", `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, metrics.schemaColumns > 0 ? "success" : "pending", [
+      ["컬럼 수", `${metrics.schemaColumns.toLocaleString()}개`],
+      ["샘플 범위", metrics.sampleScope],
+    ], [`스키마 ${metrics.schemaColumns.toLocaleString()}개 컬럼을 생성 요청에 포함했습니다.`]),
+    dagStep("create", "3. Job 생성", request.targetDataset, "success", [
+      ["타겟 데이터셋", request.targetDataset],
+      ["타겟 레이어", request.targetLayer],
+    ], ["아직 실행 전이므로 카탈로그 데이터셋은 생성하지 않습니다."]),
+    dagStep("transform", "4. 처리 규칙 대기", `${transformCount}개 규칙`, "pending", [
+      ["처리 규칙", `${transformCount}개`],
+    ], ["실행 시 Spark 변환 단계에서 적용됩니다."]),
+    dagStep("quality", "5. 품질 검증 대기", `${qualityCount}개 검사`, "pending", [
+      ["품질 검사", `${qualityCount}개`],
+    ], ["실행 시 품질 규칙 평가 결과가 기록됩니다."]),
+    dagStep("run", "6. 실행 대기", "아직 실행되지 않음", "pending", [
+      ["Run ID", "-"],
+    ], ["즉시 실행 또는 예약 실행 후 Run 로그가 연결됩니다."]),
   ];
 }
 
@@ -460,10 +475,14 @@ function statsFromRuns(job, runs) {
   };
 }
 
-function dagStepsFromCommand(job, command, run) {
+function dagStepsFromCommand(job, command, run, sparkResult) {
   const canceled = command === "cancel";
   const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
+  const sourcePath = sparkResult?.sourcePath ?? job.source;
+  const outputPath = run.outputPath ?? sparkResult?.outputPath ?? "-";
+  const sparkLogs = compactSparkLogs(sparkResult);
+  const qualitySummary = sparkResult?.quality?.summary ?? "-";
   if (!canceled) {
     const failed = run.status === "failed";
     const failedStage = String(run.failedStage ?? "").toLowerCase();
@@ -471,23 +490,64 @@ function dagStepsFromCommand(job, command, run) {
     const transformFailed = failed && failedStage.includes("transform");
     const qualityFailed = failed && failedStage.includes("quality");
     return [
-      { id: "source", meta: job.source, status: "success", title: "1. 소스 연결" },
-      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: "success", title: "2. 스키마 확인" },
-      { id: "read", meta: run.inputRows, status: readFailed ? "failed" : "success", title: "3. Spark 소스 읽기" },
-      { id: "transform", meta: transformMeta, status: transformFailed ? "failed" : readFailed ? "blocked" : "success", title: "4. 처리 규칙 적용" },
-      { id: "quality", meta: qualityMeta, status: qualityFailed ? "failed" : readFailed || transformFailed ? "blocked" : "success", title: "5. 품질 검증" },
-      { id: "write", meta: run.outputPath ?? "-", status: failed ? "blocked" : "success", title: "6. Parquet 적재" },
-      { id: "catalog", meta: job.target, status: failed ? "blocked" : "success", title: "7. 카탈로그 데이터셋 갱신" },
+      dagStep("source", "1. 소스 연결", job.source, "success", [
+        ["소스", job.source],
+        ["소스 경로", sourcePath],
+      ], [`${job.sourceType ?? "소스"} 커넥터 설정 확인 완료.`]),
+      dagStep("schema", "2. 스키마 확인", job.stats?.schemaColumns ?? "-", "success", [
+        ["스키마", job.stats?.schemaColumns ?? "-"],
+        ["샘플 범위", job.stats?.sampleScope ?? "-"],
+      ], ["생성 시 확정된 스키마를 Spark 실행 계약에 사용했습니다."]),
+      dagStep("read", "3. Spark 소스 읽기", run.inputRows, readFailed ? "failed" : "success", [
+        ["입력 행", run.inputRows],
+        ["Spark source", sourcePath],
+      ], readFailed ? [`Spark 소스 읽기 실패: ${run.errorSummary}`, ...sparkLogs] : [`Spark가 ${run.inputRows}을 읽었습니다.`, ...sparkLogs]),
+      dagStep("transform", "4. 처리 규칙 적용", transformMeta, transformFailed ? "failed" : readFailed ? "blocked" : "success", [
+        ["처리 규칙", transformMeta],
+      ], transformFailed ? [`처리 규칙 적용 실패: ${run.errorSummary}`] : readFailed ? ["소스 읽기 실패로 처리 규칙 적용이 중단되었습니다."] : ["처리 규칙 적용 완료."]),
+      dagStep("quality", "5. 품질 검증", qualityMeta, qualityFailed ? "failed" : readFailed || transformFailed ? "blocked" : "success", [
+        ["품질 검사", qualityMeta],
+        ["품질 결과", qualitySummary],
+      ], qualityFailed ? [`품질 검증 실패: ${run.errorSummary}`] : readFailed || transformFailed ? ["이전 단계 실패로 품질 검증이 실행되지 않았습니다."] : [qualitySummary !== "-" ? qualitySummary : "품질 검증 완료."]),
+      dagStep("write", "6. Parquet 적재", outputPath, failed ? "blocked" : "success", [
+        ["출력 경로", outputPath],
+        ["출력 행", run.outputRows],
+      ], failed ? ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다."] : [`Parquet 출력 완료: ${outputPath}`]),
+      dagStep("catalog", "7. 카탈로그 데이터셋 갱신", job.target, failed ? "blocked" : "success", [
+        ["데이터셋", job.target],
+        ["레이어", job.targetLayer ?? "-"],
+      ], failed ? ["실행 실패로 카탈로그 데이터셋을 갱신하지 않았습니다."] : ["실행 성공 후 카탈로그 데이터셋을 갱신했습니다."]),
     ];
   }
   return [
-    { id: "source", meta: job.source, status: canceled ? "blocked" : "success", title: "1. 소스 연결" },
-    { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: canceled ? "blocked" : "success", title: "2. 스키마 확인" },
-    { id: "read", meta: run.inputRows, status: canceled ? "blocked" : "running", title: "3. 소스 읽기" },
-    { id: "transform", meta: transformMeta, status: canceled ? "blocked" : "pending", title: "4. 처리 규칙" },
-    { id: "quality", meta: qualityMeta, status: "pending", title: "5. 품질 검증" },
-    { id: "target", meta: job.target, status: "pending", title: "6. Lake 적재" },
+    dagStep("source", "1. 소스 연결", job.source, canceled ? "blocked" : "success", [["소스", job.source]], ["사용자가 실행을 취소했습니다."]),
+    dagStep("schema", "2. 스키마 확인", job.stats?.schemaColumns ?? "-", canceled ? "blocked" : "success", [["스키마", job.stats?.schemaColumns ?? "-"]], ["취소로 스키마 확인 이후 단계가 중단되었습니다."]),
+    dagStep("read", "3. 소스 읽기", run.inputRows, canceled ? "blocked" : "running", [["입력 행", run.inputRows]], ["실행 취소 명령으로 소스 읽기를 중단했습니다."]),
+    dagStep("transform", "4. 처리 규칙", transformMeta, canceled ? "blocked" : "pending", [["처리 규칙", transformMeta]], ["취소 상태입니다."]),
+    dagStep("quality", "5. 품질 검증", qualityMeta, "pending", [["품질 검사", qualityMeta]], ["취소 상태입니다."]),
+    dagStep("target", "6. Lake 적재", job.target, "pending", [["타겟", job.target]], ["취소 상태입니다."]),
   ];
+}
+
+function dagStep(id, title, meta, status, details = [], logs = [], note) {
+  return {
+    details,
+    id,
+    logs: logs.filter(Boolean).map((line) => String(line)),
+    meta: String(meta ?? "-"),
+    ...(note ? { note } : {}),
+    status,
+    title,
+  };
+}
+
+function compactSparkLogs(result) {
+  const lines = [result?.error, result?.stderr, result?.stdout]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/\r?\n/))
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return Array.from(new Set(lines)).slice(-24);
 }
 
 function sourceUnitLabel(sourceType) {
