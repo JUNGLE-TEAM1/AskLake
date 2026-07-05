@@ -11,6 +11,9 @@ from app.schemas.dashboard import (
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
     DeleteDraftWidgetResponse,
+    OkResponse,
+    PublishDashboardResponse,
+    SaveDraftLayoutsRequest,
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
@@ -100,3 +103,24 @@ def delete_draft_widget(
     repository = DashboardRuntimeRepository(db)
     service = DashboardRuntimeService(repository)
     return service.delete_draft_widget(dashboard_id, widget_id)
+
+
+@router.patch("/{dashboard_id}/draft/layouts", response_model=OkResponse)
+def save_draft_layouts(
+    dashboard_id: str,
+    request: SaveDraftLayoutsRequest,
+    db: Session = Depends(get_db),
+) -> OkResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.save_draft_layouts(dashboard_id, request)
+
+
+@router.post("/{dashboard_id}/publish", response_model=PublishDashboardResponse)
+def publish_dashboard(
+    dashboard_id: str,
+    db: Session = Depends(get_db),
+) -> PublishDashboardResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.publish_dashboard(dashboard_id)

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import status
 
@@ -18,6 +18,7 @@ from app.schemas.dashboard import (
     DashboardRuntimeMode,
     DashboardRuntimePage,
     DashboardRuntimeResponse,
+    DashboardStatus,
     DashboardRuntimeWidget,
     DashboardRuntimeWidgetType,
     DashboardWidgetAggregation,
@@ -30,6 +31,9 @@ from app.schemas.dashboard import (
     DonutChartWidgetConfig,
     LineChartWidgetConfig,
     MetricWidgetConfig,
+    OkResponse,
+    PublishDashboardResponse,
+    SaveDraftLayoutsRequest,
     TableWidgetConfig,
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
@@ -131,15 +135,45 @@ class DashboardRuntimeService:
         self.repository.db.commit()
         return DeleteDraftWidgetResponse(ok=True, deleted_widget_id=widget_id)
 
+    def save_draft_layouts(self, dashboard_id: str, request: SaveDraftLayoutsRequest) -> OkResponse:
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, request.page_id)
+        for layout in request.layouts:
+            widget = self._get_draft_widget_or_raise(dashboard_id, layout.widget_id)
+            if widget.page_id != page.id:
+                self._raise_widget_not_found(layout.widget_id)
+            self.repository.update_widget_layout(widget, self._layout_to_json(layout))
+        self.repository.db.commit()
+        return OkResponse(ok=True)
+
+    def publish_dashboard(self, dashboard_id: str) -> PublishDashboardResponse:
+        self._require_dashboard(dashboard_id)
+        draft_revision = self._get_draft_revision_or_raise(dashboard_id)
+        published_revision = self.repository.copy_revision(draft_revision, DashboardRuntimeMode.PUBLISHED)
+        published_revision_id = published_revision.id
+        published_at = published_revision.published_at or datetime.now(UTC)
+        self.repository.update_dashboard_published_metadata(dashboard_id, published_revision_id, published_at)
+        self.repository.db.commit()
+        return PublishDashboardResponse(
+            dashboard_id=dashboard_id,
+            published_revision_id=published_revision_id,
+            published_at=self._datetime_to_iso(published_at) or published_at.isoformat(),
+        )
+
     def _build_runtime_response(
         self,
         dashboard_meta: DashboardRuntimeMetaRecord,
         mode: DashboardRuntimeMode,
         revision: DashboardRevisionModel | None,
     ) -> DashboardRuntimeResponse:
+        has_published_revision = (
+            dashboard_meta.has_published_revision
+            or (mode == DashboardRuntimeMode.PUBLISHED and revision is not None)
+            or self.repository.get_published_revision(dashboard_meta.id) is not None
+        )
         if revision is None:
             return DashboardRuntimeResponse(
-                dashboard=self._dashboard_meta_to_schema(dashboard_meta),
+                dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision),
                 mode=mode,
                 revision=None,
                 pages=[],
@@ -151,7 +185,7 @@ class DashboardRuntimeService:
         widgets_by_page_id = self.repository.list_widgets_by_page_ids([page.id for page in pages])
 
         return DashboardRuntimeResponse(
-            dashboard=self._dashboard_meta_to_schema(dashboard_meta),
+            dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision),
             mode=mode,
             revision=self._revision_to_schema(revision),
             pages=[self._page_to_schema(page) for page in pages],
@@ -235,12 +269,13 @@ class DashboardRuntimeService:
         )
 
     @staticmethod
-    def _dashboard_meta_to_schema(record: DashboardRuntimeMetaRecord) -> DashboardMeta:
+    def _dashboard_meta_to_schema(record: DashboardRuntimeMetaRecord, has_published_revision: bool) -> DashboardMeta:
+        status_value = DashboardStatus.PUBLISHED if has_published_revision else record.status
         return DashboardMeta(
             id=record.id,
             title=record.title,
-            status=record.status,
-            has_published_revision=record.has_published_revision,
+            status=status_value,
+            has_published_revision=has_published_revision,
             updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
         )
 
@@ -285,7 +320,18 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _layout_to_json(layout: DashboardWidgetLayout) -> dict[str, int]:
-        return layout.model_dump(by_alias=True, exclude_none=True, mode="json")
+        return {
+            key: value
+            for key, value in {
+                "x": layout.x,
+                "y": layout.y,
+                "w": layout.w,
+                "h": layout.h,
+                "minW": layout.min_w,
+                "minH": layout.min_h,
+            }.items()
+            if value is not None
+        }
 
     @staticmethod
     def _config_to_json(

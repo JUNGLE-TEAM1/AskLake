@@ -153,6 +153,11 @@ class DashboardRuntimeRepository:
         self.db.delete(widget)
         self.db.flush()
 
+    def update_widget_layout(self, widget: DashboardWidget, layout: dict[str, Any]) -> DashboardWidget:
+        widget.layout = layout
+        self.db.flush()
+        return widget
+
     def copy_revision(self, source_revision: DashboardRevision, target_kind: DashboardRuntimeMode) -> DashboardRevision:
         target_revision = self.create_revision(
             source_revision.dashboard_id,
@@ -173,6 +178,34 @@ class DashboardRuntimeRepository:
                     data=list(source_widget.data),
                 )
         return target_revision
+
+    def update_dashboard_published_metadata(self, dashboard_id: str, published_revision_id: str, published_at: datetime) -> None:
+        if not self._dashboards_table_exists():
+            return
+
+        columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
+        updates: list[str] = []
+        values: dict[str, Any] = {
+            "dashboard_id": dashboard_id,
+            "published_revision_id": published_revision_id,
+            "published_at": published_at,
+        }
+        if "published_revision_id" in columns:
+            updates.append("published_revision_id = :published_revision_id")
+        if "has_published_revision" in columns:
+            updates.append("has_published_revision = true")
+        if "status" in columns:
+            updates.append("status = 'published'")
+        if "updated_at" in columns:
+            updates.append("updated_at = :published_at")
+        if not updates:
+            return
+
+        self.db.execute(
+            text(f"UPDATE dashboards SET {', '.join(updates)} WHERE id = :dashboard_id"),
+            values,
+        )
+        self.db.flush()
 
     def list_pages(self, revision_id: str) -> list[DashboardPage]:
         statement = (
@@ -209,8 +242,7 @@ class DashboardRuntimeRepository:
         return self.db.scalars(statement).first()
 
     def _dashboards_table_exists(self) -> bool:
-        bind = self.db.get_bind()
-        return inspect(bind).has_table("dashboards")
+        return inspect(self.db.connection()).has_table("dashboards")
 
     def _get_dashboard_meta_from_card_list_table(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
         row = self.db.execute(
