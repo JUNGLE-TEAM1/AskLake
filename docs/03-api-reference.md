@@ -74,7 +74,7 @@ Canonical status values:
 | `DELETE` | `/api/dashboards/{dashboardId}` | dashboard ??†ú. ?åÏú†???êÎäî Í¥ÄÎ¶¨ÏûêÎß??àÏö© |
 | `POST` | `/api/audit-logs` | audit log ?úÎ≤Ñ ?Ä??|
 
-Dataset-based widget creation sends top-level `datasetId` plus `config.xKey`, `config.yKey`, `config.color`, and `config.description`; the draft runtime response must preserve `queryId`, `datasetId`, and `config` on each widget.
+Dataset-based widget creation sends top-level `datasetId` plus `type` and a type-specific `config`. The supported runtime widget types are fixed to `metric`, `table`, `bar_chart`, `line_chart`, and `donut_chart`; each widget config must follow the contract in the Dashboard Runtime Contract section. The draft runtime response must preserve `queryId`, `datasetId`, `type`, and `config` on each widget.
 
 ## 7) ?îÎ©¥Î≥??∞Ïù¥??Í≥ÑÏïΩ
 
@@ -97,6 +97,73 @@ Dataset-based widget creation sends top-level `datasetId` plus `config.xKey`, `c
 Dashboard ?ÅÏÑ∏/?∏Ïßë runtime?Ä dashboard meta?Ä revision snapshot??Î∂ÑÎ¶¨?úÎã§.
 
 ```ts
+type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
+type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetSortDirection = "asc" | "desc";
+
+type DashboardWidgetConfigBase = {
+  description?: string;
+  error?: string;
+  errorMessage?: string;
+};
+
+type MetricWidgetConfig = DashboardWidgetConfigBase & {
+  valueKey: string;
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+};
+
+type TableWidgetConfig = DashboardWidgetConfigBase & {
+  columns: string[];
+  sortKey?: string;
+  sortDirection?: DashboardWidgetSortDirection;
+};
+
+type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+  xKey: string;
+  yKey: string;
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+};
+
+type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  xKey: string;
+  yKey: string;
+  aggregation: DashboardWidgetAggregation;
+  dateUnit?: DashboardWidgetDateUnit;
+  color: string;
+};
+
+type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
+  labelKey: string;
+  valueKey: string;
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+};
+
+type DashboardRuntimeWidgetConfigByType = {
+  metric: MetricWidgetConfig;
+  table: TableWidgetConfig;
+  bar_chart: BarChartWidgetConfig;
+  line_chart: LineChartWidgetConfig;
+  donut_chart: DonutChartWidgetConfig;
+};
+
+type DashboardRuntimeWidget = {
+  [Type in DashboardRuntimeWidgetType]: {
+    id: string;
+    pageId: string;
+    type: Type;
+    title: string | null;
+    layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
+    config: DashboardRuntimeWidgetConfigByType[Type];
+    data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
+  };
+}[DashboardRuntimeWidgetType];
+
 type DashboardRuntimeResponse = {
   dashboard: {
     id: string;
@@ -117,17 +184,7 @@ type DashboardRuntimeResponse = {
     title: string;
     orderIndex: number;
   }>;
-  widgetsByPageId: Record<string, Array<{
-    id: string;
-    pageId: string;
-    type: "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
-    title: string | null;
-    layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
-    config: Record<string, unknown>;
-    data: Array<Record<string, unknown>>;
-    queryId?: string | null;
-    datasetId?: string | null;
-  }>>;
+  widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
   filters: Array<{ id: string; label: string; value: unknown }>;
 };
 ```
