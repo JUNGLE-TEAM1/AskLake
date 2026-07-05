@@ -1,0 +1,36 @@
+from typing import Literal
+
+from pydantic import Field
+
+from app.schemas.common import CamelModel
+
+QueryRunMode = Literal["preview", "run"]
+
+
+class QueryRunRequest(CamelModel):
+    base_dataset_id: str | None = None
+    dataset_id: str
+    limit: int | None = Field(default=None, ge=1, le=500)
+    mode: QueryRunMode = "preview"
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    validation_key: str | None = None
+
+
+class QueryRunResponse(CamelModel):
+    base_dataset_id: str | None = None
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    executed_at: str
+    mode: QueryRunMode | None = None
+    preview_limit: int | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    row_count: int
+    rows: list[list[str]]
+    run_id: str
+    validation_key: str | None = None
+
+
+SqlResultDraft = QueryRunResponse
