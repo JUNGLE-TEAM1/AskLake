@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import postgresqlParser from "node-sql-parser/build/postgresql.js";
 import { executeQueryPreview } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DerivedDatasetCreationOperation, DerivedDatasetCreationResult, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 
 type AutocompleteKind = "keyword" | "table" | "column";
 
@@ -68,7 +68,10 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCreateDerivedDataset: (request: CreateDerivedDatasetRequest) => Promise<CatalogDataset | null>;
+  onCreateDerivedDataset: (options: {
+    onProgress: (operation: DerivedDatasetCreationOperation) => void;
+    request: CreateDerivedDatasetRequest;
+  }) => Promise<DerivedDatasetCreationResult | null>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
@@ -95,6 +98,7 @@ export function SqlAnalysisPage({
   const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<DerivedDatasetLayer>("GOLD");
   const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
+  const [derivedDatasetOperation, setDerivedDatasetOperation] = useState<DerivedDatasetCreationOperation | null>(null);
   const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
@@ -165,6 +169,7 @@ export function SqlAnalysisPage({
     setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
     setDerivedDatasetRag(baseDataset.rag);
     setDerivedDatasetDraft(null);
+    setDerivedDatasetOperation(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
@@ -199,6 +204,7 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetDraft(null);
+    setDerivedDatasetOperation(null);
     onResultChange(null);
   };
 
@@ -272,6 +278,7 @@ export function SqlAnalysisPage({
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
       setDerivedDatasetDraft(null);
+      setDerivedDatasetOperation(null);
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch {
@@ -416,21 +423,22 @@ export function SqlAnalysisPage({
 
     setDerivedDatasetPending(true);
     try {
-      const dataset = await onCreateDerivedDataset(request);
-      if (!dataset) return;
+      const result = await onCreateDerivedDataset({ onProgress: setDerivedDatasetOperation, request });
+      if (!result) return;
       setDerivedDatasetDraft({
         columnCount: resultDraft.columns.length,
-        datasetId: dataset.id,
-        description: dataset.description,
+        datasetId: result.dataset.id,
+        description: result.dataset.description,
         layer: request.dataset.layer,
-        name: dataset.name,
-        rag: dataset.rag,
+        name: result.dataset.name,
+        rag: result.dataset.rag,
         refreshPolicy: "manual",
         rowCount: resultDraft.rowCount,
         sourceDatasetId: request.sourceDatasetId,
         sourceRunId: resultDraft.runId,
-        tags: dataset.tags,
+        tags: result.dataset.tags,
       });
+      setDerivedDatasetOperation(result.operation);
     } finally {
       setDerivedDatasetPending(false);
     }
@@ -639,6 +647,7 @@ export function SqlAnalysisPage({
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
                     setDerivedDatasetDraft(null);
+                    setDerivedDatasetOperation(null);
                   }}
                   value={derivedDatasetName}
                 />
@@ -650,6 +659,7 @@ export function SqlAnalysisPage({
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
                     setDerivedDatasetDraft(null);
+                    setDerivedDatasetOperation(null);
                   }}
                   rows={2}
                   value={derivedDatasetDescription}
@@ -662,6 +672,7 @@ export function SqlAnalysisPage({
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
                     setDerivedDatasetDraft(null);
+                    setDerivedDatasetOperation(null);
                   }}
                   placeholder="#sql-derived #analysis"
                   value={derivedDatasetTags}
@@ -674,6 +685,7 @@ export function SqlAnalysisPage({
                   onChange={(event) => {
                     setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
                     setDerivedDatasetDraft(null);
+                    setDerivedDatasetOperation(null);
                   }}
                   value={derivedDatasetLayer}
                 >
@@ -688,6 +700,7 @@ export function SqlAnalysisPage({
                   onChange={(event) => {
                     setDerivedDatasetRag(event.target.checked);
                     setDerivedDatasetDraft(null);
+                    setDerivedDatasetOperation(null);
                   }}
                   type="checkbox"
                 />
@@ -711,6 +724,25 @@ export function SqlAnalysisPage({
                 <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
               )}
             </div>
+            {derivedDatasetOperation && (
+              <div className={`sql-materialize-progress ${derivedDatasetOperation.status}`}>
+                <div className="sql-materialize-progress-header">
+                  <div>
+                    <span>{getDerivedDatasetOperationStatusLabel(derivedDatasetOperation.status)}</span>
+                    <strong>{derivedDatasetOperation.stage}</strong>
+                  </div>
+                  <em>{Math.round(derivedDatasetOperation.progress)}%</em>
+                </div>
+                <div className="sql-materialize-progress-bar" aria-label="Lake Dataset 생성 진행률">
+                  <span style={{ width: `${Math.min(100, Math.max(0, derivedDatasetOperation.progress))}%` }} />
+                </div>
+                <div className="sql-materialize-progress-meta">
+                  <span>예상 {derivedDatasetOperation.estimatedSeconds}초</span>
+                  {derivedDatasetOperation.datasetId && <span>Dataset {derivedDatasetOperation.datasetId}</span>}
+                  {derivedDatasetOperation.errorMessage && <span>{derivedDatasetOperation.errorMessage}</span>}
+                </div>
+              </div>
+            )}
           </section>
         </section>
       </main>
@@ -764,6 +796,13 @@ function parseDerivedDatasetTags(value: string) {
     .map((tag) => tag.startsWith("#") ? tag : `#${tag}`);
 
   return Array.from(new Set(tags));
+}
+
+function getDerivedDatasetOperationStatusLabel(status: DerivedDatasetCreationOperation["status"]) {
+  if (status === "success") return "생성 완료";
+  if (status === "failed") return "실패";
+  if (status === "pending") return "대기 중";
+  return "생성 중";
 }
 
 function getPreflightSummary(result: SqlPreflightResult | null) {

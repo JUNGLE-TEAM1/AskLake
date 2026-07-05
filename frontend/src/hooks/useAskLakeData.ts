@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
-import { createDerivedDatasetFromSql, createPipelineDraft, runJobCommand } from "../services/mockApi";
-import type { AuditResult, AuditTargetType, CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
+import { createDerivedDatasetOperation, createPipelineDraft, runJobCommand } from "../services/mockApi";
+import type { AuditResult, AuditTargetType, CatalogDataset, CreateDerivedDatasetRequest, DerivedDatasetCreationOperation, DerivedDatasetCreationResult, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
@@ -115,7 +115,13 @@ export function useAskLakeData({
     }
   };
 
-  const createSqlDerivedDataset = async (request: CreateDerivedDatasetRequest) => {
+  const createSqlDerivedDataset = async ({
+    onProgress,
+    request,
+  }: {
+    onProgress: (operation: DerivedDatasetCreationOperation) => void;
+    request: CreateDerivedDatasetRequest;
+  }): Promise<DerivedDatasetCreationResult | null> => {
     setApiPending(true);
     try {
       const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
@@ -127,12 +133,12 @@ export function useAskLakeData({
         return null;
       }
 
-      const dataset = await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult: currentSqlResult });
-      saveStoredDerivedDataset(dataset);
-      setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
-      writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);
+      const result = await createDerivedDatasetOperation({ onProgress, request, sourceDataset, sqlResult: currentSqlResult });
+      saveStoredDerivedDataset(result.dataset);
+      setDatasets((items) => [result.dataset, ...items.filter((item) => item.id !== result.dataset.id)]);
+      writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", result.dataset.id);
       showToast("SQL 결과 기반 Lake Dataset이 생성되었습니다.");
-      return dataset;
+      return result;
     } catch {
       writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
       showToast("Lake Dataset 생성에 실패했습니다.", "info");
