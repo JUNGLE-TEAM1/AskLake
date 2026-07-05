@@ -176,6 +176,7 @@ export function SqlAnalysisPage({
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => executeQueryPreview(baseDataset, query, {
     limit: PREVIEW_ROW_LIMIT,
+    referenceDatasetIds: [...referenceDatasetIds].sort(),
     validationKey: queryValidationKey,
   });
 

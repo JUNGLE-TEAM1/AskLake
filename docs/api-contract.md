@@ -274,9 +274,11 @@ type LineageGraph = {
 ```ts
 type SqlResultDraft = {
   runId: string;
+  baseDatasetId?: string;
   datasetId: string;
   datasetName: string;
   query: string;
+  referenceDatasetIds?: string[];
   columns: string[];
   rows: string[][];
   rowCount: number;
@@ -502,10 +504,12 @@ Request:
 
 ```ts
 type ExecuteQueryRequest = {
+  baseDatasetId?: string;
   datasetId: string;
   mode?: "preview" | "run";
   limit?: number;
   query: string;
+  referenceDatasetIds?: string[];
   validationKey?: string;
 };
 ```
@@ -514,10 +518,12 @@ Request 예시:
 
 ```json
 {
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
   "mode": "preview",
   "limit": 100,
   "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
   "validationKey": "frontend-generated-context-key"
 }
 ```
@@ -533,9 +539,11 @@ Response 예시:
 ```json
 {
   "runId": "sql_01J1Z8W2V7KX",
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
   "datasetName": "customer_review_silver",
   "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
   "mode": "preview",
   "previewLimit": 100,
   "columns": ["review_id", "rating", "sentiment"],
@@ -554,6 +562,7 @@ Validation:
 
 - `datasetId`, `query`는 필수입니다.
 - `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
@@ -579,9 +588,12 @@ Request:
 type CreateDerivedDatasetRequest = {
   layer: "SILVER" | "GOLD";
   name: string;
+  previewLimit?: number;
   query: string;
+  referenceDatasetIds?: string[];
   sourceDatasetId: string;
   sourceRunId: string;
+  validationKey?: string;
 };
 ```
 
@@ -591,9 +603,12 @@ Request 예시:
 {
   "layer": "GOLD",
   "name": "sales_daily_summary_analysis",
+  "previewLimit": 100,
   "query": "SELECT ...",
+  "referenceDatasetIds": ["ds_product_master"],
   "sourceDatasetId": "ds_sales_daily_summary",
-  "sourceRunId": "sql_preview_01J1Z8W2V7KX"
+  "sourceRunId": "sql_preview_01J1Z8W2V7KX",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 

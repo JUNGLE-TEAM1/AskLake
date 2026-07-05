@@ -223,6 +223,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
 
 export type QueryPreviewOptions = {
   limit: number;
+  referenceDatasetIds: string[];
   validationKey: string;
 };
 
@@ -236,10 +237,12 @@ export type DerivedDatasetRequest = {
 export async function executeQueryPreview(dataset: CatalogDataset, query: string, options: QueryPreviewOptions): Promise<SqlResultDraft> {
   if (!apiConfig.useMock) {
     return apiClient.post<SqlResultDraft>("/api/query/runs", {
+      baseDatasetId: dataset.id,
       datasetId: dataset.id,
       limit: options.limit,
       mode: "preview",
       query,
+      referenceDatasetIds: options.referenceDatasetIds,
       validationKey: options.validationKey,
     });
   }
@@ -250,6 +253,7 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
     .map((row) => row.slice(0, Math.max(columns.length, 1)));
 
   return resolveMock({
+    baseDatasetId: dataset.id,
     columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
@@ -257,6 +261,7 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
     mode: "preview",
     previewLimit: options.limit,
     query,
+    referenceDatasetIds: options.referenceDatasetIds,
     rowCount: rows.length,
     rows,
     runId: `sql_preview_${Date.now()}`,
@@ -265,7 +270,7 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
 }
 
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
-  return executeQueryPreview(dataset, query, { limit: 100, validationKey: `${dataset.id}:${query}` });
+  return executeQueryPreview(dataset, query, { limit: 100, referenceDatasetIds: [], validationKey: `${dataset.id}:${query}` });
 }
 
 export async function createDerivedDatasetFromSql({
@@ -278,9 +283,12 @@ export async function createDerivedDatasetFromSql({
     return apiClient.post<CatalogDataset>("/api/catalog/derived-datasets", {
       layer,
       name,
+      previewLimit: sqlResult.previewLimit,
       query: sqlResult.query,
+      referenceDatasetIds: sqlResult.referenceDatasetIds ?? [],
       sourceDatasetId: sourceDataset.id,
       sourceRunId: sqlResult.runId,
+      validationKey: sqlResult.validationKey,
     });
   }
 
@@ -305,7 +313,7 @@ export async function createDerivedDatasetFromSql({
     source: `SQL Preview · ${sqlResult.runId}`,
     status: "available",
     tags: Array.from(new Set([...sourceDataset.tags, "#sql-derived"])),
-    upstream: [sourceDataset.name, sqlResult.runId],
+    upstream: [sourceDataset.name, ...(sqlResult.referenceDatasetIds ?? []), sqlResult.runId],
   };
   dataset.lineageGraph = buildDerivedDatasetLineageGraph(sourceDataset, dataset, sqlResult);
 

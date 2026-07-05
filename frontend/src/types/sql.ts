@@ -1,4 +1,5 @@
 export type SqlResultDraft = {
+  baseDatasetId?: string;
   columns: string[];
   datasetId: string;
   datasetName: string;
@@ -6,6 +7,7 @@ export type SqlResultDraft = {
   mode?: "preview" | "run";
   previewLimit?: number;
   query: string;
+  referenceDatasetIds?: string[];
   rowCount: number;
   rows: string[][];
   runId: string;
