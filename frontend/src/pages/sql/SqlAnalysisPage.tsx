@@ -689,8 +689,6 @@ function SqlDatasetRow({
   onReferenceToggle?: (dataset: CatalogDataset) => void;
   onSchemaToggle: (dataset: CatalogDataset) => void;
 }) {
-  const columnSummary = dataset.schema.slice(0, 3).map(([name]) => name).join(" · ");
-  const summary = isBase ? `base · ${dataset.schema.length} columns · ${dataset.owner}` : `${isReferenced ? "referenced · " : ""}${columnSummary}`;
   const rowClasses = [
     "sql-table-card",
     expanded ? "active" : "",
@@ -704,11 +702,12 @@ function SqlDatasetRow({
         <span className="sql-table-toggle">{expanded ? "▾" : "▸"}</span>
         <span className="sql-table-name">
           <strong>{dataset.name}</strong>
-          <small>{summary}</small>
         </span>
         <span className="sql-table-pills">
           {isBase && <span className="sql-table-base-pill">BASE</span>}
+          {isReferenced && <span className="sql-table-ref-pill">REF</span>}
           <span className="sql-table-layer">{dataset.layer}</span>
+          {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </span>
       </button>
       {expanded && (

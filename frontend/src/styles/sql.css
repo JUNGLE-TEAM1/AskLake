@@ -188,9 +188,9 @@
 
 .sql-table-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 16px minmax(0, 1fr) minmax(0, auto);
   width: 100%;
-  min-height: 58px;
+  min-height: 46px;
   align-items: center;
   gap: 8px;
   border: 0;
@@ -217,15 +217,17 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 4px;
-  max-width: 88px;
+  max-width: 112px;
 }
 
 .sql-table-base-pill,
+.sql-table-ref-pill,
+.sql-table-rag-pill,
 .sql-table-layer {
   border-radius: 999px;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 900;
-  padding: 3px 7px;
+  padding: 2px 6px;
   text-transform: uppercase;
 }
 
@@ -234,22 +236,25 @@
   color: #1d4ed8;
 }
 
+.sql-table-ref-pill {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
 .sql-table-layer {
   background: #f1f5f9;
   color: #475569;
+}
+
+.sql-table-rag-pill {
+  background: #f5f3ff;
+  color: #6d28d9;
 }
 
 .sql-table-name strong {
   color: #0f172a;
   font-size: 12px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.sql-table-name small {
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 700;
   overflow-wrap: anywhere;
 }
 
