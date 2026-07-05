@@ -141,13 +141,14 @@ Dashboard runtime API:
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
 
-랜딩 페이지의 새 대시보드 생성은 `POST /api/dashboards`로 dashboard card를 `draft` 상태로 먼저 저장하고, 프론트는 응답받은 id로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제와 widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
+랜딩 페이지의 새 대시보드 생성은 `POST /api/dashboards`로 dashboard card를 `draft` 상태로 먼저 저장하고, 프론트는 응답받은 id로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. Draft editor는 DB-backed draft revision을 편집하고, page 추가/삭제, widget 생성/수정/삭제, widget layout 저장을 API로 반영한다. Published viewer는 published revision만 읽으며, draft 변경사항은 `POST /api/dashboards/{dashboardId}/publish` 이후 새 published revision으로 보인다.
 Draft editor에서 dashboard title은 `PATCH /api/dashboards/{dashboardId}`로 dashboard card payload에 저장하고, page tab title은 `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`로 현재 draft revision의 page row에 저장한다.
 Phase 06 runtime UX는 별도 share API 없이 프론트에서 공유 링크를 복사한다. Published revision이 있으면 `/dashboards/{dashboardId}`를, draft만 있으면 `/dashboards/{dashboardId}/edit`를 복사하며, publish 성공 후 목록 상태도 다시 갱신한다.
 Dashboard draft editor shell은 화면 높이 안에서 상단 바, 페이지 탭, 필터 행, 왼쪽 dataset sidebar, 오른쪽 inspector를 고정 흐름으로 유지하고, 위젯이 많아질 때 중앙 canvas 영역 안에서만 스크롤한다.
 Dataset 기반 위젯 생성 준비 단계에서는 draft editor가 transient `selectedDatasetId`를 소유하며, Gold dataset 목록은 `useDashboardDatasets` mock hook을 통해 공급한다. 이 hook은 이후 `GET /api/catalog/datasets` hydrate로 교체할 경계다.
 Dataset 기반 widget 생성 폼은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 5개 runtime type으로 고정한다. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`는 `datasetId`와 type별 `config`를 함께 전송하며, config 계약은 `MetricWidgetConfig`, `TableWidgetConfig`, `BarChartWidgetConfig`, `LineChartWidgetConfig`, `DonutChartWidgetConfig`를 기준으로 한다.
 Dashboard widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Draft runtime 조회는 이 `widget.data`를 그대로 반환하며, chart 계산/렌더링 레이어는 이미 내려온 `widget.data`를 소비하는 책임만 가진다.
+Runtime widget renderer는 `widget.data`를 그대로 그리지 않고, type별 `config`와 `aggregation`을 기준으로 표시용 값을 계산한다. `metric`은 단일 집계값, `table`은 컬럼/정렬, `bar_chart`/`line_chart`/`donut_chart`는 label key 기준 grouping과 `sum`/`avg`/`count`/`min`/`max` 집계를 프론트에서 처리한다.
 Draft grid는 위젯 카드 전체에서 drag를 시작할 수 있게 유지하되, no-reflow collision guard로 다른 위젯이 과하게 아래로 밀리는 layout을 막는다. 새 위젯은 현재 page layout에서 충돌하지 않는 첫 빈 위치에 배치하고, drag/resize stop 시 충돌 layout은 draft state와 `PATCH /api/dashboards/{dashboardId}/draft/layouts`에 저장하지 않고 되돌린다.
 Dashboard runtime 프론트 구조는 `DashboardPage.tsx`가 목록/생성/삭제/런타임 진입 같은 상위 흐름을 소유하고, `runtime/DashboardRuntimeView.tsx`가 runtime shell, page tab, dataset sidebar, canvas, inspector 조립을 담당한다. Dataset 기반 위젯 생성 API 흐름은 `runtime/useDraftWidgetCreator.ts`, draft widget layout 저장과 collision 실패 처리는 `runtime/useDraftWidgetLayouts.ts`가 담당한다.
 

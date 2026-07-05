@@ -33,6 +33,19 @@ export function deleteDraftPage(dashboardId: string, pageId: string) {
   );
 }
 
+export function deleteDraftWidget(dashboardId: string, widgetId: string) {
+  return apiClient.delete<{ deletedWidgetId: string; ok: true }>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/widgets/${encodeURIComponent(widgetId)}`,
+  );
+}
+
+export function updateDraftWidget(dashboardId: string, widgetId: string, input: UpdateDraftWidgetInput) {
+  return apiClient.patch<{ id: string }>(
+    `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/widgets/${encodeURIComponent(widgetId)}`,
+    input,
+  );
+}
+
 export function updateDraftPageTitle(dashboardId: string, pageId: string, input: { title: string }) {
   return apiClient.patch<{ id: string; orderIndex: number; title: string }>(
     `/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}`,
@@ -64,4 +77,11 @@ export type CreateDraftWidgetInput = {
   layout: DashboardWidgetLayout;
   title?: string | null;
   type: DashboardRuntimeWidgetType;
+};
+
+export type UpdateDraftWidgetInput = {
+  config?: Record<string, unknown>;
+  datasetId?: string | null;
+  title?: string | null;
+  type?: DashboardRuntimeWidgetType;
 };
