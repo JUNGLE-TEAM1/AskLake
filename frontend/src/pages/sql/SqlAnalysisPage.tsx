@@ -27,6 +27,16 @@ type AutocompleteContext = {
   key: string;
 };
 
+type SqlPreflightMessage = {
+  tone: "success" | "warning" | "error";
+  text: string;
+};
+
+type SqlPreflightResult = {
+  canExecute: boolean;
+  messages: SqlPreflightMessage[];
+};
+
 export function SqlAnalysisPage({
   dataset,
   datasets,
@@ -55,6 +65,7 @@ export function SqlAnalysisPage({
   const [query, setQuery] = useState(defaultQuery);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -129,11 +140,13 @@ export function SqlAnalysisPage({
     setExecuted(false);
     setResultDraft(null);
     setExecutionMs(null);
+    setPreflightResult(null);
     onResultChange(null);
   };
 
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
+    setPreflightResult(null);
     resetResultState();
   };
 
@@ -189,6 +202,13 @@ export function SqlAnalysisPage({
   };
 
   const executeQuery = async () => {
+    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
+    const preflightResult = runSqlPreflight(query, baseDataset, referenceDatasets);
+    setPreflightResult(preflightResult);
+    if (!preflightResult.canExecute) {
+      onAction("analysis.query.preflight_failed", queryContextPath(), baseDataset.id, "failed");
+      return;
+    }
     const startedAt = performance.now();
     setQueryPending(true);
     try {
@@ -199,6 +219,10 @@ export function SqlAnalysisPage({
       onResultChange(resultDraft);
       onAction("analysis.query.executed", queryContextPath(), baseDataset.id);
     } catch {
+      setPreflightResult({
+        canExecute: false,
+        messages: [{ tone: "error", text: "SQL 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+      });
       onAction("analysis.query.failed", queryContextPath(), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
@@ -453,6 +477,16 @@ export function SqlAnalysisPage({
               </div>
             </div>
           </div>
+          {preflightResult && (
+            <div className={preflightResult.canExecute ? "sql-preflight-panel" : "sql-preflight-panel error"}>
+              <span>실행 전 점검</span>
+              <ul>
+                {preflightResult.messages.map((message, index) => (
+                  <li className={message.tone} key={`${message.tone}-${index}`}>{message.text}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="sql-editor-footer">
             <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
@@ -519,6 +553,89 @@ function buildDefaultQuery(dataset: CatalogDataset) {
   return `SELECT ${columns}
 FROM ${dataset.name}
 LIMIT 100;`;
+}
+
+function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[]): SqlPreflightResult {
+  const normalizedQuery = stripSqlComments(query).trim();
+  const messages: SqlPreflightMessage[] = [];
+  if (!normalizedQuery) {
+    return {
+      canExecute: false,
+      messages: [{ tone: "error", text: "실행할 SQL을 입력해 주세요." }],
+    };
+  }
+
+  if (!/^(select|with)\b/i.test(normalizedQuery)) {
+    return {
+      canExecute: false,
+      messages: [{ tone: "error", text: "읽기 전용 SQL만 실행할 수 있습니다. SELECT 또는 WITH로 시작해야 합니다." }],
+    };
+  }
+
+  const mutationKeyword = normalizedQuery.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
+  if (mutationKeyword) {
+    return {
+      canExecute: false,
+      messages: [{ tone: "error", text: `${mutationKeyword.toUpperCase()} 문은 분석 화면에서 실행할 수 없습니다.` }],
+    };
+  }
+
+  const allowedTableNames = new Set([baseDataset.name, ...referenceDatasets.map((item) => item.name)].map(normalizeSqlIdentifier));
+  const cteNames = extractCteNames(normalizedQuery);
+  const referencedTableNames = extractReferencedTableNames(normalizedQuery);
+  const unknownTableNames = referencedTableNames.filter((name) => {
+    const normalizedName = normalizeSqlIdentifier(name);
+    return !allowedTableNames.has(normalizedName) && !cteNames.has(normalizedName);
+  });
+
+  if (unknownTableNames.length > 0) {
+    return {
+      canExecute: false,
+      messages: [{ tone: "error", text: `Query context에 없는 테이블이 있습니다: ${unknownTableNames.join(", ")}` }],
+    };
+  }
+
+  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 실행합니다.` });
+  if (!/\blimit\b/i.test(normalizedQuery)) {
+    messages.push({ tone: "warning", text: "LIMIT 없이 실행됩니다. 결과가 많아질 수 있습니다." });
+  }
+  if (referencedTableNames.length === 0) {
+    messages.push({ tone: "warning", text: "FROM/JOIN 테이블이 없습니다. 상수 조회 또는 CTE-only 쿼리인지 확인해 주세요." });
+  }
+
+  return { canExecute: true, messages };
+}
+
+function stripSqlComments(query: string) {
+  return query
+    .replace(/--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function normalizeSqlIdentifier(identifier: string) {
+  return identifier.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
+}
+
+function extractCteNames(query: string) {
+  const cteNames = new Set<string>();
+  const withMatch = query.match(/^\s*with\s+([\s\S]+?)\bselect\b/i);
+  if (!withMatch) return cteNames;
+  const ctePattern = /(?:^|,)\s*([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)\s+as\s*\(/gi;
+  let match: RegExpExecArray | null;
+  while ((match = ctePattern.exec(withMatch[1])) !== null) {
+    cteNames.add(normalizeSqlIdentifier(match[1]));
+  }
+  return cteNames;
+}
+
+function extractReferencedTableNames(query: string) {
+  const tableNames = new Set<string>();
+  const tablePattern = /\b(?:from|join)\s+([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(query)) !== null) {
+    tableNames.add(normalizeSqlIdentifier(match[1]));
+  }
+  return Array.from(tableNames);
 }
 
 const SQL_AUTOCOMPLETE_KEYWORDS = [
