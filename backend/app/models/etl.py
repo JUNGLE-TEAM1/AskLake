@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Float, ForeignKey, String
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -18,9 +18,13 @@ class ETLJobModel(TimestampMixin, Base):
     source_config: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    schema_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     target_format: Mapped[str] = mapped_column(String(120), nullable=False)
     target_layer: Mapped[str] = mapped_column(String(32), nullable=False)
     target_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    rag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     transform_output_columns: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     transform_steps: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     quality_invalid_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)

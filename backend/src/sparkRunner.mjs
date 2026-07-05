@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,15 +82,17 @@ export function runSparkPipeline(job, command, runId) {
     "/work/scripts/spark_job_run.py",
   ];
 
-  const result = spawnSync("docker", dockerArgs, {
-    encoding: "utf8",
-    maxBuffer: 128 * 1024 * 1024,
-  });
-  const report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
-  if (result.status === 0 && report.status === "success") {
+  let result = runSparkSubmitContainer(dockerArgs);
+  let report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
+  if (report.status !== "success" && shouldRetryDockerWait(result)) {
+    rmSync(reportPath, { force: true });
+    result = runSparkSubmitContainer(dockerArgs);
+    report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
+  }
+  if (report.status === "success") {
     copySparkOutputToHost(output);
   }
-  if (result.status !== 0 || report.status !== "success") {
+  if (report.status !== "success") {
     return {
       ...report,
       error: report.error || result.stderr || result.stdout || "Spark job failed.",
@@ -107,6 +109,18 @@ export function runSparkPipeline(job, command, runId) {
     stderr: tail(result.stderr),
     stdout: tail(result.stdout),
   };
+}
+
+function runSparkSubmitContainer(dockerArgs) {
+  return spawnSync("docker", dockerArgs, {
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+  });
+}
+
+function shouldRetryDockerWait(result) {
+  const text = `${result.stderr || ""}\n${result.stdout || ""}`;
+  return result.status !== 0 && /error waiting for container: unexpected EOF/i.test(text);
 }
 
 function ensureSparkServer() {

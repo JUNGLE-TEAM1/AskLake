@@ -1,28 +1,32 @@
 from datetime import UTC, datetime
 import hashlib
+import json
+from pathlib import Path
 import re
+import subprocess
 from typing import Any
 
 from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
-from app.models import ETLJobModel, ETLRunModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
+    CatalogDataset,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
     JobDagStep,
     JobRowData,
-    SchemaColumnDraft,
     SchemaDraft,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
-    SourceDraft,
-    DraftPipelinePatch,
 )
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+SCRIPTS_DIR = BACKEND_DIR / "scripts"
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
@@ -55,8 +59,12 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         source_config=tuple_rows_to_lists(request.source_config),
         source_label=request.source_label,
         source_type=request.source_type,
+        schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
+        schema_fingerprint=request.schema_fingerprint,
+        schema_sample_rows=request.schema_sample_rows,
         target_format=request.target_format,
         target_layer=request.target_layer,
+        rag=request.rag,
         transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
         transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
         quality_invalid_rows=request.quality_invalid_rows,
@@ -95,6 +103,17 @@ def get_job(db: Session, job_id: str) -> JobRowData:
     return job
 
 
+def list_datasets(db: Session) -> list[CatalogDataset]:
+    return etl_repository.list_datasets(db)
+
+
+def get_dataset(db: Session, dataset_id: str) -> CatalogDataset:
+    dataset = etl_repository.get_dataset_schema_by_id(db, dataset_id)
+    if dataset is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    return dataset
+
+
 def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
@@ -119,19 +138,32 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     }
 
     run_schema = None
-    if command in {"run", "retry", "cancel"}:
+    dataset_schema = None
+    if command in {"run", "retry"}:
+        apply_job_command(job, command)
+        spark_result = run_spark_job(job, command, stable_id("run", f"{job.id}:{command}:{iso_now()}"))
+        run_model = run_from_spark_result(job, spark_result)
+        run_schema = etl_repository.create_run(db, run_model)
+        finalize_job_from_spark_result(job, command, spark_result)
+        job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), spark_result)
+        job.stats = stats_from_runs(job, etl_repository.list_runs_for_job(db, job.id))
+        if spark_result.get("status") == "success":
+            dataset_schema = etl_repository.save_dataset(db, dataset_from_spark_result(job, spark_result))
+    elif command == "cancel":
         run_model = run_from_command(job, command)
         run_schema = etl_repository.create_run(db, run_model)
-
-    apply_job_command(job, command)
-    if run_schema is not None:
+        apply_job_command(job, command)
         job.dag_steps = dag_steps_from_command(job, command, run_schema.model_dump(by_alias=True))
         job.stats = stats_from_runs(job, etl_repository.list_runs_for_job(db, job.id))
+    else:
+        apply_job_command(job, command)
+
     saved_job = etl_repository.save_job(db, job)
 
     return JobCommandResponse(
         action=action_by_command[command],
         api_path=f"/api/etl/jobs/{job_id}/commands",
+        dataset=dataset_schema,
         job=saved_job,
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
@@ -139,55 +171,17 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
-    source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
-    source_label = get_source_label(source_type, request.source_config)
-    source_id = stable_id("source", f"{source_type}:{source_label}")
-    run_id = stable_id("run", f"{source_id}:{iso_now()}")
-    sample = sample_for_source_type(source_type)
-    source_config = upsert_fields(request.source_config, [
-        ("__Source ID", source_id),
-        ("__Run ID", run_id),
-        ("__Source Unit Count", str(len(sample["assets"]) or len(sample["preview_rows"]) or 1)),
-        ("__Schema Sample Scope", "current"),
-        ("__Schema Sample Scope Label", "현재 샘플"),
-        ("__Sample Row Limit", str(len(sample["preview_rows"]))),
-    ])
-    schema_columns = [
-        SchemaColumnDraft(source_name=name, target_name=name, type=type_, nullable=False, confidence=90)
-        for name, type_ in sample["columns"]
-    ]
-    schema_fingerprint = "|".join(f"{column.target_name}:{column.type}:required" for column in schema_columns)
-
-    return SourceConnectorAnalysis(
-        action_path="/api/etl/sources/test",
-        assets=sample["assets"],
-        draft_patch=DraftPipelinePatch(
-            schema=SchemaDraft(
-                columns=schema_columns,
-                sample_rows=sample["preview_rows"],
-                schema_fingerprint=schema_fingerprint,
-                summary=f"{source_label} backend sample에서 {len(schema_columns)}개 필드 추론",
-            ),
-            source=SourceDraft(
-                connection_message=f"{source_type_label(source_type)} 연결 성공: {source_label}",
-                connection_status="success",
-                source_config=source_config,
-                source_label=source_label,
-                source_type=source_type,
-            ),
-        ),
-        logs=[
-            f"{source_type_label(source_type)} connector 요청 수신",
-            f"샘플 소스 식별: {source_label}",
-            f"스키마 필드 {len(schema_columns)}개, 샘플 행 {len(sample['preview_rows'])}개 반환",
-        ],
-        message=f"{source_type_label(source_type)} 연결 성공",
-        preview_columns=[name for name, _ in sample["columns"]],
-        preview_note="FastAPI 전환 단계의 backend connector sample입니다. 외부 source runtime은 후속 PR에서 확장합니다.",
-        preview_rows=sample["preview_rows"],
-        status="success",
-        test_items=[("Connector", source_type), ("Mode", "FastAPI"), ("Result", "Success")],
+    result = run_node_bridge(
+        "test-source-connector.mjs",
+        "ASKLAKE_SOURCE_CONNECTOR_RESULT",
+        {
+            "sourceConfig": request.source_config,
+            "sourceType": request.source_type,
+        },
+        error_marker="ASKLAKE_SOURCE_CONNECTOR_ERROR",
+        timeout_seconds=120,
     )
+    return SourceConnectorAnalysis.model_validate(result)
 
 
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
@@ -195,6 +189,230 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
+
+
+def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    return run_node_bridge(
+        "run-spark-job-once.mjs",
+        "ASKLAKE_SPARK_RUN_RESULT",
+        {
+            "command": command,
+            "job": job_payload_for_spark(job),
+            "runId": run_id,
+        },
+        error_marker="ASKLAKE_SPARK_RUN_ERROR",
+        timeout_seconds=900,
+    )
+
+
+def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "name": job.name,
+        "owner": job.owner,
+        "qualityInvalidRows": job.quality_invalid_rows or [],
+        "qualityRules": job.quality_rules or [],
+        "qualityScore": job.quality_score,
+        "qualityStatus": job.quality_status,
+        "rag": job.rag,
+        "schedule": job.schedule,
+        "schemaColumns": job.schema_columns or [],
+        "schemaSampleRows": job.schema_sample_rows or [],
+        "source": job.source,
+        "sourceConfig": job.source_config or [],
+        "sourceLabel": job.source_label,
+        "sourceType": job.source_type,
+        "stats": job.stats or {},
+        "target": job.target,
+        "targetFormat": job.target_format,
+        "targetLayer": job.target_layer,
+        "targetPath": job.target_path,
+        "transformOutputColumns": job.transform_output_columns or [],
+        "transformSteps": job.transform_steps or [],
+    }
+
+
+def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunModel:
+    success = result.get("status") == "success"
+    return ETLRunModel(
+        run_id=str(result.get("runId") or stable_id("run", f"{job.id}:spark:{iso_now()}")),
+        job_id=job.id,
+        status="success" if success else "failed",
+        started_at=str(result.get("startedAt") or iso_now()),
+        ended_at=str(result.get("endedAt") or iso_now()),
+        duration=format_duration_ms(result.get("durationMs")),
+        input_rows=format_rows(result.get("inputRows")),
+        output_rows=format_rows(result.get("outputRows")),
+        output_path=result.get("outputPath") or "-",
+        failed_stage="-" if success else str(result.get("failedStage") or "Spark ETL"),
+        error_summary="-" if success else str(result.get("error") or "Spark job failed."),
+    )
+
+
+def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
+    success = result.get("status") == "success"
+    job.last_run = str(result.get("endedAt") or iso_now())
+    job.last_state = (
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Spark Parquet 적재"
+        if success
+        else f"Spark 실행 실패 · {result.get('error') or '원인 확인 필요'}"
+    )
+    job.next_run = "-" if job.schedule in {"수동 실행", "manual"} else job.schedule
+    job.progress = None
+    job.status = "scheduled" if success else "failed"
+    job.target_path = result.get("outputPath") or job.target_path
+
+
+def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> CatalogDatasetModel:
+    now = str(result.get("endedAt") or iso_now())
+    schema = result.get("schema")
+    schema_json = [
+        [str(field.get("name") or "-"), str(field.get("type") or "string")]
+        for field in schema
+    ] if isinstance(schema, list) and schema else schema_from_job(job)
+    return CatalogDatasetModel(
+        id=f"ds_{normalize_column_name(job.target)}",
+        name=job.target,
+        description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        owner=job.owner,
+        layer=job.target_layer,
+        status="available",
+        freshness="latest",
+        source=job.name,
+        rows=format_rows(result.get("outputRows")),
+        size=str(result.get("outputPath") or "-"),
+        quality=quality_summary_from_spark_result(job, result),
+        last_updated=now,
+        next_refresh=job.schedule,
+        rag=job.rag,
+        tags=["#생성", f"#{str(job.target_layer).lower()}"],
+        schema_json=schema_json,
+        sample_rows=job.schema_sample_rows or [],
+        upstream=[job.source_label, job.name],
+        downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+    )
+
+
+def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    failed = result.get("status") != "success"
+    failed_stage = str(result.get("failedStage") or "").lower()
+    read_failed = failed and ("read" in failed_stage or "source" in failed_stage or not failed_stage)
+    transform_failed = failed and "transform" in failed_stage
+    quality_failed = failed and "quality" in failed_stage
+    transform_meta = f"{len(job.transform_steps or [])}개 규칙"
+    quality_meta = f"{len(job.quality_rules or [])}개 검사"
+    source_path = str(result.get("sourcePath") or job.source)
+    output_path = str(result.get("outputPath") or run.get("outputPath") or "-")
+    spark_logs = compact_spark_logs(result)
+    quality_result = result.get("quality") if isinstance(result.get("quality"), dict) else {}
+    quality_summary = str(quality_result.get("summary") or "-")
+
+    return [
+        dag_step("source", "1. 소스 연결", job.source, "success", [
+            ["소스", job.source],
+            ["소스 경로", source_path],
+        ], [f"{job.source_type} 커넥터 설정 확인 완료."]),
+        dag_step("schema", "2. 스키마 확인", job.stats.get("schemaColumns", "-"), "success", [
+            ["스키마", job.stats.get("schemaColumns", "-")],
+            ["샘플 범위", job.stats.get("sampleScope", "-")],
+        ], ["생성 시 확정된 스키마를 Spark 실행 계약에 사용했습니다."]),
+        dag_step("read", "3. Spark 소스 읽기", run.get("inputRows", "0"), "failed" if read_failed else "success", [
+            ["입력 행", run.get("inputRows", "0")],
+            ["Spark source", source_path],
+        ], [f"Spark 소스 읽기 실패: {run.get('errorSummary')}" if read_failed else f"Spark가 {run.get('inputRows', '0')}을 읽었습니다.", *spark_logs]),
+        dag_step("transform", "4. 처리 규칙 적용", transform_meta, "failed" if transform_failed else "blocked" if read_failed else "success", [
+            ["처리 규칙", transform_meta],
+        ], [f"처리 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "소스 읽기 실패로 처리 규칙 적용이 중단되었습니다." if read_failed else "처리 규칙 적용 완료."]),
+        dag_step("quality", "5. 품질 검증", quality_meta, "failed" if quality_failed else "blocked" if read_failed or transform_failed else "success", [
+            ["품질 검사", quality_meta],
+            ["품질 결과", quality_summary],
+        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 실행되지 않았습니다." if read_failed or transform_failed else quality_summary if quality_summary != "-" else "품질 검증 완료."]),
+        dag_step("write", "6. Parquet 적재", output_path, "blocked" if failed else "success", [
+            ["출력 경로", output_path],
+            ["출력 행", run.get("outputRows", "0")],
+        ], ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다." if failed else f"Parquet 출력 완료: {output_path}"]),
+        dag_step("catalog", "7. 카탈로그 데이터셋 갱신", job.target, "blocked" if failed else "success", [
+            ["데이터셋", job.target],
+            ["레이어", job.target_layer],
+        ], ["실행 실패로 카탈로그 데이터셋을 갱신하지 않았습니다." if failed else "실행 성공 후 카탈로그 데이터셋을 갱신했습니다."]),
+    ]
+
+
+def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[str]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "details": details or [],
+        "id": id_,
+        "logs": [str(line) for line in (logs or []) if line],
+        "meta": str(meta or "-"),
+        "status": status_value,
+        "title": title,
+    }
+
+
+def compact_spark_logs(result: dict[str, Any]) -> list[str]:
+    lines = "\n".join(str(result.get(key) or "") for key in ["error", "stderr", "stdout"]).splitlines()
+    return [line for line in lines if line][-24:]
+
+
+def schema_from_job(job: ETLJobModel) -> list[list[str]]:
+    return [
+        [str(column.get("targetName") or column.get("sourceName") or f"column_{index + 1}"), str(column.get("type") or "string")]
+        for index, column in enumerate(job.schema_columns or [])
+    ]
+
+
+def quality_summary_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> str:
+    quality = result.get("quality") if isinstance(result.get("quality"), dict) else None
+    if quality:
+        if quality.get("summary"):
+            return str(quality["summary"])
+        if quality.get("score") is not None:
+            return f"품질 점수 {quality.get('score')}% · 상태 {quality_status_label(str(quality.get('status') or job.quality_status))}"
+    return f"품질 점수 {job.quality_score if job.quality_score is not None else '-'}% · 상태 {quality_status_label(job.quality_status)}"
+
+
+def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, Any], *, error_marker: str, timeout_seconds: int) -> dict[str, Any]:
+    script_path = SCRIPTS_DIR / script_name
+    result = subprocess.run(
+        ["node", str(script_path)],
+        cwd=str(BACKEND_DIR),
+        input=json.dumps(payload, ensure_ascii=False),
+        text=True,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout_seconds,
+    )
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if result.returncode != 0:
+        error_payload = marker_payload(stdout, error_marker) or {}
+        raise ApiError(
+            error_payload.get("code") or "BACKEND_BRIDGE_FAILED",
+            error_payload.get("message") or (stderr.strip() or f"{script_name} failed."),
+            int(error_payload.get("status") or status.HTTP_502_BAD_GATEWAY),
+            {"stderr": stderr[-4000:], "stdout": stdout[-4000:]},
+        )
+    payload_result = marker_payload(stdout, success_marker)
+    if payload_result is None:
+        raise ApiError(
+            "BACKEND_BRIDGE_BAD_RESPONSE",
+            f"{script_name} did not return {success_marker}.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"stderr": stderr[-4000:], "stdout": stdout[-4000:]},
+        )
+    if isinstance(payload_result, dict):
+        payload_result.setdefault("stdout", stdout)
+        payload_result.setdefault("stderr", stderr)
+    return payload_result
+
+
+def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
+    prefix = f"{marker}="
+    for line in reversed(str(output or "").splitlines()):
+        if line.startswith(prefix):
+            return json.loads(line[len(prefix):])
+    return None
 
 
 def validate_create_request(request: CreatePipelineRequest) -> None:
@@ -413,75 +631,11 @@ def quality_status_label(status_value: str | None) -> str:
     return {"pass": "통과", "warn": "주의", "fail": "실패"}.get(str(status_value or "checked").lower(), "확인됨")
 
 
-def sample_for_source_type(source_type: str) -> dict[str, Any]:
-    samples = {
-        "PostgreSQL": {
-            "assets": [("commerce.orders", "public", "sampled"), ("commerce.customers", "public", "detected")],
-            "columns": [("order_id", "string"), ("customer_id", "string"), ("order_date", "timestamp"), ("total_amount", "decimal"), ("status", "string")],
-            "preview_rows": [["ORD-1001", "CUS-204", "2026-07-02", "128000", "paid"], ["ORD-1002", "CUS-118", "2026-07-02", "56000", "shipped"]],
-        },
-        "MongoDB": {
-            "assets": [("events", "42,000 documents", "sampled"), ("profiles", "8,400 documents", "detected")],
-            "columns": [("_id", "string"), ("user_id", "string"), ("event_name", "string"), ("event_time", "timestamp"), ("payload", "JSON")],
-            "preview_rows": [["evt_001", "u_001", "page_view", "2026-07-04T10:00:00Z", "{\"page\":\"/pricing\"}"], ["evt_002", "u_002", "purchase", "2026-07-04T10:03:00Z", "{\"amount\":42000}"]],
-        },
-        "REST API": {
-            "assets": [("REST endpoint", "246 bytes", "HTTP 200")],
-            "columns": [("user_id", "string"), ("email", "string"), ("date", "date"), ("status", "string"), ("amount", "decimal")],
-            "preview_rows": [["u_001", "demo1@example.com", "2026-07-04", "active", "42.7"], ["u_002", "demo2@example.com", "2026-07-04", "active", "19.25"]],
-        },
-        "Data Lake": {
-            "assets": [("nyc_taxi/yellow_parquet/part-0001.parquet", "128 MB", "listed"), ("nyc_taxi/yellow_parquet/part-0002.parquet", "126 MB", "listed")],
-            "columns": [("pickup_at", "timestamp"), ("dropoff_at", "timestamp"), ("passenger_count", "integer"), ("fare_amount", "decimal"), ("payment_type", "string")],
-            "preview_rows": [["2026-07-04 09:12:00", "2026-07-04 09:31:00", "2", "18.4", "card"], ["2026-07-04 09:20:00", "2026-07-04 09:44:00", "1", "24.8", "cash"]],
-        },
-        "Stream / Kafka": {
-            "assets": [("asklake-source-events", "3 partitions", "sampled"), ("consumer-group", "asklake-etl-consumer-01", "ready")],
-            "columns": [("event_id", "string"), ("user_id", "string"), ("event_time", "timestamp"), ("page_url", "string"), ("raw_payload", "JSON")],
-            "preview_rows": [["EVT-881", "CUS-204", "2026-07-04T10:21:00Z", "/pricing", "{\"action\":\"click\"}"], ["EVT-882", "CUS-118", "2026-07-04T10:22:00Z", "/checkout", "{\"action\":\"view\"}"]],
-        },
-    }
-    return samples.get(source_type, {
-        "assets": [("nyc_taxi/csv/yellow_tripdata_sample.csv", "24 MB", "listed"), ("nyc_taxi/csv/yellow_tripdata_02.csv", "27 MB", "listed")],
-        "columns": [("trip_id", "string"), ("pickup_at", "timestamp"), ("dropoff_at", "timestamp"), ("fare_amount", "decimal"), ("payment_type", "string")],
-        "preview_rows": [["trip_001", "2026-07-04 09:12:00", "2026-07-04 09:31:00", "18.4", "card"], ["trip_002", "2026-07-04 09:20:00", "2026-07-04 09:44:00", "24.8", "cash"]],
-    })
-
-
-def get_source_label(source_type: str, fields: list[tuple[str, str]]) -> str:
-    labels = {
-        "Data Lake": ["Path"],
-        "File / S3": ["Bucket / Stage Name", "Path / Prefix"],
-        "MongoDB": ["Database Name", "Collection"],
-        "PostgreSQL": ["Endpoint / Host", "Database Name", "DATASET OR TABLE SELECTOR"],
-        "REST API": ["Endpoint URL"],
-        "Stream / Kafka": ["TOPIC / QUEUE NAME", "Broker / Endpoint"],
-    }.get(source_type, [])
-    values = [field_value(fields, label) for label in labels]
-    return " / ".join(value for value in values if value) or source_type
-
-
-def upsert_fields(fields: list[tuple[str, str]], patches: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    next_fields = list(fields)
-    for label, value in patches:
-        for index, (field_label, _) in enumerate(next_fields):
-            if field_label == label:
-                next_fields[index] = (label, value)
-                break
-        else:
-            next_fields.append((label, value))
-    return next_fields
-
-
 def field_value(fields: list[tuple[str, str]], label: str) -> str:
     for field_label, value in fields:
         if field_label == label:
             return str(value).strip()
     return ""
-
-
-def source_type_label(source_type: str) -> str:
-    return {"Stream / Kafka": "Kafka"}.get(source_type, source_type)
 
 
 def source_unit_label(source_type: str) -> str:
@@ -529,6 +683,28 @@ def format_bytes(value: int) -> str:
         size /= 1024
         unit += 1
     return f"{size:.1f} {units[unit]}" if unit > 0 else f"{int(size)} {units[unit]}"
+
+
+def format_rows(value: Any) -> str:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return str(value or "0")
+    return f"{parsed:,}\ud589"
+
+
+def format_duration_ms(value: Any) -> str:
+    try:
+        ms = int(float(value))
+    except (TypeError, ValueError):
+        return "-"
+    if ms < 1000:
+        return f"{ms}ms"
+    seconds = round(ms / 1000)
+    if seconds < 60:
+        return f"{seconds}\ucd08"
+    minutes, rest = divmod(seconds, 60)
+    return f"{minutes}\ubd84 {rest}\ucd08"
 
 
 def iso_now() -> str:

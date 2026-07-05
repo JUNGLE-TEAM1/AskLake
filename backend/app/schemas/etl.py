@@ -187,6 +187,7 @@ class JobCommandRequest(CamelModel):
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str
+    dataset: CatalogDataset | None = None
     job: JobRowData | None = None
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None

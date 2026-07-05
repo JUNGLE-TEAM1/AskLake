@@ -61,6 +61,14 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
     return job_to_schema(db, job), dataset_to_schema(dataset)
 
 
+def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
+    ensure_schema(db)
+    dataset = db.merge(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return dataset_to_schema(dataset)
+
+
 def create_job(db: Session, job: ETLJobModel) -> JobRowData:
     ensure_schema(db)
     db.add(job)

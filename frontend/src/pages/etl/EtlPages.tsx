@@ -190,7 +190,7 @@ function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, resp
   return [
     ...responseFields.map(([label, value]) => {
       const currentValue = currentByLabel.get(label);
-      if (isCredentialSourceField(label) && !String(value ?? "").trim() && currentValue) {
+      if (isCredentialSourceField(label) && shouldPreserveCredentialValue(value) && currentValue) {
         return [label, currentValue] as [string, string];
       }
       return [label, value] as [string, string];
@@ -359,6 +359,11 @@ function isInternalSourceField(label: string) {
 
 function isCredentialSourceField(label: string) {
   return /(access key|secret key|password|auth token|token|private key)/i.test(label);
+}
+
+function shouldPreserveCredentialValue(value: string) {
+  const normalized = String(value ?? "").trim();
+  return !normalized || /^[*•]+$/.test(normalized) || normalized.toLowerCase() === "redacted";
 }
 
 function publicSourceLog(value: string) {

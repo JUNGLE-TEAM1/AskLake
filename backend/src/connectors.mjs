@@ -1,4 +1,5 @@
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
+import { spawnSync } from "node:child_process";
 import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
 const textFileExtensions = [".csv", ".json", ".jsonl", ".txt", ".tsv"];
@@ -26,23 +27,29 @@ export async function testObjectStorageSource(fields) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
   }
 
-  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
-  const objects = await listObjects(client, bucket, prefix);
-  const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
   const samplePolicy = samplePolicyForFields(fields, "object");
-  return buildObjectStorageAnalysis({
-    bucket,
-    client,
-    endpoint,
-    fields,
-    forcePathStyle,
-    objects,
-    prefix,
-    region,
-    samplePolicy,
-    sampleObject,
-    sourceType: "File / S3",
-  });
+  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  try {
+    const objects = await listObjects(client, bucket, prefix);
+    const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
+    return buildObjectStorageAnalysis({
+      bucket,
+      client,
+      endpoint,
+      fields,
+      forcePathStyle,
+      objects,
+      prefix,
+      region,
+      samplePolicy,
+      sampleObject,
+      sourceType: "File / S3",
+    });
+  } catch (error) {
+    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey });
+    if (fallback) return fallback;
+    throw error;
+  }
 }
 
 export async function testDataLakeSource(fields) {
@@ -61,8 +68,14 @@ export async function testDataLakeSource(fields) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "로컬 데이터 레이크 경로에는 MinIO 액세스 키와 시크릿 키가 필요합니다.", 400);
   }
 
-  const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
-  const objects = await listObjects(client, parsed.bucket, parsed.prefix);
+  let objects;
+  try {
+    const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+    objects = await listObjects(client, parsed.bucket, parsed.prefix);
+  } catch (error) {
+    objects = listObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
+    if (!objects) throw error;
+  }
   const parquetObjects = objects.filter((item) => String(item.Key ?? "").toLowerCase().endsWith(".parquet"));
   const sample = parquetObjects[0] ?? objects[0];
   const id = sourceId("source", `${path}:${objects.length}`);
@@ -449,6 +462,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ["Use Path Style", String(forcePathStyle)],
     ["__Schema Sample Scope", samplePolicy.scope],
     ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Sample Row Limit", String(samplePolicy.rowLimit)],
     ["__Sample Requested Bytes", String(requestedBytes)],
     ["__Source ID", id],
     ["__Run ID", runId],
@@ -491,6 +505,97 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
   };
 }
 
+function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey }) {
+  const objects = listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
+  if (!objects) return null;
+
+  const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
+  let parsedSample = { columns: [], format: "unknown", rows: [] };
+  let sampleKey = "";
+  let requestedBytes = 0;
+  const logs = [
+    `MinIO 컨테이너에서 실제 오브젝트 목록 조회: bucket=${bucket}, prefix=${prefix || "(root)"}`,
+    `감지된 오브젝트: ${objects.length}개`,
+  ];
+
+  if (sampleObject?.Key && hasTextExtension(sampleObject.Key)) {
+    sampleKey = sampleObject.Key;
+    requestedBytes = sampleObjectRangeBytes(samplePolicy, Number(sampleObject.Size ?? 0));
+    const text = readObjectSampleViaMinioContainer({
+      accessKeyId,
+      bucket,
+      bytes: requestedBytes,
+      key: sampleObject.Key,
+      secretAccessKey,
+    });
+    parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
+    logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
+    logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
+    logs.push(`프로파일 스키마 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
+  } else if (sampleObject?.Key) {
+    sampleKey = sampleObject.Key;
+    logs.push(`샘플 오브젝트가 텍스트 파일이 아닙니다: ${sampleObject.Key}`);
+  } else {
+    logs.push("버킷 접근은 성공했지만 prefix와 일치하는 오브젝트가 없습니다.");
+  }
+
+  const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
+  const runId = sourceId("run", `${id}:${Date.now()}`);
+  const schemaColumns = inferSchemaColumns(parsedSample);
+  const summary = schemaColumns.length
+    ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
+    : `MinIO/S3 연결 성공 · 스키마 추론 대기(오브젝트 ${objects.length}개)`;
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Endpoint URL", endpoint],
+    ["Bucket / Stage Name", bucket],
+    ["Path / Prefix", prefix],
+    ["Use Path Style", "true"],
+    ["__Schema Sample Scope", samplePolicy.scope],
+    ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Sample Row Limit", String(samplePolicy.rowLimit)],
+    ["__Sample Requested Bytes", String(requestedBytes)],
+    ["__Source ID", id],
+    ["__Run ID", runId],
+    ["__Source Unit Count", String(objects.length)],
+    ["__Sample Object", sampleKey],
+    ["__MinIO Runtime", "docker-container"],
+  ]);
+  const sourceLabel = `${bucket}${prefix ? `/${prefix}` : ""}`;
+
+  return {
+    actionPath: "/api/etl/sources/minio/test",
+    assets: objects.slice(0, 20).map((item, index) => [
+      item.Key ?? `object-${index + 1}`,
+      formatBytes(item.Size ?? 0),
+      item.LastModified ? item.LastModified.toISOString() : "listed",
+    ]),
+    draftPatch: {
+      schema: {
+        columns: schemaColumns,
+        sampleRows: parsedSample.rows,
+        schemaFingerprint: schemaFingerprint(schemaColumns),
+        summary,
+      },
+      source: {
+        connectionMessage: `MinIO/S3 연결 성공: ${sourceLabel} (오브젝트 ${objects.length}개)`,
+        connectionStatus: "success",
+        sourceConfig,
+        sourceLabel,
+        sourceType: "File / S3",
+      },
+    },
+    logs,
+    message: `MinIO/S3 연결 성공: 오브젝트 ${objects.length}개`,
+    previewColumns: parsedSample.columns.length ? parsedSample.columns : ["Object Key", "Size", "Last Modified"],
+    previewNote: sampleKey ? `${sampleKey}에서 가져온 제한 샘플` : `MinIO/S3 오브젝트 ${objects.length}개 목록 조회`,
+    previewRows: parsedSample.rows.length
+      ? parsedSample.rows
+      : objects.slice(0, 8).map((item) => [item.Key ?? "-", formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
+    status: "success",
+    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Objects", String(objects.length)]],
+  };
+}
+
 function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey }) {
   return new S3Client({
     credentials: { accessKeyId, secretAccessKey },
@@ -503,6 +608,69 @@ function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessK
 async function listObjects(client, bucket, prefix) {
   const result = await client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 50, Prefix: prefix }));
   return (result.Contents ?? []).filter((item) => item.Key);
+}
+
+function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
+  const target = `local/${bucket}/${prefix || ""}`;
+  const result = runMinioClientCommand({
+    accessKeyId,
+    command: `mc find --json ${shellQuote(target)} | head -50`,
+    endpoint,
+    secretAccessKey,
+  });
+  if (!result) return null;
+
+  const root = `local/${bucket}/`;
+  return result
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter((item) => item?.status === "success" && item.key && !String(item.key).endsWith("/"))
+    .map((item) => ({
+      Key: String(item.key).startsWith(root) ? String(item.key).slice(root.length) : String(item.key),
+      LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
+      Size: Number(item.size ?? 0),
+    }));
+}
+
+function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, secretAccessKey }) {
+  const byteLimit = Math.max(1, Math.trunc(Number(bytes) || 512 * 1024));
+  const target = `local/${bucket}/${key}`;
+  return runMinioClientCommand({
+    accessKeyId,
+    command: `mc cat ${shellQuote(target)} | head -c ${byteLimit}`,
+    secretAccessKey,
+  }) ?? "";
+}
+
+function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
+  if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
+  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
+  const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://127.0.0.1:9000";
+  const accessKey = accessKeyId || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
+  const secretKey = secretAccessKey || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
+  const script = [
+    `mc alias set local ${shellQuote(minioEndpoint)} ${shellQuote(accessKey)} ${shellQuote(secretKey)} >/dev/null`,
+    command,
+  ].join(" && ");
+  const result = spawnSync("docker", ["exec", "-i", container, "sh", "-lc", script], {
+    encoding: "utf8",
+    env: { ...process.env, MC_QUIET: "1", MC_DISABLE_PAGER: "1" },
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) return null;
+  return result.stdout ?? "";
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
 }
 
 function parseS3Path(path) {
