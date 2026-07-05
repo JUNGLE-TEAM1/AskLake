@@ -6,7 +6,7 @@ import {
   RotateCcw,
   Search,
 } from "lucide-react";
-import { executeQueryDraft } from "../../services/mockApi";
+import { executeQueryPreview } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
 
 type AutocompleteKind = "keyword" | "table" | "column";
@@ -150,7 +150,10 @@ export function SqlAnalysisPage({
     setAutocompleteIndex(0);
   }, [autocompleteCandidates.length, autocompleteContext.key]);
 
-  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
+  const buildPreviewDraft = (): Promise<SqlResultDraft> => executeQueryPreview(baseDataset, query, {
+    limit: PREVIEW_ROW_LIMIT,
+    validationKey: queryValidationKey,
+  });
 
   const resetResultState = () => {
     setExecuted(false);
@@ -243,7 +246,7 @@ export function SqlAnalysisPage({
     const startedAt = performance.now();
     setQueryPending(true);
     try {
-      const resultDraft = await buildResultDraft();
+      const resultDraft = await buildPreviewDraft();
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
@@ -544,7 +547,10 @@ export function SqlAnalysisPage({
           {resultDraft ? (
             <>
               <div className="sql-result-toolbar">
-                <span>Run ID {resultDraft.runId}</span>
+                <span>
+                  Run ID {resultDraft.runId}
+                  {resultDraft.previewLimit ? ` · Preview ${resultDraft.previewLimit} rows` : ""}
+                </span>
                 <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
               </div>
               <div className="sql-result-scroll">

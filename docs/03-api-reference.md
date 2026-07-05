@@ -76,7 +76,7 @@ Canonical status values:
 | 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
+| SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
@@ -143,6 +143,7 @@ type QueryRunResponse = SqlResultDraft;
 - `columns`와 `rows`가 Table Widget의 데이터가 된다.
 - `runId`는 Dashboard `sourceRunId`가 된다.
 - `datasetId`는 Dashboard `datasetId`와 같아야 한다.
+- `mode: "preview"`와 `previewLimit`이 있으면 전체 materialize가 아니라 SQL Preview 결과로 취급한다.
 
 ### Pair B -> Pair C: Lineage Context
 

@@ -281,6 +281,9 @@ type SqlResultDraft = {
   rows: string[][];
   rowCount: number;
   executedAt: string;
+  mode?: "preview" | "run";
+  previewLimit?: number;
+  validationKey?: string;
 };
 ```
 
@@ -492,14 +495,18 @@ Validation:
 
 프론트 함수:
 
-- `executeQueryDraft(dataset, query)`
+- `executeQueryPreview(dataset, query, { limit, validationKey })`
+- `executeQueryDraft(dataset, query)`는 기존 화면 연결을 위한 호환 wrapper로 유지
 
 Request:
 
 ```ts
 type ExecuteQueryRequest = {
   datasetId: string;
+  mode?: "preview" | "run";
+  limit?: number;
   query: string;
+  validationKey?: string;
 };
 ```
 
@@ -508,7 +515,10 @@ Request 예시:
 ```json
 {
   "datasetId": "ds_customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100"
+  "mode": "preview",
+  "limit": 100,
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
@@ -525,7 +535,9 @@ Response 예시:
   "runId": "sql_01J1Z8W2V7KX",
   "datasetId": "ds_customer_review_silver",
   "datasetName": "customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100",
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "mode": "preview",
+  "previewLimit": 100,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -533,13 +545,15 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
-  "executedAt": "2026-07-03T11:35:00.000Z"
+  "executedAt": "2026-07-03T11:35:00.000Z",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.

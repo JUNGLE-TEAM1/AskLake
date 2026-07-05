@@ -221,24 +221,44 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
   });
 }
 
-export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
+export type QueryPreviewOptions = {
+  limit: number;
+  validationKey: string;
+};
+
+export async function executeQueryPreview(dataset: CatalogDataset, query: string, options: QueryPreviewOptions): Promise<SqlResultDraft> {
   if (!apiConfig.useMock) {
-    return apiClient.post<SqlResultDraft>("/api/query/runs", { datasetId: dataset.id, query });
+    return apiClient.post<SqlResultDraft>("/api/query/runs", {
+      datasetId: dataset.id,
+      limit: options.limit,
+      mode: "preview",
+      query,
+      validationKey: options.validationKey,
+    });
   }
 
   const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
+  const rows = dataset.sampleRows
+    .slice(0, options.limit)
+    .map((row) => row.slice(0, Math.max(columns.length, 1)));
 
   return resolveMock({
     columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
     executedAt: new Date().toISOString(),
+    mode: "preview",
+    previewLimit: options.limit,
     query,
     rowCount: rows.length,
     rows,
-    runId: `sql_${Date.now()}`,
+    runId: `sql_preview_${Date.now()}`,
+    validationKey: options.validationKey,
   });
+}
+
+export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
+  return executeQueryPreview(dataset, query, { limit: 100, validationKey: `${dataset.id}:${query}` });
 }
 
 function buildFallbackLineageGraph(dataset: CatalogDataset): LineageGraph {
