@@ -28,8 +28,9 @@ import type {
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
-const derivedDatasetStorageKey = "asklake.derivedDatasets";
-const maxStoredDerivedDatasets = 30;
+const catalogDatasetStorageKey = "asklake.catalogDatasets";
+const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
+const maxStoredCatalogDatasets = 30;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
@@ -135,41 +136,52 @@ function isCatalogDataset(value: unknown): value is CatalogDataset {
     && Array.isArray(dataset.tags);
 }
 
-function loadStoredDerivedDatasets() {
-  if (!apiConfig.useMock || typeof window === "undefined") return [];
-
+function parseStoredCatalogDatasets(storageKey: string) {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(derivedDatasetStorageKey) ?? "[]");
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
     return Array.isArray(stored) ? stored.filter(isCatalogDataset).map(normalizeDatasetRow) : [];
   } catch {
     return [];
   }
 }
 
-function mergeCatalogDatasets(baseDatasets: CatalogDataset[], derivedDatasets: CatalogDataset[]) {
-  const uniqueDerivedDatasets = derivedDatasets.filter((dataset, index, items) => (
+function loadStoredCatalogDatasets() {
+  if (!apiConfig.useMock || typeof window === "undefined") return [];
+
+  return mergeStoredCatalogDatasets([
+    ...parseStoredCatalogDatasets(catalogDatasetStorageKey),
+    ...parseStoredCatalogDatasets(legacyDerivedDatasetStorageKey),
+  ]);
+}
+
+function mergeStoredCatalogDatasets(datasets: CatalogDataset[]) {
+  return datasets.filter((dataset, index, items) => (
     items.findIndex((item) => item.id === dataset.id) === index
   ));
-  const derivedDatasetIds = new Set(uniqueDerivedDatasets.map((dataset) => dataset.id));
+}
+
+function mergeCatalogDatasets(baseDatasets: CatalogDataset[], storedDatasets: CatalogDataset[]) {
+  const uniqueStoredDatasets = mergeStoredCatalogDatasets(storedDatasets);
+  const storedDatasetIds = new Set(uniqueStoredDatasets.map((dataset) => dataset.id));
 
   return [
-    ...uniqueDerivedDatasets,
-    ...baseDatasets.filter((dataset) => !derivedDatasetIds.has(dataset.id)),
+    ...uniqueStoredDatasets,
+    ...baseDatasets.filter((dataset) => !storedDatasetIds.has(dataset.id)),
   ].map(normalizeDatasetRow);
 }
 
-function saveStoredDerivedDataset(dataset: CatalogDataset) {
+function saveStoredCatalogDataset(dataset: CatalogDataset) {
   if (!apiConfig.useMock || typeof window === "undefined") return;
 
-  const previousDatasets = loadStoredDerivedDatasets();
+  const previousDatasets = loadStoredCatalogDatasets();
   const nextDatasets = [dataset, ...previousDatasets.filter((item) => item.id !== dataset.id)]
-    .slice(0, maxStoredDerivedDatasets);
+    .slice(0, maxStoredCatalogDatasets);
 
-  window.localStorage.setItem(derivedDatasetStorageKey, JSON.stringify(nextDatasets));
+  window.localStorage.setItem(catalogDatasetStorageKey, JSON.stringify(nextDatasets));
 }
 
 function getInitialDatasets() {
-  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredDerivedDatasets()) : [];
+  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
 }
 
 function getInitialJobs() {
@@ -263,6 +275,7 @@ export function useAskLakeData({
         : await createLivePipelineDraft(draftPipeline);
       const normalizedJob = normalizeJobRow(job);
       const normalizedDataset = normalizeDatasetRow(dataset);
+      saveStoredCatalogDataset(normalizedDataset);
       setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
       setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
       setSelectedJob(normalizedJob);
@@ -298,7 +311,7 @@ export function useAskLakeData({
       }
 
       const dataset = normalizeDatasetRow(await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult: currentSqlResult }));
-      saveStoredDerivedDataset(dataset);
+      saveStoredCatalogDataset(dataset);
       setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
       setSelectedDataset(dataset);
       writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);

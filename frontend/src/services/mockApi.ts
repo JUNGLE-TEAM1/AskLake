@@ -95,6 +95,7 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     tags: ["#customer", "#RAG", "#리뷰"],
     upstream: [draftPipeline.source.sourceLabel, job.name],
   };
+  dataset.lineageGraph = buildPipelineDatasetLineageGraph(draftPipeline, dataset);
 
   return resolveMock({ dataset, job });
 }
@@ -377,6 +378,44 @@ function buildDerivedDatasetLineageGraph(
     datasetId: derivedDataset.id,
     datasets: [...baseDatasets, derivedNode],
     edges: [...baseEdges, ...derivedEdges],
+  };
+}
+
+function buildPipelineDatasetLineageGraph(draftPipeline: DraftPipeline, targetDataset: CatalogDataset): LineageGraph {
+  const targetNode = buildLineageDatasetNode(targetDataset);
+  const sourceColumns = draftPipeline.schema.columns.length > 0
+    ? draftPipeline.schema.columns.map((column) => ({
+      id: normalizeLineageId(`${targetDataset.id}-source-${column.sourceName || column.targetName}`),
+      name: column.sourceName || column.targetName,
+      type: column.type,
+    }))
+    : targetNode.columns.map((column) => ({
+      ...column,
+      id: normalizeLineageId(`${targetDataset.id}-source-${column.name}`),
+    }));
+  const sourceNode: LineageGraphDataset = {
+    columns: sourceColumns,
+    engine: inferLineageEngine(draftPipeline.source.sourceType, "SOURCE"),
+    id: normalizeLineageId(`${targetDataset.id}-${draftPipeline.source.sourceLabel}`),
+    layer: "SOURCE",
+    name: draftPipeline.source.sourceLabel,
+  };
+  const edges = targetNode.columns.map((targetColumn, index) => {
+    const sourceColumn = sourceNode.columns.find((column) => column.name === targetColumn.name)
+      ?? sourceNode.columns[index % Math.max(sourceNode.columns.length, 1)]
+      ?? targetColumn;
+    return {
+      fromColumnId: sourceColumn.id,
+      fromDatasetId: sourceNode.id,
+      toColumnId: targetColumn.id,
+      toDatasetId: targetNode.id,
+    };
+  });
+
+  return {
+    datasetId: targetDataset.id,
+    datasets: [sourceNode, targetNode],
+    edges,
   };
 }
 
