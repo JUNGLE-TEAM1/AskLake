@@ -2,20 +2,19 @@
 
 이 문서는 AskLake API/interface 계약의 상위 진입점이다.
 상세 request/response shape는 기존 문서인 `docs/api-contract.md`를 기준으로 한다.
-백엔드 연결 순서와 mock 제거 계획은 `docs/backend-integration-readiness.md`를 기준으로 한다.
+백엔드 연결 범위와 남은 작업은 `docs/backend-integration-readiness.md`를 기준으로 한다.
 
 ## 1) 현재 상태
 
-- 현재 앱은 frontend-only baseline이다.
-- `frontend/src/services/mockApi.ts`가 mock/live 전환 지점이다.
-- `frontend/src/services/apiClient.ts`가 live API 호출 wrapper다.
-- `VITE_USE_MOCK_API=false`일 때 P0 API는 실제 backend로 호출된다.
+- 현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출한다.
+- `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
+- `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
+- ETL/Catalog 초기 hydrate 결과가 비어 있으면 UI도 빈 목록으로 시작한다.
 
 ## 2) 환경 변수
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
 ```
 
 ## 3) 공통 규칙
@@ -25,7 +24,7 @@ VITE_USE_MOCK_API=false
 - Response format: JSON
 - ID type: opaque string
 - Time format: ISO 8601 string
-- Status values: API, mock fixture, and frontend internal state use English canonical values. UI labels are translated in the frontend.
+- Status values: API and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
 
@@ -69,13 +68,13 @@ Canonical status values:
 
 | 화면 | 현재 데이터 | Future API |
 | --- | --- | --- |
-| 수집/처리 목록 | `etlJobs` mock | `GET /api/etl/jobs` |
+| 수집/처리 목록 | live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
-| 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
+| 카탈로그 | live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
-| SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
+| SQL 분석 | `executeQueryDraft` live API 호출 | `POST /api/query/runs` |
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
@@ -83,7 +82,7 @@ Canonical status values:
 
 ## 8) Pair Handoff Contracts
 
-Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
+Pair 간 전달 객체는 API field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.
 
 ### Pair A -> Pair B
@@ -94,6 +93,8 @@ type CreateJobResponse = {
   dataset: CatalogDataset;
 };
 ```
+
+Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다.
 
 필수 확인:
 
@@ -132,6 +133,25 @@ type JobCommandResponse = {
 - `job`이 있으면 프론트는 해당 응답을 기준으로 Job 상태를 갱신한다.
 - `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
 - `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
+
+프론트 Run 상태 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+필수 규칙:
+
+- `runsByJobId[job.id]`는 최신 Run을 앞에 둔다.
+- 같은 `run.runId`가 다시 들어오면 기존 Run을 교체한다.
+- 새 Run이 들어오면 `selectedRunIdByJobId[job.id]`를 그 `run.runId`로 갱신한다.
+- `dagSteps`는 별도 `runId` 필드를 요구하지 않고, 같은 응답의 `run.runId` 기준으로 `dagStepsByRunId`에 저장한다.
+- DAG 화면은 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
+- History는 `selectRunForJob(jobId, runId)` action으로만 선택 Run을 바꾼다.
+- 초기 hydrate 시 `job.runHistory`는 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`는 최신 Run의 `runId`에 묶는다.
+- PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않고 frontend temp id `client:<jobId>:<timestamp>`를 만든 뒤, 서버 응답의 `run.runId`로 교체한다.
 
 ### Pair B -> Pair C
 
@@ -179,7 +199,7 @@ type DataProcessingResult = {
   durationMs: number;
   status: "success" | "failed";
   retryCount: number;
-  scaleLabel: "500MB" | "1GB" | "10GB";
+  scaleLabel: "sample" | "500MB" | "1GB";
   caveat?: string;
 };
 ```

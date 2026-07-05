@@ -102,7 +102,6 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL 실행 -> Dashboard Widget 생성 -> Dashboard 저장/Publish` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
 이 마일스톤은 demo readiness 기준이며, 실제 backend/runtime 완성 범위를 과장하지 않는다.
 E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 따른다.
-대용량 처리 증거가 별도로 필요할 때는 `docs/10gb-fallback-verification.md`를 참조한다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |
 | --- | --- | --- |

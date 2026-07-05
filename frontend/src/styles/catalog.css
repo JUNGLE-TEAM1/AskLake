@@ -145,6 +145,35 @@
   padding: 16px 20px;
 }
 
+.catalog-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 220px;
+  align-content: center;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
+  padding: 28px;
+  text-align: center;
+}
+
+.catalog-empty-state svg {
+  color: #2563eb;
+}
+
+.catalog-empty-state strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.catalog-empty-state p {
+  max-width: 390px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .catalog-result-card {
   display: grid;
   gap: 10px;
@@ -341,6 +370,11 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   padding: 14px;
+}
+
+.catalog-lineage-teaser[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.62;
 }
 
 .catalog-lineage-teaser div {

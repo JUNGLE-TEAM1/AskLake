@@ -48,10 +48,11 @@ export function CatalogPage({
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
+  const hasDatasets = datasets.length > 0;
   const tags = ["#customer", "#sales", "#behavior", "#marketing", "#dw", "#growth", "#클릭", "#실시간", "#고객 주문", "#스트림", "#RAG", "#사용자 지표"];
 
   useEffect(() => {
-    const nextPreview = datasets.find((dataset) => dataset.id === selectedDataset.id) ?? datasets[0];
+    const nextPreview = datasets.find((dataset) => dataset.id === selectedDataset.id) ?? datasets[0] ?? selectedDataset;
     setPreviewDataset(nextPreview);
   }, [datasets, selectedDataset.id]);
 
@@ -91,6 +92,13 @@ export function CatalogPage({
           </div>
 
           <div className="catalog-result-list">
+            {!hasDatasets && (
+              <div className="catalog-empty-state">
+                <BookOpen size={22} />
+                <strong>등록된 데이터셋이 없습니다.</strong>
+                <p>수집/처리에서 파이프라인을 생성하면 응답의 Dataset이 카탈로그에 추가됩니다.</p>
+              </div>
+            )}
             {datasets.map((dataset) => (
               <button
                 className={dataset.id === previewDataset.id ? "catalog-result-card active" : "catalog-result-card"}
@@ -145,15 +153,17 @@ export function CatalogPage({
             </thead>
             <tbody>
               {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
+              {previewDataset.schema.length === 0 && <tr><td colSpan={2}>생성된 스키마가 없습니다.</td></tr>}
             </tbody>
           </table>
-          <button className="catalog-text-button" type="button" onClick={() => onDatasetOpen(previewDataset)}>전체 스키마 상세 보기</button>
+          <button className="catalog-text-button" type="button" disabled={!hasDatasets} onClick={() => onDatasetOpen(previewDataset)}>전체 스키마 상세 보기</button>
         </article>
 
-        <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
+        <article className="catalog-lineage-teaser" role="button" tabIndex={hasDatasets ? 0 : -1} onClick={() => {
+          if (!hasDatasets) return;
           onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
           onDatasetOpen(previewDataset);
-        }}>
+        }} aria-disabled={!hasDatasets}>
           <ExternalLink size={16} />
           <div>
             <strong>데이터 흐름도 확인</strong>
@@ -162,10 +172,10 @@ export function CatalogPage({
           <span>›</span>
         </article>
 
-        <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
+        <button className="primary-button catalog-wide-button" type="button" disabled={!hasDatasets} onClick={() => onOpenSql(previewDataset)}>
           <ExternalLink size={16} /> 쿼리 편집기에서 열기
         </button>
-        <button className="secondary-button catalog-wide-button" type="button" onClick={() => onAction("catalog.dataset.saved", `/api/catalog/datasets/${previewDataset.id}/saved`, previewDataset.id)}>내 저장소 보관</button>
+        <button className="secondary-button catalog-wide-button" type="button" disabled={!hasDatasets} onClick={() => onAction("catalog.dataset.saved", `/api/catalog/datasets/${previewDataset.id}/saved`, previewDataset.id)}>내 저장소 보관</button>
         <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
       </aside>
     </div>
