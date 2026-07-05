@@ -11,7 +11,12 @@ class CatalogRepository:
         self.db = db
 
     def list_dataset_models(self) -> list[CatalogDatasetModel]:
-        result = self.db.execute(select(CatalogDatasetModel).order_by(CatalogDatasetModel.id.asc()))
+        result = self.db.execute(
+            select(CatalogDatasetModel).order_by(
+                CatalogDatasetModel.updated_at.desc(),
+                CatalogDatasetModel.id.asc(),
+            )
+        )
         return list(result.scalars().all())
 
     def get_dataset_model(self, dataset_id: str) -> CatalogDatasetModel | None:
