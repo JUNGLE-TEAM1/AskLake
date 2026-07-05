@@ -106,7 +106,6 @@ export function SqlAnalysisPage({
     [baseDataset.id, query, referenceDatasetIds],
   );
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
-  const canRequestPreview = query.trim().length > 0 && !queryPending;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
@@ -174,6 +173,11 @@ export function SqlAnalysisPage({
   useEffect(() => {
     setAutocompleteIndex(0);
   }, [autocompleteCandidates.length, autocompleteContext.key]);
+
+  useEffect(() => {
+    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
+    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey));
+  }, [baseDataset, datasets, query, queryValidationKey, referenceDatasetIdSet]);
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => executeQueryPreview(baseDataset, query, {
     limit: PREVIEW_ROW_LIMIT,
@@ -261,8 +265,7 @@ export function SqlAnalysisPage({
   };
 
   const executePreview = async () => {
-    const currentPreflight = canRunPreview ? preflightResult : runPreflightCheck();
-    if (!currentPreflight.canExecute) {
+    if (!canRunPreview) {
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
       return;
     }
@@ -520,7 +523,7 @@ export function SqlAnalysisPage({
               <button className="secondary-button" type="button" onClick={runPreflightCheck} disabled={queryPending}>
                 <CheckCircle size={16} /> SQL 점검
               </button>
-              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRequestPreview}>
+              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
                 <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
               </button>
             </div>
@@ -589,7 +592,7 @@ export function SqlAnalysisPage({
               <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "Preview 실행 후 결과가 표시됩니다"}</h2>
             </div>
             <div className="sql-result-status">
-              <span>{queryPending ? "running" : executed ? "success" : "ready"}</span>
+              <span>{queryPending ? "running" : executed ? "테스트 완료" : "ready"}</span>
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
@@ -780,6 +783,9 @@ function maskSqlSingleQuotedLiterals(query: string) {
 
 function findSqlSyntaxIssue(query: string) {
   const sanitizedQuery = maskSqlStringLiterals(query);
+  if (/[^\x09\x0a\x0d\x20-\x7e]/.test(sanitizedQuery)) {
+    return "SQL 문장에 지원하지 않는 문자가 있습니다.";
+  }
   if (/;\s*\S/.test(sanitizedQuery)) {
     return "세미콜론 뒤에 추가 문자가 있습니다. SQL 문장을 정리해 주세요.";
   }
