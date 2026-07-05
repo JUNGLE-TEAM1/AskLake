@@ -162,6 +162,7 @@ function JobRow({
   onRun: () => void;
 }) {
   const actionLabel = job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
+  const lastRunLabel = formatRunTimestamp(job.lastRun);
   const tertiaryLabel = job.status === "running" ? "취소" : "수정";
   const statusClass = jobStatusMeta[job.status].className;
 
@@ -183,11 +184,11 @@ function JobRow({
         </div>
         {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
         <dl className="job-row-details">
-          <div><dt>소스</dt><dd>{job.source}</dd></div>
-          <div><dt>타깃</dt><dd>{job.target}</dd></div>
-          <div><dt>스케줄</dt><dd>{job.schedule}</dd></div>
-          <div><dt>마지막 실행</dt><dd>{job.lastRun}</dd><dd className={job.lastState === "실패" ? "danger-text" : ""}>{job.lastState}</dd></div>
-          <div><dt>다음 실행</dt><dd>{job.nextRun}</dd></div>
+          <div><dt>소스</dt><dd title={job.source}>{job.source}</dd></div>
+          <div><dt>타깃</dt><dd title={job.target}>{job.target}</dd></div>
+          <div><dt>스케줄</dt><dd title={job.schedule}>{job.schedule}</dd></div>
+          <div><dt>마지막 실행</dt><dd title={job.lastRun}>{lastRunLabel}</dd><dd className={job.lastState === "실패" ? "danger-text" : ""} title={job.lastState}>{job.lastState}</dd></div>
+          <div><dt>다음 실행</dt><dd title={job.nextRun}>{job.nextRun}</dd></div>
         </dl>
         <div className="job-row-actions">
           <button className="job-action-button" type="button" onClick={onDetail}>상세</button>
@@ -294,6 +295,14 @@ function DetailMetricCard({ label, tone, value }: { label: string; tone?: "dange
   );
 }
 
+function formatRunTimestamp(value: string) {
+  if (!value || value === "-") return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function JobDetailHeader({
   activeTab,
   job,
@@ -315,10 +324,10 @@ function JobDetailHeader({
 }) {
   return (
     <header className="job-detail-header">
-      <button className="job-detail-breadcrumb" type="button" onClick={onDetail}>수집/처리 &gt; 작업 목록 &gt; {job.name}</button>
+      <button className="job-detail-breadcrumb" title={`수집/처리 > 작업 목록 > ${job.name}`} type="button" onClick={onDetail}>수집/처리 &gt; 작업 목록 &gt; {job.name}</button>
       <div className="job-detail-title-row">
         <div>
-          <h1>{job.name}</h1>
+          <h1 title={job.name}>{job.name}</h1>
           <div className="job-detail-meta">
             <StatusPill status={job.status} />
             <span className="owner-chip">Owner: {job.owner}</span>
@@ -655,15 +664,15 @@ export function JobRunsPage({
                   onKeyDown={(event) => handleRunKeyDown(event, row)}
                   tabIndex={0}
                 >
-                  <td>{row.runId}</td>
+                  <td title={row.runId}>{row.runId}</td>
                   <td><RunStatusPill status={row.status} /></td>
-                  <td>{row.startedAt}</td>
-                  <td>{row.endedAt}</td>
+                  <td title={row.startedAt}>{formatRunTimestamp(row.startedAt)}</td>
+                  <td title={row.endedAt}>{formatRunTimestamp(row.endedAt)}</td>
                   <td>{row.duration}</td>
                   <td>{row.inputRows}</td>
                   <td>{row.outputRows}</td>
-                  <td>{row.failedStage}</td>
-                  <td>{row.errorSummary}</td>
+                  <td title={row.failedStage}>{row.failedStage}</td>
+                  <td title={row.errorSummary}>{row.errorSummary}</td>
                   <td>
                     <button className="runs-detail-button" type="button" onClick={(event) => openDagForRun(event, row)}>DAG 보기</button>
                   </td>
@@ -781,26 +790,13 @@ export function JobDagPage({
         </div>
       </div>
 
-      <div className="dag-graph">
-        <div className="dag-row dag-row-top">
-          {dagSteps.slice(0, 4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow top" />}
-            </Fragment>
-          ))}
-        </div>
-        <div className="dag-down-arrow">
-          <span>{currentRun.status === "failed" ? "실패 이후 중단" : "다음 단계"}</span>
-        </div>
-        <div className="dag-row dag-row-bottom">
-          {dagSteps.slice(4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow muted bottom" />}
-            </Fragment>
-          ))}
-        </div>
+      <div className="dag-linear-graph">
+        {dagSteps.map((step, index) => (
+          <Fragment key={step.id}>
+            <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} />
+            {index < dagSteps.length - 1 && <div className="dag-arrow" />}
+          </Fragment>
+        ))}
       </div>
     </div>
   );
@@ -810,8 +806,8 @@ export function JobDagPage({
       <JobDetailHeader activeTab="dag" job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <section className="dag-body-content">
-        <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-          {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
+        <button className="dag-run-select" title={`${currentRun.runId} · ${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`} type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
+          {currentRun.runId} · {formatRunTimestamp(currentRun.startedAt)} · {runStatusMeta[currentRun.status].label}
           <span>▾</span>
         </button>
 
@@ -898,7 +894,7 @@ function DagStepNode({
   const tone = dagStepStatusMeta[step.status].className;
 
   return (
-    <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} type="button" onClick={onSelect}>
+    <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} title={`${step.title} · ${step.meta}`} type="button" onClick={onSelect}>
       <span className="dag-step-dot" />
       <strong>{step.title}</strong>
       <span className="dag-step-meta">{step.meta}</span>

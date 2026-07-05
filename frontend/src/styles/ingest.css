@@ -238,12 +238,21 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+}
+
+.job-title-row > div:first-child {
+  min-width: 0;
 }
 
 .job-title-row strong {
+  display: block;
+  overflow: hidden;
   color: #171a1f;
   font-size: 15px;
   font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-title-row p {
@@ -298,11 +307,13 @@
 }
 
 .job-row-details dd {
+  overflow: hidden;
   color: #171a1f;
   font-size: 13px;
   line-height: 1.32;
   margin: 0;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .danger-text {
@@ -427,6 +438,8 @@
 }
 
 .job-detail-breadcrumb {
+  max-width: min(560px, 100%);
+  overflow: hidden;
   justify-self: start;
   border: 0;
   background: transparent;
@@ -434,6 +447,8 @@
   font-size: 12px;
   font-weight: 500;
   padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-detail-title-row {
@@ -443,10 +458,18 @@
   gap: 24px;
 }
 
+.job-detail-title-row > div:first-child {
+  min-width: 0;
+}
+
 .job-detail-title-row h1 {
+  max-width: min(600px, 100%);
+  overflow: hidden;
   color: #0f172a;
   font-size: 22px;
   line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-detail-meta {
@@ -459,6 +482,7 @@
 
 .job-detail-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
@@ -793,16 +817,13 @@
 
 .job-runs-page {
   gap: 24px;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: calc(100vh - 170px);
 }
 
 .runs-body-content {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
   gap: 24px;
   min-height: 0;
-  height: clamp(520px, calc(100vh - 300px), 760px);
 }
 
 .runs-filter-bar {
@@ -866,14 +887,13 @@
 }
 
 .runs-table-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
+  max-height: clamp(260px, 42vh, 460px);
   overflow: auto;
 }
 
 .runs-table {
   width: 100%;
-  min-width: 1060px;
+  min-width: 960px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -898,50 +918,55 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   padding: 0 12px;
+  text-overflow: ellipsis;
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .runs-table th:nth-child(1),
 .runs-table td:nth-child(1) {
-  width: 100px;
+  width: 112px;
 }
 
 .runs-table th:nth-child(2),
 .runs-table td:nth-child(2) {
-  width: 90px;
+  width: 72px;
 }
 
 .runs-table th:nth-child(3),
 .runs-table td:nth-child(3),
 .runs-table th:nth-child(4),
-.runs-table td:nth-child(4),
+.runs-table td:nth-child(4) {
+  width: 96px;
+}
+
 .runs-table th:nth-child(5),
 .runs-table td:nth-child(5) {
-  width: 78px;
+  width: 76px;
 }
 
 .runs-table th:nth-child(6),
 .runs-table td:nth-child(6),
 .runs-table th:nth-child(7),
 .runs-table td:nth-child(7) {
-  width: 100px;
+  width: 82px;
 }
 
 .runs-table th:nth-child(8),
 .runs-table td:nth-child(8) {
-  width: 145px;
+  width: 104px;
 }
 
 .runs-table th:nth-child(9),
 .runs-table td:nth-child(9) {
-  width: 150px;
+  width: 112px;
 }
 
 .runs-table th:nth-child(10),
 .runs-table td:nth-child(10) {
-  width: 90px;
+  width: 78px;
 }
 
 .run-row.failed {

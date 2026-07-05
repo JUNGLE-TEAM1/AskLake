@@ -62,6 +62,7 @@
 .dag-run-select {
   display: inline-flex;
   width: fit-content;
+  max-width: min(420px, 100%);
   min-width: 295px;
   height: 33px;
   align-items: center;
@@ -73,7 +74,10 @@
   color: #334155;
   font-size: 12px;
   font-weight: 800;
+  overflow: hidden;
   padding: 0 8px 0 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dag-run-select span {
@@ -89,13 +93,13 @@
 
 .dag-summary-card {
   display: grid;
-  min-height: 112px;
+  min-height: 96px;
   align-content: start;
-  gap: 10px;
+  gap: 8px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  padding: 20px;
+  padding: 16px;
 }
 
 .dag-summary-card span {
@@ -106,7 +110,7 @@
 
 .dag-summary-card strong {
   color: #0f172a;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 1.2;
   overflow-wrap: anywhere;
@@ -193,15 +197,15 @@
 }
 
 .dag-canvas-scroll {
-  overflow-x: auto;
+  overflow: auto;
   padding: 0 16px 16px;
 }
 
 .dag-canvas-expanded {
   position: relative;
-  width: 100%;
-  min-width: 0;
-  height: 390px;
+  width: max-content;
+  min-width: 100%;
+  min-height: 245px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #f8fafc;
@@ -267,58 +271,44 @@
   color: #64748b;
 }
 
-.dag-graph {
-  display: grid;
-  grid-template-rows: auto 54px auto;
-  height: 318px;
-  margin: 10px 30px 0;
-}
-
-.dag-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 48px minmax(0, 1fr) 48px minmax(0, 1fr) 48px minmax(0, 1fr);
+.dag-linear-graph {
+  display: flex;
   align-items: center;
-  column-gap: 12px;
-}
-
-.dag-row-top {
-  grid-row: 1;
-}
-
-.dag-row-bottom {
-  grid-row: 3;
+  gap: 4px;
+  min-width: 100%;
+  padding: 18px 16px 28px;
 }
 
 .dag-step-node {
   position: relative;
   z-index: 2;
   display: grid;
-  min-height: 98px;
+  min-height: 90px;
   grid-template-areas:
     "dot title"
     "meta meta"
     "footer footer";
   grid-template-columns: 8px minmax(0, 1fr);
   align-content: start;
-  gap: 9px 9px;
+  gap: 8px 9px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
   color: inherit;
-  padding: 16px;
+  padding: 12px;
   text-align: left;
 }
 
 .dag-step-node:not(.wide) {
-  width: 100%;
+  width: 155px;
 }
 
 .dag-step-node.wide {
-  width: 100%;
+  width: 165px;
 }
 
 .dag-step-node.paused {
-  min-height: 98px;
+  min-height: 90px;
 }
 
 .dag-step-node.failed {
@@ -347,20 +337,29 @@
 
 .dag-step-node strong {
   grid-area: title;
+  display: -webkit-box;
+  overflow: hidden;
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   word-break: keep-all;
 }
 
 .dag-step-meta {
   grid-area: meta;
+  display: -webkit-box;
+  overflow: hidden;
   color: #64748b;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.45;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  word-break: break-all;
 }
 
 .dag-step-footer {
@@ -387,7 +386,8 @@
 .dag-arrow {
   position: relative;
   z-index: 1;
-  width: 100%;
+  flex: 0 0 24px;
+  width: 24px;
   height: 2px;
   background: #94a3b8;
 }
@@ -421,18 +421,27 @@
   align-self: center;
   width: 2px;
   height: 48px;
-  background: #dc2626;
+  background: #94a3b8;
 }
 
 .dag-down-arrow::after {
   position: absolute;
   bottom: -11px;
   left: -5px;
-  color: #dc2626;
+  color: #94a3b8;
   content: "↓";
   font-size: 14px;
   font-weight: 900;
   line-height: 1;
+}
+
+.dag-down-arrow.failed {
+  background: #dc2626;
+}
+
+.dag-down-arrow.failed::after,
+.dag-down-arrow.failed span {
+  color: #dc2626;
 }
 
 .dag-down-arrow span {
@@ -440,7 +449,7 @@
   right: 14px;
   top: 13px;
   width: 112px;
-  color: #dc2626;
+  color: #64748b;
   font-size: 11px;
   font-weight: 800;
   text-align: right;
