@@ -1126,6 +1126,11 @@
   color: #dc2626;
 }
 
+.status-pill.success {
+  background: #ecfdf5;
+  color: #059669;
+}
+
 .status-pill.running {
   background: #f0fdf4;
   color: #16a34a;
