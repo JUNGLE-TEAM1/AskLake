@@ -1,6 +1,7 @@
 # AskLake Backend Integration Readiness
 
 이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
+FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
@@ -18,6 +19,9 @@
 | SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
 | Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
+
+FastAPI 1차 scaffold의 범위는 기능 endpoint 구현이 아니라 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이다.
+이후 ETL/Catalog/SQL/Dashboard API는 Pair별 후속 PR에서 구현한다.
 
 ## 2. Pair A Live Contract
 
