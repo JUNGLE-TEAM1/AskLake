@@ -115,6 +115,7 @@ export function SqlAnalysisPage({
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
+  const isDerivedDatasetFormDisabled = !resultDraft || derivedDatasetPending;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
@@ -643,7 +644,7 @@ export function SqlAnalysisPage({
               <label>
                 <span>Dataset name</span>
                 <input
-                  disabled={!resultDraft}
+                  disabled={isDerivedDatasetFormDisabled}
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -655,7 +656,7 @@ export function SqlAnalysisPage({
               <label className="wide">
                 <span>Description</span>
                 <textarea
-                  disabled={!resultDraft}
+                  disabled={isDerivedDatasetFormDisabled}
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -668,7 +669,7 @@ export function SqlAnalysisPage({
               <label className="wide">
                 <span>Tags</span>
                 <input
-                  disabled={!resultDraft}
+                  disabled={isDerivedDatasetFormDisabled}
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -681,7 +682,7 @@ export function SqlAnalysisPage({
               <label>
                 <span>Layer</span>
                 <select
-                  disabled={!resultDraft}
+                  disabled={isDerivedDatasetFormDisabled}
                   onChange={(event) => {
                     setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
                     setDerivedDatasetDraft(null);
@@ -696,7 +697,7 @@ export function SqlAnalysisPage({
               <label className="sql-materialize-checkbox">
                 <input
                   checked={derivedDatasetRag}
-                  disabled={!resultDraft}
+                  disabled={isDerivedDatasetFormDisabled}
                   onChange={(event) => {
                     setDerivedDatasetRag(event.target.checked);
                     setDerivedDatasetDraft(null);
