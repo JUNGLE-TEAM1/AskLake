@@ -24,6 +24,9 @@ def ensure_dashboard_card_schema(db: Session) -> None:
             updated_at timestamptz NOT NULL DEFAULT now()
         )
         """,
+        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS payload jsonb NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+        "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
         "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS name text",
         "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS owner text",
         "ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS status text",

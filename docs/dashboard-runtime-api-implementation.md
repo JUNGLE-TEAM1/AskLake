@@ -164,7 +164,7 @@ update_dashboard_published_metadata()
 현재 동작:
 
 - Card/List API의 `dashboards` table을 dashboard metadata의 source of truth로 사용한다.
-- PostgreSQL 환경에서 `dashboards` table이 아직 없으면 Card/List schema 준비 함수를 먼저 호출한다.
+- PostgreSQL 환경에서 `dashboards` table이 아직 없거나 필요한 column이 부족하면 Card/List schema 준비 함수를 먼저 호출한다.
 - `dashboards` table이나 dashboard row가 없으면 임시 metadata를 만들지 않고 dashboard 없음으로 처리한다.
 
 팀원 Card/List PR merge 후 확인한 접점:

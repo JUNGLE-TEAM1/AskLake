@@ -247,14 +247,30 @@ class DashboardRuntimeRepository:
         return inspect(self.db.connection()).has_table("dashboards")
 
     def _ensure_dashboard_meta_table(self) -> None:
-        if self._dashboards_table_exists():
-            return
-
         bind = self.db.get_bind()
         if bind.dialect.name == "sqlite":
             return
 
-        ensure_dashboard_card_schema(self.db)
+        if not self._dashboards_table_exists():
+            ensure_dashboard_card_schema(self.db)
+            return
+
+        if not self._dashboard_meta_columns_ready():
+            ensure_dashboard_card_schema(self.db)
+
+    def _dashboard_meta_columns_ready(self) -> bool:
+        columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
+        required_columns = {
+            "id",
+            "payload",
+            "name",
+            "status",
+            "has_published_revision",
+            "published_revision_id",
+            "created_at",
+            "updated_at",
+        }
+        return required_columns.issubset(columns)
 
     def _get_dashboard_meta_from_card_list_table(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
         row = self.db.execute(
