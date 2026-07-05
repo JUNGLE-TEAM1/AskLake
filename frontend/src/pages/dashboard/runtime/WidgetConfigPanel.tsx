@@ -398,7 +398,7 @@ export function WidgetConfigPanel({
             <label>
               <span>X축</span>
               <select value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
-                {(type === "line_chart" ? columnGroups.lineXAxisColumns : columnGroups.dimensionColumns).map((column) => (
+                {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
               </select>
@@ -406,7 +406,7 @@ export function WidgetConfigPanel({
             <label>
               <span>Y축</span>
               <select value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
-                {columnGroups.numericColumns.map((column) => (
+                {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
               </select>
