@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import inspect, select, text
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
@@ -73,6 +73,29 @@ class DashboardRuntimeRepository:
         self.db.add(page)
         self.db.flush()
         return page
+
+    def get_page(self, page_id: str) -> DashboardPage | None:
+        return self.db.get(DashboardPage, page_id)
+
+    def get_next_page_order(self, revision_id: str) -> int:
+        statement = (
+            select(DashboardPage.order_index)
+            .where(DashboardPage.revision_id == revision_id)
+            .order_by(DashboardPage.order_index.desc())
+            .limit(1)
+        )
+        current_order = self.db.scalars(statement).first()
+        return (current_order if current_order is not None else -1) + 1
+
+    def update_page_title(self, page: DashboardPage, title: str) -> DashboardPage:
+        page.title = title
+        self.db.flush()
+        return page
+
+    def delete_page(self, page: DashboardPage) -> None:
+        self.db.execute(delete(DashboardWidget).where(DashboardWidget.page_id == page.id))
+        self.db.delete(page)
+        self.db.flush()
 
     def create_widget(
         self,

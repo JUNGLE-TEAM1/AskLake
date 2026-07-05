@@ -9,7 +9,9 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
+    CreateDraftPageRequest,
     DashboardMeta,
+    DashboardPageResponse,
     DashboardRevision,
     DashboardRuntimeMode,
     DashboardRuntimePage,
@@ -17,6 +19,8 @@ from app.schemas.dashboard import (
     DashboardRuntimeWidget,
     DashboardRuntimeWidgetType,
     DashboardWidgetLayout,
+    DeleteDraftPageResponse,
+    UpdateDraftPageRequest,
 )
 
 
@@ -37,19 +41,35 @@ class DashboardRuntimeService:
         if dashboard_meta is None:
             self._raise_dashboard_not_found(dashboard_id)
 
-        revision = self.repository.get_draft_revision(dashboard_id)
-        if revision is None:
-            published_revision = self.repository.get_published_revision(dashboard_id)
-            revision = (
-                self.repository.copy_revision(published_revision, DashboardRuntimeMode.DRAFT)
-                if published_revision is not None
-                else self.repository.create_revision(dashboard_id, DashboardRuntimeMode.DRAFT)
-            )
-            if not self.repository.list_pages(revision.id):
-                self.repository.create_page(revision.id, "Untitled page", 0)
-            self.repository.db.commit()
+        revision = self._ensure_draft_revision(dashboard_id)
+        self.repository.db.commit()
 
         return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision)
+
+    def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest) -> DashboardPageResponse:
+        self._require_dashboard(dashboard_id)
+        revision = self._ensure_draft_revision(dashboard_id)
+        page = self.repository.create_page(
+            revision.id,
+            request.title,
+            self.repository.get_next_page_order(revision.id),
+        )
+        self.repository.db.commit()
+        return self._page_response(page)
+
+    def update_draft_page(self, dashboard_id: str, page_id: str, request: UpdateDraftPageRequest) -> DashboardPageResponse:
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, page_id)
+        page = self.repository.update_page_title(page, request.title)
+        self.repository.db.commit()
+        return self._page_response(page)
+
+    def delete_draft_page(self, dashboard_id: str, page_id: str) -> DeleteDraftPageResponse:
+        revision = self._get_draft_revision_or_raise(dashboard_id)
+        page = self._get_draft_page_or_raise(revision, page_id)
+        self.repository.delete_page(page)
+        self.repository.db.commit()
+        return DeleteDraftPageResponse(ok=True)
 
     def _build_runtime_response(
         self,
@@ -91,6 +111,49 @@ class DashboardRuntimeService:
             {"dashboardId": dashboard_id},
         )
 
+    def _require_dashboard(self, dashboard_id: str) -> DashboardRuntimeMetaRecord:
+        dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
+        if dashboard_meta is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        return dashboard_meta
+
+    def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
+        revision = self.repository.get_draft_revision(dashboard_id)
+        if revision is None:
+            published_revision = self.repository.get_published_revision(dashboard_id)
+            revision = (
+                self.repository.copy_revision(published_revision, DashboardRuntimeMode.DRAFT)
+                if published_revision is not None
+                else self.repository.create_revision(dashboard_id, DashboardRuntimeMode.DRAFT)
+            )
+        if not self.repository.list_pages(revision.id):
+            self.repository.create_page(revision.id, "Untitled page", 0)
+        self.repository.db.flush()
+        return revision
+
+    def _get_draft_revision_or_raise(self, dashboard_id: str) -> DashboardRevisionModel:
+        self._require_dashboard(dashboard_id)
+        revision = self.repository.get_draft_revision(dashboard_id)
+        if revision is None:
+            raise ApiError(
+                ErrorCode.NO_DRAFT_REVISION,
+                "Draft revision is not prepared.",
+                status.HTTP_409_CONFLICT,
+                {"dashboardId": dashboard_id},
+            )
+        return revision
+
+    def _get_draft_page_or_raise(self, revision: DashboardRevisionModel, page_id: str) -> DashboardPageModel:
+        page = self.repository.get_page(page_id)
+        if page is None or page.revision_id != revision.id:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Draft page not found.",
+                status.HTTP_404_NOT_FOUND,
+                {"pageId": page_id},
+            )
+        return page
+
     @staticmethod
     def _dashboard_meta_to_schema(record: DashboardRuntimeMetaRecord) -> DashboardMeta:
         return DashboardMeta(
@@ -113,6 +176,14 @@ class DashboardRuntimeService:
     @staticmethod
     def _page_to_schema(page: DashboardPageModel) -> DashboardRuntimePage:
         return DashboardRuntimePage(
+            id=page.id,
+            title=page.title,
+            order_index=page.order_index,
+        )
+
+    @staticmethod
+    def _page_response(page: DashboardPageModel) -> DashboardPageResponse:
+        return DashboardPageResponse(
             id=page.id,
             title=page.title,
             order_index=page.order_index,
