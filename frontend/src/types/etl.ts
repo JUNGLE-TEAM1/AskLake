@@ -196,3 +196,7 @@ export type JobExecutionEvidence = {
   dagSteps: JobDagStep[];
   runs: JobRunSummary[];
 };
+
+export type RunsByJobId = Record<string, JobRunSummary[]>;
+export type SelectedRunIdByJobId = Record<string, string>;
+export type DagStepsByRunId = Record<string, JobDagStep[]>;

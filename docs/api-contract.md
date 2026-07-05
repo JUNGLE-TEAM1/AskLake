@@ -415,6 +415,23 @@ type JobCommandResponse = {
 };
 ```
 
+프론트 상태 반영 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+- `job.id`는 `runsByJobId`의 key입니다.
+- `run.runId`는 `selectedRunIdByJobId[job.id]`의 value이자 `dagStepsByRunId`의 key입니다.
+- `run`이 있으면 `runsByJobId[job.id]`에 최신순으로 upsert합니다.
+- 같은 `run.runId`가 이미 있으면 기존 Run을 교체하고 중복 row를 만들지 않습니다.
+- 새 `run`이 있으면 `selectedRunIdByJobId[job.id]`는 해당 `run.runId`로 갱신합니다.
+- `dagSteps`는 같은 응답의 `run.runId`에 묶어 `dagStepsByRunId[run.runId]`에 저장합니다.
+- `dagSteps`에 별도 `runId` 필드를 요구하지 않습니다.
+- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아닙니다.
+
 Response 예시:
 
 ```json

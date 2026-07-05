@@ -4,6 +4,7 @@ export type { CatalogDataset } from "./types/catalog";
 export type { DashboardEntry, DashboardStatus, DashboardView, DashboardWidgetType } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
+  DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
   DraftPipelineSlicePatch,
@@ -23,6 +24,8 @@ export type {
   ScheduleDraft,
   SchemaColumnDraft,
   SchemaDraft,
+  RunsByJobId,
+  SelectedRunIdByJobId,
   SourceDraft,
   TargetDraft,
   TargetLayer,

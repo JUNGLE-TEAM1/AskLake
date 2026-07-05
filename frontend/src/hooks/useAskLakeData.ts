@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import { apiClient } from "../services/apiClient";
 import { createPipelineDraft, runJobCommand } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
+import type { AuditResult, AuditTargetType, CatalogDataset, DagStepsByRunId, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobExecutionEvidence, JobRowData, JobRunSummary, RunsByJobId, SelectedRunIdByJobId, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
@@ -115,6 +115,36 @@ function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   };
 }
 
+function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
+  return [run, ...runs.filter((item) => item.runId !== run.runId)];
+}
+
+function selectedRunFirst(runs: JobRunSummary[], selectedRunId?: string): JobRunSummary[] {
+  if (!selectedRunId) return runs;
+  const selectedRun = runs.find((run) => run.runId === selectedRunId);
+  if (!selectedRun) return runs;
+  return [selectedRun, ...runs.filter((run) => run.runId !== selectedRunId)];
+}
+
+function buildJobExecutionEvidence(
+  runsByJobId: RunsByJobId,
+  selectedRunIdByJobId: SelectedRunIdByJobId,
+  dagStepsByRunId: DagStepsByRunId,
+): Record<string, JobExecutionEvidence> {
+  return Object.fromEntries(
+    Object.entries(runsByJobId).map(([jobId, runs]) => {
+      const selectedRunId = selectedRunIdByJobId[jobId] ?? runs[0]?.runId;
+      return [
+        jobId,
+        {
+          dagSteps: selectedRunId ? (dagStepsByRunId[selectedRunId] ?? []) : [],
+          runs: selectedRunFirst(runs, selectedRunId),
+        },
+      ];
+    }),
+  );
+}
+
 export function useAskLakeData({
   onFlowChange,
   showToast,
@@ -129,10 +159,17 @@ export function useAskLakeData({
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(emptySelectedJob);
-  const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
+  const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
+  const [selectedRunIdByJobId, setSelectedRunIdByJobId] = useState<SelectedRunIdByJobId>({});
+  const [dagStepsByRunId, setDagStepsByRunId] = useState<DagStepsByRunId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
+
+  const jobExecutionEvidence = useMemo(
+    () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
+    [dagStepsByRunId, runsByJobId, selectedRunIdByJobId],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -233,17 +270,21 @@ export function useAskLakeData({
       const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
-      if (run || dagSteps) {
-        setJobExecutionEvidence((evidence) => {
-          const previous = evidence[job.id] ?? { dagSteps: [], runs: [] };
-          return {
-            ...evidence,
-            [job.id]: {
-              dagSteps: dagSteps ?? previous.dagSteps,
-              runs: run ? [run, ...previous.runs.filter((item) => item.runId !== run.runId)] : previous.runs,
-            },
-          };
-        });
+      if (run) {
+        setRunsByJobId((state) => ({
+          ...state,
+          [job.id]: upsertRunByRunId(state[job.id] ?? [], run),
+        }));
+        setSelectedRunIdByJobId((state) => ({
+          ...state,
+          [job.id]: run.runId,
+        }));
+        if (dagSteps) {
+          setDagStepsByRunId((state) => ({
+            ...state,
+            [run.runId]: dagSteps,
+          }));
+        }
       }
     } catch {
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
@@ -277,6 +318,7 @@ export function useAskLakeData({
     datasets,
     draftPipeline,
     handleJobCommand,
+    dagStepsByRunId,
     jobExecutionEvidence,
     jobs,
     openDataset,
@@ -284,9 +326,11 @@ export function useAskLakeData({
     openJobDetail,
     selectedDataset,
     selectedJob,
+    selectedRunIdByJobId,
     setSelectedDataset,
     setSqlResultDraft,
     sqlResultDraft,
+    runsByJobId,
     updateDraftPipeline,
   };
 }
