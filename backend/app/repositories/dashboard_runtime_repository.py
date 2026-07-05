@@ -124,6 +124,35 @@ class DashboardRuntimeRepository:
         self.db.flush()
         return widget
 
+    def get_widget(self, widget_id: str) -> DashboardWidget | None:
+        return self.db.get(DashboardWidget, widget_id)
+
+    def update_widget(
+        self,
+        widget: DashboardWidget,
+        *,
+        widget_type: str | None = None,
+        title: str | None = None,
+        update_title: bool = False,
+        dataset_id: str | None = None,
+        update_dataset_id: bool = False,
+        config: dict[str, Any] | None = None,
+    ) -> DashboardWidget:
+        if widget_type is not None:
+            widget.type = widget_type
+        if update_title:
+            widget.title = title
+        if update_dataset_id:
+            widget.dataset_id = dataset_id
+        if config is not None:
+            widget.config = config
+        self.db.flush()
+        return widget
+
+    def delete_widget(self, widget: DashboardWidget) -> None:
+        self.db.delete(widget)
+        self.db.flush()
+
     def copy_revision(self, source_revision: DashboardRevision, target_kind: DashboardRuntimeMode) -> DashboardRevision:
         target_revision = self.create_revision(
             source_revision.dashboard_id,

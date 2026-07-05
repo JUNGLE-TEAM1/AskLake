@@ -5,10 +5,14 @@ from app.core.database import get_db
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.dashboard import (
     CreateDraftPageRequest,
+    CreateDraftWidgetRequest,
     DashboardPageResponse,
     DashboardRuntimeResponse,
+    DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
+    DeleteDraftWidgetResponse,
     UpdateDraftPageRequest,
+    UpdateDraftWidgetRequest,
 )
 from app.services.dashboard_runtime_service import DashboardRuntimeService
 
@@ -61,3 +65,38 @@ def delete_draft_page(
     repository = DashboardRuntimeRepository(db)
     service = DashboardRuntimeService(repository)
     return service.delete_draft_page(dashboard_id, page_id)
+
+
+@router.post("/{dashboard_id}/draft/pages/{page_id}/widgets", response_model=DashboardWidgetMutationResponse)
+def create_draft_widget(
+    dashboard_id: str,
+    page_id: str,
+    request: CreateDraftWidgetRequest,
+    db: Session = Depends(get_db),
+) -> DashboardWidgetMutationResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.create_draft_widget(dashboard_id, page_id, request)
+
+
+@router.patch("/{dashboard_id}/draft/widgets/{widget_id}", response_model=DashboardWidgetMutationResponse)
+def update_draft_widget(
+    dashboard_id: str,
+    widget_id: str,
+    request: UpdateDraftWidgetRequest,
+    db: Session = Depends(get_db),
+) -> DashboardWidgetMutationResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.update_draft_widget(dashboard_id, widget_id, request)
+
+
+@router.delete("/{dashboard_id}/draft/widgets/{widget_id}", response_model=DeleteDraftWidgetResponse)
+def delete_draft_widget(
+    dashboard_id: str,
+    widget_id: str,
+    db: Session = Depends(get_db),
+) -> DeleteDraftWidgetResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.delete_draft_widget(dashboard_id, widget_id)
