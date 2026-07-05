@@ -32,7 +32,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
-import type { AuditResult, FlowId, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
+import type { AuditResult, FlowId, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -93,7 +93,7 @@ export function JobsLandingPage({
   const metrics = [
     ["전체 작업", String(jobs.length)],
     ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
-    ["스케줄됨", String(jobs.filter((job) => job.status === "scheduled").length)],
+    ["실행 가능", String(jobs.filter((job) => job.status === "scheduled").length)],
     ["실패", String(jobs.filter((job) => job.status === "failed").length)],
     ["최신 아님", "0"],
   ];
@@ -196,12 +196,13 @@ function JobRow({
   const actionLabel = isCommandPending ? commandPendingLabel(pendingCommand) : job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
   const lastRunLabel = formatRunTimestamp(job.lastRun);
   const tertiaryLabel = job.status === "running" ? "취소" : "수정";
-  const statusClass = jobStatusMeta[job.status].className;
+  const displayStatus = jobDisplayStatus(job);
+  const statusClass = displayStatus.className;
 
   return (
     <article className={`job-row ${statusClass}`}>
       <div className="job-row-status">
-        <StatusPill status={job.status} />
+        <StatusPill job={job} />
       </div>
       <div className="job-row-main">
         <div className="job-title-row">
@@ -230,9 +231,27 @@ function JobRow({
   );
 }
 
-function StatusPill({ status }: { status: JobStatus }) {
-  const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <span className={`status-pill ${statusClass}`}>{jobStatusMeta[status].label}</span>;
+function jobDisplayStatus(job: JobRowData) {
+  const latestRun = job.runHistory?.[0];
+  if (job.status === "scheduled" && latestRun?.status === "success") {
+    return { className: "success", label: "실행 완료", summaryLabel: "SUCCESS" };
+  }
+  if (job.status === "scheduled" && latestRun?.status === "failed") {
+    return { className: "danger", label: "실행 실패", summaryLabel: "FAILED" };
+  }
+  if (job.status === "scheduled" && latestRun?.status === "canceled") {
+    return { className: "canceled", label: "실행 취소", summaryLabel: "CANCELED" };
+  }
+  const fallback = jobStatusMeta[job.status];
+  return {
+    ...fallback,
+    className: job.status === "failed" ? "danger" : job.status === "scheduled" ? "" : fallback.className,
+  };
+}
+
+function StatusPill({ job }: { job: JobRowData }) {
+  const displayStatus = jobDisplayStatus(job);
+  return <span className={`status-pill ${displayStatus.className}`}>{displayStatus.label}</span>;
 }
 
 function JobProgress({ label, value }: { label: string; value: number }) {
@@ -372,7 +391,7 @@ function JobDetailHeader({
         <div>
           <h1 title={job.name}>{job.name}</h1>
           <div className="job-detail-meta">
-            <StatusPill status={job.status} />
+            <StatusPill job={job} />
             <span className="owner-chip">소유자: {job.owner}</span>
             <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
           </div>
@@ -417,14 +436,16 @@ export function JobDetailPage({
   const [detailPane, setDetailPane] = useState<JobDetailPane>("overview");
   const sourceType = job.source.split(" / ")[0] ?? job.source;
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
-  const statusText = jobStatusMeta[job.status].summaryLabel;
+  const displayStatus = jobDisplayStatus(job);
+  const statusText = displayStatus.summaryLabel;
   const stats = job.stats ?? fallbackJobStats(job);
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
   const issueText = job.status === "failed" ? job.lastState : job.status === "running" || job.status === "paused" || job.status === "canceled" ? stats.currentStage : "실행 전";
   const recentFailure = job.runHistory?.find((run) => run.status === "failed" || run.status === "canceled")?.runId ?? "-";
   const lastChangedBy = job.owner;
-  const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
-  const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
+  const latestRun = job.runHistory?.[0];
+  const stripTone = job.status === "failed" || latestRun?.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" || latestRun?.status === "canceled" ? "canceled" : "scheduled";
+  const stripTitle = job.status === "failed" || latestRun?.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" || latestRun?.status === "canceled" ? "최근 실행 취소" : latestRun?.status === "success" ? "최근 실행 완료" : "실행 대기";
   const stripBody = job.status === "failed"
     ? `${job.lastState} · 실행 이력과 DAG에서 영향 단계를 확인하세요.`
     : job.status === "running"
@@ -433,6 +454,8 @@ export function JobDetailPage({
         ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 실행을 재개할 수 있습니다."
         : job.status === "canceled"
           ? "사용자 요청으로 실행이 취소되었습니다. 다시 실행하면 새 Run으로 처리 흐름을 재개할 수 있습니다."
+          : latestRun?.status === "success"
+            ? `${stats.currentStage} · Spark 실행 결과가 실행 이력과 DAG에 반영되었습니다.`
           : job.runHistory?.length
             ? `${stats.currentStage} · 최근 실행 이력을 기준으로 표시합니다.`
             : "아직 실행 이력이 없습니다. 생성 시 검증된 소스/스키마 메타데이터만 표시합니다.";

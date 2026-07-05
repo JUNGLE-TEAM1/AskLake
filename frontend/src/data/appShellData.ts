@@ -36,7 +36,7 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [
     ["전체 작업", "0"],
     ["실행 중", "0"],
-    ["스케줄됨", "0"],
+    ["실행 가능", "0"],
     ["실패", "0"],
     ["최신 아님", "0"],
   ],
