@@ -28,11 +28,12 @@
 .sql-dataset-panel {
   position: fixed;
   z-index: 30;
-  top: 88px;
+  top: 188px;
   left: var(--sidebar-width);
   display: grid;
   width: var(--sql-context-width);
-  max-height: calc(100vh - 112px);
+  height: calc(100vh - 260px);
+  max-height: none;
   gap: 16px;
   min-width: 0;
   overflow-y: auto;
@@ -356,7 +357,7 @@
 .sql-collapse-button {
   position: fixed;
   z-index: 31;
-  top: 416px;
+  top: calc(188px + ((100vh - 260px) / 2) - 32px);
   left: calc(var(--sidebar-width) + var(--sql-context-width) - 1px);
   display: inline-flex;
   width: 36px;

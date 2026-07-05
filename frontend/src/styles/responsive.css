@@ -163,6 +163,7 @@
     top: 76px;
     left: 16px;
     width: min(320px, calc(100vw - 32px));
+    height: auto;
     max-height: calc(100vh - 96px);
   }
 
