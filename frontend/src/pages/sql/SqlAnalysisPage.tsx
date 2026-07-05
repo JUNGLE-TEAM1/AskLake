@@ -651,11 +651,11 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetPending}
+                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetPending || Boolean(derivedDatasetDraft)}
                 onClick={createDerivedDataset}
                 type="button"
               >
-                <Database size={15} /> {derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
+                <Database size={15} /> {derivedDatasetDraft ? "생성됨" : derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
               </button>
             </div>
             <div className="sql-materialize-summary">
@@ -723,7 +723,8 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
     };
   }
 
-  const mutationKeyword = normalizedQuery.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
+  const queryForKeywordScan = maskSqlStringLiterals(normalizedQuery);
+  const mutationKeyword = queryForKeywordScan.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
   if (mutationKeyword) {
     return {
       key,
@@ -763,6 +764,14 @@ function stripSqlComments(query: string) {
     .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
+function maskSqlStringLiterals(query: string) {
+  return query.replace(/'([^']|'')*'|"([^"]|"")*"/g, (literal) => " ".repeat(literal.length));
+}
+
+function maskSqlSingleQuotedLiterals(query: string) {
+  return query.replace(/'([^']|'')*'/g, (literal) => " ".repeat(literal.length));
+}
+
 function normalizeSqlIdentifier(identifier: string) {
   return identifier.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
 }
@@ -781,10 +790,19 @@ function extractCteNames(query: string) {
 
 function extractReferencedTableNames(query: string) {
   const tableNames = new Set<string>();
+  const sanitizedQuery = maskSqlSingleQuotedLiterals(query);
   const tablePattern = /\b(?:from|join)\s+([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/gi;
   let match: RegExpExecArray | null;
-  while ((match = tablePattern.exec(query)) !== null) {
+  while ((match = tablePattern.exec(sanitizedQuery)) !== null) {
     tableNames.add(normalizeSqlIdentifier(match[1]));
+  }
+  const fromPattern = /\bfrom\s+([\s\S]+?)(?=\bwhere\b|\bgroup\s+by\b|\border\s+by\b|\bhaving\b|\blimit\b|\bunion\b|;|$)/gi;
+  while ((match = fromPattern.exec(sanitizedQuery)) !== null) {
+    const fromClause = match[1];
+    fromClause.split(",").slice(1).forEach((tableExpression) => {
+      const tableName = tableExpression.trim().match(/^([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/)?.[1];
+      if (tableName) tableNames.add(normalizeSqlIdentifier(tableName));
+    });
   }
   return Array.from(tableNames);
 }
