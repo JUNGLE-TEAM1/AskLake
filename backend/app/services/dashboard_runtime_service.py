@@ -116,15 +116,20 @@ class DashboardRuntimeService:
         request: UpdateDraftWidgetRequest,
     ) -> DashboardWidgetMutationResponse:
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
-        next_type = self._widget_type_enum(request.type or widget.type)
+        current_type = self._widget_type_enum(widget.type)
+        next_type = self._widget_type_enum(request.type or current_type)
+        type_changed = request.type is not None and next_type != current_type
+        next_config = None
+        if request.config is not None or type_changed:
+            next_config = self._config_to_json(next_type, request.config)
         widget = self.repository.update_widget(
             widget,
-            widget_type=next_type.value if request.type is not None else None,
+            widget_type=next_type.value if type_changed else None,
             title=request.title,
             update_title="title" in request.model_fields_set,
             dataset_id=request.dataset_id,
             update_dataset_id="dataset_id" in request.model_fields_set,
-            config=self._config_to_json(next_type, request.config) if request.config is not None else None,
+            config=next_config,
         )
         self.repository.db.commit()
         return DashboardWidgetMutationResponse(id=widget.id)
@@ -232,7 +237,7 @@ class DashboardRuntimeService:
             raise ApiError(
                 ErrorCode.NO_DRAFT_REVISION,
                 "Draft revision is not prepared.",
-                status.HTTP_409_CONFLICT,
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
                 {"dashboardId": dashboard_id},
             )
         return revision

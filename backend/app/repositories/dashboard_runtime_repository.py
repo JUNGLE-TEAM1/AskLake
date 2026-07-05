@@ -7,6 +7,7 @@ from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.repositories.dashboard_card_repository import ensure_dashboard_card_schema
 from app.schemas.dashboard import DashboardRuntimeMode, DashboardStatus
 
 
@@ -25,9 +26,10 @@ class DashboardRuntimeRepository:
         self.db = db
 
     def get_dashboard_meta(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
+        self._ensure_dashboard_meta_table()
         if self._dashboards_table_exists():
             return self._get_dashboard_meta_from_card_list_table(dashboard_id)
-        return self._mock_dashboard_meta(dashboard_id)
+        return None
 
     def get_published_revision(self, dashboard_id: str) -> DashboardRevision | None:
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.PUBLISHED)
@@ -244,6 +246,16 @@ class DashboardRuntimeRepository:
     def _dashboards_table_exists(self) -> bool:
         return inspect(self.db.connection()).has_table("dashboards")
 
+    def _ensure_dashboard_meta_table(self) -> None:
+        if self._dashboards_table_exists():
+            return
+
+        bind = self.db.get_bind()
+        if bind.dialect.name == "sqlite":
+            return
+
+        ensure_dashboard_card_schema(self.db)
+
     def _get_dashboard_meta_from_card_list_table(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
         row = self.db.execute(
             text(
@@ -271,16 +283,6 @@ class DashboardRuntimeRepository:
             has_published_revision=bool(row["has_published_revision"]),
             published_revision_id=self._optional_str(row["published_revision_id"]),
             updated_at=self._coerce_datetime(row["updated_at"]),
-        )
-
-    def _mock_dashboard_meta(self, dashboard_id: str) -> DashboardRuntimeMetaRecord:
-        return DashboardRuntimeMetaRecord(
-            id=dashboard_id,
-            title=f"Dashboard {dashboard_id}",
-            status=DashboardStatus.DRAFT,
-            has_published_revision=False,
-            published_revision_id=None,
-            updated_at=datetime.now(UTC),
         )
 
     @staticmethod

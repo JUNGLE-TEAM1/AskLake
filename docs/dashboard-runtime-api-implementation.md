@@ -144,7 +144,7 @@ updated_at
 
 ## 6. 팀원 Card/List 작업과 연결할 지점
 
-현재 Runtime repository는 Card/List 작업이 merge되기 전에도 개발할 수 있도록 임시 metadata fallback을 둔다.
+현재 Runtime repository는 Card/List 작업의 `dashboards` table을 기준으로 dashboard metadata를 읽는다.
 
 위치:
 
@@ -156,20 +156,21 @@ backend/app/repositories/dashboard_runtime_repository.py
 
 ```py
 get_dashboard_meta()
+_ensure_dashboard_meta_table()
 _get_dashboard_meta_from_card_list_table()
-_mock_dashboard_meta()
 update_dashboard_published_metadata()
 ```
 
 현재 동작:
 
-- `dashboards` table이 있으면 DB에서 dashboard metadata를 읽는다.
-- `dashboards` table이 없으면 `Dashboard {dashboardId}` 형태의 임시 metadata를 만든다.
+- Card/List API의 `dashboards` table을 dashboard metadata의 source of truth로 사용한다.
+- PostgreSQL 환경에서 `dashboards` table이 아직 없으면 Card/List schema 준비 함수를 먼저 호출한다.
+- `dashboards` table이나 dashboard row가 없으면 임시 metadata를 만들지 않고 dashboard 없음으로 처리한다.
 
-팀원 Card/List PR이 merge되면 반드시 확인할 것:
+팀원 Card/List PR merge 후 확인한 접점:
 
-1. `dashboards` table 이름이 그대로인지 확인한다.
-2. 아래 column 이름이 실제 구현과 같은지 확인한다.
+1. `dashboards` table 이름은 그대로 사용한다.
+2. 아래 column 이름은 Card/List 구현과 맞춘다.
 
 ```text
 id
@@ -180,7 +181,7 @@ published_revision_id
 updated_at
 ```
 
-3. 다르면 `_get_dashboard_meta_from_card_list_table()`와 `update_dashboard_published_metadata()`만 팀원 구현 기준으로 수정한다.
+3. Runtime의 publish는 `published_revision_id`, `has_published_revision`, `status`, `updated_at`을 갱신한다.
 4. Runtime table(`dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`)은 Card/List가 직접 수정하지 않도록 유지한다.
 
 ## 7. 검증한 사항
@@ -236,4 +237,3 @@ python3 -m compileall backend/app
 - 팀원 Card/List API merge 후 `dashboards` metadata 쿼리 재점검
 - 프론트 `dashboardRuntimeApi.ts`와 실제 API E2E 확인
 - migration을 Alembic으로 정식 관리할지 결정
-
