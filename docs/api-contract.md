@@ -40,10 +40,13 @@ P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=true
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- Source/Schema/Create/Run 흐름은 실제 백엔드를 호출합니다.
+- `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
+- live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -235,21 +238,56 @@ type CatalogDataset = {
   sampleRows: string[][];
   upstream: string[];
   downstream: string[];
+  lineageGraph?: LineageGraph;
 };
 ```
+
+### LineageGraph
+
+```ts
+type LineageGraph = {
+  datasetId: string;
+  datasets: Array<{
+    id: string;
+    name: string;
+    layer: "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+    engine: string;
+    columns: Array<{
+      id: string;
+      name: string;
+      type: string;
+    }>;
+  }>;
+  edges: Array<{
+    fromDatasetId: string;
+    fromColumnId: string;
+    toDatasetId: string;
+    toColumnId: string;
+  }>;
+};
+```
+
+`LineageGraph`는 화면 좌표나 렌더링 스타일을 포함하지 않습니다.
+백엔드는 dataset/column/edge 관계만 반환하고, 프론트는 이를 React Flow node/edge와 column row handle로 변환합니다.
+`CatalogDataset.upstream`과 `CatalogDataset.downstream`은 요약/fallback context로 유지할 수 있습니다.
 
 ### SqlResultDraft
 
 ```ts
 type SqlResultDraft = {
   runId: string;
+  baseDatasetId?: string;
   datasetId: string;
   datasetName: string;
   query: string;
+  referenceDatasetIds?: string[];
   columns: string[];
   rows: string[][];
   rowCount: number;
   executedAt: string;
+  mode?: "preview" | "run";
+  previewLimit?: number;
+  validationKey?: string;
 };
 ```
 
@@ -395,6 +433,8 @@ Response 예시:
 - `dataset`을 카탈로그 목록 최상단에 추가합니다.
 - `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
 - 생성 성공 감사 로그를 남깁니다.
+- mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다. 없으면 `upstream` 기반 fallback graph를 사용합니다.
 
 Validation:
 
@@ -485,14 +525,20 @@ Validation:
 
 프론트 함수:
 
-- `executeQueryDraft(dataset, query)`
+- `executeQueryPreview(dataset, query, { limit, validationKey })`
+- `executeQueryDraft(dataset, query)`는 기존 화면 연결을 위한 호환 wrapper로 유지
 
 Request:
 
 ```ts
 type ExecuteQueryRequest = {
+  baseDatasetId?: string;
   datasetId: string;
+  mode?: "preview" | "run";
+  limit?: number;
   query: string;
+  referenceDatasetIds?: string[];
+  validationKey?: string;
 };
 ```
 
@@ -500,8 +546,13 @@ Request 예시:
 
 ```json
 {
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100"
+  "mode": "preview",
+  "limit": 100,
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
@@ -516,9 +567,13 @@ Response 예시:
 ```json
 {
   "runId": "sql_01J1Z8W2V7KX",
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
   "datasetName": "customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100",
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "mode": "preview",
+  "previewLimit": 100,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -526,13 +581,17 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
-  "executedAt": "2026-07-03T11:35:00.000Z"
+  "executedAt": "2026-07-03T11:35:00.000Z",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
+- frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
@@ -542,7 +601,75 @@ Validation:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
-- 실패 시 `analysis.query.failed` 감사 로그를 남깁니다.
+- 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
+
+### 7.4 SQL 결과 기반 Lake Dataset 생성
+
+`POST /api/catalog/derived-datasets`
+
+프론트 함수:
+
+- `createDerivedDatasetFromSql({ request, sourceDataset, sqlResult })`
+
+Request:
+
+```ts
+type CreateDerivedDatasetRequest = {
+  dataset: {
+    description: string;
+    layer: "SILVER" | "GOLD";
+    name: string;
+    rag: boolean;
+    refreshPolicy: "manual";
+    tags: string[];
+  };
+  previewLimit?: number;
+  query: string;
+  referenceDatasetIds?: string[];
+  sourceDatasetId: string;
+  sourceRunId: string;
+  validationKey?: string;
+};
+```
+
+Request 예시:
+
+```json
+{
+  "dataset": {
+    "description": "일별 매출 SQL Preview 결과로 생성한 분석 데이터셋",
+    "layer": "GOLD",
+    "name": "sales_daily_summary_analysis",
+    "rag": true,
+    "refreshPolicy": "manual",
+    "tags": ["#sql-derived", "#sales", "#dw"]
+  },
+  "previewLimit": 100,
+  "query": "SELECT ...",
+  "referenceDatasetIds": ["ds_product_master"],
+  "sourceDatasetId": "ds_sales_daily_summary",
+  "sourceRunId": "sql_preview_01J1Z8W2V7KX",
+  "validationKey": "frontend-generated-context-key"
+}
+```
+
+Response `201 Created`:
+
+```ts
+type CreateDerivedDatasetResponse = CatalogDataset;
+```
+
+프론트 기대 동작:
+
+- 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
+- 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
+- mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
+- live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
+- `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
+- `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
+- 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API
 
@@ -599,6 +726,7 @@ Response `200 OK`:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 `POST /api/etl/jobs` 응답 dataset을 우선 반영한 뒤, 목록 재조회로 동기화하면 됩니다.
+- mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세
 
@@ -618,7 +746,50 @@ GET /api/catalog/datasets/{datasetId}/sample-rows
 GET /api/catalog/datasets/{datasetId}/lineage
 ```
 
-현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 모두 포함해서 표시합니다.
+`GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
+
+```ts
+type DatasetLineageResponse = LineageGraph;
+```
+
+Response 예시:
+
+```json
+{
+  "datasetId": "ds_customer_orders_gold",
+  "datasets": [
+    {
+      "id": "source-commerce-orders",
+      "name": "commerce.orders",
+      "layer": "SOURCE",
+      "engine": "POSTGRESQL",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    },
+    {
+      "id": "ds_customer_orders_gold",
+      "name": "orders_clean",
+      "layer": "GOLD",
+      "engine": "ICEBERG",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "fromDatasetId": "source-commerce-orders",
+      "fromColumnId": "order_id",
+      "toDatasetId": "ds_customer_orders_gold",
+      "toColumnId": "order_id"
+    }
+  ]
+}
+```
+
+현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
+Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
 ### 8.3 대시보드 초안 생성
 
@@ -744,14 +915,15 @@ Response `201 Created`:
 
 ## 11. 프론트 전환 순서
 
-1. 백엔드 서버를 실행합니다.
-2. `frontend/.env`에 `VITE_API_BASE_URL`을 설정합니다.
-3. 프론트 dev 서버를 재시작합니다.
-4. `POST /api/etl/sources/test` Source/Schema 연결 흐름을 확인합니다.
-5. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-6. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
-7. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
-8. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
+1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
+2. 백엔드 서버를 실행합니다.
+3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
+4. 프론트 dev 서버를 재시작합니다.
+5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
+9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
 ## 12. 열린 결정 사항
 

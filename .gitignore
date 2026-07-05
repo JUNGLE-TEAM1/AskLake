@@ -3,6 +3,7 @@ dist/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+AGENTS.local.md
 backend/tmp/
 __pycache__/
 *.pyc

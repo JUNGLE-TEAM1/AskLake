@@ -1,11 +1,36 @@
 import { useEffect, useRef, useState } from "react";
+import { catalogDatasets, etlJobs } from "../data/mockData";
+import { apiClient, apiConfig } from "../services/apiClient";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
-import { apiClient } from "../services/apiClient";
-import { createPipelineDraft, runJobCommand } from "../services/pipelineApi";
+import {
+  createDerivedDatasetFromSql,
+  createPipelineDraft as createMockPipelineDraft,
+  runJobCommand as runMockJobCommand,
+} from "../services/mockApi";
+import {
+  createPipelineDraft as createLivePipelineDraft,
+  runJobCommand as runLiveJobCommand,
+} from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
+import type {
+  AuditResult,
+  AuditTargetType,
+  CatalogDataset,
+  CreateDerivedDatasetRequest,
+  DraftPipeline,
+  DraftPipelinePatch,
+  FlowId,
+  JobCommand,
+  JobExecutionEvidence,
+  JobRowData,
+  SqlResultDraft,
+} from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
+
+const catalogDatasetStorageKey = "asklake.catalogDatasets";
+const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
+const maxStoredCatalogDatasets = 30;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
@@ -101,6 +126,68 @@ const emptySelectedJob: JobRowData = {
   target: "-",
 };
 
+function isCatalogDataset(value: unknown): value is CatalogDataset {
+  if (!value || typeof value !== "object") return false;
+  const dataset = value as Partial<CatalogDataset>;
+  return typeof dataset.id === "string"
+    && typeof dataset.name === "string"
+    && Array.isArray(dataset.schema)
+    && Array.isArray(dataset.sampleRows)
+    && Array.isArray(dataset.tags);
+}
+
+function parseStoredCatalogDatasets(storageKey: string) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+    return Array.isArray(stored) ? stored.filter(isCatalogDataset).map(normalizeDatasetRow) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadStoredCatalogDatasets() {
+  if (!apiConfig.useMock || typeof window === "undefined") return [];
+
+  return mergeStoredCatalogDatasets([
+    ...parseStoredCatalogDatasets(catalogDatasetStorageKey),
+    ...parseStoredCatalogDatasets(legacyDerivedDatasetStorageKey),
+  ]);
+}
+
+function mergeStoredCatalogDatasets(datasets: CatalogDataset[]) {
+  return datasets.filter((dataset, index, items) => (
+    items.findIndex((item) => item.id === dataset.id) === index
+  ));
+}
+
+function mergeCatalogDatasets(baseDatasets: CatalogDataset[], storedDatasets: CatalogDataset[]) {
+  const uniqueStoredDatasets = mergeStoredCatalogDatasets(storedDatasets);
+  const storedDatasetIds = new Set(uniqueStoredDatasets.map((dataset) => dataset.id));
+
+  return [
+    ...uniqueStoredDatasets,
+    ...baseDatasets.filter((dataset) => !storedDatasetIds.has(dataset.id)),
+  ].map(normalizeDatasetRow);
+}
+
+function saveStoredCatalogDataset(dataset: CatalogDataset) {
+  if (!apiConfig.useMock || typeof window === "undefined") return;
+
+  const previousDatasets = loadStoredCatalogDatasets();
+  const nextDatasets = [dataset, ...previousDatasets.filter((item) => item.id !== dataset.id)]
+    .slice(0, maxStoredCatalogDatasets);
+
+  window.localStorage.setItem(catalogDatasetStorageKey, JSON.stringify(nextDatasets));
+}
+
+function getInitialDatasets() {
+  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
+}
+
+function getInitialJobs() {
+  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+}
+
 function normalizeJobRow(job: JobRowData): JobRowData {
   return {
     ...job,
@@ -124,17 +211,19 @@ export function useAskLakeData({
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
 }) {
-  const [jobs, setJobs] = useState<JobRowData[]>([]);
-  const [datasets, setDatasets] = useState<CatalogDataset[]>([]);
+  const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
+  const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
-  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(emptySelectedDataset);
-  const [selectedJob, setSelectedJob] = useState<JobRowData>(emptySelectedJob);
+  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
+  const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
   const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
 
   useEffect(() => {
+    if (apiConfig.useMock) return;
+
     let cancelled = false;
     setApiPending(true);
     Promise.all([
@@ -160,7 +249,7 @@ export function useAskLakeData({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showToast]);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
@@ -181,9 +270,12 @@ export function useAskLakeData({
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const { dataset, job } = await createPipelineDraft(draftPipeline);
+      const { dataset, job } = apiConfig.useMock
+        ? await createMockPipelineDraft(draftPipeline, jobs.length)
+        : await createLivePipelineDraft(draftPipeline);
       const normalizedJob = normalizeJobRow(job);
       const normalizedDataset = normalizeDatasetRow(dataset);
+      saveStoredCatalogDataset(normalizedDataset);
       setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
       setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
       setSelectedJob(normalizedJob);
@@ -202,6 +294,34 @@ export function useAskLakeData({
       showToast("파이프라인 생성 요청에 실패했습니다.", "info");
     } finally {
       createPendingRef.current = false;
+      setApiPending(false);
+    }
+  };
+
+  const createSqlDerivedDataset = async (request: CreateDerivedDatasetRequest) => {
+    setApiPending(true);
+    try {
+      const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
+      const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
+
+      if (!sourceDataset || !currentSqlResult) {
+        writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
+        showToast("Lake Dataset 생성에 필요한 Preview 결과를 찾지 못했습니다.", "info");
+        return null;
+      }
+
+      const dataset = normalizeDatasetRow(await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult: currentSqlResult }));
+      saveStoredCatalogDataset(dataset);
+      setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
+      setSelectedDataset(dataset);
+      writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);
+      showToast("SQL 결과 기반 Lake Dataset이 생성되었습니다.");
+      return dataset;
+    } catch {
+      writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
+      showToast("Lake Dataset 생성에 실패했습니다.", "info");
+      return null;
+    } finally {
       setApiPending(false);
     }
   };
@@ -230,7 +350,9 @@ export function useAskLakeData({
 
     setApiPending(true);
     try {
-      const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
+      const { action, apiPath, dagSteps, job: updatedJob, run } = apiConfig.useMock
+        ? await runMockJobCommand(job, command)
+        : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
       if (run || dagSteps) {
@@ -274,6 +396,7 @@ export function useAskLakeData({
   return {
     apiPending,
     createPipeline,
+    createSqlDerivedDataset,
     datasets,
     draftPipeline,
     handleJobCommand,

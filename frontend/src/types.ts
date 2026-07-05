@@ -1,6 +1,6 @@
 export { ApiError } from "./types/audit";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
-export type { CatalogDataset } from "./types/catalog";
+export type { CatalogDataset, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
 export type { DashboardEntry, DashboardStatus, DashboardView, DashboardWidgetType } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
@@ -31,4 +31,4 @@ export type {
   TransformStepDraft,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
-export type { SqlResultDraft } from "./types/sql";
+export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

@@ -5,6 +5,7 @@ const defaultApiBaseUrl = "http://localhost:8080";
 
 export const apiConfig = {
   baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,
+  useMock: import.meta.env.VITE_USE_MOCK_API !== "false",
 };
 
 type RequestOptions = {
@@ -49,4 +50,3 @@ export const apiClient = {
   post: <T>(path: string, body: unknown) => request<T>(path, { body, method: "POST" }),
   put: <T>(path: string, body: unknown) => request<T>(path, { body, method: "PUT" }),
 };
-
