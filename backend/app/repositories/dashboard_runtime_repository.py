@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
@@ -33,6 +34,93 @@ class DashboardRuntimeRepository:
 
     def get_draft_revision(self, dashboard_id: str) -> DashboardRevision | None:
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.DRAFT)
+
+    def get_next_revision_version(self, dashboard_id: str) -> int:
+        statement = (
+            select(DashboardRevision.version)
+            .where(DashboardRevision.dashboard_id == dashboard_id)
+            .order_by(DashboardRevision.version.desc())
+            .limit(1)
+        )
+        current_version = self.db.scalars(statement).first()
+        return (current_version or 0) + 1
+
+    def create_revision(
+        self,
+        dashboard_id: str,
+        kind: DashboardRuntimeMode,
+        *,
+        published_at: datetime | None = None,
+    ) -> DashboardRevision:
+        revision = DashboardRevision(
+            id=self._new_id("dashrev"),
+            dashboard_id=dashboard_id,
+            kind=kind.value,
+            version=self.get_next_revision_version(dashboard_id),
+            published_at=published_at,
+        )
+        self.db.add(revision)
+        self.db.flush()
+        return revision
+
+    def create_page(self, revision_id: str, title: str, order_index: int) -> DashboardPage:
+        page = DashboardPage(
+            id=self._new_id("dashpage"),
+            revision_id=revision_id,
+            title=title,
+            order_index=order_index,
+        )
+        self.db.add(page)
+        self.db.flush()
+        return page
+
+    def create_widget(
+        self,
+        page_id: str,
+        *,
+        widget_type: str,
+        title: str | None,
+        layout: dict[str, Any],
+        config: dict[str, Any],
+        data: list[dict[str, Any]],
+        dataset_id: str | None = None,
+        query_id: str | None = None,
+    ) -> DashboardWidget:
+        widget = DashboardWidget(
+            id=self._new_id("dashwidget"),
+            page_id=page_id,
+            type=widget_type,
+            title=title,
+            dataset_id=dataset_id,
+            query_id=query_id,
+            layout=layout,
+            config=config,
+            data=data,
+        )
+        self.db.add(widget)
+        self.db.flush()
+        return widget
+
+    def copy_revision(self, source_revision: DashboardRevision, target_kind: DashboardRuntimeMode) -> DashboardRevision:
+        target_revision = self.create_revision(
+            source_revision.dashboard_id,
+            target_kind,
+            published_at=datetime.now(UTC) if target_kind == DashboardRuntimeMode.PUBLISHED else None,
+        )
+        for source_page in self.list_pages(source_revision.id):
+            target_page = self.create_page(target_revision.id, source_page.title, source_page.order_index)
+            for source_widget in self.list_widgets_by_page_ids([source_page.id]).get(source_page.id, []):
+                self.create_widget(
+                    target_page.id,
+                    widget_type=source_widget.type,
+                    title=source_widget.title,
+                    dataset_id=source_widget.dataset_id,
+                    query_id=source_widget.query_id,
+                    layout=dict(source_widget.layout),
+                    config=dict(source_widget.config),
+                    data=list(source_widget.data),
+                )
+        return target_revision
 
     def list_pages(self, revision_id: str) -> list[DashboardPage]:
         statement = (
@@ -122,3 +210,7 @@ class DashboardRuntimeRepository:
         if isinstance(value, datetime):
             return value
         return datetime.now(UTC)
+
+    @staticmethod
+    def _new_id(prefix: str) -> str:
+        return f"{prefix}_{uuid4().hex[:12]}"

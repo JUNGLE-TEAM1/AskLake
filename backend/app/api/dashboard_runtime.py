@@ -14,3 +14,10 @@ def get_published_dashboard_runtime(dashboard_id: str, db: Session = Depends(get
     repository = DashboardRuntimeRepository(db)
     service = DashboardRuntimeService(repository)
     return service.get_published_runtime(dashboard_id)
+
+
+@router.post("/{dashboard_id}/draft/ensure", response_model=DashboardRuntimeResponse)
+def ensure_draft_dashboard_runtime(dashboard_id: str, db: Session = Depends(get_db)) -> DashboardRuntimeResponse:
+    repository = DashboardRuntimeRepository(db)
+    service = DashboardRuntimeService(repository)
+    return service.ensure_draft_runtime(dashboard_id)
