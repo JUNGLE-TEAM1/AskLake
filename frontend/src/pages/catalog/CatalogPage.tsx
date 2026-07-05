@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
-import type { Edge, Node as FlowNode } from "@xyflow/react";
+import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   BarChart3,
@@ -64,6 +64,7 @@ type LineageTableNodeData = Record<string, unknown> & {
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
 };
+const lineageFitViewOptions = { maxZoom: 1.08, padding: 0.08 };
 
 type CatalogFilterState = {
   approvalRequired: boolean;
@@ -349,165 +350,166 @@ export function CatalogPage({
 
   return (
     <div className="catalog-page">
-      <div className="catalog-main">
-        <PageTitle title="검색/카탈로그" description="테이블명, 컬럼명, 태그 또는 업무 키워드로 데이터셋을 검색합니다." />
-        <section className="catalog-search-panel">
-          <div className="catalog-search-box">
-            <Search size={18} />
-            <input
-              aria-label="카탈로그 검색"
-              onChange={(event) => setSearchText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  handleSearchSubmit();
-                }
-              }}
-              placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
-              type="search"
-              value={searchText}
-            />
-          </div>
-          <div className="catalog-tag-row">
-            <span>태그</span>
-            <div>
-              {topTags.map((tag) => {
-                const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+      <PageTitle title="검색/카탈로그" description="테이블명, 컬럼명, 태그 또는 업무 키워드로 데이터셋을 검색합니다." />
+      <div className="catalog-content-grid">
+        <div className="catalog-main">
+          <section className="catalog-search-panel">
+            <div className="catalog-search-box">
+              <Search size={18} />
+              <input
+                aria-label="카탈로그 검색"
+                onChange={(event) => setSearchText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    handleSearchSubmit();
+                  }
+                }}
+                placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
+                type="search"
+                value={searchText}
+              />
+            </div>
+            <div className="catalog-tag-row">
+              <span>태그</span>
+              <div>
+                {topTags.map((tag) => {
+                  const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+
+                  return (
+                    <button
+                      aria-pressed={isTagInSearch}
+                      className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                      key={tag}
+                      type="button"
+                      onClick={() => addTagToSearch(tag)}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <section className="catalog-results-section">
+            <div className="catalog-results-header">
+              <div>
+                <h2>검색 결과</h2>
+                <span>{filteredDatasets.length}건</span>
+              </div>
+              <div className="catalog-filter-row">
+                <label>
+                  <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
+                  사용 가능
+                </label>
+                <label>
+                  <input checked={filterState.approvalRequired} type="checkbox" onChange={(event) => updateFilter("approvalRequired", event.target.checked)} />
+                  승인 필요
+                </label>
+                <label>
+                  <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
+                  RAG 여부
+                </label>
+                <div className="catalog-sort-control" ref={sortMenuRef}>
+                  <button
+                    aria-expanded={isSortMenuOpen}
+                    aria-haspopup="menu"
+                    className="catalog-sort-button"
+                    type="button"
+                    onClick={() => {
+                      setIsSortMenuOpen((isOpen) => !isOpen);
+                      onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                    }}
+                  >
+                    정렬: {selectedSortOption.label} ▾
+                  </button>
+                  {isSortMenuOpen && (
+                    <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
+                      {catalogSortOptions.map((option) => (
+                        <button
+                          aria-checked={sortMode === option.mode}
+                          className={sortMode === option.mode ? "active" : ""}
+                          key={option.mode}
+                          role="menuitemradio"
+                          type="button"
+                          onClick={() => updateSortMode(option.mode)}
+                        >
+                          <span>{sortMode === option.mode ? "✓" : ""}</span>
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="catalog-result-list">
+              {paginatedDatasets.map((dataset) => {
+                const isPinned = pinnedDatasetIds.includes(dataset.id);
+                const isActive = dataset.id === previewDataset.id;
 
                 return (
                   <button
-                    aria-pressed={isTagInSearch}
-                    className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
-                    key={tag}
+                    className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
+                    key={dataset.id}
                     type="button"
-                    onClick={() => addTagToSearch(tag)}
+                    onClick={() => setPreviewDataset(dataset)}
+                    onDoubleClick={() => onDatasetOpen(dataset)}
                   >
-                    {tag}
+                    {isPinned && (
+                      <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
+                        <Pin size={13} />
+                        고정됨
+                      </span>
+                    )}
+                    <div className="catalog-result-title">
+                      <strong>{dataset.name}</strong>
+                      <DatasetStatusBadge dataset={dataset} />
+                    </div>
+                    <p>{dataset.description}</p>
+                    <div className="catalog-result-tags">
+                      {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
+                      {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
+                    </div>
                   </button>
                 );
               })}
+              {!hasCatalogResults && (
+                <div className="catalog-empty-state">
+                  <strong>검색 결과가 없습니다.</strong>
+                  <span>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</span>
+                </div>
+              )}
             </div>
-          </div>
-        </section>
 
-        <section className="catalog-results-section">
-          <div className="catalog-results-header">
-            <div>
-              <h2>검색 결과</h2>
-              <span>{filteredDatasets.length}건</span>
-            </div>
-            <div className="catalog-filter-row">
-              <label>
-                <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
-                사용 가능
-              </label>
-              <label>
-                <input checked={filterState.approvalRequired} type="checkbox" onChange={(event) => updateFilter("approvalRequired", event.target.checked)} />
-                승인 필요
-              </label>
-              <label>
-                <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
-                RAG 여부
-              </label>
-              <div className="catalog-sort-control" ref={sortMenuRef}>
-                <button
-                  aria-expanded={isSortMenuOpen}
-                  aria-haspopup="menu"
-                  className="catalog-sort-button"
-                  type="button"
-                  onClick={() => {
-                    setIsSortMenuOpen((isOpen) => !isOpen);
-                    onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                  }}
-                >
-                  정렬: {selectedSortOption.label} ▾
-                </button>
-                {isSortMenuOpen && (
-                  <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
-                    {catalogSortOptions.map((option) => (
-                      <button
-                        aria-checked={sortMode === option.mode}
-                        className={sortMode === option.mode ? "active" : ""}
-                        key={option.mode}
-                        role="menuitemradio"
-                        type="button"
-                        onClick={() => updateSortMode(option.mode)}
-                      >
-                        <span>{sortMode === option.mode ? "✓" : ""}</span>
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="catalog-result-list">
-            {paginatedDatasets.map((dataset) => {
-              const isPinned = pinnedDatasetIds.includes(dataset.id);
-              const isActive = dataset.id === previewDataset.id;
-
-              return (
-                <button
-                  className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
-                  key={dataset.id}
-                  type="button"
-                  onClick={() => setPreviewDataset(dataset)}
-                  onDoubleClick={() => onDatasetOpen(dataset)}
-                >
-                  {isPinned && (
-                    <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
-                      <Pin size={13} />
-                      고정됨
-                    </span>
-                  )}
-                  <div className="catalog-result-title">
-                    <strong>{dataset.name}</strong>
-                    <DatasetStatusBadge dataset={dataset} />
-                  </div>
-                  <p>{dataset.description}</p>
-                  <div className="catalog-result-tags">
-                    {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
-                    {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
-                  </div>
-                </button>
-              );
-            })}
-            {!hasCatalogResults && (
-              <div className="catalog-empty-state">
-                <strong>검색 결과가 없습니다.</strong>
-                <span>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</span>
+            {hasCatalogResults && (
+              <div className="catalog-pagination" aria-label="검색 결과 페이지">
+                <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
+                <div>
+                  <button
+                    type="button"
+                    disabled={currentCatalogPage === 1}
+                    onClick={() => updateResultPage(currentCatalogPage - 1)}
+                  >
+                    이전
+                  </button>
+                  <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
+                  <button
+                    type="button"
+                    disabled={currentCatalogPage === totalCatalogPages}
+                    onClick={() => updateResultPage(currentCatalogPage + 1)}
+                  >
+                    다음
+                  </button>
+                </div>
               </div>
             )}
-          </div>
+          </section>
+        </div>
 
-          {hasCatalogResults && (
-            <div className="catalog-pagination" aria-label="검색 결과 페이지">
-              <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
-              <div>
-                <button
-                  type="button"
-                  disabled={currentCatalogPage === 1}
-                  onClick={() => updateResultPage(currentCatalogPage - 1)}
-                >
-                  이전
-                </button>
-                <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
-                <button
-                  type="button"
-                  disabled={currentCatalogPage === totalCatalogPages}
-                  onClick={() => updateResultPage(currentCatalogPage + 1)}
-                >
-                  다음
-                </button>
-              </div>
-            </div>
-          )}
-        </section>
-      </div>
-
-      {hasCatalogResults ? (
-        <aside className="catalog-preview-panel">
+        {hasCatalogResults ? (
+          <aside className="catalog-preview-panel">
           <div className="catalog-preview-title">
             <LayoutGrid size={20} />
             <div>
@@ -565,10 +567,9 @@ export function CatalogPage({
               setActiveModal("lineage");
             }
           }}>
-            <ExternalLink size={16} />
+            <Share2 size={16} />
             <div>
-              <strong>데이터 흐름도 확인</strong>
-              <span>Upstream {previewDataset.upstream.length} / Downstream {previewDataset.downstream.length}</span>
+              <strong>데이터 흐름 보기</strong>
             </div>
             <span>›</span>
           </article>
@@ -577,19 +578,21 @@ export function CatalogPage({
             <ExternalLink size={16} /> 쿼리 편집기에서 열기
           </button>
           <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
-        </aside>
-      ) : (
-        <aside className="catalog-preview-panel catalog-preview-panel-empty">
-          <LayoutGrid size={22} />
-          <strong>선택할 데이터셋이 없습니다.</strong>
-          <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
-        </aside>
-      )}
+          </aside>
+        ) : (
+          <aside className="catalog-preview-panel catalog-preview-panel-empty">
+            <LayoutGrid size={22} />
+            <strong>선택할 데이터셋이 없습니다.</strong>
+            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
+          </aside>
+        )}
+      </div>
       {activeModal && (
         <CatalogModal
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
           title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
+          variant={activeModal}
         >
           {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
         </CatalogModal>
@@ -603,15 +606,17 @@ function CatalogModal({
   dataset,
   onClose,
   title,
+  variant,
 }: {
   children: React.ReactNode;
   dataset: CatalogDataset;
   onClose: () => void;
   title: string;
+  variant: "lineage" | "schema";
 }) {
   return (
     <div className="catalog-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="catalog-modal" role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
+      <section className={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`} role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
         <header className="catalog-modal-header">
           <div>
             <span>{dataset.layer} Dataset</span>
@@ -778,6 +783,8 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
+  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
   const { edges, nodes } = lineageGraph
     ? buildLineageGraph(lineageGraph, selectedColumnKey, setSelectedColumnKey)
     : { edges: [], nodes: [] };
@@ -800,6 +807,35 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     };
   }, [dataset.id]);
 
+  useEffect(() => {
+    if (!flowInstance || !lineageGraph) return;
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      void flowInstance.fitView(lineageFitViewOptions);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [edges.length, flowInstance, lineageGraph, nodes.length]);
+
+  useEffect(() => {
+    if (!flowInstance || !flowWrapperRef.current || !lineageGraph || typeof ResizeObserver === "undefined") return;
+
+    let animationFrame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        void flowInstance.fitView(lineageFitViewOptions);
+      });
+    });
+
+    observer.observe(flowWrapperRef.current);
+
+    return () => {
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+    };
+  }, [flowInstance, lineageGraph]);
+
   return (
     <section className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
       {!compact && (
@@ -812,17 +848,18 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       )}
       {lineageGraph ? (
-        <div className="catalog-lineage-flow" aria-label={`${dataset.name} lineage graph`}>
+        <div className="catalog-lineage-flow" ref={flowWrapperRef} aria-label={`${dataset.name} lineage graph`}>
           <ReactFlow
             edges={edges}
             fitView
-            fitViewOptions={{ maxZoom: 0.9, padding: 0.2 }}
-            maxZoom={1}
+            fitViewOptions={lineageFitViewOptions}
+            maxZoom={1.2}
             minZoom={0.35}
             nodes={nodes}
             nodesDraggable={false}
             nodesConnectable={false}
             nodeTypes={lineageNodeTypes}
+            onInit={setFlowInstance}
             onPaneClick={() => setSelectedColumnKey(null)}
             proOptions={{ hideAttribution: true }}
           >
