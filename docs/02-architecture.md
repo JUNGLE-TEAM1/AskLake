@@ -32,6 +32,7 @@ AskLake/
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
 | Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor drag/resize canvas |
+| Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
@@ -59,7 +60,8 @@ flowchart LR
 - layout: `frontend/src/components/layout/`
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
-- catalog 화면: `frontend/src/pages/catalog/`
+- catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`
+- lineage graph API/mock boundary: `frontend/src/services/mockApi.ts`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
 - dashboard runtime shell: `frontend/src/pages/dashboard/runtime/`
@@ -100,6 +102,7 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 | --- | --- | --- |
 | ETL Job | `JobRowData` mock | persisted job resource |
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
+| Dataset Lineage | `LineageGraph` mock/fallback | column-level lineage graph resource |
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
 | Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
@@ -125,6 +128,7 @@ P1 hydrate API:
 - `GET /api/etl/jobs/{jobId}`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
+- `GET /api/catalog/datasets/{datasetId}/lineage`
 
 Dashboard runtime API:
 

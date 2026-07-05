@@ -102,11 +102,10 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL 실행 -> Dashboard Widget 생성 -> Dashboard 저장/Publish` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
 이 마일스톤은 demo readiness 기준이며, 실제 backend/runtime 완성 범위를 과장하지 않는다.
 E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 따른다.
-대용량 처리 증거가 별도로 필요할 때는 `docs/10gb-fallback-verification.md`를 참조한다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |
 | --- | --- | --- |
-| Day 1 | 생성 결과를 ETL 목록과 Catalog에 연결하고 Catalog 상세에 기본 lineage를 표시 | 새 Job, 새 Dataset, Dataset schema, upstream/current/downstream lineage, Dashboard 빈 상태가 보인다. |
+| Day 1 | 생성 결과를 ETL 목록과 Catalog에 연결하고 Catalog 상세에 기본 lineage를 표시 | 새 Job, 새 Dataset, Dataset schema, source/upstream -> current lineage, Dashboard 빈 상태가 보인다. |
 | Day 2 | Job 실행 상태를 이력/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 이력/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
 | Day 3 | SQL Result를 Dashboard Widget으로 넘기고 Lineage/SQL/Dashboard 조작을 보강 | SQL Result Preview, Lineage 선택 상태, Table Widget, Widget 제목 수정/삭제가 동작한다. |
 | Day 4 | 전체 흐름을 반복 QA하고 Dashboard 저장/Publish를 완성 | 발표자가 5분 안에 전체 흐름을 재현하고 Published Dashboard까지 확인한다. |
