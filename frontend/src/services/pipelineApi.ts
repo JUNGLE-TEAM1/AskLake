@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
 import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -10,7 +10,9 @@ export type PipelineCreationResult = {
 export type JobCommandResult = {
   action: string;
   apiPath: string;
+  dagSteps?: JobDagStep[];
   job?: JobRowData;
+  run?: JobRunSummary;
 };
 
 export async function createPipelineDraft(draftPipeline: DraftPipeline): Promise<PipelineCreationResult> {

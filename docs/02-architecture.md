@@ -1,109 +1,136 @@
 # 02. Architecture
 
-AskLake currently has a React/Vite frontend and a local Node backend. The active vertical slice is Source, Schema, and Create for Pair A person-1.
+이 문서는 AskLake의 현재 frontend baseline과 목표 backend architecture를 함께 기록한다.
 
-## 1. Repository Layout
+## 1) 현재 구조
+
+현재 repository는 frontend-only app이다.
 
 ```text
 AskLake/
-  backend/
-    src/
-      server.mjs
-      connectors.mjs
-      createPipeline.mjs
-      profile.mjs
-    scripts/
-      setup-source-fixtures.mjs
-      verify-all-sources.mjs
-      prepare-minio-samples.mjs
-      start-spark-server.mjs
-      run-spark-validation.mjs
-      spark_validate.py
-  frontend/
-    src/
-      data/appShellData.ts
-      hooks/useAskLakeData.ts
-      services/apiClient.ts
-      services/pipelineApi.ts
-      services/sourceConnectorService.ts
-      pages/etl/EtlPages.tsx
-  docs/
+├─ frontend/
+│  ├─ src/
+│  │  ├─ components/
+│  │  ├─ data/
+│  │  ├─ hooks/
+│  │  ├─ pages/
+│  │  ├─ services/
+│  │  ├─ styles/
+│  │  └─ types/
+│  ├─ package.json
+│  └─ vite.config.ts
+├─ docs/
+│  ├─ api-contract.md
+│  └─ backend-integration-readiness.md
+└─ README.md
 ```
 
-## 2. Runtime View
+## 2) 기술 스택
+
+| 영역 | 현재 선택 | 상태 | 메모 |
+| --- | --- | --- | --- |
+| Frontend | React + Vite + TypeScript | implemented | `frontend/` |
+| UI icons | lucide-react | implemented | package dependency |
+| State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
+| API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
+| Backend | TBD | planned | API contract exists |
+| Database | TBD | planned | persistence model not implemented |
+
+## 3) 목표 시스템 구성
 
 ```mermaid
 flowchart LR
-    User["User"] --> FE["React/Vite Frontend"]
-    FE --> API["Node Backend API"]
-    API --> S3["MinIO / S3"]
-    API --> REST["REST Endpoint"]
-    API --> PG["PostgreSQL Fixture"]
-    API --> MONGO["MongoDB Fixture"]
-    API --> KAFKA["Redpanda Kafka Fixture"]
-    API --> SPARK["Spark Standalone Validation"]
+    U[User] --> FE[React/Vite Frontend]
+    FE --> API[AskLake Backend API]
+    API --> DB[(Metadata DB)]
+    API --> JOB[Job Runtime / Scheduler]
+    API --> SQL[Query Runtime]
+    API --> AUDIT[(Audit Log)]
 ```
 
-Frontend behavior is backend-driven. The UI does not perform direct source reads.
+현재는 `FE`만 구현되어 있고, backend/API/DB/runtime은 planned 상태다.
 
-## 3. Frontend Ownership
+## 4) Frontend Layer
 
-- Navigation and shell state: `frontend/src/data/appShellData.ts`
-- Domain state: `frontend/src/hooks/useAskLakeData.ts`
-- Backend client: `frontend/src/services/apiClient.ts`
-- Pipeline adapter: `frontend/src/services/pipelineApi.ts`
-- Source adapter: `frontend/src/services/sourceConnectorService.ts`
-- Draft contract: `frontend/src/types/etl.ts`, `frontend/src/services/draftPipelineContract.ts`
+주요 책임:
 
-`DraftPipeline` remains nested for slice ownership:
+- navigation과 화면 composition: `frontend/src/App.tsx`
+- layout: `frontend/src/components/layout/`
+- ingest/job 화면: `frontend/src/pages/ingest/`
+- ETL creation flow: `frontend/src/pages/etl/`
+- catalog 화면: `frontend/src/pages/catalog/`
+- SQL 화면: `frontend/src/pages/sql/`
+- dashboard 화면: `frontend/src/pages/dashboard/`
+- mock data: `frontend/src/data/mockData.ts`
+- domain state: `frontend/src/hooks/useAskLakeData.ts`
+- audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
+- API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
 
-```ts
-type DraftPipeline = {
-  source: SourceDraft;
-  schema: SchemaDraft;
-  transform: TransformDraft;
-  quality: QualityDraft;
-  schedule: ScheduleDraft;
-  permission: PermissionDraft;
-  target: TargetDraft;
-};
-```
+## 5) Backend Target Boundary
 
-Submit maps nested draft state to flat `CreatePipelineRequest` immediately before `POST /api/etl/jobs`.
+백엔드가 소유할 책임:
 
-## 4. Backend Ownership
+- ETL job 생성과 상태 전이
+- dataset catalog hydrate
+- SQL query run 생성과 결과 반환
+- dashboard 저장/게시
+- audit log 저장
+- 인증/권한이 도입될 경우 actor와 access policy 판정
 
-- HTTP routing: `backend/src/server.mjs`
-- Source connectors: `backend/src/connectors.mjs`
-- Schema/sample profiling: `backend/src/profile.mjs`
-- Create response mapping: `backend/src/createPipeline.mjs`
-- Source fixtures: `backend/scripts/setup-source-fixtures.mjs`
-- Source verification: `backend/scripts/verify-all-sources.mjs`
-- MinIO 1GB sample preparation: `backend/scripts/prepare-minio-samples.mjs`
-- Spark validation: `backend/scripts/spark_validate.py`
+프론트가 계속 소유할 책임:
 
-Current metadata storage is in-memory. This is sufficient for local Day 1 flow but not durable persistence.
+- 화면 상태와 사용자 interaction
+- loading/error 표시
+- optimistic update 또는 rollback UX
+- mock/live 전환 adapter
 
-## 5. API Boundary
+## 6) 데이터 모델 초안
 
-Implemented endpoints:
+상세 타입은 `docs/api-contract.md`와 `frontend/src/types/`를 기준으로 한다.
 
-- `GET /api/health`
-- `GET /api/etl/jobs`
-- `GET /api/catalog/datasets`
-- `GET /api/harness/rest-sample`
-- `POST /api/etl/sources/test`
-- `POST /api/etl/schema-inference`
+핵심 리소스:
+
+| Resource | 현재 위치 | 백엔드 목표 |
+| --- | --- | --- |
+| ETL Job | `JobRowData` mock | persisted job resource |
+| Dataset | `CatalogDataset` mock | catalog dataset resource |
+| SQL Run | `SqlResultDraft` runtime state | query run resource |
+| Dashboard | `DashboardEntry` and local builder state | dashboard resource |
+| Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
+
+## 7) API Boundary
+
+현재 live mode 진입점:
+
+- `VITE_USE_MOCK_API=false`
+- `VITE_API_BASE_URL=http://localhost:8080`
+- `frontend/src/services/mockApi.ts`
+- `frontend/src/services/apiClient.ts`
+
+P0 API:
+
 - `POST /api/etl/jobs`
 - `POST /api/etl/jobs/{jobId}/commands`
 - `POST /api/query/runs`
 
-Initial hydrate endpoints return empty arrays until a pipeline is created.
+P1 hydrate API:
 
-## 6. Design Rules
+- `GET /api/etl/jobs`
+- `GET /api/etl/jobs/{jobId}`
+- `GET /api/catalog/datasets`
+- `GET /api/catalog/datasets/{datasetId}`
 
-- Public UI must not expose internal M/L stage labels.
-- Public UI must use Korean text for user-facing ETL creation screens.
-- Wide JSON/table previews must scroll inside their own panel, not expand the page.
-- Source connector cards must distinguish PostgreSQL and MongoDB.
-- Unsupported frontend-only source reads must not be reintroduced.
+## 8) 설계 원칙
+
+- Mock data는 demo baseline이며, 최종 persistence model로 간주하지 않는다.
+- API response shape는 프론트 타입과 문서가 함께 바뀌어야 한다.
+- API, mock fixture, frontend internal state의 status 값은 영어 canonical value로 유지하고 UI label mapper에서 한국어 표시로 변환한다.
+- Backend 연결은 생성/명령/SQL 실행 같은 P0 vertical slice부터 시작한다.
+- SQL runtime은 read-only guard를 가져야 한다.
+- 감사 로그는 사용자에게 보이는 제품 기능이면서 backend integration evidence로도 쓰일 수 있다.
+
+## 9) 운영/배포 메모
+
+- 현재 실행은 frontend dev server 기준이다.
+- backend dev server, DB, migration, container strategy는 아직 정하지 않았다.
+- CI가 생기면 최소 required check 후보는 frontend build다.

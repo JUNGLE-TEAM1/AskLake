@@ -67,12 +67,10 @@ export async function testDataLakeSource(fields) {
   const sample = parquetObjects[0] ?? objects[0];
   const id = sourceId("source", `${path}:${objects.length}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const sourceConfig = upsertFields(fields, [
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["Path", path],
     ["Endpoint URL", endpoint],
     ["Region", region],
-    ["Access Key", accessKeyId],
-    ["Secret Key", secretAccessKey],
     ["Use Path Style", String(forcePathStyle)],
     ["__Source ID", id],
     ["__Run ID", runId],
@@ -132,7 +130,7 @@ export async function testRestSource(fields) {
   const schemaColumns = inferSchemaColumns(parsedSample);
   const id = sourceId("source", endpoint);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const sourceConfig = upsertFields(fields, [
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["__Source ID", id],
     ["__Run ID", runId],
     ["__Source Unit Count", "1"],
@@ -201,7 +199,7 @@ export async function testPostgresSource(fields) {
     const schemaColumns = inferSchemaColumns(parsedSample);
     const id = sourceId("source", `postgres://${host}:${port}/${database}/${schema}/${table}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
-    const sourceConfig = upsertFields(fields, [
+    const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
       ["Endpoint / Host", host],
       ["Port", String(port)],
       ["Database Name", database],
@@ -292,7 +290,7 @@ export async function testMongoSource(fields) {
     const schemaColumns = inferSchemaColumns(parsedSample);
     const id = sourceId("source", `mongodb://${endpoint}:${port}/${database}/${collection}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
-    const sourceConfig = upsertFields(fields, [
+    const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
       ["Endpoint / Host", endpoint],
       ["Port", String(port)],
       ["Database Name", database],
@@ -359,7 +357,7 @@ export async function testKafkaSource(fields) {
 
     const id = sourceId("source", `kafka://${broker}/${topic}`);
     const runId = sourceId("run", `${id}:${Date.now()}`);
-    const sourceConfig = upsertFields(fields, [
+    const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
       ["Broker / Endpoint", broker],
       ["TOPIC / QUEUE NAME", topic],
       ["CONSUMER GROUP ID", groupId],
@@ -425,7 +423,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
       Key: sampleObject.Key,
       Range: requestedBytes > 0 ? `bytes=0-${Math.max(0, requestedBytes - 1)}` : undefined,
     }));
-    const text = await objectResult.Body?.transformToString();
+    const text = await readBodyTextWithinLimit(objectResult.Body, requestedBytes);
     parsedSample = parseSourceSample(sampleObject.Key, text ?? "", { maxRows: samplePolicy.rowLimit });
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
@@ -443,7 +441,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
   const summary = schemaColumns.length
     ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
-  const sourceConfig = upsertFields(fields, [
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["Endpoint URL", endpoint],
     ["Region", region],
     ["Bucket / Stage Name", bucket],
@@ -517,6 +515,11 @@ function normalizePrefix(prefix) {
   return String(prefix ?? "").replace(/^\/+/, "");
 }
 
+function redactSecretConfigValues(fields) {
+  const secretPattern = /(access key|secret key|password|auth token|token|private key)/i;
+  return fields.map(([label, value]) => [label, secretPattern.test(label) ? "" : value]);
+}
+
 function hasTextExtension(key) {
   const lower = key.toLowerCase();
   return textFileExtensions.some((extension) => lower.endsWith(extension));
@@ -560,15 +563,42 @@ function sampleRowLimit(scope, kind) {
 function sampleObjectRangeBytes(policy, objectSize) {
   const currentBytes = Number(process.env.ASKLAKE_SOURCE_CURRENT_SAMPLE_BYTES || 512 * 1024);
   const oneGbBytes = Number(process.env.ASKLAKE_SOURCE_1GB_SAMPLE_BYTES || 1024 * 1024 * 1024);
-  const fullCapBytes = Number(process.env.ASKLAKE_SOURCE_FULL_SAMPLE_CAP_BYTES || oneGbBytes);
+  const interactiveCapBytes = Number(process.env.ASKLAKE_SOURCE_INTERACTIVE_SAMPLE_CAP_BYTES || 16 * 1024 * 1024);
+  const fullCapBytes = Number(process.env.ASKLAKE_SOURCE_FULL_SAMPLE_CAP_BYTES || interactiveCapBytes);
   const desiredBytes = policy.scope === "slice1gb"
     ? oneGbBytes
     : policy.scope === "full"
       ? Math.min(Number.isFinite(objectSize) && objectSize > 0 ? objectSize : fullCapBytes, fullCapBytes)
       : currentBytes;
-  if (!Number.isFinite(desiredBytes) || desiredBytes <= 0) return currentBytes;
-  if (Number.isFinite(objectSize) && objectSize > 0) return Math.min(objectSize, desiredBytes);
-  return desiredBytes;
+  const cappedBytes = Math.min(
+    Number.isFinite(desiredBytes) && desiredBytes > 0 ? desiredBytes : currentBytes,
+    Number.isFinite(interactiveCapBytes) && interactiveCapBytes > 0 ? interactiveCapBytes : currentBytes,
+  );
+  if (Number.isFinite(objectSize) && objectSize > 0) return Math.min(objectSize, cappedBytes);
+  return cappedBytes;
+}
+
+async function readBodyTextWithinLimit(body, maxBytes) {
+  if (!body) return "";
+  const byteLimit = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : 512 * 1024;
+  const chunks = [];
+  let totalBytes = 0;
+
+  if (typeof body[Symbol.asyncIterator] !== "function") {
+    return "";
+  }
+
+  for await (const chunk of body) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = byteLimit - totalBytes;
+    if (remaining <= 0) break;
+    const next = buffer.length > remaining ? buffer.subarray(0, remaining) : buffer;
+    chunks.push(next);
+    totalBytes += next.length;
+    if (totalBytes >= byteLimit) break;
+  }
+
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
 }
 
 function parseBoolean(value, fallback) {

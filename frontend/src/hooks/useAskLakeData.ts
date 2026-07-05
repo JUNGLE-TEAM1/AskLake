@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import { apiClient } from "../services/apiClient";
 import { createPipelineDraft, runJobCommand } from "../services/pipelineApi";
-import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobRowData, SqlResultDraft } from "../types";
+import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
+import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, DraftPipelinePatch, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
@@ -44,8 +45,8 @@ const initialDraftPipeline: DraftPipeline = {
       ["Region", "us-east-1"],
       ["Bucket / Stage Name", "m3-raw"],
       ["Path / Prefix", "nyc_taxi/csv/"],
-      ["Access Key", "m3admin"],
-      ["Secret Key", "wishuponastar"],
+      ["Access Key", ""],
+      ["Secret Key", ""],
       ["Use Path Style", "true"],
     ],
     sourceLabel: "m3-raw",
@@ -81,7 +82,7 @@ const emptySelectedDataset: CatalogDataset = {
   schema: [],
   size: "-",
   source: "-",
-  status: "승인 필요",
+  status: "approval_required",
   tags: [],
   upstream: [],
 };
@@ -95,10 +96,24 @@ const emptySelectedJob: JobRowData = {
   owner: "-",
   schedule: "-",
   source: "-",
-  status: "일시정지",
+  status: "paused",
   tag: "[없음]",
   target: "-",
 };
+
+function normalizeJobRow(job: JobRowData): JobRowData {
+  return {
+    ...job,
+    status: normalizeJobStatus(String(job.status)),
+  };
+}
+
+function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
+  return {
+    ...dataset,
+    status: normalizeDatasetStatus(String(dataset.status)),
+  };
+}
 
 export function useAskLakeData({
   onFlowChange,
@@ -114,6 +129,7 @@ export function useAskLakeData({
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(emptySelectedJob);
+  const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
@@ -127,10 +143,12 @@ export function useAskLakeData({
     ])
       .then(([nextJobs, nextDatasets]) => {
         if (cancelled) return;
-        setJobs(nextJobs);
-        setDatasets(nextDatasets);
-        setSelectedJob(nextJobs[0] ?? emptySelectedJob);
-        setSelectedDataset(nextDatasets[0] ?? emptySelectedDataset);
+        const normalizedJobs = nextJobs.map(normalizeJobRow);
+        const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
+        setJobs(normalizedJobs);
+        setDatasets(normalizedDatasets);
+        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
+        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
       })
       .catch(() => {
         if (!cancelled) showToast("백엔드 초기 데이터를 불러오지 못했습니다.", "info");
@@ -164,10 +182,12 @@ export function useAskLakeData({
     setApiPending(true);
     try {
       const { dataset, job } = await createPipelineDraft(draftPipeline);
-      setJobs((items) => [job, ...items.filter((item) => item.name !== job.name)]);
-      setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
-      setSelectedJob(job);
-      setSelectedDataset(dataset);
+      const normalizedJob = normalizeJobRow(job);
+      const normalizedDataset = normalizeDatasetRow(dataset);
+      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
+      setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
+      setSelectedJob(normalizedJob);
+      setSelectedDataset(normalizedDataset);
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
       writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
       showToast("파이프라인 생성 요청이 접수되었습니다.");
@@ -210,9 +230,21 @@ export function useAskLakeData({
 
     setApiPending(true);
     try {
-      const { action, apiPath, job: updatedJob } = await runJobCommand(job, command);
+      const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
-      if (updatedJob) updateJobState(job.id, () => updatedJob);
+      if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
+      if (run || dagSteps) {
+        setJobExecutionEvidence((evidence) => {
+          const previous = evidence[job.id] ?? { dagSteps: [], runs: [] };
+          return {
+            ...evidence,
+            [job.id]: {
+              dagSteps: dagSteps ?? previous.dagSteps,
+              runs: run ? [run, ...previous.runs.filter((item) => item.runId !== run.runId)] : previous.runs,
+            },
+          };
+        });
+      }
     } catch {
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");
@@ -245,6 +277,7 @@ export function useAskLakeData({
     datasets,
     draftPipeline,
     handleJobCommand,
+    jobExecutionEvidence,
     jobs,
     openDataset,
     openDatasetInSql,

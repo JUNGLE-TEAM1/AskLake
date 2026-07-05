@@ -1,4 +1,4 @@
-import { normalizeColumnName, sourceId } from "./profile.mjs";
+import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
 
 const jobs = [];
 const datasets = [];
@@ -15,19 +15,23 @@ export function createPipeline(request) {
   validateCreatePipelineRequest(request);
   const datasetSchema = datasetSchemaFromRequest(request);
   const datasetSampleRows = datasetSampleRowsFromRequest(request, datasetSchema);
+  const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
   const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobs.length + 1).padStart(3, "0")}`;
   const datasetId = `ds_${normalizeColumnName(request.targetDataset)}`;
 
   const job = {
+    dagSteps: initialDagSteps(request, sourceMetrics),
     id: jobId,
-    lastRun: "방금 생성됨",
-    lastState: "대기 중",
+    lastRun: "생성 후 미실행",
+    lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
     nextRun: request.scheduleLabel === "manual" ? "-" : request.scheduleLabel,
     owner: request.owner,
+    runHistory: [],
     schedule: request.scheduleLabel,
     source: `${request.sourceType} / ${request.sourceLabel}`,
-    status: "스케줄됨",
+    stats: initialJobStats(sourceMetrics),
+    status: "scheduled",
     tag: "[생성]",
     target: request.targetDataset,
   };
@@ -35,7 +39,7 @@ export function createPipeline(request) {
   const dataset = {
     description: `${request.sourceType} 소스 ${request.sourceLabel}에서 생성된 데이터셋`,
     downstream: request.rag ? ["SQL 분석", "RAG 인덱싱"] : ["SQL 분석"],
-    freshness: "생성됨",
+    freshness: "latest",
     id: datasetId,
     lastUpdated: new Date().toISOString(),
     layer: request.targetLayer,
@@ -44,12 +48,12 @@ export function createPipeline(request) {
     owner: request.owner,
     quality: request.ruleSummary || "확인 대기",
     rag: Boolean(request.rag),
-    rows: "0 rows",
+    rows: sourceMetrics.datasetRows,
     sampleRows: datasetSampleRows,
     schema: datasetSchema,
-    size: "확인 대기",
+    size: sourceMetrics.datasetSize,
     source: request.jobName,
-    status: "사용 가능",
+    status: "available",
     tags: ["#생성", `#${String(request.targetLayer).toLowerCase()}`],
     upstream: [request.sourceLabel, request.jobName],
   };
@@ -74,22 +78,18 @@ export function commandJob(jobId, command) {
 
   const nextJob = applyJobCommand(job, command);
   Object.assign(job, nextJob);
+  const run = runFromCommand(job, command);
+  if (run) {
+    job.runHistory = [run, ...(job.runHistory ?? [])];
+    job.stats = statsFromRuns(job, job.runHistory);
+    job.dagSteps = dagStepsFromCommand(job, command, run);
+  }
   return {
     action: actionByCommand[command],
     apiPath: `/api/etl/jobs/${jobId}/commands`,
     job,
-    run: {
-      command,
-      jobId,
-      runId: sourceId("run", `${jobId}:${command}:${Date.now()}`),
-      status: job.status,
-      submittedAt: new Date().toISOString(),
-    },
-    dagSteps: [
-      { id: "source", label: "Source 연결", status: command === "cancel" ? "cancelled" : "done" },
-      { id: "schema", label: "Schema 확인", status: command === "cancel" ? "cancelled" : "done" },
-      { id: "transform", label: "Transform 실행", status: command === "pause" ? "paused" : command === "cancel" ? "cancelled" : "running" },
-    ],
+    run,
+    dagSteps: job.dagSteps ?? [],
   };
 }
 
@@ -141,13 +141,14 @@ function notFoundError(message) {
 
 function applyJobCommand(job, command) {
   if (command === "run" || command === "retry") {
+    const now = new Date().toISOString();
     return {
       ...job,
-      lastRun: "현재 실행 중",
-      lastState: command === "retry" ? "재실행 중 · Source 연결" : "1/3 단계 · Source 연결",
-      nextRun: "-",
-      progress: { label: command === "retry" ? "재실행 중 · Source 연결" : "1/3 단계 · Source 연결", value: 33 },
-      status: "실행 중",
+      lastRun: now,
+      lastState: command === "retry" ? "재실행 완료 · Source/Schema/Create 검증" : "실행 완료 · Source/Schema/Create 검증",
+      nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+      progress: undefined,
+      status: "scheduled",
     };
   }
 
@@ -157,7 +158,7 @@ function applyJobCommand(job, command) {
       lastState: "사용자 일시정지",
       nextRun: "재개 대기",
       progress: job.progress ?? { label: "일시정지됨", value: 50 },
-      status: "일시정지",
+      status: "paused",
     };
   }
 
@@ -167,8 +168,148 @@ function applyJobCommand(job, command) {
     lastState: "취소됨",
     nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
     progress: undefined,
-    status: "스케줄됨",
+    status: "canceled",
   };
+}
+
+function sourceMetricsFromRequest(request, schema, sampleRows) {
+  const sourceConfig = Array.isArray(request.sourceConfig) ? request.sourceConfig : [];
+  const sampleRowsCount = Array.isArray(sampleRows) ? sampleRows.length : 0;
+  const schemaColumns = Array.isArray(schema) ? schema.length : 0;
+  const rowLimit = parsePositiveInteger(fieldValue(sourceConfig, "__Sample Row Limit"));
+  const requestedBytes = parsePositiveInteger(fieldValue(sourceConfig, "__Sample Requested Bytes"));
+  const sourceUnits = parsePositiveInteger(fieldValue(sourceConfig, "__Source Unit Count"));
+  const sampleScope = fieldValue(sourceConfig, "__Schema Sample Scope Label") || "현재 샘플";
+  const unitLabel = sourceUnitLabel(request.sourceType);
+  const rowLabel = request.sourceType === "MongoDB" ? "문서" : "행";
+  const datasetRows = sampleRowsCount > 0
+    ? `샘플 ${sampleRowsCount.toLocaleString()}${rowLabel}`
+    : sourceUnits > 0
+      ? `${sourceUnits.toLocaleString()}개 ${unitLabel} 감지`
+      : "샘플 없음";
+  const datasetSize = requestedBytes > 0
+    ? formatBytes(requestedBytes)
+    : rowLimit > 0
+      ? `최대 ${rowLimit.toLocaleString()}${rowLabel} 샘플`
+      : sourceUnits > 0
+        ? `${sourceUnits.toLocaleString()}개 ${unitLabel}`
+        : "확인 대기";
+
+  return {
+    datasetRows,
+    datasetSize,
+    rowLabel,
+    sampleRows: sampleRowsCount,
+    sampleScope,
+    schemaColumns,
+    sourceUnits,
+    unitLabel,
+  };
+}
+
+function initialJobStats(metrics) {
+  return {
+    averageDuration: "-",
+    currentStage: "생성 완료 · 실행 전",
+    inputRows: metrics.sampleRows > 0 ? `${metrics.sampleRows.toLocaleString()} 샘플 ${metrics.rowLabel}` : "-",
+    lastSuccess: "-",
+    outputRows: "0",
+    sampleScope: metrics.sampleScope,
+    schemaColumns: `${metrics.schemaColumns.toLocaleString()}개`,
+    sourceUnits: metrics.sourceUnits > 0 ? `${metrics.sourceUnits.toLocaleString()}개 ${metrics.unitLabel}` : "-",
+    successRate: "-",
+    totalRuns: "0회",
+  };
+}
+
+function initialDagSteps(request, metrics) {
+  return [
+    { id: "source", meta: `${request.sourceType} / ${request.sourceLabel}`, status: "success", title: "1. Source 연결" },
+    { id: "schema", meta: `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, status: metrics.schemaColumns > 0 ? "success" : "pending", title: "2. Schema 추론" },
+    { id: "create", meta: request.targetDataset, status: "success", title: "3. Job 생성" },
+    { id: "run", meta: "아직 실행되지 않음", status: "pending", title: "4. 실행 대기" },
+  ];
+}
+
+function runFromCommand(job, command) {
+  if (command === "pause") return undefined;
+  const now = new Date();
+  const runId = sourceId("run", `${job.id}:${command}:${now.toISOString()}`);
+  const inputRows = job.stats?.inputRows && job.stats.inputRows !== "-" ? job.stats.inputRows : "0";
+  if (command === "cancel") {
+    return {
+      duration: "-",
+      endedAt: now.toISOString(),
+      errorSummary: "사용자 취소",
+      failedStage: "실행 취소",
+      inputRows,
+      outputRows: "0",
+      runId,
+      startedAt: now.toISOString(),
+      status: "canceled",
+    };
+  }
+  return {
+    duration: "완료",
+    endedAt: now.toISOString(),
+    errorSummary: "-",
+    failedStage: "-",
+    inputRows,
+    outputRows: inputRows,
+    runId,
+    startedAt: now.toISOString(),
+    status: "success",
+  };
+}
+
+function statsFromRuns(job, runs) {
+  const totalRuns = runs.length;
+  const successRuns = runs.filter((run) => run.status === "success").length;
+  const lastSuccess = runs.find((run) => run.status === "success")?.endedAt ?? "-";
+  const latestRun = runs[0];
+  return {
+    ...(job.stats ?? {}),
+    averageDuration: latestRun?.duration ?? "-",
+    currentStage: job.lastState,
+    lastSuccess,
+    outputRows: latestRun?.outputRows ?? job.stats?.outputRows ?? "0",
+    successRate: totalRuns > 0 ? `${Math.round((successRuns / totalRuns) * 100)}%` : "-",
+    totalRuns: `${totalRuns.toLocaleString()}회`,
+  };
+}
+
+function dagStepsFromCommand(job, command, run) {
+  const canceled = command === "cancel";
+  if (!canceled) {
+    return [
+      { id: "source", meta: job.source, status: "success", title: "1. Source 연결" },
+      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: "success", title: "2. Schema 확인" },
+      { id: "read", meta: run.inputRows, status: "success", title: "3. Source 읽기" },
+      { id: "create", meta: job.id, status: "success", title: "4. Job 실행 기록" },
+      { id: "catalog", meta: job.target, status: "success", title: "5. Catalog Dataset 확인" },
+    ];
+  }
+  return [
+    { id: "source", meta: job.source, status: canceled ? "blocked" : "success", title: "1. Source 연결" },
+    { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: canceled ? "blocked" : "success", title: "2. Schema 확인" },
+    { id: "read", meta: run.inputRows, status: canceled ? "blocked" : "running", title: "3. Source 읽기" },
+    { id: "transform", meta: "Pair A 2 처리 단계", status: canceled ? "blocked" : "pending", title: "4. Transform" },
+    { id: "quality", meta: "Pair A 2 품질 단계", status: "pending", title: "5. Quality" },
+    { id: "target", meta: job.target, status: "pending", title: "6. Lake 적재" },
+  ];
+}
+
+function sourceUnitLabel(sourceType) {
+  if (sourceType === "MongoDB") return "컬렉션";
+  if (sourceType === "PostgreSQL") return "테이블";
+  if (sourceType === "Stream / Kafka") return "파티션";
+  return "오브젝트";
+}
+
+function parsePositiveInteger(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.trunc(parsed);
 }
 
 function validRequestSchemaColumns(request) {

@@ -204,6 +204,10 @@
   background: #f59e0b;
 }
 
+.job-row.canceled::before {
+  background: #64748b;
+}
+
 .job-row.running {
   min-height: 175px;
 }
@@ -659,6 +663,15 @@
   color: #2563eb;
 }
 
+.detail-metric-card.canceled {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.detail-metric-card.canceled strong {
+  color: #475569;
+}
+
 .detail-meta-line {
   grid-area: meta;
   display: flex;
@@ -715,6 +728,12 @@
   border-color: #bbf7d0;
   border-left-color: #16a34a;
   background: #f0fdf4;
+}
+
+.detail-status-strip.canceled {
+  border-color: #cbd5e1;
+  border-left-color: #64748b;
+  background: #f8fafc;
 }
 
 .detail-table-header {
@@ -1117,3 +1136,7 @@
   color: #b45309;
 }
 
+.status-pill.canceled {
+  background: #f1f5f9;
+  color: #475569;
+}
