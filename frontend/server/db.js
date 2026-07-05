@@ -55,6 +55,79 @@ function normalizeLayout(input = {}) {
   return { x, y, w, h, minW, minH };
 }
 
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function datasetColumns(dataset) {
+  if (!Array.isArray(dataset?.schema)) return [];
+  return dataset.schema
+    .map((entry, index) => {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || !entry[0].trim()) return null;
+      return {
+        name: entry[0],
+        type: typeof entry[1] === "string" ? entry[1] : "",
+        fallbackName: `column_${index + 1}`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function coerceDatasetValue(value, type = "") {
+  if (value === null || value === undefined || value === "") return value;
+  const normalizedType = type.toLowerCase();
+  const isNumericType = /(bigint|decimal|double|float|int|number|numeric|real)/.test(normalizedType);
+  if (isNumericType) {
+    const parsed = typeof value === "number" ? value : Number(String(value).replace(/,/g, ""));
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  if (/bool/.test(normalizedType) && typeof value === "string") {
+    if (value.toLowerCase() === "true") return true;
+    if (value.toLowerCase() === "false") return false;
+  }
+  return value;
+}
+
+function rowArrayToRecord(row, columns) {
+  if (!Array.isArray(row)) return null;
+  return row.reduce((record, value, index) => {
+    const column = columns[index];
+    const key = column?.name ?? column?.fallbackName ?? `column_${index + 1}`;
+    record[key] = coerceDatasetValue(value, column?.type);
+    return record;
+  }, {});
+}
+
+function rowRecordToSnapshot(row, columns) {
+  if (!isRecord(row)) return null;
+  const record = { ...row };
+  for (const column of columns) {
+    if (Object.prototype.hasOwnProperty.call(record, column.name)) {
+      record[column.name] = coerceDatasetValue(record[column.name], column.type);
+    }
+  }
+  return record;
+}
+
+function datasetRowsToWidgetData(dataset, limit = 100) {
+  const rows = Array.isArray(dataset?.rows) ? dataset.rows : Array.isArray(dataset?.sampleRows) ? dataset.sampleRows : [];
+  if (!rows.length) return [];
+  const columns = datasetColumns(dataset);
+  return rows
+    .map((row) => (Array.isArray(row) ? rowArrayToRecord(row, columns) : rowRecordToSnapshot(row, columns)))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+async function resolveWidgetData(input = {}) {
+  if (Array.isArray(input.data) && input.data.length > 0) {
+    return input.data.filter(isRecord);
+  }
+  if (typeof input.datasetId !== "string" || !input.datasetId.trim()) return [];
+  const dataset = await getDataset(input.datasetId);
+  return datasetRowsToWidgetData(dataset);
+}
+
 export async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS etl_jobs (
@@ -673,13 +746,14 @@ export async function createDraftDashboardWidget(dashboardId, pageId, input = {}
   const type = normalizeRuntimeWidgetType(input.type);
   const fallbackLayout = defaultLayoutByType[type] ?? defaultLayoutByType.table;
   const layout = normalizeLayout(input.layout ?? fallbackLayout);
+  const data = await resolveWidgetData(input);
   const widget = await createWidget({
     pageId,
     type,
     title: input.title ?? null,
     layout,
     config: input.config ?? {},
-    data: Array.isArray(input.data) ? input.data : [],
+    data,
     queryId: input.queryId ?? null,
     datasetId: input.datasetId ?? null,
   });
