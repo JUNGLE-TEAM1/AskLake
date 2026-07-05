@@ -786,6 +786,115 @@
   font-weight: 800;
 }
 
+.sql-materialize-progress {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 12px;
+}
+
+.sql-materialize-progress.success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.sql-materialize-progress.failed {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.sql-materialize-progress-header,
+.sql-materialize-progress-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sql-materialize-progress-header div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.sql-materialize-progress-header span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sql-materialize-progress.success .sql-materialize-progress-header span {
+  color: #15803d;
+}
+
+.sql-materialize-progress.failed .sql-materialize-progress-header span {
+  color: #b91c1c;
+}
+
+.sql-materialize-progress-header strong {
+  color: #0f172a;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.sql-materialize-progress-header em {
+  color: #1d4ed8;
+  font-size: 20px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.sql-materialize-progress.success .sql-materialize-progress-header em {
+  color: #15803d;
+}
+
+.sql-materialize-progress.failed .sql-materialize-progress-header em {
+  color: #b91c1c;
+}
+
+.sql-materialize-progress-bar {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.sql-materialize-progress.success .sql-materialize-progress-bar {
+  background: #dcfce7;
+}
+
+.sql-materialize-progress.failed .sql-materialize-progress-bar {
+  background: #fee2e2;
+}
+
+.sql-materialize-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 260ms ease;
+}
+
+.sql-materialize-progress.success .sql-materialize-progress-bar span {
+  background: #22c55e;
+}
+
+.sql-materialize-progress.failed .sql-materialize-progress-bar span {
+  background: #ef4444;
+}
+
+.sql-materialize-progress-meta span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 860px) {
   .sql-materialize-form {
     grid-template-columns: 1fr;

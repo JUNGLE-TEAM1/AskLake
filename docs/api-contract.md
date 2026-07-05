@@ -631,6 +631,26 @@ Response `201 Created`:
 type CreateDerivedDatasetResponse = CatalogDataset;
 ```
 
+Future operation response:
+
+```ts
+type CreateDerivedDatasetOperationResponse = {
+  operationId: string;
+  estimatedSeconds: number;
+};
+```
+
+```ts
+type OperationStatusResponse = {
+  datasetId?: string;
+  errorMessage?: string;
+  operationId: string;
+  progress: number;
+  stage: string;
+  status: "pending" | "running" | "success" | "failed";
+};
+```
+
 프론트 기대 동작:
 
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
@@ -641,6 +661,7 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 - `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
 - 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
 - `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
+- 생성 중에는 operation 상태의 `progress`, `estimatedSeconds`, `stage`를 SQL 화면에 표시합니다. 현재 mock adapter는 timer 기반으로 이 값을 만들고, backend 전환 시 `POST /api/catalog/derived-datasets`와 `GET /api/operations/{operationId}` polling으로 교체할 수 있습니다.
 - 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API

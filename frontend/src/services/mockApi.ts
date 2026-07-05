@@ -1,4 +1,4 @@
-import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DerivedDatasetCreationOperation, DerivedDatasetCreationResult, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -233,6 +233,10 @@ export type DerivedDatasetCreationContext = {
   sqlResult: SqlResultDraft;
 };
 
+export type DerivedDatasetOperationContext = DerivedDatasetCreationContext & {
+  onProgress?: (operation: DerivedDatasetCreationOperation) => void;
+};
+
 export async function executeQueryPreview(dataset: CatalogDataset, query: string, options: QueryPreviewOptions): Promise<SqlResultDraft> {
   if (!apiConfig.useMock) {
     return apiClient.post<SqlResultDraft>("/api/query/runs", {
@@ -270,6 +274,84 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
 
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
   return executeQueryPreview(dataset, query, { limit: 100, referenceDatasetIds: [], validationKey: `${dataset.id}:${query}` });
+}
+
+export async function createDerivedDatasetOperation({
+  onProgress,
+  request,
+  sourceDataset,
+  sqlResult,
+}: DerivedDatasetOperationContext): Promise<DerivedDatasetCreationResult> {
+  const operationId = `op_derived_${Date.now()}`;
+  const estimatedSeconds = estimateDerivedDatasetCreationSeconds(request, sqlResult);
+  let currentOperation: DerivedDatasetCreationOperation = {
+    estimatedSeconds,
+    operationId,
+    progress: 0,
+    stage: "Lake Dataset 생성 준비 중",
+    status: "pending",
+  };
+  const emit = (patch: Partial<DerivedDatasetCreationOperation>) => {
+    currentOperation = { ...currentOperation, ...patch };
+    onProgress?.(currentOperation);
+  };
+
+  emit(currentOperation);
+
+  try {
+    await advanceDerivedDatasetOperation(estimatedSeconds, emit);
+    const dataset = await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult });
+    const operation = {
+      ...currentOperation,
+      datasetId: dataset.id,
+      progress: 100,
+      stage: "Lake Dataset 생성 완료",
+      status: "success" as const,
+    };
+
+    onProgress?.(operation);
+    return { dataset, operation };
+  } catch (error) {
+    const operation = {
+      ...currentOperation,
+      errorMessage: error instanceof Error ? error.message : "Lake Dataset 생성에 실패했습니다.",
+      progress: Math.max(currentOperation.progress, 1),
+      stage: "Lake Dataset 생성 실패",
+      status: "failed" as const,
+    };
+
+    onProgress?.(operation);
+    throw error;
+  }
+}
+
+const derivedDatasetOperationStages: Array<Pick<DerivedDatasetCreationOperation, "progress" | "stage" | "status">> = [
+  { progress: 15, stage: "Preview 결과와 SQL run 정보 확인 중", status: "running" },
+  { progress: 35, stage: "Dataset metadata 구성 중", status: "running" },
+  { progress: 60, stage: "Lake 저장 작업 요청 중", status: "running" },
+  { progress: 85, stage: "Catalog metadata 등록 중", status: "running" },
+];
+
+async function advanceDerivedDatasetOperation(
+  estimatedSeconds: number,
+  emit: (patch: Partial<DerivedDatasetCreationOperation>) => void,
+) {
+  const stageDelayMs = apiConfig.useMock
+    ? Math.max(520, Math.round((estimatedSeconds * 1000 * 0.68) / derivedDatasetOperationStages.length))
+    : 80;
+
+  for (const stage of derivedDatasetOperationStages) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, stageDelayMs));
+    emit(stage);
+  }
+}
+
+function estimateDerivedDatasetCreationSeconds(request: CreateDerivedDatasetRequest, sqlResult: SqlResultDraft) {
+  const columnWeight = Math.ceil(sqlResult.columns.length / 4);
+  const referenceWeight = Math.min(4, (request.referenceDatasetIds?.length ?? 0) * 2);
+  const rowWeight = Math.ceil(sqlResult.rowCount / 100);
+
+  return Math.min(14, Math.max(5, 5 + columnWeight + referenceWeight + rowWeight));
 }
 
 export async function createDerivedDatasetFromSql({

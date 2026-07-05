@@ -34,3 +34,18 @@ export type CreateDerivedDatasetRequest = {
   sourceRunId: string;
   validationKey?: string;
 };
+
+export type DerivedDatasetCreationOperation = {
+  datasetId?: string;
+  errorMessage?: string;
+  estimatedSeconds: number;
+  operationId: string;
+  progress: number;
+  stage: string;
+  status: "pending" | "running" | "success" | "failed";
+};
+
+export type DerivedDatasetCreationResult = {
+  dataset: CatalogDataset;
+  operation: DerivedDatasetCreationOperation;
+};
