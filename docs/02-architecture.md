@@ -83,7 +83,10 @@ Ownership rules:
 - `run.runId` is the key for `dagStepsByRunId`.
 - History changes the selected run by updating `selectedRunIdByJobId[job.id]`.
 - DAG renders only `dagStepsByRunId[selectedRunIdByJobId[job.id]]`.
+- `useAskLakeData` exposes `selectRunForJob(jobId, runId)` so History can change the selected run without touching DAG state directly.
+- Initial job hydrate moves `job.runHistory` into `runsByJobId` and attaches `job.dagSteps` to the latest run id when available.
 - `jobExecutionEvidence` is a compatibility adapter for existing pages, not the long-term source of truth.
+- PR1 optimistic command UX should create a frontend-only temp run id like `client:<jobId>:<timestamp>` and reconcile it to the server `run.runId` when the command response arrives.
 
 ## 5) Backend Target Boundary
 

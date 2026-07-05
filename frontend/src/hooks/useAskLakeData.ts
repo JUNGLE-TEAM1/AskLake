@@ -7,6 +7,12 @@ import type { AuditResult, AuditTargetType, CatalogDataset, DagStepsByRunId, Dra
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
 
+type JobRunStateMaps = {
+  dagStepsByRunId: DagStepsByRunId;
+  runsByJobId: RunsByJobId;
+  selectedRunIdByJobId: SelectedRunIdByJobId;
+};
+
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
   permission: {
@@ -119,6 +125,15 @@ function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSumm
   return [run, ...runs.filter((item) => item.runId !== run.runId)];
 }
 
+function uniqueRunsByRunId(runs: JobRunSummary[]): JobRunSummary[] {
+  const seenRunIds = new Set<string>();
+  return runs.filter((run) => {
+    if (seenRunIds.has(run.runId)) return false;
+    seenRunIds.add(run.runId);
+    return true;
+  });
+}
+
 function selectedRunFirst(runs: JobRunSummary[], selectedRunId?: string): JobRunSummary[] {
   if (!selectedRunId) return runs;
   const selectedRun = runs.find((run) => run.runId === selectedRunId);
@@ -143,6 +158,27 @@ function buildJobExecutionEvidence(
       ];
     }),
   );
+}
+
+function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
+  const runsByJobId: RunsByJobId = {};
+  const selectedRunIdByJobId: SelectedRunIdByJobId = {};
+  const dagStepsByRunId: DagStepsByRunId = {};
+
+  jobs.forEach((job) => {
+    const runs = uniqueRunsByRunId(job.runHistory ?? []);
+    if (runs.length === 0) return;
+
+    const selectedRunId = runs[0].runId;
+    runsByJobId[job.id] = runs;
+    selectedRunIdByJobId[job.id] = selectedRunId;
+
+    if (job.dagSteps?.length) {
+      dagStepsByRunId[selectedRunId] = job.dagSteps;
+    }
+  });
+
+  return { dagStepsByRunId, runsByJobId, selectedRunIdByJobId };
 }
 
 export function useAskLakeData({
@@ -182,10 +218,14 @@ export function useAskLakeData({
         if (cancelled) return;
         const normalizedJobs = nextJobs.map(normalizeJobRow);
         const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
+        const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
         setJobs(normalizedJobs);
         setDatasets(normalizedDatasets);
         setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
         setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+        setRunsByJobId(hydratedRunState.runsByJobId);
+        setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+        setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
       })
       .catch(() => {
         if (!cancelled) showToast("백엔드 초기 데이터를 불러오지 못했습니다.", "info");
@@ -246,6 +286,17 @@ export function useAskLakeData({
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
+  };
+
+  const selectRunForJob = (jobId: string, runId: string) => {
+    setSelectedRunIdByJobId((state) => {
+      const runExists = (runsByJobId[jobId] ?? []).some((run) => run.runId === runId);
+      if (!runExists || state[jobId] === runId) return state;
+      return {
+        ...state,
+        [jobId]: runId,
+      };
+    });
   };
 
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
@@ -327,6 +378,7 @@ export function useAskLakeData({
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
+    selectRunForJob,
     setSelectedDataset,
     setSqlResultDraft,
     sqlResultDraft,
