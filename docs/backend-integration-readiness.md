@@ -147,10 +147,10 @@ VITE_USE_MOCK_API=false
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
-| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/레이어를 입력하고 생성 준비 draft를 남김 | `POST /api/query/results/lake` |
+| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/레이어로 mock Catalog Dataset을 생성 | `POST /api/catalog/derived-datasets` |
 | CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
-| 새 Lake Dataset 저장 | 현재는 Preview runId 기반 생성 준비 UX까지만 제공, 실제 Catalog 반영은 후속 단계 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
+| 새 Lake Dataset 저장 | Preview runId/source dataset/query를 기반으로 datasets state에 prepend하고 selected dataset 갱신 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
 
 SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 

@@ -563,7 +563,51 @@ Validation:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
-- 실패 시 `analysis.query.failed` 감사 로그를 남깁니다.
+- 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
+
+### 7.4 SQL 결과 기반 Lake Dataset 생성
+
+`POST /api/catalog/derived-datasets`
+
+프론트 함수:
+
+- `createDerivedDatasetFromSql({ layer, name, sourceDataset, sqlResult })`
+
+Request:
+
+```ts
+type CreateDerivedDatasetRequest = {
+  layer: "SILVER" | "GOLD";
+  name: string;
+  query: string;
+  sourceDatasetId: string;
+  sourceRunId: string;
+};
+```
+
+Request 예시:
+
+```json
+{
+  "layer": "GOLD",
+  "name": "sales_daily_summary_analysis",
+  "query": "SELECT ...",
+  "sourceDatasetId": "ds_sales_daily_summary",
+  "sourceRunId": "sql_preview_01J1Z8W2V7KX"
+}
+```
+
+Response `201 Created`:
+
+```ts
+type CreateDerivedDatasetResponse = CatalogDataset;
+```
+
+프론트 기대 동작:
+
+- 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
+- `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API
 

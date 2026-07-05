@@ -42,6 +42,7 @@ type SqlPreflightResult = {
 
 type DerivedDatasetDraft = {
   columnCount: number;
+  datasetId?: string;
   layer: CatalogDataset["layer"];
   name: string;
   rowCount: number;
@@ -55,11 +56,18 @@ export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
+  onCreateDerivedDataset,
   onResultChange,
 }: {
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onCreateDerivedDataset: (request: {
+    layer: CatalogDataset["layer"];
+    name: string;
+    sourceDataset: CatalogDataset;
+    sqlResult: SqlResultDraft;
+  }) => Promise<CatalogDataset | null>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
@@ -83,6 +91,7 @@ export function SqlAnalysisPage({
   const [derivedDatasetName, setDerivedDatasetName] = useState(buildDefaultDerivedDatasetName(baseDataset));
   const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<CatalogDataset["layer"]>("GOLD");
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
+  const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -388,18 +397,29 @@ export function SqlAnalysisPage({
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
-  const prepareDerivedDatasetDraft = () => {
+  const createDerivedDataset = async () => {
     if (!resultDraft) return;
-    const draft: DerivedDatasetDraft = {
-      columnCount: resultDraft.columns.length,
-      layer: derivedDatasetLayer,
-      name: derivedDatasetName.trim(),
-      rowCount: resultDraft.rowCount,
-      sourceDatasetId: resultDraft.datasetId,
-      sourceRunId: resultDraft.runId,
-    };
-    setDerivedDatasetDraft(draft);
-    onAction("analysis.derived_dataset.draft_prepared", "/api/catalog/derived-datasets/draft", resultDraft.datasetId);
+    setDerivedDatasetPending(true);
+    try {
+      const dataset = await onCreateDerivedDataset({
+        layer: derivedDatasetLayer,
+        name: derivedDatasetName.trim(),
+        sourceDataset: baseDataset,
+        sqlResult: resultDraft,
+      });
+      if (!dataset) return;
+      setDerivedDatasetDraft({
+        columnCount: resultDraft.columns.length,
+        datasetId: dataset.id,
+        layer: dataset.layer,
+        name: dataset.name,
+        rowCount: resultDraft.rowCount,
+        sourceDatasetId: resultDraft.datasetId,
+        sourceRunId: resultDraft.runId,
+      });
+    } finally {
+      setDerivedDatasetPending(false);
+    }
   };
 
   return (
@@ -630,20 +650,20 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={!resultDraft || derivedDatasetName.trim().length === 0}
-                onClick={prepareDerivedDatasetDraft}
+                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetPending}
+                onClick={createDerivedDataset}
                 type="button"
               >
-                <Database size={15} /> 생성 준비
+                <Database size={15} /> {derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
               </button>
             </div>
             <div className="sql-materialize-summary">
               {derivedDatasetDraft ? (
-                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · source {derivedDatasetDraft.sourceRunId}</span>
+                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.datasetId}</span>
               ) : resultDraft ? (
                 <span>{resultDraft.rowCount} preview rows · source {resultDraft.runId}</span>
               ) : (
-                <span>Preview 성공 후 Dataset 생성 준비가 가능합니다.</span>
+                <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
               )}
             </div>
           </section>

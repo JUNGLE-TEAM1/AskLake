@@ -226,6 +226,13 @@ export type QueryPreviewOptions = {
   validationKey: string;
 };
 
+export type DerivedDatasetRequest = {
+  layer: CatalogDataset["layer"];
+  name: string;
+  sourceDataset: CatalogDataset;
+  sqlResult: SqlResultDraft;
+};
+
 export async function executeQueryPreview(dataset: CatalogDataset, query: string, options: QueryPreviewOptions): Promise<SqlResultDraft> {
   if (!apiConfig.useMock) {
     return apiClient.post<SqlResultDraft>("/api/query/runs", {
@@ -259,6 +266,56 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
 
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
   return executeQueryPreview(dataset, query, { limit: 100, validationKey: `${dataset.id}:${query}` });
+}
+
+export async function createDerivedDatasetFromSql({
+  layer,
+  name,
+  sourceDataset,
+  sqlResult,
+}: DerivedDatasetRequest): Promise<CatalogDataset> {
+  if (!apiConfig.useMock) {
+    return apiClient.post<CatalogDataset>("/api/catalog/derived-datasets", {
+      layer,
+      name,
+      query: sqlResult.query,
+      sourceDatasetId: sourceDataset.id,
+      sourceRunId: sqlResult.runId,
+    });
+  }
+
+  const normalizedName = name.trim() || `${sourceDataset.name}_analysis`;
+  const dataset: CatalogDataset = {
+    description: `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`,
+    downstream: ["SQL 분석", "대시보드"],
+    freshness: "latest",
+    id: `ds_${normalizeDerivedDatasetId(normalizedName)}`,
+    layer,
+    lastUpdated: "방금 생성됨",
+    name: normalizedName,
+    nextRefresh: "수동 갱신",
+    owner: sourceDataset.owner,
+    quality: "Preview verified",
+    rag: sourceDataset.rag,
+    rows: `${sqlResult.rowCount.toLocaleString()} preview rows`,
+    sampleRows: sqlResult.rows,
+    schema: sqlResult.columns.map((column) => [column, inferColumnType(sourceDataset, column)]),
+    size: "Preview result",
+    source: `SQL Preview · ${sqlResult.runId}`,
+    status: "available",
+    tags: Array.from(new Set([...sourceDataset.tags, "#sql-derived"])),
+    upstream: [sourceDataset.name, sqlResult.runId],
+  };
+
+  return resolveMock(dataset);
+}
+
+function inferColumnType(dataset: CatalogDataset, columnName: string) {
+  return dataset.schema.find(([name]) => name === columnName)?.[1] ?? "string";
+}
+
+function normalizeDerivedDatasetId(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "sql_derived";
 }
 
 function buildFallbackLineageGraph(dataset: CatalogDataset): LineageGraph {

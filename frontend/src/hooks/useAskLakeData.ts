@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
-import { createPipelineDraft, runJobCommand } from "../services/mockApi";
+import { createDerivedDatasetFromSql, createPipelineDraft, runJobCommand } from "../services/mockApi";
 import type { AuditResult, AuditTargetType, CatalogDataset, DraftPipeline, FlowId, JobCommand, JobExecutionEvidence, JobRowData, SqlResultDraft } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -63,6 +63,33 @@ export function useAskLakeData({
     } catch {
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
       showToast("파이프라인 생성 요청에 실패했습니다.", "info");
+    } finally {
+      setApiPending(false);
+    }
+  };
+
+  const createSqlDerivedDataset = async ({
+    layer,
+    name,
+    sourceDataset,
+    sqlResult,
+  }: {
+    layer: CatalogDataset["layer"];
+    name: string;
+    sourceDataset: CatalogDataset;
+    sqlResult: SqlResultDraft;
+  }) => {
+    setApiPending(true);
+    try {
+      const dataset = await createDerivedDatasetFromSql({ layer, name, sourceDataset, sqlResult });
+      setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
+      writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);
+      showToast("SQL 결과 기반 Lake Dataset이 생성되었습니다.");
+      return dataset;
+    } catch {
+      writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", sourceDataset.id, "failed");
+      showToast("Lake Dataset 생성에 실패했습니다.", "info");
+      return null;
     } finally {
       setApiPending(false);
     }
@@ -136,6 +163,7 @@ export function useAskLakeData({
   return {
     apiPending,
     createPipeline,
+    createSqlDerivedDataset,
     datasets,
     draftPipeline,
     handleJobCommand,
