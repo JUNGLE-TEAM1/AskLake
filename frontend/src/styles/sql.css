@@ -188,7 +188,7 @@
 
 .sql-table-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: 16px minmax(0, 1fr) max-content;
   width: 100%;
   min-height: 46px;
   align-items: center;
@@ -214,10 +214,10 @@
 
 .sql-table-pills {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 4px;
-  max-width: 112px;
+  max-width: 150px;
 }
 
 .sql-table-base-pill,
@@ -255,7 +255,9 @@
   color: #0f172a;
   font-size: 12px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sql-dataset-search-results p {
