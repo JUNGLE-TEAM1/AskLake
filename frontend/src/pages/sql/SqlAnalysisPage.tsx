@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle,
+  Database,
   Download,
   PlayCircle,
   RotateCcw,
@@ -39,6 +40,15 @@ type SqlPreflightResult = {
   messages: SqlPreflightMessage[];
 };
 
+type DerivedDatasetDraft = {
+  columnCount: number;
+  layer: CatalogDataset["layer"];
+  name: string;
+  rowCount: number;
+  sourceDatasetId: string;
+  sourceRunId: string;
+};
+
 const PREVIEW_ROW_LIMIT = 100;
 
 export function SqlAnalysisPage({
@@ -70,6 +80,9 @@ export function SqlAnalysisPage({
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
+  const [derivedDatasetName, setDerivedDatasetName] = useState(buildDefaultDerivedDatasetName(baseDataset));
+  const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<CatalogDataset["layer"]>("GOLD");
+  const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -133,6 +146,8 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setExecutionMs(null);
     setPreflightResult(null);
+    setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
+    setDerivedDatasetDraft(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
@@ -160,6 +175,7 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setExecutionMs(null);
     setPreflightResult(null);
+    setDerivedDatasetDraft(null);
     onResultChange(null);
   };
 
@@ -250,6 +266,7 @@ export function SqlAnalysisPage({
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
+      setDerivedDatasetDraft(null);
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch {
@@ -369,6 +386,20 @@ export function SqlAnalysisPage({
     anchor.remove();
     URL.revokeObjectURL(url);
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
+  };
+
+  const prepareDerivedDatasetDraft = () => {
+    if (!resultDraft) return;
+    const draft: DerivedDatasetDraft = {
+      columnCount: resultDraft.columns.length,
+      layer: derivedDatasetLayer,
+      name: derivedDatasetName.trim(),
+      rowCount: resultDraft.rowCount,
+      sourceDatasetId: resultDraft.datasetId,
+      sourceRunId: resultDraft.runId,
+    };
+    setDerivedDatasetDraft(draft);
+    onAction("analysis.derived_dataset.draft_prepared", "/api/catalog/derived-datasets/draft", resultDraft.datasetId);
   };
 
   return (
@@ -566,6 +597,56 @@ export function SqlAnalysisPage({
               <span>SQL 점검을 통과한 뒤 Preview를 실행하면 결과 테이블이 표시됩니다.</span>
             </div>
           )}
+          <section className={resultDraft ? "sql-materialize-card" : "sql-materialize-card disabled"}>
+            <div>
+              <span>LAKE DATASET</span>
+              <h3>Preview 결과 저장</h3>
+            </div>
+            <div className="sql-materialize-form">
+              <label>
+                <span>Dataset name</span>
+                <input
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetName(event.target.value);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  value={derivedDatasetName}
+                />
+              </label>
+              <label>
+                <span>Layer</span>
+                <select
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetLayer(event.target.value as CatalogDataset["layer"]);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  value={derivedDatasetLayer}
+                >
+                  <option value="SILVER">SILVER</option>
+                  <option value="GOLD">GOLD</option>
+                </select>
+              </label>
+              <button
+                className="primary-button"
+                disabled={!resultDraft || derivedDatasetName.trim().length === 0}
+                onClick={prepareDerivedDatasetDraft}
+                type="button"
+              >
+                <Database size={15} /> 생성 준비
+              </button>
+            </div>
+            <div className="sql-materialize-summary">
+              {derivedDatasetDraft ? (
+                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · source {derivedDatasetDraft.sourceRunId}</span>
+              ) : resultDraft ? (
+                <span>{resultDraft.rowCount} preview rows · source {resultDraft.runId}</span>
+              ) : (
+                <span>Preview 성공 후 Dataset 생성 준비가 가능합니다.</span>
+              )}
+            </div>
+          </section>
         </section>
       </main>
     </div>
@@ -596,6 +677,10 @@ function buildDefaultQuery(dataset: CatalogDataset) {
   return `SELECT ${columns}
 FROM ${dataset.name}
 LIMIT 100;`;
+}
+
+function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
+  return `${dataset.name}_analysis`;
 }
 
 function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[], key: string): SqlPreflightResult {
