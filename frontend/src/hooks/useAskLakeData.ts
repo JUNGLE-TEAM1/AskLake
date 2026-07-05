@@ -226,6 +226,12 @@ export function useAskLakeData({
   const createPendingRef = useRef(false);
 
   useEffect(() => {
+    if (apiConfig.useMock) {
+      setDataLoading(false);
+      setDataError(null);
+      return;
+    }
+
     let cancelled = false;
 
     async function hydrateData() {
