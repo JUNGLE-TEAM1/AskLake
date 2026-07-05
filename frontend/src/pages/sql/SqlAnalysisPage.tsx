@@ -1,11 +1,13 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Database,
   Download,
   PlayCircle,
   RotateCcw,
   Search,
 } from "lucide-react";
-import { executeQueryDraft } from "../../services/mockApi";
+import postgresqlParser from "node-sql-parser/build/postgresql.js";
+import { executeQueryPreview } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
 
 type AutocompleteKind = "keyword" | "table" | "column";
@@ -27,15 +29,47 @@ type AutocompleteContext = {
   key: string;
 };
 
+type SqlPreflightMessage = {
+  tone: "success" | "info" | "warning" | "error";
+  text: string;
+};
+
+type SqlPreflightResult = {
+  key: string;
+  canExecute: boolean;
+  messages: SqlPreflightMessage[];
+};
+
+type DerivedDatasetDraft = {
+  columnCount: number;
+  datasetId?: string;
+  layer: CatalogDataset["layer"];
+  name: string;
+  rowCount: number;
+  sourceDatasetId: string;
+  sourceRunId: string;
+};
+
+const PREVIEW_ROW_LIMIT = 100;
+const { Parser: SqlParser } = postgresqlParser;
+const sqlParser = new SqlParser();
+
 export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
+  onCreateDerivedDataset,
   onResultChange,
 }: {
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onCreateDerivedDataset: (request: {
+    layer: CatalogDataset["layer"];
+    name: string;
+    sourceDataset: CatalogDataset;
+    sqlResult: SqlResultDraft;
+  }) => Promise<CatalogDataset | null>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
@@ -55,11 +89,25 @@ export function SqlAnalysisPage({
   const [query, setQuery] = useState(defaultQuery);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
+  const [derivedDatasetName, setDerivedDatasetName] = useState(buildDefaultDerivedDatasetName(baseDataset));
+  const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<CatalogDataset["layer"]>("GOLD");
+  const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
+  const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
+  const queryValidationKey = useMemo(
+    () => JSON.stringify({
+      baseDatasetId: baseDataset.id,
+      query,
+      referenceDatasetIds: [...referenceDatasetIds].sort(),
+    }),
+    [baseDataset.id, query, referenceDatasetIds],
+  );
+  const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
@@ -108,14 +156,19 @@ export function SqlAnalysisPage({
     setCursorIndex(defaultQuery.length);
     setResultDraft(null);
     setExecutionMs(null);
+    setPreflightResult(null);
+    setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
+    setDerivedDatasetDraft(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset.id, defaultQuery]);
 
-  const queryContextPath = () => {
+  const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
+    params.set("mode", mode);
+    if (mode === "preview") params.set("previewLimit", String(PREVIEW_ROW_LIMIT));
     return `/api/query/runs?${params.toString()}`;
   };
 
@@ -123,17 +176,29 @@ export function SqlAnalysisPage({
     setAutocompleteIndex(0);
   }, [autocompleteCandidates.length, autocompleteContext.key]);
 
-  const buildResultDraft = (): Promise<SqlResultDraft> => executeQueryDraft(baseDataset, query);
+  useEffect(() => {
+    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
+    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey));
+  }, [baseDataset, datasets, query, queryValidationKey, referenceDatasetIdSet]);
+
+  const buildPreviewDraft = (): Promise<SqlResultDraft> => executeQueryPreview(baseDataset, query, {
+    limit: PREVIEW_ROW_LIMIT,
+    referenceDatasetIds: [...referenceDatasetIds].sort(),
+    validationKey: queryValidationKey,
+  });
 
   const resetResultState = () => {
     setExecuted(false);
     setResultDraft(null);
     setExecutionMs(null);
+    setPreflightResult(null);
+    setDerivedDatasetDraft(null);
     onResultChange(null);
   };
 
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
+    setPreflightResult(null);
     resetResultState();
   };
 
@@ -188,22 +253,34 @@ export function SqlAnalysisPage({
     }
   };
 
-  const executeQuery = async () => {
+  const executePreview = async () => {
+    if (!canRunPreview) {
+      onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
+      return;
+    }
     const startedAt = performance.now();
     setQueryPending(true);
     try {
-      const resultDraft = await buildResultDraft();
+      const resultDraft = await buildPreviewDraft();
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
+      setDerivedDatasetDraft(null);
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", queryContextPath(), baseDataset.id);
+      onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch {
-      onAction("analysis.query.failed", queryContextPath(), baseDataset.id, "failed");
+      setPreflightResult({
+        key: queryValidationKey,
+        canExecute: false,
+        messages: [{ tone: "error", text: "Preview 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+      });
+      onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
   };
+
+  const preflightSummary = getPreflightSummary(preflightResult);
 
   const resetQuery = () => {
     updateQuery(defaultQuery);
@@ -312,6 +389,31 @@ export function SqlAnalysisPage({
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
+  const createDerivedDataset = async () => {
+    if (!resultDraft) return;
+    setDerivedDatasetPending(true);
+    try {
+      const dataset = await onCreateDerivedDataset({
+        layer: derivedDatasetLayer,
+        name: derivedDatasetName.trim(),
+        sourceDataset: baseDataset,
+        sqlResult: resultDraft,
+      });
+      if (!dataset) return;
+      setDerivedDatasetDraft({
+        columnCount: resultDraft.columns.length,
+        datasetId: dataset.id,
+        layer: dataset.layer,
+        name: dataset.name,
+        rowCount: resultDraft.rowCount,
+        sourceDatasetId: resultDraft.datasetId,
+        sourceRunId: resultDraft.runId,
+      });
+    } finally {
+      setDerivedDatasetPending(false);
+    }
+  };
+
   return (
     <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
       <aside className="sql-dataset-panel" aria-hidden={contextCollapsed}>
@@ -409,7 +511,9 @@ export function SqlAnalysisPage({
               <h2>Base Dataset 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
+              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+                <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
+              </button>
             </div>
           </div>
           <div className="sql-editor-layout">
@@ -454,7 +558,15 @@ export function SqlAnalysisPage({
             </div>
           </div>
           <div className="sql-editor-footer">
-            <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+            <div className="sql-editor-status-line">
+              <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+              {preflightSummary && (
+                <span className={`sql-check-pill ${preflightSummary.tone}`}>
+                  {preflightSummary.label}
+                </span>
+              )}
+              {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
+            </div>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
           </div>
         </section>
@@ -462,18 +574,21 @@ export function SqlAnalysisPage({
         <section className="sql-result-card">
           <div className="sql-result-header">
             <div>
-              <span>QUERY RESULT</span>
-              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "실행 후 결과가 표시됩니다"}</h2>
+              <span>PREVIEW RESULT</span>
+              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "Preview 실행 후 결과가 표시됩니다"}</h2>
             </div>
             <div className="sql-result-status">
-              <span>{queryPending ? "running" : executed ? "success" : "ready"}</span>
+              <span>{queryPending ? "running" : executed ? "테스트 완료" : "ready"}</span>
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
           {resultDraft ? (
             <>
               <div className="sql-result-toolbar">
-                <span>Run ID {resultDraft.runId}</span>
+                <span>
+                  Run ID {resultDraft.runId}
+                  {resultDraft.previewLimit ? ` · Preview ${resultDraft.previewLimit} rows` : ""}
+                </span>
                 <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
               </div>
               <div className="sql-result-scroll">
@@ -485,10 +600,60 @@ export function SqlAnalysisPage({
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>아직 실행 결과가 없습니다.</strong>
-              <span>SQL을 실행하면 이 영역에 결과 테이블이 표시됩니다.</span>
+              <strong>아직 Preview 결과가 없습니다.</strong>
+              <span>SQL 점검을 통과한 뒤 Preview를 실행하면 결과 테이블이 표시됩니다.</span>
             </div>
           )}
+          <section className={resultDraft ? "sql-materialize-card" : "sql-materialize-card disabled"}>
+            <div>
+              <span>LAKE DATASET</span>
+              <h3>Preview 결과 저장</h3>
+            </div>
+            <div className="sql-materialize-form">
+              <label>
+                <span>Dataset name</span>
+                <input
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetName(event.target.value);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  value={derivedDatasetName}
+                />
+              </label>
+              <label>
+                <span>Layer</span>
+                <select
+                  disabled={!resultDraft}
+                  onChange={(event) => {
+                    setDerivedDatasetLayer(event.target.value as CatalogDataset["layer"]);
+                    setDerivedDatasetDraft(null);
+                  }}
+                  value={derivedDatasetLayer}
+                >
+                  <option value="SILVER">SILVER</option>
+                  <option value="GOLD">GOLD</option>
+                </select>
+              </label>
+              <button
+                className="primary-button"
+                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetPending || Boolean(derivedDatasetDraft)}
+                onClick={createDerivedDataset}
+                type="button"
+              >
+                <Database size={15} /> {derivedDatasetDraft ? "생성됨" : derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
+              </button>
+            </div>
+            <div className="sql-materialize-summary">
+              {derivedDatasetDraft ? (
+                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.datasetId}</span>
+              ) : resultDraft ? (
+                <span>{resultDraft.rowCount} preview rows · source {resultDraft.runId}</span>
+              ) : (
+                <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
+              )}
+            </div>
+          </section>
         </section>
       </main>
     </div>
@@ -519,6 +684,203 @@ function buildDefaultQuery(dataset: CatalogDataset) {
   return `SELECT ${columns}
 FROM ${dataset.name}
 LIMIT 100;`;
+}
+
+function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
+  return `${dataset.name}_analysis`;
+}
+
+function getPreflightSummary(result: SqlPreflightResult | null) {
+  if (!result) return null;
+  if (result.canExecute) {
+    const warningMessage = result.messages.find((message) => message.tone === "warning")?.text;
+    if (warningMessage) {
+      return { detail: warningMessage, label: "확인 필요", tone: "warning" as const };
+    }
+    return { detail: "", label: "점검 통과", tone: "success" as const };
+  }
+  const errorMessage = result.messages.find((message) => message.tone === "error")?.text ?? "SQL을 확인해 주세요.";
+  return { detail: errorMessage, label: "점검 필요", tone: "error" as const };
+}
+
+function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[], key: string): SqlPreflightResult {
+  const normalizedQuery = stripSqlComments(query).trim();
+  const messages: SqlPreflightMessage[] = [];
+  if (!normalizedQuery) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: "실행할 SQL을 입력해 주세요." }],
+    };
+  }
+
+  const parsedQuery = parseSqlQuery(normalizedQuery);
+  if (!parsedQuery.ok) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: parsedQuery.message }],
+    };
+  }
+
+  const statements = Array.isArray(parsedQuery.ast) ? parsedQuery.ast : [parsedQuery.ast];
+  if (statements.length !== 1) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: "Preview는 단일 SELECT 문만 실행할 수 있습니다." }],
+    };
+  }
+
+  const statement = statements[0];
+  if (!isSelectStatement(statement)) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: "읽기 전용 SQL만 실행할 수 있습니다. SELECT 또는 WITH로 시작해야 합니다." }],
+    };
+  }
+
+  const limitIssue = findLimitIssue(statement);
+  if (limitIssue) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: limitIssue }],
+    };
+  }
+
+  const allowedTableNames = new Set([baseDataset.name, ...referenceDatasets.map((item) => item.name)].map(normalizeSqlIdentifier));
+  const cteNames = extractCteNames(statement);
+  const referencedTableNames = extractReferencedTableNames(statement);
+  const unknownTableNames = referencedTableNames.filter((name) => {
+    const normalizedName = normalizeSqlIdentifier(name);
+    return !allowedTableNames.has(normalizedName) && !cteNames.has(normalizedName);
+  });
+
+  if (unknownTableNames.length > 0) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: `Query context에 없는 테이블이 있습니다: ${unknownTableNames.join(", ")}` }],
+    };
+  }
+
+  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 Preview할 수 있습니다.` });
+  messages.push({ tone: "info", text: `Preview는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT} rows로 제한해 실행합니다.` });
+  const tableAliases = extractTableAliases(statement);
+  if (tableAliases.length > 0) {
+    messages.push({ tone: "warning", text: `테이블 alias ${tableAliases.map((alias) => `"${alias}"`).join(", ")}가 감지되었습니다. 의도한 별칭이면 Preview할 수 있고, LIMIT 오타라면 수정해 주세요.` });
+  }
+  if (referencedTableNames.length === 0) {
+    messages.push({ tone: "warning", text: "FROM/JOIN 테이블이 없습니다. 상수 조회 또는 CTE-only 쿼리인지 확인해 주세요." });
+  }
+
+  return { key, canExecute: true, messages };
+}
+
+function stripSqlComments(query: string) {
+  return query
+    .replace(/--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function normalizeSqlIdentifier(identifier: string) {
+  return identifier.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
+}
+
+type SqlAstNode = {
+  as?: string | null;
+  columns?: unknown;
+  db?: string | null;
+  from?: SqlAstNode[] | null;
+  limit?: { value?: Array<{ type?: string; value?: unknown }> } | null;
+  name?: { value?: string } | string;
+  stmt?: SqlAstNode;
+  table?: string | null;
+  type?: string;
+  with?: SqlAstNode[] | null;
+};
+
+function parseSqlQuery(query: string): { ast: SqlAstNode | SqlAstNode[]; ok: true } | { message: string; ok: false } {
+  try {
+    return { ast: sqlParser.astify(query, { database: "postgresql" }) as SqlAstNode | SqlAstNode[], ok: true };
+  } catch (error) {
+    return {
+      message: `SQL 문법 오류입니다. ${getParserErrorHint(error)}`,
+      ok: false,
+    };
+  }
+}
+
+function getParserErrorHint(error: unknown) {
+  if (isParserSyntaxError(error)) {
+    const found = error.found ? ` "${error.found}"` : "";
+    return `${error.location.start.line}:${error.location.start.column} 위치의${found} 토큰을 확인해 주세요.`;
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("but") && message.includes("found")) {
+    return message.replace(/\s+/g, " ");
+  }
+  return "문장을 확인해 주세요.";
+}
+
+function isParserSyntaxError(error: unknown): error is { found?: string; location: { start: { column: number; line: number } } } {
+  return typeof error === "object"
+    && error !== null
+    && "location" in error
+    && typeof (error as { location?: { start?: { column?: unknown; line?: unknown } } }).location?.start?.line === "number"
+    && typeof (error as { location?: { start?: { column?: unknown; line?: unknown } } }).location?.start?.column === "number";
+}
+
+function isSelectStatement(statement: SqlAstNode) {
+  return statement.type === "select";
+}
+
+function findLimitIssue(statement: SqlAstNode) {
+  const limitValues = statement.limit?.value ?? [];
+  const invalidLimit = limitValues.find((item) => item.type !== "number" || !Number.isFinite(Number(item.value)));
+  return invalidLimit ? "LIMIT에는 숫자만 입력할 수 있습니다." : null;
+}
+
+function extractCteNames(statement: SqlAstNode) {
+  const cteNames = new Set<string>();
+  statement.with?.forEach((cte) => {
+    const cteName = typeof cte.name === "string" ? cte.name : cte.name?.value;
+    if (cteName) cteNames.add(normalizeSqlIdentifier(cteName));
+  });
+  return cteNames;
+}
+
+function extractReferencedTableNames(statement: SqlAstNode) {
+  const tableNames = new Set<string>();
+  const collectFromStatement = (node: SqlAstNode) => {
+    node.from?.forEach((fromItem) => {
+      if (fromItem.table) {
+        const qualifiedName = fromItem.db ? `${fromItem.db}.${fromItem.table}` : fromItem.table;
+        tableNames.add(normalizeSqlIdentifier(qualifiedName));
+      }
+    });
+    node.with?.forEach((cte) => {
+      if (cte.stmt) collectFromStatement(cte.stmt);
+    });
+  };
+  collectFromStatement(statement);
+  return Array.from(tableNames);
+}
+
+function extractTableAliases(statement: SqlAstNode) {
+  const aliases = new Set<string>();
+  const collectFromStatement = (node: SqlAstNode) => {
+    node.from?.forEach((fromItem) => {
+      if (fromItem.as) aliases.add(fromItem.as);
+    });
+    node.with?.forEach((cte) => {
+      if (cte.stmt) collectFromStatement(cte.stmt);
+    });
+  };
+  collectFromStatement(statement);
+  return Array.from(aliases);
 }
 
 const SQL_AUTOCOMPLETE_KEYWORDS = [

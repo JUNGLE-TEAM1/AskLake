@@ -274,13 +274,18 @@ type LineageGraph = {
 ```ts
 type SqlResultDraft = {
   runId: string;
+  baseDatasetId?: string;
   datasetId: string;
   datasetName: string;
   query: string;
+  referenceDatasetIds?: string[];
   columns: string[];
   rows: string[][];
   rowCount: number;
   executedAt: string;
+  mode?: "preview" | "run";
+  previewLimit?: number;
+  validationKey?: string;
 };
 ```
 
@@ -492,14 +497,20 @@ Validation:
 
 프론트 함수:
 
-- `executeQueryDraft(dataset, query)`
+- `executeQueryPreview(dataset, query, { limit, validationKey })`
+- `executeQueryDraft(dataset, query)`는 기존 화면 연결을 위한 호환 wrapper로 유지
 
 Request:
 
 ```ts
 type ExecuteQueryRequest = {
+  baseDatasetId?: string;
   datasetId: string;
+  mode?: "preview" | "run";
+  limit?: number;
   query: string;
+  referenceDatasetIds?: string[];
+  validationKey?: string;
 };
 ```
 
@@ -507,8 +518,13 @@ Request 예시:
 
 ```json
 {
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100"
+  "mode": "preview",
+  "limit": 100,
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
@@ -523,9 +539,13 @@ Response 예시:
 ```json
 {
   "runId": "sql_01J1Z8W2V7KX",
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
   "datasetName": "customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100",
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "mode": "preview",
+  "previewLimit": 100,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -533,13 +553,17 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
-  "executedAt": "2026-07-03T11:35:00.000Z"
+  "executedAt": "2026-07-03T11:35:00.000Z",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
+- frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
@@ -549,7 +573,59 @@ Validation:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
-- 실패 시 `analysis.query.failed` 감사 로그를 남깁니다.
+- 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
+
+### 7.4 SQL 결과 기반 Lake Dataset 생성
+
+`POST /api/catalog/derived-datasets`
+
+프론트 함수:
+
+- `createDerivedDatasetFromSql({ layer, name, sourceDataset, sqlResult })`
+
+Request:
+
+```ts
+type CreateDerivedDatasetRequest = {
+  layer: "SILVER" | "GOLD";
+  name: string;
+  previewLimit?: number;
+  query: string;
+  referenceDatasetIds?: string[];
+  sourceDatasetId: string;
+  sourceRunId: string;
+  validationKey?: string;
+};
+```
+
+Request 예시:
+
+```json
+{
+  "layer": "GOLD",
+  "name": "sales_daily_summary_analysis",
+  "previewLimit": 100,
+  "query": "SELECT ...",
+  "referenceDatasetIds": ["ds_product_master"],
+  "sourceDatasetId": "ds_sales_daily_summary",
+  "sourceRunId": "sql_preview_01J1Z8W2V7KX",
+  "validationKey": "frontend-generated-context-key"
+}
+```
+
+Response `201 Created`:
+
+```ts
+type CreateDerivedDatasetResponse = CatalogDataset;
+```
+
+프론트 기대 동작:
+
+- 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
+- `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
+- `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
+- 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API
 

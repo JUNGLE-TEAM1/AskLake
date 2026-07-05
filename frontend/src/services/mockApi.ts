@@ -221,24 +221,160 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
   });
 }
 
-export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
+export type QueryPreviewOptions = {
+  limit: number;
+  referenceDatasetIds: string[];
+  validationKey: string;
+};
+
+export type DerivedDatasetRequest = {
+  layer: CatalogDataset["layer"];
+  name: string;
+  sourceDataset: CatalogDataset;
+  sqlResult: SqlResultDraft;
+};
+
+export async function executeQueryPreview(dataset: CatalogDataset, query: string, options: QueryPreviewOptions): Promise<SqlResultDraft> {
   if (!apiConfig.useMock) {
-    return apiClient.post<SqlResultDraft>("/api/query/runs", { datasetId: dataset.id, query });
+    return apiClient.post<SqlResultDraft>("/api/query/runs", {
+      baseDatasetId: dataset.id,
+      datasetId: dataset.id,
+      limit: options.limit,
+      mode: "preview",
+      query,
+      referenceDatasetIds: options.referenceDatasetIds,
+      validationKey: options.validationKey,
+    });
   }
 
   const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
+  const rows = dataset.sampleRows
+    .slice(0, options.limit)
+    .map((row) => row.slice(0, Math.max(columns.length, 1)));
 
   return resolveMock({
+    baseDatasetId: dataset.id,
     columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
     executedAt: new Date().toISOString(),
+    mode: "preview",
+    previewLimit: options.limit,
     query,
+    referenceDatasetIds: options.referenceDatasetIds,
     rowCount: rows.length,
     rows,
-    runId: `sql_${Date.now()}`,
+    runId: `sql_preview_${Date.now()}`,
+    validationKey: options.validationKey,
   });
+}
+
+export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
+  return executeQueryPreview(dataset, query, { limit: 100, referenceDatasetIds: [], validationKey: `${dataset.id}:${query}` });
+}
+
+export async function createDerivedDatasetFromSql({
+  layer,
+  name,
+  sourceDataset,
+  sqlResult,
+}: DerivedDatasetRequest): Promise<CatalogDataset> {
+  if (!apiConfig.useMock) {
+    return apiClient.post<CatalogDataset>("/api/catalog/derived-datasets", {
+      layer,
+      name,
+      previewLimit: sqlResult.previewLimit,
+      query: sqlResult.query,
+      referenceDatasetIds: sqlResult.referenceDatasetIds ?? [],
+      sourceDatasetId: sourceDataset.id,
+      sourceRunId: sqlResult.runId,
+      validationKey: sqlResult.validationKey,
+    });
+  }
+
+  const normalizedName = name.trim() || `${sourceDataset.name}_analysis`;
+  const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
+  const dataset: CatalogDataset = {
+    description: `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`,
+    downstream: ["SQL 분석", "대시보드"],
+    freshness: "latest",
+    id: derivedDatasetId,
+    layer,
+    lastUpdated: "방금 생성됨",
+    name: normalizedName,
+    nextRefresh: "수동 갱신",
+    owner: sourceDataset.owner,
+    quality: "Preview verified",
+    rag: sourceDataset.rag,
+    rows: `${sqlResult.rowCount.toLocaleString()} preview rows`,
+    sampleRows: sqlResult.rows,
+    schema: sqlResult.columns.map((column) => [column, inferColumnType(sourceDataset, column)]),
+    size: "Preview result",
+    source: `SQL Preview · ${sqlResult.runId}`,
+    status: "available",
+    tags: Array.from(new Set([...sourceDataset.tags, "#sql-derived"])),
+    upstream: [sourceDataset.name, ...(sqlResult.referenceDatasetIds ?? []), sqlResult.runId],
+  };
+  dataset.lineageGraph = buildDerivedDatasetLineageGraph(sourceDataset, dataset, sqlResult);
+
+  return resolveMock(dataset);
+}
+
+function inferColumnType(dataset: CatalogDataset, columnName: string) {
+  return dataset.schema.find(([name]) => name === columnName)?.[1] ?? "string";
+}
+
+function normalizeDerivedDatasetId(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "sql_derived";
+}
+
+function buildDerivedDatasetLineageGraph(
+  sourceDataset: CatalogDataset,
+  derivedDataset: CatalogDataset,
+  sqlResult: SqlResultDraft,
+): LineageGraph {
+  const sourceGraph = sourceDataset.lineageGraph;
+  const derivedNode: LineageGraphDataset = {
+    columns: derivedDataset.schema.map(([name, type]) => ({ id: normalizeLineageId(`${derivedDataset.id}-${name}`), name, type })),
+    engine: "ICEBERG",
+    id: derivedDataset.id,
+    layer: derivedDataset.layer,
+    name: derivedDataset.name,
+  };
+  const sourceNode = sourceGraph?.datasets.find((node) => node.id === sourceDataset.id)
+    ?? buildLineageDatasetNode(sourceDataset);
+  const sourceGraphDatasets = sourceGraph?.datasets.filter((node) => node.id !== derivedDataset.id) ?? [];
+  const baseDatasets = sourceGraph
+    ? sourceGraphDatasets.some((node) => node.id === sourceNode.id) ? sourceGraphDatasets : [...sourceGraphDatasets, sourceNode]
+    : [sourceNode];
+  const baseEdges = sourceGraph?.edges.filter((edge) => edge.toDatasetId !== derivedDataset.id && edge.fromDatasetId !== derivedDataset.id) ?? [];
+  const derivedEdges = derivedNode.columns.map((targetColumn, index) => {
+    const sourceColumn = sourceNode.columns.find((column) => column.name === targetColumn.name)
+      ?? sourceNode.columns[index % Math.max(sourceNode.columns.length, 1)]
+      ?? targetColumn;
+    return {
+      fromColumnId: sourceColumn.id,
+      fromDatasetId: sourceNode.id,
+      toColumnId: targetColumn.id,
+      toDatasetId: derivedNode.id,
+    };
+  });
+
+  return {
+    datasetId: derivedDataset.id,
+    datasets: [...baseDatasets, derivedNode],
+    edges: [...baseEdges, ...derivedEdges],
+  };
+}
+
+function buildLineageDatasetNode(dataset: CatalogDataset): LineageGraphDataset {
+  return {
+    columns: dataset.schema.map(([name, type]) => ({ id: normalizeLineageId(`${dataset.id}-${name}`), name, type })),
+    engine: "ICEBERG",
+    id: dataset.id,
+    layer: dataset.layer,
+    name: dataset.name,
+  };
 }
 
 function buildFallbackLineageGraph(dataset: CatalogDataset): LineageGraph {

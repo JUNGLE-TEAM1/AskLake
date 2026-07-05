@@ -12,6 +12,7 @@
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "^12.11.1",
     "lucide-react": "latest",
+    "node-sql-parser": "^5.4.0",
     "react": "latest",
     "react-dom": "latest",
     "typescript": "latest",
