@@ -203,6 +203,26 @@
   overflow-wrap: anywhere;
 }
 
+.input-value-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.input.compact-value {
+  max-height: 76px;
+  align-items: flex-start;
+  overflow: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.4;
+}
+
+.input.compact-value .input-value-text {
+  display: block;
+  white-space: pre-wrap;
+}
+
 .input.muted {
   color: #9095a1;
 }

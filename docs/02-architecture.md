@@ -65,22 +65,6 @@ flowchart LR
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/mockApi.ts`, `frontend/src/services/apiClient.ts`
-- Pair A A0 draft contract and mapper: `frontend/src/types/etl.ts`, `frontend/src/services/draftPipelineContract.ts`
-
-ETL 생성 flow의 frontend 내부 상태는 A0 계약을 따른다.
-
-```text
-DraftPipeline
-  source       Pair A 1번
-  schema       Pair A 1번
-  transform    Pair A 2번
-  quality      Pair A 2번
-  schedule     Pair A 2번
-  permission   Pair A 2번
-  target       Pair A 2번
-```
-
-`POST /api/etl/jobs` 호출 직전에는 `DraftPipeline`을 flat `CreatePipelineRequest`로 변환한다. Review Summary도 같은 mapper 결과를 표시해서 화면 값과 submit payload가 어긋나지 않게 한다.
 
 ## 5) Backend Target Boundary
 
@@ -140,6 +124,7 @@ P1 hydrate API:
 
 - Mock data는 demo baseline이며, 최종 persistence model로 간주하지 않는다.
 - API response shape는 프론트 타입과 문서가 함께 바뀌어야 한다.
+- API, mock fixture, frontend internal state의 status 값은 영어 canonical value로 유지하고 UI label mapper에서 한국어 표시로 변환한다.
 - Backend 연결은 생성/명령/SQL 실행 같은 P0 vertical slice부터 시작한다.
 - SQL runtime은 read-only guard를 가져야 한다.
 - 감사 로그는 사용자에게 보이는 제품 기능이면서 backend integration evidence로도 쓰일 수 있다.

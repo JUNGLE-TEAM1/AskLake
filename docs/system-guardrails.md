@@ -28,7 +28,8 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
-| Protected default branch | GitHub repository ruleset on `main` | `enabled` | block direct push or force push to `main`; require changes through PR | repo admin | ruleset: `Protect main with PRs` |
+| Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
+| PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain | repo admin | `main <- dev`; `dev <- pair1, pair2, pair3` |
 | Default PR and issue templates | GitHub `.github` templates | `enabled` | prompt contributors to document scope, verification, impact, and acceptance criteria | maintainer | advisory template, not a hard gate |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
@@ -40,8 +41,9 @@
 
 | Rule | What it means for people |
 | --- | --- |
-| Direct push to `main` | `main` 변경은 직접 push하지 않고 PR로 병합한다. |
-| Force push to `main` | `main` history rewrite는 차단한다. |
+| Direct push to `main` and `dev` | `main`과 `dev` 변경은 직접 push하지 않고 PR로 병합한다. |
+| Force push to protected branches | protected branch history rewrite는 차단한다. |
+| Invalid PR source branch | `main` PR은 `dev`에서만, `dev` PR은 `pair1`, `pair2`, `pair3`에서만 병합할 수 있다. |
 
 ### What Is Warning Only
 
@@ -65,6 +67,7 @@
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
+| PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 
 ## 4) Lifecycle Guardrails
 
@@ -73,7 +76,7 @@
 | Branch/workspace start | developer | branch naming check | task notes or PR description |
 | PR open | developer / GitHub | PR checklist, linked issue candidate | PR body |
 | PR review/merge readiness | CI / reviewer | frontend build, API contract checks | PR checks and docs updates |
-| PR merge/finalize | maintainer | protected `main` ruleset, required checks when available | merge summary |
+| PR merge/finalize | maintainer | protected branch ruleset, PR source branch policy, required checks when available | merge summary |
 | Drift recovery | maintainer | read-only audit or manual review | follow-up issue or docs update |
 
 ## 5) Follow-Up Candidates

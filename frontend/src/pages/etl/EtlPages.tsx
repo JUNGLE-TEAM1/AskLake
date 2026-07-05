@@ -30,11 +30,13 @@ import {
   SlidersHorizontal,
   Table2,
   TerminalSquare,
+  Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, RetryPolicyDraft, ScheduleFlowId, TargetLayer } from "../../types";
+import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, RetryPolicyDraft, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -166,6 +168,242 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
   );
 }
 
+function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<[string, string]>): Array<[string, string]> {
+  const savedByLabel = new Map(savedFields);
+  const mergedFields = baseFields.map(([label, value]) => [label, savedByLabel.get(label) ?? value] as [string, string]);
+  const baseLabels = new Set(baseFields.map(([label]) => label));
+  const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
+  return [...mergedFields, ...extraSavedFields];
+}
+
+function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
+  const currentByLabel = new Map(currentFields);
+  const responseLabels = new Set(responseFields.map(([label]) => label));
+  return [
+    ...responseFields.map(([label, value]) => {
+      const currentValue = currentByLabel.get(label);
+      if (isCredentialSourceField(label) && !String(value ?? "").trim() && currentValue) {
+        return [label, currentValue] as [string, string];
+      }
+      return [label, value] as [string, string];
+    }),
+    ...currentFields.filter(([label]) => !responseLabels.has(label)),
+  ];
+}
+
+function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, currentFields: Array<[string, string]>): SourceConnectorAnalysis {
+  const responseConfig = result.draftPatch.source?.sourceConfig;
+  if (!responseConfig) return result;
+  return {
+    ...result,
+    draftPatch: {
+      ...result.draftPatch,
+      source: {
+        ...result.draftPatch.source,
+        sourceConfig: mergeConnectorSourceConfig(currentFields, responseConfig),
+      },
+    },
+  };
+}
+
+const sourceTypeLabels: Record<string, string> = {
+  Database: "PostgreSQL",
+  "Data Lake": "데이터 레이크",
+  "File / S3": "파일 / MinIO(S3)",
+  MongoDB: "MongoDB",
+  PostgreSQL: "PostgreSQL",
+  "REST API": "REST API",
+  "Stream / Kafka": "스트림 / Kafka",
+};
+
+const sourceFieldLabels: Record<string, string> = {
+  Accept: "응답 형식",
+  "Access Key": "액세스 키",
+  Authentication: "인증",
+  "Authentication Type": "인증 방식",
+  "Broker / Endpoint": "브로커 / 엔드포인트",
+  Bucket: "버킷",
+  "Bucket / Stage Name": "버킷 / 스테이지 이름",
+  "CONSUMER GROUP ID": "컨슈머 그룹 ID",
+  "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
+  Collection: "컬렉션",
+  "Connection URI": "연결 URI",
+  "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
+  "DATABASE / SCHEMA": "데이터베이스 / 스키마",
+  "Database Name": "데이터베이스 이름",
+  Delimiter: "구분자",
+  Encoding: "인코딩",
+  Endpoint: "엔드포인트",
+  "Endpoint / Host": "엔드포인트 / 호스트",
+  "Endpoint URL": "엔드포인트 URL",
+  Header: "헤더 처리",
+  HTTP: "HTTP",
+  "Lake Access": "레이크 접근",
+  "Lake Type": "레이크 유형",
+  Metadata: "메타데이터",
+  Method: "메서드",
+  Objects: "오브젝트",
+  Partitions: "파티션",
+  "Password / Auth Token": "비밀번호 / 인증 토큰",
+  Path: "경로",
+  "Path / Prefix": "경로 / 프리픽스",
+  Port: "포트",
+  Region: "리전",
+  Response: "응답",
+  Result: "결과",
+  Schema: "스키마",
+  "Secret Key": "시크릿 키",
+  "Storage Provider": "스토리지 제공자",
+  "Stream Type": "스트림 유형",
+  Table: "테이블",
+  Tables: "테이블",
+  "Token / Secret": "토큰 / 시크릿",
+  Topic: "토픽",
+  "Topic Access": "토픽 접근",
+  "TOPIC / QUEUE NAME": "토픽 / 큐 이름",
+  Username: "사용자 이름",
+  "Use Path Style": "Path Style 사용",
+  "X-Request-ID": "요청 ID",
+  Auth: "인증",
+  "Backend connector": "백엔드 커넥터",
+  "Broker Reachable": "브로커 접근",
+  Connector: "커넥터",
+  "File Type": "파일 형식",
+  "Message Format": "메시지 형식",
+  "Offset Policy": "오프셋 정책",
+  Parquet: "Parquet",
+  "Pagination Strategy": "페이지네이션 방식",
+  "Read Mode": "읽기 모드",
+  "Root Path": "루트 경로",
+  "Source Units": "소스 단위",
+};
+
+const sourceColumnLabels: Record<string, string> = {
+  "Action Type": "액션 유형",
+  Amount: "금액",
+  Date: "일자",
+  Email: "이메일",
+  "Event Timestamp": "이벤트 시각",
+  "Last Modified": "수정 시각",
+  Leader: "리더",
+  "Object Key": "오브젝트 키",
+  "Payload (Raw JSON)": "페이로드(JSON 원문)",
+  "Part.": "파티션",
+  Partition: "파티션",
+  Reason: "사유",
+  Region: "리전",
+  Rows: "행 수",
+  Size: "크기",
+  Status: "상태",
+  Table: "테이블",
+  Timestamp: "타임스탬프",
+  Topic: "토픽",
+  "Transaction ID": "거래 ID",
+  "User ID": "사용자 ID",
+};
+
+const sourceValueLabels: Record<string, string> = {
+  detected: "감지됨",
+  failed: "실패",
+  listed: "목록 확인",
+  "metadata reachable": "메타데이터 접근 가능",
+  "Not listed": "목록 미확인",
+  "Not tested": "미테스트",
+  Pending: "대기",
+  Reachable: "접근 가능",
+  Required: "필수",
+  sampled: "샘플링됨",
+};
+
+const sourceActionLabels: Record<string, string> = {
+  "Download CSV": "CSV 다운로드",
+  "Fetch Metadata": "메타데이터 조회",
+  "Full Screen": "전체 화면",
+  "Refresh Preview": "미리보기 새로고침",
+  "Show Advanced Configuration": "고급 설정 보기",
+};
+
+function sourceTypeLabel(value: string) {
+  return sourceTypeLabels[value] ?? value;
+}
+
+function sourceFieldLabel(value: string) {
+  return sourceFieldLabels[value] ?? value;
+}
+
+function sourceColumnLabel(value: string) {
+  return sourceColumnLabels[value] ?? value;
+}
+
+function sourceValueLabel(value: string) {
+  if (/^leader \d+$/i.test(value)) return value.replace(/^leader/i, "리더");
+  if (/^\d+ bytes$/i.test(value)) return value.replace("bytes", "바이트");
+  return sourceValueLabels[value] ?? value;
+}
+
+function sourceActionLabel(value: string) {
+  return sourceActionLabels[value] ?? value;
+}
+
+function isInternalSourceField(label: string) {
+  return label.startsWith("__");
+}
+
+function isCredentialSourceField(label: string) {
+  return /(access key|secret key|password|auth token|token|private key)/i.test(label);
+}
+
+function publicSourceLog(value: string) {
+  return value
+    .replace(/^MinIO\/S3 reachable:\s*(\d+)\s*objects?$/i, "MinIO/S3 연결 성공: 오브젝트 $1개")
+    .replace(/^MinIO\/S3 reachable:\s*(.+?)\s*\((\d+)\s*objects?\)$/i, "MinIO/S3 연결 성공: $1 (오브젝트 $2개)")
+    .replace(/^MinIO reachable:\s*(\d+)\s*objects?$/i, "MinIO 연결 성공: 오브젝트 $1개")
+    .replace(/^REST API reachable$/i, "REST API 연결 성공")
+    .replace(/^REST API reachable:\s*(.+)$/i, "REST API 연결 성공: $1")
+    .replace(/^PostgreSQL reachable:\s*(.+)$/i, "PostgreSQL 연결 성공: $1")
+    .replace(/^MongoDB reachable:\s*(.+)$/i, "MongoDB 연결 성공: $1")
+    .replace(/^Data Lake reachable:\s*(\d+)\s*objects?$/i, "데이터 레이크 연결 성공: 오브젝트 $1개")
+    .replace(/^Kafka topic reachable:\s*(.+)$/i, "Kafka 토픽 연결 성공: $1")
+    .replace(/^Source connection test is required before review\.$/i, "검토 전에 소스 연결 테스트가 필요합니다.")
+    .replace(/^Connection test is required before review\.$/i, "검토 전에 연결 테스트가 필요합니다.")
+    .replace(/^Bounded sample from\s+(.+)$/i, "$1에서 가져온 제한 샘플")
+    .replace(/^Listed\s+(\d+)\s+objects?\s+from\s+MinIO\/S3$/i, "MinIO/S3 오브젝트 $1개 목록 조회")
+    .replace(/^source units detected:\s*(\d+)$/i, "소스 단위 감지: $1개")
+    .replace(/^bounded sample fetched:\s*(.+)$/i, "제한 샘플 조회: $1")
+    .replace(/^profile snapshot inferred:\s*(\d+)\s*fields?,\s*(\d+)\s*sample rows?$/i, "프로파일 스냅샷 추론: $1개 필드, 샘플 행 $2개")
+    .replace(/^profile snapshot inferred:\s*(\d+)\s*fields?$/i, "프로파일 스냅샷 추론: $1개 필드")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function publicSchemaSummary(value: string) {
+  return value
+    .replace(/^MinIO\/S3 reachable\s*-\s*schema inference pending\s*\((\d+)\s*objects?\)$/i, "MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 $1개)")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function publicConnectorAnalysis(result: SourceConnectorAnalysis): SourceConnectorAnalysis {
+  return {
+    ...result,
+    draftPatch: {
+      ...result.draftPatch,
+      schema: result.draftPatch.schema ? {
+        ...result.draftPatch.schema,
+        summary: publicSchemaSummary(result.draftPatch.schema.summary ?? ""),
+      } : result.draftPatch.schema,
+      source: result.draftPatch.source ? {
+        ...result.draftPatch.source,
+        connectionMessage: publicSourceLog(result.draftPatch.source.connectionMessage ?? result.message),
+      } : result.draftPatch.source,
+    },
+    logs: result.logs.map(publicSourceLog).filter(Boolean),
+    message: publicSourceLog(result.message),
+    previewNote: publicSourceLog(result.previewNote),
+    testItems: result.testItems.filter(([label]) => !isInternalSourceField(label)),
+  };
+}
+
 const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
@@ -255,6 +493,7 @@ function normalizeCronExpression(value: string) {
 }
 
 export function SourceConnectionPage({
+  draft,
   onAction,
   onDraftChange,
   onNotify,
@@ -262,6 +501,7 @@ export function SourceConnectionPage({
   onNext,
   onSave,
 }: {
+  draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onNotify: (message: string) => void;
@@ -269,14 +509,18 @@ export function SourceConnectionPage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [sourceType, setSourceType] = useState("File / S3");
+  const [sourceType, setSourceType] = useState(draft.source.sourceType || "File / S3");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
-  const connectorMeta: Record<string, { desc: string; status: string }> = {
-    Database: { desc: "Postgres, MySQL, Oracle", status: "ready" },
-    "File / S3": { desc: "S3, GCS, Azure Blob", status: "valid" },
-    "Data Lake": { desc: "Delta Lake, Iceberg, Hudi", status: "metadata" },
-    "REST API": { desc: "REST, GraphQL, Webhooks", status: "parsed" },
-    "Stream / Kafka": { desc: "Real-time message brokers", status: "active" },
+  const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
+  const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
+  const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
+  const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
+    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <HardDrive size={18} />, label: "파일 / MinIO(S3)", status: "실제 연결" },
+    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <Database size={18} />, label: "PostgreSQL", status: "실제 연결" },
+    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <LayoutGrid size={18} />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <FileText size={18} />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <Table2 size={18} />, label: "데이터 레이크", status: "목록 조회" },
+    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <TerminalSquare size={18} />, label: "스트림 / Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -293,86 +537,110 @@ export function SourceConnectionPage({
     actions?: string[];
     info?: string;
   }> = {
-    Database: {
-      title: "PostgreSQL Connection",
-      description: "JDBC 연결로 테이블과 뷰를 탐색하고 샘플 행을 가져옵니다.",
+    PostgreSQL: {
+      title: "PostgreSQL 연결",
+      description: "백엔드 커넥터가 PostgreSQL 테이블 목록, 샘플 행, 스키마를 조회합니다.",
       fields: [
-        ["Endpoint / Host", "production-pg-cluster.internal"],
-        ["Port", "5432"],
-        ["Database Name", "sales_warehouse"],
+        ["Endpoint / Host", "127.0.0.1"],
+        ["Port", "15432"],
+        ["Database Name", "asklake_sources"],
         ["Schema", "public"],
-        ["Username", "asklake_service_account"],
-        ["Password / Auth Token", "secret_token_123"],
+        ["Username", "asklake"],
+        ["Password / Auth Token", "asklake"],
+        ["DATASET OR TABLE SELECTOR", "nyc_taxi_sample"],
       ],
-      testItems: [["Endpoint", "Reachable"], ["Auth", "Ready"], ["Tables", "1 detected"]],
-      logs: ["[INFO] DNS resolved production-pg-cluster.internal", "[INFO] Read-only credential accepted", "[SCAN] public.users detected"],
-      assetsTitle: "Detected Tables",
-      assets: [["public.users", "Table", "ready"], ["public.orders", "Table", "locked"], ["public.events", "View", "ready"]],
-      previewTitle: "Raw Source Preview",
-      previewNote: "No preview data available · Run a connection test to fetch sample rows from the source.",
+      testItems: [["Endpoint", "Not tested"], ["Backend connector", "Required"], ["Tables", "Pending"]],
+      logs: ["PostgreSQL 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 원시 데이터베이스 소켓을 열지 않습니다."],
+      assetsTitle: "감지된 테이블",
+      assets: [],
+      previewTitle: "원천 데이터 미리보기",
+      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하면 샘플 행을 가져옵니다.",
       previewColumns: ["Table", "Rows", "Status"],
-      previewRows: [["public.users", "0", "Test required"], ["public.orders", "0", "Locked"]],
-      info: "We recommend using a read-only user account for ETL processes to ensure data security.",
+      previewRows: [],
+      info: "PostgreSQL 자격 증명은 브라우저가 아니라 백엔드 커넥터에서 검증합니다.",
+    },
+    MongoDB: {
+      title: "MongoDB 연결",
+      description: "백엔드 커넥터가 MongoDB 컬렉션 목록, 문서 샘플, 중첩 필드를 조회합니다.",
+      fields: [
+        ["Endpoint / Host", "127.0.0.1"],
+        ["Port", "27018"],
+        ["Database Name", "asklake_sources"],
+        ["Username", ""],
+        ["Password / Auth Token", ""],
+        ["DATASET OR TABLE SELECTOR", "app_events"],
+      ],
+      testItems: [["Endpoint", "Not tested"], ["Database", "Pending"], ["Collection", "Pending"]],
+      logs: ["MongoDB 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 문서 샘플을 가져옵니다."],
+      assetsTitle: "감지된 컬렉션",
+      assets: [],
+      previewTitle: "문서 샘플 미리보기",
+      previewNote: "미리보기 데이터 없음 · MongoDB 연결 테스트를 실행하세요.",
+      previewColumns: ["Collection", "Documents", "Status"],
+      previewRows: [],
+      info: "MongoDB 연결과 샘플 조회는 백엔드 커넥터에서 실행합니다.",
     },
     "File / S3": {
-      title: "File / S3 Source Configuration",
-      description: "Configure your cloud storage bucket connection details.",
+      title: "MinIO 소스 설정",
+      description: "MinIO/S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "Amazon S3"],
-        ["Bucket / Stage Name", "asklake-raw-ingest-us-east"],
-        ["Path / Prefix", "data/inventory/daily/"],
-        ["Auth Method", "IAM Role (Recommended)"],
-        ["Role ARN", "arn:aws:iam::982347102:role/DataIngestRole"],
+        ["Storage Provider", "MinIO"],
+        ["Endpoint URL", "http://127.0.0.1:9000"],
+        ["Region", "us-east-1"],
+        ["Bucket / Stage Name", "m3-raw"],
+        ["Path / Prefix", "nyc_taxi/csv/"],
+        ["Access Key", ""],
+        ["Secret Key", ""],
+        ["Use Path Style", "true"],
         ["File Type", "CSV (Comma Separated)"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
       ],
-      testItems: [["Storage", "Connected"], ["Auth", "AccessGranted"], ["Path", "Scanned"]],
-      logs: ["[INFO] Connection established to us-east-1", "[INFO] Validating IAM policy: AccessGranted", "[SCAN] Scanning prefix: data/inventory/..."],
-      assetsTitle: "Detected Files",
-      assets: [["orders_2024.csv", "2.4 MB", "10m ago"], ["users.parquet", "15.8 MB", "1h ago"], ["events.json", "442 KB", "2d ago"]],
-      previewTitle: "Raw File Preview",
-      previewNote: 'Showing first 5 rows of "orders_2024.csv"',
-      previewColumns: ["#", "Raw Content (UTF-8)", "Byte Size", "Status"],
-      previewRows: [
-        ["1", "order_id,customer_id,order_date,amount,status,region", "64 B", "Header"],
-        ["2", "ORD-99201,CUST-002,2024-03-15,124.50,PENDING,US-EAST-1", "62 B", "Valid"],
-        ["3", "ORD-99202,CUST-045,2024-03-15,88.00,COMPLETED,US-WEST-2", "60 B", "Valid"],
-        ["4", "ORD-99203,CUST-012,2024-03-16,420.75,CANCELLED,US-EAST-1", "63 B", "Valid"],
-        ["5", "ORD-99204,CUST-111,2024-03-16,210.00,PENDING,EU-CENTRAL-1", "62 B", "Valid"],
-      ],
+      testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
+      logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
+      assetsTitle: "감지된 MinIO 오브젝트",
+      assets: [],
+      previewTitle: "제한 샘플 미리보기",
+      previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
+      previewColumns: ["Object Key", "Size", "Last Modified"],
+      previewRows: [],
       actions: ["Refresh Preview"],
     },
     "Data Lake": {
-      title: "Data Lake Source",
-      description: "Configure the connection details for your cloud-based data lakehouse.",
+      title: "데이터 레이크 소스",
+      description: "백엔드 connector runner가 Delta/Iceberg/Hudi 메타데이터를 조회해야 합니다.",
       fields: [
         ["Lake Type", "Delta Lake (Databricks)"],
-        ["CATALOG / NAMESPACE", "prod_datalake_v2"],
-        ["DATABASE / SCHEMA", "analytics_raw"],
-        ["Path", "s3://asklake-prod-bucket/logs/user_events/"],
+        ["CATALOG / NAMESPACE", "local_catalog"],
+        ["DATABASE / SCHEMA", "default"],
+        ["Path", "s3://m3-raw/nyc_taxi/yellow_parquet/"],
+        ["Endpoint URL", "http://127.0.0.1:9000"],
+        ["Region", "us-east-1"],
+        ["Access Key", ""],
+        ["Secret Key", ""],
+        ["Use Path Style", "true"],
         ["Read Mode", "Latest Version (Snapshot Isolation)"],
-        ["DATASET OR TABLE SELECTOR", "user_interactions_log"],
+        ["DATASET OR TABLE SELECTOR", ""],
       ],
-      testItems: [["Lake Access", "Passed"], ["Metadata", "Fetched"], ["Permission", "Granted"]],
-      logs: ["[14:02:11] Init: AWS SDK V2 Client", "[14:02:12] Auth: IAM Role detected", "[14:02:14] Success: Bucket accessible", "[14:02:15] Success: Delta manifest found", "[14:02:15] Info: Scanning partitions..."],
-      assetsTitle: "Detected Lake Objects",
-      assets: [["user_interactions_log", "Table", "1.2 TB"], ["session_archive_2023", "Folder", "4.8 TB"], ["identity_map_v2", "Iceberg Table", "240 GB"], ["snapshot_v1_backup", "Snapshot", "12 GB"]],
-      previewTitle: "Lake Table Preview",
-      previewNote: "Showing first 5 of 12,402,192 rows · Version 42 (Iceberg)",
+      testItems: [["Lake Access", "Not tested"], ["Metadata", "Pending"], ["Backend connector", "Required"]],
+      logs: ["데이터 레이크 소스 식별은 백엔드 커넥터 러너에서 검증합니다.", "커넥터가 메타데이터를 반환할 때까지 테이블 프로파일은 대기합니다."],
+      assetsTitle: "감지된 레이크 오브젝트",
+      assets: [],
+      previewTitle: "레이크 테이블 미리보기",
+      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Event Timestamp", "User ID", "Transaction ID", "Region", "Action Type", "Latency"],
-      previewRows: [["2024-03-20 10:15:02", "USR_882", "TRX-90122", "APAC", "PAGE_VIEW", "42ms"], ["2024-03-20 10:15:15", "USR_121", "TRX-90123", "EMEA", "ADD_TO_CART", "38ms"], ["2024-03-20 10:16:01", "USR_882", "TRX-90124", "APAC", "CHECKOUT", "55ms"]],
+      previewRows: [],
       actions: ["Fetch Metadata", "Download CSV", "Full Screen"],
     },
     "REST API": {
-      title: "REST API Source",
-      description: "Configure your REST endpoint to ingest remote data.",
+      title: "REST API 소스",
+      description: "원격 데이터를 수집할 REST 엔드포인트를 설정합니다.",
       fields: [
         ["Method", "GET"],
-        ["Endpoint URL", "https://api.asklake-demo.io/v1/analytics/orders"],
-        ["Authentication Type", "Bearer Token"],
-        ["Token / Secret", "••••••••••••••••••••••"],
+        ["Endpoint URL", "http://localhost:8080/api/harness/rest-sample"],
+        ["Authentication Type", "None"],
+        ["Token / Secret", ""],
         ["Accept", "application/json"],
         ["X-Request-ID", "etl-9928-ax"],
         ["limit", "50"],
@@ -380,155 +648,241 @@ export function SourceConnectionPage({
         ["Pagination Strategy", "Page Number"],
         ["Root Path", "$.data.items"],
       ],
-      testItems: [["Endpoint", "Reachable"], ["Auth", "Valid"], ["Response", "Parsed (200 OK)"]],
-      logs: ["[09:21:02] Connected to asklake-demo.io", "[09:21:03] Sending Auth headers...", "[09:21:03] Response 200 Received (82kb)", "[09:21:04] Applying Root Path $.data.items"],
-      assetsTitle: "Detected Fields",
-      assets: [["user_id", "Integer", "5 Found"], ["email", "String", "parsed"], ["created_at", "DateTime", "parsed"], ["amount", "Decimal", "parsed"], ["status", "String", "parsed"]],
-      previewTitle: "API Response Preview",
-      previewNote: "Parsed Rows · Total Rows: 50 · Fetch Time: 214ms",
+      testItems: [["Endpoint", "Not tested"], ["Auth", "Pending"], ["Response", "Pending"]],
+      logs: ["REST 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 백엔드가 HTTP 응답 샘플을 가져옵니다."],
+      assetsTitle: "감지된 필드",
+      assets: [],
+      previewTitle: "API 응답 미리보기",
+      previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
-      previewRows: [["10283", "dev.ops@example.com", "2024-03-12", "COMPLETED", "$499.99"], ["10284", "data.wiz@asklake.ai", "2024-03-12", "PENDING", "$120.50"], ["10285", "jane.smith@corp.com", "2024-03-12", "COMPLETED", "$88.00"]],
+      previewRows: [],
       actions: ["Refresh Preview"],
     },
     "Stream / Kafka": {
-      title: "Stream Source Configuration",
-      description: "Configure your real-time data stream endpoint.",
+      title: "스트림 소스 설정",
+      description: "실시간 데이터 스트림 엔드포인트를 설정합니다.",
       fields: [
         ["Stream Type", "Apache Kafka"],
-        ["Broker / Endpoint", "pkc-4vjqw.us-east-1.confluent.cloud:9092"],
-        ["TOPIC / QUEUE NAME", "asklake.ingest.production.telemetry"],
+        ["Broker / Endpoint", "127.0.0.1:19092"],
+        ["TOPIC / QUEUE NAME", "asklake-source-events"],
         ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
         ["Authentication", "SASL / SCRAM"],
       ],
-      testItems: [["Broker Reachable", "Pending"], ["Topic Access", "Pending"], ["Message Parse", "Pending"]],
-      logs: ["[INFO] Initiating handshake with broker...", "[INFO] SASL_SSL authentication successful.", "[INFO] Metadata fetched for 12 partitions.", "[INFO] Established consumer session ID: k-8821x-af", "[WARN] Partition 4 reporting slight latency."],
-      assetsTitle: "Detected Metadata",
-      assets: [["Partitions", "12", "ready"], ["Replication Factor", "3", "ready"], ["Latest Offset", "1,442,901", "ready"], ["Lag Status", "0ms", "healthy"], ["Compression", "Snappy", "ready"]],
-      previewTitle: "Sample Messages Preview",
-      previewNote: "Real-time stream head · Polling at 100ms · Auto-parsing active",
+      testItems: [["Broker Reachable", "Not tested"], ["Topic Access", "Pending"], ["Backend connector", "Required"]],
+      logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],
+      assetsTitle: "감지된 메타데이터",
+      assets: [],
+      previewTitle: "샘플 메시지 미리보기",
+      previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
-      previewRows: [["{\"event\":\"purchase\",\"user_id\":8821,\"amount\":42.50}", "2", "450122", "2024-05-20 14:02:11.452"], ["{\"event\":\"click\",\"user_id\":4120,\"page\":\"/checkout\"}", "0", "991201", "2024-05-20 14:02:11.488"], ["{\"event\":\"view\",\"user_id\":9931,\"product_id\":\"P-442\"}", "1", "221094", "2024-05-20 14:02:11.501"]],
+      previewRows: [],
       actions: ["Show Advanced Configuration"],
     },
   };
-  const current = sourceConfigs[sourceType];
-  const editableFields = sourceFields[sourceType] ?? current.fields;
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? sourceType;
+  const activeSourceType = sourceType === "Database" ? "PostgreSQL" : sourceConfigs[sourceType] ? sourceType : "File / S3";
+  const current = sourceConfigs[activeSourceType];
+  const editableFields = sourceFields[activeSourceType] ?? (
+    draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
+      ? mergeFieldRows(current.fields, draft.source.sourceConfig)
+      : current.fields
+  );
+  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
+    failed: { badge: "확인 실패", title: "연결 실패" },
+    idle: { badge: "테스트 필요", title: "연결 테스트 대기" },
+    success: { badge: "미리보기 가능", title: "연결 검증 완료" },
+    testing: { badge: "테스트 중", title: "연결 테스트 실행 중" },
+  };
+  const visibleEditableFields = editableFields.filter(([label]) => !isInternalSourceField(label));
+  const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
+  const displayAssets = sourceRuntime?.assets ?? current.assets;
+  const displayLogs = (sourceRuntime?.logs ?? current.logs).map(publicSourceLog).filter(Boolean);
+  const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
+  const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
+  const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
+  const previewTableMinWidth = Math.max(880, displayPreviewColumns.length * 148);
+  const publicConnectionMessage = publicSourceLog(connectionMessage);
+  const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
+  const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
+  const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
+  const sourceSummaryRows: Array<[string, string]> = [
+    ["선택 커넥터", sourceTypeLabel(activeSourceType)],
+    ["연결 상태", connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
+    ["감지 파일", `${displayAssets.length}개`],
+    ["인증 방식", activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
+    ["다음 단계", "스키마 추론"],
+  ];
 
-  const applySourceDraft = (nextType = sourceType, nextFields = editableFields) => {
-    const label = nextFields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? nextType;
+  const applySourceDraft = (
+    nextType = activeSourceType,
+    nextFields = verifiedSourceFields,
+    nextStatus = connectionStatus,
+    nextMessage = connectionMessage,
+  ) => {
+    const label = sourceLabelFromFields(nextType, nextFields);
     onDraftChange({
-      sourceConfig: nextFields,
-      sourceLabel: label,
-      sourceType: nextType,
+      source: {
+        connectionMessage: nextMessage,
+        connectionStatus: nextStatus,
+        sourceConfig: nextFields,
+        sourceLabel: label,
+        sourceType: nextType,
+      },
     });
   };
 
   const selectSource = (value: string) => {
+    const nextMessage = `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
-    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields);
+    setSourceRuntime(null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields, "idle", nextMessage);
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
   const updateSourceField = (label: string, value: string) => {
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
-    setSourceFields((fields) => ({ ...fields, [sourceType]: nextFields }));
-    applySourceDraft(sourceType, nextFields);
+    const nextMessage = "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime(null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
   };
 
-  const testConnection = () => {
-    onAction("etl.source.connection_tested", "/api/etl/sources/test", sourceType);
-    onNotify(`${sourceType} 연결 테스트가 통과되었습니다.`);
+  const testConnection = async () => {
+    const testingMessage = `${sourceTypeLabel(activeSourceType)} 커넥터 테스트 실행 중입니다.`;
+    setConnectionStatus("testing");
+    setConnectionMessage(testingMessage);
+    applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
+    try {
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
+        editableFields,
+      );
+      if (result.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+      }
+      setSourceRuntime(result);
+      setConnectionStatus(result.status);
+      setConnectionMessage(result.message);
+      onDraftChange(result.draftPatch);
+      onAction("etl.source.connection_tested", result.actionPath, activeSourceType);
+      onNotify(result.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "소스 커넥터 테스트에 실패했습니다.";
+      setSourceRuntime({
+        actionPath: "/api/etl/sources/test",
+        assets: [],
+        draftPatch: {},
+        logs: [`[ERROR] ${message}`],
+        message,
+        previewColumns: ["Status", "Reason"],
+        previewNote: "연결 테스트에 실패했습니다. 샘플을 가져오지 못했습니다.",
+        previewRows: [["failed", message]],
+        status: "failed",
+        testItems: [["Connector", activeSourceType], ["Result", "Failed"]],
+      });
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, editableFields, "failed", message);
+      onAction("etl.source.connection_failed", "/api/etl/sources/test", activeSourceType, "failed");
+      onNotify(message);
+    }
   };
 
   const fetchMetadata = () => {
-    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", sourceType);
-  };
-
-  const refreshPreview = () => {
-    onAction("etl.source.preview_refreshed", "/api/etl/sources/preview", sourceType);
+    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceType} · ${sourceLabel}`} onPrev={onPrev} onNext={() => {
-        applySourceDraft();
+      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceTypeLabel(activeSourceType)} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
+        if (connectionStatus !== "success") {
+          onNotify("먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+          return;
+        }
+        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
         onNext();
       }} onSave={() => {
-        applySourceDraft();
+        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
         onSave();
       }} />}
     >
-        <PageTitle title="Source Connection" description="Define your data source and test connectivity to proceed." />
-        <section className="panel hegun-console-panel">
+        <PageTitle title="소스 연결" description="사용할 소스를 고르고 같은 영역에서 연결 정보를 입력한 뒤 실제 연결 테스트를 실행합니다." />
+        <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="panel-header">
             <Database size={18} />
-            <h2>Source Type</h2>
-            <span className="panel-note">Pipeline Draft saved 2 mins ago</span>
+            <h2>소스 선택 및 연결</h2>
+            <span className="panel-note">소스를 선택하면 연결 설정과 테스트가 바로 이어집니다</span>
           </div>
-          <div className="hegun-connector-grid">
-            {Object.entries(connectorMeta).map(([connector, meta]) => (
-              <button className={sourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
-                <strong>{connector}</strong>
-                <span>{meta.desc}</span>
-                <em>{meta.status}</em>
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <Settings size={18} />
-            <h2>{current.title}</h2>
-            <span className="panel-note">{current.description}</span>
-          </div>
-          <div className="hegun-field-grid">
-            {editableFields.map(([label, value]) => (
-              <label className={value.length > 38 ? "field wide" : "field"} key={`${sourceType}-${label}`}>
-                <span>{label}</span>
-                <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
-              </label>
-            ))}
-          </div>
-          {current.info && <InfoBox title="Secure Connection" body={current.info} />}
-          <div className="form-actions inline">
-            {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", sourceType)}>Show Advanced Configuration</button>}
-            {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>Fetch Metadata</button>}
-            <button className="secondary-button" type="button" onClick={testConnection}>Test Connection</button>
+          <div className="source-connect-stack">
+            <div className="source-picker-strip" role="group" aria-label="소스 선택">
+              {Object.entries(connectorMeta).map(([connector, meta]) => (
+                <button className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                  <span className="hegun-connector-icon">{meta.icon}</span>
+                  <strong>{meta.label}</strong>
+                  <span>{meta.desc}</span>
+                  <em>{meta.status}</em>
+                </button>
+              ))}
+            </div>
+            <div className="source-active-config">
+              <div className="source-active-heading">
+                <Settings size={18} />
+                <strong>{current.title}</strong>
+                <span>{current.description}</span>
+              </div>
+              <div className="hegun-field-grid">
+                {visibleEditableFields.map(([label, value]) => (
+                  <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
+                    <span>{sourceFieldLabel(label)}</span>
+                    <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                  </label>
+                ))}
+              </div>
+              {current.info && <InfoBox title="보안 연결" body={current.info} />}
+              <div className="form-actions inline source-connect-actions">
+                {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+              </div>
+            </div>
           </div>
         </section>
         <div className="hegun-source-grid">
           <section className="panel hegun-console-panel">
             <div className="panel-header">
               <Check size={18} />
-              <h2>Connectivity Test</h2>
-              <span className="panel-note">{current.testItems.map(([label]) => label).join(" · ")}</span>
+              <h2>연결 테스트</h2>
+              <span className="panel-note">{displayTestItems.map(([label]) => sourceFieldLabel(label)).join(" · ")}</span>
             </div>
             <div className="hegun-test-summary">
               <div>
-                <strong>Connection verified</strong>
-                <span>{current.testItems.length} checks completed for {sourceType}</span>
+                <strong>{connectionStatusCopy[connectionStatus].title}</strong>
+                <span>{publicConnectionMessage || `${sourceTypeLabel(activeSourceType)}에 ${displayTestItems.length}개 확인 항목이 설정되었습니다.`}</span>
               </div>
-              <em>Ready for preview</em>
+              <em>{connectionStatusCopy[connectionStatus].badge}</em>
             </div>
             <div className="hegun-test-strip">
-              {current.testItems.map(([label, value], index) => (
-                <span key={`${sourceType}-${label}-${index}`}>
+              {displayTestItems.map(([label, value], index) => (
+                <span key={`${activeSourceType}-${label}-${index}`}>
                   <i><Check size={13} /></i>
-                  <strong>{label}</strong>
-                  <em>{value}</em>
+                  <strong>{sourceFieldLabel(label)}</strong>
+                  <em>{sourceValueLabel(value)}</em>
                 </span>
               ))}
             </div>
-            <div className="hegun-log-panel" aria-label="Connection test log">
+            <div className="hegun-log-panel" aria-label="연결 테스트 로그">
               <div className="hegun-log-header">
-                <strong>Execution log</strong>
-                <span>live</span>
+                <strong>검증 기록</strong>
+                <span>{connectionStatus === "success" ? "완료" : connectionStatus === "testing" ? "진행 중" : connectionStatus === "failed" ? "실패" : "대기"}</span>
               </div>
               <div className="hegun-log-lines">
-                {current.logs.map((log, index) => <span key={`${sourceType}-log-${index}`}>{log}</span>)}
+                {displayLogs.map((log, index) => <span key={`${activeSourceType}-log-${index}`}>{log}</span>)}
               </div>
             </div>
           </section>
@@ -536,14 +890,14 @@ export function SourceConnectionPage({
             <div className="panel-header">
               <LayoutGrid size={18} />
               <h2>{current.assetsTitle}</h2>
-              <span className="panel-note">{current.assets.length} Total</span>
+              <span className="panel-note">총 {displayAssets.length}개</span>
             </div>
             <div className="hegun-asset-list">
-              {current.assets.map(([name, meta, status], index) => (
-                <article key={`${sourceType}-${name}-${index}`}>
+              {displayAssets.map(([name, meta, status], index) => (
+                <article key={`${activeSourceType}-${name}-${index}`}>
                   <strong>{name}</strong>
                   <span>{meta}</span>
-                  <em>{status}</em>
+                  <em>{sourceValueLabel(status)}</em>
                 </article>
               ))}
             </div>
@@ -553,28 +907,268 @@ export function SourceConnectionPage({
           <div className="panel-header">
             <FileText size={18} />
             <h2>{current.previewTitle}</h2>
-            <span className="panel-note">{current.previewNote}</span>
+            <span className="panel-note">{publicDisplayPreviewNote}</span>
           </div>
           <div className="hegun-preview-actions">
-            {current.actions?.includes("Refresh Preview") && <button className="secondary-button" type="button" onClick={refreshPreview}>Refresh Preview</button>}
-            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", sourceType)}>Download CSV</button>}
-            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", sourceType)}>Full Screen</button>}
+            {current.actions?.includes("Refresh Preview") && <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>{sourceActionLabel("Refresh Preview")}</button>}
+            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", activeSourceType)}>{sourceActionLabel("Download CSV")}</button>}
+            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", activeSourceType)}>{sourceActionLabel("Full Screen")}</button>}
           </div>
           <div className="hegun-table-scroll">
-            <table className="schema-table">
-              <thead><tr>{current.previewColumns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-              <tbody>{current.previewRows.map((row, rowIndex) => <tr key={`${sourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+            <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+              <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+              <tbody>
+                {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                {displayPreviewRows.length === 0 && <tr><td colSpan={Math.max(displayPreviewColumns.length, 1)}>연결 테스트 후 소스 샘플 미리보기가 표시됩니다.</td></tr>}
+              </tbody>
             </table>
           </div>
         </section>
         <div className="form-actions inline">
-          <button className="secondary-button" type="button" onClick={testConnection}>연결 테스트</button>
+          <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
         </div>
     </CreationFlowLayout>
   );
 }
 
+const schemaTypeOptions = ["String", "Integer", "Float", "Boolean", "Timestamp", "JSON"];
+const schemaRoleOptions = [
+  { label: "일반", value: "" },
+  { label: "식별자", value: "Identifier" },
+  { label: "이벤트 시간", value: "Event Time" },
+  { label: "측정값", value: "Metric" },
+  { label: "개인정보", value: "PII" },
+];
+
+type SchemaBaseSnapshot = {
+  columns: SchemaColumnDraft[];
+  sampleRows: string[][];
+  sourceLabel: string;
+};
+
+type SchemaSampleScope = "current" | "slice1gb" | "full";
+type SchemaSampleScopeOption = {
+  label: string;
+  shortLabel: string;
+  value: SchemaSampleScope;
+};
+
+function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScopeOption[] {
+  if (sourceType === "MongoDB") {
+    return [
+      { label: "현재 문서", shortLabel: "현재", value: "current" },
+      { label: "10k 문서", shortLabel: "10k", value: "slice1gb" },
+      { label: "전체 컬렉션", shortLabel: "전체", value: "full" },
+    ];
+  }
+  if (sourceType === "PostgreSQL") {
+    return [
+      { label: "현재 행", shortLabel: "현재", value: "current" },
+      { label: "10k 행", shortLabel: "10k", value: "slice1gb" },
+      { label: "전체 테이블", shortLabel: "전체", value: "full" },
+    ];
+  }
+  return [
+    { label: "현재 샘플", shortLabel: "현재", value: "current" },
+    { label: "1GB 샘플", shortLabel: "1GB", value: "slice1gb" },
+    { label: "전체", shortLabel: "전체", value: "full" },
+  ];
+}
+
+function detectSchemaSourceFormat(draft: DraftPipeline) {
+  const summary = draft.schema.summary.toLowerCase();
+  const sampleObject = draft.source.sourceConfig.find(([label]) => label === "__Sample Object")?.[1]?.toLowerCase() ?? "";
+  const sourceLabel = draft.source.sourceLabel.toLowerCase();
+  const probe = `${summary} ${sampleObject} ${sourceLabel}`;
+  if (probe.includes("jsonl")) return "JSONL";
+  if (probe.includes("json")) return "JSON";
+  if (probe.includes("parquet")) return "PARQUET";
+  if (probe.includes("tsv")) return "TSV";
+  if (probe.includes("csv")) return "CSV";
+  if (draft.source.sourceType === "PostgreSQL") return "TABLE";
+  if (draft.source.sourceType === "MongoDB") return "JSON";
+  if (draft.source.sourceType === "Stream / Kafka") return "JSON";
+  return "SAMPLE";
+}
+
+function buildSchemaFingerprint(columns: SchemaColumnDraft[]) {
+  return columns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`).join("|");
+}
+
+function summarizeSchemaColumns(columns: SchemaColumnDraft[], lowConfidenceCount: number, sourceFormat: string) {
+  return `${columns.length}개 출력 컬럼 구성 · ${lowConfidenceCount}개 검토 필요 · ${sourceFormat} 샘플 기준`;
+}
+
+function normalizeTargetColumnName(value: string) {
+  return value
+    .trim()
+    .replace(/[^0-9A-Za-z_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase() || "column";
+}
+
+function withUniqueTargetNames(columns: SchemaColumnDraft[]) {
+  const counts = new Map<string, number>();
+  return columns.map((column) => {
+    const baseName = normalizeTargetColumnName(column.sourceName);
+    const seen = counts.get(baseName) ?? 0;
+    counts.set(baseName, seen + 1);
+    return {
+      ...column,
+      targetName: seen === 0 ? baseName : `${baseName}_${seen + 1}`,
+    };
+  });
+}
+
+function cloneSchemaColumns(columns: SchemaColumnDraft[]) {
+  return columns.map((column) => ({ ...column }));
+}
+
+function cloneSchemaRows(rows: string[][]) {
+  return rows.map((row) => [...row]);
+}
+
+function upsertConfigValue(config: Array<[string, string]>, label: string, value: string) {
+  const found = config.some(([fieldLabel]) => fieldLabel === label);
+  if (found) {
+    return config.map(([fieldLabel, fieldValue]) => (fieldLabel === label ? [fieldLabel, value] : [fieldLabel, fieldValue])) as Array<[string, string]>;
+  }
+  return [...config, [label, value]] as Array<[string, string]>;
+}
+
+function compactSchemaByPathDepth(columns: SchemaColumnDraft[], sampleRows: string[][], maxPathSegments: number) {
+  const safeDepth = Math.max(1, Math.trunc(maxPathSegments));
+  const groups = new Map<string, {
+    columns: Array<{ column: SchemaColumnDraft; index: number; relativePath: string }>;
+    firstIndex: number;
+    key: string;
+  }>();
+
+  columns.forEach((column, index) => {
+    const parts = column.sourceName.split(".").filter(Boolean);
+    const compactParts = parts.length > safeDepth ? parts.slice(0, safeDepth) : parts;
+    const key = compactParts.join(".") || column.sourceName || `column_${index + 1}`;
+    const relativePath = parts.slice(compactParts.length).join(".");
+    const group = groups.get(key);
+    if (group) {
+      group.columns.push({ column, index, relativePath });
+      return;
+    }
+    groups.set(key, { columns: [{ column, index, relativePath }], firstIndex: index, key });
+  });
+
+  const orderedGroups = Array.from(groups.values()).sort((a, b) => a.firstIndex - b.firstIndex);
+  const nextColumns = orderedGroups.map((group) => {
+    if (group.columns.length === 1 && !group.columns[0].relativePath) {
+      return { ...group.columns[0].column };
+    }
+    const confidenceValues = group.columns.map(({ column }) => column.confidence ?? 70);
+    return {
+      confidence: Math.min(...confidenceValues),
+      nullable: group.columns.some(({ column }) => column.nullable),
+      sourceName: group.key,
+      targetName: normalizeTargetColumnName(group.key),
+      type: "JSON",
+    } satisfies SchemaColumnDraft;
+  });
+
+  const nextRows = sampleRows.map((row) => orderedGroups.map((group) => {
+    if (group.columns.length === 1 && !group.columns[0].relativePath) {
+      return row[group.columns[0].index] ?? "";
+    }
+    const nested: Record<string, unknown> = {};
+    group.columns.forEach(({ column, index, relativePath }) => {
+      const value = row[index] ?? "";
+      if (!value.trim()) return;
+      setNestedPreviewValue(nested, relativePath || column.sourceName.split(".").at(-1) || "value", value);
+    });
+    return Object.keys(nested).length > 0 ? JSON.stringify(nested) : "";
+  }));
+
+  return { columns: nextColumns, sampleRows: nextRows };
+}
+
+function buildSourceShapePreview(columns: SchemaColumnDraft[], row: string[]) {
+  if (columns.length === 0) return "연결 테스트 후 샘플 구조가 표시됩니다.";
+  const preview: Record<string, unknown> = {};
+  const visibleColumns = columns.slice(0, 10);
+  visibleColumns.forEach((column, index) => {
+    setNestedPreviewValue(preview, column.sourceName, row[index] ?? "");
+  });
+  if (columns.length > visibleColumns.length) {
+    preview.__remaining_fields = `${columns.length - visibleColumns.length}개 추가 필드`;
+  }
+  return JSON.stringify(preview, null, 2);
+}
+
+function buildCsvShapePreview(columns: SchemaColumnDraft[], row: string[]) {
+  if (columns.length === 0) return "출력 컬럼이 없습니다.";
+  const visibleColumns = columns.slice(0, 10);
+  const header = visibleColumns.map((column, index) => toCsvPreviewCell(column.targetName || `column_${index + 1}`)).join(",");
+  const values = visibleColumns.map((_, index) => toCsvPreviewCell(row[index] ?? "")).join(",");
+  const suffix = columns.length > visibleColumns.length ? `\n... ${columns.length - visibleColumns.length}개 컬럼 더 있음` : "";
+  return `${header}\n${values}${suffix}`;
+}
+
+function setNestedPreviewValue(target: Record<string, unknown>, sourceName: string, value: string) {
+  const parts = sourceName.split(".").filter(Boolean);
+  if (parts.length <= 1) {
+    target[sourceName || "value"] = value;
+    return;
+  }
+  let cursor = target;
+  parts.forEach((part, index) => {
+    if (index === parts.length - 1) {
+      cursor[part] = value;
+      return;
+    }
+    if (!cursor[part] || typeof cursor[part] !== "object" || Array.isArray(cursor[part])) {
+      cursor[part] = {};
+    }
+    cursor = cursor[part] as Record<string, unknown>;
+  });
+}
+
+function toCsvPreviewCell(value: string) {
+  if (!/[",\n]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function sampleValuesForColumn(rows: string[][], columnIndex: number) {
+  return rows.map((row) => row[columnIndex] ?? "").filter((value) => value.trim() !== "");
+}
+
+function estimateNullRatio(rows: string[][], columnIndex: number) {
+  if (rows.length === 0) return 0;
+  const nullCount = rows.filter((row) => !(row[columnIndex] ?? "").trim()).length;
+  return Math.round((nullCount / rows.length) * 100);
+}
+
+function valueDistribution(values: string[]) {
+  const counts = new Map<string, number>();
+  values.forEach((value) => {
+    const key = value.length > 24 ? `${value.slice(0, 24)}...` : value;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  const max = Math.max(...counts.values(), 0);
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([label, count]) => ({ count, label, percent: max > 0 ? Math.max(8, Math.round((count / max) * 100)) : 0 }));
+}
+
+function schemaRoleLabel(role?: string) {
+  return schemaRoleOptions.find((option) => option.value === (role ?? ""))?.label ?? role ?? "일반";
+}
+
+function formatSourceFieldPath(value: string) {
+  if (!value.includes(".")) return value;
+  const parts = value.split(".");
+  return parts.map((part, index) => (index === 0 ? part : `└ ${part}`)).join(" ");
+}
+
 export function SchemaInferencePage({
+  draft,
   onDraftChange,
   onAction,
   onNotify,
@@ -582,6 +1176,7 @@ export function SchemaInferencePage({
   onPrev,
   onSave,
 }: {
+  draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onNotify: (message: string) => void;
@@ -589,134 +1184,540 @@ export function SchemaInferencePage({
   onPrev: () => void;
   onSave: () => void;
 }) {
-  const schemaRows = [
-    ["#1", "user_id", "user_id", "Integer", "NO", "Primary", "100%", "102, 103, 104"],
-    ["#2", "first_name", "first_name", "String", "NO", "-", "98%", "John, Jane, Mike"],
-    ["#3", "last_name", "last_name", "String", "YES", "-", "95%", "Doe, Smith, Brown"],
-    ["#4", "signup_ts", "created_at", "Timestamp", "NO", "-", "72%", "2023-01-01 10:00..."],
-    ["#5", "sub_plan_code", "plan_id", "Integer", "YES", "Foreign", "85%", "1, 2, NULL, 3"],
-    ["#6", "meta_json", "metadata", "JSON", "YES", "Obj", "60%", "{\"ref\":\"ads_01\"}"],
-    ["#7", "geo_lat", "latitude", "Float", "YES", "-", "99%", "37.7749, 34.0522"],
-  ];
-  const metadata = [
-    ["Data Source", "orders_main_prod.csv"],
-    ["Rows Sampled", "10,000"],
-    ["Status", "Inference Needs Review"],
-    ["Parser", "CSV · UTF-8 · Header"],
-  ];
+  const [schemaFilter, setSchemaFilter] = useState("");
+  const [schemaPreviewMode, setSchemaPreviewMode] = useState<"flat" | "raw">("flat");
+  const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0);
+  const [flattenObjects, setFlattenObjects] = useState(true);
+  const [flattenDepth, setFlattenDepth] = useState(2);
+  const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
+  const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
+  const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
+  const hasInferredSchema = draft.schema.columns.length > 0;
+  const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
+  const schemaSampleRows = draft.schema.sampleRows;
+  const lowConfidenceCount = schemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
+  const averageConfidence = schemaColumns.length
+    ? Math.round(schemaColumns.reduce((sum, column) => sum + (column.confidence ?? 70), 0) / schemaColumns.length)
+    : 0;
+  const sourceFormat = detectSchemaSourceFormat(draft);
+  const isFlattenedJson = schemaColumns.some((column) => column.sourceName.includes(".")) || ["JSON", "JSONL"].includes(sourceFormat);
+  const nestedFieldCount = schemaColumns.filter((column) => column.sourceName.includes(".")).length;
+  const mappingModeText = hasInferredSchema
+    ? isFlattenedJson
+      ? flattenObjects
+        ? `${sourceFormat} 원본 필드를 최대 ${flattenDepth}단계까지 출력 컬럼으로 평탄화`
+        : `${sourceFormat} 중첩 객체를 JSON 컬럼으로 유지`
+      : `${sourceFormat} 원본 컬럼을 출력 테이블 컬럼으로 매핑`
+    : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
+  const previewRow = schemaSampleRows[0] ?? [];
+  const sourcePreviewText = buildSourceShapePreview(schemaColumns, previewRow);
+  const outputTableMinWidth = Math.max(880, schemaColumns.length * 148);
+  const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
+  const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
+  const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
+  const selectedSampleScopeLabel = sampleScopeOptions.find((option) => option.value === schemaSampleScope)?.label ?? sampleScopeOptions[0].label;
+  const schemaFingerprint = buildSchemaFingerprint(schemaColumns);
+  const selectedIndex = schemaColumns.length ? Math.min(selectedSchemaIndex, schemaColumns.length - 1) : 0;
+  const selectedColumn = schemaColumns[selectedIndex];
+  const selectedSampleValues = selectedColumn ? sampleValuesForColumn(schemaSampleRows, selectedIndex) : [];
+  const selectedNullRatio = selectedColumn ? estimateNullRatio(schemaSampleRows, selectedIndex) : 0;
+  const selectedDistribution = selectedColumn ? valueDistribution(selectedSampleValues) : [];
+  const visibleSchemaColumns = schemaColumns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => {
+      const keyword = schemaFilter.trim().toLowerCase();
+      if (!keyword) return true;
+      return `${column.sourceName} ${column.targetName} ${column.type} ${column.role ?? ""}`.toLowerCase().includes(keyword);
+    });
 
-  const runInference = () => {
-    onAction("etl.schema.inferred", "/api/etl/schema-inference", "customer_review_raw");
-    onDraftChange({ schemaSummary: "24 fields inferred · 3 need review" });
-    onNotify("샘플 데이터 기준 스키마 추론이 완료되었습니다.");
+  const applySchemaDraft = (summary: string, columns = schemaColumns, sampleRows = schemaSampleRows) => {
+    if (columns.length === 0) return false;
+    onDraftChange({
+      schema: {
+        columns,
+        sampleRows,
+        schemaFingerprint: buildSchemaFingerprint(columns),
+        summary,
+      },
+    });
+    return true;
+  };
+
+  const patchSchemaColumns = (columns: SchemaColumnDraft[], sampleRows = schemaSampleRows) => {
+    const reviewCount = columns.filter((column) => (column.confidence ?? 100) < 80).length;
+    onDraftChange({
+      schema: {
+        columns,
+        sampleRows,
+        schemaFingerprint: buildSchemaFingerprint(columns),
+        summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
+      },
+    });
+  };
+
+  const currentSourceLabel = draft.source.sourceLabel || draft.source.sourceType || "source";
+
+  const getFlattenBaseSchema = () => {
+    if (flattenBaseSchema?.sourceLabel === currentSourceLabel && flattenBaseSchema.columns.length > 0) {
+      return flattenBaseSchema;
+    }
+    const base = {
+      columns: cloneSchemaColumns(schemaColumns),
+      sampleRows: cloneSchemaRows(schemaSampleRows),
+      sourceLabel: currentSourceLabel,
+    };
+    setFlattenBaseSchema(base);
+    return base;
+  };
+
+  const applyFlattenSettings = (nextFlattenObjects: boolean, nextDepth = flattenDepth) => {
+    if (!hasInferredSchema) {
+      onNotify("변경할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return;
+    }
+    const base = getFlattenBaseSchema();
+    const maxPathSegments = nextFlattenObjects ? nextDepth : 1;
+    const nextSchema = compactSchemaByPathDepth(base.columns, base.sampleRows, maxPathSegments);
+    setFlattenObjects(nextFlattenObjects);
+    setFlattenDepth(nextDepth);
+    patchSchemaColumns(nextSchema.columns, nextSchema.sampleRows);
+    setSelectedSchemaIndex(0);
+    onAction(
+      nextFlattenObjects ? "etl.schema.flatten_enabled" : "etl.schema.flatten_disabled",
+      "/api/etl/schema-inference/flattening",
+      draft.source.sourceLabel || "schema",
+    );
+    onNotify(nextFlattenObjects
+      ? `중첩 객체를 최대 ${nextDepth}단계까지 출력 컬럼으로 펼쳤습니다.`
+      : "중첩 객체를 JSON 컬럼으로 유지합니다.");
+  };
+
+  const selectSampleScope = (scope: SchemaSampleScope) => {
+    const option = sampleScopeOptions.find((item) => item.value === scope) ?? sampleScopeOptions[0];
+    setSchemaSampleScope(scope);
+    onDraftChange({
+      source: {
+        sourceConfig: upsertConfigValue(
+          upsertConfigValue(draft.source.sourceConfig, "__Schema Sample Scope", option.value),
+          "__Schema Sample Scope Label",
+          option.label,
+        ),
+      },
+    });
+    onAction("etl.schema.sample_scope_changed", "/api/etl/schema-inference/sample-scope", option.label);
+    onNotify(`${option.label} 기준으로 스키마 확인 범위를 설정했습니다.`);
+  };
+
+  const updateSchemaColumn = (index: number, patch: Partial<SchemaColumnDraft>) => {
+    const nextColumns = schemaColumns.map((column, columnIndex) => (
+      columnIndex === index ? { ...column, ...patch } : column
+    ));
+    patchSchemaColumns(nextColumns);
+  };
+
+  const deleteSchemaColumn = (index: number) => {
+    const nextColumns = schemaColumns.filter((_, columnIndex) => columnIndex !== index);
+    const nextSampleRows = schemaSampleRows.map((row) => row.filter((_, cellIndex) => cellIndex !== index));
+    patchSchemaColumns(nextColumns, nextSampleRows);
+    setSelectedSchemaIndex(Math.max(0, Math.min(index, nextColumns.length - 1)));
+    onAction("etl.schema.column_deleted", "/api/etl/schema-inference/columns", schemaColumns[index]?.sourceName ?? "schema");
+    onNotify(nextColumns.length > 0 ? "출력 컬럼에서 제외했습니다." : "모든 출력 컬럼이 제외됐습니다. 최소 1개 컬럼을 남겨야 생성할 수 있습니다.");
+  };
+
+  const resetSchemaMappings = () => {
+    const nextColumns = withUniqueTargetNames(schemaColumns);
+    patchSchemaColumns(nextColumns);
+    onAction("etl.schema.mappings_reset", "/api/etl/schema-inference/reset-mappings", draft.source.sourceLabel || "source");
+    onNotify("원본 필드 기준으로 출력 컬럼명을 다시 맞췄습니다.");
   };
 
   const schemaAction = (action: string, path: string, schemaSummary?: string) => {
-    onAction(action, path, "orders_main_prod.csv");
+    onAction(action, path, draft.source.sourceLabel || "source");
     if (schemaSummary) {
-      onDraftChange({ schemaSummary });
+      applySchemaDraft(schemaSummary);
     }
   };
 
   const approveSchema = () => {
-    schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", "24 fields approved · 0 blocking issues");
+    if (!hasInferredSchema) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
+      onNotify("확정할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return false;
+    }
+    schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
+    return true;
   };
 
   const saveSchemaDraft = () => {
-    onDraftChange({ schemaSummary: "24 fields approved · 0 blocking issues" });
+    if (!applySchemaDraft(approvedSummary)) {
+      onNotify("저장할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return;
+    }
     onSave();
   };
 
+  const exportSchema = () => {
+    if (!hasInferredSchema) {
+      onNotify("내보낼 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return;
+    }
+    const payload = JSON.stringify({
+      columns: schemaColumns,
+      sampleRows: schemaSampleRows.slice(0, 5),
+      schemaFingerprint,
+      summary: approvedSummary,
+    }, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${draft.source.sourceLabel || "asklake-schema"}.schema.json`.replace(/[\\/:*?"<>|]+/g, "_");
+    link.click();
+    URL.revokeObjectURL(url);
+    onAction("etl.schema.exported", "/api/etl/schema-inference/export", draft.source.sourceLabel || "schema");
+    onNotify("현재 스키마 JSON을 내보냈습니다.");
+  };
+
+  const confirmCurrentSchema = () => {
+    if (!approveSchema()) return;
+    onNext();
+  };
+
+  const applySelectedField = () => {
+    if (!selectedColumn) {
+      onNotify("적용할 필드가 없습니다.");
+      return;
+    }
+    onAction("etl.schema.field_applied", "/api/etl/schema-inference/field", selectedColumn.sourceName);
+    onNotify(`${selectedColumn.targetName || selectedColumn.sourceName} 필드 변경사항을 적용했습니다.`);
+  };
+
+  const rerunCurrentInference = async () => {
+    if (!draft.source.sourceType || draft.source.sourceConfig.length === 0) {
+      onNotify("다시 확인할 소스 연결 정보가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
+      return;
+    }
+    setIsRecheckingSchema(true);
+    const sourceConfig = upsertConfigValue(
+      upsertConfigValue(draft.source.sourceConfig, "__Schema Sample Scope", schemaSampleScope),
+      "__Schema Sample Scope Label",
+      selectedSampleScopeLabel,
+    );
+    try {
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(draft.source.sourceType, sourceConfig)),
+        sourceConfig,
+      );
+      onDraftChange(result.draftPatch);
+      setFlattenBaseSchema(null);
+      setSelectedSchemaIndex(0);
+      onAction("etl.schema.inference_checked", "/api/etl/schema-inference", draft.source.sourceLabel || "source", result.status === "failed" ? "failed" : "success");
+      onNotify(`${selectedSampleScopeLabel} 기준으로 스키마를 다시 확인했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "스키마 재확인 중 오류가 발생했습니다.";
+      onAction("etl.schema.inference_failed", "/api/etl/schema-inference", draft.source.sourceLabel || "source", "failed");
+      onNotify(message);
+    } finally {
+      setIsRecheckingSchema(false);
+    }
+  };
+
   return (
-    <CreationFlowLayout
-      side={<CreationSummaryPanel flow="schema" title="스키마 요약" onPrev={onPrev} onNext={() => {
-        approveSchema();
-        onNext();
-      }} onSave={saveSchemaDraft} />}
-    >
-        <PageTitle title="Schema Inference" description="샘플 데이터를 분석해 컬럼, 타입, Null 여부와 추천 메타데이터를 확인합니다." />
-        <div className="review-card-grid compact-cards">
-          {metadata.map(([label, value], index) => (
-            <article className="review-mini-card" key={`${label}-${index}`}>
-              <strong>{label}</strong>
-              <span>{value}</span>
-            </article>
-          ))}
+    <div className="schema-workbench">
+      <section className="schema-status-strip">
+        <div className="schema-status-item source">
+          <Database size={17} />
+          <span>데이터 소스</span>
+          <strong>{draft.source.sourceLabel || "-"}</strong>
         </div>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <LayoutGrid size={18} />
-            <h2>Showing 24 Fields</h2>
-            <span className="panel-note">Filter, bulk edit, and approve inferred fields</span>
+        <div className="schema-status-item">
+          <span>샘플 행</span>
+          <strong>{schemaSampleRows.length.toLocaleString()}</strong>
+        </div>
+        <div className={lowConfidenceCount > 0 ? "schema-status-item warning" : "schema-status-item success"}>
+          <span>상태</span>
+          <strong>{hasInferredSchema ? (lowConfidenceCount > 0 ? "검토 필요" : "추론 완료") : "소스 연결 필요"}</strong>
+        </div>
+        <div className="schema-status-actions">
+          <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
+            <RefreshCw size={15} /> 매핑 초기화
+          </button>
+          <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
+            <Check size={15} /> 스키마 승인
+          </button>
+        </div>
+      </section>
+
+      <section className="schema-designer">
+        <aside className="schema-settings-panel">
+          <div className="schema-panel-title">
+            <SlidersHorizontal size={17} />
+            <h2>{isFlattenedJson ? "문서 샘플링" : "파서 설정"}</h2>
           </div>
-          <div className="hegun-toolbar">
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.rescanned", "/api/etl/schema-inference/rescan", "24 fields re-scanned · 3 need review")}>Re-scan Source</button>
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", "24 fields approved · 0 blocking issues")}>Approve All</button>
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.bulk_edit_opened", "/api/etl/schema-inference/bulk-edit")}>Bulk Edit Type</button>
-            <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.mappings_reset", "/api/etl/schema-inference/reset-mappings", "24 fields inferred · mappings reset")}>Reset Mappings</button>
-            <span>Filter fields...</span>
+          <label className="schema-setting-field">
+            <span>소스 형식</span>
+            <select className="input control-input" value={sourceFormat} disabled>
+              <option>{sourceFormat}</option>
+            </select>
+          </label>
+          <label className="schema-setting-field">
+            <span>{isFlattenedJson ? "루트 경로" : "헤더 처리"}</span>
+            <input className="input control-input" value={isFlattenedJson ? "$" : "첫 행을 컬럼명으로 사용"} readOnly />
+          </label>
+          <label className="schema-setting-field">
+            <span>인코딩</span>
+            <select className="input control-input" value="UTF-8" disabled>
+              <option>UTF-8</option>
+            </select>
+          </label>
+          <div className="schema-segment-field">
+            <span>샘플 범위</span>
+            <div>
+              {sampleScopeOptions.map((option) => (
+                <button
+                  className={option.value === schemaSampleScope ? "active" : ""}
+                  disabled={isRecheckingSchema}
+                  aria-label={option.label}
+                  key={option.value}
+                  onClick={() => selectSampleScope(option.value)}
+                  title={option.label}
+                  type="button"
+                >
+                  {option.shortLabel}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table">
+          {isFlattenedJson && (
+            <>
+              <label className="schema-check-row">
+                <span>
+                  <strong>중첩 객체 평탄화</strong>
+                  <small>{flattenObjects ? `${nestedFieldCount}개 중첩 필드를 출력 컬럼으로 펼침` : "중첩 객체를 JSON 컬럼으로 유지"}</small>
+                </span>
+                <input
+                  aria-label="중첩 객체 평탄화"
+                  checked={flattenObjects}
+                  disabled={!hasInferredSchema}
+                  onChange={(event) => applyFlattenSettings(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+              </label>
+              <div className="schema-segment-field">
+                <span>평탄화 깊이</span>
+                <div>
+                  {["1", "2", "3"].map((depth) => (
+                    <button
+                      className={Number(depth) === flattenDepth ? "active" : ""}
+                      disabled={!hasInferredSchema || !flattenObjects}
+                      key={depth}
+                      onClick={() => applyFlattenSettings(true, Number(depth))}
+                      type="button"
+                    >
+                      {depth}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="schema-setting-field">
+                <span>배열 처리</span>
+                <select className="input control-input" value="JSON 유지" disabled>
+                  <option>JSON 유지</option>
+                </select>
+              </label>
+            </>
+          )}
+          <button className="secondary-button schema-wide-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
+            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "선택 범위 다시 확인"}
+          </button>
+        </aside>
+
+        <main className="schema-field-panel">
+          <div className="schema-field-toolbar">
+            <label className="schema-search-box">
+              <Search size={16} />
+              <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.currentTarget.value)} placeholder="필드 검색..." />
+            </label>
+            <button className="schema-toolbar-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>매핑 초기화</button>
+            <span>{visibleSchemaColumns.length} / {schemaColumns.length}개 표시</span>
+          </div>
+          <div className="schema-field-table-wrap">
+            <table className="schema-field-table">
               <thead>
                 <tr>
-                  <th>Order</th>
-                  <th>Source Field</th>
-                  <th>Target Field</th>
-                  <th>Type</th>
-                  <th>Nullable</th>
-                  <th>Key</th>
-                  <th>Confidence</th>
-                  <th>Sample Data</th>
+                  <th>포함</th>
+                  <th>순서</th>
+                  <th>{isFlattenedJson ? "필드 경로" : "원본 필드"}</th>
+                  <th>출력 필드</th>
+                  <th>타입</th>
+                  <th>Null</th>
+                  <th>역할</th>
+                  <th>삭제</th>
                 </tr>
               </thead>
               <tbody>
-                {schemaRows.map((row, rowIndex) => (
-                  <tr className={Number.parseInt(row[6]) < 80 ? "hegun-low-confidence" : ""} key={`${row[0]}-${rowIndex}`}>
-                    {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
+                {visibleSchemaColumns.map(({ column, index }) => {
+                  const confidence = column.confidence ?? 70;
+                  return (
+                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
+                      <td>
+                        <input aria-label={`${column.targetName} 포함`} checked type="checkbox" onChange={(event) => {
+                          event.stopPropagation();
+                          if (!event.currentTarget.checked) deleteSchemaColumn(index);
+                        }} onClick={(event) => event.stopPropagation()} />
+                      </td>
+                      <td>#{index + 1}</td>
+                      <td>
+                        <strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong>
+                      </td>
+                      <td>
+                        <button type="button" onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedSchemaIndex(index);
+                        }}>{column.targetName || `column_${index + 1}`}</button>
+                      </td>
+                      <td><span className="schema-type-pill">{column.type}</span></td>
+                      <td>{column.nullable ? "허용" : "필수"}</td>
+                      <td>{schemaRoleLabel(column.role)}</td>
+                      <td>
+                        <button className="schema-table-delete" type="button" title="출력 컬럼에서 제외" onClick={(event) => {
+                          event.stopPropagation();
+                          deleteSchemaColumn(index);
+                        }}>
+                          <Trash2 size={15} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {visibleSchemaColumns.length === 0 && (
+                  <tr>
+                    <td colSpan={8}>표시할 스키마 필드가 없습니다. 소스 연결 테스트를 먼저 실행하거나 검색어를 지우세요.</td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>
-        </section>
-        <div className="hegun-schema-grid">
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <Check size={18} />
-              <h2>Field Review</h2>
-              <span className="panel-note">signup_ts · 72% Confidence · Field ID: 4</span>
-            </div>
-            <div className="form-grid">
-              <Field label="Target Field Name" value="created_at" />
-              <Field label="Override Type" value="Timestamp" />
-              <Field label="Null Ratio" value="12.4%" />
-              <Field label="Value Distribution" value="Premium / Basic / Enterprise / Trial" wide />
-            </div>
-            <div className="hegun-distribution">
-              {[45, 30, 15, 10].map((value, index) => <span key={value + index} style={{ width: `${value}%` }} />)}
-            </div>
-          </section>
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <Settings size={18} />
-              <h2>Parsing & Flattening</h2>
-              <span className="panel-note">MongoDB / JSON compatible</span>
-            </div>
-            <div className="form-grid compact">
-              <Field label="Root Path" value="$" />
-              <Field label="Flatten Nested Objects" value="Enabled" />
-              <Field label="Flatten Depth" value="1 / 2 / 3" />
-              <Field label="Array Handling" value="Keep as JSON" />
-              <Field label="Mixed Type Policy" value="Most Common Type" wide />
-            </div>
-          </section>
+        </main>
+
+        <aside className="schema-inspector-panel">
+          {selectedColumn ? (
+            <>
+              <div className="schema-inspector-heading">
+                <div>
+                  <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
+                  <span>필드 ID: {selectedIndex + 1}</span>
+                </div>
+                <em>{selectedColumn.confidence ?? 70}% 확신</em>
+              </div>
+              <label className="schema-setting-field">
+                <span>출력 필드명</span>
+                <input
+                  className="input control-input"
+                  value={selectedColumn.targetName}
+                  onBlur={(event) => {
+                    if (event.currentTarget.value.trim()) return;
+                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
+                  }}
+                  onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
+                />
+              </label>
+              <label className="schema-setting-field">
+                <span>타입 재정의</span>
+                <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
+                  {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </label>
+              <label className="schema-setting-field">
+                <span>Null 정책</span>
+                <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
+                  <option value="false">필수</option>
+                  <option value="true">허용</option>
+                </select>
+              </label>
+              <label className="schema-setting-field">
+                <span>역할</span>
+                <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
+                  {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
+                </select>
+              </label>
+              <div className="schema-inspector-metrics">
+                <div>
+                  <span>Null 비율</span>
+                  <strong>{selectedNullRatio}%</strong>
+                </div>
+                <div>
+                  <span>샘플 값 수</span>
+                  <strong>{selectedSampleValues.length}</strong>
+                </div>
+              </div>
+              <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
+              <div className="schema-distribution">
+                <span>값 분포</span>
+                {selectedDistribution.map((item) => (
+                  <div key={item.label}>
+                    <strong title={item.label}>{item.label}</strong>
+                    <span><i style={{ width: `${item.percent}%` }} /></span>
+                    <em>{item.count}</em>
+                  </div>
+                ))}
+                {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
+              </div>
+              <div className="schema-sample-chips">
+                <span>샘플 값</span>
+                <div>
+                  {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
+                  {selectedSampleValues.length === 0 && <em>값 없음</em>}
+                </div>
+              </div>
+              <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
+              <button className="secondary-button schema-wide-button" type="button" onClick={() => deleteSchemaColumn(selectedIndex)}>출력 컬럼에서 제외</button>
+            </>
+          ) : (
+            <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>
+          )}
+        </aside>
+      </section>
+
+      <section className="schema-preview-panel">
+        <div className="schema-preview-tabs">
+          <button className={schemaPreviewMode === "raw" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("raw")}>원본 샘플</button>
+          <button className={schemaPreviewMode === "flat" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("flat")}>평탄화 미리보기</button>
+          <span>{mappingModeText}</span>
         </div>
-        <div className="form-actions inline">
-          <button className="secondary-button" type="button" onClick={runInference}>다시 추론</button>
-          <button className="secondary-button" type="button" onClick={() => schemaAction("etl.schema.exported", "/api/etl/schema-inference/export")}>Export Schema (JSON)</button>
-        </div>
-    </CreationFlowLayout>
+        {schemaPreviewMode === "raw" ? (
+          <pre className="schema-raw-preview">{sourcePreviewText}</pre>
+        ) : (
+          <div className="hegun-table-scroll">
+            <table className="schema-table schema-output-preview-table" style={{ minWidth: outputTableMinWidth }}>
+              <thead>
+                <tr>
+                  {schemaColumns.map((column, index) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {schemaSampleRows.slice(0, 8).map((row, rowIndex) => (
+                  <tr key={`schema-preview-${rowIndex}`}>
+                    {schemaColumns.map((column, columnIndex) => <td key={`${column.sourceName}-${columnIndex}`} title={row[columnIndex] ?? ""}>{row[columnIndex] ?? ""}</td>)}
+                  </tr>
+                ))}
+                {schemaColumns.length === 0 && <tr><td>소스 연결과 스키마 추론이 완료되면 출력 미리보기가 표시됩니다.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="schema-bottom-bar">
+        <button className="secondary-button" type="button" onClick={onPrev}>이전: 소스 연결</button>
+        <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}>
+          <Download size={15} /> 스키마 JSON 내보내기
+        </button>
+        <span>Step 2 of 3 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
+        <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
+        <button className="ghost-button" type="button" onClick={saveSchemaDraft}>설정 저장</button>
+      </section>
+    </div>
   );
 }
 
@@ -758,13 +1759,13 @@ export function RuleApplicationPage({
   ];
 
   const testRules = () => {
-    onAction("etl.transform.tested", "/api/etl/transform-rules/test", "customer_review_raw");
+    onAction("etl.transform.tested", "/api/etl/transform-rules/test", "transform_recipe_draft");
     onDraftChange({ ruleSummary: "5 rules tested · 94.2% pass · 3 invalid rows" });
     onNotify("샘플 Transform 테스트가 통과되었습니다.");
   };
 
   const ruleAction = (action: string, path: string, ruleSummary?: string) => {
-    onAction(action, path, "customer_review_raw");
+    onAction(action, path, "transform_recipe_draft");
     if (ruleSummary) {
       onDraftChange({ ruleSummary });
     }
@@ -1412,18 +2413,40 @@ export function PermissionPage({
   );
 }
 
-export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPipeline; onCreate: () => void; onEdit: (flow: FlowId) => void; onSave: () => void }) {
+export function ReviewPage({
+  createPending,
+  draft,
+  onCreate,
+  onEdit,
+  onSave,
+}: {
+  createPending?: boolean;
+  draft: DraftPipeline;
+  onCreate: () => void;
+  onEdit: (flow: FlowId) => void;
+  onSave: () => void;
+}) {
   const request = toCreatePipelineRequest(draft);
-  const schemaRows = [
-    ["review_id", "BIGINT", "NO", "SOURCE.id"],
-    ["product_id", "STRING", "NO", "SOURCE.p_code"],
-    ["rating", "INT", "YES", "CAST(SOURCE.score AS INT)"],
-    ["review_title", "STRING", "YES", "TRIM(SOURCE.title)"],
-    ["review_text", "STRING", "YES", "REGEXP_REPLACE(SOURCE.content, \"[\\n\\r]\", \" \")"],
-    ["created_at", "TIMESTAMP", "NO", "CURRENT_TIMESTAMP()"],
-  ];
-  const sourceSummary = request.sourceConfig.slice(0, 3).map(([label, value]) => `${label}: ${value}`).join(" · ");
+  const schemaRows = draft.schema.columns.map((column) => [
+    column.targetName,
+    column.type,
+    column.nullable ? "예" : "아니오",
+    column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+  ]);
+  const sourceSummary = summarizeSourceConfig(request.sourceConfig);
+  const reviewSchemaSummary = publicSchemaSummary(request.schemaSummary);
   const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
+  const validationRows = [
+    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
+    ["스키마", draft.schema.columns.length > 0 ? "확정됨" : "추론 필요"],
+    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
+    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
+    ["실패 처리 정책", request.retryPolicySummary ? "유효함" : "확인 필요"],
+    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
+  ];
+  const canCreate = draft.source.connectionStatus === "success" && draft.schema.columns.length > 0;
+  const createDisabled = createPending || !canCreate;
+  const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
   return (
     <CreationFlowLayout
@@ -1431,13 +2454,13 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
       side={(
         <CreationValidationPanel
           title="최종 유효성 검사"
-          actions={<CreationPanelActions withDivider nextLabel="파이프라인 생성" onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
+          actions={<CreationPanelActions withDivider nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
         >
-          {["소스 연결 완료", "처리 테스트 통과", "스케줄 유효함", "실패 처리 정책 유효함", "권한 선택됨", "타겟 설정 유효함"].map((item) => (
+          {validationRows.map(([item, status]) => (
             <div className="validation-row" key={item}>
               <Check size={16} />
               <span>{item}</span>
-              <strong>유효함</strong>
+              <strong>{status}</strong>
             </div>
           ))}
           <InfoBox title="안내사항" body="파이프라인 생성 후 데이터 카탈로그에서 즉시 조회 및 SQL 쿼리를 수행할 수 있습니다." />
@@ -1448,8 +2471,8 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
         <div className="review-card-grid">
           {[
             ["기본 정보", request.targetDataset, "target"],
-            ["소스", `${request.sourceType} · ${sourceSummary || request.sourceLabel}`, "source"],
-            ["스키마", request.schemaSummary, "schema"],
+            ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
+            ["스키마", reviewSchemaSummary, "schema"],
             ["처리 규칙", request.ruleSummary, "rules"],
             ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["실패 처리 정책", request.retryPolicySummary, scheduleEditFlow],
@@ -1468,7 +2491,7 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
           <div className="panel-header">
             <Database size={18} />
             <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{request.schemaSummary}</span>
+            <span className="panel-note">{reviewSchemaSummary}</span>
           </div>
           <table className="schema-table">
             <thead>
@@ -1485,9 +2508,34 @@ export function ReviewPage({ draft, onCreate, onEdit, onSave }: { draft: DraftPi
                   {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
                 </tr>
               ))}
+              {schemaRows.length === 0 && <tr><td colSpan={4}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td></tr>}
             </tbody>
           </table>
         </section>
     </CreationFlowLayout>
   );
+}
+
+function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
+  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "Broker / Endpoint"];
+  const valuesByLabel = new Map(sourceConfig);
+  return priorityLabels
+    .map((label) => {
+      const value = valuesByLabel.get(label);
+      return value && !isInternalSourceField(label) ? `${sourceFieldLabel(label)}: ${value}` : "";
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function sourceLabelFromFields(sourceType: string, fields: Array<[string, string]>) {
+  const valuesByLabel = new Map(fields);
+  if (sourceType === "File / S3") {
+    const bucket = valuesByLabel.get("Bucket / Stage Name");
+    const prefix = valuesByLabel.get("Path / Prefix");
+    if (bucket && prefix) return `${bucket}/${prefix}`;
+    if (bucket) return bucket;
+  }
+
+  return fields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
 }

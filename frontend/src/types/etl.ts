@@ -1,6 +1,8 @@
-export type JobStatus = "스케줄됨" | "실패" | "실행 중" | "일시정지";
+export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancel" | "delete";
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
+export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
 
 export type JobRowData = {
   status: JobStatus;
@@ -11,6 +13,12 @@ export type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  sourceConfig?: Array<[string, string]>;
+  sourceLabel?: string;
+  sourceType?: string;
+  targetFormat?: string;
+  targetLayer?: TargetLayer;
+  targetPath?: string;
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -18,6 +26,23 @@ export type JobRowData = {
     label: string;
     value: number;
   };
+  stats?: JobStats;
+  runHistory?: JobRunSummary[];
+  dagSteps?: JobDagStep[];
+};
+
+export type JobStats = {
+  averageDuration: string;
+  currentStage: string;
+  inputRows: string;
+  lastSuccess: string;
+  outputRows: string;
+  outputPath?: string;
+  sampleScope: string;
+  schemaColumns: string;
+  sourceUnits: string;
+  successRate: string;
+  totalRuns: string;
 };
 
 export type SourceDraft = {
@@ -114,6 +139,9 @@ export type DraftPipeline = {
 export type CreatePipelineRequest = {
   id: string;
   jobName: string;
+  schemaColumns: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows: string[][];
   sourceConfig: Array<[string, string]>;
   sourceType: string;
   sourceLabel: string;
@@ -142,3 +170,29 @@ export type DraftPipelineSlicePatch = {
 };
 
 export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;
+
+export type JobRunSummary = {
+  duration: string;
+  endedAt: string;
+  errorSummary: string;
+  failedStage: string;
+  inputRows: string;
+  outputRows: string;
+  outputPath?: string;
+  runId: string;
+  startedAt: string;
+  status: JobRunStatus;
+};
+
+export type JobDagStep = {
+  id: string;
+  meta: string;
+  note?: string;
+  status: JobDagStepStatus;
+  title: string;
+};
+
+export type JobExecutionEvidence = {
+  dagSteps: JobDagStep[];
+  runs: JobRunSummary[];
+};

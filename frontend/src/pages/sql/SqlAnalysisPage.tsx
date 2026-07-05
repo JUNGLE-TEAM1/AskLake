@@ -31,7 +31,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
-import { executeQueryDraft } from "../../services/mockApi";
+import { executeQueryDraft } from "../../services/pipelineApi";
 import type { AuditResult, CatalogDataset, SqlResultDraft } from "../../types";
 
 export function SqlAnalysisPage({

@@ -25,8 +25,19 @@ VITE_USE_MOCK_API=false
 - Response format: JSON
 - ID type: opaque string
 - Time format: ISO 8601 string
+- Status values: API, mock fixture, and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
+
+Canonical status values:
+
+| Resource | Field | Values |
+| --- | --- | --- |
+| Job | `status` | `scheduled`, `running`, `failed`, `paused`, `canceled` |
+| Run | `status` | `queued`, `running`, `success`, `failed`, `canceled` |
+| Dataset | `status` | `available`, `approval_required` |
+| Dataset | `freshness` | `latest`, `stale`, `approval` |
+| Dashboard | `status` | `draft`, `published` |
 
 ## 4) P0 API
 
@@ -60,31 +71,121 @@ VITE_USE_MOCK_API=false
 | --- | --- | --- |
 | 수집/처리 목록 | `etlJobs` mock | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
-| 생성 flow | A0 nested `DraftPipeline` state -> flat `CreatePipelineRequest` mapper | `POST /api/etl/jobs` |
+| 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
 | 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
+| Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
 | SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
-## 8) 변경 규칙
+## 8) Pair Handoff Contracts
+
+Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
+ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.
+
+### Pair A -> Pair B
+
+```ts
+type CreateJobResponse = {
+  job: JobRowData;
+  dataset: CatalogDataset;
+};
+```
+
+필수 확인:
+
+- `dataset.id`, `dataset.name`, `dataset.schema`, `dataset.sampleRows`, `dataset.rows`, `dataset.size`가 있어야 SQL context를 만들 수 있다.
+- `dataset.upstream`과 `dataset.downstream`이 있으면 Lineage fallback을 만들 수 있다.
+- 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
+
+### Pair A -> Pair C
+
+```ts
+type JobCommandResponse = {
+  action: "etl.run.requested" | "etl.run.retry_requested" | "etl.job.pause_requested" | "etl.run.cancel_requested";
+  apiPath: string;
+  job?: JobRowData;
+  run?: {
+    runId: string;
+    jobId: string;
+    status: "queued" | "running" | "success" | "failed" | "canceled";
+    startedAt?: string;
+    endedAt?: string;
+    durationMs?: number;
+  };
+  dagSteps?: Array<{
+    id: string;
+    title: string;
+    status: "pending" | "running" | "success" | "failed" | "blocked";
+  }>;
+  datasetPatch?: Partial<CatalogDataset>;
+  processingResult?: DataProcessingResult;
+};
+```
+
+필수 확인:
+
+- `job`이 있으면 프론트는 해당 응답을 기준으로 Job 상태를 갱신한다.
+- `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
+- `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
+
+### Pair B -> Pair C
+
+```ts
+type QueryRunResponse = SqlResultDraft;
+```
+
+필수 확인:
+
+- `columns`와 `rows`가 Table Widget의 데이터가 된다.
+- `runId`는 Dashboard `sourceRunId`가 된다.
+- `datasetId`는 Dashboard `datasetId`와 같아야 한다.
+
+### Pair B -> Pair C: Lineage Context
+
+```ts
+type LineageContext = {
+  datasetId: string;
+  nodes: Array<{
+    id: string;
+    label: string;
+    role: "upstream" | "current" | "downstream";
+  }>;
+  edges: Array<{
+    from: string;
+    to: string;
+  }>;
+  selectedNodeId: string;
+};
+```
+
+Lineage API가 없으면 `CatalogDataset.upstream`과 `CatalogDataset.downstream`으로 fallback context를 만든다.
+
+### Optional Large-Scale Evidence Extension
+
+```ts
+type DataProcessingResult = {
+  runId: string;
+  datasetId: string;
+  inputBytes: number;
+  inputRows: number;
+  outputBytes?: number;
+  outputPath: string;
+  outputFiles?: number;
+  durationMs: number;
+  status: "success" | "failed";
+  retryCount: number;
+  scaleLabel: "500MB" | "1GB" | "10GB";
+  caveat?: string;
+};
+```
+
+`DataProcessingResult`는 대용량 처리 증거가 필요할 때만 쓰는 optional demo evidence 확장 객체다.
+정식 persistence API가 생기기 전에는 `JobCommandResponse.processingResult` 또는 fixture로 전달한다.
+
+## 9) 변경 규칙
 
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
 - Mock/live 전환 순서가 바뀌면 `docs/backend-integration-readiness.md`를 업데이트한다.
 - Frontend 타입이 바뀌면 관련 `frontend/src/types/`와 문서를 함께 업데이트한다.
-
-## 9) Pair A A0 계약
-
-Pair A의 생성 flow는 A0 공동 계약을 먼저 따른다.
-
-- Frontend wizard state: `DraftPipeline = { source, schema, transform, quality, schedule, permission, target }`
-- Submit request: `CreatePipelineRequest`
-- Schedule submit fields include `scheduleLabel`, `retryPolicy`, and `retryPolicySummary`.
-- Mapper: `frontend/src/services/draftPipelineContract.ts`
-- Response: `{ job, dataset }`
-
-1번 사람은 `source`, `schema`, create submit, `{ job, dataset }` mapper 결과 반영, `jobs/datasets` prepend, `selectedJob/selectedDataset` 갱신을 책임진다.
-
-2번 사람은 `transform`, `quality`, `schedule`, `permission`, `target` 값을 책임진다.
-
-API가 준비되지 않아도 mock/live는 같은 `CreatePipelineRequest`와 `{ job, dataset }` shape를 써야 한다.

@@ -33,74 +33,6 @@ P1/P2 API는 다음 연결 단계에서 프론트 hydrate와 저장 흐름을 �
 - dashboard view: `frontend/src/types/dashboard.ts`
 - audit/error: `frontend/src/types/audit.ts`
 
-## 2.1. Pair A A0 Draft Contract
-
-Pair A는 frontend/backend로 나누지 않고 기능 slice별로 end-to-end 책임을 나눈다. 따라서 ETL 생성 wizard의 공통 상태는 먼저 A0 계약으로 고정한다.
-
-Frontend 내부 draft는 step별 소유권이 보이도록 nested shape를 쓴다.
-
-```ts
-type DraftPipeline = {
-  id: string;
-  source: SourceDraft;
-  schema: SchemaDraft;
-  transform: TransformDraft;
-  quality: QualityDraft;
-  schedule: ScheduleDraft;
-  permission: PermissionDraft;
-  target: TargetDraft;
-};
-```
-
-Slice 소유권:
-
-| Slice | 주 소유자 | 포함 값 |
-| --- | --- | --- |
-| `source` | Pair A 1번 | source type, source label, source config, connection status |
-| `schema` | Pair A 1번 | columns, sample rows, schema summary, schema fingerprint |
-| `transform` | Pair A 2번 | transform steps, output columns, transform summary |
-| `quality` | Pair A 2번 | quality rules, score/status, invalid row preview, quality summary |
-| `schedule` | Pair A 2번 | manual/once/repeat mode, schedule label, next run, retry policy |
-| `permission` | Pair A 2번 | owner, permission summary |
-| `target` | Pair A 2번 | target dataset, layer, format, RAG flag |
-
-Create submit 직전에는 `frontend/src/services/draftPipelineContract.ts`의 mapper가 nested draft를 flat `CreatePipelineRequest`로 변환한다.
-
-```ts
-type CreatePipelineRequest = {
-  id: string;
-  jobName: string;
-  sourceConfig: Array<[string, string]>;
-  sourceType: string;
-  sourceLabel: string;
-  schemaSummary: string;
-  ruleSummary: string;
-  scheduleLabel: string;
-  retryPolicy: {
-    maxRetries: number;
-    retryIntervalMinutes: number;
-    timeoutMinutes: number;
-    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
-  };
-  retryPolicySummary: string;
-  permissionSummary: string;
-  targetDataset: string;
-  targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
-  targetFormat: string;
-  owner: string;
-  rag: boolean;
-};
-```
-
-규칙:
-
-- Review Summary는 `DraftPipeline`에서 파생한 `CreatePipelineRequest` 값을 표시한다.
-- `POST /api/etl/jobs`는 flat `CreatePipelineRequest`를 받는다.
-- `ruleSummary`는 `transform.summary`와 `quality.summary`를 합친 값이며, 둘 중 하나가 다른 하나를 덮어쓰면 안 된다.
-- 성공 응답은 `{ job, dataset }` shape를 유지한다.
-- 생성 성공 시 Pair A 1번이 `jobs`, `datasets`, `selectedJob`, `selectedDataset` 반영을 책임진다.
-- 개별 step은 자기 slice만 바꾼다. root draft 구조는 A0 계약 변경 없이는 바꾸지 않는다.
-
 ## 3. 환경변수
 
 `frontend/.env`
@@ -225,13 +157,15 @@ INTERNAL_ERROR
 
 프론트는 ID를 opaque string으로 취급합니다.
 표시용 이름은 `name`, `jobName`, `targetDataset`을 사용합니다.
+API, mock fixture, frontend internal state의 상태값은 영어 canonical value를 사용합니다.
+한국어 배지/버튼 문구는 프론트 UI mapper에서 변환합니다.
 
 ## 6. 데이터 모델 요약
 
 ### JobRowData
 
 ```ts
-type JobStatus = "스케줄됨" | "실패" | "실행 중" | "일시정지";
+type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
 
 type JobRowData = {
   id: string;
@@ -252,6 +186,33 @@ type JobRowData = {
 };
 ```
 
+### JobRunSummary and JobDagStep
+
+```ts
+type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
+
+type JobRunSummary = {
+  runId: string;
+  status: JobRunStatus;
+  startedAt: string;
+  endedAt: string;
+  duration: string;
+  inputRows: string;
+  outputRows: string;
+  failedStage: string;
+  errorSummary: string;
+};
+
+type JobDagStep = {
+  id: string;
+  title: string;
+  meta: string;
+  status: JobDagStepStatus;
+  note?: string;
+};
+```
+
 ### CatalogDataset
 
 ```ts
@@ -261,7 +222,7 @@ type CatalogDataset = {
   description: string;
   owner: string;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
-  status: "사용 가능" | "승인 필요";
+  status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
   source: string;
   rows: string;
@@ -315,13 +276,6 @@ type CreatePipelineRequest = {
   schemaSummary: string;
   ruleSummary: string;
   scheduleLabel: string;
-  retryPolicy: {
-    maxRetries: number;
-    retryIntervalMinutes: number;
-    timeoutMinutes: number;
-    failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
-  };
-  retryPolicySummary: string;
   permissionSummary: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -347,13 +301,6 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
-  "retryPolicy": {
-    "maxRetries": 3,
-    "retryIntervalMinutes": 10,
-    "timeoutMinutes": 60,
-    "failureAction": "retry_then_fail"
-  },
-  "retryPolicySummary": "3회 재시도 · 10분 간격 · 60분 제한 · 재시도 후 실패 처리",
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",
@@ -380,7 +327,7 @@ Response 예시:
     "id": "JOB-001",
     "name": "customer_review_daily_ingest",
     "owner": "Data Engineer Group",
-    "status": "스케줄됨",
+    "status": "scheduled",
     "tag": "[리뷰]",
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
@@ -395,7 +342,7 @@ Response 예시:
     "description": "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
     "owner": "Data Engineer Group",
     "layer": "SILVER",
-    "status": "사용 가능",
+    "status": "available",
     "freshness": "latest",
     "source": "customer_review_daily_ingest",
     "rows": "0 rows",
@@ -463,6 +410,8 @@ type JobCommandResponse = {
   action: string;
   apiPath: string;
   job?: JobRowData;
+  run?: JobRunSummary;
+  dagSteps?: JobDagStep[];
 };
 ```
 
@@ -476,7 +425,7 @@ Response 예시:
     "id": "JOB-001",
     "name": "customer_review_daily_ingest",
     "owner": "Data Engineer Group",
-    "status": "실행 중",
+    "status": "running",
     "tag": "[리뷰]",
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
@@ -496,10 +445,10 @@ Response 예시:
 
 | command | action | 상태 변경 |
 | --- | --- | --- |
-| `run` | `etl.run.requested` | `실행 중` |
-| `retry` | `etl.run.retry_requested` | `실행 중` |
-| `pause` | `etl.job.pause_requested` | `일시정지` |
-| `cancel` | `etl.run.cancel_requested` | `스케줄됨` 또는 이전 안정 상태 |
+| `run` | `etl.run.requested` | `running` |
+| `retry` | `etl.run.retry_requested` | `running` |
+| `pause` | `etl.job.pause_requested` | `paused` |
+| `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
 
 Validation:
 
@@ -600,7 +549,7 @@ Response `200 OK`:
       "description": "고객 리뷰 정제 데이터셋",
       "owner": "Data Engineer Group",
       "layer": "SILVER",
-      "status": "사용 가능",
+      "status": "available",
       "freshness": "latest",
       "source": "customer_review_daily_ingest",
       "rows": "128,420 rows",
