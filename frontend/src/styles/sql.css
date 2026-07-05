@@ -794,7 +794,7 @@
 
 .sql-materialize-form {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 120px auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) 120px auto;
   gap: 10px;
 }
 
@@ -809,8 +809,13 @@
   font-weight: 900;
 }
 
+.sql-materialize-form label.wide {
+  grid-column: 1 / -1;
+}
+
 .sql-materialize-form input,
-.sql-materialize-form select {
+.sql-materialize-form select,
+.sql-materialize-form textarea {
   min-height: 34px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -821,10 +826,39 @@
   padding: 0 10px;
 }
 
+.sql-materialize-form textarea {
+  min-height: 64px;
+  resize: vertical;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
 .sql-materialize-form input:disabled,
-.sql-materialize-form select:disabled {
+.sql-materialize-form select:disabled,
+.sql-materialize-form textarea:disabled {
   background: #f1f5f9;
   color: #94a3b8;
+}
+
+.sql-materialize-form .sql-materialize-checkbox {
+  align-self: end;
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 10px;
+}
+
+.sql-materialize-form .sql-materialize-checkbox input {
+  width: 14px;
+  height: 14px;
+  min-height: auto;
+  border: 0;
+  accent-color: #2563eb;
+  padding: 0;
 }
 
 .sql-materialize-form .primary-button {

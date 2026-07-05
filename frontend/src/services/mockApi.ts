@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -227,9 +227,8 @@ export type QueryPreviewOptions = {
   validationKey: string;
 };
 
-export type DerivedDatasetRequest = {
-  layer: CatalogDataset["layer"];
-  name: string;
+export type DerivedDatasetCreationContext = {
+  request: CreateDerivedDatasetRequest;
   sourceDataset: CatalogDataset;
   sqlResult: SqlResultDraft;
 };
@@ -274,46 +273,38 @@ export async function executeQueryDraft(dataset: CatalogDataset, query: string):
 }
 
 export async function createDerivedDatasetFromSql({
-  layer,
-  name,
+  request,
   sourceDataset,
   sqlResult,
-}: DerivedDatasetRequest): Promise<CatalogDataset> {
+}: DerivedDatasetCreationContext): Promise<CatalogDataset> {
   if (!apiConfig.useMock) {
-    return apiClient.post<CatalogDataset>("/api/catalog/derived-datasets", {
-      layer,
-      name,
-      previewLimit: sqlResult.previewLimit,
-      query: sqlResult.query,
-      referenceDatasetIds: sqlResult.referenceDatasetIds ?? [],
-      sourceDatasetId: sourceDataset.id,
-      sourceRunId: sqlResult.runId,
-      validationKey: sqlResult.validationKey,
-    });
+    return apiClient.post<CatalogDataset>("/api/catalog/derived-datasets", request);
   }
 
-  const normalizedName = name.trim() || `${sourceDataset.name}_analysis`;
+  const normalizedName = request.dataset.name.trim() || `${sourceDataset.name}_analysis`;
+  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  const normalizedTags = normalizeDerivedDatasetTags(request.dataset.tags);
   const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
   const dataset: CatalogDataset = {
-    description: `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`,
+    description: normalizedDescription,
     downstream: ["SQL 분석", "대시보드"],
     freshness: "latest",
     id: derivedDatasetId,
-    layer,
+    layer: request.dataset.layer,
     lastUpdated: "방금 생성됨",
     name: normalizedName,
     nextRefresh: "수동 갱신",
     owner: sourceDataset.owner,
     quality: "Preview verified",
-    rag: sourceDataset.rag,
+    rag: request.dataset.rag,
     rows: `${sqlResult.rowCount.toLocaleString()} preview rows`,
     sampleRows: sqlResult.rows,
     schema: sqlResult.columns.map((column) => [column, inferColumnType(sourceDataset, column)]),
     size: "Preview result",
     source: `SQL Preview · ${sqlResult.runId}`,
     status: "available",
-    tags: Array.from(new Set([...sourceDataset.tags, "#sql-derived"])),
-    upstream: [sourceDataset.name, ...(sqlResult.referenceDatasetIds ?? []), sqlResult.runId],
+    tags: normalizedTags,
+    upstream: [sourceDataset.name, ...(request.referenceDatasetIds ?? []), request.sourceRunId],
   };
   dataset.lineageGraph = buildDerivedDatasetLineageGraph(sourceDataset, dataset, sqlResult);
 
@@ -322,6 +313,15 @@ export async function createDerivedDatasetFromSql({
 
 function inferColumnType(dataset: CatalogDataset, columnName: string) {
   return dataset.schema.find(([name]) => name === columnName)?.[1] ?? "string";
+}
+
+function normalizeDerivedDatasetTags(tags: string[]) {
+  const normalizedTags = tags
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`);
+
+  return Array.from(new Set(normalizedTags.length > 0 ? normalizedTags : ["#sql-derived"]));
 }
 
 function normalizeDerivedDatasetId(name: string) {
