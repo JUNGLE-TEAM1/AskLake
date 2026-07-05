@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   BarChart3,
@@ -541,21 +541,60 @@ export function JobDetailPage({
 }
 
 export function JobRunsPage({
-  evidence,
   job,
   onAction,
   onBack,
   onCommand,
   onDag,
+  onRunSelect,
+  runs,
+  selectedRunId,
 }: {
-  evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onDag: () => void;
+  onRunSelect: (jobId: string, runId: string) => void;
+  runs: JobRunSummary[];
+  selectedRunId?: string;
 }) {
-  const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const effectiveSelectedRunId = selectedRunId ?? runs[0]?.runId;
+  const runStats = useMemo(() => {
+    const successCount = runs.filter((run) => run.status === "success").length;
+    const runningCount = runs.filter((run) => run.status === "running" || run.status === "queued").length;
+    const latestFailure = runs.find((run) => run.status === "failed" || run.status === "canceled");
+    return {
+      runningCount,
+      successRate: runs.length > 0 ? `${Math.round((successCount / runs.length) * 100)}%` : "-",
+      totalRuns: `${runs.length}회`,
+      latestFailure: latestFailure?.runId ?? "-",
+    };
+  }, [runs]);
+
+  useEffect(() => {
+    if (!selectedRunId && runs[0]?.runId) {
+      onRunSelect(job.id, runs[0].runId);
+    }
+  }, [job.id, onRunSelect, runs, selectedRunId]);
+
+  const selectRun = (run: JobRunSummary) => {
+    onRunSelect(job.id, run.runId);
+    onAction("etl.run.selected", `/api/etl/jobs/${job.id}/runs/${run.runId}`, run.runId);
+  };
+
+  const openDagForRun = (event: React.MouseEvent<HTMLButtonElement>, run: JobRunSummary) => {
+    event.stopPropagation();
+    onRunSelect(job.id, run.runId);
+    onAction("etl.run.dag_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}/dag`, run.runId);
+    onDag();
+  };
+
+  const handleRunKeyDown = (event: React.KeyboardEvent<HTMLTableRowElement>, run: JobRunSummary) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    selectRun(run);
+  };
 
   return (
     <div className="job-detail-page job-runs-page">
@@ -568,7 +607,7 @@ export function JobRunsPage({
             <button className="runs-filter-button date" type="button" onClick={() => onAction("etl.runs.date_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/date`, job.id)}><Calendar size={14} /> 날짜 선택</button>
           </div>
           <div className="runs-filters-right">
-            <span>{runs.length} runs total</span>
+            <span>총 {runs.length}회 실행</span>
             <button className="runs-refresh-button" type="button" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}><RefreshCw size={14} /> 새로고침</button>
           </div>
         </div>
@@ -592,12 +631,30 @@ export function JobRunsPage({
             </thead>
             <tbody>
               {runs.length === 0 && (
-                <tr className="run-row">
-                  <td colSpan={10}>아직 실행 이력이 없습니다. 작업을 실행하면 이 표에 Run이 추가됩니다.</td>
+                <tr>
+                  <td className="runs-empty-cell" colSpan={10}>
+                    <div className="runs-empty-state">
+                      <Clock3 size={22} />
+                      <strong>아직 실행 이력이 없습니다.</strong>
+                      <span>작업을 실행하면 실행 중 Run부터 이 표에 표시됩니다.</span>
+                    </div>
+                  </td>
                 </tr>
               )}
               {runs.map((row) => (
-                <tr className={row.status === "failed" || row.status === "canceled" ? "run-row failed" : "run-row"} key={row.runId}>
+                <tr
+                  aria-selected={row.runId === effectiveSelectedRunId}
+                  className={[
+                    "run-row",
+                    row.status === "failed" || row.status === "canceled" ? "failed" : "",
+                    row.status === "running" || row.status === "queued" ? "running" : "",
+                    row.runId === effectiveSelectedRunId ? "selected" : "",
+                  ].filter(Boolean).join(" ")}
+                  key={row.runId}
+                  onClick={() => selectRun(row)}
+                  onKeyDown={(event) => handleRunKeyDown(event, row)}
+                  tabIndex={0}
+                >
                   <td>{row.runId}</td>
                   <td><RunStatusPill status={row.status} /></td>
                   <td>{row.startedAt}</td>
@@ -608,7 +665,7 @@ export function JobRunsPage({
                   <td>{row.failedStage}</td>
                   <td>{row.errorSummary}</td>
                   <td>
-                    <button className="runs-detail-button" type="button" onClick={() => onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${row.runId}`, row.runId)}>상세보기</button>
+                    <button className="runs-detail-button" type="button" onClick={(event) => openDagForRun(event, row)}>DAG 보기</button>
                   </td>
                 </tr>
               ))}
@@ -616,7 +673,7 @@ export function JobRunsPage({
           </table>
           </div>
           <div className="runs-pagination">
-            <span>Showing {runs.length ? `1-${runs.length}` : "0"} of {runs.length}</span>
+            <span>{runs.length ? `1-${runs.length}` : "0"} / {runs.length} 표시</span>
             <div>
               <button type="button" aria-label="이전 페이지" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</button>
               <button type="button" aria-label="다음 페이지" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</button>
@@ -627,9 +684,11 @@ export function JobRunsPage({
         <article className="runs-stats-summary">
           <h2>실행 통계 요약</h2>
           <div>
-            <RunSummaryMetric label="성공률" value={job.stats?.successRate ?? "-"} />
+            <RunSummaryMetric label="성공률" value={runStats.successRate} />
             <RunSummaryMetric label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
-            <RunSummaryMetric label="총 실행" value={job.stats?.totalRuns ?? `${runs.length}회`} />
+            <RunSummaryMetric label="총 실행" value={runStats.totalRuns} />
+            <RunSummaryMetric label="진행 중" value={`${runStats.runningCount}회`} />
+            <RunSummaryMetric label="최근 실패" value={runStats.latestFailure} />
           </div>
         </article>
       </section>

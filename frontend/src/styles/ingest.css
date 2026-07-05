@@ -933,12 +933,57 @@
   background: #fffafa;
 }
 
+.run-row {
+  cursor: pointer;
+}
+
+.run-row:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.run-row:hover {
+  background: #f8fafc;
+}
+
+.run-row.selected {
+  background: #eff6ff;
+}
+
+.run-row.selected td:first-child {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.run-row.running td:first-child {
+  box-shadow: inset 3px 0 0 #16a34a;
+}
+
 .run-row.failed td {
   height: 64px;
 }
 
 .run-row.failed td:first-child {
   box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.runs-empty-cell {
+  padding: 28px 12px;
+}
+
+.runs-empty-state {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #64748b;
+  text-align: center;
+}
+
+.runs-empty-state strong {
+  color: #0f172a;
+  font-size: 15px;
 }
 
 .run-status-pill {
