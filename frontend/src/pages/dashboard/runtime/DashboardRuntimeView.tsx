@@ -19,6 +19,7 @@ type RuntimeNotice = {
 };
 
 type DashboardRuntimeState = {
+  deletingWidgetId: string | null;
   draftError: string | null;
   draftLoading: boolean;
   draftRuntime: DashboardRuntimeResponse | null;
@@ -57,6 +58,7 @@ type DashboardRuntimeViewActions = {
   closeSharePanel: () => void;
   createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   deletePage: (pageId: string) => void;
+  deleteWidget: (widgetId: string) => void;
   layoutCommit: (layout: LayoutItem[]) => void;
   layoutRejected: () => void;
   openDraft: () => void;
@@ -91,6 +93,7 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const {
+    deletingWidgetId,
     draftError,
     draftLoading,
     draftRuntime,
@@ -127,6 +130,7 @@ export function DashboardRuntimeView({
     closeSharePanel: onCloseSharePanel,
     createDatasetWidget: onCreateDatasetWidget,
     deletePage: onDeletePage,
+    deleteWidget: onDeleteWidget,
     layoutCommit: onLayoutCommit,
     layoutRejected: onLayoutRejected,
     openDraft: onOpenDraft,
@@ -189,9 +193,11 @@ export function DashboardRuntimeView({
       </div>
     ) : (
       <DashboardCanvas
+        deletingWidgetId={deletingWidgetId}
         editable
         selectedWidgetId={selectedWidgetId}
         widgets={selectedDraftWidgets}
+        onDeleteWidget={onDeleteWidget}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onSelectWidget={onSelectWidget}

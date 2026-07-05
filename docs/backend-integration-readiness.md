@@ -102,7 +102,7 @@ VITE_USE_MOCK_API=false
 | ´ë½Ãº¸µå »èÁ¦ | `DELETE /api/dashboards/{dashboardId}` |
 | legacy À§Á¬ Ãß°¡ | `POST /api/dashboards/{dashboardId}/widgets` |
 | ?„ì ¯ ?˜ì • | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
-| ?„ì ¯ ?? œ | `DELETE /api/dashboards/{dashboardId}/widgets/{widgetId}` |
+| ?„ì ¯ ?? œ | `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}` |
 
 `POST /api/dashboards`ëŠ” ìƒˆ dashboard cardë¥¼ `draft` ìƒíƒœë¡œ DBì— ë¨¼ì € ì €ì¥í•˜ëŠ” ìƒì„± APIë‹¤. ë‚´ë¶€ í¸ì§‘ í™”ë©´ì—ì„œ í•„ìš”í•œ draft revision/page/widget ì¤€ë¹„ëŠ” `POST /api/dashboards/{dashboardId}/draft/ensure`ê°€ ë‹´ë‹¹í•œë‹¤.
 
@@ -169,7 +169,7 @@ SQL ?¤í–‰ ë°±ì—”?œëŠ” ë°˜ë“œ??read-only guardë¥??¬ì•¼ ?©ë‹ˆ??
 | --- | --- | --- |
 | ?„ì ¯ ?€??? íƒ | ?„ë¡ ???íƒœ ë³€ê²?| ?†ìŒ |
 | ?„ì ¯ ì¶”ê? | draft canvas??ì¶”ê? | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
-| ?„ì ¯ ?? œ | local canvas?ì„œ ?œê±° | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
+| ?„ì ¯ ?? œ | local canvas?ì„œ ?œê±° | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Draft ì¡°íšŒ/?ì„± | DB-backed draft runtime | `POST /api/dashboards/{id}/draft/ensure` |
 | Page ì¶”ê? | DB-backed draft page | `POST /api/dashboards/{id}/draft/pages` |
 | Page ì´ë¦„ ìˆ˜ì • | DB-backed draft page title ìˆ˜ì • | `PATCH /api/dashboards/{id}/draft/pages/{pageId}` |

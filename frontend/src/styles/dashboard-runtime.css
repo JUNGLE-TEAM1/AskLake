@@ -795,6 +795,29 @@
   line-height: 1.25;
 }
 
+.asklake-widget-delete-button {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.asklake-widget-delete-button:hover:not(:disabled) {
+  border-color: #fca5a5;
+  background: #ffe4e6;
+}
+
+.asklake-widget-delete-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .asklake-widget-frame-body {
   display: grid;
   min-height: 0;

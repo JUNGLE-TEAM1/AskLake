@@ -715,6 +715,32 @@ export async function deleteDraftDashboardPage(dashboardId, pageId) {
   return { ok: true };
 }
 
+export async function deleteDraftDashboardWidget(dashboardId, widgetId) {
+  const draftRevision = await getLatestRevision(dashboardId, "draft");
+  if (!draftRevision || !widgetId) return null;
+
+  const deleteResult = await pool.query(
+    `
+      DELETE FROM dashboard_widgets
+      USING dashboard_pages
+      WHERE dashboard_widgets.id = $1
+        AND dashboard_widgets.page_id = dashboard_pages.id
+        AND dashboard_pages.revision_id = $2
+      RETURNING dashboard_widgets.id
+    `,
+    [widgetId, draftRevision.id],
+  );
+  const widget = deleteResult.rows[0];
+  if (!widget) return null;
+
+  await saveDashboardPatch(dashboardId, {
+    updated: "방금 전",
+    updatedAtValue: new Date().toISOString(),
+  });
+
+  return { deletedWidgetId: widget.id, ok: true };
+}
+
 export async function updateDraftDashboardPageTitle(dashboardId, pageId, title) {
   const nextTitle = typeof title === "string" ? title.trim() : "";
   if (!nextTitle) return { error: { code: "VALIDATION_ERROR", message: "Page title is required", status: 400 } };

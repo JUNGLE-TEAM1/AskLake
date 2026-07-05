@@ -6,6 +6,7 @@ import {
   createDraftDashboardPage,
   createDraftDashboardWidget,
   deleteDraftDashboardPage,
+  deleteDraftDashboardWidget,
   deleteDashboard,
   ensureSchema,
   ensureDraftDashboardRuntime,
@@ -379,6 +380,19 @@ async function route(request, response) {
       return;
     }
     sendJson(response, 201, widget);
+    return;
+  }
+
+  const draftWidgetDeleteMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/widgets\/([^/]+)$/);
+  if (request.method === "DELETE" && draftWidgetDeleteMatch) {
+    const dashboardId = decodeURIComponent(draftWidgetDeleteMatch[1]);
+    const widgetId = decodeURIComponent(draftWidgetDeleteMatch[2]);
+    const result = await deleteDraftDashboardWidget(dashboardId, widgetId);
+    if (!result) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard draft widget not found");
+      return;
+    }
+    sendJson(response, 200, result);
     return;
   }
 

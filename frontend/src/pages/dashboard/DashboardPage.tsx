@@ -33,6 +33,7 @@ import { useDashboardLandingList } from "./useDashboardLandingList";
 import {
   createDraftPage,
   deleteDraftPage,
+  deleteDraftWidget,
   ensureDraftDashboard,
   getPublishedDashboard,
   publishDashboard as publishRuntimeDashboard,
@@ -106,6 +107,7 @@ export function DashboardPage({
   const [dashboardListRefreshKey, setDashboardListRefreshKey] = useState(0);
   const [isAddingRuntimePage, setIsAddingRuntimePage] = useState(false);
   const [isPublishingRuntime, setIsPublishingRuntime] = useState(false);
+  const [deletingRuntimeWidgetId, setDeletingRuntimeWidgetId] = useState<string | null>(null);
   const [isRenamingRuntimeTitle, setIsRenamingRuntimeTitle] = useState(false);
   const [renamingRuntimePageId, setRenamingRuntimePageId] = useState<string | null>(null);
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
@@ -546,6 +548,32 @@ export function DashboardPage({
     }
   };
 
+  const deleteRuntimeWidget = async (widgetId: string) => {
+    if (runtimeSelection.mode !== "draft" || deletingRuntimeWidgetId) return;
+    const targetWidget = selectedDraftWidgets.find((widget) => widget.id === widgetId);
+    const targetTitle = targetWidget?.title || "제목 없는 위젯";
+    const confirmed = window.confirm(`'${targetTitle}' 위젯을 삭제할까요? 삭제 후에는 되돌릴 수 없습니다.`);
+    if (!confirmed) return;
+
+    setDeletingRuntimeWidgetId(widgetId);
+    setDraftError(null);
+    setRuntimeNotice({ message: "위젯을 삭제하는 중입니다.", tone: "info" });
+    try {
+      await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
+      if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
+      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
+      onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete the draft widget.";
+      setDraftError(message);
+      setRuntimeNotice({ message: "위젯을 삭제하지 못했습니다.", tone: "error" });
+      onAction("dashboard.widget.delete_failed", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId, "failed");
+    } finally {
+      setDeletingRuntimeWidgetId(null);
+    }
+  };
+
   const renameRuntimeDashboardTitle = async (title: string) => {
     if (runtimeSelection.mode !== "draft" || isRenamingRuntimeTitle) return;
     const nextTitle = title.trim();
@@ -836,6 +864,7 @@ export function DashboardPage({
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
       deletePage: deleteRuntimePage,
+      deleteWidget: deleteRuntimeWidget,
       layoutCommit: updateDraftWidgetLayouts,
       layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
       openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
@@ -861,6 +890,7 @@ export function DashboardPage({
       selectedDatasetId,
     };
     const runtimeViewState = {
+      deletingWidgetId: deletingRuntimeWidgetId,
       draftError,
       draftLoading,
       draftRuntime,

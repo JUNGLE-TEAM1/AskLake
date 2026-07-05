@@ -29,14 +29,18 @@ function scaleLayout(layout: LayoutItem[], cols: number) {
 }
 
 export function DashboardCanvas({
+  deletingWidgetId,
   editable,
+  onDeleteWidget,
   onLayoutCommit,
   onLayoutRejected,
   onSelectWidget,
   selectedWidgetId,
   widgets,
 }: {
+  deletingWidgetId?: string | null;
   editable: boolean;
+  onDeleteWidget?: (widgetId: string) => void;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
   onSelectWidget?: (widgetId: string) => void;
@@ -130,9 +134,11 @@ export function DashboardCanvas({
           {widgets.map((widget) => (
             <div key={widget.id}>
               <WidgetFrame
+                deleteDisabled={deletingWidgetId === widget.id}
                 editable={editable}
                 selected={selectedWidgetId === widget.id}
                 widget={widget}
+                onDelete={onDeleteWidget}
                 onSelect={onSelectWidget}
               />
             </div>
