@@ -565,7 +565,7 @@ export function SqlAnalysisPage({
                   {preflightSummary.label}
                 </span>
               )}
-              {preflightSummary?.detail && <span className="sql-check-detail">{preflightSummary.detail}</span>}
+              {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
           </div>
@@ -693,6 +693,10 @@ function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
 function getPreflightSummary(result: SqlPreflightResult | null) {
   if (!result) return null;
   if (result.canExecute) {
+    const warningMessage = result.messages.find((message) => message.tone === "warning")?.text;
+    if (warningMessage) {
+      return { detail: warningMessage, label: "확인 필요", tone: "warning" as const };
+    }
     return { detail: "", label: "점검 통과", tone: "success" as const };
   }
   const errorMessage = result.messages.find((message) => message.tone === "error")?.text ?? "SQL을 확인해 주세요.";
@@ -764,6 +768,10 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
 
   messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 Preview할 수 있습니다.` });
   messages.push({ tone: "info", text: `Preview는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT} rows로 제한해 실행합니다.` });
+  const tableAliases = extractTableAliases(statement);
+  if (tableAliases.length > 0) {
+    messages.push({ tone: "warning", text: `테이블 alias ${tableAliases.map((alias) => `"${alias}"`).join(", ")}가 감지되었습니다. 의도한 별칭이면 Preview할 수 있고, LIMIT 오타라면 수정해 주세요.` });
+  }
   if (referencedTableNames.length === 0) {
     messages.push({ tone: "warning", text: "FROM/JOIN 테이블이 없습니다. 상수 조회 또는 CTE-only 쿼리인지 확인해 주세요." });
   }
@@ -782,6 +790,7 @@ function normalizeSqlIdentifier(identifier: string) {
 }
 
 type SqlAstNode = {
+  as?: string | null;
   columns?: unknown;
   db?: string | null;
   from?: SqlAstNode[] | null;
@@ -858,6 +867,20 @@ function extractReferencedTableNames(statement: SqlAstNode) {
   };
   collectFromStatement(statement);
   return Array.from(tableNames);
+}
+
+function extractTableAliases(statement: SqlAstNode) {
+  const aliases = new Set<string>();
+  const collectFromStatement = (node: SqlAstNode) => {
+    node.from?.forEach((fromItem) => {
+      if (fromItem.as) aliases.add(fromItem.as);
+    });
+    node.with?.forEach((cte) => {
+      if (cte.stmt) collectFromStatement(cte.stmt);
+    });
+  };
+  collectFromStatement(statement);
+  return Array.from(aliases);
 }
 
 const SQL_AUTOCOMPLETE_KEYWORDS = [

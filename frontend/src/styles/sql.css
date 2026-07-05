@@ -564,10 +564,22 @@
   color: #dc2626;
 }
 
+.sql-check-pill.warning {
+  background: #fffbeb;
+  color: #b45309;
+}
+
 .sql-check-detail {
-  color: #b91c1c;
   font-size: 12px;
   font-weight: 800;
+}
+
+.sql-check-detail.error {
+  color: #b91c1c;
+}
+
+.sql-check-detail.warning {
+  color: #b45309;
 }
 
 .sql-result-status span {
