@@ -11,6 +11,10 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.sql-page.context-collapsed .sql-workspace {
+  margin-left: 0;
+}
+
 .sql-page.context-collapsed .sql-dataset-panel {
   pointer-events: none;
   opacity: 0;
@@ -28,11 +32,11 @@
 .sql-dataset-panel {
   position: fixed;
   z-index: 30;
-  top: 188px;
+  top: 65px;
   left: var(--sidebar-width);
   display: grid;
   width: var(--sql-context-width);
-  height: calc(100vh - 260px);
+  height: calc(100vh - 121px);
   max-height: none;
   gap: 16px;
   min-width: 0;
@@ -357,7 +361,7 @@
 .sql-collapse-button {
   position: fixed;
   z-index: 31;
-  top: calc(188px + ((100vh - 260px) / 2) - 32px);
+  top: calc(65px + ((100vh - 121px) / 2) - 32px);
   left: calc(var(--sidebar-width) + var(--sql-context-width) - 1px);
   display: inline-flex;
   width: 36px;
@@ -376,6 +380,10 @@
 
 .sql-page.context-collapsed .sql-collapse-button {
   left: var(--sidebar-width);
+}
+
+.sql-workspace {
+  margin-left: calc(var(--sql-context-width) + 28px);
 }
 
 .sql-page-header {

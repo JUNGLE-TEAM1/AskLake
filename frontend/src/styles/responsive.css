@@ -167,6 +167,10 @@
     max-height: calc(100vh - 96px);
   }
 
+  .sql-workspace {
+    margin-left: 0;
+  }
+
   .sql-collapse-button {
     top: 390px;
     left: min(calc(320px + 15px), calc(100vw - 17px));
