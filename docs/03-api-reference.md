@@ -198,6 +198,8 @@ type DashboardRuntimeResponse = {
 };
 ```
 
+Dashboard widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Draft runtime 조회 응답은 이 `widget.data`를 그대로 내려준다. 현재 demo backend는 `sampleRows`와 `schema`를 사용하며, dataset을 찾지 못하거나 rows/sample rows가 없으면 `data: []` fallback을 유지한다.
+
 `POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
 `PATCH /api/dashboards/{dashboardId}`는 dashboard card의 표시 제목을 수정한다.
 `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`는 현재 draft revision에 속한 page 제목만 수정한다.

@@ -72,6 +72,7 @@ export function publishDashboard(dashboardId: string) {
 
 export type CreateDraftWidgetInput = {
   config?: Record<string, unknown>;
+  data?: Array<Record<string, unknown>>;
   datasetId?: string | null;
   layout: DashboardWidgetLayout;
   title?: string | null;

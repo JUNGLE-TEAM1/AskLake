@@ -1004,6 +1004,10 @@ Request:
 }
 ```
 
+`data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
+현재 demo backend는 실제 rows API가 없으므로 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
+
 Response `201 Created`:
 
 ```json
@@ -1011,8 +1015,9 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
-기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`; `table`은 `columns`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`; `line_chart`는 `xKey`, `yKey`, `aggregation`, optional `dateUnit`, `color`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
-생성 후 draft runtime 조회 응답의 widget에는 `datasetId`와 `config`가 유지되어야 합니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`, common `color`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
+생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
+dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
 
 #### 8.5.7 Draft widget 수정
 
