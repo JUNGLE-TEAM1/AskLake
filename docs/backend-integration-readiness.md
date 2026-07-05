@@ -1,208 +1,197 @@
 # AskLake Backend Integration Readiness
 
-??문서???�재 ?�론?�엔?��? 백엔?��? ?�결?�기 ?�에 ?��? ?�업, mock ?�거 ?�서, ?�면�?API ?�결 범위�??�리??체크 문서?�니??
-?�세 ?�청/?�답 ?�?��? `docs/api-contract.md`�?기�??�로 ?�니??
-API, mock fixture, frontend internal state???�어 canonical status value�??�용?�고, ?�국???�면 문구???�론??mapper?�서 변?�합?�다.
-E2E fallback 검�?기�??� `docs/e2e-fallback-verification.md`�?기�??�로 ?�니??
-10GB demo evidence가 ?�요??경우 `docs/10gb-fallback-verification.md`�?추�?�?참조?�니??
+이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
 
-## 1. ?�재 ?�태 ?�약
+상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
-?�재 ?�론?�엔?�는 ?�순 ?�적 ?�면???�니?? ?�래 ?�름?� React ?�태?� mock API�??�어???�습?�다.
+## 1. 현재 연결 상태
 
-| ?�름 | ?�재 ?�태 | 백엔???�결 ?�태 |
+| 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| ?�집/처리 목록 | mock jobs ?�시, ?�세/?�행/?�정/??�� 버튼 ?�결 | P0 ?��? 준�?|
-| ???�집/처리 ?�성 | Source ??Schema ??Rule ??Schedule ??Permission ??Target ??Review 진행 | `POST /api/etl/jobs` ?�환 가??|
-| ?�업 명령 | 즉시 ?�행, ?�실?? ?�시?��?, 취소 ?�태 반영 | `POST /api/etl/jobs/{jobId}/commands` ?�환 가??|
-| ?�업 ?�세/?�행 ?�력/DAG | mock ?�세 ?�보, DAG 버튼, ?�세 ?�널 ?�시 | 조회 API ?�요 |
-| 카탈로그 | mock datasets 목록/?�세/리니지 ?�시 | hydrate API ?�요 |
-| SQL 분석 | dataset 기�? read-only SQL ?�행 mock | `POST /api/query/runs` ?�환 가??|
-| ?�?�보??| SQL 결과 기반 builder/publish UI ?�시 | ?�??조회 API ?�요 |
-| AI ?�용 | placeholder ?�면 | 백엔??기획 미정 |
-| 관�?| placeholder ?�면 | 백엔??기획 미정 |
-| 감사 로그 | local state/localStorage 기록 | `POST /api/audit-logs` ?�요 |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. 서버 상태가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 persistence |
+| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결 | 중간 단계별 서버 저장 API는 후속 범위 |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인 | Kafka message payload sampling, Parquet physical schema inference |
+| Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
+| Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
+| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과 반영 | 상세/lineage/search persistence |
+| SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
+| Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
+| Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
-## 2. 백엔???�결 ??반드???�낼 �?
+## 2. Pair A Live Contract
 
-| ?�선?�위 | ?�업 | ?�유 |
-| --- | --- | --- |
-| P0 | `POST /api/etl/jobs` 구현 | ?�성 ?�로?�의 최종 ?�출 지??|
-| P0 | `POST /api/etl/jobs/{jobId}/commands` 구현 | ?�행/?�실???�시?��?/취소 버튼???�제 ?�태 ?�이 |
-| P0 | `POST /api/query/runs` 구현 | SQL ?�행 결과�??�?�보?�로 ?�기???�심 ?�름 |
-| P1 | `GET /api/etl/jobs`?� `GET /api/etl/jobs/{jobId}` 구현 | ?�집/처리 목록�??�세�??�버 ?�이?�로 hydrate |
-| P1 | `GET /api/catalog/datasets`?� ?�세 API 구현 | 카탈로그/SQL/dashboards??공통 ?�이???�천 |
-| P1 | `POST /api/dashboards`, `PATCH /api/dashboards/{id}` 구현 | ?�?�보???�??게시가 ?�제 리소?�로 ?�도�?처리 |
-| P2 | 감사 로그 ?�버 ?�??| 발표/?�영??추적???�보 |
-| P2 | AI ?�용/관�?메뉴 API 결정 | ?�재??placeholder??범위 ?�정 ?�요 |
+Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
-## 3. mock ?�거 ?�서
+Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode로 동작한다. 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환해야 한다. `VITE_USE_MOCK_API=false`일 때만 live backend connector를 호출한다.
 
-### 3.1 1�? P0 write API ?�결
+필수 create payload:
 
-?��? `frontend/src/services/mockApi.ts`??mock/live ?�환 지?�이 ?�습?�다.
+- Source: `sourceType`, `sourceLabel`, `sourceConfig`
+- Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
+- Transform: `transformSteps`, `transformOutputColumns`
+- Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
+- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
 
-`.env`:
+Backend create response:
 
-```bash
-VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
+```ts
+type CreateJobResponse = {
+  job: JobRowData;
+  dataset: CatalogDataset;
+};
 ```
 
-?�환 ???�제 ?�출?�는 API:
+Backend command response:
 
-| ?�론???�수 | ?�제 API |
-| --- | --- |
-| `createPipelineDraft` | `POST /api/etl/jobs` |
-| `runJobCommand` | `POST /api/etl/jobs/{jobId}/commands` |
-| `executeQueryDraft` | `POST /api/query/runs` |
+```ts
+type JobCommandResponse = {
+  action: string;
+  apiPath: string;
+  job: JobRowData;
+  run: JobRunSummary;
+  dagSteps: JobDagStep[];
+};
+```
 
-???�계?�서??초기 목록?� ?�직 mock?�로 ?�고, ?�성/명령/SQL ?�행�?백엔?�에 붙입?�다.
+## 3. Source Credential Handling
 
-### 3.2 2�? hydrate API ?�결
+Backend connector 응답은 secret field를 redacted value로 내려준다. 프론트는 응답 metadata, schema, sampleRows는 반영하되 브라우저 세션에 사용자가 입력한 credential 값은 다음 connector 호출을 위해 유지해야 한다.
 
-?�음 ?�계?�서??`frontend/src/hooks/useAskLakeData.ts`??초기 ?�태�?mock import ?�???�버 조회�?바꿉?�다.
+적용 기준:
 
-?�??
+- 첫 연결 테스트 성공 후 Schema 단계의 다시 확인이 credential 없이 실패하면 안 된다.
+- 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
+- PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-| ?�재 mock | 교체 API |
-| --- | --- |
-| `etlJobs` | `GET /api/etl/jobs` |
-| `catalogDatasets` | `GET /api/catalog/datasets` |
-| `selectedJob` ?�세 ?�보 | `GET /api/etl/jobs/{jobId}` |
-| `selectedDataset` ?�세 ?�보 | `GET /api/catalog/datasets/{datasetId}` |
+## 4. Spark Run Path
 
-권장 방식:
+`POST /api/etl/jobs/{jobId}/commands`는 Spark runner를 호출한다.
 
-1. ??최초 로딩 ??jobs/datasets�?병렬 조회?�니??
-2. 조회 ?�패 ???�용?�에�??�결 ?�패 ?�스?��? 보여주고 mock fallback ?��?�?결정?�니??
-3. ?�성/명령 ?�에???��????�데?�트보다 ?�버 ?�답값을 기�??�로 ?�태�?갱신?�니??
-4. hydrate ?�답??`status`??`docs/03-api-reference.md`??canonical status values�??�라???�니??
+Spark runner 입력:
 
-### 3.3 3�? ?�?�보???�??모델 ?�결
+- File / S3, Data Lake: object path를 Spark source로 직접 사용
+- REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
+- `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
+- `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 
-?�재 ?�?�보?�는 ?�면 ???�태�?builder/published view�??�환?�니??
-백엔???�결 ???�래 리소?��? ?�요?�니??
+Spark runner 결과:
 
-| 기능 | API ?�보 |
-| --- | --- |
-| ?�?�보??초안 ?�성 | `POST /api/dashboards` ?�는 `POST /api/dashboards/{dashboardId}/draft/ensure` |
-| ?�?�보???�??| `PATCH /api/dashboards/{dashboardId}` ?�는 draft revision page/widget/layout API |
-| ?�?�보??게시 | `POST /api/dashboards/{dashboardId}/publish` |
-| ?�?�된 ?�?�보??�?목록 | `GET /api/dashboards` |
-| ?�?�된 ?�?�보??검???�터 목록 | `POST /api/dashboards/query` |
-| �Խ� ��ú��� �� | `GET /api/dashboards/{dashboardId}/published` |
-| �ʾ� ���� �� | `POST /api/dashboards/{dashboardId}/draft/ensure` |
-| ������ �߰� | `POST /api/dashboards/{dashboardId}/draft/pages` |
-| Page 이름 수정 | `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}` |
-| ������ ���� | `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}` |
-| ���� �߰� | `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` |
-| Draft widget 수정 | `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}` |
-| ���̾ƿ� ���� | `PATCH /api/dashboards/{dashboardId}/draft/layouts` |
-| ��ú��� �� | `GET /api/dashboards/{dashboardId}` |
-| ��ú��� ���� | `DELETE /api/dashboards/{dashboardId}` |
-| legacy ���� �߰� | `POST /api/dashboards/{dashboardId}/widgets` |
-| ?�젯 ?�정 | `PATCH /api/dashboards/{dashboardId}/widgets/{widgetId}` |
-| ?�젯 ??�� | `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}` |
+- transformed Parquet output
+- output schema
+- input/output row count
+- quality summary
+- run status
+- DAG step status
 
-`POST /api/dashboards`는 새 dashboard card를 `draft` 상태로 DB에 먼저 저장하는 생성 API다. 내부 편집 화면에서 필요한 draft revision/page/widget 준비는 `POST /api/dashboards/{dashboardId}/draft/ensure`가 담당한다.
+## 5. 검증 명령
 
-Draft widget creation API accepts only `metric`, `table`, `bar_chart`, `line_chart`, and `donut_chart` runtime types. Backend save/read responses must preserve the type-specific config contract from `frontend/src/types/dashboard.ts`; required field checks are `aggregation` for metric/bar/line/donut configs and `columns` for table configs.
+Backend:
 
-?�?�보??목록??검?? ?�유???�터, ?�그 ?�터, ?�렬, pagination?� ?�버?�서 처리?�니??
-?�론?�는 JSON body�?보내�?`items`, `total`, `page`, `pageSize`, `filterOptions`�?받아 목록�?pagination???�시?�니??
+```powershell
+cd backend
+npm run verify
+npm run verify:sources
+npm run verify:spark-run
+```
 
-## 4. ?�면�??�결 범위
+Frontend:
 
-### 4.1 ?�집/처리
+```powershell
+cd frontend
+npm run build
+```
 
-| 버튼/기능 | ?�재 ?�작 | ?�요??백엔??|
+Browser smoke:
+
+- backend server를 켠다.
+- frontend dev server를 켠다.
+- 수집/처리 목록이 처음에는 비어 있는지 확인한다.
+- 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
+- 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
+
+## 6. 완료 기준
+
+- ETL/Catalog 초기 목록은 서버가 비어 있으면 빈 상태로 표시된다.
+- Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
+- Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
+- Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
+- Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
+
+## 7. Catalog/SQL 연결 범위
+
+### Catalog
+
+| 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| `+ ???�집/처리 ?�성` | ?�성 ?�로???�동 | ?�음 |
-| `?�세` | selectedJob ?�정 ???�세 ?�동 | `GET /api/etl/jobs/{jobId}` |
-| `즉시 ?�행` | mock ?�태�??�행 중으�?변�?| `POST /api/etl/jobs/{jobId}/commands` |
-| `?�실?? | mock ?�태�??�실??중으�?변�?| `POST /api/etl/jobs/{jobId}/commands` |
-| `?�시?��?` | mock ?�태�??�시?��?�?변�?| `POST /api/etl/jobs/{jobId}/commands` |
-| `취소` | mock ?�태�?취소?�으�?변�?| `POST /api/etl/jobs/{jobId}/commands` |
-| `??��` | ?�론??목록?�서 ?�거 | `DELETE /api/etl/jobs/{jobId}` |
-| ?�행 ?�력 | mock run rows ?�시 | `GET /api/etl/jobs/{jobId}/runs` |
-| DAG | mock step graph ?�시 | `GET /api/etl/jobs/{jobId}/dag` |
+| 목록 | mock datasets 표시 | `GET /api/catalog/datasets` |
+| 검색/태그/필터 | 프론트 이벤트 로그 중심 | `GET /api/catalog/datasets?q=&tag=&layer=` |
+| 상세 | selectedDataset 표시 | `GET /api/catalog/datasets/{datasetId}` |
+| 스키마 | dataset.schema 표시 | 상세 포함 또는 `/schema` |
+| 샘플 row | dataset.sampleRows 표시 | 상세 포함 또는 `/sample-rows` |
+| 리니지 | `LineageGraph` contract를 React Flow로 렌더링, 없으면 upstream fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
+| SQL로 열기 | SQL 화면 이동 | 없음, datasetId 유지 |
 
-### 4.2 ???�집/처리 ?�성
+### SQL 분석
 
-| ?�계 | ?�재 ?�작 | ?�요??백엔??|
+| 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| Source | connector ?�택, ?�스??미리보기 mock | `POST /api/etl/sources/test`, `POST /api/etl/sources/preview` |
-| Schema | 추론/?�인 UI mock | `POST /api/etl/schema-inference`, `POST /api/etl/schema-inference/confirm` |
-| Rule | rule 추�?/검�?UI mock | `POST /api/etl/rules`, `POST /api/etl/rules/revalidate` |
-| Schedule | ?��?�??�택 ?�태 ?�??| ?�성 request???�함 ?�는 `PUT /api/etl/jobs/{jobId}/schedule` |
-| Permission | 권한 ?�택 ?�태 ?�??| ?�성 request???�함 ?�는 `PUT /api/etl/jobs/{jobId}/permissions` |
-| Target Review | 최종 ?�성 | `POST /api/etl/jobs` |
+| SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
+| Preview 실행 | 자동 SQL 점검 통과 후에만 mock result 생성, preview는 최대 100 rows 제한 안내 | `POST /api/query/runs` preview mode 또는 `POST /api/query/previews` |
+| Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
+| 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
+| 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
+| SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
+| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 mock Catalog Dataset을 생성하고 mock mode에서는 localStorage fallback으로 유지 | `POST /api/catalog/derived-datasets` |
+| CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
+| 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
+| 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 datasets state에 prepend하고 mock mode에서는 `asklake.catalogDatasets`에서 재hydrate하며 SQL 화면 context는 유지 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
 
-초기 백엔???�결?�서??중간 ?�계 API�?모두 구현?��? ?�아???�니??
-발표/?�모 기�??�로??최종 `POST /api/etl/jobs`가 draft ?�체�?받아 처리?�면 충분?�니??
+Mock mode에서는 수집/처리 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다. Live API mode에서는 localStorage fallback을 쓰지 않고 backend catalog persistence와 `GET /api/catalog/datasets` hydrate를 source of truth로 둡니다.
 
-### 4.3 카탈로그
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. 수집/처리 생성 dataset도 가능하면 source -> target 기본 `lineageGraph`를 포함해야 하며, 없으면 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
-| 기능 | ?�재 ?�작 | ?�요??백엔??|
+## 8. 대시보드
+
+| 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| 목록 | mock datasets ?�시 | `GET /api/catalog/datasets` |
-| 검???�그/?�터 | ?�론???�벤??로그 중심 | `GET /api/catalog/datasets?q=&tag=&layer=` |
-| ?�세 | selectedDataset ?�시 | `GET /api/catalog/datasets/{datasetId}` |
-| ?�키�?| dataset.schema ?�시 | ?�세 ?�함 ?�는 `/schema` |
-| ?�플 row | dataset.sampleRows ?�시 | ?�세 ?�함 ?�는 `/sample-rows` |
-| 리니지 | upstream/downstream ?�시 | ?�세 ?�함 ?�는 `/lineage` |
-| SQL�??�기 | SQL ?�면 ?�동 | ?�음, datasetId ?��? |
-
-### 4.4 SQL 분석
-
-| 기능 | ?�재 ?�작 | ?�요??백엔??|
-| --- | --- | --- |
-| SQL ?�행 | mock result ?�성 | `POST /api/query/runs` |
-| SQL ?�??| 감사 로그�?기록 | `POST /api/query/saved` |
-| 결과 Lake ?�??| 감사 로그�?기록 | `POST /api/query/results/lake` |
-| CSV ?�운로드 | 감사 로그�?기록 | `GET /api/query/runs/{runId}/download` |
-| ?�?�보???�성 | `SqlResultDraft`�?builder�??�달 | `POST /api/dashboards` |
-
-SQL ?�행 백엔?�는 반드??read-only guard�??�야 ?�니??
-
-### 4.5 ?�?�보??
-
-| 기능 | ?�재 ?�작 | ?�요??백엔??|
-| --- | --- | --- |
-| ?�젯 ?�???�택 | ?�론???�태 변�?| ?�음 |
-| ?�젯 추�? | draft canvas??추�? | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
-| Widget 수정 | DB-backed draft widget title/type/config 수정 | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
-| ?�젯 ??�� | local canvas?�서 ?�거 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
-| Draft 조회/?�성 | DB-backed draft runtime | `POST /api/dashboards/{id}/draft/ensure` |
-| Page 추�? | DB-backed draft page | `POST /api/dashboards/{id}/draft/pages` |
+| 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
+| 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
+| 목록 삭제 | 확인 후 dashboard 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
+| Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
+| Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
+| Page 추가 | DB-backed draft page 추가 | `POST /api/dashboards/{id}/draft/pages` |
 | Page 이름 수정 | DB-backed draft page title 수정 | `PATCH /api/dashboards/{id}/draft/pages/{pageId}` |
-| Page ??�� | DB-backed draft page ??�� | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
-| Layout ?�??| DB-backed widget layout ?�??| `PATCH /api/dashboards/{id}/draft/layouts` |
-| ?�??| localStorage snapshot�?감사 로그 기록 | draft revision page/widget/layout API ?�는 `PATCH /api/dashboards/{id}` |
-| Publish | published view�??�환 | `POST /api/dashboards/{id}/publish` |
-| Published ��ȸ | DB-backed published revision snapshot | `GET /api/dashboards/{id}/published` |
-| ��Ͽ��� ���� | Ȯ�� ��� �� ��� ����ȸ | `DELETE /api/dashboards/{id}` |
-| Share | ����� ����Ʈ���� runtime ��ũ ����� feedback �г� ǥ�� | ���� `POST /api/dashboards/{id}/share` |
-| ?�보?�기 | local snapshot JSON ?�운로드?� 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
-| ?�체?�면/차트 ?��? | ?�론??모달 ?�시 | 백엔??불필??|
+| Page 삭제 | DB-backed draft page와 하위 widgets 삭제 | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
+| 위젯 추가 | selected dataset과 type별 config로 draft widget 생성 | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
+| 위젯 수정 | draft widget title/type/datasetId/config 수정 | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
+| Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
+| Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
+| 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
+| 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
-## 5. ?�직 ?�제 ?�?�되지 ?�는 기능
+Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
 
-?�래 기능?� ?�재 UI 반응�?감사 로그�??�고, ?�버 ?�?��? ?�습?�다.
+## 9. 아직 실제 저장되지 않는 기능
 
-| ?�역 | 기능 |
+아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
+
+| 영역 | 기능 |
 | --- | --- |
-| ?�집/처리 | ??��, ?�세 ?�정 ?�?? ?�터 조건 ?�??|
-| ?�성 ?�로??| Source 중간 ?�스??결과, Schema ?�인, Rule 추�?/검�?|
-| 카탈로그 | ?�?�소 보�?, ?�그/?�터 ?�버 검??|
-| SQL | 쿼리 ?�?? Lake ?�?? CSV ?�운로드 |
-| ?�?�보??| ?�젯 ?�?? 게시 ?�태 ?��?, 공유, ?�보?�기 |
-| 공통 | 감사 로그 ?�버 ?�?? ?�용???�증/권한 |
+| 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
+| 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
+| 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
+| SQL | 쿼리 저장, Lake 저장, CSV 다운로드 |
+| 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
+| 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-## 6. 백엔???�???�길 최소 구현 범위
+## 10. 백엔드 팀에 넘길 최소 구현 범위
 
-최소 ?�모 ?�동�?목표?�면 ?�래 5개면 충분?�니??
+최소 데모 연동만 목표라면 아래 5개면 충분합니다.
 
 1. `POST /api/etl/jobs`
 2. `POST /api/etl/jobs/{jobId}/commands`
@@ -210,39 +199,55 @@ SQL ?�행 백엔?�는 반드??read-only guard�??�야 ?�니??
 4. `GET /api/catalog/datasets`
 5. `POST /api/query/runs`
 
-?�?�보?�까지 ?�제 ?�?�하?�면 ?�래 API�?추�??�니??
+대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
 
 1. `GET /api/dashboards`
 2. `POST /api/dashboards/query`
-3. `GET /api/dashboards/{dashboardId}/published`
-4. `POST /api/dashboards/{dashboardId}/draft/ensure`
-5. `POST /api/dashboards/{dashboardId}/draft/pages`
-6. `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
-7. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
-8. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
-9. `POST /api/dashboards/{dashboardId}/publish`
+3. `POST /api/dashboards`
+4. `PATCH /api/dashboards/{dashboardId}`
+5. `DELETE /api/dashboards/{dashboardId}`
+6. `GET /api/dashboards/{dashboardId}/published`
+7. `POST /api/dashboards/{dashboardId}/draft/ensure`
+8. `POST /api/dashboards/{dashboardId}/draft/pages`
+9. `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+10. `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+11. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+12. `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+13. `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+14. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+15. `POST /api/dashboards/{dashboardId}/publish`
 
-## 7. ?�론?�에???�음?????�업
+## 11. 프론트에서 다음에 할 작업
 
-백엔??API가 준비되�????�론?�에??미리 ?????�는 ?�업?�니??
+백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
 
-| ?�서 | ?�업 | ?�일 |
+| 순서 | 작업 | 파일 |
 | --- | --- | --- |
-| 1 | `getJobs`, `getDatasets` API adapter 추�? | `frontend/src/services/mockApi.ts` |
-| 2 | 초기 hydrate loading/error ?�태 추�? | `frontend/src/hooks/useAskLakeData.ts` |
-| 3 | dashboard adapter 추�? | `frontend/src/services/mockApi.ts` |
-| 4 | audit log ?�버 ?�???�션 추�? | `frontend/src/hooks/useAuditLogs.ts` |
-| 5 | ??��/?�??게시 ?�패 ??rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
+| 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
+| 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
+| 3 | dashboard list/runtime adapter와 conflict-safe API shape 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
+| 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
+| 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
-## 8. ?�수 기�?
+## 12. 인수 기준
 
-백엔???�결???�났?�고 ?�단?�려�??�래�??�과?�야 ?�니??
+백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
-- `.env`?�서 `VITE_USE_MOCK_API=false`�??�행?�도 ?�이 ?�상 로딩?�니??
-- ???�집/처리 ?�성 ??목록�?카탈로그???�버 ?�답 ?�이?��? ?�시?�니??
-- 즉시 ?�행/?�실???�시?��?/취소 버튼???�버 ?�태 ?�이�?반영?�니??
-- SQL ?�행 결과가 ?�버 ?�답 columns/rows 그�?�??�시?�니??
-- SQL 결과?�서 ?�?�보???�성 ??같�? `runId`가 dashboard request???�함?�니??
-- ?�로고침 ?�에???�?�된 ?�?�보???�업/?�이?�셋???��??�니??
-- ?�패 ?�답?� ?�스?��? 감사 로그???�습?�다.
-- 콘솔??React key/layout 관??error가 ?�어???�니??
+- `.env`에서 `VITE_USE_MOCK_API=false`로 실행해도 앱이 정상 로딩됩니다.
+- 새 수집/처리 생성 후 목록과 카탈로그에 서버 응답 데이터가 표시됩니다.
+- 즉시 실행/재실행/일시정지/취소 버튼이 서버 상태 전이를 반영합니다.
+- SQL 실행 결과가 서버 응답 columns/rows 그대로 표시됩니다.
+- SQL 결과에서 대시보드 생성 시 같은 `runId`가 dashboard request에 포함됩니다.
+- 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.
+- 실패 응답은 토스트와 감사 로그에 남습니다.
+- 콘솔에 React key/layout 관련 error가 없어야 합니다.
+
+## 13. 남은 작업
+
+- Kafka message payload schema sampling
+- Parquet physical schema inference endpoint
+- ETL job/dataset/run persistence
+- 삭제/수정 API persistence
+- SQL engine read-only guard 고도화
+- Dashboard save/publish persistence
+- Audit log server persistence

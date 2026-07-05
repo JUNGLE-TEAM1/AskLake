@@ -1,30 +1,58 @@
-# AskLake Project
+# AskLake
 
-AskLake 데이터 레이크 플랫폼 프로젝트 저장소입니다.
+AskLake is a trusted data lake workflow project. This branch includes the Pair A person-1 vertical slice: Source connection, Schema inference, and Create pipeline handoff through a local backend.
 
-## 구조
+## Structure
 
 ```text
-frontend/   # React/Vite 프론트엔드 데모
-docs/       # 백엔드 연동 계약서와 공용 문서
+backend/    # Local Node backend, source connectors, Spark validation scripts
+frontend/   # React/Vite frontend
+docs/       # Product, architecture, API, validation, and team guardrails
 ```
 
-## 프론트엔드 실행
+## Quick Start
 
-```bash
-cd frontend
+```powershell
+cd backend
 npm install
+npm run verify
+npm run sources:fixtures
 npm run dev
 ```
 
-백엔드 연동 기준은 [docs/api-contract.md](docs/api-contract.md)를 참고하세요.
-백엔드 연결 전 남은 작업과 mock 제거 순서는 [docs/backend-integration-readiness.md](docs/backend-integration-readiness.md)를 참고하세요.
+In another terminal:
 
-## 하네스 문서
+```powershell
+cd frontend
+npm install
+$env:VITE_API_BASE_URL = "http://localhost:8080"
+npm run dev
+```
 
-- [Codex 작업 규칙](AGENTS.md)
-- [제품 기획](docs/01-product-planning.md)
-- [아키텍처](docs/02-architecture.md)
-- [API Reference](docs/03-api-reference.md)
-- [개발 가이드](docs/04-development-guide.md)
-- [시스템 가드레일](docs/system-guardrails.md)
+Initial ETL jobs and catalog datasets are intentionally empty. Create a pipeline from the UI to add them.
+
+## Validation
+
+```powershell
+cd backend
+$env:ASKLAKE_WITH_KAFKA = "true"
+$env:ASKLAKE_RECREATE_KAFKA = "true"
+npm run sources:fixtures
+$env:ASKLAKE_VERIFY_KAFKA = "true"
+npm run verify:sources
+npm run minio:prepare-samples
+npm run spark:start
+npm run spark:validate
+```
+
+For the MinIO 100GB and 1GB-per-type Spark validation flow, see [docs/minio-100gb-spark-harness.md](docs/minio-100gb-spark-harness.md).
+
+## Docs
+
+- [Codex work rules](AGENTS.md)
+- [Product planning](docs/01-product-planning.md)
+- [Architecture](docs/02-architecture.md)
+- [API reference](docs/03-api-reference.md)
+- [Development guide](docs/04-development-guide.md)
+- [System guardrails](docs/system-guardrails.md)
+- [Backend status](docs/backend-integration-readiness.md)

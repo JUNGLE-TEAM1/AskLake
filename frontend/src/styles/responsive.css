@@ -34,6 +34,7 @@
   }
 
   .catalog-page,
+  .catalog-content-grid,
   .catalog-detail-grid,
   .sql-page,
   .sql-page.context-collapsed,
@@ -41,10 +42,6 @@
   .dashboard-layout,
   .dashboard-builder-layout {
     grid-template-columns: 1fr;
-  }
-
-  .sql-history-panel {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dashboard-filter-bar,
@@ -174,6 +171,7 @@
     top: 76px;
     left: 16px;
     width: min(320px, calc(100vw - 32px));
+    height: auto;
     max-height: calc(100vh - 96px);
   }
 
@@ -196,8 +194,6 @@
   .metric-grid,
   .jobs-toolbar,
   .job-row-details,
-  .sql-history-panel,
-  .sql-estimation-bar,
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .dashboard-canvas,
@@ -274,13 +270,8 @@
   }
 
   .sql-editor-actions,
-  .sql-result-actions,
   .sql-result-status {
     justify-content: flex-start;
-  }
-
-  .sql-estimation-bar div {
-    width: 100%;
   }
 
   .dashboard-header-actions {

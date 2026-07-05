@@ -1,6 +1,6 @@
 import type React from "react";
 import { FileText } from "lucide-react";
-import { summaryByFlow } from "../../data/mockData";
+import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
 export function CreationFlowLayout({
@@ -25,6 +25,7 @@ export function CreationFlowLayout({
 }
 
 export function CreationPanelActions({
+  nextDisabled,
   nextLabel = "다음 단계로",
   prevLabel = "이전",
   saveLabel = "설정 저장",
@@ -33,6 +34,7 @@ export function CreationPanelActions({
   onSave,
   withDivider,
 }: {
+  nextDisabled?: boolean;
   nextLabel?: string;
   prevLabel?: string;
   saveLabel?: string;
@@ -45,7 +47,7 @@ export function CreationPanelActions({
     <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
       <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
       <button className="secondary-button" type="button" onClick={onSave}>{saveLabel}</button>
-      <button className="primary-button" type="button" onClick={onNext}>{nextLabel}</button>
+      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
     </div>
   );
 }
@@ -60,6 +62,7 @@ export function CreationSummaryPanel({
   prevLabel,
   saveLabel,
   selected,
+  summaryRows,
   title,
 }: {
   flow: FlowId;
@@ -71,8 +74,10 @@ export function CreationSummaryPanel({
   prevLabel?: string;
   saveLabel?: string;
   selected?: string;
+  summaryRows?: Array<[string, string]>;
   title: string;
 }) {
+  const rows = summaryRows ?? summaryByFlow[flow];
   return (
     <aside className="summary-panel">
       <div className="summary-header">
@@ -80,7 +85,7 @@ export function CreationSummaryPanel({
         <h2>{title}</h2>
       </div>
       <dl>
-        {summaryByFlow[flow].map(([label, value]) => (
+        {rows.map(([label, value]) => (
           <div key={label}>
             <dt>{label}</dt>
             <dd>{selected && label === "실행 방식" ? selected : value}</dd>
