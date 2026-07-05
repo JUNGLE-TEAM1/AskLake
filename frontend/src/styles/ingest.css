@@ -398,6 +398,16 @@
   color: #dc2626;
 }
 
+.job-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.job-action-button.primary:disabled {
+  border-color: #93c5fd;
+  background: #93c5fd;
+}
+
 .job-table-footer {
   display: flex;
   align-items: center;
