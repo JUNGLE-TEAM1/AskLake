@@ -141,8 +141,8 @@ VITE_USE_MOCK_API=false
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| SQL 실행 | mock result 생성 | `POST /api/query/runs` |
-| 실행 전 점검 | frontend에서 empty/read-only/unknown table/LIMIT warning을 검사하고 inline message 표시 | backend SQL guard와 query validation response |
+| SQL 점검 | frontend에서 empty/read-only/unknown table을 검사하고 inline message 표시 | backend SQL guard와 query validation response |
+| Preview 실행 | SQL 점검 통과 후 mock result 생성, preview는 최대 100 rows 제한 안내 | `POST /api/query/runs` preview mode 또는 `POST /api/query/previews` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
@@ -152,7 +152,7 @@ VITE_USE_MOCK_API=false
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | 후속 확장으로 분리 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
 
-SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
 ### 4.5 대시보드
 

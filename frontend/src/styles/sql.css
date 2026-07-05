@@ -574,6 +574,11 @@
   content: "OK";
 }
 
+.sql-preflight-panel li.info::before {
+  color: #2563eb;
+  content: "i";
+}
+
 .sql-preflight-panel li.warning::before {
   color: #d97706;
   content: "!";

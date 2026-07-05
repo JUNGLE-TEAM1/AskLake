@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CheckCircle,
   Download,
   PlayCircle,
   RotateCcw,
@@ -28,14 +29,17 @@ type AutocompleteContext = {
 };
 
 type SqlPreflightMessage = {
-  tone: "success" | "warning" | "error";
+  tone: "success" | "info" | "warning" | "error";
   text: string;
 };
 
 type SqlPreflightResult = {
+  key: string;
   canExecute: boolean;
   messages: SqlPreflightMessage[];
 };
+
+const PREVIEW_ROW_LIMIT = 100;
 
 export function SqlAnalysisPage({
   dataset,
@@ -71,6 +75,15 @@ export function SqlAnalysisPage({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
+  const queryValidationKey = useMemo(
+    () => JSON.stringify({
+      baseDatasetId: baseDataset.id,
+      query,
+      referenceDatasetIds: [...referenceDatasetIds].sort(),
+    }),
+    [baseDataset.id, query, referenceDatasetIds],
+  );
+  const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
@@ -119,14 +132,17 @@ export function SqlAnalysisPage({
     setCursorIndex(defaultQuery.length);
     setResultDraft(null);
     setExecutionMs(null);
+    setPreflightResult(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset.id, defaultQuery]);
 
-  const queryContextPath = () => {
+  const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
+    params.set("mode", mode);
+    if (mode === "preview") params.set("previewLimit", String(PREVIEW_ROW_LIMIT));
     return `/api/query/runs?${params.toString()}`;
   };
 
@@ -201,12 +217,27 @@ export function SqlAnalysisPage({
     }
   };
 
-  const executeQuery = async () => {
+  const runPreflightCheck = () => {
     const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
-    const preflightResult = runSqlPreflight(query, baseDataset, referenceDatasets);
-    setPreflightResult(preflightResult);
-    if (!preflightResult.canExecute) {
-      onAction("analysis.query.preflight_failed", queryContextPath(), baseDataset.id, "failed");
+    const result = runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey);
+    setPreflightResult(result);
+    onAction(
+      result.canExecute ? "analysis.query.preflight_passed" : "analysis.query.preflight_failed",
+      queryContextPath("preflight"),
+      baseDataset.id,
+      result.canExecute ? "success" : "failed",
+    );
+    return result;
+  };
+
+  const executePreview = async () => {
+    if (!canRunPreview) {
+      setPreflightResult({
+        key: queryValidationKey,
+        canExecute: false,
+        messages: [{ tone: "error", text: "먼저 SQL 점검을 통과해 주세요. SQL 또는 참조 데이터셋이 바뀌면 다시 점검해야 합니다." }],
+      });
+      onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
       return;
     }
     const startedAt = performance.now();
@@ -217,13 +248,14 @@ export function SqlAnalysisPage({
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
       onResultChange(resultDraft);
-      onAction("analysis.query.executed", queryContextPath(), baseDataset.id);
+      onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch {
       setPreflightResult({
+        key: queryValidationKey,
         canExecute: false,
-        messages: [{ tone: "error", text: "SQL 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+        messages: [{ tone: "error", text: "Preview 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
       });
-      onAction("analysis.query.failed", queryContextPath(), baseDataset.id, "failed");
+      onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
       setQueryPending(false);
     }
@@ -433,7 +465,12 @@ export function SqlAnalysisPage({
               <h2>Base Dataset 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" type="button" onClick={executeQuery} disabled={queryPending}><PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}</button>
+              <button className="secondary-button" type="button" onClick={runPreflightCheck} disabled={queryPending}>
+                <CheckCircle size={16} /> SQL 점검
+              </button>
+              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+                <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
+              </button>
             </div>
           </div>
           <div className="sql-editor-layout">
@@ -479,7 +516,7 @@ export function SqlAnalysisPage({
           </div>
           {preflightResult && (
             <div className={preflightResult.canExecute ? "sql-preflight-panel" : "sql-preflight-panel error"}>
-              <span>실행 전 점검</span>
+              <span>SQL 점검</span>
               <ul>
                 {preflightResult.messages.map((message, index) => (
                   <li className={message.tone} key={`${message.tone}-${index}`}>{message.text}</li>
@@ -496,8 +533,8 @@ export function SqlAnalysisPage({
         <section className="sql-result-card">
           <div className="sql-result-header">
             <div>
-              <span>QUERY RESULT</span>
-              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "실행 후 결과가 표시됩니다"}</h2>
+              <span>PREVIEW RESULT</span>
+              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "Preview 실행 후 결과가 표시됩니다"}</h2>
             </div>
             <div className="sql-result-status">
               <span>{queryPending ? "running" : executed ? "success" : "ready"}</span>
@@ -519,8 +556,8 @@ export function SqlAnalysisPage({
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>아직 실행 결과가 없습니다.</strong>
-              <span>SQL을 실행하면 이 영역에 결과 테이블이 표시됩니다.</span>
+              <strong>아직 Preview 결과가 없습니다.</strong>
+              <span>SQL 점검을 통과한 뒤 Preview를 실행하면 결과 테이블이 표시됩니다.</span>
             </div>
           )}
         </section>
@@ -555,11 +592,12 @@ FROM ${dataset.name}
 LIMIT 100;`;
 }
 
-function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[]): SqlPreflightResult {
+function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[], key: string): SqlPreflightResult {
   const normalizedQuery = stripSqlComments(query).trim();
   const messages: SqlPreflightMessage[] = [];
   if (!normalizedQuery) {
     return {
+      key,
       canExecute: false,
       messages: [{ tone: "error", text: "실행할 SQL을 입력해 주세요." }],
     };
@@ -567,6 +605,7 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
 
   if (!/^(select|with)\b/i.test(normalizedQuery)) {
     return {
+      key,
       canExecute: false,
       messages: [{ tone: "error", text: "읽기 전용 SQL만 실행할 수 있습니다. SELECT 또는 WITH로 시작해야 합니다." }],
     };
@@ -575,6 +614,7 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
   const mutationKeyword = normalizedQuery.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
   if (mutationKeyword) {
     return {
+      key,
       canExecute: false,
       messages: [{ tone: "error", text: `${mutationKeyword.toUpperCase()} 문은 분석 화면에서 실행할 수 없습니다.` }],
     };
@@ -590,20 +630,19 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
 
   if (unknownTableNames.length > 0) {
     return {
+      key,
       canExecute: false,
       messages: [{ tone: "error", text: `Query context에 없는 테이블이 있습니다: ${unknownTableNames.join(", ")}` }],
     };
   }
 
-  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 실행합니다.` });
-  if (!/\blimit\b/i.test(normalizedQuery)) {
-    messages.push({ tone: "warning", text: "LIMIT 없이 실행됩니다. 결과가 많아질 수 있습니다." });
-  }
+  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 Preview할 수 있습니다.` });
+  messages.push({ tone: "info", text: `Preview는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT} rows로 제한해 실행합니다.` });
   if (referencedTableNames.length === 0) {
     messages.push({ tone: "warning", text: "FROM/JOIN 테이블이 없습니다. 상수 조회 또는 CTE-only 쿼리인지 확인해 주세요." });
   }
 
-  return { canExecute: true, messages };
+  return { key, canExecute: true, messages };
 }
 
 function stripSqlComments(query: string) {
