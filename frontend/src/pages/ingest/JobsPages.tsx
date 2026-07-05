@@ -92,7 +92,7 @@ export function JobsLandingPage({
             <div className="job-empty-state">
               <Plus size={22} />
               <strong>생성된 수집/처리 작업이 없습니다.</strong>
-              <p>Source 연결과 Schema 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다.</p>
+              <p>소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다.</p>
               <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
             </div>
           )}
@@ -270,8 +270,8 @@ function ruleRowsForJob(job: JobRowData): RuleDetailRow[] {
   const state = job.status === "failed" ? "FAILED" : job.status === "running" ? "RUNNING" : job.status === "canceled" ? "CANCELED" : "PENDING";
 
   return [
-    ["Source validation", job.source, "backend connector result", state],
-    ["Schema inference", stage, "inferred metadata", state],
+    ["소스 검증", job.source, "백엔드 커넥터 결과", state],
+    ["스키마 추론", stage, "추론된 메타데이터", state],
     ["Create handoff", job.target, "job/dataset response", state],
   ];
 }
@@ -380,7 +380,7 @@ export function JobDetailPage({
           ? "사용자 요청으로 실행이 취소되었습니다. 다시 실행하면 새 Run으로 처리 흐름을 재개할 수 있습니다."
           : job.runHistory?.length
             ? `${stats.currentStage} · 최근 실행 이력을 기준으로 표시합니다.`
-            : "아직 실행 이력이 없습니다. 생성 시 검증된 Source/Schema metadata만 표시합니다.";
+            : "아직 실행 이력이 없습니다. 생성 시 검증된 소스/스키마 메타데이터만 표시합니다.";
   const schemaRows = schemaRowsForJob(job, stats);
   const ruleRows = ruleRowsForJob(job);
 
@@ -402,7 +402,7 @@ export function JobDetailPage({
               <Field label="Job ID" value={job.id} />
               <Field label="Owner" value={job.owner} />
               <Field label="상태" value={statusText} />
-              <Field label="Source" value={job.source} />
+              <Field label="소스" value={job.source} />
               <Field label="Target" value={job.target} />
               <Field label="최근 상태" value={job.lastState} />
             </div>
@@ -432,15 +432,15 @@ export function JobDetailPage({
 
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
-          <h2>Source / Target 설정</h2>
+          <h2>소스 / 타겟 설정</h2>
         </div>
         <div className="job-detail-card-grid two-up">
           <article className="job-detail-card">
-            <h3>Source 연결 설정</h3>
+            <h3>소스 연결 설정</h3>
             <div className="detail-kv-grid">
-              <Field label="Source 유형" value={sourceType} />
-              <Field label="Source 경로" value={sourcePath} />
-              <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 Source 검증 완료"} />
+              <Field label="소스 유형" value={sourceType} />
+              <Field label="소스 경로" value={sourcePath} />
+              <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료"} />
               <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "MinIO/S3 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
               <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
             </div>
@@ -452,7 +452,7 @@ export function JobDetailPage({
               <Field label="Lake 경로" value={physicalOutputPath} />
               <Field label="저장 포맷" value="Parquet" />
               <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
-              <Field label="품질 체크" value={job.status === "failed" ? "Transform 전 중단" : "row count / schema check"} />
+              <Field label="품질 체크" value={job.status === "failed" ? "변환 전 중단" : "행 수 / 스키마 검사"} />
             </div>
             <div className="detail-meta-line">
               <span>Downstream: SQL · Dashboard · Catalog</span>
@@ -463,11 +463,11 @@ export function JobDetailPage({
 
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
-          <h2>Schema / Transform</h2>
+          <h2>스키마 / 변환</h2>
         </div>
         <article className="detail-table-card">
           <div className="detail-table-header">
-            <h3>Schema 매핑</h3>
+            <h3>스키마 매핑</h3>
             <span>5 컬럼</span>
           </div>
           <table className="schema-table detail-table">
@@ -490,7 +490,7 @@ export function JobDetailPage({
         </article>
         <article className="detail-table-card">
           <div className="detail-table-header">
-            <h3>Transform Rules</h3>
+            <h3>변환 규칙</h3>
             <span>{issueText}</span>
           </div>
           <table className="schema-table detail-table">
@@ -677,18 +677,19 @@ export function JobDagPage({
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const [dagFullscreenOpen, setDagFullscreenOpen] = useState(false);
   const [dagZoom, setDagZoom] = useState(0);
-  const defaultDagSteps: JobDagStep[] = [
-    { id: "step-1", meta: "S3 · raw/user-log/*.csv", status: "success", title: "1. Source 연결" },
-    { id: "step-2", meta: "21,840 rows scanned", status: "success", title: "2. 파일 읽기" },
-    { id: "step-3", meta: "5 columns mapped", status: "success", title: "3. Schema 매핑" },
-    { id: "step-4", meta: "age TYPE_CAST → Integer", note: "cannot cast unknown", status: "failed", title: "4. Transform Rule" },
-    { id: "step-5", meta: "age >= 0", status: "blocked", title: "5. Validation" },
-    { id: "step-6", meta: "user_activity", status: "blocked", title: "6. Lake 적재" },
-    { id: "step-7", meta: "row count / schema check", status: "blocked", title: "7. 품질 체크" },
-    { id: "step-8", meta: "SQL · Dashboard · Index", status: "blocked", title: "8. Downstream 반영" },
-  ];
-  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : defaultDagSteps;
-  const currentRun = evidence?.runs[0] ?? { duration: "00:00:18", endedAt: "10:10", errorSummary: "age 필드 타입 변환 실패", failedStage: "Transform Rule 적용", inputRows: "21,840", outputRows: "0", runId: "run_002", startedAt: "10:10", status: "failed" as JobRunStatus };
+  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
+  const runHistory = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const currentRun = runHistory[0] ?? {
+    duration: "-",
+    endedAt: "-",
+    errorSummary: "-",
+    failedStage: "-",
+    inputRows: job.stats?.inputRows ?? "-",
+    outputRows: job.stats?.outputRows ?? "0",
+    runId: "실행 전",
+    startedAt: "-",
+    status: "queued" as JobRunStatus,
+  };
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const dagZoomClass = `zoom-${dagZoom}`;
@@ -713,7 +714,7 @@ export function JobDagPage({
     <div className="dag-canvas-expanded">
       <div className="dag-context-row">
         <strong>Run context</strong>
-        <span>실패 Run의 단계별 상태와 중단 영향 범위를 확인합니다.</span>
+        <span>현재 Run의 단계별 상태와 처리 흐름을 확인합니다.</span>
         <div className="dag-legend">
           <DagStatePill status="success" />
           <DagStatePill status="failed" />
@@ -731,7 +732,7 @@ export function JobDagPage({
           ))}
         </div>
         <div className="dag-down-arrow">
-          <span>실패 이후 중단</span>
+          <span>{currentRun.status === "failed" ? "실패 이후 중단" : "다음 단계"}</span>
         </div>
         <div className="dag-row dag-row-bottom">
           {dagSteps.slice(4).map((step, index) => (
@@ -776,7 +777,7 @@ export function JobDagPage({
           {dagSearchOpen && (
             <div className="dag-search-panel">
               <Search size={15} />
-              <input aria-label="DAG 단계 검색" defaultValue="Transform Rule" />
+              <input aria-label="DAG 단계 검색" defaultValue="변환 규칙" />
               <span>1개 단계 발견</span>
             </div>
           )}

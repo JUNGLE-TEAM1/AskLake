@@ -142,7 +142,7 @@ export function App() {
       >
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
-        <RuleApplicationPage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
+        <RuleApplicationPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
       </RuleBuilderShell>
     );
   }
@@ -203,18 +203,18 @@ function RuleBuilderShell({
   onRefresh: () => void;
 }) {
   const workspaceItems = [
-    { icon: Workflow, label: "Pipelines", flow: "jobs" as FlowId },
-    { icon: Database, label: "Datasets", flow: "catalog" as FlowId },
-    { icon: History, label: "Run History", flow: "jobRuns" as FlowId },
+    { icon: Workflow, label: "파이프라인", flow: "jobs" as FlowId },
+    { icon: Database, label: "데이터셋", flow: "catalog" as FlowId },
+    { icon: History, label: "실행 이력", flow: "jobRuns" as FlowId },
   ];
   const managementItems = [
-    { icon: ShieldCheck, label: "Governance", flow: "permission" as FlowId },
-    { icon: Settings, label: "Settings", flow: "admin" as FlowId },
+    { icon: ShieldCheck, label: "거버넌스", flow: "permission" as FlowId },
+    { icon: Settings, label: "설정", flow: "admin" as FlowId },
   ];
   const stepItems = [
-    ["1", "Source 연결"],
-    ["2", "Schema 추론"],
-    ["3", "Rule 적용"],
+    ["1", "소스 연결"],
+    ["2", "스키마 추론"],
+    ["3", "규칙 적용"],
   ];
 
   return (
@@ -222,9 +222,9 @@ function RuleBuilderShell({
       <header className="etl-builder-header">
         <div className="etl-builder-brand">
           <span className="etl-builder-brand-mark" aria-hidden="true" />
-          <strong>AskLake — Dataset creation ETL builder</strong>
+          <strong>AskLake - 데이터셋 생성 ETL 빌더</strong>
         </div>
-        <nav className="etl-builder-stepper" aria-label="Dataset creation steps">
+        <nav className="etl-builder-stepper" aria-label="데이터셋 생성 단계">
           {stepItems.map(([index, label], itemIndex) => (
             <span className={index === "3" ? "etl-builder-step active" : "etl-builder-step"} key={index}>
               <span>{index}</span>
@@ -260,18 +260,18 @@ function RuleBuilderShell({
               </section>
             )}
           </div>
-          <button className="icon-button" type="button" aria-label="Docs" onClick={onDocs}>
+          <button className="icon-button" type="button" aria-label="문서" onClick={onDocs}>
             <BookOpen size={19} />
           </button>
-          <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
+          <button className="icon-button" type="button" aria-label="새로고침" onClick={onRefresh}>
             <History size={19} />
           </button>
-          <button className="etl-builder-avatar" type="button" aria-label="Account" onClick={onAccount} />
+          <button className="etl-builder-avatar" type="button" aria-label="계정" onClick={onAccount} />
         </div>
       </header>
       <aside className="etl-builder-sidebar">
         <div>
-          <p className="etl-builder-nav-heading">Workspace</p>
+          <p className="etl-builder-nav-heading">작업 공간</p>
           <nav className="etl-builder-nav">
             {workspaceItems.map(({ flow, icon: Icon, label }) => (
               <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
@@ -280,7 +280,7 @@ function RuleBuilderShell({
               </button>
             ))}
           </nav>
-          <p className="etl-builder-nav-heading">Management</p>
+          <p className="etl-builder-nav-heading">관리</p>
           <nav className="etl-builder-nav">
             {managementItems.map(({ flow, icon: Icon, label }) => (
               <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
@@ -293,10 +293,10 @@ function RuleBuilderShell({
         <div className="etl-builder-sidebar-foot">
           <button type="button" onClick={onLogout}>
             <LogOut size={16} />
-            Logout
+            로그아웃
           </button>
-          <span><i /> System Operational</span>
-          <span>Version 2.4.0-stable</span>
+          <span><i /> 시스템 정상</span>
+          <span>버전 2.4.0-stable</span>
         </div>
       </aside>
       <main className="etl-builder-main">

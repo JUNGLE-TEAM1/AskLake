@@ -41,6 +41,41 @@ try {
     retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 5, timeoutMinutes: 60 },
     retryPolicySummary: "수동 재시도",
     ruleSummary: "Spark run smoke",
+    transformOutputColumns: [
+      ["vendorid", "integer"],
+      ["tpep_pickup_datetime", "timestamp"],
+      ["tpep_dropoff_datetime", "timestamp"],
+      ["passenger_count", "integer"],
+      ["trip_distance", "double"],
+      ["total_amount", "double"],
+    ],
+    transformSteps: [
+      {
+        enabled: true,
+        id: "spark-transform-distance",
+        input: "trip_distance",
+        kind: "cast",
+        label: "Cast Decimal: trip_distance -> trip_distance",
+        onError: "Set Null",
+        operation: "Cast Decimal",
+        output: "trip_distance",
+        params: "double",
+      },
+    ],
+    qualityInvalidRows: [],
+    qualityRules: [
+      {
+        enabled: true,
+        failureAction: "Warn",
+        id: "spark-quality-total-amount",
+        kind: "range",
+        severity: "Warning",
+        targetColumn: "total_amount",
+        validationType: "Range Check",
+      },
+    ],
+    qualityScore: 100,
+    qualityStatus: "pass",
     scheduleLabel: "manual",
     schemaColumns: [
       { nullable: true, sourceName: "VendorID", targetName: "vendorid", type: "Integer" },
@@ -92,6 +127,8 @@ try {
   assert(parquetFiles.length > 0, `Spark output path has no parquet files: ${run?.outputPath}`);
   assert(command.job.status === "scheduled", `Job did not return to scheduled status: ${command.job.status}`);
   assert(command.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
+  assert(command.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
+  assert(command.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
 } finally {
   server.kill();
   setTimeout(() => server.kill("SIGKILL"), 2000).unref();

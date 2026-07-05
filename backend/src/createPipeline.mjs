@@ -14,6 +14,10 @@ export function listDatasets() {
 
 export function createPipeline(request) {
   validateCreatePipelineRequest(request);
+  const transformSteps = normalizeTransformSteps(request.transformSteps);
+  const transformOutputColumns = normalizeTransformOutputColumns(request.transformOutputColumns);
+  const qualityRules = normalizeQualityRules(request.qualityRules);
+  const qualityInvalidRows = Array.isArray(request.qualityInvalidRows) ? request.qualityInvalidRows : [];
   const datasetSchema = datasetSchemaFromRequest(request);
   const datasetSampleRows = datasetSampleRowsFromRequest(request, datasetSchema);
   const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
@@ -34,12 +38,20 @@ export function createPipeline(request) {
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    schemaColumns: request.schemaColumns,
+    schemaSampleRows: request.schemaSampleRows,
     stats: initialJobStats(sourceMetrics),
     status: "scheduled",
     tag: "[생성]",
     target: request.targetDataset,
     targetFormat: request.targetFormat,
     targetLayer: request.targetLayer,
+    transformOutputColumns,
+    transformSteps,
+    qualityInvalidRows,
+    qualityRules,
+    qualityScore: request.qualityScore,
+    qualityStatus: request.qualityStatus,
   };
 
   const dataset = {
@@ -52,7 +64,7 @@ export function createPipeline(request) {
     name: request.targetDataset,
     nextRefresh: request.scheduleLabel,
     owner: request.owner,
-    quality: request.ruleSummary || "확인 대기",
+    quality: qualitySummaryFromRequest(request),
     rag: Boolean(request.rag),
     rows: sourceMetrics.datasetRows,
     sampleRows: datasetSampleRows,
@@ -150,6 +162,63 @@ function validateCreatePipelineRequest(request) {
   if (!request.owner) missing.push("owner");
   if (!Array.isArray(request.schemaColumns) || request.schemaColumns.length === 0) missing.push("schemaColumns");
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
+}
+
+function normalizeTransformSteps(steps) {
+  if (!Array.isArray(steps)) return [];
+  return steps
+    .filter((step) => step && typeof step === "object")
+    .map((step, index) => ({
+      enabled: step.enabled !== false,
+      id: String(step.id || index + 1),
+      input: String(step.input || ""),
+      kind: String(step.kind || "derive"),
+      label: String(step.label || `${step.operation || "Transform"}: ${step.input || ""} -> ${step.output || ""}`),
+      onError: String(step.onError || "Warn"),
+      operation: String(step.operation || ""),
+      output: String(step.output || step.input || `column_${index + 1}`),
+      params: String(step.params || ""),
+    }))
+    .filter((step) => step.input && step.output);
+}
+
+function normalizeQualityRules(rules) {
+  if (!Array.isArray(rules)) return [];
+  return rules
+    .filter((rule) => rule && typeof rule === "object")
+    .map((rule, index) => ({
+      enabled: rule.enabled !== false,
+      failureAction: String(rule.failureAction || "Warn"),
+      id: String(rule.id || `qr-${index + 1}`),
+      kind: String(rule.kind || "notNull"),
+      severity: String(rule.severity || "Warning"),
+      targetColumn: String(rule.targetColumn || ""),
+      validationType: String(rule.validationType || "Not Null"),
+    }))
+    .filter((rule) => rule.targetColumn);
+}
+
+function normalizeTransformOutputColumns(columns) {
+  if (!Array.isArray(columns)) return [];
+  return columns
+    .filter((column) => Array.isArray(column) && String(column[0] ?? "").trim())
+    .map(([name, type]) => [String(name), String(type || "string")]);
+}
+
+function qualitySummaryFromRequest(request) {
+  if (Number.isFinite(Number(request.qualityScore))) {
+    return `품질 점수 ${Number(request.qualityScore).toFixed(1)}% · 상태 ${qualityStatusLabel(request.qualityStatus)}`;
+  }
+  if (request.ruleSummary) return request.ruleSummary;
+  return "확인 대기";
+}
+
+function qualityStatusLabel(status) {
+  const normalizedStatus = String(status || "checked").toLowerCase();
+  if (normalizedStatus === "pass") return "통과";
+  if (normalizedStatus === "warn") return "주의";
+  if (normalizedStatus === "fail") return "실패";
+  return "확인됨";
 }
 
 function validationError(message) {
@@ -250,11 +319,15 @@ function initialJobStats(metrics) {
 }
 
 function initialDagSteps(request, metrics) {
+  const transformCount = Array.isArray(request.transformSteps) ? request.transformSteps.length : 0;
+  const qualityCount = Array.isArray(request.qualityRules) ? request.qualityRules.length : 0;
   return [
-    { id: "source", meta: `${request.sourceType} / ${request.sourceLabel}`, status: "success", title: "1. Source 연결" },
-    { id: "schema", meta: `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, status: metrics.schemaColumns > 0 ? "success" : "pending", title: "2. Schema 추론" },
+    { id: "source", meta: `${request.sourceType} / ${request.sourceLabel}`, status: "success", title: "1. 소스 연결" },
+    { id: "schema", meta: `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, status: metrics.schemaColumns > 0 ? "success" : "pending", title: "2. 스키마 추론" },
     { id: "create", meta: request.targetDataset, status: "success", title: "3. Job 생성" },
-    { id: "run", meta: "아직 실행되지 않음", status: "pending", title: "4. 실행 대기" },
+    { id: "transform", meta: `${transformCount}개 규칙`, status: "pending", title: "4. 처리 규칙 대기" },
+    { id: "quality", meta: `${qualityCount}개 검사`, status: "pending", title: "5. 품질 검증 대기" },
+    { id: "run", meta: "아직 실행되지 않음", status: "pending", title: "6. 실행 대기" },
   ];
 }
 
@@ -297,7 +370,7 @@ function runFromSparkResult(run, result) {
     duration: formatDuration(result.durationMs),
     endedAt: result.endedAt ?? new Date().toISOString(),
     errorSummary: success ? "-" : result.error ?? "Spark job failed.",
-    failedStage: success ? "-" : "Spark ETL",
+    failedStage: success ? "-" : result.failedStage ?? "Spark ETL",
     inputRows: formatRows(result.inputRows),
     outputPath: result.outputPath ?? "-",
     outputRows: formatRows(result.outputRows),
@@ -325,6 +398,12 @@ function updateDatasetFromSparkResult(job, result) {
   const dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
   if (!dataset || result.status !== "success") return;
   dataset.lastUpdated = result.endedAt ?? new Date().toISOString();
+  if (Array.isArray(result.schema) && result.schema.length > 0) {
+    dataset.schema = result.schema.map((field) => [field.name, field.type]);
+  }
+  if (result.quality) {
+    dataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
+  }
   dataset.rows = formatRows(result.outputRows);
   dataset.size = result.outputPath ?? dataset.size;
   dataset.source = job.name;
@@ -351,22 +430,30 @@ function statsFromRuns(job, runs) {
 
 function dagStepsFromCommand(job, command, run) {
   const canceled = command === "cancel";
+  const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
+  const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
   if (!canceled) {
     const failed = run.status === "failed";
+    const failedStage = String(run.failedStage ?? "").toLowerCase();
+    const readFailed = failed && (!failedStage || failedStage.includes("source") || failedStage.includes("read") || failedStage.includes("spark etl"));
+    const transformFailed = failed && failedStage.includes("transform");
+    const qualityFailed = failed && failedStage.includes("quality");
     return [
-      { id: "source", meta: job.source, status: failed ? "blocked" : "success", title: "1. Source 연결" },
-      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: failed ? "blocked" : "success", title: "2. Schema 확인" },
-      { id: "read", meta: run.inputRows, status: failed ? "failed" : "success", title: "3. Spark Source 읽기" },
-      { id: "write", meta: run.outputPath ?? "-", status: failed ? "blocked" : "success", title: "4. Parquet 적재" },
-      { id: "catalog", meta: job.target, status: failed ? "blocked" : "success", title: "5. Catalog Dataset 갱신" },
+      { id: "source", meta: job.source, status: "success", title: "1. 소스 연결" },
+      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: "success", title: "2. 스키마 확인" },
+      { id: "read", meta: run.inputRows, status: readFailed ? "failed" : "success", title: "3. Spark 소스 읽기" },
+      { id: "transform", meta: transformMeta, status: transformFailed ? "failed" : readFailed ? "blocked" : "success", title: "4. 처리 규칙 적용" },
+      { id: "quality", meta: qualityMeta, status: qualityFailed ? "failed" : readFailed || transformFailed ? "blocked" : "success", title: "5. 품질 검증" },
+      { id: "write", meta: run.outputPath ?? "-", status: failed ? "blocked" : "success", title: "6. Parquet 적재" },
+      { id: "catalog", meta: job.target, status: failed ? "blocked" : "success", title: "7. 카탈로그 데이터셋 갱신" },
     ];
   }
   return [
-    { id: "source", meta: job.source, status: canceled ? "blocked" : "success", title: "1. Source 연결" },
-    { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: canceled ? "blocked" : "success", title: "2. Schema 확인" },
-    { id: "read", meta: run.inputRows, status: canceled ? "blocked" : "running", title: "3. Source 읽기" },
-    { id: "transform", meta: "Pair A 2 처리 단계", status: canceled ? "blocked" : "pending", title: "4. Transform" },
-    { id: "quality", meta: "Pair A 2 품질 단계", status: "pending", title: "5. Quality" },
+    { id: "source", meta: job.source, status: canceled ? "blocked" : "success", title: "1. 소스 연결" },
+    { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: canceled ? "blocked" : "success", title: "2. 스키마 확인" },
+    { id: "read", meta: run.inputRows, status: canceled ? "blocked" : "running", title: "3. 소스 읽기" },
+    { id: "transform", meta: transformMeta, status: canceled ? "blocked" : "pending", title: "4. 처리 규칙" },
+    { id: "quality", meta: qualityMeta, status: "pending", title: "5. 품질 검증" },
     { id: "target", meta: job.target, status: "pending", title: "6. Lake 적재" },
   ];
 }
@@ -405,6 +492,8 @@ function validRequestSchemaColumns(request) {
 }
 
 function datasetSchemaFromRequest(request) {
+  const transformOutputColumns = normalizeTransformOutputColumns(request.transformOutputColumns);
+  if (transformOutputColumns.length > 0) return transformOutputColumns;
   return validRequestSchemaColumns(request).map(({ column }) => [
     column.targetName,
     String(column.type ?? "string").toLowerCase(),
@@ -417,9 +506,18 @@ function datasetSampleRowsFromRequest(request, schema) {
   }
 
   const columns = validRequestSchemaColumns(request);
+  const sourceIndexByOutputName = new Map(
+    columns.flatMap(({ column, sourceIndex }) => [
+      [String(column.targetName), sourceIndex],
+      [String(column.sourceName), sourceIndex],
+    ]),
+  );
   if (columns.length === 0) {
     return request.schemaSampleRows.map((row) => schema.map((_, index) => row[index] ?? "-"));
   }
 
-  return request.schemaSampleRows.map((row) => columns.map(({ sourceIndex }) => row[sourceIndex] ?? "-"));
+  return request.schemaSampleRows.map((row) => schema.map(([name]) => {
+    const sourceIndex = sourceIndexByOutputName.get(String(name));
+    return sourceIndex === undefined ? "" : row[sourceIndex] ?? "";
+  }));
 }

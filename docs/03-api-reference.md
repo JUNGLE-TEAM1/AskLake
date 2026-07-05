@@ -2,20 +2,19 @@
 
 이 문서는 AskLake API/interface 계약의 상위 진입점이다.
 상세 request/response shape는 기존 문서인 `docs/api-contract.md`를 기준으로 한다.
-백엔드 연결 순서와 mock 제거 계획은 `docs/backend-integration-readiness.md`를 기준으로 한다.
+백엔드 연결 범위와 남은 작업은 `docs/backend-integration-readiness.md`를 기준으로 한다.
 
 ## 1) 현재 상태
 
-- 현재 앱은 frontend-only baseline이다.
-- `frontend/src/services/mockApi.ts`가 mock/live 전환 지점이다.
-- `frontend/src/services/apiClient.ts`가 live API 호출 wrapper다.
-- `VITE_USE_MOCK_API=false`일 때 P0 API는 실제 backend로 호출된다.
+- 현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출한다.
+- `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
+- `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
+- ETL/Catalog 초기 hydrate 결과가 비어 있으면 UI도 빈 목록으로 시작한다.
 
 ## 2) 환경 변수
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
 ```
 
 ## 3) 공통 규칙
@@ -25,7 +24,7 @@ VITE_USE_MOCK_API=false
 - Response format: JSON
 - ID type: opaque string
 - Time format: ISO 8601 string
-- Status values: API, mock fixture, and frontend internal state use English canonical values. UI labels are translated in the frontend.
+- Status values: API and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
 - Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
 
@@ -69,19 +68,19 @@ Canonical status values:
 
 | 화면 | 현재 데이터 | Future API |
 | --- | --- | --- |
-| 수집/처리 목록 | `etlJobs` mock | `GET /api/etl/jobs` |
+| 수집/처리 목록 | live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
-| 카탈로그 | `catalogDatasets` mock | `GET /api/catalog/datasets` |
+| 카탈로그 | live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `upstream`/`downstream` arrays | dataset detail 또는 lineage API |
-| SQL 분석 | `executeQueryDraft` mock/live | `POST /api/query/runs` |
+| SQL 분석 | `executeQueryDraft` live API 호출 | `POST /api/query/runs` |
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 ## 8) Pair Handoff Contracts
 
-Pair 간 전달 객체는 API/mock fixture와 같은 field name을 사용한다.
+Pair 간 전달 객체는 API field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.
 
 ### Pair A -> Pair B
@@ -92,6 +91,8 @@ type CreateJobResponse = {
   dataset: CatalogDataset;
 };
 ```
+
+Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다.
 
 필수 확인:
 

@@ -18,6 +18,10 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     retryPolicy,
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
     ruleSummary: combineSummaries(draft.transform.summary, draft.quality.summary),
+    qualityInvalidRows: draft.quality.invalidRows,
+    qualityRules: draft.quality.rules,
+    qualityScore: draft.quality.score,
+    qualityStatus: draft.quality.status,
     scheduleLabel: draft.schedule.label,
     schemaColumns: draft.schema.columns,
     schemaFingerprint: draft.schema.schemaFingerprint,
@@ -29,6 +33,8 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetDataset,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
+    transformOutputColumns: draft.transform.outputColumns,
+    transformSteps: draft.transform.steps,
   };
 }
 
@@ -53,6 +59,12 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.schemaSampleRows !== undefined) next.schema.sampleRows = patch.schemaSampleRows;
   if (patch.schemaSummary !== undefined) next.schema.summary = patch.schemaSummary;
   if (patch.ruleSummary !== undefined) next.transform.summary = patch.ruleSummary;
+  if (patch.transformOutputColumns !== undefined) next.transform.outputColumns = patch.transformOutputColumns;
+  if (patch.transformSteps !== undefined) next.transform.steps = patch.transformSteps;
+  if (patch.qualityInvalidRows !== undefined) next.quality.invalidRows = patch.qualityInvalidRows;
+  if (patch.qualityRules !== undefined) next.quality.rules = patch.qualityRules;
+  if (patch.qualityScore !== undefined) next.quality.score = patch.qualityScore;
+  if (patch.qualityStatus !== undefined) next.quality.status = patch.qualityStatus;
   if (patch.scheduleLabel !== undefined) {
     next.schedule.label = patch.scheduleLabel;
     next.schedule.mode = scheduleModeFromLabel(patch.scheduleLabel);

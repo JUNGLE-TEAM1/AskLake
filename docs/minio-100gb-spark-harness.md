@@ -11,6 +11,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
+- `backend/scripts/verify-spark-job-run.mjs`: create -> run -> Spark -> DAG -> Catalog verifier
 - `backend/scripts/setup-source-fixtures.mjs`: PostgreSQL, MongoDB, and Redpanda fixtures
 - `backend/scripts/verify-all-sources.mjs`: source connector verifier
 
@@ -117,7 +118,16 @@ The validator checks:
 
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
-## 7. Frontend
+## 7. Create/Run Spark Pipeline Verification
+
+```powershell
+cd backend
+npm run verify:spark-run
+```
+
+This verifier starts from an empty in-memory ETL/Catalog state, creates one live job from a MinIO sample, submits a run command, and verifies that Spark writes Parquet output. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+
+## 8. Frontend
 
 ```powershell
 cd frontend
