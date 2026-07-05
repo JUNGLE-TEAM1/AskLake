@@ -587,9 +587,13 @@
 }
 
 .catalog-modal.lineage-modal {
-  width: min(1680px, calc(100vw - 32px));
-  height: calc(100vh - 32px);
-  max-height: calc(100vh - 32px);
+  width: min(1720px, calc(100vw - 16px));
+  height: calc(100vh - 16px);
+  max-height: calc(100vh - 16px);
+}
+
+.catalog-modal.lineage-modal .catalog-modal-header {
+  padding: 14px 20px;
 }
 
 .catalog-modal-header {
@@ -641,6 +645,7 @@
   display: grid;
   min-width: 0;
   overflow: hidden;
+  padding: 12px 14px 14px;
 }
 
 .catalog-modal-body .catalog-table-card,
@@ -654,7 +659,7 @@
 }
 
 .catalog-modal-body .catalog-lineage-card.compact {
-  gap: 12px;
+  gap: 8px;
 }
 
 .catalog-modal.lineage-modal .catalog-lineage-card {
@@ -719,6 +724,15 @@
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
+}
+
+.catalog-modal.lineage-modal .catalog-lineage-footer {
+  gap: 18px;
+  padding-top: 10px;
+}
+
+.catalog-modal.lineage-modal .catalog-lineage-footer span + span {
+  padding-left: 18px;
 }
 
 .catalog-modal.lineage-modal .catalog-lineage-flow .react-flow {

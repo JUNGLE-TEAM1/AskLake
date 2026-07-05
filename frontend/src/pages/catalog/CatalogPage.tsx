@@ -64,6 +64,7 @@ type LineageTableNodeData = Record<string, unknown> & {
 const lineageNodeTypes = {
   lineageTable: LineageTableNode,
 };
+const lineageFitViewOptions = { maxZoom: 1.08, padding: 0.08 };
 
 type CatalogFilterState = {
   approvalRequired: boolean;
@@ -810,7 +811,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     if (!flowInstance || !lineageGraph) return;
 
     const animationFrame = window.requestAnimationFrame(() => {
-      void flowInstance.fitView({ maxZoom: 0.9, padding: 0.2 });
+      void flowInstance.fitView(lineageFitViewOptions);
     });
 
     return () => window.cancelAnimationFrame(animationFrame);
@@ -823,7 +824,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     const observer = new ResizeObserver(() => {
       if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
       animationFrame = window.requestAnimationFrame(() => {
-        void flowInstance.fitView({ maxZoom: 0.9, padding: 0.2 });
+        void flowInstance.fitView(lineageFitViewOptions);
       });
     });
 
@@ -851,8 +852,8 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
           <ReactFlow
             edges={edges}
             fitView
-            fitViewOptions={{ maxZoom: 0.9, padding: 0.2 }}
-            maxZoom={1}
+            fitViewOptions={lineageFitViewOptions}
+            maxZoom={1.2}
             minZoom={0.35}
             nodes={nodes}
             nodesDraggable={false}
