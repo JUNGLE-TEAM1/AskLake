@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type {
+  DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
   DashboardRuntimeWidgetType,
   DashboardWidgetAggregation,
@@ -7,7 +8,7 @@ import type {
   DashboardWidgetFormat,
   DashboardWidgetSortDirection,
 } from "../../../types";
-import type { CreateDraftWidgetFormInput, DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
+import type { CreateDraftWidgetFormInput, DashboardDatasetColumn, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 
 type WidgetConfigDraft = {
   aggregation?: DashboardWidgetAggregation;
@@ -66,6 +67,43 @@ function columnNames(columns: DashboardDatasetColumn[]) {
 
 function firstName(columns: DashboardDatasetColumn[]) {
   return columns[0]?.name ?? "";
+}
+
+function configRecord(config: DashboardRuntimeWidgetConfig) {
+  return config as Record<string, unknown>;
+}
+
+function configString(config: DashboardRuntimeWidgetConfig, key: string) {
+  const value = configRecord(config)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function configNumber(config: DashboardRuntimeWidgetConfig, key: string) {
+  const value = configRecord(config)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function configStringArray(config: DashboardRuntimeWidgetConfig, key: string) {
+  const value = configRecord(config)[key];
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
+  const config = widget.config;
+  return {
+    aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
+    columns: configStringArray(config, "columns"),
+    dateUnit: configString(config, "dateUnit") as DashboardWidgetDateUnit | undefined,
+    format: configString(config, "format") as DashboardWidgetFormat | undefined,
+    labelKey: configString(config, "labelKey"),
+    limit: configNumber(config, "limit"),
+    sortDirection: configString(config, "sortDirection") as DashboardWidgetSortDirection | undefined,
+    sortKey: configString(config, "sortKey"),
+    valueKey: configString(config, "valueKey"),
+    xKey: configString(config, "xKey"),
+    yKey: configString(config, "yKey"),
+  };
 }
 
 function createDefaultConfigs(dataset: DashboardDatasetOption): Record<DashboardRuntimeWidgetType, WidgetConfigDraft> {
@@ -175,13 +213,21 @@ function buildConfig(
 }
 
 export function WidgetConfigPanel({
+  editingWidget = null,
   isCreating = false,
+  isUpdating = false,
+  onCancelEdit,
   onCreateWidget,
+  onUpdateWidget,
   selectedDataset,
   selectedDatasetId,
 }: {
+  editingWidget?: DashboardRuntimeWidget | null;
   isCreating?: boolean;
+  isUpdating?: boolean;
+  onCancelEdit?: () => void;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
 }) {
@@ -191,6 +237,7 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
+  const isEditMode = Boolean(editingWidget);
 
   const columnGroups = useMemo(() => {
     const allColumns = selectedDataset?.columns ?? [];
@@ -210,12 +257,30 @@ export function WidgetConfigPanel({
 
   useEffect(() => {
     setFormError(null);
+    if (editingWidget) {
+      setType(editingWidget.type);
+      setTitle(editingWidget.title ?? "");
+      setDescription(configString(editingWidget.config, "description") ?? "");
+      setColor(configString(editingWidget.config, "color") ?? "blue");
+      setConfigsByType({
+        ...(selectedDataset ? createDefaultConfigs(selectedDataset) : {}),
+        [editingWidget.type]: configDraftFromWidget(editingWidget),
+      });
+      return;
+    }
+
+    setColor("blue");
+    setDescription("");
+    setTitle("");
+    setType("bar_chart");
     setConfigsByType(selectedDataset ? createDefaultConfigs(selectedDataset) : {});
-  }, [selectedDataset]);
+  }, [editingWidget, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
-  const validationMessage = selectedDataset ? validateConfig(type, currentConfig) : "왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.";
-  const canCreate = Boolean(selectedDatasetId && selectedDataset && !validationMessage);
+  const validationMessage = selectedDataset || isEditMode
+    ? validateConfig(type, currentConfig)
+    : "왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.";
+  const canSubmit = Boolean((isEditMode || (selectedDatasetId && selectedDataset)) && !validationMessage);
 
   const patchCurrentConfig = (patch: WidgetConfigDraft) => {
     setConfigsByType((current) => ({
@@ -240,7 +305,7 @@ export function WidgetConfigPanel({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedDataset || !selectedDatasetId) {
+    if (!isEditMode && (!selectedDataset || !selectedDatasetId)) {
       setFormError("왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.");
       return;
     }
@@ -252,20 +317,37 @@ export function WidgetConfigPanel({
     }
 
     setFormError(null);
-    await onCreateWidget({
+    const nextInput = {
       config: buildConfig(type, currentConfig, {
         color,
         description: description.trim() || undefined,
       }),
-      datasetId: selectedDatasetId,
       title: title.trim() || "제목 없는 위젯",
       type,
+    };
+
+    if (editingWidget && onUpdateWidget) {
+      await onUpdateWidget(editingWidget.id, {
+        ...nextInput,
+        datasetId: selectedDatasetId ?? editingWidget.datasetId ?? null,
+      });
+      return;
+    }
+
+    if (!selectedDatasetId) {
+      setFormError("왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.");
+      return;
+    }
+
+    await onCreateWidget({
+      ...nextInput,
+      datasetId: selectedDatasetId,
     });
     setTitle("");
     setDescription("");
   };
 
-  if (!selectedDataset) {
+  if (!selectedDataset && !editingWidget) {
     return (
       <section className="asklake-widget-config-panel empty">
         <strong>데이터셋을 선택해 주세요</strong>
@@ -278,8 +360,8 @@ export function WidgetConfigPanel({
     <section className="asklake-widget-config-panel">
       <div className="asklake-widget-config-heading">
         <div>
-          <span>Dataset widget</span>
-          <strong>{selectedDataset.name}</strong>
+          <span>{isEditMode ? "Selected widget" : "Dataset widget"}</span>
+          <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
         </div>
       </div>
 
@@ -463,9 +545,16 @@ export function WidgetConfigPanel({
 
         {(formError || validationMessage) && <p className="asklake-widget-config-error">{formError ?? validationMessage}</p>}
 
-        <button className="asklake-widget-create-button" disabled={!canCreate || isCreating} type="submit">
-          {isCreating ? "생성 중" : "위젯 생성"}
-        </button>
+        <div className="asklake-widget-config-actions">
+          {isEditMode && (
+            <button className="asklake-widget-secondary-button" type="button" onClick={onCancelEdit}>
+              새 위젯 만들기
+            </button>
+          )}
+          <button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
+            {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
+          </button>
+        </div>
       </form>
     </section>
   );

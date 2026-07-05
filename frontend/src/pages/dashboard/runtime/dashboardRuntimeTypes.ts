@@ -19,3 +19,10 @@ export type CreateDraftWidgetFormInput = {
   title: string;
   type: DashboardRuntimeWidgetType;
 };
+
+export type UpdateDraftWidgetFormInput = {
+  config: DashboardRuntimeWidgetConfig;
+  datasetId?: string | null;
+  title: string;
+  type: DashboardRuntimeWidgetType;
+};

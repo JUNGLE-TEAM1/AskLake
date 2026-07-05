@@ -1014,7 +1014,66 @@ Response `201 Created`:
 기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`; `table`은 `columns`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`; `line_chart`는 `xKey`, `yKey`, `aggregation`, optional `dateUnit`, `color`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`와 `config`가 유지되어야 합니다.
 
-#### 8.5.7 Draft layout batch 저장
+#### 8.5.7 Draft widget 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+Request:
+
+```json
+{
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "line_chart",
+  "title": "월별 물류비 추이",
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "aggregation": "sum",
+    "dateUnit": "month",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
+}
+```
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 수정합니다.
+2. `type`, `title`, `datasetId`, `config`를 갱신합니다.
+3. published revision의 widget은 직접 수정하지 않습니다.
+4. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 수정된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.8 Draft widget 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 삭제합니다.
+2. published revision의 widget은 직접 삭제하지 않습니다.
+3. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 삭제된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true, "deletedWidgetId": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.9 Draft layout batch 저장
 
 `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 
@@ -1037,7 +1096,7 @@ Response `200 OK`:
 
 서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
 
-#### 8.5.8 Publish
+#### 8.5.10 Publish
 
 `POST /api/dashboards/{dashboardId}/publish`
 
