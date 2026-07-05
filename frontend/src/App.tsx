@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import type React from "react";
+import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
 import { flowTabs, navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
@@ -12,7 +14,7 @@ import { JobDagPage, JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
 type PlaceholderAction = "requirements" | "status" | "primary";
@@ -116,6 +118,35 @@ export function App() {
     writeAuditLog(action, apiPath, flow, "success", { targetType: config.targetType });
   };
 
+  if (activeFlow === "rules") {
+    return (
+      <RuleBuilderShell
+        auditOpen={auditOpen}
+        auditLogs={auditLogs}
+        auditCount={auditLogs.length}
+        onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })}
+        onAuditToggle={() => setAuditOpen((open) => !open)}
+        onDocs={() => {
+          writeAuditLog("etl.builder.docs_opened", "/docs/etl-builder", "rule-application", "success", { targetType: "ui" });
+          showToast("ETL Builder 도움말을 확인할 수 있도록 기록했습니다.", "info");
+        }}
+        onLogout={() => {
+          writeAuditLog("ui.logout_requested", "/app/logout", "demo.user@asklake.local", "success", { targetType: "ui" });
+          showToast("데모 환경에서는 로그아웃 요청만 기록됩니다.", "info");
+        }}
+        onNavigate={(flow, label) => {
+          writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
+          moveToFlow(flow);
+        }}
+        onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs/customer_review_gold", "customer_review_gold")}
+      >
+        {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
+        {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
+        <RuleApplicationPage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />
+      </RuleBuilderShell>
+    );
+  }
+
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onNavigate={navigateSidebar} />
@@ -131,7 +162,6 @@ export function App() {
           {activeFlow === "jobDag" && <JobDagPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onEdit={() => moveToFlow("rules")} onRuns={() => moveToFlow("jobRuns")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("rules")} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
-          {activeFlow === "rules" && <RuleApplicationPage onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("rules")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftRetryPolicy={draftPipeline.schedule.retryPolicy} draftScheduleLabel={draftPipeline.schedule.label} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
@@ -144,6 +174,134 @@ export function App() {
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
         </section>
         <Footer />
+      </main>
+    </div>
+  );
+}
+
+function RuleBuilderShell({
+  auditCount,
+  auditLogs,
+  auditOpen,
+  children,
+  onAccount,
+  onAuditToggle,
+  onDocs,
+  onLogout,
+  onNavigate,
+  onRefresh,
+}: {
+  auditCount: number;
+  auditLogs: AuditEntry[];
+  auditOpen: boolean;
+  children: React.ReactNode;
+  onAccount: () => void;
+  onAuditToggle: () => void;
+  onDocs: () => void;
+  onLogout: () => void;
+  onNavigate: (flow: FlowId, label: string) => void;
+  onRefresh: () => void;
+}) {
+  const workspaceItems = [
+    { icon: Workflow, label: "Pipelines", flow: "jobs" as FlowId },
+    { icon: Database, label: "Datasets", flow: "catalog" as FlowId },
+    { icon: History, label: "Run History", flow: "jobRuns" as FlowId },
+  ];
+  const managementItems = [
+    { icon: ShieldCheck, label: "Governance", flow: "permission" as FlowId },
+    { icon: Settings, label: "Settings", flow: "admin" as FlowId },
+  ];
+  const stepItems = [
+    ["1", "Source 연결"],
+    ["2", "Schema 추론"],
+    ["3", "Rule 적용"],
+  ];
+
+  return (
+    <div className="etl-builder-shell" data-audit-open={auditOpen}>
+      <header className="etl-builder-header">
+        <div className="etl-builder-brand">
+          <span className="etl-builder-brand-mark" aria-hidden="true" />
+          <strong>AskLake — Dataset creation ETL builder</strong>
+        </div>
+        <nav className="etl-builder-stepper" aria-label="Dataset creation steps">
+          {stepItems.map(([index, label], itemIndex) => (
+            <span className={index === "3" ? "etl-builder-step active" : "etl-builder-step"} key={index}>
+              <span>{index}</span>
+              {label}
+              {itemIndex < stepItems.length - 1 && <i aria-hidden="true">›</i>}
+            </span>
+          ))}
+        </nav>
+        <div className="etl-builder-header-actions">
+          <div className="audit-menu">
+            <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
+              <CircleHelp size={19} />
+              {auditCount > 0 && <span className="audit-dot" />}
+            </button>
+            {auditOpen && (
+              <section className="audit-popover">
+                <div className="audit-popover-header">
+                  <strong>최근 API 호출</strong>
+                  <span>{auditLogs.length}건</span>
+                </div>
+                <div className="audit-log-list">
+                  {auditLogs.slice(0, 8).map((log) => (
+                    <article className="audit-log-item" key={log.request_id}>
+                      <div>
+                        <strong>{log.action}</strong>
+                        <span>{log.api_path}</span>
+                      </div>
+                      <em>{log.result}</em>
+                    </article>
+                  ))}
+                  {auditLogs.length === 0 && <p>아직 기록된 호출이 없습니다.</p>}
+                </div>
+              </section>
+            )}
+          </div>
+          <button className="icon-button" type="button" aria-label="Docs" onClick={onDocs}>
+            <BookOpen size={19} />
+          </button>
+          <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
+            <History size={19} />
+          </button>
+          <button className="etl-builder-avatar" type="button" aria-label="Account" onClick={onAccount} />
+        </div>
+      </header>
+      <aside className="etl-builder-sidebar">
+        <div>
+          <p className="etl-builder-nav-heading">Workspace</p>
+          <nav className="etl-builder-nav">
+            {workspaceItems.map(({ flow, icon: Icon, label }) => (
+              <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
+                <Icon size={17} />
+                {label}
+              </button>
+            ))}
+          </nav>
+          <p className="etl-builder-nav-heading">Management</p>
+          <nav className="etl-builder-nav">
+            {managementItems.map(({ flow, icon: Icon, label }) => (
+              <button key={label} type="button" onClick={() => onNavigate(flow, label)}>
+                <Icon size={17} />
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="etl-builder-sidebar-foot">
+          <button type="button" onClick={onLogout}>
+            <LogOut size={16} />
+            Logout
+          </button>
+          <span><i /> System Operational</span>
+          <span>Version 2.4.0-stable</span>
+        </div>
+      </aside>
+      <main className="etl-builder-main">
+        {children}
+        <footer className="etl-builder-footer">© 2024 AskLake ETL Builder. All rights reserved.</footer>
       </main>
     </div>
   );
