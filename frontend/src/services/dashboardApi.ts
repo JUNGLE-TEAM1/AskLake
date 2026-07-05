@@ -20,6 +20,10 @@ type DeleteDashboardResponse = {
   deletedDashboardId: string;
 };
 
+type UpdateDashboardTitleResponse = {
+  dashboard: Pick<SavedDashboardCard, "id" | "name"> & Partial<SavedDashboardCard>;
+};
+
 export type CreateDashboardInput = {
   datasetId?: string;
   owner?: string;
@@ -208,4 +212,22 @@ export async function deleteDashboard(dashboardId: string): Promise<DeleteDashbo
   if (apiConfig.useMock) return { deletedDashboardId: dashboardId };
 
   return apiClient.delete<DeleteDashboardResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`);
+}
+
+export async function updateDashboardTitle(dashboardId: string, title: string): Promise<UpdateDashboardTitleResponse> {
+  const nextTitle = title.trim();
+  if (apiConfig.useMock) {
+    return {
+      dashboard: {
+        id: dashboardId,
+        name: nextTitle,
+        updated: "방금 전",
+        updatedAtValue: new Date().toISOString(),
+      },
+    };
+  }
+
+  return apiClient.patch<UpdateDashboardTitleResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`, {
+    title: nextTitle,
+  });
 }

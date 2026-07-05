@@ -737,6 +737,39 @@ Response `201 Created`:
 - 생성 응답의 `dashboard.id`를 사용해 `/dashboards/{dashboardId}` 조회 화면으로 이동합니다.
 - 위젯 추가와 draft revision 생성은 내부 화면의 `위젯 편집` 이후 별도 runtime API에서 처리합니다.
 
+### 8.5.0 대시보드 제목 수정
+
+`PATCH /api/dashboards/{dashboardId}`
+
+대시보드 내부 draft 편집 화면에서 상단 제목을 수정할 때 사용합니다.
+서버는 기존 dashboard card payload를 유지하고 `name`, `title`, `updated`, `updatedAtValue`만 갱신합니다.
+
+Request:
+
+```json
+{
+  "title": "월별 물류비 대시보드"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "dashboard": {
+    "id": "dash_...",
+    "name": "월별 물류비 대시보드",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z"
+  }
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
 ### 8.5 대시보드 revision runtime
 
 Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/published revision snapshot을 저장합니다.
@@ -836,7 +869,37 @@ Response `201 Created`:
 }
 ```
 
-#### 8.5.4 Draft page 삭제
+#### 8.5.4 Draft page 이름 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+현재 draft revision에 속한 page의 표시 이름을 수정합니다.
+Published revision의 page 이름은 이 API로 직접 수정하지 않고, 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 draft snapshot이 published로 복사됩니다.
+
+Request:
+
+```json
+{
+  "title": "월별 비용"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "월별 비용",
+  "orderIndex": 0
+}
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
+#### 8.5.5 Draft page 삭제
 
 `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
 
@@ -856,7 +919,7 @@ Response `200 OK`:
 
 - dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
 
-#### 8.5.5 Draft widget 추가
+#### 8.5.6 Draft widget 추가
 
 `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
 
@@ -887,7 +950,7 @@ Response `201 Created`:
 기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI는 `datasetId`를 별도 필드로 보내고 `config.xKey`, `config.yKey`, `config.color`, `config.description`을 함께 보냅니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`와 `config`가 유지되어야 합니다.
 
-#### 8.5.6 Draft layout batch 저장
+#### 8.5.7 Draft layout batch 저장
 
 `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 
@@ -910,7 +973,7 @@ Response `200 OK`:
 
 서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
 
-#### 8.5.7 Publish
+#### 8.5.8 Publish
 
 `POST /api/dashboards/{dashboardId}/publish`
 

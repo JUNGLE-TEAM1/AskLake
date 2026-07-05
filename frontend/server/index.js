@@ -26,6 +26,8 @@ import {
   saveJob,
   saveSqlRun,
   seedDatabase,
+  updateDashboardTitle,
+  updateDraftDashboardPageTitle,
 } from "./db.js";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -349,6 +351,24 @@ async function route(request, response) {
     return;
   }
 
+  const draftPageTitleMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/pages\/([^/]+)$/);
+  if (request.method === "PATCH" && draftPageTitleMatch) {
+    const dashboardId = decodeURIComponent(draftPageTitleMatch[1]);
+    const pageId = decodeURIComponent(draftPageTitleMatch[2]);
+    const { title } = await readJson(request);
+    const page = await updateDraftDashboardPageTitle(dashboardId, pageId, title);
+    if (!page) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard draft page not found");
+      return;
+    }
+    if (page.error) {
+      sendError(response, page.error.status, page.error.code, page.error.message);
+      return;
+    }
+    sendJson(response, 200, page);
+    return;
+  }
+
   const draftWidgetsMatch = path.match(/^\/api\/dashboards\/([^/]+)\/draft\/pages\/([^/]+)\/widgets$/);
   if (request.method === "POST" && draftWidgetsMatch) {
     const dashboardId = decodeURIComponent(draftWidgetsMatch[1]);
@@ -439,10 +459,27 @@ async function route(request, response) {
   }
 
   const dashboardMatch = path.match(/^\/api\/dashboards\/([^/]+)$/);
-  if ((request.method === "PUT" || request.method === "PATCH") && dashboardMatch) {
+  if (request.method === "PUT" && dashboardMatch) {
     const dashboardId = decodeURIComponent(dashboardMatch[1]);
     const dashboard = { ...(await readJson(request)), id: dashboardId };
     await saveDashboard(dashboard);
+    sendJson(response, 200, { dashboard });
+    return;
+  }
+
+  if (request.method === "PATCH" && dashboardMatch) {
+    const dashboardId = decodeURIComponent(dashboardMatch[1]);
+    const body = await readJson(request);
+    const title = body.title ?? body.name;
+    const dashboard = await updateDashboardTitle(dashboardId, title);
+    if (!dashboard) {
+      sendError(response, 404, "NOT_FOUND", "Dashboard not found");
+      return;
+    }
+    if (dashboard.error) {
+      sendError(response, dashboard.error.status, dashboard.error.code, dashboard.error.message);
+      return;
+    }
     sendJson(response, 200, { dashboard });
     return;
   }

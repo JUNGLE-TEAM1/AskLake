@@ -21,6 +21,7 @@ export function DashboardRuntimeShell({
   inspector,
   isAddingPage,
   isPublishing,
+  isRenamingTitle,
   isRefreshing,
   mode,
   notice,
@@ -31,10 +32,13 @@ export function DashboardRuntimeShell({
   onOpenPublished,
   onPublishDraft,
   onRefresh,
+  onRenamePage,
+  onRenameTitle,
   onSelectPage,
   onShare,
   onToggleDatasetSidebar,
   pages,
+  renamingPageId,
   selectedPageId,
   shareLink,
   title,
@@ -46,6 +50,7 @@ export function DashboardRuntimeShell({
   inspector?: React.ReactNode;
   isAddingPage?: boolean;
   isPublishing?: boolean;
+  isRenamingTitle?: boolean;
   isRefreshing?: boolean;
   mode: "published" | "draft";
   notice?: RuntimeNotice | null;
@@ -56,10 +61,13 @@ export function DashboardRuntimeShell({
   onOpenPublished?: () => void;
   onPublishDraft?: () => void;
   onRefresh?: () => void;
+  onRenamePage?: (pageId: string, title: string) => Promise<void> | void;
+  onRenameTitle?: (title: string) => Promise<void> | void;
   onSelectPage: (pageId: string) => void;
   onShare?: () => void;
   onToggleDatasetSidebar?: () => void;
   pages: DashboardPageTab[];
+  renamingPageId?: string | null;
   selectedPageId: string | null;
   shareLink?: string | null;
   title: string;
@@ -77,6 +85,7 @@ export function DashboardRuntimeShell({
       <DashboardTopBar
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
+        isRenaming={isRenamingTitle}
         isRefreshing={isRefreshing}
         mode={mode}
         title={title}
@@ -84,6 +93,7 @@ export function DashboardRuntimeShell({
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
+        onRenameTitle={onRenameTitle}
         onShare={onShare}
       />
       {notice && (
@@ -120,9 +130,11 @@ export function DashboardRuntimeShell({
           isAddingPage={isAddingPage}
           mode={mode}
           pages={pages}
+          renamingPageId={renamingPageId}
           selectedPageId={selectedPageId}
           onAddPage={onAddPage}
           onDeletePage={onDeletePage}
+          onRenamePage={onRenamePage}
           onSelectPage={onSelectPage}
         />
       </div>

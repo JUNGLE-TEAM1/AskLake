@@ -26,11 +26,13 @@ type DashboardRuntimeState = {
   isAddingPage: boolean;
   isDatasetSidebarOpen: boolean;
   isPublishing: boolean;
+  isRenamingTitle: boolean;
   isRefreshing: boolean;
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
   publishedRuntime: DashboardRuntimeResponse | null;
+  renamingPageId: string | null;
   runtimeError: string | null;
   runtimeLoading: boolean;
   selectedDraftWidgets: DashboardRuntimeWidget[];
@@ -61,6 +63,8 @@ type DashboardRuntimeViewActions = {
   openPublished: () => void;
   publishDraft: () => void;
   refresh: () => void;
+  renamePage: (pageId: string, title: string) => Promise<void> | void;
+  renameTitle: (title: string) => Promise<void> | void;
   retryDraft: () => void;
   retryPublished: () => void;
   selectDataset: (datasetId: string) => void;
@@ -94,11 +98,13 @@ export function DashboardRuntimeView({
     isAddingPage,
     isDatasetSidebarOpen,
     isPublishing,
+    isRenamingTitle,
     isRefreshing,
     mode,
     notice,
     pages,
     publishedRuntime,
+    renamingPageId,
     runtimeError,
     runtimeLoading,
     selectedDraftWidgets,
@@ -127,6 +133,8 @@ export function DashboardRuntimeView({
     openPublished: onOpenPublished,
     publishDraft: onPublishDraft,
     refresh: onRefresh,
+    renamePage: onRenamePage,
+    renameTitle: onRenameTitle,
     retryDraft: onRetryDraft,
     retryPublished: onRetryPublished,
     selectDataset: onSelectDataset,
@@ -241,6 +249,7 @@ export function DashboardRuntimeView({
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
+        isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
         inspector={isDraftMode ? (
           <aside className="asklake-dashboard-inspector">
@@ -255,6 +264,7 @@ export function DashboardRuntimeView({
         mode={mode}
         notice={notice}
         pages={pages}
+        renamingPageId={renamingPageId}
         selectedPageId={selectedPageId}
         shareLink={shareLink}
         title={title}
@@ -265,6 +275,8 @@ export function DashboardRuntimeView({
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
+        onRenamePage={isDraftMode ? onRenamePage : undefined}
+        onRenameTitle={isDraftMode ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}
         onShare={onShare}
         onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}

@@ -368,6 +368,22 @@ async function saveDashboardPatch(dashboardId, patch) {
   return nextDashboard;
 }
 
+export async function updateDashboardTitle(dashboardId, title) {
+  const nextTitle = typeof title === "string" ? title.trim() : "";
+  if (!nextTitle) return { error: { code: "VALIDATION_ERROR", message: "Dashboard title is required", status: 400 } };
+
+  const updatedAtValue = new Date().toISOString();
+  const dashboard = await saveDashboardPatch(dashboardId, {
+    name: nextTitle,
+    title: nextTitle,
+    updated: "방금 전",
+    updatedAtValue,
+  });
+  if (!dashboard) return null;
+
+  return dashboard;
+}
+
 async function getLatestRevision(dashboardId, kind) {
   const result = await pool.query(
     `
@@ -697,6 +713,39 @@ export async function deleteDraftDashboardPage(dashboardId, pageId) {
   }
 
   return { ok: true };
+}
+
+export async function updateDraftDashboardPageTitle(dashboardId, pageId, title) {
+  const nextTitle = typeof title === "string" ? title.trim() : "";
+  if (!nextTitle) return { error: { code: "VALIDATION_ERROR", message: "Page title is required", status: 400 } };
+
+  const draftRevision = await getLatestRevision(dashboardId, "draft");
+  if (!draftRevision || !pageId) return null;
+
+  const updateResult = await pool.query(
+    `
+      UPDATE dashboard_pages
+      SET title = $1,
+          updated_at = now()
+      WHERE id = $2
+        AND revision_id = $3
+      RETURNING id, title, order_index
+    `,
+    [nextTitle, pageId, draftRevision.id],
+  );
+  const page = updateResult.rows[0];
+  if (!page) return null;
+
+  await saveDashboardPatch(dashboardId, {
+    updated: "방금 전",
+    updatedAtValue: new Date().toISOString(),
+  });
+
+  return {
+    id: page.id,
+    orderIndex: page.order_index,
+    title: page.title,
+  };
 }
 
 export async function saveDraftDashboardLayouts(dashboardId, { pageId, layouts = [] } = {}) {
