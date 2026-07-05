@@ -28,6 +28,16 @@ def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
     return job_to_schema(db, job)
 
 
+def get_job_by_dataset_id(db: Session, dataset_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    return db.scalar(select(ETLJobModel).where(ETLJobModel.dataset_id == dataset_id))
+
+
+def get_job_by_target(db: Session, target: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    return db.scalar(select(ETLJobModel).where(ETLJobModel.target == target))
+
+
 def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
     return db.get(CatalogDatasetModel, dataset_id)
@@ -67,6 +77,37 @@ def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
     db.commit()
     db.refresh(dataset)
     return dataset_to_schema(dataset)
+
+
+def save_command_result(
+    db: Session,
+    job: ETLJobModel,
+    run: ETLRunModel | None = None,
+    dataset: CatalogDatasetModel | None = None,
+) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
+    ensure_schema(db)
+    merged_dataset = db.merge(dataset) if dataset is not None else None
+    if run is not None:
+        db.add(run)
+    db.add(job)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(job)
+    if run is not None:
+        db.refresh(run)
+    if merged_dataset is not None:
+        db.refresh(merged_dataset)
+
+    return (
+        job_to_schema(db, job),
+        run_to_schema(run) if run is not None else None,
+        dataset_to_schema(merged_dataset) if merged_dataset is not None else None,
+    )
 
 
 def create_job(db: Session, job: ETLJobModel) -> JobRowData:

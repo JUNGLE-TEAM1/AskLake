@@ -33,10 +33,15 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     validate_create_request(request)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
 
-    if etl_repository.get_dataset_by_id(db, dataset_id) or etl_repository.get_dataset_by_name(db, request.target_dataset):
+    if (
+        etl_repository.get_dataset_by_id(db, dataset_id)
+        or etl_repository.get_dataset_by_name(db, request.target_dataset)
+        or etl_repository.get_job_by_dataset_id(db, dataset_id)
+        or etl_repository.get_job_by_target(db, request.target_dataset)
+    ):
         raise ApiError(
             ErrorCode.CONFLICT,
-            f"Dataset already exists: {request.target_dataset}",
+            f"Dataset already exists or is pending run: {request.target_dataset}",
             status.HTTP_409_CONFLICT,
         )
 
@@ -139,26 +144,29 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
 
     run_schema = None
     dataset_schema = None
+    run_model = None
+    dataset_model = None
     if command in {"run", "retry"}:
         apply_job_command(job, command)
         spark_result = run_spark_job(job, command, stable_id("run", f"{job.id}:{command}:{iso_now()}"))
         run_model = run_from_spark_result(job, spark_result)
-        run_schema = etl_repository.create_run(db, run_model)
+        run_schema = etl_repository.run_to_schema(run_model)
         finalize_job_from_spark_result(job, command, spark_result)
         job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), spark_result)
-        job.stats = stats_from_runs(job, etl_repository.list_runs_for_job(db, job.id))
+        job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
         if spark_result.get("status") == "success":
-            dataset_schema = etl_repository.save_dataset(db, dataset_from_spark_result(job, spark_result))
+            dataset_model = dataset_from_spark_result(job, spark_result)
     elif command == "cancel":
         run_model = run_from_command(job, command)
-        run_schema = etl_repository.create_run(db, run_model)
+        run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
         job.dag_steps = dag_steps_from_command(job, command, run_schema.model_dump(by_alias=True))
-        job.stats = stats_from_runs(job, etl_repository.list_runs_for_job(db, job.id))
+        job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
     else:
         apply_job_command(job, command)
 
-    saved_job = etl_repository.save_job(db, job)
+    saved_job, persisted_run, dataset_schema = etl_repository.save_command_result(db, job, run_model, dataset_model)
+    run_schema = persisted_run or run_schema
 
     return JobCommandResponse(
         action=action_by_command[command],

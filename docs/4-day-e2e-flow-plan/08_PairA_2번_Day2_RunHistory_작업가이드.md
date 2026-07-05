@@ -103,4 +103,3 @@ npm run build
 | handoff | `DAG 보기`가 선택 Run을 먼저 저장하는지 |
 | 범위 | PR1/PR3/PR4 책임을 PR2에서 침범하지 않았는지 |
 | 검증 | `npm run build`와 브라우저 클릭 흐름이 통과하는지 |
-

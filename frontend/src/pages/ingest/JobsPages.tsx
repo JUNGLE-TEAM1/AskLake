@@ -51,7 +51,17 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+type CommandPendingByJobId = Partial<Record<string, JobCommand>>;
+
+function commandPendingLabel(command?: JobCommand): string {
+  if (command === "run" || command === "retry") return "실행 요청 중";
+  if (command === "pause") return "일시정지 요청 중";
+  if (command === "cancel") return "취소 요청 중";
+  return "처리 중";
+}
+
 export function JobsLandingPage({
+  commandPendingByJobId,
   jobs,
   onAction,
   onCommand,
@@ -60,6 +70,7 @@ export function JobsLandingPage({
   onDetail,
   onRuns,
 }: {
+  commandPendingByJobId?: CommandPendingByJobId;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -116,6 +127,7 @@ export function JobsLandingPage({
               onDetail={() => onDetail(job)}
               onEdit={() => onCommand(job, "edit")}
               onRun={() => onCommand(job, job.status === "failed" ? "retry" : "run")}
+              pendingCommand={commandPendingByJobId?.[job.id]}
             />
           ))}
           {jobs.length > 0 && (
@@ -155,7 +167,7 @@ function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void
         <Search size={16} />
         <span>작업명, 소스명, 타깃 데이터셋명 검색</span>
       </div>
-      {["상태", "소스", "Owner", "태그"].map((filter) => (
+      {["상태", "소스", "소유자", "태그"].map((filter) => (
         <button className="filter-chip jobs-filter" key={filter} type="button" onClick={() => onFilter(filter)}>{filter} ▾</button>
       ))}
       <button className="ghost-link reset-filter" type="button" onClick={onReset}>↺ 필터 초기화</button>
@@ -170,6 +182,7 @@ function JobRow({
   onDetail,
   onEdit,
   onRun,
+  pendingCommand,
 }: {
   job: JobRowData;
   onCancel: () => void;
@@ -177,8 +190,10 @@ function JobRow({
   onDetail: () => void;
   onEdit: () => void;
   onRun: () => void;
+  pendingCommand?: JobCommand;
 }) {
-  const actionLabel = job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
+  const isCommandPending = Boolean(pendingCommand);
+  const actionLabel = isCommandPending ? commandPendingLabel(pendingCommand) : job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
   const lastRunLabel = formatRunTimestamp(job.lastRun);
   const tertiaryLabel = job.status === "running" ? "취소" : "수정";
   const statusClass = jobStatusMeta[job.status].className;
@@ -207,8 +222,8 @@ function JobRow({
         </dl>
         <div className="job-row-actions">
           <button className="job-action-button" type="button" onClick={onDetail}>상세</button>
-          <button className="job-action-button primary" type="button" onClick={job.status === "running" ? onDag : onRun}>{actionLabel}</button>
-          <button className={job.status === "running" ? "job-action-button danger" : "job-action-button"} type="button" onClick={job.status === "running" ? onCancel : onEdit}>{tertiaryLabel}</button>
+          <button aria-busy={isCommandPending} className="job-action-button primary" disabled={isCommandPending} type="button" onClick={job.status === "running" ? onDag : onRun}>{actionLabel}</button>
+          <button className={job.status === "running" ? "job-action-button danger" : "job-action-button"} disabled={isCommandPending} type="button" onClick={job.status === "running" ? onCancel : onEdit}>{tertiaryLabel}</button>
         </div>
       </div>
     </article>
@@ -271,11 +286,11 @@ function schemaRowsForJob(job: JobRowData, stats: JobStats): SchemaDetailRow[] {
   const issue = job.status === "failed" ? job.lastState : job.status === "running" ? "처리 중" : "정상";
 
   return [
-    ["1", "source", sourcePath, "raw_payload", "String", issue],
-    ["2", "schema columns", stats.schemaColumns, "inferred_schema", "JSON", issue],
-    ["3", "input rows", stats.inputRows, "source_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
-    ["4", "output rows", stats.outputRows, "target_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
-    ["5", "sample scope", stats.sampleScope, "sample_window", "String", "생성 시점 metadata"],
+    ["1", "소스", sourcePath, "raw_payload", "String", issue],
+    ["2", "스키마 컬럼", stats.schemaColumns, "inferred_schema", "JSON", issue],
+    ["3", "입력 행", stats.inputRows, "source_rows", "Integer", run?.status === "failed" ? "실패 실행 기준" : "최근 실행 기준"],
+    ["4", "출력 행", stats.outputRows, "target_rows", "Integer", run?.status === "failed" ? "실패 실행 기준" : "최근 실행 기준"],
+    ["5", "샘플 범위", stats.sampleScope, "sample_window", "String", "생성 시점 메타데이터"],
   ];
 }
 
@@ -296,7 +311,7 @@ function ruleRowsForJob(job: JobRowData): RuleDetailRow[] {
   return [
     ["소스 검증", job.source, "백엔드 커넥터 결과", state],
     ["스키마 추론", stage, "추론된 메타데이터", state],
-    ["Create handoff", job.target, "job/dataset response", state],
+    ["생성 결과 전달", job.target, "Job / 데이터셋 응답", state],
   ];
 }
 
@@ -328,6 +343,7 @@ function formatRunTimestamp(value: string) {
 
 function JobDetailHeader({
   activeTab,
+  commandPending,
   job,
   onAction,
   onCommand,
@@ -337,6 +353,7 @@ function JobDetailHeader({
   onRuns,
 }: {
   activeTab: "detail" | "runs" | "dag";
+  commandPending?: JobCommand;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -345,6 +362,9 @@ function JobDetailHeader({
   onEdit: () => void;
   onRuns: () => void;
 }) {
+  const isCommandPending = Boolean(commandPending);
+  const pendingLabel = commandPendingLabel(commandPending);
+
   return (
     <header className="job-detail-header">
       <button className="job-detail-breadcrumb" title={`수집/처리 > 작업 목록 > ${job.name}`} type="button" onClick={onDetail}>수집/처리 &gt; 작업 목록 &gt; {job.name}</button>
@@ -353,17 +373,17 @@ function JobDetailHeader({
           <h1 title={job.name}>{job.name}</h1>
           <div className="job-detail-meta">
             <StatusPill status={job.status} />
-            <span className="owner-chip">Owner: {job.owner}</span>
+            <span className="owner-chip">소유자: {job.owner}</span>
             <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
           </div>
         </div>
         <div className="job-detail-actions">
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "edit")}>수정</button>
-          <button className="job-action-button primary" type="button" onClick={() => onCommand(job, "run")}>즉시 실행</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "retry")}>재실행</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "pause")}>일시정지</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "cancel")}>취소</button>
-          <button className="job-action-button danger" type="button" onClick={() => onCommand(job, "delete")}>삭제</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "edit")}>수정</button>
+          <button aria-busy={isCommandPending} className="job-action-button primary" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "run")}>{isCommandPending ? pendingLabel : "즉시 실행"}</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "retry")}>재실행</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "pause")}>일시정지</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "cancel")}>취소</button>
+          <button className="job-action-button danger" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "delete")}>삭제</button>
         </div>
       </div>
       <nav className="job-detail-tabs" aria-label="작업 상세 탭">
@@ -376,6 +396,7 @@ function JobDetailHeader({
 }
 
 export function JobDetailPage({
+  commandPending,
   job,
   onAction,
   onBack,
@@ -384,6 +405,7 @@ export function JobDetailPage({
   onEdit,
   onRuns,
 }: {
+  commandPending?: JobCommand;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -423,7 +445,7 @@ export function JobDetailPage({
 
   return (
     <div className="job-detail-page">
-      <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader activeTab="detail" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <DetailStatusStrip body={stripBody} title={stripTitle} tone={stripTone} />
 
@@ -446,10 +468,10 @@ export function JobDetailPage({
             <h3>작업 요약</h3>
             <div className="detail-kv-grid summary-kv">
               <Field label="Job ID" value={job.id} />
-              <Field label="Owner" value={job.owner} />
+              <Field label="소유자" value={job.owner} />
               <Field label="상태" value={statusText} />
               <Field label="소스" value={job.source} />
-              <Field label="Target" value={job.target} />
+              <Field label="타깃" value={job.target} />
               <Field label="최근 상태" value={job.lastState} />
             </div>
             <div className="detail-meta-line">
@@ -489,17 +511,17 @@ export function JobDetailPage({
               <Field label="소스 유형" value={sourceType} />
               <Field label="소스 경로" value={sourcePath} />
               <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료"} />
-              <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "MinIO/S3 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
-              <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
+              <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "MinIO/S3 액세스 키" : sourceType.includes("Kafka") ? "백엔드 Kafka 커넥터" : "백엔드 소스 커넥터"} />
+              <Field label="읽기 방식" value={job.status === "running" ? "스트리밍" : "배치 스캔"} />
             </div>
           </article>
           <article className="job-detail-card">
-            <h3>Target 저장 설정</h3>
+            <h3>타깃 저장 설정</h3>
             <div className="detail-kv-grid">
               <Field label="타깃 데이터셋" value={job.target} />
-              <Field label="Lake 경로" value={physicalOutputPath} />
+              <Field label="데이터 레이크 경로" value={physicalOutputPath} />
               <Field label="저장 포맷" value="Parquet" />
-              <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
+              <Field label="쓰기 모드" value={job.status === "running" ? "추가 스트림" : "추가 후 압축"} />
               <Field label="품질 체크" value={job.status === "failed" ? "변환 전 중단" : "행 수 / 스키마 검사"} />
             </div>
             <div className="detail-meta-line">
@@ -546,9 +568,9 @@ export function JobDetailPage({
           <table className="schema-table detail-table">
             <thead>
               <tr>
-                <th>Rule</th>
+                <th>규칙</th>
                 <th>대상 필드</th>
-                <th>Config</th>
+                <th>설정</th>
                 <th>오류 시</th>
               </tr>
             </thead>
@@ -565,24 +587,24 @@ export function JobDetailPage({
       {detailPane === "schedule" && (
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
-          <h2>Schedule / Permission</h2>
+          <h2>스케줄 / 권한</h2>
         </div>
         <div className="job-detail-card-grid two-up">
           <article className="job-detail-card">
-            <h3>Schedule</h3>
+            <h3>스케줄</h3>
             <div className="detail-kv-grid">
               <Field label="실행 유형" value={job.status === "running" ? "실시간 수집" : "반복 실행"} />
               <Field label="주기" value={job.schedule} />
               <Field label="다음 실행" value={job.nextRun} />
-              <Field label="재시도 정책" value={job.status === "failed" ? "3회 · backoff 10m" : "3회 · backoff 5m"} />
+              <Field label="재시도 정책" value={job.status === "failed" ? "3회 · 10분 간격" : "3회 · 5분 간격"} />
             </div>
           </article>
           <article className="job-detail-card">
-            <h3>Permission</h3>
+            <h3>권한</h3>
             <div className="detail-kv-grid">
-              <Field label="Owner" value={job.owner} />
+              <Field label="소유자" value={job.owner} />
               <Field label="접근 그룹" value="Data Platform, Analytics" />
-              <Field label="canRun" value={job.status === "failed" ? "Owner 승인 후 가능" : "true"} />
+              <Field label="실행 권한" value={job.status === "failed" ? "소유자 승인 후 가능" : "가능"} />
               <Field label="승인 상태" value={job.status === "failed" ? "재실행 승인 필요" : "승인됨"} />
             </div>
           </article>
@@ -594,6 +616,7 @@ export function JobDetailPage({
 }
 
 export function JobRunsPage({
+  commandPending,
   job,
   onAction,
   onBack,
@@ -603,6 +626,7 @@ export function JobRunsPage({
   runs,
   selectedRunId,
 }: {
+  commandPending?: JobCommand;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -651,7 +675,7 @@ export function JobRunsPage({
 
   return (
     <div className="job-detail-page job-runs-page">
-      <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
+      <JobDetailHeader activeTab="runs" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
 
       <section className="runs-body-content">
         <div className="runs-filter-bar">
@@ -670,7 +694,7 @@ export function JobRunsPage({
             <table className="runs-table">
             <thead>
               <tr>
-                <th>Run ID</th>
+                <th>실행 ID</th>
                 <th>상태</th>
                 <th>시작</th>
                 <th>종료</th>
@@ -770,21 +794,27 @@ function RunSummaryMetric({ label, value }: { label: string; value: string }) {
 }
 
 export function JobDagPage({
+  commandPending,
   evidence,
   job,
   onAction,
   onBack,
   onCommand,
   onEdit,
+  onRunSelect,
   onRuns,
+  selectedRunId,
 }: {
+  commandPending?: JobCommand;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onEdit: () => void;
+  onRunSelect: (jobId: string, runId: string) => void;
   onRuns: () => void;
+  selectedRunId?: string;
 }) {
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const [dagFullscreenOpen, setDagFullscreenOpen] = useState(false);
@@ -793,12 +823,13 @@ export function JobDagPage({
   const [dagDrag, setDagDrag] = useState<{ originX: number; originY: number; pointerId: number; startX: number; startY: number } | null>(null);
   const [selectedDagStepId, setSelectedDagStepId] = useState<string | undefined>();
   const [runSelectorOpen, setRunSelectorOpen] = useState(false);
-  const [localRunId, setLocalRunId] = useState<string | undefined>();
   const dagViewportRef = useRef<HTMLDivElement | null>(null);
   const dagFullscreenViewportRef = useRef<HTMLDivElement | null>(null);
-  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
-  const runHistory = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
-  const currentRun = runHistory.find((run) => run.runId === localRunId) ?? runHistory[0] ?? {
+  const runSelectorRef = useRef<HTMLDivElement | null>(null);
+  const dagSteps = evidence ? evidence.dagSteps : job.dagSteps ?? [];
+  const runHistory = evidence ? evidence.runs : job.runHistory ?? [];
+  const effectiveSelectedRunId = selectedRunId ?? runHistory[0]?.runId;
+  const currentRun = runHistory.find((run) => run.runId === effectiveSelectedRunId) ?? runHistory[0] ?? {
     duration: "-",
     endedAt: "-",
     errorSummary: "-",
@@ -811,10 +842,8 @@ export function JobDagPage({
   };
 
   useEffect(() => {
-    if (runHistory.length > 0 && localRunId && !runHistory.some((run) => run.runId === localRunId)) {
-      setLocalRunId(undefined);
-    }
-  }, [localRunId, runHistory]);
+    if (!selectedRunId && runHistory[0]?.runId) onRunSelect(job.id, runHistory[0].runId);
+  }, [job.id, onRunSelect, runHistory, selectedRunId]);
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const selectedDagStep = selectedDagStepId ? dagSteps.find((step) => step.id === selectedDagStepId) : undefined;
@@ -850,8 +879,18 @@ export function JobDagPage({
     setRunSelectorOpen((open) => !open);
     onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
   };
+  const handleRunSelectorKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Escape") {
+      setRunSelectorOpen(false);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setRunSelectorOpen(true);
+    }
+  };
   const selectRunForDag = (run: JobRunSummary) => {
-    setLocalRunId(run.runId);
+    onRunSelect(job.id, run.runId);
     setRunSelectorOpen(false);
     setSelectedDagStepId(undefined);
     onAction("etl.dag.run_selected", `/api/etl/jobs/${job.id}/runs/${run.runId}/dag`, run.runId);
@@ -902,10 +941,19 @@ export function JobDagPage({
     return () => viewports.forEach((viewport) => viewport.removeEventListener("wheel", handleWheel));
   }, [dagFullscreenOpen, job.id, onAction]);
 
+  useEffect(() => {
+    if (!runSelectorOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!runSelectorRef.current?.contains(event.target as Node)) setRunSelectorOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [runSelectorOpen]);
+
   const dagCanvas = (
     <div className="dag-canvas-expanded" style={{ transform: `translate(${dagPan.x}px, ${dagPan.y}px) scale(${dagScale})` }}>
       <div className="dag-context-row">
-        <strong>Run context</strong>
+        <strong>실행 컨텍스트</strong>
         <span>현재 Run의 단계별 상태와 처리 흐름을 확인합니다.</span>
         <div className="dag-legend">
           <DagStatePill status="success" />
@@ -919,7 +967,7 @@ export function JobDagPage({
           <div className="dag-empty-state">
             <LayoutGrid size={22} />
             <strong>표시할 DAG 단계가 없습니다.</strong>
-            <span>작업을 실행하면 같은 runId 기준으로 단계 흐름이 표시됩니다.</span>
+            <span>선택한 실행 ID에 연결된 단계 기록이 없으면 비어 있게 표시됩니다.</span>
           </div>
         )}
         {dagSteps.map((step, index) => (
@@ -934,22 +982,22 @@ export function JobDagPage({
 
   return (
     <div className="job-detail-page job-dag-page">
-      <JobDetailHeader activeTab="dag" job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader activeTab="dag" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <section className="dag-body-content">
-        <div className="dag-run-select-wrap">
-          <button aria-expanded={runSelectorOpen} className="dag-run-select" title={`${currentRun.runId} · ${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`} type="button" onClick={toggleRunSelector}>
+        <div className="dag-run-select-wrap" ref={runSelectorRef}>
+          <button aria-controls="dag-run-menu" aria-expanded={runSelectorOpen} aria-haspopup="listbox" className="dag-run-select" title={`${currentRun.runId} · ${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`} type="button" onClick={toggleRunSelector} onKeyDown={handleRunSelectorKeyDown}>
             {currentRun.runId} · {formatRunTimestamp(currentRun.startedAt)} · {runStatusMeta[currentRun.status].label}
             <span>▾</span>
           </button>
           {runSelectorOpen && (
-            <div className="dag-run-menu" role="listbox" aria-label="DAG Run 선택">
-              {runHistory.length === 0 && <div className="dag-run-menu-empty">선택할 Run이 없습니다.</div>}
+            <div className="dag-run-menu" id="dag-run-menu" role="listbox" aria-label="DAG 실행 선택">
+              {runHistory.length === 0 && <div className="dag-run-menu-empty">선택할 실행이 없습니다.</div>}
               {runHistory.map((run) => (
                 <button aria-selected={run.runId === currentRun.runId} key={run.runId} role="option" type="button" onClick={() => selectRunForDag(run)}>
                   <strong>{run.runId}</strong>
                   <span>{formatRunTimestamp(run.startedAt)} · {runStatusMeta[run.status].label}</span>
-                  <em>{run.outputRows} rows</em>
+                  <em>{run.outputRows} 행</em>
                 </button>
               ))}
             </div>
@@ -959,7 +1007,7 @@ export function JobDagPage({
         <div className="dag-summary-grid">
           <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
           <DagSummaryCard label="소요 시간" value={currentRun.duration} />
-          <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
+          <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} 단계`} />
           <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
           <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
         </div>
@@ -1010,7 +1058,7 @@ export function JobDagPage({
           <section>
             <div className="dag-fullscreen-header">
               <div>
-                <span>DAG FULLSCREEN</span>
+                <span>DAG 전체화면</span>
                 <h2>실행 DAG / 단계 흐름</h2>
               </div>
               <button type="button" onClick={() => setDagFullscreenOpen(false)}>닫기</button>
@@ -1056,7 +1104,7 @@ function buildDagStepDetail(step: JobDagStep, run: JobRunSummary, outputPath: st
   const stepDetails = (step.details ?? []).filter(([label]) => !["출력 경로"].includes(label));
   const baseDetails: Array<[string, string]> = [
     ["상태", statusLabel],
-    ["Run ID", run.runId],
+    ["실행 ID", run.runId],
     ["처리 행", `${run.inputRows} -> ${run.outputRows}`],
   ];
   const details = uniqueDetailRows([...stepDetails.slice(0, 2), ...baseDetails]).slice(0, 5);
@@ -1068,7 +1116,7 @@ function buildDagStepDetail(step: JobDagStep, run: JobRunSummary, outputPath: st
     run.outputPath && run.outputPath !== "-" ? `출력 경로: ${run.outputPath}` : "",
   ].filter(Boolean);
   const logs = step.logs?.length ? step.logs : fallbackLogs;
-  const error = step.status === "failed" && run.errorSummary !== "-" ? run.errorSummary : step.note;
+  const error = step.status === "failed" ? (run.errorSummary !== "-" ? run.errorSummary : step.note) : undefined;
 
   return { details, error, logs, statusLabel };
 }

@@ -77,7 +77,7 @@ try {
     validationType: "Not Null",
   }];
 
-  const created = await post("/api/etl/jobs", {
+  const createRequest = {
     id: "pair_a_verify",
     jobName: "pair_a_verify_pipeline",
     owner: "data-team-01",
@@ -103,10 +103,12 @@ try {
     targetDataset: "pair_a_verify_gold",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
-  });
+  };
+  const created = await post("/api/etl/jobs", createRequest);
   assert(created.job && created.catalogTarget, "Create job should return { job, catalogTarget }.");
   assert(created.job.transformSteps?.length === 1, "Created job should preserve transform steps.");
   assert(created.job.qualityRules?.length === 1, "Created job should preserve quality rules.");
+  await assertPostFails("/api/etl/jobs", createRequest, 409, "Duplicate pending target dataset should be rejected.");
 
   const jobs = await get("/api/etl/jobs");
   const datasets = await get("/api/catalog/datasets");
@@ -147,6 +149,18 @@ async function post(path, body) {
     method: "POST",
   });
   return readResponse(response);
+}
+
+async function assertPostFails(path, body, status, message) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.status !== status) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(`${message} Expected ${status}, got ${response.status}: ${JSON.stringify(payload)}`);
+  }
 }
 
 async function readResponse(response) {

@@ -13,6 +13,9 @@ type JobRunStateMaps = {
   selectedRunIdByJobId: SelectedRunIdByJobId;
 };
 
+type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
+type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
+
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
   permission: {
@@ -83,7 +86,7 @@ const emptySelectedDataset: CatalogDataset = {
   owner: "-",
   quality: "-",
   rag: false,
-  rows: "0 rows",
+  rows: "0행",
   sampleRows: [],
   schema: [],
   size: "-",
@@ -125,6 +128,23 @@ function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSumm
   return [run, ...runs.filter((item) => item.runId !== run.runId)];
 }
 
+function replaceTempRunByRunId(runs: JobRunSummary[], tempRunId: string, run: JobRunSummary): JobRunSummary[] {
+  return [run, ...runs.filter((item) => item.runId !== tempRunId && item.runId !== run.runId)];
+}
+
+function withoutRecordKey<T>(record: Record<string, T>, key?: string | null): Record<string, T> {
+  if (!key || !(key in record)) return record;
+  return Object.fromEntries(Object.entries(record).filter(([recordKey]) => recordKey !== key)) as Record<string, T>;
+}
+
+function restoreRecordEntry<T>(record: Record<string, T>, key: string, value: T | undefined): Record<string, T> {
+  if (value === undefined) return withoutRecordKey(record, key);
+  return {
+    ...record,
+    [key]: value,
+  };
+}
+
 function uniqueRunsByRunId(runs: JobRunSummary[]): JobRunSummary[] {
   const seenRunIds = new Set<string>();
   return runs.filter((run) => {
@@ -148,7 +168,10 @@ function buildJobExecutionEvidence(
 ): Record<string, JobExecutionEvidence> {
   return Object.fromEntries(
     Object.entries(runsByJobId).map(([jobId, runs]) => {
-      const selectedRunId = selectedRunIdByJobId[jobId] ?? runs[0]?.runId;
+      const requestedRunId = selectedRunIdByJobId[jobId];
+      const selectedRunId = requestedRunId && runs.some((run) => run.runId === requestedRunId)
+        ? requestedRunId
+        : runs[0]?.runId;
       return [
         jobId,
         {
@@ -181,6 +204,49 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
   return { dagStepsByRunId, runsByJobId, selectedRunIdByJobId };
 }
 
+function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry" {
+  return command === "run" || command === "retry";
+}
+
+function commandSuccessMessage(command: ServerJobCommand): string {
+  if (command === "run") return "작업 실행 요청이 접수되었습니다.";
+  if (command === "retry") return "작업 재실행 요청이 접수되었습니다.";
+  if (command === "pause") return "작업 일시정지 요청이 접수되었습니다.";
+  return "작업 취소 요청이 접수되었습니다.";
+}
+
+function buildClientRunId(jobId: string): string {
+  return `client:${jobId}:${Date.now()}`;
+}
+
+function buildOptimisticRun(runId: string): JobRunSummary {
+  return {
+    duration: "-",
+    endedAt: "-",
+    errorSummary: "",
+    failedStage: "-",
+    inputRows: "-",
+    outputRows: "-",
+    runId,
+    startedAt: new Date().toISOString(),
+    status: "running",
+  };
+}
+
+function buildOptimisticJob(job: JobRowData): JobRowData {
+  return normalizeJobRow({
+    ...job,
+    lastRun: "현재 실행 중",
+    lastState: "실행 요청 처리 중",
+    nextRun: "-",
+    progress: {
+      label: "실행 요청 처리 중",
+      value: 5,
+    },
+    status: "running",
+  });
+}
+
 export function useAskLakeData({
   onFlowChange,
   showToast,
@@ -198,9 +264,11 @@ export function useAskLakeData({
   const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
   const [selectedRunIdByJobId, setSelectedRunIdByJobId] = useState<SelectedRunIdByJobId>({});
   const [dagStepsByRunId, setDagStepsByRunId] = useState<DagStepsByRunId>({});
+  const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const createPendingRef = useRef(false);
+  const commandPendingRef = useRef<Set<string>>(new Set());
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
@@ -303,12 +371,57 @@ export function useAskLakeData({
     if (command === "delete") {
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
+      const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
       setJobs(remaining);
       setSelectedJob(remaining[0] ?? emptySelectedJob);
+      setRunsByJobId((state) => withoutRecordKey(state, job.id));
+      setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
+      setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
+      commandPendingRef.current.delete(job.id);
+      setCommandPendingByJobId((state) => {
+        const { [job.id]: _pendingCommand, ...rest } = state;
+        return rest;
+      });
       onFlowChange("jobs");
       return;
     }
 
+    if (commandPendingRef.current.has(job.id)) {
+      showToast("이미 작업 명령이 처리 중입니다.", "info");
+      return;
+    }
+
+    const previousJob = jobs.find((item) => item.id === job.id) ?? job;
+    const previousRunsForJob = runsByJobId[job.id];
+    const previousSelectedRunId = selectedRunIdByJobId[job.id];
+    const tempRunId = isOptimisticRunCommand(command) ? buildClientRunId(job.id) : null;
+    const rollbackOptimisticRun = () => {
+      setJobs((items) => items.map((item) => (item.id === job.id ? previousJob : item)));
+      setSelectedJob((current) => (current.id === job.id ? previousJob : current));
+      setRunsByJobId((state) => restoreRecordEntry(state, job.id, previousRunsForJob));
+      setSelectedRunIdByJobId((state) => restoreRecordEntry(state, job.id, previousSelectedRunId));
+      setDagStepsByRunId((state) => withoutRecordKey(state, tempRunId));
+    };
+
+    if (tempRunId) {
+      const optimisticRun = buildOptimisticRun(tempRunId);
+      const optimisticJob = buildOptimisticJob(job);
+      updateJobState(job.id, () => optimisticJob);
+      setRunsByJobId((state) => ({
+        ...state,
+        [job.id]: upsertRunByRunId(state[job.id] ?? [], optimisticRun),
+      }));
+      setSelectedRunIdByJobId((state) => ({
+        ...state,
+        [job.id]: tempRunId,
+      }));
+    }
+
+    commandPendingRef.current.add(job.id);
+    setCommandPendingByJobId((state) => ({
+      ...state,
+      [job.id]: command,
+    }));
     setApiPending(true);
     try {
       const { action, apiPath, dagSteps, dataset, job: updatedJob, run } = await runJobCommand(job, command);
@@ -317,28 +430,44 @@ export function useAskLakeData({
       if (run) {
         setRunsByJobId((state) => ({
           ...state,
-          [job.id]: upsertRunByRunId(state[job.id] ?? [], run),
+          [job.id]: tempRunId ? replaceTempRunByRunId(state[job.id] ?? [], tempRunId, run) : upsertRunByRunId(state[job.id] ?? [], run),
         }));
         setSelectedRunIdByJobId((state) => ({
           ...state,
           [job.id]: run.runId,
         }));
-        if (dagSteps) {
-          setDagStepsByRunId((state) => ({
-            ...state,
-            [run.runId]: dagSteps,
-          }));
-        }
+        setDagStepsByRunId((state) => {
+          const rest = withoutRecordKey(state, tempRunId);
+          return dagSteps
+            ? {
+                ...rest,
+                [run.runId]: dagSteps,
+              }
+            : rest;
+        });
+      } else if (tempRunId) {
+        rollbackOptimisticRun();
+        showToast("실행 응답에 Run 정보가 없어 상태를 되돌렸습니다.", "info");
+        return;
       }
       if (dataset) {
         const normalizedDataset = normalizeDatasetRow(dataset);
         setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
+      showToast(commandSuccessMessage(command));
     } catch {
+      if (tempRunId) {
+        rollbackOptimisticRun();
+      }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");
     } finally {
+      commandPendingRef.current.delete(job.id);
+      setCommandPendingByJobId((state) => {
+        const { [job.id]: _pendingCommand, ...rest } = state;
+        return rest;
+      });
       setApiPending(false);
     }
   };
@@ -363,6 +492,7 @@ export function useAskLakeData({
 
   return {
     apiPending,
+    commandPendingByJobId,
     createPipeline,
     datasets,
     draftPipeline,

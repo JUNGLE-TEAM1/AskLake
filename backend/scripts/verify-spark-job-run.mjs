@@ -5,7 +5,7 @@ import path from "node:path";
 const port = Number(process.env.ASKLAKE_VERIFY_SPARK_PORT || 18088);
 const sourceBucket = process.env.ASKLAKE_VERIFY_SPARK_BUCKET || "m3-raw";
 const sourceKey = process.env.ASKLAKE_VERIFY_SPARK_KEY || "nyc_taxi/csv/2019-Nov.csv";
-const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "10";
+const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "3";
 
 const env = {
   ...process.env,

@@ -23,10 +23,12 @@ export function createPipeline(request) {
   const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
   const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobs.length + 1).padStart(3, "0")}`;
   const datasetId = `ds_${normalizeColumnName(request.targetDataset)}`;
+  assertTargetDatasetAvailable(datasetId, request.targetDataset);
 
   const job = {
     dagSteps: initialDagSteps(request, sourceMetrics),
     id: jobId,
+    datasetId,
     lastRun: "생성 후 미실행",
     lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
@@ -66,6 +68,18 @@ export function createPipeline(request) {
     },
     job,
   };
+}
+
+function assertTargetDatasetAvailable(datasetId, targetDataset) {
+  const normalizedTarget = normalizeColumnName(targetDataset);
+  const datasetExists = datasets.some((dataset) => dataset.id === datasetId || normalizeColumnName(dataset.name) === normalizedTarget);
+  const pendingJobExists = jobs.some((job) => job.datasetId === datasetId || normalizeColumnName(job.target) === normalizedTarget);
+  if (datasetExists || pendingJobExists) {
+    const error = new Error(`타깃 데이터셋이 이미 생성되었거나 실행 대기 중입니다: ${targetDataset}`);
+    error.status = 409;
+    error.code = "CREATE_PIPELINE_CONFLICT";
+    throw error;
+  }
 }
 
 export function commandJob(jobId, command) {
