@@ -26,6 +26,37 @@ const defaultLayoutByType = {
   table: { x: 0, y: 10, w: 9, h: 5, minW: 4, minH: 3 },
 };
 
+const seedRuntimeDatasetId = "gold_logistics_cost_overview";
+
+const seedRuntimeRows = [
+  { carrier: "CJ Logistics", month: "2026-01", region: "KR", total_cost: 148000, transport_cost: 112000, warehouse_cost: 36000 },
+  { carrier: "Hanjin", month: "2026-02", region: "JP", total_cost: 126000, transport_cost: 91000, warehouse_cost: 35000 },
+  { carrier: "DHL", month: "2026-03", region: "SG", total_cost: 174000, transport_cost: 132000, warehouse_cost: 42000 },
+  { carrier: "FedEx", month: "2026-04", region: "US", total_cost: 158000, transport_cost: 121000, warehouse_cost: 37000 },
+  { carrier: "UPS", month: "2026-05", region: "EU", total_cost: 139000, transport_cost: 102000, warehouse_cost: 37000 },
+];
+
+const seedRuntimeConfigByType = {
+  bar_chart: { aggregation: "sum", color: "blue", xKey: "region", yKey: "total_cost" },
+  donut_chart: { aggregation: "sum", color: "amber", labelKey: "carrier", valueKey: "total_cost" },
+  line_chart: { aggregation: "sum", color: "green", dateUnit: "month", xKey: "month", yKey: "total_cost" },
+  metric: { aggregation: "sum", color: "blue", format: "currency", valueKey: "total_cost" },
+  table: {
+    columns: ["month", "region", "carrier", "transport_cost", "warehouse_cost", "total_cost"],
+    limit: 100,
+    sortDirection: "asc",
+    sortKey: "month",
+  },
+};
+
+const seedRuntimeTitleByType = {
+  bar_chart: "지역별 물류비",
+  donut_chart: "운송사별 물류비 비중",
+  line_chart: "월별 물류비 추이",
+  metric: "총 물류비",
+  table: "물류비 상세 테이블",
+};
+
 function makeId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
 }
@@ -448,26 +479,55 @@ async function createWidget({ pageId, type, title = null, layout, config = {}, d
 }
 
 async function seedWidgetsForPage(pageId, dashboard) {
-  const countResult = await pool.query("SELECT count(*)::int AS count FROM dashboard_widgets WHERE page_id = $1", [pageId]);
-  if ((countResult.rows[0]?.count ?? 0) > 0) return;
-
   const widgetTypes = Array.isArray(dashboard.widgets) && dashboard.widgets.length ? dashboard.widgets : [];
+  if (!widgetTypes.length) return;
+
+  const countResult = await pool.query(
+    `
+      SELECT
+        count(*)::int AS count,
+        count(*) FILTER (
+          WHERE config_json = '{}'::jsonb
+             OR dataset_id IS NULL
+             OR dataset_id NOT LIKE 'gold_%'
+        )::int AS legacy_count
+      FROM dashboard_widgets
+      WHERE page_id = $1
+    `,
+    [pageId],
+  );
+  const existingCount = countResult.rows[0]?.count ?? 0;
+  const legacyCount = countResult.rows[0]?.legacy_count ?? 0;
+  if (existingCount > 0 && legacyCount === 0) return;
+
+  await pool.query("DELETE FROM dashboard_widgets WHERE page_id = $1", [pageId]);
+
   for (const [index, rawType] of widgetTypes.entries()) {
     const type = normalizeRuntimeWidgetType(rawType);
     await createWidget({
       pageId,
       type,
-      title: null,
+      title: seedRuntimeTitleByType[type] ?? "대시보드 위젯",
       layout: {
         ...(defaultLayoutByType[type] ?? defaultLayoutByType.table),
         y: Math.floor(index / 2) * 5,
         x: index % 2 === 0 ? 0 : 6,
       },
-      config: {},
-      data: [],
-      datasetId: dashboard.datasetId ?? null,
+      config: seedRuntimeConfigByType[type] ?? seedRuntimeConfigByType.table,
+      data: seedRuntimeRows,
+      datasetId: seedRuntimeDatasetId,
     });
   }
+}
+
+async function refreshSeedWidgetsForRevision(revisionId, dashboard) {
+  if (!revisionId) return;
+  const pagesResult = await pool.query(
+    "SELECT id FROM dashboard_pages WHERE revision_id = $1 ORDER BY order_index ASC, created_at ASC",
+    [revisionId],
+  );
+  const firstPage = pagesResult.rows[0];
+  if (firstPage) await seedWidgetsForPage(firstPage.id, dashboard);
 }
 
 async function createEmptyRuntimeRevision(dashboardId, kind, dashboard, options = {}) {
@@ -533,6 +593,8 @@ async function ensureDashboardRuntimeSeed(dashboard) {
   const publishedRevision = dashboard.status === "published"
     ? existingPublished ?? (await cloneRevision({ sourceRevisionId: draftRevision.id, kind: "published", publishedAt: new Date().toISOString() }))
     : existingPublished;
+  await refreshSeedWidgetsForRevision(draftRevision.id, dashboard);
+  if (publishedRevision) await refreshSeedWidgetsForRevision(publishedRevision.id, dashboard);
 
   await saveDashboard({
     ...dashboard,
