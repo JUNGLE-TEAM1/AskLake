@@ -438,6 +438,26 @@ type JobCommandResponse = {
 };
 ```
 
+프론트 상태 반영 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+- `job.id`는 `runsByJobId`의 key입니다.
+- `run.runId`는 `selectedRunIdByJobId[job.id]`의 value이자 `dagStepsByRunId`의 key입니다.
+- `run`이 있으면 `runsByJobId[job.id]`에 최신순으로 upsert합니다.
+- 같은 `run.runId`가 이미 있으면 기존 Run을 교체하고 중복 row를 만들지 않습니다.
+- 새 `run`이 있으면 `selectedRunIdByJobId[job.id]`는 해당 `run.runId`로 갱신합니다.
+- `dagSteps`는 같은 응답의 `run.runId`에 묶어 `dagStepsByRunId[run.runId]`에 저장합니다.
+- `dagSteps`에 별도 `runId` 필드를 요구하지 않습니다.
+- History row 선택은 `selectRunForJob(jobId, runId)` action으로 `selectedRunIdByJobId[job.id]`만 갱신합니다.
+- 초기 `/api/etl/jobs` hydrate에서는 `job.runHistory`를 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`를 최신 Run의 `runId`에 연결합니다.
+- PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않습니다. 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만들고, 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체합니다.
+- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아닙니다.
+
 Response 예시:
 
 ```json

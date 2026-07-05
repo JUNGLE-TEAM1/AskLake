@@ -131,6 +131,25 @@ type JobCommandResponse = {
 - `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
 - `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
 
+프론트 Run 상태 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+필수 규칙:
+
+- `runsByJobId[job.id]`는 최신 Run을 앞에 둔다.
+- 같은 `run.runId`가 다시 들어오면 기존 Run을 교체한다.
+- 새 Run이 들어오면 `selectedRunIdByJobId[job.id]`를 그 `run.runId`로 갱신한다.
+- `dagSteps`는 별도 `runId` 필드를 요구하지 않고, 같은 응답의 `run.runId` 기준으로 `dagStepsByRunId`에 저장한다.
+- DAG 화면은 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
+- History는 `selectRunForJob(jobId, runId)` action으로만 선택 Run을 바꾼다.
+- 초기 hydrate 시 `job.runHistory`는 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`는 최신 Run의 `runId`에 묶는다.
+- PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않고 frontend temp id `client:<jobId>:<timestamp>`를 만든 뒤, 서버 응답의 `run.runId`로 교체한다.
+
 ### Pair B -> Pair C
 
 ```ts
