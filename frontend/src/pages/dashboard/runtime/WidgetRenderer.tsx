@@ -89,11 +89,13 @@ function aggregateNumbers(values: number[], aggregation: DashboardWidgetAggregat
 function sortComparableValue(value: unknown) {
   if (typeof value === "number") return value;
   if (typeof value === "string") {
-    const timestamp = Date.parse(value);
-    if (Number.isFinite(timestamp)) return timestamp;
-    const numeric = Number(value);
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const numeric = Number(trimmed.replace(/,/g, ""));
     if (Number.isFinite(numeric)) return numeric;
-    return value.toLocaleLowerCase();
+    const timestamp = Date.parse(trimmed);
+    if (Number.isFinite(timestamp)) return timestamp;
+    return trimmed.toLocaleLowerCase();
   }
   if (value instanceof Date) return value.getTime();
   return String(value ?? "");
