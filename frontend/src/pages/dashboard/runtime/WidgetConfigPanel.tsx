@@ -406,7 +406,7 @@ export function WidgetConfigPanel({
             <label>
               <span>Y축</span>
               <select value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
-                {columnGroups.allColumns.map((column) => (
+                {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
               </select>
