@@ -51,7 +51,17 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+type CommandPendingByJobId = Partial<Record<string, JobCommand>>;
+
+function commandPendingLabel(command?: JobCommand): string {
+  if (command === "run" || command === "retry") return "실행 요청 중";
+  if (command === "pause") return "일시정지 요청 중";
+  if (command === "cancel") return "취소 요청 중";
+  return "처리 중";
+}
+
 export function JobsLandingPage({
+  commandPendingByJobId,
   jobs,
   onAction,
   onCommand,
@@ -60,6 +70,7 @@ export function JobsLandingPage({
   onDetail,
   onRuns,
 }: {
+  commandPendingByJobId?: CommandPendingByJobId;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -105,6 +116,7 @@ export function JobsLandingPage({
               onDetail={() => onDetail(job)}
               onEdit={() => onCommand(job, "edit")}
               onRun={() => onCommand(job, job.status === "failed" ? "retry" : "run")}
+              pendingCommand={commandPendingByJobId?.[job.id]}
             />
           ))}
           {jobs.length > 0 && (
@@ -153,6 +165,7 @@ function JobRow({
   onDetail,
   onEdit,
   onRun,
+  pendingCommand,
 }: {
   job: JobRowData;
   onCancel: () => void;
@@ -160,8 +173,10 @@ function JobRow({
   onDetail: () => void;
   onEdit: () => void;
   onRun: () => void;
+  pendingCommand?: JobCommand;
 }) {
-  const actionLabel = job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
+  const isCommandPending = Boolean(pendingCommand);
+  const actionLabel = isCommandPending ? commandPendingLabel(pendingCommand) : job.status === "running" ? "실행 흐름" : job.status === "failed" || job.status === "canceled" ? "다시 실행" : job.status === "paused" ? "재개" : "즉시 실행";
   const tertiaryLabel = job.status === "running" ? "취소" : "수정";
   const statusClass = jobStatusMeta[job.status].className;
 
@@ -191,8 +206,8 @@ function JobRow({
         </dl>
         <div className="job-row-actions">
           <button className="job-action-button" type="button" onClick={onDetail}>상세</button>
-          <button className="job-action-button primary" type="button" onClick={job.status === "running" ? onDag : onRun}>{actionLabel}</button>
-          <button className={job.status === "running" ? "job-action-button danger" : "job-action-button"} type="button" onClick={job.status === "running" ? onCancel : onEdit}>{tertiaryLabel}</button>
+          <button aria-busy={isCommandPending} className="job-action-button primary" disabled={isCommandPending} type="button" onClick={job.status === "running" ? onDag : onRun}>{actionLabel}</button>
+          <button className={job.status === "running" ? "job-action-button danger" : "job-action-button"} disabled={isCommandPending} type="button" onClick={job.status === "running" ? onCancel : onEdit}>{tertiaryLabel}</button>
         </div>
       </div>
     </article>
@@ -296,6 +311,7 @@ function DetailMetricCard({ label, tone, value }: { label: string; tone?: "dange
 
 function JobDetailHeader({
   activeTab,
+  commandPending,
   job,
   onAction,
   onCommand,
@@ -305,6 +321,7 @@ function JobDetailHeader({
   onRuns,
 }: {
   activeTab: "detail" | "runs" | "dag";
+  commandPending?: JobCommand;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -313,6 +330,9 @@ function JobDetailHeader({
   onEdit: () => void;
   onRuns: () => void;
 }) {
+  const isCommandPending = Boolean(commandPending);
+  const pendingLabel = commandPendingLabel(commandPending);
+
   return (
     <header className="job-detail-header">
       <button className="job-detail-breadcrumb" type="button" onClick={onDetail}>수집/처리 &gt; 작업 목록 &gt; {job.name}</button>
@@ -326,12 +346,12 @@ function JobDetailHeader({
           </div>
         </div>
         <div className="job-detail-actions">
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "edit")}>수정</button>
-          <button className="job-action-button primary" type="button" onClick={() => onCommand(job, "run")}>즉시 실행</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "retry")}>재실행</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "pause")}>일시정지</button>
-          <button className="job-action-button" type="button" onClick={() => onCommand(job, "cancel")}>취소</button>
-          <button className="job-action-button danger" type="button" onClick={() => onCommand(job, "delete")}>삭제</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "edit")}>수정</button>
+          <button aria-busy={isCommandPending} className="job-action-button primary" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "run")}>{isCommandPending ? pendingLabel : "즉시 실행"}</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "retry")}>재실행</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "pause")}>일시정지</button>
+          <button className="job-action-button" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "cancel")}>취소</button>
+          <button className="job-action-button danger" disabled={isCommandPending} type="button" onClick={() => onCommand(job, "delete")}>삭제</button>
         </div>
       </div>
       <nav className="job-detail-tabs" aria-label="작업 상세 탭">
@@ -344,6 +364,7 @@ function JobDetailHeader({
 }
 
 export function JobDetailPage({
+  commandPending,
   job,
   onAction,
   onBack,
@@ -352,6 +373,7 @@ export function JobDetailPage({
   onEdit,
   onRuns,
 }: {
+  commandPending?: JobCommand;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -386,7 +408,7 @@ export function JobDetailPage({
 
   return (
     <div className="job-detail-page">
-      <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader activeTab="detail" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <DetailStatusStrip body={stripBody} title={stripTitle} tone={stripTone} />
 
@@ -541,6 +563,7 @@ export function JobDetailPage({
 }
 
 export function JobRunsPage({
+  commandPending,
   evidence,
   job,
   onAction,
@@ -548,6 +571,7 @@ export function JobRunsPage({
   onCommand,
   onDag,
 }: {
+  commandPending?: JobCommand;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -555,11 +579,11 @@ export function JobRunsPage({
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onDag: () => void;
 }) {
-  const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const runs = evidence ? evidence.runs : job.runHistory ?? [];
 
   return (
     <div className="job-detail-page job-runs-page">
-      <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
+      <JobDetailHeader activeTab="runs" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={onDag} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
 
       <section className="runs-body-content">
         <div className="runs-filter-bar">
@@ -658,6 +682,7 @@ function RunSummaryMetric({ label, value }: { label: string; value: string }) {
 }
 
 export function JobDagPage({
+  commandPending,
   evidence,
   job,
   onAction,
@@ -666,6 +691,7 @@ export function JobDagPage({
   onEdit,
   onRuns,
 }: {
+  commandPending?: JobCommand;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -677,8 +703,8 @@ export function JobDagPage({
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
   const [dagFullscreenOpen, setDagFullscreenOpen] = useState(false);
   const [dagZoom, setDagZoom] = useState(0);
-  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
-  const runHistory = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const dagSteps = evidence ? evidence.dagSteps : job.dagSteps ?? [];
+  const runHistory = evidence ? evidence.runs : job.runHistory ?? [];
   const currentRun = runHistory[0] ?? {
     duration: "-",
     endedAt: "-",
@@ -748,7 +774,7 @@ export function JobDagPage({
 
   return (
     <div className="job-detail-page job-dag-page">
-      <JobDetailHeader activeTab="dag" job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader activeTab="dag" commandPending={commandPending} job={job} onAction={onAction} onCommand={onCommand} onDag={() => undefined} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
       <section className="dag-body-content">
         <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>

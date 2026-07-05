@@ -87,6 +87,8 @@ Ownership rules:
 - Initial job hydrate moves `job.runHistory` into `runsByJobId` and attaches `job.dagSteps` to the latest run id when available.
 - `jobExecutionEvidence` is a compatibility adapter for existing pages, not the long-term source of truth.
 - PR1 optimistic command UX should create a frontend-only temp run id like `client:<jobId>:<timestamp>` and reconcile it to the server `run.runId` when the command response arrives.
+- `commandPendingByJobId[job.id]` tracks in-flight command buttons. It disables duplicate clicks without changing the Run/DAG contract.
+- If the selected run has no DAG yet, DAG UI must show the empty state for that run instead of falling back to another run's `job.dagSteps`.
 
 ## 5) Backend Target Boundary
 

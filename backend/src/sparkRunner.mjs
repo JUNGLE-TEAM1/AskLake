@@ -7,7 +7,8 @@ import { fieldValue, normalizeColumnName } from "./profile.mjs";
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
 const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
-const reportDir = path.join(backendDir, "tmp", "spark-runs");
+const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
+const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 const localOutputDir = path.join(backendDir, "tmp", "spark-output");
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
@@ -21,7 +22,7 @@ export function runSparkPipeline(job, command, runId) {
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
-  const dockerReportPath = `/work/reports/${runId}.json`;
+  const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const dockerArgs = [
     "run",
     "--rm",
@@ -32,7 +33,7 @@ export function runSparkPipeline(job, command, runId) {
     "-v",
     `${ivyDir}:/tmp/.ivy2`,
     "-v",
-    `${reportDir}:/work/reports`,
+    `${reportDir}:${reportContainerDir}`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
     "-e",
@@ -105,7 +106,11 @@ function ensureSparkServer() {
   const result = spawnSync(process.execPath, [path.join(scriptsDir, "start-spark-server.mjs")], {
     cwd: backendDir,
     encoding: "utf8",
-    env: process.env,
+    env: {
+      ...process.env,
+      ASKLAKE_SPARK_REPORT_CONTAINER_DIR: reportContainerDir,
+      ASKLAKE_SPARK_REPORT_DIR: reportDir,
+    },
     maxBuffer: 16 * 1024 * 1024,
   });
   if (result.status !== 0) {
@@ -141,7 +146,7 @@ function sparkSourceFromJob(job, runId) {
   if (samplePath) {
     return {
       format: "jsonl",
-      path: `file:///work/reports/${path.basename(samplePath)}`,
+      path: `file://${reportContainerDir}/${path.basename(samplePath)}`,
     };
   }
 
