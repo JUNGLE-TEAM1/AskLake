@@ -137,18 +137,17 @@
 
 .sql-table-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 8px;
   width: 100%;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 6px;
   background: #fff;
 }
 
 .sql-table-card:hover,
 .sql-table-card.active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
+  border-color: #dbeafe;
+  background: #f8fbff;
 }
 
 .sql-table-card.referenced {
@@ -187,30 +186,52 @@
   cursor: default;
 }
 
-.sql-table-card-main span {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
+.sql-table-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.sql-table-toggle {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sql-table-name {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sql-table-layer {
   border-radius: 999px;
   background: #f1f5f9;
   color: #475569;
   font-size: 10px;
   font-weight: 900;
   padding: 3px 7px;
+  text-transform: uppercase;
 }
 
-.sql-table-card-main strong {
-  grid-column: 1;
+.sql-table-name strong {
   color: #0f172a;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.sql-table-card-main small {
-  grid-column: 1 / -1;
+.sql-table-name small {
   color: #64748b;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   overflow-wrap: anywhere;
 }
@@ -226,31 +247,25 @@
 
 .sql-table-card {
   position: relative;
-  padding: 0;
 }
 
-.sql-table-card-main {
+.sql-table-expanded {
   display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px 8px;
-  min-height: 58px;
-  padding: 12px 12px 6px;
-  text-align: left;
+  gap: 8px;
+  border-top: 1px solid #e2e8f0;
+  padding: 8px 10px 10px;
 }
 
 .sql-table-card-actions {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  padding: 0 12px 12px;
 }
 
 .sql-table-card-actions button {
-  min-height: 26px;
+  min-height: 24px;
   border: 1px solid #d8dee8;
-  border-radius: 7px;
+  border-radius: 999px;
   background: #fff;
   color: #334155;
   font-size: 10px;
@@ -258,19 +273,10 @@
   padding: 0 8px;
 }
 
-.sql-table-card-actions button:first-child {
-  grid-column: 1 / -1;
-}
-
-.sql-table-card-actions.two-actions button:first-child {
-  grid-column: auto;
-}
-
-.sql-table-card-actions button:disabled {
+.sql-table-card-actions button:hover {
   border-color: #bfdbfe;
-  background: #dbeafe;
+  background: #eff6ff;
   color: #1d4ed8;
-  cursor: default;
 }
 
 .sql-dataset-metrics {
@@ -278,12 +284,12 @@
 }
 
 .sql-card-schema {
-  grid-column: 1 / -1;
   display: grid;
   gap: 4px;
-  border-top: 1px solid #e2e8f0;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
   background: rgba(248, 250, 252, 0.72);
-  padding: 8px 10px 10px;
+  padding: 6px;
 }
 
 .sql-card-schema button {
