@@ -778,6 +778,86 @@ Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/pu
 공통 response:
 
 ```ts
+type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
+type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetFormat = "number" | "currency" | "percent";
+type DashboardWidgetSortDirection = "asc" | "desc";
+
+type DashboardWidgetConfigBase = {
+  color?: string;
+  description?: string;
+  error?: string;
+  errorMessage?: string;
+};
+
+type MetricWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  format?: DashboardWidgetFormat;
+  valueKey: string;
+};
+
+type TableWidgetConfig = DashboardWidgetConfigBase & {
+  columns: string[];
+  limit?: number;
+  sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
+};
+
+type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  groupKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type DashboardRuntimeWidgetConfigByType = {
+  metric: MetricWidgetConfig;
+  table: TableWidgetConfig;
+  bar_chart: BarChartWidgetConfig;
+  line_chart: LineChartWidgetConfig;
+  donut_chart: DonutChartWidgetConfig;
+};
+
+type DashboardRuntimeWidget = {
+  [Type in DashboardRuntimeWidgetType]: {
+    id: string;
+    pageId: string;
+    type: Type;
+    title: string | null;
+    layout: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      minW?: number;
+      minH?: number;
+    };
+    config: DashboardRuntimeWidgetConfigByType[Type];
+    data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
+  };
+}[DashboardRuntimeWidgetType];
+
 type DashboardRuntimeResponse = {
   dashboard: {
     id: string;
@@ -798,24 +878,7 @@ type DashboardRuntimeResponse = {
     title: string;
     orderIndex: number;
   }>;
-  widgetsByPageId: Record<string, Array<{
-    id: string;
-    pageId: string;
-    type: "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
-    title: string | null;
-    layout: {
-      x: number;
-      y: number;
-      w: number;
-      h: number;
-      minW?: number;
-      minH?: number;
-    };
-    config: Record<string, unknown>;
-    data: Array<Record<string, unknown>>;
-    queryId?: string | null;
-    datasetId?: string | null;
-  }>>;
+  widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
   filters: Array<{ id: string; label: string; value: unknown }>;
 };
 ```
@@ -934,6 +997,7 @@ Request:
   "config": {
     "xKey": "month",
     "yKey": "total_cost",
+    "aggregation": "sum",
     "color": "blue",
     "description": "월 기준 총 물류비 추이"
   }
@@ -947,7 +1011,7 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
-기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI는 `datasetId`를 별도 필드로 보내고 `config.xKey`, `config.yKey`, `config.color`, `config.description`을 함께 보냅니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`; `table`은 `columns`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`; `line_chart`는 `xKey`, `yKey`, `aggregation`, optional `dateUnit`, `color`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`와 `config`가 유지되어야 합니다.
 
 #### 8.5.7 Draft widget 삭제

@@ -23,13 +23,18 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
-function getConfigString(config: Record<string, unknown>, key: string) {
-  const value = config[key];
+function getConfigString(config: object, key: string) {
+  const value = (config as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function getConfigColumns(config: Record<string, unknown>) {
-  const columns = config.columns;
+function getConfigNumber(config: object, key: string) {
+  const value = (config as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function getConfigColumns(config: object) {
+  const columns = (config as Record<string, unknown>).columns;
   if (Array.isArray(columns)) {
     return columns.filter((column): column is string => typeof column === "string" && column.trim().length > 0);
   }
@@ -65,8 +70,18 @@ function labelValue(row: SimpleRow, key: string | null, fallback: string) {
 function chartPoints(widget: DashboardRuntimeWidget) {
   const rows = rowsFromWidget(widget);
   const firstRow = rows[0];
-  const labelKey = getConfigString(widget.config, "xKey") ?? getConfigString(widget.config, "labelKey") ?? firstTextKey(firstRow);
-  const valueKey = getConfigString(widget.config, "yKey") ?? getConfigString(widget.config, "valueKey") ?? firstNumericKey(firstRow);
+  const labelKey =
+    getConfigString(widget.config, "xKey")
+    ?? getConfigString(widget.config, "xAxis")
+    ?? getConfigString(widget.config, "labelKey")
+    ?? getConfigString(widget.config, "categoryField")
+    ?? firstTextKey(firstRow);
+  const valueKey =
+    getConfigString(widget.config, "yKey")
+    ?? getConfigString(widget.config, "yAxis")
+    ?? getConfigString(widget.config, "valueKey")
+    ?? getConfigString(widget.config, "valueField")
+    ?? firstNumericKey(firstRow);
 
   return rows
     .map((row, index) => ({
@@ -88,7 +103,11 @@ function WidgetDataError() {
 function MetricWidget({ widget }: { widget: DashboardRuntimeWidget }) {
   const rows = rowsFromWidget(widget);
   const firstRow = rows[0];
-  const valueKey = getConfigString(widget.config, "valueKey") ?? getConfigString(widget.config, "yKey") ?? firstNumericKey(firstRow);
+  const valueKey =
+    getConfigString(widget.config, "valueKey")
+    ?? getConfigString(widget.config, "valueField")
+    ?? getConfigString(widget.config, "yKey")
+    ?? firstNumericKey(firstRow);
   const labelKey = getConfigString(widget.config, "labelKey") ?? getConfigString(widget.config, "xKey") ?? firstTextKey(firstRow);
   const metricValue = firstRow ? numericValue(firstRow, valueKey) ?? Object.values(firstRow)[0] : null;
   const label = firstRow ? labelValue(firstRow, labelKey, "지표") : "지표";
@@ -107,6 +126,7 @@ function TableWidget({ widget }: { widget: DashboardRuntimeWidget }) {
   const rows = rowsFromWidget(widget);
   const configuredColumns = getConfigColumns(widget.config);
   const columns = (configuredColumns?.length ? configuredColumns : Object.keys(rows[0] ?? {})).slice(0, 8);
+  const limit = Math.max(1, Math.min(getConfigNumber(widget.config, "limit") ?? 10, 100));
   if (!rows.length || !columns.length) return <EmptyWidgetData />;
 
   return (
@@ -116,7 +136,7 @@ function TableWidget({ widget }: { widget: DashboardRuntimeWidget }) {
           <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.slice(0, 10).map((row, rowIndex) => (
+          {rows.slice(0, limit).map((row, rowIndex) => (
             <tr key={`runtime-row-${rowIndex}`}>
               {columns.map((column) => <td key={column}>{formatCell(row[column])}</td>)}
             </tr>

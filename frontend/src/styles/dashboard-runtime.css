@@ -1081,6 +1081,47 @@
   resize: vertical;
 }
 
+.asklake-widget-column-picker {
+  display: grid;
+  gap: 8px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.asklake-widget-column-picker legend {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.asklake-widget-column-picker label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d7dfec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.asklake-widget-column-picker input {
+  width: 14px;
+  min-height: 14px;
+}
+
+.asklake-widget-column-picker span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .asklake-widget-config-error {
   border: 1px solid #fecaca;
   border-radius: 6px;

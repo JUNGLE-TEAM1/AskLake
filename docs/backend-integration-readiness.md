@@ -106,6 +106,8 @@ VITE_USE_MOCK_API=false
 
 `POST /api/dashboards`는 새 dashboard card를 `draft` 상태로 DB에 먼저 저장하는 생성 API다. 내부 편집 화면에서 필요한 draft revision/page/widget 준비는 `POST /api/dashboards/{dashboardId}/draft/ensure`가 담당한다.
 
+Draft widget creation API accepts only `metric`, `table`, `bar_chart`, `line_chart`, and `donut_chart` runtime types. Backend save/read responses must preserve the type-specific config contract from `frontend/src/types/dashboard.ts`; required field checks are `aggregation` for metric/bar/line/donut configs and `columns` for table configs.
+
 ?�?�보??목록??검?? ?�유???�터, ?�그 ?�터, ?�렬, pagination?� ?�버?�서 처리?�니??
 ?�론?�는 JSON body�?보내�?`items`, `total`, `page`, `pageSize`, `filterOptions`�?받아 목록�?pagination???�시?�니??
 
