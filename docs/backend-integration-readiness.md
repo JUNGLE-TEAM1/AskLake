@@ -141,7 +141,7 @@ VITE_USE_MOCK_API=false
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| SQL 점검 | frontend에서 empty/read-only/unknown table을 검사하고 inline message 표시. 문자열 리터럴 내부 mutation keyword는 무시하고 comma-separated table도 context 검증 대상에 포함 | backend SQL guard와 query validation response |
+| SQL 점검 | frontend에서 empty/read-only/unknown table과 기본 구문 오류를 검사하고 inline message 표시. 문자열 리터럴 내부 mutation keyword는 무시하고 comma-separated table도 context 검증 대상에 포함 | backend SQL guard와 query validation response |
 | Preview 실행 | SQL 점검 통과 후 mock result 생성. Preview 클릭 시 최신 점검이 없으면 즉시 점검 후 통과할 때만 실행, preview는 최대 100 rows 제한 안내 | `POST /api/query/runs` preview mode 또는 `POST /api/query/previews` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |

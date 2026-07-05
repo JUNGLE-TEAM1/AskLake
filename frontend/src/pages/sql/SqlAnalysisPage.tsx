@@ -720,6 +720,15 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
     };
   }
 
+  const syntaxIssue = findSqlSyntaxIssue(normalizedQuery);
+  if (syntaxIssue) {
+    return {
+      key,
+      canExecute: false,
+      messages: [{ tone: "error", text: syntaxIssue }],
+    };
+  }
+
   const queryForKeywordScan = maskSqlStringLiterals(normalizedQuery);
   const mutationKeyword = queryForKeywordScan.match(/\b(insert|update|delete|drop|alter|truncate|merge|create|replace|grant|revoke)\b/i)?.[1];
   if (mutationKeyword) {
@@ -767,6 +776,21 @@ function maskSqlStringLiterals(query: string) {
 
 function maskSqlSingleQuotedLiterals(query: string) {
   return query.replace(/'([^']|'')*'/g, (literal) => " ".repeat(literal.length));
+}
+
+function findSqlSyntaxIssue(query: string) {
+  const sanitizedQuery = maskSqlStringLiterals(query);
+  if (/;\s*\S/.test(sanitizedQuery)) {
+    return "세미콜론 뒤에 추가 문자가 있습니다. SQL 문장을 정리해 주세요.";
+  }
+  const limitMatch = sanitizedQuery.match(/\blimit\b\s+([^\s;]+)/i);
+  if (limitMatch && !/^\d+$/.test(limitMatch[1])) {
+    return "LIMIT에는 숫자만 입력할 수 있습니다.";
+  }
+  if (/\blimit\b\s+\d+\s+\S/i.test(sanitizedQuery)) {
+    return "LIMIT 절 뒤에 알 수 없는 문자가 있습니다.";
+  }
+  return null;
 }
 
 function normalizeSqlIdentifier(identifier: string) {
