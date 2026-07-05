@@ -14,12 +14,14 @@ from app.schemas.catalog import (
     LineageGraphResponse,
 )
 from app.services.catalog_service import CatalogService
+from app.services.lake_storage_service import LocalLakeStorageService
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
 
 
 def get_catalog_service(db: Annotated[Session, Depends(get_db)]) -> CatalogService:
     return CatalogService(
+        lake_storage=LocalLakeStorageService(),
         repository=CatalogRepository(db),
         sql_repository=SqlRepository(db),
     )

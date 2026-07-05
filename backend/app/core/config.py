@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     api_prefix: str = "/api"
     database_url: str = "postgresql+psycopg://asklake:asklake_dev@localhost:54328/asklake"
+    local_lake_storage_dir: str | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

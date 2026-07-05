@@ -45,7 +45,11 @@ export type CatalogDataset = {
   schema: Array<[string, string]>;
   size: string;
   source: string;
+  sourceRunId?: string;
   status: "available" | "approval_required";
+  storageFormat?: string;
+  storageLocation?: string;
+  storageSizeBytes?: number;
   tags: string[];
   upstream: string[];
 };
