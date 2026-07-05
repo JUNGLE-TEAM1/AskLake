@@ -1,7 +1,7 @@
 # AskLake Backend API Contract
 
-이 문서는 AskLake 프론트엔드 mock 흐름을 실제 백엔드 API로 교체하기 위한 구현 명세입니다.
-프론트 연결 지점은 `frontend/src/services/mockApi.ts`와 `frontend/src/services/apiClient.ts`입니다.
+이 문서는 AskLake 프론트엔드와 실제 백엔드 API를 연결하기 위한 구현 명세입니다.
+프론트 연결 지점은 `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/sourceConnectorService.ts`입니다.
 
 ## 1. 구현 우선순위
 
@@ -15,13 +15,14 @@
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
-현재 프론트에서 `VITE_USE_MOCK_API=false`로 바꾸면 P0 API 3개를 실제 백엔드로 호출합니다.
-P1/P2 API는 다음 연결 단계에서 프론트 hydrate와 저장 흐름을 분리할 때 붙이면 됩니다.
+현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출합니다.
+P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면 됩니다.
 
 ## 2. 프론트 연결 위치
 
-- API 전환: `frontend/src/services/mockApi.ts`
 - 공통 fetch client: `frontend/src/services/apiClient.ts`
+- Pipeline create/run/query client: `frontend/src/services/pipelineApi.ts`
+- Source connector client: `frontend/src/services/sourceConnectorService.ts`
 - 프론트 데이터 상태: `frontend/src/hooks/useAskLakeData.ts`
 - 감사 로그/토스트 상태: `frontend/src/hooks/useAuditLogs.ts`
 
@@ -39,12 +40,13 @@ P1/P2 API는 다음 연결 단계에서 프론트 hydrate와 저장 흐름을 �
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
+VITE_USE_MOCK_API=true
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- `VITE_USE_MOCK_API=true`: 프론트 mock 응답을 사용합니다.
-- `VITE_USE_MOCK_API=false`: 실제 백엔드를 호출합니다.
+- `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
+- live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -157,7 +159,7 @@ INTERNAL_ERROR
 
 프론트는 ID를 opaque string으로 취급합니다.
 표시용 이름은 `name`, `jobName`, `targetDataset`을 사용합니다.
-API, mock fixture, frontend internal state의 상태값은 영어 canonical value를 사용합니다.
+API와 frontend internal state의 상태값은 영어 canonical value를 사용합니다.
 한국어 배지/버튼 문구는 프론트 UI mapper에서 변환합니다.
 
 ## 6. 데이터 모델 요약
@@ -310,6 +312,30 @@ type CreatePipelineRequest = {
   sourceLabel: string;
   schemaSummary: string;
   ruleSummary: string;
+  transformSteps: Array<{
+    enabled: boolean;
+    id: string;
+    input: string;
+    kind: "rename" | "cast" | "trim" | "jsonPath" | "mask" | "derive";
+    label: string;
+    onError: string;
+    operation: string;
+    output: string;
+    params: string;
+  }>;
+  transformOutputColumns: Array<[string, string]>;
+  qualityRules: Array<{
+    enabled: boolean;
+    failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
+    id: string;
+    kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+    severity: "Warning" | "Error";
+    targetColumn: string;
+    validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
+  }>;
+  qualityInvalidRows: string[][];
+  qualityScore?: number;
+  qualityStatus: "idle" | "pass" | "warn" | "fail";
   scheduleLabel: string;
   permissionSummary: string;
   targetDataset: string;
@@ -407,6 +433,8 @@ Response 예시:
 - `dataset`을 카탈로그 목록 최상단에 추가합니다.
 - `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
 - 생성 성공 감사 로그를 남깁니다.
+- mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다. 없으면 `upstream` 기반 fallback graph를 사용합니다.
 
 Validation:
 
@@ -635,7 +663,7 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
 - 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
-- mock mode에서는 생성된 derived dataset을 `window.localStorage["asklake.derivedDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다.
+- mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
 - `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
 - `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
@@ -696,8 +724,9 @@ Response `200 OK`:
 
 프론트 연결 시점:
 
-- 앱 초기 로딩 때 mock `catalogDatasets` 대신 hydrate합니다.
+- 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 `POST /api/etl/jobs` 응답 dataset을 우선 반영한 뒤, 목록 재조회로 동기화하면 됩니다.
+- mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세
 
@@ -886,14 +915,15 @@ Response `201 Created`:
 
 ## 11. 프론트 전환 순서
 
-1. 백엔드 서버를 실행합니다.
-2. `frontend/.env`에 `VITE_API_BASE_URL`을 설정합니다.
-3. `frontend/.env`에서 `VITE_USE_MOCK_API=false`로 바꿉니다.
+1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
+2. 백엔드 서버를 실행합니다.
+3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
 4. 프론트 dev 서버를 재시작합니다.
-5. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-6. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름을 확인합니다.
-7. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
-8. P1 API를 붙인 뒤 mock 초기 데이터를 hydrate로 교체합니다.
+5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
+9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
 ## 12. 열린 결정 사항
 

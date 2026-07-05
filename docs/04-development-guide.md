@@ -23,14 +23,13 @@ npm run build
 
 ## 3) Backend Live Mode
 
-백엔드가 준비되면 `frontend/.env` 또는 로컬 env에 아래 값을 둔다.
+프론트는 기본적으로 live backend API를 호출한다. `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=false
 ```
 
-연결 전에는 `VITE_USE_MOCK_API=true` 또는 기본 mock mode로 프론트를 검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
 ## 4) 브랜치 전략
 
@@ -59,7 +58,7 @@ VITE_USE_MOCK_API=false
 - frontend screen/UI change
 - API contract change
 - backend scaffold/API implementation
-- mock removal/hydration
+- live backend hydration
 - docs-only update
 - guardrail/CI update
 
@@ -68,12 +67,12 @@ VITE_USE_MOCK_API=false
 백엔드 연결 작업은 아래 순서를 기본으로 한다.
 
 1. 문서에서 endpoint와 response shape 확인
-2. backend API 또는 mock/live adapter 구현
+2. backend API와 frontend API adapter 구현
 3. frontend loading/error/rollback 처리
 4. `npm run build` 실행
 5. 관련 docs 업데이트
 
-상태값을 다룰 때는 API/mock/internal state에 영어 canonical value를 사용한다.
+상태값을 다룰 때는 API와 frontend internal state에 영어 canonical value를 사용한다.
 화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
 
 ## 6) Pair Ownership
@@ -107,7 +106,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - [ ] 변경 목적이 명확하다.
 - [ ] `npm run build`를 실행했거나 실행하지 못한 이유를 남겼다.
 - [ ] API/interface 변경이 있으면 `docs/03-api-reference.md`와 `docs/api-contract.md`가 최신 상태다.
-- [ ] mock 제거 또는 backend 연결 순서 변경이 있으면 `docs/backend-integration-readiness.md`가 최신 상태다.
+- [ ] backend 연결 순서 변경이 있으면 `docs/backend-integration-readiness.md`가 최신 상태다.
 - [ ] architecture, routing, state ownership 변경이 있으면 `docs/02-architecture.md`가 최신 상태다.
 - [ ] repository/CI/platform guardrail 변경이 있으면 `docs/system-guardrails.md`가 최신 상태다.
 
@@ -124,7 +123,8 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - API contract tests
 - adapter unit tests
 - backend endpoint tests
-- mock/live mode smoke tests
+- live backend browser smoke tests
+- Spark run regression tests
 - dashboard persistence regression tests
 
 ## 10) Manual Smoke Checklist

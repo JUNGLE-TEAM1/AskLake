@@ -49,39 +49,53 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
 
   const job: JobRowData = {
     status: "scheduled",
-    name: draftPipeline.jobName,
+    name: `${draftPipeline.target.datasetName}_pipeline`,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
-    owner: draftPipeline.owner,
+    owner: draftPipeline.permission.owner,
     tag: "[리뷰]",
-    source: `${draftPipeline.sourceType} / ${draftPipeline.sourceLabel}`,
-    target: draftPipeline.targetDataset,
-    schedule: draftPipeline.scheduleLabel,
+    source: `${draftPipeline.source.sourceType} / ${draftPipeline.source.sourceLabel}`,
+    target: draftPipeline.target.datasetName,
+    schedule: draftPipeline.schedule.label,
     lastRun: "생성됨",
     lastState: "대기 중",
-    nextRun: draftPipeline.scheduleLabel === "수동 실행" ? "-" : "다음 예약 대기",
+    nextRun: draftPipeline.schedule.mode === "manual" ? "-" : "다음 예약 대기",
+    qualityInvalidRows: draftPipeline.quality.invalidRows,
+    qualityRules: draftPipeline.quality.rules,
+    qualityScore: draftPipeline.quality.score,
+    qualityStatus: draftPipeline.quality.status,
+    sourceConfig: draftPipeline.source.sourceConfig,
+    sourceLabel: draftPipeline.source.sourceLabel,
+    sourceType: draftPipeline.source.sourceType,
+    targetFormat: draftPipeline.target.format,
+    targetLayer: draftPipeline.target.layer,
+    transformOutputColumns: draftPipeline.transform.outputColumns,
+    transformSteps: draftPipeline.transform.steps,
   };
 
   const dataset: CatalogDataset = {
     description: "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
-    downstream: ["SQL 분석", "대시보드", draftPipeline.rag ? "AI 활용" : "카탈로그"],
+    downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
-    id: `ds_${draftPipeline.targetDataset}`,
-    layer: draftPipeline.targetLayer,
+    id: `ds_${draftPipeline.target.datasetName}`,
+    layer: draftPipeline.target.layer,
     lastUpdated: "방금 생성됨",
-    name: draftPipeline.targetDataset,
-    nextRefresh: draftPipeline.scheduleLabel,
-    owner: draftPipeline.owner,
+    name: draftPipeline.target.datasetName,
+    nextRefresh: draftPipeline.schedule.label,
+    owner: draftPipeline.permission.owner,
     quality: "95% (Draft verified)",
-    rag: draftPipeline.rag,
+    rag: draftPipeline.target.rag,
     rows: "0 rows",
     sampleRows: [["-", "-", "-", "-", "Pipeline queued"]],
-    schema: [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
+    schema: draftPipeline.transform.outputColumns.length > 0
+      ? draftPipeline.transform.outputColumns
+      : [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
     size: "Pending",
-    source: draftPipeline.jobName,
+    source: job.name,
     status: "available",
     tags: ["#customer", "#RAG", "#리뷰"],
-    upstream: [draftPipeline.sourceLabel, draftPipeline.jobName],
+    upstream: [draftPipeline.source.sourceLabel, job.name],
   };
+  dataset.lineageGraph = buildPipelineDatasetLineageGraph(draftPipeline, dataset);
 
   return resolveMock({ dataset, job });
 }
@@ -364,6 +378,44 @@ function buildDerivedDatasetLineageGraph(
     datasetId: derivedDataset.id,
     datasets: [...baseDatasets, derivedNode],
     edges: [...baseEdges, ...derivedEdges],
+  };
+}
+
+function buildPipelineDatasetLineageGraph(draftPipeline: DraftPipeline, targetDataset: CatalogDataset): LineageGraph {
+  const targetNode = buildLineageDatasetNode(targetDataset);
+  const sourceColumns = draftPipeline.schema.columns.length > 0
+    ? draftPipeline.schema.columns.map((column) => ({
+      id: normalizeLineageId(`${targetDataset.id}-source-${column.sourceName || column.targetName}`),
+      name: column.sourceName || column.targetName,
+      type: column.type,
+    }))
+    : targetNode.columns.map((column) => ({
+      ...column,
+      id: normalizeLineageId(`${targetDataset.id}-source-${column.name}`),
+    }));
+  const sourceNode: LineageGraphDataset = {
+    columns: sourceColumns,
+    engine: inferLineageEngine(draftPipeline.source.sourceType, "SOURCE"),
+    id: normalizeLineageId(`${targetDataset.id}-${draftPipeline.source.sourceLabel}`),
+    layer: "SOURCE",
+    name: draftPipeline.source.sourceLabel,
+  };
+  const edges = targetNode.columns.map((targetColumn, index) => {
+    const sourceColumn = sourceNode.columns.find((column) => column.name === targetColumn.name)
+      ?? sourceNode.columns[index % Math.max(sourceNode.columns.length, 1)]
+      ?? targetColumn;
+    return {
+      fromColumnId: sourceColumn.id,
+      fromDatasetId: sourceNode.id,
+      toColumnId: targetColumn.id,
+      toDatasetId: targetNode.id,
+    };
+  });
+
+  return {
+    datasetId: targetDataset.id,
+    datasets: [sourceNode, targetNode],
+    edges,
   };
 }
 
