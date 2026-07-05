@@ -566,10 +566,9 @@ export function CatalogPage({
               setActiveModal("lineage");
             }
           }}>
-            <ExternalLink size={16} />
+            <Share2 size={16} />
             <div>
-              <strong>데이터 흐름도 확인</strong>
-              <span>Upstream {previewDataset.upstream.length} / Downstream {previewDataset.downstream.length}</span>
+              <strong>데이터 흐름 보기</strong>
             </div>
             <span>›</span>
           </article>
