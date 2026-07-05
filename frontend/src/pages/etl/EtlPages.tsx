@@ -176,6 +176,36 @@ function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<
   return [...mergedFields, ...extraSavedFields];
 }
 
+function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
+  const currentByLabel = new Map(currentFields);
+  const responseLabels = new Set(responseFields.map(([label]) => label));
+  return [
+    ...responseFields.map(([label, value]) => {
+      const currentValue = currentByLabel.get(label);
+      if (isCredentialSourceField(label) && !String(value ?? "").trim() && currentValue) {
+        return [label, currentValue] as [string, string];
+      }
+      return [label, value] as [string, string];
+    }),
+    ...currentFields.filter(([label]) => !responseLabels.has(label)),
+  ];
+}
+
+function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, currentFields: Array<[string, string]>): SourceConnectorAnalysis {
+  const responseConfig = result.draftPatch.source?.sourceConfig;
+  if (!responseConfig) return result;
+  return {
+    ...result,
+    draftPatch: {
+      ...result.draftPatch,
+      source: {
+        ...result.draftPatch.source,
+        sourceConfig: mergeConnectorSourceConfig(currentFields, responseConfig),
+      },
+    },
+  };
+}
+
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
@@ -317,6 +347,10 @@ function sourceActionLabel(value: string) {
 
 function isInternalSourceField(label: string) {
   return label.startsWith("__");
+}
+
+function isCredentialSourceField(label: string) {
+  return /(access key|secret key|password|auth token|token|private key)/i.test(label);
 }
 
 function publicSourceLog(value: string) {
@@ -725,7 +759,10 @@ export function SourceConnectionPage({
     setConnectionMessage(testingMessage);
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
-      const result = publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields));
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
+        editableFields,
+      );
       if (result.draftPatch.source?.sourceConfig) {
         setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
       }
@@ -1367,7 +1404,10 @@ export function SchemaInferencePage({
       selectedSampleScopeLabel,
     );
     try {
-      const result = await testSourceConnector(draft.source.sourceType, sourceConfig);
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(draft.source.sourceType, sourceConfig)),
+        sourceConfig,
+      );
       onDraftChange(result.draftPatch);
       setFlattenBaseSchema(null);
       setSelectedSchemaIndex(0);
