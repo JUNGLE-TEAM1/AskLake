@@ -41,4 +41,5 @@ class CatalogRepository:
             model.payload = payload
 
         self.db.flush()
+        self.db.commit()
         return payload
