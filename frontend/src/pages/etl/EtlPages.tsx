@@ -1196,10 +1196,10 @@ export function PermissionPage({
     { name: "Data Analyst Group", access: ["조회", "쿼리 실행", "메타데이터"], checked: true, note: "분석 업무용 표준 접근 권한" },
     { name: "ML Team", access: ["조회", "메타데이터"], checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
   ];
-  const [permissionTemplate, setPermissionTemplate] = useState("Data Engineer Group");
-  const [visibility, setVisibility] = useState("조직 내부");
-  const [dataOwner, setDataOwner] = useState(draft.owner || "data-team-01");
-  const [approvalStatus, setApprovalStatus] = useState("승인 검토");
+  const permissionTemplate: string = "Data Engineer Group";
+  const visibility: string = "조직 내부";
+  const dataOwner = draft.owner || "data-team-01";
+  const approvalStatus: string = "승인 검토";
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => Object.fromEntries(roles.map((role) => [role.name, role.checked])));
   const permissionSummary = `${permissionTemplate} · ${visibility} · ${approvalStatus}`;
 
@@ -1233,55 +1233,6 @@ export function PermissionPage({
       )}
     >
         <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
-        <section className="panel permission-share-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>공유 대상</h2>
-          </div>
-          <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="form-grid">
-            <label className="field">
-              <span>권한 템플릿</span>
-              <select className="input control-input" value={permissionTemplate} onChange={(event) => {
-                setPermissionTemplate(event.target.value);
-                onDraftChange({ permissionSummary: `${event.target.value} · ${visibility} · ${approvalStatus}` });
-              }}>
-                <option>Data Engineer Group</option>
-                <option>Data Analyst Group</option>
-                <option>ML Team</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>공개 범위</span>
-              <select className="input control-input" value={visibility} onChange={(event) => {
-                setVisibility(event.target.value);
-                onDraftChange({ permissionSummary: `${permissionTemplate} · ${event.target.value} · ${approvalStatus}` });
-              }}>
-                <option>조직 내부</option>
-                <option>프로젝트 멤버</option>
-                <option>외부 공유</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>데이터 오너</span>
-              <input className="input control-input" value={dataOwner} onChange={(event) => {
-                setDataOwner(event.target.value);
-                onDraftChange({ owner: event.target.value });
-              }} />
-            </label>
-            <label className="field">
-              <span>승인 상태</span>
-              <select className="input control-input" value={approvalStatus} onChange={(event) => {
-                setApprovalStatus(event.target.value);
-                onDraftChange({ permissionSummary: `${permissionTemplate} · ${visibility} · ${event.target.value}` });
-              }}>
-                <option>승인 검토</option>
-                <option>승인 완료</option>
-                <option>오너 승인 필요</option>
-              </select>
-            </label>
-          </div>
-        </section>
         <section className="panel">
           <h2 className="panel-title">세부 권한</h2>
           <div className="permission-list">
