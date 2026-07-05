@@ -170,7 +170,15 @@ export type CreatePipelineRequest = {
   scheduleLabel: string;
   retryPolicy: RetryPolicyDraft;
   retryPolicySummary: string;
+  scheduleSummary?: string;
+  startDate?: string;
+  endDate?: string;
+  timezone?: string;
   permissionSummary: string;
+  storageType?: "S3" | "Local" | "HDFS";
+  partition?: string;
+  compression?: "Snappy" | "Gzip" | "None";
+  storagePath?: string;
   targetDataset: string;
   targetLayer: TargetLayer;
   targetFormat: string;
