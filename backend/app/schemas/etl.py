@@ -106,6 +106,11 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    permission_roles: list[dict[str, Any]] | None = None
+    storage_type: str | None = None
+    partition: str | None = None
+    compression: str | None = None
+    storage_path: str | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
@@ -122,6 +127,7 @@ class JobRowData(CamelModel):
     stats: JobStats | dict[str, Any] | None = None
     run_history: list[JobRunSummary] | list[dict[str, Any]] | None = None
     dag_steps: list[JobDagStep] | list[dict[str, Any]] | None = None
+    dag_steps_by_run_id: dict[str, list[JobDagStep] | list[dict[str, Any]]] | None = None
 
 
 class CatalogDataset(CamelModel):
@@ -168,6 +174,11 @@ class CreatePipelineRequest(CamelModel):
     retry_policy: RetryPolicyDraft | None = None
     retry_policy_summary: str = ""
     permission_summary: str = ""
+    permission_roles: list[dict[str, Any]] | None = None
+    storage_type: str | None = None
+    partition: str | None = None
+    compression: str | None = None
+    storage_path: str | None = None
     target_dataset: str
     target_layer: TargetLayer
     target_format: str

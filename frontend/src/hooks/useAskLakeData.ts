@@ -20,7 +20,8 @@ const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
-    summary: "Data Engineer Group · 조직 내부",
+    roles: [],
+    summary: "Data Engineer Group · 조직 기본 권한",
   },
   quality: {
     invalidRows: [],
@@ -62,20 +63,24 @@ const initialDraftPipeline: DraftPipeline = {
     sourceType: "File / S3",
   },
   target: {
+    compression: "Snappy",
     datasetName: "pair_a_customer_review_gold",
     format: "Parquet",
     layer: "GOLD",
+    partition: "year/month/region",
     rag: true,
+    storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
+    storageType: "S3",
   },
   transform: {
     outputColumns: [],
     steps: [],
-    summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
+    summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
 };
 
 const emptySelectedDataset: CatalogDataset = {
-  description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하세요.",
+  description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
   downstream: [],
   freshness: "approval",
   id: "dataset_not_selected",
@@ -196,7 +201,13 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
     runsByJobId[job.id] = runs;
     selectedRunIdByJobId[job.id] = selectedRunId;
 
-    if (job.dagSteps?.length) {
+    Object.entries(job.dagStepsByRunId ?? {}).forEach(([runId, steps]) => {
+      if (Array.isArray(steps) && steps.length > 0) {
+        dagStepsByRunId[runId] = steps;
+      }
+    });
+
+    if (job.dagSteps?.length && !dagStepsByRunId[selectedRunId]) {
       dagStepsByRunId[selectedRunId] = job.dagSteps;
     }
   });
@@ -209,10 +220,10 @@ function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry"
 }
 
 function commandSuccessMessage(command: ServerJobCommand): string {
-  if (command === "run") return "작업 실행 요청이 접수되었습니다.";
-  if (command === "retry") return "작업 재실행 요청이 접수되었습니다.";
-  if (command === "pause") return "작업 일시정지 요청이 접수되었습니다.";
-  return "작업 취소 요청이 접수되었습니다.";
+  if (command === "run") return "작업 실행 요청을 접수했습니다.";
+  if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
+  if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  return "작업 취소 요청을 접수했습니다.";
 }
 
 function buildClientRunId(jobId: string): string {
@@ -313,7 +324,6 @@ export function useAskLakeData({
 
   const createPipeline = async () => {
     if (createPendingRef.current) {
-      showToast("이미 생성 요청이 처리 중입니다.", "info");
       return;
     }
 
@@ -330,7 +340,7 @@ export function useAskLakeData({
       setSelectedJob(normalizedJob);
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
       writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
-      showToast("파이프라인 생성 요청이 접수되었습니다. 실행 성공 후 카탈로그에 등록됩니다.");
+      showToast("파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       setDraftPipeline(initialDraftPipeline);
       onFlowChange("jobs");
     } catch {
@@ -387,7 +397,7 @@ export function useAskLakeData({
     }
 
     if (commandPendingRef.current.has(job.id)) {
-      showToast("이미 작업 명령이 처리 중입니다.", "info");
+      showToast("이미 이 작업 명령을 처리 중입니다.", "info");
       return;
     }
 
@@ -478,6 +488,12 @@ export function useAskLakeData({
     onFlowChange("jobDetail");
   };
 
+  const openJobDag = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.dag_opened", `/api/etl/jobs/${job.id}/dag`, job.id);
+    onFlowChange("jobDag");
+  };
+
   const openDataset = (dataset: CatalogDataset) => {
     setSelectedDataset(dataset);
     writeAuditLog("catalog.dataset.opened", `/api/catalog/datasets/${dataset.id}`, dataset.id);
@@ -500,6 +516,7 @@ export function useAskLakeData({
     dagStepsByRunId,
     jobExecutionEvidence,
     jobs,
+    openJobDag,
     openDataset,
     openDatasetInSql,
     openJobDetail,

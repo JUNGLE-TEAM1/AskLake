@@ -14,6 +14,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     jobName: `${targetDataset}_pipeline`,
     owner: draft.permission.owner,
     permissionSummary: draft.permission.summary,
+    permissionRoles: draft.permission.roles,
     rag: draft.target.rag,
     retryPolicy,
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
@@ -30,6 +31,10 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceConfig: draft.source.sourceConfig,
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
+    compression: draft.target.compression,
+    partition: draft.target.partition,
+    storagePath: draft.target.storagePath,
+    storageType: draft.target.storageType,
     targetDataset,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
@@ -86,7 +91,12 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
     next.schedule.mode = scheduleModeFromLabel(patch.scheduleLabel);
   }
   if (patch.permissionSummary !== undefined) next.permission.summary = patch.permissionSummary;
+  if (patch.permissionRoles !== undefined) next.permission.roles = patch.permissionRoles;
   if (patch.owner !== undefined) next.permission.owner = patch.owner;
+  if (patch.compression !== undefined) next.target.compression = patch.compression;
+  if (patch.partition !== undefined) next.target.partition = patch.partition;
+  if (patch.storagePath !== undefined) next.target.storagePath = patch.storagePath;
+  if (patch.storageType !== undefined) next.target.storageType = patch.storageType;
   if (patch.targetDataset !== undefined) next.target.datasetName = patch.targetDataset;
   if (patch.targetFormat !== undefined) next.target.format = patch.targetFormat;
   if (patch.targetLayer !== undefined) next.target.layer = patch.targetLayer;

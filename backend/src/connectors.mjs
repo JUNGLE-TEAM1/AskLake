@@ -1031,7 +1031,7 @@ function defaultSampleLabel(scope, kind) {
     if (scope === "full") return "전체 테이블";
     return "현재 행";
   }
-  if (scope === "slice1gb") return "1GB 샘플";
+  if (scope === "slice1gb") return "1GB 요청(기본 16MB 제한)";
   if (scope === "full") return "전체";
   return "현재 샘플";
 }

@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
@@ -8,6 +8,20 @@ from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
 
 def ensure_schema(db: Session) -> None:
     Base.metadata.create_all(bind=db.get_bind())
+    inspector = inspect(db.get_bind())
+    existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+    column_defs = {
+        "compression": "VARCHAR(64)",
+        "dag_steps_by_run_id": "JSON",
+        "partition": "VARCHAR(255)",
+        "permission_roles": "JSON",
+        "storage_path": "VARCHAR(512)",
+        "storage_type": "VARCHAR(64)",
+    }
+    for column_name, column_type in column_defs.items():
+        if column_name not in existing_columns:
+            db.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+    db.commit()
 
 
 def list_jobs(db: Session) -> list[JobRowData]:
@@ -157,6 +171,11 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        permission_roles=job.permission_roles,
+        storage_type=job.storage_type,
+        partition=job.partition,
+        compression=job.compression,
+        storage_path=job.storage_path,
         target_format=job.target_format,
         target_layer=job.target_layer,
         target_path=job.target_path,
@@ -173,6 +192,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         stats=job.stats,
         run_history=list_runs_for_job(db, job.id),
         dag_steps=job.dag_steps,
+        dag_steps_by_run_id=job.dag_steps_by_run_id,
     )
 
 

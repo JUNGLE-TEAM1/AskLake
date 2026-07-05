@@ -21,6 +21,11 @@ class ETLJobModel(TimestampMixin, Base):
     schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     schema_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
+    permission_roles: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    storage_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    partition: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    compression: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    storage_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     target_format: Mapped[str] = mapped_column(String(120), nullable=False)
     target_layer: Mapped[str] = mapped_column(String(32), nullable=False)
     target_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -37,6 +42,7 @@ class ETLJobModel(TimestampMixin, Base):
     progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     stats: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     dag_steps: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    dag_steps_by_run_id: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     dataset_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
 
 

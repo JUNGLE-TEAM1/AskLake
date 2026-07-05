@@ -16,6 +16,11 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  permissionRoles?: PermissionDraft["roles"];
+  compression?: "Snappy" | "Gzip" | "None";
+  partition?: string;
+  storagePath?: string;
+  storageType?: "S3" | "Local" | "HDFS";
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
@@ -35,6 +40,7 @@ export type JobRowData = {
   stats?: JobStats;
   runHistory?: JobRunSummary[];
   dagSteps?: JobDagStep[];
+  dagStepsByRunId?: Record<string, JobDagStep[]>;
 };
 
 export type JobStats = {
@@ -130,14 +136,23 @@ export type RetryPolicyDraft = {
 
 export type PermissionDraft = {
   owner: string;
+  roles?: Array<{
+    access: string[];
+    checked: boolean;
+    name: string;
+  }>;
   summary: string;
 };
 
 export type TargetDraft = {
+  compression?: "Snappy" | "Gzip" | "None";
   datasetName: string;
   format: string;
   layer: TargetLayer;
+  partition?: string;
   rag: boolean;
+  storagePath?: string;
+  storageType?: "S3" | "Local" | "HDFS";
 };
 
 export type DraftPipeline = {
@@ -176,6 +191,7 @@ export type CreatePipelineRequest = {
   endDate?: string;
   timezone?: string;
   permissionSummary: string;
+  permissionRoles?: PermissionDraft["roles"];
   storageType?: "S3" | "Local" | "HDFS";
   partition?: string;
   compression?: "Snappy" | "Gzip" | "None";

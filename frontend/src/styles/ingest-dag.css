@@ -553,6 +553,11 @@
   color: #b91c1c;
 }
 
+.dag-state-pill.running {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .dag-state-pill.paused {
   background: #f1f5f9;
   color: #64748b;
@@ -623,6 +628,11 @@
   border-color: #fecaca;
 }
 
+.dag-step-node.running {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
 .dag-step-node.selected {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
@@ -642,6 +652,10 @@
 
 .dag-step-node.failed .dag-step-dot {
   background: #dc2626;
+}
+
+.dag-step-node.running .dag-step-dot {
+  background: #2563eb;
 }
 
 .dag-step-node.paused .dag-step-dot {

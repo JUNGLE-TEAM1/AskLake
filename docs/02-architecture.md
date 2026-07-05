@@ -1,33 +1,44 @@
 # 02. Architecture
 
-이 문서는 AskLake의 현재 frontend baseline과 목표 backend architecture를 함께 기록한다.
+## Current Pair A Live Boundary (2026-07-06)
 
-## 1) 현재 구조
+This document contains earlier planning notes. For the current Pair A branch, the authoritative boundary is:
 
-현재 repository는 frontend-only app이다.
+- Source / Schema / Create / Run calls the live backend through `VITE_API_BASE_URL`; mock mode is not the target path for this PR.
+- Initial ETL and Catalog hydrate should start from backend state. Creating a pipeline creates a Job and a pending `catalogTarget`; the Catalog Dataset is created or updated only after a successful run.
+- Run state is keyed by `runId`: `runsByJobId[jobId]`, `selectedRunIdByJobId[jobId]`, and `dagStepsByRunId[runId]`.
+- `jobExecutionEvidence` is only a compatibility adapter for existing pages, not the source of truth.
+- Source schema sampling is bounded. `1GB 요청(기본 16MB 제한)` means the operator requested the large-sample path, while the interactive backend cap defaults to 16MB unless environment variables override it.
+
+
+??臾몄꽌??AskLake???꾩옱 frontend baseline怨?紐⑺몴 backend architecture瑜??④퍡 湲곕줉?쒕떎.
+
+## 1) ?꾩옱 援ъ“
+
+?꾩옱 repository??frontend-only app?대떎.
 
 ```text
 AskLake/
-├─ frontend/
-│  ├─ src/
-│  │  ├─ components/
-│  │  ├─ data/
-│  │  ├─ hooks/
-│  │  ├─ pages/
-│  │  ├─ services/
-│  │  ├─ styles/
-│  │  └─ types/
-│  ├─ package.json
-│  └─ vite.config.ts
-├─ docs/
-│  ├─ api-contract.md
-│  └─ backend-integration-readiness.md
-└─ README.md
+?쒋? frontend/
+?? ?쒋? src/
+?? ?? ?쒋? components/
+?? ?? ?쒋? data/
+?? ?? ?쒋? hooks/
+?? ?? ?쒋? pages/
+?? ?? ?쒋? services/
+?? ?? ?쒋? styles/
+?? ?? ?붴? types/
+?? ?쒋? package.json
+?? ?붴? vite.config.ts
+?쒋? docs/
+?? ?쒋? api-contract.md
+?? ?붴? backend-integration-readiness.md
+?붴? README.md
 ```
 
-## 2) 기술 스택
+## 2) 湲곗닠 ?ㅽ깮
 
-| 영역 | 현재 선택 | 상태 | 메모 |
+| ?곸뿭 | ?꾩옱 ?좏깮 | ?곹깭 | 硫붾え |
 | --- | --- | --- | --- |
 | Frontend | React + Vite + TypeScript | implemented | `frontend/` |
 | UI icons | lucide-react | implemented | package dependency |
@@ -36,7 +47,7 @@ AskLake/
 | Backend | TBD | planned | API contract exists |
 | Database | TBD | planned | persistence model not implemented |
 
-## 3) 목표 시스템 구성
+## 3) 紐⑺몴 ?쒖뒪??援ъ꽦
 
 ```mermaid
 flowchart LR
@@ -48,19 +59,19 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재는 `FE`만 구현되어 있고, backend/API/DB/runtime은 planned 상태다.
+?꾩옱??`FE`留?援ы쁽?섏뼱 ?덇퀬, backend/API/DB/runtime? planned ?곹깭??
 
 ## 4) Frontend Layer
 
-주요 책임:
+二쇱슂 梨낆엫:
 
-- navigation과 화면 composition: `frontend/src/App.tsx`
+- navigation怨??붾㈃ composition: `frontend/src/App.tsx`
 - layout: `frontend/src/components/layout/`
-- ingest/job 화면: `frontend/src/pages/ingest/`
+- ingest/job ?붾㈃: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
-- catalog 화면: `frontend/src/pages/catalog/`
-- SQL 화면: `frontend/src/pages/sql/`
-- dashboard 화면: `frontend/src/pages/dashboard/`
+- catalog ?붾㈃: `frontend/src/pages/catalog/`
+- SQL ?붾㈃: `frontend/src/pages/sql/`
+- dashboard ?붾㈃: `frontend/src/pages/dashboard/`
 - mock data: `frontend/src/data/mockData.ts`
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
@@ -92,29 +103,29 @@ Ownership rules:
 
 ## 5) Backend Target Boundary
 
-백엔드가 소유할 책임:
+諛깆뿏?쒓? ?뚯쑀??梨낆엫:
 
-- ETL job 생성과 상태 전이
+- ETL job ?앹꽦怨??곹깭 ?꾩씠
 - dataset catalog hydrate
-- SQL query run 생성과 결과 반환
-- dashboard 저장/게시
-- audit log 저장
-- 인증/권한이 도입될 경우 actor와 access policy 판정
+- SQL query run ?앹꽦怨?寃곌낵 諛섑솚
+- dashboard ???寃뚯떆
+- audit log ???
+- ?몄쬆/沅뚰븳???꾩엯??寃쎌슦 actor? access policy ?먯젙
 
-프론트가 계속 소유할 책임:
+?꾨줎?멸? 怨꾩냽 ?뚯쑀??梨낆엫:
 
-- 화면 상태와 사용자 interaction
-- loading/error 표시
-- optimistic update 또는 rollback UX
-- mock/live 전환 adapter
+- ?붾㈃ ?곹깭? ?ъ슜??interaction
+- loading/error ?쒖떆
+- optimistic update ?먮뒗 rollback UX
+- mock/live ?꾪솚 adapter
 
-## 6) 데이터 모델 초안
+## 6) ?곗씠??紐⑤뜽 珥덉븞
 
-상세 타입은 `docs/api-contract.md`와 `frontend/src/types/`를 기준으로 한다.
+?곸꽭 ??낆? `docs/api-contract.md`? `frontend/src/types/`瑜?湲곗??쇰줈 ?쒕떎.
 
-핵심 리소스:
+?듭떖 由ъ냼??
 
-| Resource | 현재 위치 | 백엔드 목표 |
+| Resource | ?꾩옱 ?꾩튂 | 諛깆뿏??紐⑺몴 |
 | --- | --- | --- |
 | ETL Job | `JobRowData` mock | persisted job resource |
 | Dataset | `CatalogDataset` mock | catalog dataset resource |
@@ -124,7 +135,7 @@ Ownership rules:
 
 ## 7) API Boundary
 
-현재 live mode 진입점:
+?꾩옱 live mode 吏꾩엯??
 
 - `VITE_API_BASE_URL=http://localhost:8080`
 - `frontend/src/services/apiClient.ts`
@@ -142,17 +153,17 @@ P1 hydrate API:
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
 
-## 8) 설계 원칙
+## 8) ?ㅺ퀎 ?먯튃
 
-- Mock data는 demo baseline이며, 최종 persistence model로 간주하지 않는다.
-- API response shape는 프론트 타입과 문서가 함께 바뀌어야 한다.
-- API, mock fixture, frontend internal state의 status 값은 영어 canonical value로 유지하고 UI label mapper에서 한국어 표시로 변환한다.
-- Backend 연결은 생성/명령/SQL 실행 같은 P0 vertical slice부터 시작한다.
-- SQL runtime은 read-only guard를 가져야 한다.
-- 감사 로그는 사용자에게 보이는 제품 기능이면서 backend integration evidence로도 쓰일 수 있다.
+- Mock data??demo baseline?대ŉ, 理쒖쥌 persistence model濡?媛꾩＜?섏? ?딅뒗??
+- API response shape???꾨줎????낃낵 臾몄꽌媛 ?④퍡 諛붾뚯뼱???쒕떎.
+- API, mock fixture, frontend internal state??status 媛믪? ?곸뼱 canonical value濡??좎??섍퀬 UI label mapper?먯꽌 ?쒓뎅???쒖떆濡?蹂?섑븳??
+- Backend ?곌껐? ?앹꽦/紐낅졊/SQL ?ㅽ뻾 媛숈? P0 vertical slice遺???쒖옉?쒕떎.
+- SQL runtime? read-only guard瑜?媛?몄빞 ?쒕떎.
+- 媛먯궗 濡쒓렇???ъ슜?먯뿉寃?蹂댁씠???쒗뭹 湲곕뒫?대㈃??backend integration evidence濡쒕룄 ?곗씪 ???덈떎.
 
-## 9) 운영/배포 메모
+## 9) ?댁쁺/諛고룷 硫붾え
 
-- 현재 실행은 frontend dev server 기준이다.
-- backend dev server, DB, migration, container strategy는 아직 정하지 않았다.
-- CI가 생기면 최소 required check 후보는 frontend build다.
+- ?꾩옱 ?ㅽ뻾? frontend dev server 湲곗??대떎.
+- backend dev server, DB, migration, container strategy???꾩쭅 ?뺥븯吏 ?딆븯??
+- CI媛 ?앷린硫?理쒖냼 required check ?꾨낫??frontend build??

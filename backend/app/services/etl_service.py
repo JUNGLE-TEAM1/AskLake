@@ -67,6 +67,11 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_fingerprint=request.schema_fingerprint,
         schema_sample_rows=request.schema_sample_rows,
+        permission_roles=request.permission_roles,
+        storage_type=request.storage_type,
+        partition=request.partition,
+        compression=request.compression,
+        storage_path=request.storage_path,
         target_format=request.target_format,
         target_layer=request.target_layer,
         rag=request.rag,
@@ -153,6 +158,7 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         run_schema = etl_repository.run_to_schema(run_model)
         finalize_job_from_spark_result(job, command, spark_result)
         job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), spark_result)
+        job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
         if spark_result.get("status") == "success":
             dataset_model = dataset_from_spark_result(job, spark_result)
@@ -161,6 +167,7 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
         job.dag_steps = dag_steps_from_command(job, command, run_schema.model_dump(by_alias=True))
+        job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
     else:
         apply_job_command(job, command)

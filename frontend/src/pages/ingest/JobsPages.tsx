@@ -75,7 +75,7 @@ export function JobsLandingPage({
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onCreate: () => void;
-  onDag: () => void;
+  onDag: (job: JobRowData) => void;
   onDetail: (job: JobRowData) => void;
   onRuns: () => void;
 }) {
@@ -123,7 +123,7 @@ export function JobsLandingPage({
               job={job}
               key={job.id}
               onCancel={() => onCommand(job, "cancel")}
-              onDag={onDag}
+              onDag={() => onDag(job)}
               onDetail={() => onDetail(job)}
               onEdit={() => onCommand(job, "edit")}
               onRun={() => onCommand(job, job.status === "failed" ? "retry" : "run")}
@@ -849,8 +849,8 @@ export function JobDagPage({
   const dagViewportRef = useRef<HTMLDivElement | null>(null);
   const dagFullscreenViewportRef = useRef<HTMLDivElement | null>(null);
   const runSelectorRef = useRef<HTMLDivElement | null>(null);
-  const dagSteps = evidence ? evidence.dagSteps : job.dagSteps ?? [];
-  const runHistory = evidence ? evidence.runs : job.runHistory ?? [];
+  const dagSteps = evidence?.dagSteps ?? [];
+  const runHistory = evidence?.runs ?? [];
   const effectiveSelectedRunId = selectedRunId ?? runHistory[0]?.runId;
   const currentRun = runHistory.find((run) => run.runId === effectiveSelectedRunId) ?? runHistory[0] ?? {
     duration: "-",

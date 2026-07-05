@@ -34,6 +34,17 @@ import { PageTitle } from "../../components/common";
 import type { AuditResult, CatalogDataset } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
+const layerDisplayLabels: Record<string, string> = {
+  BRONZE: "수집 정제 단계",
+  GOLD: "서비스 데이터셋",
+  RAW: "원본 보관 단계",
+  SILVER: "분석 표준 단계",
+};
+
+function displayLayer(layer: string) {
+  return layerDisplayLabels[layer] ?? layer;
+}
+
 export function CatalogPage({
   datasets,
   onAction,
@@ -214,7 +225,7 @@ export function CatalogDetailPage({
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
               <span className="owner-chip">{dataset.owner}</span>
-              <span className="tag-chip">{dataset.layer} LAYER</span>
+              <span className="tag-chip">{displayLayer(dataset.layer)}</span>
               {dataset.tags.slice(0, 2).map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
             </div>
           </div>
@@ -365,7 +376,7 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
           </div>
           <div className="lineage-connector" />
           <div className="lineage-column current">
-            <span>{dataset.layer} LAYER</span>
+            <span>{displayLayer(dataset.layer)}</span>
             {nodes.filter((node) => node.role === "current").map((node) => (
               <LineageNode key={node.id} node={node} onSelect={toggleNode} selected={node.id === selectedNodeId} tone="current" />
             ))}

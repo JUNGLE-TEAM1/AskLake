@@ -37,6 +37,7 @@ try {
     jobName: `Spark 실제 실행 검증 ${suffix}`,
     owner: "admin",
     permissionSummary: "admin",
+    permissionRoles: [{ access: ["조회", "쿼리 실행"], checked: true, name: "Data Engineer Group" }],
     rag: false,
     retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 5, timeoutMinutes: 60 },
     retryPolicySummary: "수동 재시도",
@@ -102,6 +103,10 @@ try {
     sourceLabel: `${sourceBucket}/${sourceKey}`,
     sourceType: "File / S3",
     targetDataset: `spark_actual_verify_${suffix}`,
+    compression: "Snappy",
+    partition: "year/month/region",
+    storagePath: `s3a://asklake-output/spark_actual_verify_${suffix}/gold/`,
+    storageType: "S3",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
   });
@@ -123,6 +128,7 @@ try {
     inputRows: run?.inputRows,
     jobId: create.job.id,
     jobStatus: command.job.status,
+    runDagSteps: command.job.dagStepsByRunId?.[run?.runId]?.length ?? 0,
     outputExists: Boolean(run?.outputPath && existsSync(run.outputPath)),
     outputPath: run?.outputPath,
     outputRows: run?.outputRows,
@@ -143,6 +149,9 @@ try {
   assert(!schemaNames.includes("brand"), `Excluded schema column should not be in output schema: ${schemaNames.join(", ")}`);
   assert(String(schemaTypes.get("item_price") || "").includes("double"), `item_price should be cast to double: ${schemaTypes.get("item_price")}`);
   assert(command.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
+  assert(command.job.dagStepsByRunId?.[run.runId]?.length === command.dagSteps.length, "Job should preserve DAG steps under the server runId.");
+  assert(command.job.permissionRoles?.length === 1, "Job should preserve permissionRoles from the create request.");
+  assert(command.job.storagePath?.includes(`spark_actual_verify_${suffix}`), "Job should preserve target storagePath from the create request.");
   assert(command.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
   assert(command.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
 } finally {

@@ -518,6 +518,12 @@ const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공�
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
+const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
+  BRONZE: "수집 정제",
+  GOLD: "서비스 제공",
+  RAW: "원본 보관",
+  SILVER: "분석 표준",
+};
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -532,18 +538,23 @@ type PermissionDraftSlice = {
   owner?: string;
   permissionSummary?: string;
   permissionTemplate?: string;
+  roles?: Array<{ access: string[]; checked: boolean; name: string }>;
   summary?: string;
   template?: string;
   visibility?: string;
 };
 
 type TargetDraftSlice = {
+  compression?: "Snappy" | "Gzip" | "None";
   datasetName?: string;
   format?: string;
   jobName?: string;
   layer?: string;
   owner?: string;
+  partition?: string;
   rag?: boolean;
+  storagePath?: string;
+  storageType?: "S3" | "Local" | "HDFS";
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
@@ -573,6 +584,10 @@ function getKnownOption<T extends string>(value: string | undefined, options: re
 
 function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
+}
+
+function displayTargetLayer(layer: TargetLayer) {
+  return TARGET_LAYER_LABELS[layer];
 }
 
 function buildJobName(targetDataset: string) {
@@ -1165,7 +1180,7 @@ function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScop
   }
   return [
     { label: "현재 샘플", shortLabel: "현재", value: "current" },
-    { label: "1GB 샘플", shortLabel: "1GB", value: "slice1gb" },
+    { label: "1GB 요청(기본 16MB 제한)", shortLabel: "1GB", value: "slice1gb" },
     { label: "전체", shortLabel: "전체", value: "full" },
   ];
 }
@@ -4242,10 +4257,15 @@ export function TargetPage({
     const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
     const nextRag = patch.rag ?? ragEnabled;
+    const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
 
     onDraftChange({
       jobName: buildJobName(nextTargetDataset),
       owner: nextOwner,
+      compression: "Snappy",
+      partition: "year/month/region",
+      storagePath: nextStoragePath,
+      storageType: "S3",
       targetDataset: nextTargetDataset,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
@@ -4316,7 +4336,7 @@ export function TargetPage({
           <div className="format-grid">
             {TARGET_LAYER_OPTIONS.map((layer) => (
               <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
-                {layer}
+                {displayTargetLayer(layer)}
               </button>
             ))}
           </div>
@@ -4397,9 +4417,18 @@ export function PermissionPage({
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
     const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
+    const permissionRoles = PERMISSION_ROLES.map((role) => ({
+      access: [...role.access],
+      checked: Boolean(roleChecks[role.name] ?? role.checked),
+      name: role.name,
+    }));
 
     onDraftChange({
       owner: nextOwner,
+      permissionRoles,
+      permission: {
+        roles: permissionRoles,
+      },
       permissionSummary: buildPermissionSummary(nextPermissionTemplate, nextVisibility, nextApprovalStatus),
     });
   };

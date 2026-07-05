@@ -27,6 +27,7 @@ export function createPipeline(request) {
 
   const job = {
     dagSteps: initialDagSteps(request, sourceMetrics),
+    dagStepsByRunId: {},
     id: jobId,
     datasetId,
     lastRun: "생성 후 미실행",
@@ -34,6 +35,7 @@ export function createPipeline(request) {
     name: request.jobName,
     nextRun: request.scheduleLabel === "manual" ? "-" : request.scheduleLabel,
     owner: request.owner,
+    permissionRoles: request.permissionRoles,
     rag: Boolean(request.rag),
     runHistory: [],
     schedule: request.scheduleLabel,
@@ -41,6 +43,10 @@ export function createPipeline(request) {
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    compression: request.compression,
+    partition: request.partition,
+    storagePath: request.storagePath,
+    storageType: request.storageType,
     schemaColumns: request.schemaColumns,
     schemaSampleRows: request.schemaSampleRows,
     stats: initialJobStats(sourceMetrics),
@@ -123,6 +129,10 @@ export function commandJob(jobId, command) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
     job.dagSteps = dagStepsFromCommand(job, command, run, sparkResult);
+    job.dagStepsByRunId = {
+      ...(job.dagStepsByRunId ?? {}),
+      [run.runId]: job.dagSteps,
+    };
   }
   return {
     action: actionByCommand[command],

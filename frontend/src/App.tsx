@@ -59,6 +59,7 @@ export function App() {
     jobs,
     openDataset,
     openDatasetInSql,
+    openJobDag,
     openJobDetail,
     runsByJobId,
     selectedDataset,
@@ -165,7 +166,7 @@ export function App() {
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : "page-body"}>
-          {activeFlow === "jobs" && <JobsLandingPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={openJobDag} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage commandPending={commandPendingByJobId[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
           {activeFlow === "jobRuns" && <JobRunsPage commandPending={commandPendingByJobId[selectedJob.id]} job={selectedJob} runs={selectedJobRuns} selectedRunId={selectedRunId} onRunSelect={selectRunForJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
           {activeFlow === "jobDag" && <JobDagPage commandPending={commandPendingByJobId[selectedJob.id]} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} selectedRunId={selectedRunId} onRunSelect={selectRunForJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onEdit={() => moveToFlow("rules")} onRuns={() => moveToFlow("jobRuns")} onAction={writeAuditLog} />}
