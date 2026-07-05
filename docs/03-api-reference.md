@@ -56,6 +56,8 @@ Canonical status values:
 
 | Method | Endpoint | Auth | 설명 | 상세 문서 |
 | --- | --- | --- | --- | --- |
+| `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
+| `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 취소 | `docs/api-contract.md` |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
