@@ -105,10 +105,15 @@ try {
     targetLayer: "GOLD",
   });
 
+  const datasetsAfterCreate = await getJson("/api/catalog/datasets");
+  assert(datasetsAfterCreate.length === 0, "Catalog should stay empty before the Spark run succeeds.");
+
   const command = await postJson(`/api/etl/jobs/${encodeURIComponent(create.job.id)}/commands`, { command: "run" });
   const run = command.run;
+  const datasetsAfterRun = await getJson("/api/catalog/datasets");
   const parquetFiles = listParquetFiles(run?.outputPath);
   const result = {
+    catalogDatasets: datasetsAfterRun.length,
     dagSteps: command.dagSteps?.map((step) => `${step.title}:${step.status}`),
     errorSummary: run?.errorSummary,
     inputRows: run?.inputRows,
@@ -126,6 +131,8 @@ try {
   assert(result.outputExists, `Spark output path was not copied to host: ${run?.outputPath}`);
   assert(parquetFiles.length > 0, `Spark output path has no parquet files: ${run?.outputPath}`);
   assert(command.job.status === "scheduled", `Job did not return to scheduled status: ${command.job.status}`);
+  assert(command.dataset?.id === datasetsAfterRun[0]?.id, "Run command should return the catalog dataset created by the successful run.");
+  assert(datasetsAfterRun.length === 1, "Catalog should contain the dataset after the Spark run succeeds.");
   assert(command.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
   assert(command.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
   assert(command.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
@@ -165,6 +172,13 @@ async function postJson(pathname, body) {
     headers: { "content-type": "application/json" },
     method: "POST",
   });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(`${pathname} failed ${response.status}: ${JSON.stringify(payload)}`);
+  return payload;
+}
+
+async function getJson(pathname) {
+  const response = await fetch(apiUrl(pathname));
   const payload = await response.json();
   if (!response.ok) throw new Error(`${pathname} failed ${response.status}: ${JSON.stringify(payload)}`);
   return payload;

@@ -96,7 +96,7 @@ export function CatalogPage({
               <div className="catalog-empty-state">
                 <BookOpen size={22} />
                 <strong>등록된 데이터셋이 없습니다.</strong>
-                <p>수집/처리에서 파이프라인을 생성하면 응답의 Dataset이 카탈로그에 추가됩니다.</p>
+                <p>수집/처리 작업을 실행해 Spark 적재가 성공하면 결과 데이터셋이 카탈로그에 추가됩니다.</p>
               </div>
             )}
             {datasets.map((dataset) => (

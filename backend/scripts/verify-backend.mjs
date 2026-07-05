@@ -104,15 +104,14 @@ try {
     targetFormat: "Parquet",
     targetLayer: "GOLD",
   });
-  assert(created.job && created.dataset, "Create job should return { job, dataset }.");
+  assert(created.job && created.catalogTarget, "Create job should return { job, catalogTarget }.");
   assert(created.job.transformSteps?.length === 1, "Created job should preserve transform steps.");
   assert(created.job.qualityRules?.length === 1, "Created job should preserve quality rules.");
-  assert(created.dataset.schema.length === transformOutputColumns.length, "Dataset schema should map transform output schema.");
 
   const jobs = await get("/api/etl/jobs");
   const datasets = await get("/api/catalog/datasets");
   assert(jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
-  assert(datasets.length === 1, "Backend hydrate datasets should contain the created dataset only.");
+  assert(datasets.length === 0, "Catalog should stay empty until a job run succeeds.");
 
   console.log("verify-backend: ok");
 } finally {

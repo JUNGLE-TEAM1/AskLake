@@ -642,12 +642,12 @@ export function SourceConnectionPage({
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <HardDrive size={18} />, label: "파일 / MinIO(S3)", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <Database size={18} />, label: "PostgreSQL", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <LayoutGrid size={18} />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <FileText size={18} />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <Table2 size={18} />, label: "데이터 레이크", status: "목록 조회" },
-    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <TerminalSquare size={18} />, label: "스트림 / Kafka", status: "메타데이터" },
+    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <SourceBrandIcon kind="s3" />, label: "MinIO/S3", status: "실제 연결" },
+    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
+    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -822,10 +822,9 @@ export function SourceConnectionPage({
     success: { badge: "미리보기 가능", title: "연결 검증 완료" },
     testing: { badge: "테스트 중", title: "연결 테스트 실행 중" },
   };
-  const visibleEditableFields = editableFields.filter(([label]) => !isInternalSourceField(label));
+  const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
   const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
   const displayAssets = sourceRuntime?.assets ?? current.assets;
-  const displayLogs = (sourceRuntime?.logs ?? current.logs).map(publicSourceLog).filter(Boolean);
   const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
   const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
@@ -939,7 +938,7 @@ export function SourceConnectionPage({
         onSave();
       }} />}
     >
-        <PageTitle title="소스 연결" description="사용할 소스를 고르고 같은 영역에서 연결 정보를 입력한 뒤 실제 연결 테스트를 실행합니다." />
+        <PageTitle title="소스 연결" description="소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다." />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="panel-header">
             <Database size={18} />
@@ -949,11 +948,9 @@ export function SourceConnectionPage({
           <div className="source-connect-stack">
             <div className="source-picker-strip" role="group" aria-label="소스 선택">
               {Object.entries(connectorMeta).map(([connector, meta]) => (
-                <button className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                <button aria-label={`${meta.label} ${meta.desc} ${meta.status}`} className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} title={`${meta.desc} · ${meta.status}`} type="button" onClick={() => selectSource(connector)}>
                   <span className="hegun-connector-icon">{meta.icon}</span>
                   <strong>{meta.label}</strong>
-                  <span>{meta.desc}</span>
-                  <em>{meta.status}</em>
                 </button>
               ))}
             </div>
@@ -972,47 +969,33 @@ export function SourceConnectionPage({
                 ))}
               </div>
               {current.info && <InfoBox title="보안 연결" body={current.info} />}
-              <div className="form-actions inline source-connect-actions">
-                {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
-              </div>
+              <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
+                <div className="hegun-status-head">
+                  <div className="hegun-status-copy">
+                    {sourceStatusIcon(connectionStatus)}
+                    <h2>{connectionStatusCopy[connectionStatus].title}</h2>
+                    <span className="panel-note">{publicConnectionMessage}</span>
+                  </div>
+                  <div className="hegun-status-actions">
+                    {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                    {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+                  </div>
+                </div>
+                <div className="hegun-test-strip">
+                  {displayTestItems.map(([label, value], index) => (
+                    <span className={sourceCheckState(value)} key={`${activeSourceType}-${label}-${index}`}>
+                      <i>{sourceCheckIcon(label)}</i>
+                      <strong>{sourceFieldLabel(label)}</strong>
+                      <em>{sourceValueLabel(value)}</em>
+                    </span>
+                  ))}
+                </div>
+              </section>
             </div>
           </div>
         </section>
-        <div className="hegun-source-grid">
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <Check size={18} />
-              <h2>연결 테스트</h2>
-              <span className="panel-note">{displayTestItems.map(([label]) => sourceFieldLabel(label)).join(" · ")}</span>
-            </div>
-            <div className="hegun-test-summary">
-              <div>
-                <strong>{connectionStatusCopy[connectionStatus].title}</strong>
-                <span>{publicConnectionMessage || `${sourceTypeLabel(activeSourceType)}에 ${displayTestItems.length}개 확인 항목이 설정되었습니다.`}</span>
-              </div>
-              <em>{connectionStatusCopy[connectionStatus].badge}</em>
-            </div>
-            <div className="hegun-test-strip">
-              {displayTestItems.map(([label, value], index) => (
-                <span key={`${activeSourceType}-${label}-${index}`}>
-                  <i><Check size={13} /></i>
-                  <strong>{sourceFieldLabel(label)}</strong>
-                  <em>{sourceValueLabel(value)}</em>
-                </span>
-              ))}
-            </div>
-            <div className="hegun-log-panel" aria-label="연결 테스트 로그">
-              <div className="hegun-log-header">
-                <strong>검증 기록</strong>
-                <span>{connectionStatus === "success" ? "완료" : connectionStatus === "testing" ? "진행 중" : connectionStatus === "failed" ? "실패" : "대기"}</span>
-              </div>
-              <div className="hegun-log-lines">
-                {displayLogs.map((log, index) => <span key={`${activeSourceType}-log-${index}`}>{log}</span>)}
-              </div>
-            </div>
-          </section>
+        {displayAssets.length > 0 && (
           <section className="panel hegun-console-panel">
             <div className="panel-header">
               <LayoutGrid size={18} />
@@ -1029,33 +1012,111 @@ export function SourceConnectionPage({
               ))}
             </div>
           </section>
-        </div>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <FileText size={18} />
-            <h2>{current.previewTitle}</h2>
-            <span className="panel-note">{publicDisplayPreviewNote}</span>
-          </div>
-          <div className="hegun-preview-actions">
-            {current.actions?.includes("Refresh Preview") && <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>{sourceActionLabel("Refresh Preview")}</button>}
-            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", activeSourceType)}>{sourceActionLabel("Download CSV")}</button>}
-            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", activeSourceType)}>{sourceActionLabel("Full Screen")}</button>}
-          </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
-              <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
-              <tbody>
-                {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
-                {displayPreviewRows.length === 0 && <tr><td colSpan={Math.max(displayPreviewColumns.length, 1)}>연결 테스트 후 소스 샘플 미리보기가 표시됩니다.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <div className="form-actions inline">
-          <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
-        </div>
+        )}
+        {displayPreviewRows.length > 0 && (
+          <section className="panel hegun-console-panel">
+            <div className="panel-header">
+              <FileText size={18} />
+              <h2>{current.previewTitle}</h2>
+              <span className="panel-note">{publicDisplayPreviewNote}</span>
+            </div>
+            <div className="hegun-table-scroll">
+              <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+                <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+                <tbody>
+                  {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
     </CreationFlowLayout>
   );
+}
+
+function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
+  if (status === "success") return <Check size={18} />;
+  if (status === "testing") return <RefreshCw size={18} />;
+  if (status === "failed") return <Info size={18} />;
+  return <Settings size={18} />;
+}
+
+function isVisibleSourceField(sourceType: string, label: string) {
+  if (isInternalSourceField(label)) return false;
+  if (sourceType === "File / S3") {
+    return !["Storage Provider", "Region", "Use Path Style", "Header"].includes(label);
+  }
+  return true;
+}
+
+function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
+  if (kind === "s3") {
+    return (
+      <svg className="source-brand-icon source-brand-s3" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M7 8.5 16 4l9 4.5v15L16 28l-9-4.5v-15Z" />
+        <path d="M11 10.5 16 8l5 2.5M11 21.5l5 2.5 5-2.5M16 8v16" />
+      </svg>
+    );
+  }
+  if (kind === "postgres") {
+    return (
+      <svg className="source-brand-icon source-brand-postgres" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" />
+        <path d="M10.5 13.4c.8-3.2 3.2-4.9 6.4-4.6 3.5.3 5.5 2.8 5 6.2l-.8 5.3c-.2 1.3-1.4 2.1-2.6 1.6l-2.1-.8-2.3 2.9c-.8 1-2.4.4-2.3-.9l.2-3.6-1.3-.5c-1.1-.4-1.7-1.6-1.4-2.8l1.2-2.8Z" />
+        <path d="M18.6 12.2c.9.4 1.4 1.2 1.4 2.4 0 1.1-.6 2-1.6 2.4" />
+      </svg>
+    );
+  }
+  if (kind === "mongo") {
+    return (
+      <svg className="source-brand-icon source-brand-mongo" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3c5.8 4.5 8.1 9.3 7 14.3-1 4.4-3.6 7.4-7 11.7-3.4-4.3-6-7.3-7-11.7C7.9 12.3 10.2 7.5 16 3Z" />
+        <path d="M16 7v18" />
+      </svg>
+    );
+  }
+  if (kind === "rest") {
+    return (
+      <svg className="source-brand-icon source-brand-rest" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="7" y="5" width="18" height="22" rx="3" />
+        <path d="m14 13-3 3 3 3M18 13l3 3-3 3M17 11l-2 10" />
+      </svg>
+    );
+  }
+  if (kind === "lake") {
+    return (
+      <svg className="source-brand-icon source-brand-lake" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M6 10c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+        <path d="M6 16c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+        <path d="M6 22c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="source-brand-icon source-brand-kafka" viewBox="0 0 32 32" aria-hidden="true">
+      <circle cx="10" cy="10" r="3.5" />
+      <circle cx="22" cy="10" r="3.5" />
+      <circle cx="16" cy="22" r="3.5" />
+      <path d="M13.4 11.9 18.6 20M18.6 11.9 13.4 20M13.5 10h5" />
+    </svg>
+  );
+}
+
+function sourceCheckIcon(label: string) {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("endpoint") || normalized.includes("broker") || normalized.includes("lake")) return <HardDrive size={14} />;
+  if (normalized.includes("bucket") || normalized.includes("database") || normalized.includes("table") || normalized.includes("collection") || normalized.includes("topic")) return <Database size={14} />;
+  if (normalized.includes("auth") || normalized.includes("access")) return <ShieldCheck size={14} />;
+  if (normalized.includes("sample") || normalized.includes("response") || normalized.includes("message") || normalized.includes("metadata")) return <FileText size={14} />;
+  return <Settings size={14} />;
+}
+
+function sourceCheckState(value: string) {
+  const normalized = value.toLowerCase();
+  if (/(ok|success|reachable|verified|fetched|listed|ready|완료|성공|가능)/.test(normalized)) return "success";
+  if (/(fail|error|denied|실패|오류)/.test(normalized)) return "failed";
+  if (/(pending|required|not tested|대기|필요|미확인)/.test(normalized)) return "idle";
+  return "idle";
 }
 
 const schemaTypeOptions = ["String", "Integer", "Float", "Boolean", "Timestamp", "JSON"];
@@ -4117,7 +4178,7 @@ export function TargetPage({
             <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
           </div>
           <div className="target-status-grid">
-            <StatusTile label="카탈로그 등록" value="생성 후 자동 등록" status="준비됨" />
+            <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
             <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
           </div>
         </section>
@@ -4342,7 +4403,7 @@ export function ReviewPage({
               <strong>{status}</strong>
             </div>
           ))}
-          <InfoBox title="안내사항" body="파이프라인 생성 후 데이터 카탈로그에서 즉시 조회 및 SQL 쿼리를 수행할 수 있습니다." />
+          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
         </CreationValidationPanel>
       )}
     >

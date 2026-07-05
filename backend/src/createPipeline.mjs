@@ -32,6 +32,7 @@ export function createPipeline(request) {
     name: request.jobName,
     nextRun: request.scheduleLabel === "manual" ? "-" : request.scheduleLabel,
     owner: request.owner,
+    rag: Boolean(request.rag),
     runHistory: [],
     schedule: request.scheduleLabel,
     source: `${request.sourceType} / ${request.sourceLabel}`,
@@ -54,32 +55,17 @@ export function createPipeline(request) {
     qualityStatus: request.qualityStatus,
   };
 
-  const dataset = {
-    description: `${request.sourceType} 소스 ${request.sourceLabel}에서 생성된 데이터셋`,
-    downstream: request.rag ? ["SQL 분석", "RAG 인덱싱"] : ["SQL 분석"],
-    freshness: "latest",
-    id: datasetId,
-    lastUpdated: new Date().toISOString(),
-    layer: request.targetLayer,
-    name: request.targetDataset,
-    nextRefresh: request.scheduleLabel,
-    owner: request.owner,
-    quality: qualitySummaryFromRequest(request),
-    rag: Boolean(request.rag),
-    rows: sourceMetrics.datasetRows,
-    sampleRows: datasetSampleRows,
-    schema: datasetSchema,
-    size: sourceMetrics.datasetSize,
-    source: request.jobName,
-    status: "available",
-    tags: ["#생성", `#${String(request.targetLayer).toLowerCase()}`],
-    upstream: [request.sourceLabel, request.jobName],
-  };
-
   jobs.unshift(job);
-  datasets.unshift(dataset);
 
-  return { dataset, job };
+  return {
+    catalogTarget: {
+      id: datasetId,
+      layer: request.targetLayer,
+      name: request.targetDataset,
+      status: "pending_run",
+    },
+    job,
+  };
 }
 
 export function commandJob(jobId, command) {
@@ -97,6 +83,7 @@ export function commandJob(jobId, command) {
   const startedJob = applyJobCommand(job, command);
   Object.assign(job, startedJob);
   const run = runFromCommand(job, command);
+  let dataset;
   if (run && (command === "run" || command === "retry")) {
     let sparkResult;
     try {
@@ -116,7 +103,7 @@ export function commandJob(jobId, command) {
     }
     Object.assign(run, runFromSparkResult(run, sparkResult));
     Object.assign(job, finalizeJobFromSparkResult(job, command, sparkResult));
-    updateDatasetFromSparkResult(job, sparkResult);
+    dataset = updateDatasetFromSparkResult(job, sparkResult);
   }
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
@@ -126,6 +113,7 @@ export function commandJob(jobId, command) {
   return {
     action: actionByCommand[command],
     apiPath: `/api/etl/jobs/${jobId}/commands`,
+    dataset,
     job,
     run,
     dagSteps: job.dagSteps ?? [],
@@ -395,8 +383,13 @@ function finalizeJobFromSparkResult(job, command, result) {
 }
 
 function updateDatasetFromSparkResult(job, result) {
-  const dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
-  if (!dataset || result.status !== "success") return;
+  if (result.status !== "success") return undefined;
+  let dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
+  if (!dataset) {
+    dataset = datasetFromSuccessfulRun(job, result);
+    datasets.unshift(dataset);
+    return dataset;
+  }
   dataset.lastUpdated = result.endedAt ?? new Date().toISOString();
   if (Array.isArray(result.schema) && result.schema.length > 0) {
     dataset.schema = result.schema.map((field) => [field.name, field.type]);
@@ -409,6 +402,45 @@ function updateDatasetFromSparkResult(job, result) {
   dataset.source = job.name;
   dataset.status = "available";
   dataset.upstream = Array.from(new Set([...(dataset.upstream ?? []), result.sourcePath ?? job.source]));
+  return dataset;
+}
+
+function datasetFromSuccessfulRun(job, result) {
+  const layer = job.targetLayer ?? "GOLD";
+  const schema = Array.isArray(result.schema) && result.schema.length > 0
+    ? result.schema.map((field) => [field.name, field.type])
+    : schemaFromJob(job);
+  return {
+    description: `${job.sourceType ?? "소스"} 소스 ${job.sourceLabel ?? job.source} 실행 결과 데이터셋`,
+    downstream: job.rag ? ["SQL 분석", "RAG 인덱싱"] : ["SQL 분석"],
+    freshness: "latest",
+    id: `ds_${normalizeColumnName(job.target)}`,
+    lastUpdated: result.endedAt ?? new Date().toISOString(),
+    layer,
+    name: job.target,
+    nextRefresh: job.schedule,
+    owner: job.owner,
+    quality: result.quality?.summary || `품질 점수 ${result.quality?.score ?? job.qualityScore ?? "-"}% · 상태 ${qualityStatusLabel(result.quality?.status ?? job.qualityStatus)}`,
+    rag: Boolean(job.rag),
+    rows: formatRows(result.outputRows),
+    sampleRows: Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [],
+    schema,
+    size: result.outputPath ?? "-",
+    source: job.name,
+    status: "available",
+    tags: ["#실행완료", `#${String(layer).toLowerCase()}`],
+    upstream: Array.from(new Set([job.sourceLabel, job.name, result.sourcePath ?? job.source].filter(Boolean))),
+  };
+}
+
+function schemaFromJob(job) {
+  if (Array.isArray(job.transformOutputColumns) && job.transformOutputColumns.length > 0) {
+    return job.transformOutputColumns;
+  }
+  if (Array.isArray(job.schemaColumns) && job.schemaColumns.length > 0) {
+    return job.schemaColumns.map((column) => [column.targetName ?? column.sourceName, column.type ?? "string"]);
+  }
+  return [];
 }
 
 function statsFromRuns(job, runs) {

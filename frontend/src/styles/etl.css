@@ -28,7 +28,7 @@
 
 .source-picker-strip {
   grid-template-columns: repeat(6, minmax(118px, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .source-active-config {
@@ -89,8 +89,11 @@
 }
 
 .source-picker-strip .hegun-connector {
-  grid-template-rows: auto auto minmax(36px, 1fr) auto;
-  min-height: 142px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 52px;
+  padding: 9px 10px;
 }
 
 .hegun-connector:hover {
@@ -102,8 +105,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
   background: #eef2ff;
   color: #4f46e5;
@@ -122,7 +125,9 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hegun-connector span,
@@ -138,6 +143,95 @@
 .hegun-connector .hegun-connector-icon {
   color: #4f46e5;
   font-size: inherit;
+}
+
+.source-brand-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.source-brand-icon path,
+.source-brand-icon circle,
+.source-brand-icon rect {
+  vector-effect: non-scaling-stroke;
+}
+
+.source-brand-s3 path:first-child {
+  fill: #ff9900;
+  stroke: #e76f00;
+  stroke-width: 1.2;
+}
+
+.source-brand-s3 path:last-child {
+  fill: none;
+  stroke: #fff7ed;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.source-brand-postgres circle {
+  fill: #336791;
+}
+
+.source-brand-postgres path {
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.source-brand-mongo path:first-child {
+  fill: #47a248;
+  stroke: #2f7d32;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+}
+
+.source-brand-mongo path:last-child {
+  fill: none;
+  stroke: #f0fdf4;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.source-brand-rest rect {
+  fill: #eef2ff;
+  stroke: #6366f1;
+  stroke-width: 1.4;
+}
+
+.source-brand-rest path {
+  fill: none;
+  stroke: #4f46e5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.source-brand-lake path {
+  fill: none;
+  stroke: #0284c7;
+  stroke-linecap: round;
+  stroke-width: 2.2;
+}
+
+.source-brand-kafka circle {
+  fill: #111827;
+}
+
+.source-brand-kafka path {
+  fill: none;
+  stroke: #111827;
+  stroke-linecap: round;
+  stroke-width: 1.9;
+}
+
+.source-picker-strip .hegun-connector strong {
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .hegun-connector em,
@@ -169,6 +263,104 @@
 .hegun-schema-grid,
 .hegun-rule-layout {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.hegun-source-grid.compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.hegun-source-status-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+}
+
+.hegun-status-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.hegun-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hegun-status-actions .primary-button,
+.hegun-status-actions .secondary-button {
+  min-height: 38px;
+  padding: 9px 16px;
+}
+
+.hegun-source-status-bar.success {
+  border-color: #bbf7d0;
+  background: #f7fef9;
+}
+
+.hegun-source-status-bar.failed {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.hegun-source-status-bar.testing {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.hegun-status-copy {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.hegun-status-copy > svg {
+  grid-row: span 2;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #eef2ff;
+  color: #4f46e5;
+  padding: 8px;
+}
+
+.hegun-source-status-bar.success .hegun-status-copy > svg {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.hegun-source-status-bar.failed .hegun-status-copy > svg {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.hegun-status-copy h2 {
+  min-width: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.25;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hegun-status-copy .panel-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hegun-test-summary {
@@ -217,32 +409,44 @@
 .hegun-test-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
 }
 
 .hegun-test-strip span {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  gap: 4px 10px;
-  align-items: start;
-  min-height: 78px;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 46px;
   border: 1px solid #dbe3ef;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  padding: 13px;
+  padding: 8px 10px;
 }
 
 .hegun-test-strip i {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.hegun-test-strip span.success i {
   background: #dcfce7;
   color: #16a34a;
-  grid-row: span 2;
+}
+
+.hegun-test-strip span.failed i {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.hegun-test-strip span.idle i {
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .hegun-test-strip svg {
@@ -253,10 +457,13 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hegun-test-strip em {
-  justify-self: start;
+  justify-self: end;
   border-radius: 999px;
   background: #eef2ff;
   color: #3730a3;
@@ -265,8 +472,10 @@
   font-weight: 900;
   line-height: 1;
   max-width: 100%;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   padding: 5px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hegun-log-panel {

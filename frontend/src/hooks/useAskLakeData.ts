@@ -250,31 +250,24 @@ export function useAskLakeData({
     }
 
     const previousState = {
-      datasets,
       jobs,
-      selectedDataset,
       selectedJob,
     };
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const { dataset, job } = await createPipelineDraft(draftPipeline);
+      const { job } = await createPipelineDraft(draftPipeline);
       const normalizedJob = normalizeJobRow(job);
-      const normalizedDataset = normalizeDatasetRow(dataset);
       setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
-      setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
       setSelectedJob(normalizedJob);
-      setSelectedDataset(normalizedDataset);
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
       writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
-      showToast("파이프라인 생성 요청이 접수되었습니다.");
+      showToast("파이프라인 생성 요청이 접수되었습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       setDraftPipeline(initialDraftPipeline);
       onFlowChange("jobs");
     } catch {
       setJobs(previousState.jobs);
-      setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
-      setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
       showToast("파이프라인 생성 요청에 실패했습니다.", "info");
     } finally {
@@ -318,7 +311,7 @@ export function useAskLakeData({
 
     setApiPending(true);
     try {
-      const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
+      const { action, apiPath, dagSteps, dataset, job: updatedJob, run } = await runJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
       if (run) {
@@ -336,6 +329,11 @@ export function useAskLakeData({
             [run.runId]: dagSteps,
           }));
         }
+      }
+      if (dataset) {
+        const normalizedDataset = normalizeDatasetRow(dataset);
+        setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
+        setSelectedDataset(normalizedDataset);
       }
     } catch {
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
