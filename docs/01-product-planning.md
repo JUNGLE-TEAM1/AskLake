@@ -84,15 +84,15 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 ### Flow C. 백엔드 연결
 
-1. 프론트는 `VITE_USE_MOCK_API=false`로 live API 모드에 들어간다.
-2. API adapter는 `VITE_API_BASE_URL` 기준으로 서버를 호출한다.
+1. 프론트는 기본적으로 live backend API 모드로 동작한다.
+2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
 3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
 4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
 
 ## 8) 성공 기준
 
 - `npm run build`가 통과한다.
-- frontend mock demo의 핵심 흐름이 끊기지 않는다.
+- live backend 기준 핵심 흐름이 끊기지 않는다.
 - 백엔드 도입 전후의 API 계약이 문서와 코드에서 어긋나지 않는다.
 - 최소 P0 backend API를 붙이면 생성/명령/SQL 실행이 live mode로 동작한다.
 - README와 docs가 현재 구현 상태를 과장하지 않는다.
@@ -105,7 +105,7 @@ E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 따른다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |
 | --- | --- | --- |
-| Day 1 | 생성 결과를 ETL 목록과 Catalog에 연결하고 Catalog 상세에 기본 lineage를 표시 | 새 Job, 새 Dataset, Dataset schema, upstream/current/downstream lineage, Dashboard 빈 상태가 보인다. |
+| Day 1 | 생성 결과를 ETL 목록에 연결하고 Spark run 성공 후 Catalog 상세에 기본 lineage를 표시 | 새 Job, 성공 run 이후 새 Dataset, Dataset schema, upstream/current/downstream lineage, Dashboard 빈 상태가 보인다. |
 | Day 2 | Job 실행 상태를 이력/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 이력/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
 | Day 3 | SQL Result를 Dashboard Widget으로 넘기고 Lineage/SQL/Dashboard 조작을 보강 | SQL Result Preview, Lineage 선택 상태, Table Widget, Widget 제목 수정/삭제가 동작한다. |
 | Day 4 | 전체 흐름을 반복 QA하고 Dashboard 저장/Publish를 완성 | 발표자가 5분 안에 전체 흐름을 재현하고 Published Dashboard까지 확인한다. |
@@ -114,7 +114,7 @@ E2E fallback 검증 기준은 `docs/e2e-fallback-verification.md`를 따른다.
 
 | Day | Pair A: ETL Creation & Job Operations | Pair B: Catalog, Lineage & SQL Analysis | Pair C: Dashboard Builder & Publish |
 | --- | --- | --- | --- |
-| Day 1 | Review 생성 후 `{ job, dataset }` 반영, 중복 클릭 방지, 실패 rollback | Catalog 상세, schema, 기본 lineage 표시 | Dashboard 목록과 Builder 진입 안정화 |
+| Day 1 | Review 생성 후 `{ job, catalogTarget }` 반영, run 성공 후 `dataset` 반영, 중복 클릭 방지, 실패 rollback | Catalog 상세, schema, 기본 lineage 표시 | Dashboard 목록과 Builder 진입 안정화 |
 | Day 2 | Job command 결과를 Run/DAG 상태로 연결 | Dataset을 SQL context로 전달하고 result reset 기준 정리 | `SqlResult`를 Table Widget 초안으로 변환 |
 | Day 3 | duplicate submit, 500/422/timeout 실패 복구 | read-only SQL guard, Lineage node selection, SQL result 렌더링 | Widget 제목 수정/삭제/추가, local draft reducer |
 | Day 4 | ETL 생성/실행 반복 QA | Catalog/Lineage/SQL 반복 이동 QA | Dashboard save/publish, localStorage fallback, published snapshot 고정 |

@@ -92,17 +92,22 @@ ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 �
 ```ts
 type CreateJobResponse = {
   job: JobRowData;
-  dataset: CatalogDataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 
-Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다.
+Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않는다. `transformSteps`, `transformOutputColumns`, `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`를 함께 보내고, backend는 이 payload를 job에 저장한 뒤 run command에서 Spark transform/quality 실행에 사용한다. Catalog Dataset은 create 시점에 만들지 않고 Spark run 성공 후 `JobCommandResponse.dataset`으로 생성/갱신한다.
 
 필수 확인:
 
-- `dataset.id`, `dataset.name`, `dataset.schema`, `dataset.sampleRows`, `dataset.rows`, `dataset.size`가 있어야 SQL context를 만들 수 있다.
-- `dataset.upstream`과 `dataset.downstream`이 있으면 Lineage fallback을 만들 수 있다.
-- 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
+- `catalogTarget.id`, `catalogTarget.name`, `catalogTarget.layer`, `catalogTarget.status`가 있어야 실행 전 대상 정보를 보여줄 수 있다.
+- Spark run 성공 후 command 응답의 `dataset.id`, `dataset.name`, `dataset.schema`, `dataset.sampleRows`, `dataset.rows`, `dataset.size`가 SQL context를 만들 수 있어야 한다.
+- 생성 후 ETL 목록에는 Job이 보이고, Catalog 목록은 Spark run 성공 전까지 비어 있어야 한다.
 - Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
 
 ### Pair A -> Pair C
@@ -125,7 +130,7 @@ type JobCommandResponse = {
     title: string;
     status: "pending" | "running" | "success" | "failed" | "blocked";
   }>;
-  datasetPatch?: Partial<CatalogDataset>;
+  dataset?: CatalogDataset;
   processingResult?: DataProcessingResult;
 };
 ```

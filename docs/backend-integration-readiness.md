@@ -36,7 +36,12 @@ Backend create response:
 ```ts
 type CreateJobResponse = {
   job: JobRowData;
-  dataset: CatalogDataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 

@@ -178,7 +178,7 @@ B가 target dataset 이름과 layer를 검토하면 Catalog handoff 오류를 �
 | 항목 | 내용 |
 |---|---|
 | 목적 | Review 생성 버튼을 눌러 Job/Dataset을 만들고 다음 화면에 반영한다. |
-| 주요 작업 | create adapter, `{ job, dataset }` mapper, jobs prepend, datasets prepend, selected state 갱신 |
+| 주요 작업 | create adapter, `{ job, catalogTarget }` mapper, jobs prepend, run 성공 `dataset` mapper, datasets prepend, selected state 갱신 |
 | 입력 | `draftPipeline` |
 | 출력 | `job`, `dataset`, `selectedJob`, `selectedDataset` |
 | 맡기 좋은 사람 | Pair A 고정 담당 |
@@ -347,7 +347,7 @@ Pair C가 직접 고치지 말아야 할 것:
 | A5 | schedule label이 보인다. | `scheduleLabel`이 Job 카드에도 재사용된다. |
 | A6 | target dataset/layer가 보인다. | `targetDataset`, `targetLayer`, `owner`가 create request에 들어간다. |
 | A7 | Review summary가 비어 있지 않다. | `canCreate`가 누락값을 막는다. |
-| A8 | 생성 후 ETL/Catalog에 결과가 보인다. | `{ job, dataset }` mapper와 selected state가 맞다. |
+| A8 | 생성 후 ETL에 Job이 보이고 run 성공 후 Catalog에 Dataset이 보인다. | `{ job, catalogTarget }` create mapper, run 성공 `dataset` mapper와 selected state가 맞다. |
 | A9 | 실행 버튼 상태가 바뀐다. | command response가 정규화된다. |
 | A10 | 같은 Run ID가 공유된다. | `runsByJobId`, `selectedRun`이 일치한다. |
 | A11 | 실행 이력 row가 보인다. | Run fixture로 독립 렌더링된다. |

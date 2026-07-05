@@ -131,7 +131,7 @@ def make_spark():
         .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
         .getOrCreate()
     )
-    spark.sparkContext.setLogLevel("WARN")
+    spark.sparkContext.setLogLevel("INFO")
     return spark
 
 

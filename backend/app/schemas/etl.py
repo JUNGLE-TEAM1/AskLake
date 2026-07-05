@@ -178,7 +178,6 @@ class CreatePipelineRequest(CamelModel):
 class CreatePipelineResponse(CamelModel):
     job: JobRowData
     catalog_target: dict[str, Any] | None = None
-    dataset: CatalogDataset | None = None
 
 
 class JobCommandRequest(CamelModel):
@@ -192,7 +191,6 @@ class JobCommandResponse(CamelModel):
     job: JobRowData | None = None
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
-    dataset_patch: dict[str, Any] | None = None
     processing_result: dict[str, Any] | None = None
 
 

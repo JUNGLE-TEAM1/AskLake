@@ -126,9 +126,7 @@ Ownership rules:
 
 현재 live mode 진입점:
 
-- `VITE_USE_MOCK_API=false`
 - `VITE_API_BASE_URL=http://localhost:8080`
-- `frontend/src/services/mockApi.ts`
 - `frontend/src/services/apiClient.ts`
 
 P0 API:
