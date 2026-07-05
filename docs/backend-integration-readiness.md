@@ -97,6 +97,7 @@ VITE_USE_MOCK_API=false
 | Page ì´ë¦„ ìˆ˜ì • | `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}` |
 | ÆäÀÌÁö »èÁ¦ | `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}` |
 | À§Á¬ Ãß°¡ | `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` |
+| Draft widget ìˆ˜ì • | `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}` |
 | ·¹ÀÌ¾Æ¿ô ÀúÀå | `PATCH /api/dashboards/{dashboardId}/draft/layouts` |
 | ´ë½Ãº¸µå »ó¼¼ | `GET /api/dashboards/{dashboardId}` |
 | ´ë½Ãº¸µå »èÁ¦ | `DELETE /api/dashboards/{dashboardId}` |
@@ -171,6 +172,7 @@ SQL ?¤í–‰ ë°±ì—”?œëŠ” ë°˜ë“œ??read-only guardë¥??¬ì•¼ ?©ë‹ˆ??
 | --- | --- | --- |
 | ?„ì ¯ ?€??? íƒ | ?„ë¡ ???íƒœ ë³€ê²?| ?†ìŒ |
 | ?„ì ¯ ì¶”ê? | draft canvas??ì¶”ê? | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
+| Widget ìˆ˜ì • | DB-backed draft widget title/type/config ìˆ˜ì • | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | ?„ì ¯ ?? œ | local canvas?ì„œ ?œê±° | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Draft ì¡°íšŒ/?ì„± | DB-backed draft runtime | `POST /api/dashboards/{id}/draft/ensure` |
 | Page ì¶”ê? | DB-backed draft page | `POST /api/dashboards/{id}/draft/pages` |

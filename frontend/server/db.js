@@ -741,6 +741,54 @@ export async function deleteDraftDashboardWidget(dashboardId, widgetId) {
   return { deletedWidgetId: widget.id, ok: true };
 }
 
+export async function updateDraftDashboardWidget(dashboardId, widgetId, input = {}) {
+  const draftRevision = await getLatestRevision(dashboardId, "draft");
+  if (!draftRevision || !widgetId) return null;
+
+  const existingResult = await pool.query(
+    `
+      SELECT dashboard_widgets.*
+      FROM dashboard_widgets
+      JOIN dashboard_pages ON dashboard_widgets.page_id = dashboard_pages.id
+      WHERE dashboard_widgets.id = $1
+        AND dashboard_pages.revision_id = $2
+    `,
+    [widgetId, draftRevision.id],
+  );
+  const existingWidget = existingResult.rows[0];
+  if (!existingWidget) return null;
+
+  const nextConfig = typeof input.config === "object" && input.config !== null && !Array.isArray(input.config)
+    ? input.config
+    : existingWidget.config_json ?? {};
+  const nextDatasetId = Object.hasOwn(input, "datasetId") ? input.datasetId ?? null : existingWidget.dataset_id;
+  const nextTitle = typeof input.title === "string" ? input.title.trim() || null : existingWidget.title;
+  const nextType = normalizeRuntimeWidgetType(input.type ?? existingWidget.type);
+
+  const updateResult = await pool.query(
+    `
+      UPDATE dashboard_widgets
+      SET type = $1,
+          title = $2,
+          dataset_id = $3,
+          config_json = $4::jsonb,
+          updated_at = now()
+      WHERE id = $5
+      RETURNING id
+    `,
+    [nextType, nextTitle, nextDatasetId, JSON.stringify(nextConfig), widgetId],
+  );
+
+  await saveDashboardPatch(dashboardId, {
+    updated: "방금 전",
+    updatedAtValue: new Date().toISOString(),
+  });
+
+  return {
+    id: updateResult.rows[0].id,
+  };
+}
+
 export async function updateDraftDashboardPageTitle(dashboardId, pageId, title) {
   const nextTitle = typeof title === "string" ? title.trim() : "";
   if (!nextTitle) return { error: { code: "VALIDATION_ERROR", message: "Page title is required", status: 400 } };

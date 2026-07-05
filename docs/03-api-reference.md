@@ -70,6 +70,7 @@ Canonical status values:
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page ì´ë¦„ ìˆ˜ì • |
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page?€ ?˜ìœ„ widgets ?? œ |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` | draft page??widget ì¶”ê? |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget ìˆ˜ì • |
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget ì‚­ì œ |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch ?€??|
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard ê²Œì‹œ |
@@ -204,6 +205,7 @@ type DashboardRuntimeResponse = {
 `GET /api/dashboards/{dashboardId}/published`??published revision???†ìœ¼ë©?`revision: null`, `pages: []`, `widgetsByPageId: {}`ë¡??‘ë‹µ?œë‹¤.
 `POST /api/dashboards/{dashboardId}/draft/ensure`??idempotent?˜ë©° draftê°€ ?†ìœ¼ë©?published snapshot ?ëŠ” ë¹?revisionê³?ê¸°ë³¸ pageë¥?ë§Œë“ ??
 `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`??page?€ ?´ë‹¹ page??widgetsë¥??¨ê»˜ ?? œ?œë‹¤.
+`PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`ëŠ” í˜„ì¬ draft revisionì— ì†í•œ widgetì˜ type, title, datasetId, configë¥¼ ìˆ˜ì •í•œë‹¤.
 `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`ëŠ” í˜„ì¬ draft revisionì— ì†í•œ widgetë§Œ ì‚­ì œí•œë‹¤.
 `POST /api/dashboards/{dashboardId}/publish`???„ì¬ draft revision????published revision?¼ë¡œ ë³µì‚¬?˜ë?ë¡? draft editor?ì„œ ì¶”ê?/?? œ??pages??publish ??published viewer?ì„œ ë³´ì¸??
 

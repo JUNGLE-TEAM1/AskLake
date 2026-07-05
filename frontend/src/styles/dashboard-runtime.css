@@ -169,6 +169,7 @@
 .asklake-widget-config-form select:focus-visible,
 .asklake-widget-config-form textarea:focus-visible,
 .asklake-widget-create-button:focus-visible,
+.asklake-widget-secondary-button:focus-visible,
 .asklake-dashboard-share-panel button:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.25);
   outline-offset: 2px;
@@ -1133,18 +1134,38 @@
   padding: 8px 9px;
 }
 
-.asklake-widget-create-button {
+.asklake-widget-config-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.asklake-widget-config-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+.asklake-widget-create-button,
+.asklake-widget-secondary-button {
   display: inline-flex;
   min-height: 36px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #2563eb;
   border-radius: 6px;
-  background: #2563eb;
-  color: #ffffff;
   font-size: 13px;
   font-weight: 850;
   padding: 0 10px;
+}
+
+.asklake-widget-create-button {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.asklake-widget-secondary-button {
+  border: 1px solid var(--dash-border-strong);
+  background: #ffffff;
+  color: var(--dash-text);
 }
 
 .asklake-widget-create-button:disabled {
