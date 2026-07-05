@@ -40,10 +40,13 @@ P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=true
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- Source/Schema/Create/Run 흐름은 실제 백엔드를 호출합니다.
+- `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
+- live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -912,14 +915,15 @@ Response `201 Created`:
 
 ## 11. 프론트 전환 순서
 
-1. 백엔드 서버를 실행합니다.
-2. `frontend/.env`에 `VITE_API_BASE_URL`을 설정합니다.
-3. 프론트 dev 서버를 재시작합니다.
-4. `POST /api/etl/sources/test` Source/Schema 연결 흐름을 확인합니다.
-5. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-6. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
-7. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
-8. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
+1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
+2. 백엔드 서버를 실행합니다.
+3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
+4. 프론트 dev 서버를 재시작합니다.
+5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
+9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
 ## 12. 열린 결정 사항
 

@@ -6,7 +6,9 @@
 
 ## 1) 현재 상태
 
-- 현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출한다.
+- 현재 Pair A Source/Schema/Create/Run 흐름은 mock/live adapter를 통해 동작한다.
+- mock mode(`VITE_USE_MOCK_API` 미설정 또는 `true`)에서는 Source/Schema 연결 테스트도 backend 없이 mock `SourceConnectorAnalysis`를 반환한다.
+- live API mode(`VITE_USE_MOCK_API=false`)에서만 Source/Schema/Create/Run이 live backend API를 호출한다.
 - `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - ETL/Catalog 초기 hydrate 결과가 비어 있으면 UI도 빈 목록으로 시작한다.
@@ -15,7 +17,11 @@
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=true
 ```
+
+- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query API를 실제 backend로 보낸다.
+- 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 
 ## 3) 공통 규칙
 
@@ -72,6 +78,7 @@ Canonical status values:
 | 수집/처리 목록 | live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
+| Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
 | 카탈로그 | live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
