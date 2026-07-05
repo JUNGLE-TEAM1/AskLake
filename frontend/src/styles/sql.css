@@ -35,6 +35,8 @@
   top: 65px;
   left: var(--sidebar-width);
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   width: var(--sql-context-width);
   height: calc(100vh - 121px);
   max-height: none;
