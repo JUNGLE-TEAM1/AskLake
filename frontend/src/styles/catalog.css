@@ -586,6 +586,12 @@
   box-shadow: 0 24px 64px rgb(15 23 42 / 24%);
 }
 
+.catalog-modal.lineage-modal {
+  width: min(1680px, calc(100vw - 32px));
+  height: calc(100vh - 32px);
+  max-height: calc(100vh - 32px);
+}
+
 .catalog-modal-header {
   display: flex;
   align-items: flex-start;
@@ -631,6 +637,11 @@
   padding: 20px 24px 24px;
 }
 
+.catalog-modal.lineage-modal .catalog-modal-body {
+  display: grid;
+  overflow: hidden;
+}
+
 .catalog-modal-body .catalog-table-card,
 .catalog-modal-body .catalog-lineage-card {
   border: 0;
@@ -643,6 +654,11 @@
 
 .catalog-modal-body .catalog-lineage-card.compact {
   gap: 12px;
+}
+
+.catalog-modal.lineage-modal .catalog-lineage-card {
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
 }
 
 .catalog-detail-page {
@@ -691,6 +707,12 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #f8fbff;
+}
+
+.catalog-modal.lineage-modal .catalog-lineage-flow {
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .catalog-lineage-empty {

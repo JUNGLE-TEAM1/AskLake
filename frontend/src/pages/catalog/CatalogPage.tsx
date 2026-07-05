@@ -591,6 +591,7 @@ export function CatalogPage({
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
           title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
+          variant={activeModal}
         >
           {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
         </CatalogModal>
@@ -604,15 +605,17 @@ function CatalogModal({
   dataset,
   onClose,
   title,
+  variant,
 }: {
   children: React.ReactNode;
   dataset: CatalogDataset;
   onClose: () => void;
   title: string;
+  variant: "lineage" | "schema";
 }) {
   return (
     <div className="catalog-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="catalog-modal" role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
+      <section className={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`} role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
         <header className="catalog-modal-header">
           <div>
             <span>{dataset.layer} Dataset</span>
