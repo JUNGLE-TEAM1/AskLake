@@ -51,7 +51,7 @@ type DerivedDatasetDraft = {
 };
 
 const PREVIEW_ROW_LIMIT = 100;
-const SQL_CONTEXT_PAGE_SIZE = 10;
+const SQL_CONTEXT_PAGE_SIZE = 15;
 const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
 
