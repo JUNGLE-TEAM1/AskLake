@@ -83,7 +83,7 @@ class CatalogService:
             columns=sql_result.columns,
             dataset_id=dataset_id,
             layer=request.dataset.layer,
-            rows=build_materialized_sql_rows(sql_result, result_source_dataset),
+            rows=build_materialized_sql_rows(sql_result),
             source_run_id=request.source_run_id,
         )
         dataset_payload = build_derived_dataset_payload(
@@ -241,16 +241,14 @@ def build_derived_dataset_name(
 
 def build_materialized_sql_rows(
     sql_result: QueryRunResponse,
-    result_source_dataset: CatalogDatasetResponse,
 ) -> list[list[str]]:
-    source_rows = result_source_dataset.sample_rows or sql_result.rows
     column_count = len(sql_result.columns)
     return [
         [
             str(row[column_index]) if column_index < len(row) else ""
             for column_index in range(column_count)
         ]
-        for row in source_rows
+        for row in sql_result.rows
     ]
 
 
