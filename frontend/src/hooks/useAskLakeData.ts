@@ -203,8 +203,11 @@ function saveStoredCatalogDataset(dataset: CatalogDataset) {
   const previousDatasets = loadStoredCatalogDatasets();
   const nextDatasets = [dataset, ...previousDatasets.filter((item) => item.id !== dataset.id)]
     .slice(0, maxStoredCatalogDatasets);
+  const nextLegacyDatasets = parseStoredCatalogDatasets(legacyDerivedDatasetStorageKey)
+    .filter((item) => item.id !== dataset.id);
 
   window.localStorage.setItem(catalogDatasetStorageKey, JSON.stringify(nextDatasets));
+  window.localStorage.setItem(legacyDerivedDatasetStorageKey, JSON.stringify(nextLegacyDatasets));
 }
 
 function getInitialDatasets() {
@@ -282,6 +285,7 @@ function buildSqlDatasetJobDraft(
         ["Source Dataset ID", sourceDataset.id],
         ["SQL Run ID", sqlResult.runId],
         ["Preview Limit", String(sqlResult.previewLimit ?? request.previewLimit ?? "")],
+        ["Preview Row Count", String(sqlResult.rowCount)],
         ["Reference Dataset IDs", (request.referenceDatasetIds ?? []).join(", ") || "-"],
         ["Validation Key", request.validationKey ?? "-"],
         ["Query", request.query],

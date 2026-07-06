@@ -308,12 +308,14 @@ export function CatalogPage({
 
     const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
     const previewInResults = paginatedDatasets.find((dataset) => dataset.id === previewDataset.id);
-    const nextPreview = previewInResults ?? selectedInResults ?? paginatedDatasets[0];
+    const nextPreview = previewDataset.id === selectedDataset.id
+      ? selectedInResults ?? previewInResults ?? paginatedDatasets[0]
+      : previewInResults ?? selectedInResults ?? paginatedDatasets[0];
 
-    if (nextPreview.id !== previewDataset.id) {
+    if (nextPreview !== previewDataset) {
       setPreviewDataset(nextPreview);
     }
-  }, [hasCatalogResults, paginatedDatasets, previewDataset.id, selectedDataset.id]);
+  }, [hasCatalogResults, paginatedDatasets, previewDataset, selectedDataset.id]);
 
   const handleSearchSubmit = () => {
     const query = searchText.trim();
