@@ -10,6 +10,18 @@ const widgetTypeLabels: Record<DashboardRuntimeWidget["type"], string> = {
   table: "테이블",
 };
 
+function placeholderKind(widget: DashboardRuntimeWidget) {
+  const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
+  return kind === "visualization_request" || kind === "text" ? kind : null;
+}
+
+function widgetTypeLabel(widget: DashboardRuntimeWidget) {
+  const kind = placeholderKind(widget);
+  if (kind === "visualization_request") return "시각화";
+  if (kind === "text") return "텍스트";
+  return widgetTypeLabels[widget.type];
+}
+
 function clampSpan(value: number | undefined, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
   return Math.min(12, Math.max(1, Math.round(value ?? fallback)));
@@ -23,6 +35,7 @@ export function WidgetFrame({
   deleteDisabled = false,
   editable = false,
   onDelete,
+  onPatchConfig,
   onSelect,
   selected = false,
   widget,
@@ -30,6 +43,7 @@ export function WidgetFrame({
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
+  onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
@@ -52,7 +66,7 @@ export function WidgetFrame({
     >
       <header>
         <div>
-          <span>{widgetTypeLabels[widget.type]}</span>
+          <span>{widgetTypeLabel(widget)}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         {editable && selected && (
@@ -72,7 +86,10 @@ export function WidgetFrame({
         )}
       </header>
       <div className="asklake-widget-frame-body">
-        <WidgetRenderer widget={widget} />
+        <WidgetRenderer
+          widget={widget}
+          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+        />
       </div>
     </article>
   );

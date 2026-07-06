@@ -144,10 +144,13 @@ type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 
 type DashboardWidgetConfigBase = {
+  body?: string;
   color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: "visualization_request" | "text";
+  prompt?: string;
 };
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {

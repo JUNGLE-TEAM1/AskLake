@@ -279,7 +279,7 @@ export function WidgetConfigPanel({
   const currentConfig = configsByType[type] ?? {};
   const validationMessage = selectedDataset || isEditMode
     ? validateConfig(type, currentConfig)
-    : "왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.";
+    : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean((isEditMode || (selectedDatasetId && selectedDataset)) && !validationMessage);
 
   const patchCurrentConfig = (patch: WidgetConfigDraft) => {
@@ -306,7 +306,7 @@ export function WidgetConfigPanel({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!isEditMode && (!selectedDataset || !selectedDatasetId)) {
-      setFormError("왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.");
+      setFormError("왼쪽에서 데이터셋을 먼저 선택해 주세요.");
       return;
     }
 
@@ -335,7 +335,7 @@ export function WidgetConfigPanel({
     }
 
     if (!selectedDatasetId) {
-      setFormError("왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.");
+      setFormError("왼쪽에서 데이터셋을 먼저 선택해 주세요.");
       return;
     }
 
@@ -351,7 +351,7 @@ export function WidgetConfigPanel({
     return (
       <section className="asklake-widget-config-panel empty">
         <strong>데이터셋을 선택해 주세요</strong>
-        <span>왼쪽에서 Gold 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다.</span>
+        <span>왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다.</span>
       </section>
     );
   }
@@ -360,7 +360,7 @@ export function WidgetConfigPanel({
     <section className="asklake-widget-config-panel">
       <div className="asklake-widget-config-heading">
         <div>
-          <span>{isEditMode ? "Selected widget" : "Dataset widget"}</span>
+          <span>{isEditMode ? "위젯 수정하기" : "데이터셋 위젯 만들기"}</span>
           <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
         </div>
       </div>

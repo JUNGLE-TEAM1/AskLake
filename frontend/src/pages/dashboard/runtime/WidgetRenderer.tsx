@@ -1,5 +1,6 @@
-import { memo } from "react";
+import { memo, useEffect, useState, type FormEvent } from "react";
 import type { ApexOptions } from "apexcharts";
+import { Send } from "lucide-react";
 import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
@@ -15,6 +16,7 @@ type ChartPoint = {
   value: number;
 };
 type RuntimeWidgetByType<Type extends DashboardRuntimeWidget["type"]> = Extract<DashboardRuntimeWidget, { type: Type }>;
+type WidgetConfigPatch = Record<string, unknown>;
 
 const chartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const chartColorByConfig: Record<string, string> = {
@@ -38,6 +40,16 @@ function isSimpleRow(value: unknown): value is SimpleRow {
 
 function rowsFromWidget(widget: DashboardRuntimeWidget) {
   return Array.isArray(widget.data) ? widget.data.filter(isSimpleRow) : [];
+}
+
+function configText(widget: DashboardRuntimeWidget, key: string) {
+  const value = (widget.config as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
+function placeholderKind(widget: DashboardRuntimeWidget) {
+  const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
+  return kind === "visualization_request" || kind === "text" ? kind : null;
 }
 
 export function formatCell(value: unknown) {
@@ -302,6 +314,116 @@ function WidgetDataError() {
   return <div className="asklake-widget-empty error">위젯 데이터를 불러오지 못했습니다.</div>;
 }
 
+function VisualizationRequestWidget({
+  onPatchConfig,
+  widget,
+}: {
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPromptEditing, setIsPromptEditing] = useState(false);
+  const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
+
+  useEffect(() => {
+    setPrompt(configText(widget, "prompt"));
+    setIsPromptEditing(false);
+  }, [widget.id, widget.config]);
+
+  const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextPrompt = prompt.trim();
+    if (!nextPrompt || !onPatchConfig || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      await onPatchConfig({ prompt: nextPrompt });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="asklake-visualization-request-widget">
+      <form className="asklake-visualization-request-form" onSubmit={(event) => void savePrompt(event)}>
+        <input
+          aria-label="시각화 요청"
+          className={isPromptEditing ? "widget-control" : undefined}
+          placeholder="어시스턴트에게 이 차트의 편집을 요청하세요."
+          readOnly={!isPromptEditing}
+          value={prompt}
+          onBlur={() => setIsPromptEditing(false)}
+          onChange={(event) => setPrompt(event.target.value)}
+          onDoubleClick={() => setIsPromptEditing(true)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            setPrompt(configText(widget, "prompt"));
+            setIsPromptEditing(false);
+            event.currentTarget.blur();
+          }}
+        />
+        <button aria-label="요청 저장" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
+          <Send size={18} />
+        </button>
+      </form>
+      <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
+    </div>
+  );
+}
+
+function TextPlaceholderWidget({
+  onPatchConfig,
+  widget,
+}: {
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const [body, setBody] = useState(() => configText(widget, "body"));
+  const [isBodyEditing, setIsBodyEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setBody(configText(widget, "body"));
+    setIsBodyEditing(false);
+  }, [widget.id, widget.config]);
+
+  const saveBody = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!onPatchConfig || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      await onPatchConfig({ body });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <form className="asklake-text-placeholder-widget" onSubmit={(event) => void saveBody(event)}>
+      <textarea
+        aria-label="텍스트 위젯 내용"
+        className={isBodyEditing ? "widget-control" : undefined}
+        placeholder="편집을 시작하려면 텍스트를 입력하세요."
+        readOnly={!isBodyEditing}
+        value={body}
+        onBlur={() => setIsBodyEditing(false)}
+        onChange={(event) => setBody(event.target.value)}
+        onDoubleClick={() => setIsBodyEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          setBody(configText(widget, "body"));
+          setIsBodyEditing(false);
+          event.currentTarget.blur();
+        }}
+      />
+      <div className="asklake-text-placeholder-actions">
+        <button disabled={!onPatchConfig || isSaving} type="submit">저장</button>
+      </div>
+    </form>
+  );
+}
+
 function MetricWidget({ widget }: { widget: RuntimeWidgetByType<"metric"> }) {
   const rows = rowsFromWidget(widget);
   const firstRow = rows[0];
@@ -492,7 +614,17 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
   return <RuntimeApexChart options={options} series={series} type="donut" />;
 }
 
-export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
+export const WidgetRenderer = memo(function WidgetRenderer({
+  onPatchConfig,
+  widget,
+}: {
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const kind = placeholderKind(widget);
+  if (kind === "visualization_request") return <VisualizationRequestWidget widget={widget} onPatchConfig={onPatchConfig} />;
+  if (kind === "text") return <TextPlaceholderWidget widget={widget} onPatchConfig={onPatchConfig} />;
+
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);
   if (hasError) return <WidgetDataError />;
 

@@ -1,5 +1,7 @@
 import type { DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
 
+export type ToolbarDraftWidgetKind = "visualization" | "text";
+
 export type DashboardDatasetColumn = {
   name: string;
   type: "string" | "number" | "date";

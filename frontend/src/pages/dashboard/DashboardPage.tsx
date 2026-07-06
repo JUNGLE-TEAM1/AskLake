@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
   Maximize2,
@@ -62,6 +63,10 @@ type RuntimeNotice = {
   tone: "success" | "info" | "error";
 };
 
+type RuntimeLayoutSnapshot = Array<Pick<LayoutItem, "h" | "i" | "minH" | "minW" | "w" | "x" | "y">>;
+
+const maxLayoutHistoryEntries = 40;
+
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
@@ -69,6 +74,48 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
 };
+
+function normalizeLayoutSnapshot(layout: readonly LayoutItem[]): RuntimeLayoutSnapshot {
+  return layout
+    .map((item) => ({
+      h: item.h,
+      i: item.i,
+      minH: item.minH,
+      minW: item.minW,
+      w: item.w,
+      x: item.x,
+      y: item.y,
+    }))
+    .sort((first, second) => first.i.localeCompare(second.i));
+}
+
+function widgetLayoutSnapshot(widgets: DashboardRuntimeWidget[]): RuntimeLayoutSnapshot {
+  return normalizeLayoutSnapshot(widgets.map((widget) => ({
+    h: widget.layout.h,
+    i: widget.id,
+    minH: widget.layout.minH,
+    minW: widget.layout.minW,
+    w: widget.layout.w,
+    x: widget.layout.x,
+    y: widget.layout.y,
+  })));
+}
+
+function layoutSnapshotsEqual(first: RuntimeLayoutSnapshot, second: RuntimeLayoutSnapshot) {
+  if (first.length !== second.length) return false;
+  return first.every((item, index) => {
+    const next = second[index];
+    return item.i === next.i
+      && item.x === next.x
+      && item.y === next.y
+      && item.w === next.w
+      && item.h === next.h;
+  });
+}
+
+function pushLayoutHistory(stack: RuntimeLayoutSnapshot[], snapshot: RuntimeLayoutSnapshot) {
+  return [...stack, snapshot].slice(-maxLayoutHistoryEntries);
+}
 
 export function DashboardPage({
   dataset,
@@ -117,6 +164,8 @@ export function DashboardPage({
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
   const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [layoutRedoStack, setLayoutRedoStack] = useState<RuntimeLayoutSnapshot[]>([]);
+  const [layoutUndoStack, setLayoutUndoStack] = useState<RuntimeLayoutSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
@@ -211,6 +260,10 @@ export function DashboardPage({
     () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
     [selectedDraftWidgets, selectedWidgetId],
   );
+  const selectedDraftWidgetIds = useMemo(
+    () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
+    [selectedDraftWidgets],
+  );
   const editorDatasetId = selectedDraftWidget?.datasetId ?? selectedDatasetId;
   const editorDataset = useMemo(
     () => dashboardDatasets.find((datasetOption) => datasetOption.id === editorDatasetId) ?? null,
@@ -278,7 +331,9 @@ export function DashboardPage({
 
   const {
     createDatasetDraftWidget,
+    createToolbarDraftWidget,
     isCreatingDatasetWidget,
+    isCreatingToolbarWidget,
   } = useDraftWidgetCreator({
     dashboardId: runtimeSelection.dashboardId,
     defaultLayouts: defaultDraftWidgetLayout,
@@ -300,6 +355,40 @@ export function DashboardPage({
     setDraftRuntime,
     setRuntimeNotice,
   });
+
+  const commitRuntimeLayout = (layout: LayoutItem[]) => {
+    const previousLayout = widgetLayoutSnapshot(selectedDraftWidgets);
+    const nextLayout = normalizeLayoutSnapshot(layout);
+    if (layoutSnapshotsEqual(previousLayout, nextLayout)) return;
+
+    setLayoutUndoStack((stack) => pushLayoutHistory(stack, previousLayout));
+    setLayoutRedoStack([]);
+    updateDraftWidgetLayouts(nextLayout);
+  };
+
+  const undoRuntimeLayout = () => {
+    const previousLayout = layoutUndoStack.at(-1);
+    if (!previousLayout) return;
+
+    const currentLayout = widgetLayoutSnapshot(selectedDraftWidgets);
+    setLayoutUndoStack((stack) => stack.slice(0, -1));
+    setLayoutRedoStack((stack) => pushLayoutHistory(stack, currentLayout));
+    updateDraftWidgetLayouts(previousLayout);
+    setRuntimeNotice({ message: "레이아웃 변경을 실행 취소했습니다.", tone: "info" });
+    onAction("dashboard.layout.undo", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId ?? runtimeSelection.dashboardId);
+  };
+
+  const redoRuntimeLayout = () => {
+    const nextLayout = layoutRedoStack.at(-1);
+    if (!nextLayout) return;
+
+    const currentLayout = widgetLayoutSnapshot(selectedDraftWidgets);
+    setLayoutRedoStack((stack) => stack.slice(0, -1));
+    setLayoutUndoStack((stack) => pushLayoutHistory(stack, currentLayout));
+    updateDraftWidgetLayouts(nextLayout);
+    setRuntimeNotice({ message: "레이아웃 변경을 다시 실행했습니다.", tone: "info" });
+    onAction("dashboard.layout.redo", `/api/dashboards/${runtimeSelection.dashboardId}/draft/layouts`, selectedRuntimePageId ?? runtimeSelection.dashboardId);
+  };
 
   useEffect(() => {
     setView(entry.view);
@@ -348,6 +437,11 @@ export function DashboardPage({
   useEffect(() => {
     setSelectedWidgetId(null);
   }, [selectedRuntimePageId]);
+
+  useEffect(() => {
+    setLayoutRedoStack([]);
+    setLayoutUndoStack([]);
+  }, [runtimeSelection.dashboardId, runtimeSelection.mode, selectedDraftWidgetIds, selectedRuntimePageId]);
 
   useEffect(() => {
     window.localStorage.setItem("asklake.dashboardCards", JSON.stringify(savedDashboards));
@@ -909,13 +1003,15 @@ export function DashboardPage({
       clearWidgetSelection: clearRuntimeWidgetSelection,
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
+      createToolbarWidget: createToolbarDraftWidget,
       deletePage: deleteRuntimePage,
       deleteWidget: deleteRuntimeWidget,
-      layoutCommit: updateDraftWidgetLayouts,
+      layoutCommit: commitRuntimeLayout,
       layoutRejected: () => setRuntimeNotice({ message: "위젯이 겹쳐 원래 위치로 되돌렸습니다.", tone: "error" }),
       openDraft: () => openRuntimeDashboard(runtimeSelection.dashboardId, "draft"),
       openPublished: () => openRuntimeDashboard(runtimeSelection.dashboardId, "published"),
       publishDraft: publishDraftRuntime,
+      redoLayout: redoRuntimeLayout,
       refresh: refreshRuntimeDashboard,
       renamePage: renameRuntimePage,
       renameTitle: renameRuntimeDashboardTitle,
@@ -926,6 +1022,7 @@ export function DashboardPage({
       selectWidget: selectRuntimeWidget,
       share: shareRuntimeDashboard,
       toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
+      undoLayout: undoRuntimeLayout,
       updateWidget: updateRuntimeWidget,
     };
     const runtimeDatasetState = {
@@ -941,9 +1038,12 @@ export function DashboardPage({
       draftError,
       draftLoading,
       draftRuntime,
+      canRedoLayout: layoutRedoStack.length > 0,
+      canUndoLayout: layoutUndoStack.length > 0,
       hasPublishedRevision: runtimeHasPublishedRevision,
       isAddingPage: isAddingRuntimePage,
       isDatasetSidebarOpen,
+      isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,

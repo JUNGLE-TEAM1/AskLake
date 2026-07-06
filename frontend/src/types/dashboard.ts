@@ -8,12 +8,16 @@ export type DashboardWidgetDateUnit = "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
+export type DashboardWidgetPlaceholderKind = "visualization_request" | "text";
 
 export type DashboardWidgetConfigBase = {
+  body?: string;
   color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: DashboardWidgetPlaceholderKind;
+  prompt?: string;
 };
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
