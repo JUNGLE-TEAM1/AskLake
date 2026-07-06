@@ -42,6 +42,7 @@ AskLake/
 | UI icons | lucide-react | implemented | package dependency |
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | Catalog lineage modal |
 | Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor canvas |
+| Dashboard charts | ApexCharts (`apexcharts`, `react-apexcharts`) | implemented | runtime `bar_chart`, `line_chart`, `donut_chart` renderer |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | FastAPI backend | FastAPI + SQLAlchemy | partial | `backend/app/` |
@@ -142,6 +143,7 @@ Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
 Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
 Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
 두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
+Runtime chart widget은 `widget.data`와 type별 `config`를 frontend에서 ApexCharts option/series로 변환해 렌더링한다. 현재 ApexCharts 전환 범위는 `bar_chart`, `line_chart`, `donut_chart`이며, `table` 위젯은 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
 ## 9) API Boundary
 
