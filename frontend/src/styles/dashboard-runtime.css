@@ -899,6 +899,76 @@
   border-bottom-color: #2563eb;
 }
 
+.asklake-dashboard-rgl.edit .react-resizable-handle {
+  z-index: 4;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #93c5fd;
+  border-radius: 999px;
+  background: #ffffff;
+  background-image: none;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle::after {
+  display: none;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-n,
+.asklake-dashboard-rgl.edit .react-resizable-handle-s {
+  left: 50%;
+  margin-left: -7px;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-e,
+.asklake-dashboard-rgl.edit .react-resizable-handle-w {
+  top: 50%;
+  margin-top: -7px;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-n {
+  top: -7px;
+  cursor: ns-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-s {
+  bottom: -7px;
+  cursor: ns-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-e {
+  right: -7px;
+  cursor: ew-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-w {
+  left: -7px;
+  cursor: ew-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-ne {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-nw {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-se {
+  right: -7px;
+  bottom: -7px;
+  cursor: nwse-resize;
+}
+
+.asklake-dashboard-rgl.edit .react-resizable-handle-sw {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
 .asklake-widget-frame {
   display: grid;
   min-width: 0;

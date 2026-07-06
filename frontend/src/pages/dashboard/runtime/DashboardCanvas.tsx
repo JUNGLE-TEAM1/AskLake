@@ -6,7 +6,7 @@ import type { DashboardRuntimeWidget } from "../../../types";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
-import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
+import { hasAnyLayoutCollision, hasLayoutOutOfBounds } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
 const gridMargin: [number, number] = [12, 12];
@@ -114,7 +114,7 @@ export function DashboardCanvas({
     return false;
   };
   const commitLayout = (nextLayout: readonly LayoutItem[]) => {
-    if (hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
+    if (hasLayoutOutOfBounds(nextLayout, breakpointCols.lg) || hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
       setResetKey((key) => key + 1);
       onLayoutRejected?.();
       return;
@@ -168,7 +168,7 @@ export function DashboardCanvas({
           }}
           layouts={responsiveLayouts}
           margin={gridMargin}
-          resizeConfig={{ enabled: editable, handles: ["se"] }}
+          resizeConfig={{ enabled: editable, handles: ["n", "s", "e", "w", "ne", "nw", "se", "sw"] }}
           rowHeight={gridRowHeight}
           style={editGridMinHeight ? { minHeight: editGridMinHeight } : undefined}
           width={width}
