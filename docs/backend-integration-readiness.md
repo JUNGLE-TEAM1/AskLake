@@ -199,7 +199,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
-| Assistant mock | AskLake 보조 패널/시각화 요청 위젯의 요청/응답 계약 확인. 실제 OpenAI/RAG 호출은 하지 않음 | `POST /api/dashboards/assistant` |
+| Dashboard Assistant | AskLake 보조 패널/시각화 요청 위젯에서 DB runtime/catalog 컨텍스트 기반 OpenAI 응답 생성. OpenAI 설정이 없거나 실패하면 `mock fallback` 명시 응답 반환 | `POST /api/dashboards/assistant` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
