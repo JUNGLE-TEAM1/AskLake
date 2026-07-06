@@ -475,6 +475,7 @@ function withColorSlotSelection(
     onSelectColorSlot(slotIndex);
   };
   const events: NonNullable<NonNullable<ApexOptions["chart"]>["events"]> = {
+    click: (_event, _chartContext, config) => selectColorSlot(config as ChartSelectionPayload),
     dataPointSelection: (_event, _chartContext, config) => selectColorSlot(config as ChartSelectionPayload),
     legendClick: (_chartContext, seriesIndex) => selectColorSlot({ seriesIndex }),
     markerClick: (_event, _chartContext, config) => selectColorSlot(config as ChartSelectionPayload),
