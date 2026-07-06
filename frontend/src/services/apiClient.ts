@@ -1,7 +1,7 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 
-const defaultApiBaseUrl = "http://localhost:8080";
+const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
 
 export const apiConfig = {
   baseUrl: import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl,

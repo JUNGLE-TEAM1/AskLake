@@ -27,7 +27,8 @@ npm run build
 
 ## 3) Backend Live Mode
 
-프론트는 기본적으로 live backend API를 호출한다. `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+프론트 dev server는 기본적으로 같은 출처의 `/api` 요청을 FastAPI `http://127.0.0.1:8080`으로 proxy한다.
+별도 backend URL을 직접 지정해야 하면 `frontend/.env` 또는 로컬 env에 API base URL을 둔다.
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080

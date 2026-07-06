@@ -51,6 +51,16 @@ from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_data
 
 
 class DashboardRuntimeService:
+    _legacy_color_map = {
+        "blue": "#2563eb",
+        "green": "#10b981",
+        "orange": "#f97316",
+        "pink": "#db2777",
+        "purple": "#8b5cf6",
+        "red": "#ef4444",
+        "yellow": "#f59e0b",
+    }
+
     def __init__(self, repository: DashboardRuntimeRepository) -> None:
         self.repository = repository
 
@@ -328,13 +338,14 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _widget_to_schema(widget: DashboardWidgetModel) -> DashboardRuntimeWidget:
+        widget_type = DashboardRuntimeWidgetType(widget.type)
         return DashboardRuntimeWidget(
             id=widget.id,
             page_id=widget.page_id,
-            type=DashboardRuntimeWidgetType(widget.type),
+            type=widget_type,
             title=widget.title,
             layout=DashboardWidgetLayout(**widget.layout),
-            config=widget.config,
+            config=DashboardRuntimeService._normalize_widget_config(widget_type, widget.config),
             data=widget.data,
             dataset_id=widget.dataset_id,
             query_id=widget.query_id,
@@ -370,6 +381,33 @@ class DashboardRuntimeService:
     @staticmethod
     def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
         return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
+
+    @staticmethod
+    def _normalize_widget_config(
+        widget_type: DashboardRuntimeWidgetType,
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if config is None:
+            return DashboardRuntimeService._config_to_json(widget_type, None)
+
+        normalized = dict(config)
+        if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
+            return normalized
+
+        color = normalized.get("color")
+        if isinstance(color, str):
+            normalized["color"] = {
+                "colors": [
+                    DashboardRuntimeService._legacy_color_map.get(
+                        color,
+                        color if color.startswith("#") else "#2563eb",
+                    ),
+                ],
+            }
+        elif color is None:
+            normalized["color"] = {"colors": ["#2563eb"]}
+
+        return normalized
 
     @staticmethod
     def _resolve_widget_data(
