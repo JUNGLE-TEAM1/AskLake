@@ -789,6 +789,7 @@ function PieLikeChartWidget({
   const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
     ? {
       pie: {
+        expandOnClick: false,
         donut: {
           labels: {
             show: true,
@@ -806,7 +807,9 @@ function PieLikeChartWidget({
       },
     }
     : {
-      pie: {},
+      pie: {
+        expandOnClick: false,
+      },
     };
   const options: ApexOptions = {
     ...baseOptions,
@@ -823,9 +826,27 @@ function PieLikeChartWidget({
       markers: {
         size: 6,
       },
+      onItemClick: {
+        toggleDataSeries: false,
+      },
+      onItemHover: {
+        highlightDataSeries: false,
+      },
       position: "right",
     },
     plotOptions: piePlotOptions,
+    states: {
+      active: {
+        filter: {
+          type: "none",
+        },
+      },
+      hover: {
+        filter: {
+          type: "none",
+        },
+      },
+    },
     stroke: {
       colors: ["#ffffff"],
       width: 3,

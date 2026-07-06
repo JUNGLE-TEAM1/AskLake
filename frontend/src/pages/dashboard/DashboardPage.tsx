@@ -693,9 +693,10 @@ export function DashboardPage({
   };
 
   const selectRuntimeWidget = (widgetId: string) => {
+    const nextWidgetId = widgetId || null;
     const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
-    setPreviewDraftWidget(null);
-    setSelectedWidgetId(widgetId || null);
+    setPreviewDraftWidget((current) => (current?.id === nextWidgetId ? current : null));
+    setSelectedWidgetId(nextWidgetId);
     if (widget?.datasetId) setSelectedDatasetId(widget.datasetId);
   };
 
