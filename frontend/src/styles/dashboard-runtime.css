@@ -1198,6 +1198,7 @@
   width: 100%;
   min-width: 420px;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .asklake-table-widget th,
@@ -1214,6 +1215,81 @@
 .asklake-table-widget th {
   color: var(--dash-text-muted);
   font-weight: 800;
+  position: relative;
+  user-select: none;
+}
+
+.asklake-table-header-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 6px;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.asklake-table-header-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-table-header-button svg {
+  color: #94a3b8;
+  flex: 0 0 auto;
+}
+
+.asklake-table-header-button:hover,
+.asklake-table-header-button.sorted {
+  color: #2563eb;
+}
+
+.asklake-table-header-button:hover svg,
+.asklake-table-header-button.sorted svg {
+  color: #2563eb;
+}
+
+.asklake-table-column-resizer {
+  bottom: 7px;
+  cursor: col-resize;
+  position: absolute;
+  right: -4px;
+  top: 7px;
+  touch-action: none;
+  width: 8px;
+  z-index: 2;
+}
+
+.asklake-table-column-resizer::after {
+  background: transparent;
+  border-radius: 999px;
+  bottom: 0;
+  content: "";
+  left: 3px;
+  position: absolute;
+  top: 0;
+  width: 2px;
+}
+
+.asklake-table-column-resizer:hover::after,
+.asklake-table-column-resizer.resizing::after {
+  background: #2563eb;
+}
+
+.asklake-table-cell-content {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .asklake-apex-widget {
