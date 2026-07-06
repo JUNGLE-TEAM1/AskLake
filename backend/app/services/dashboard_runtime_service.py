@@ -7,6 +7,7 @@ from app.core.errors import ApiError
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
+from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
@@ -43,8 +44,9 @@ from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_data
 
 
 class DashboardRuntimeService:
-    def __init__(self, repository: DashboardRuntimeRepository) -> None:
+    def __init__(self, repository: DashboardRuntimeRepository, catalog_repository: CatalogRepository) -> None:
         self.repository = repository
+        self.catalog_repository = catalog_repository
 
     def get_published_runtime(self, dashboard_id: str) -> DashboardRuntimeResponse:
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
@@ -363,14 +365,15 @@ class DashboardRuntimeService:
     def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
         return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
 
-    @staticmethod
     def _resolve_widget_data(
+        self,
         explicit_data: list[dict[str, Any]] | None,
         dataset_id: str | None,
     ) -> list[dict[str, Any]]:
         if explicit_data is not None:
             return explicit_data
-        return dataset_rows_to_widget_data(get_demo_dataset(dataset_id))
+        catalog_payload = self.catalog_repository.get_dataset_payload(dataset_id) if dataset_id else None
+        return dataset_rows_to_widget_data(catalog_payload or get_demo_dataset(dataset_id))
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:

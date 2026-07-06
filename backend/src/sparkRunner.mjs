@@ -27,6 +27,7 @@ export function runSparkPipeline(job, command, runId) {
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
+  const packageArgs = sparkPackageArgs(source, output);
   const dockerArgs = [
     "run",
     "--rm",
@@ -78,8 +79,7 @@ export function runSparkPipeline(job, command, runId) {
     process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077",
     "--conf",
     "spark.jars.ivy=/tmp/.ivy2",
-    "--packages",
-    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+    ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
 
@@ -110,6 +110,19 @@ export function runSparkPipeline(job, command, runId) {
     stderr: tail(result.stderr),
     stdout: tail(result.stdout),
   };
+}
+
+function sparkPackageArgs(source, output) {
+  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
+  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
+  return [
+    "--packages",
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+  ];
+}
+
+function usesS3A(value) {
+  return /^s3a?:\/\//i.test(String(value || ""));
 }
 
 function runSparkSubmitContainer(dockerArgs) {

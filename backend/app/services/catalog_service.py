@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import status
 
 from app.core.errors import ApiError
-from app.repositories.catalog_repository import CatalogRepository
+from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
     CatalogDatasetListResponse,
@@ -38,7 +38,7 @@ class CatalogService:
 
     def list_datasets(self) -> CatalogDatasetListResponse:
         datasets = [
-            CatalogDatasetResponse.model_validate(model.payload)
+            CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
             for model in self.repository.list_dataset_models()
         ]
         return CatalogDatasetListResponse(
