@@ -151,6 +151,19 @@ JSONB 후보:
 `Dataset`은 세 Pair가 모두 공유하는 중심 리소스다.
 따라서 `catalog_datasets` table과 `CatalogDataset` response shape는 2차 contract/schema 작업에서 가장 먼저 고정한다.
 
+### Pair3 Dashboard 세부 경계
+
+Pair3는 Dashboard를 card/list lane과 runtime lane으로 나눠 병렬 구현한다.
+공통 schema skeleton은 `backend/app/schemas/dashboard.py`에 둔다.
+
+| Lane | 책임 | 주요 파일 | DB table 방향 |
+| --- | --- | --- | --- |
+| Card/List | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `schemas/dashboard.py`, `api/dashboard_card.py`, `services/dashboard_card_service.py`, `repositories/dashboard_card_repository.py` | `dashboards`, `dashboard_tags` |
+| Runtime | published 조회, draft ensure, page, widget, layout, publish | `schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` | `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` |
+
+현재 구현은 `dashboard_card_*`, `dashboard_runtime_*` 모듈로 분리되어 있다.
+Card/List lane과 Runtime lane은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
+
 ## 9. 오늘 하지 않는 것
 
 - 기존 Node demo API 제거

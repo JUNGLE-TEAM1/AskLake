@@ -11,7 +11,7 @@
 - 파이프라인 생성은 Job과 pending `catalogTarget`을 만들고, Catalog dataset은 실행 성공 후 생성 또는 갱신한다.
 - Run state는 `runId` 기준으로 관리한다.
 - `jobExecutionEvidence`는 기존 화면 호환용 adapter이며 장기 source of truth가 아니다.
-- Dashboard API는 FastAPI Pair3 전까지 local/mock fallback 또는 Node demo API 영역이다.
+- Dashboard card/list와 draft/published runtime API는 FastAPI에 등록되어 있다. 프론트는 이전 backend 호환을 위해 404 local fallback을 유지한다.
 
 ## 2) Repository Structure
 
@@ -46,7 +46,7 @@ AskLake/
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | FastAPI backend | FastAPI + SQLAlchemy | partial | `backend/app/` |
 | Node demo API | Node HTTP + pg | reference/demo | `frontend/server/` |
-| Database | PostgreSQL metadata DB | partial | ETL/Catalog in FastAPI, Dashboard in Node demo reference |
+| Database | PostgreSQL metadata DB | partial | ETL/Catalog/Dashboard metadata in FastAPI, Node demo API is reference/demo |
 
 ## 4) 목표 시스템 구성
 
@@ -60,8 +60,8 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL preview, SQL derived dataset 저장이다.
-Dashboard persistence와 draft/published runtime은 Pair3에서 FastAPI로 옮긴다.
+현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL preview, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다.
+Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ## 5) Frontend Layer
 
@@ -77,7 +77,7 @@ Dashboard persistence와 draft/published runtime은 Pair3에서 FastAPI로 옮�
 - domain state: `frontend/src/hooks/useAskLakeData.ts`
 - audit/toast state: `frontend/src/hooks/useAuditLogs.ts`
 - API boundary: `frontend/src/services/apiClient.ts`, `frontend/src/services/pipelineApi.ts`, `frontend/src/services/mockApi.ts`
-- dashboard list/runtime fallback: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+- dashboard list/runtime API adapter와 fallback: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
 
 라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
 Dashboard redesign부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
@@ -114,13 +114,13 @@ FastAPI가 현재 소유하는 책임:
 - Catalog lineage fallback
 - SQL preview 실행
 - SQL preview 결과 기반 derived dataset 저장
-- 공통 error envelope
-
-FastAPI Pair3 이후로 넘길 책임:
-
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
+- 공통 error envelope
+
+후속으로 넘길 책임:
+
 - Audit log persistence
 - 인증/권한 판정
 
@@ -135,8 +135,13 @@ FastAPI Pair3 이후로 넘길 책임:
 | Dataset | `CatalogDataset` | FastAPI catalog dataset resource |
 | Dataset Lineage | `LineageGraph` | FastAPI 저장 graph 또는 fallback graph |
 | SQL Run | `SqlResultDraft` | FastAPI query preview resource |
-| Dashboard | `DashboardEntry`, runtime response | Pair3 FastAPI dashboard resource |
+| Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
+
+Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
+Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
+Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
+두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
 
 ## 9) API Boundary
 
@@ -160,9 +165,6 @@ FastAPI 현재 구현 범위:
 - `GET /api/catalog/datasets/{datasetId}/lineage`
 - `POST /api/catalog/derived-datasets`
 - `POST /api/query/runs`
-
-Dashboard future API:
-
 - `GET /api/dashboards`
 - `POST /api/dashboards`
 - `POST /api/dashboards/query`
@@ -179,7 +181,12 @@ Dashboard future API:
 - `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 - `POST /api/dashboards/{dashboardId}/publish`
 
-현재 프론트는 Dashboard endpoint가 FastAPI에서 404를 반환하면 local/mock fallback으로 목록, 생성, runtime 화면을 유지한다.
+Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo` 아래에 둔다.
+
+- `GET /api/demo/etl/jobs`
+- `GET /api/demo/catalog/datasets`
+
+현재 프론트는 Dashboard endpoint가 FastAPI에서 404를 반환하면 local/mock fallback으로 목록, 생성, runtime 화면을 유지한다. FastAPI 응답이 성공하면 서버 응답을 source of truth로 사용한다.
 
 ## 10) 설계 원칙
 
@@ -188,11 +195,11 @@ Dashboard future API:
 - API, mock fixture, frontend internal state의 status 값은 영어 canonical value를 유지하고 UI label mapper에서 한국어로 표시한다.
 - SQL runtime은 read-only guard를 가져야 한다.
 - 빈 backend state는 정상 상태다. 상세/SQL/builder처럼 실제 resource가 필요한 화면만 방어한다.
-- Dashboard API 구현 상태를 FastAPI live 구현으로 과장하지 않는다.
+- Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위한 local fallback은 실패/404 경로로만 사용한다.
 
 ## 11) 운영/배포 메모
 
 - 현재 실행은 backend FastAPI dev server와 frontend Vite dev server 기준이다.
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
-- Node demo API는 Dashboard Pair3 이전까지 reference로 유지한다.
+- Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.

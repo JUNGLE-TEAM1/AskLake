@@ -20,9 +20,9 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 ```
 
-- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog API를 실제 backend로 보낸다.
+- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
-- Dashboard API는 FastAPI Pair3 전까지 local/mock fallback을 사용한다.
+- Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 
 ## 3) 공통 규칙
 
@@ -97,6 +97,17 @@ Canonical status values:
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
+Dashboard FastAPI 구현은 두 lane으로 나눈다.
+
+| Lane | 목적 | Endpoint 범위 | Backend 파일 기준 |
+| --- | --- | --- | --- |
+| Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard_card.py`, `services/dashboard_card_service.py`, `repositories/dashboard_card_repository.py` |
+| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` |
+
+Card/List lane은 `DashboardCard`와 `DashboardListResponse`를 기준으로 한다.
+Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준으로 한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 자세한 table 경계는 `docs/api-contract.md`의 Dashboard FastAPI 구현 경계를 따른다.
+
 ## 7) 화면별 데이터 계약
 
 | 화면 | 현재 데이터 | Future API |
@@ -110,7 +121,7 @@ Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`�
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | SQL 결과 Dataset 생성 | `createDerivedDatasetFromSql` mock/live | `POST /api/catalog/derived-datasets` |
-| 대시보드 | local/mock fallback, Node demo API reference | FastAPI Pair3 future: `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
+| 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 반복 실행 schedule은 `scheduleLabel`에 더해 `scheduleSummary`, `startDate`, `endDate`, `timezone`을 create request에 포함해 Review와 생성 payload가 같은 값을 보게 한다.
@@ -218,6 +229,8 @@ type DashboardRuntimeResponse = {
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
 Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 표시값을 계산한다.
+
+`DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 
 ### Pair A -> Pair B
 

@@ -17,12 +17,13 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과 반영 | search persistence |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지 | read-only SQL engine 고도화 |
-| Dashboard | FastAPI Pair3 전까지 local/mock fallback과 Node demo API reference 유지 | FastAPI persistence, 권한/공유 API, cross-pair E2E QA |
+| Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
-현재 브랜치는 ETL/Catalog/SQL 일부 live endpoint를 포함하고, Dashboard API는 Pair3 후속 PR에서 FastAPI로 옮긴다.
+현재 브랜치는 ETL/Catalog/SQL live endpoint와 Dashboard card/runtime FastAPI endpoint를 함께 포함한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
+Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/etl/jobs`, `/api/demo/catalog/datasets`에 둔다.
 
 ## 2. Pair A Live Contract
 
@@ -167,25 +168,46 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| 목록 조회 | local/mock fallback. Node demo API reference는 `GET /api/dashboards`, `POST /api/dashboards/query` | FastAPI Pair3 |
-| 새 대시보드 생성 | local/mock fallback으로 draft card 생성. Node demo API reference는 `POST /api/dashboards` | FastAPI Pair3 |
-| 목록 삭제 | local/mock fallback으로 목록에서 제거. Node demo API reference는 `DELETE /api/dashboards/{id}` | FastAPI Pair3 |
-| Dashboard title 수정 | local/mock fallback으로 title 반영. Node demo API reference는 `PATCH /api/dashboards/{id}` | FastAPI Pair3 |
-| Published 조회 | local/mock runtime store. Node demo API reference는 `GET /api/dashboards/{id}/published` | FastAPI Pair3 |
-| Draft 조회/생성 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/ensure` | FastAPI Pair3 |
-| Page 추가 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/pages` | FastAPI Pair3 |
-| Page 이름 수정 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/pages/{pageId}` | FastAPI Pair3 |
-| Page 삭제 | local/mock runtime store. Node demo API reference는 `DELETE /api/dashboards/{id}/draft/pages/{pageId}` | FastAPI Pair3 |
-| 위젯 추가 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` | FastAPI Pair3 |
-| 위젯 수정 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` | FastAPI Pair3 |
-| 위젯 삭제 | local/mock runtime store. Node demo API reference는 `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` | FastAPI Pair3 |
-| Layout 저장 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/layouts` | FastAPI Pair3 |
-| Publish | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/publish` | FastAPI Pair3 |
+| 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
+| 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
+| 목록 삭제 | 확인 후 dashboard와 runtime snapshot 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
+| Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
+| Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
+| Page 추가 | DB-backed draft page 추가 | `POST /api/dashboards/{id}/draft/pages` |
+| Page 이름 수정 | DB-backed draft page title 수정 | `PATCH /api/dashboards/{id}/draft/pages/{pageId}` |
+| Page 삭제 | DB-backed draft page와 하위 widgets 삭제 | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
+| 위젯 추가 | selected dataset과 type별 config로 draft widget 생성 | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
+| 위젯 수정 | draft widget title/type/datasetId/config 수정 | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
+| Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
+프론트 dashboard adapter는 FastAPI가 404를 반환하는 이전 backend에서도 화면을 깨지 않도록 local/mock fallback을 유지한다. 현재 병합 기준에서는 FastAPI dashboard endpoint가 우선 source of truth다.
+
 Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
+
+현재 FastAPI live smoke에서는 실제 Catalog persistence가 아직 완성되지 않았기 때문에 `backend/app/services/demo_catalog.py`가 임시 dataset 공급처 역할을 한다. Dashboard runtime service는 `datasetId -> widget.data snapshot` 흐름만 소유하고, demo catalog의 구체 데이터 구조는 해당 파일 안에 가둔다. 이후 실제 Catalog/SQL Result API가 준비되면 `get_demo_dataset()` 호출부를 실제 dataset/query result service 호출로 교체하고, `dataset_rows_to_widget_data()`와 같은 row snapshot 변환 경계는 유지한다.
+
+Runtime table 보강 코드는 Alembic migration 도입 전까지 로컬 PostgreSQL smoke를 막지 않기 위한 임시 안전장치다. `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`에 `created_at`, `updated_at`, JSON snapshot 컬럼이 빠져 있으면 repository에서 `ADD COLUMN IF NOT EXISTS`로 보강하지만, 장기 운영 기준의 source of truth는 후속 Alembic migration으로 옮겨야 한다.
+
+Dashboard FastAPI 구현은 아래 순서와 파일 경계로 유지한다.
+
+1. Dashboard 계약/schema skeleton 정리: `backend/app/schemas/dashboard.py`
+2. Card/List API: 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제
+3. Runtime 조회 API: published 조회, draft ensure
+4. Draft page API: page 추가/이름 수정/삭제
+5. Draft widget/layout/publish API: widget 생성/수정/삭제, layout 저장, publish
+6. Frontend adapter E2E: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
+Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
+두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
+Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
+구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 9. 아직 실제 저장되지 않는 기능
 
@@ -196,8 +218,8 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
 | 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
 | 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
-| SQL | 쿼리 저장, Lake 저장, CSV 다운로드 |
-| 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
+| SQL | 쿼리 저장, CSV 다운로드 |
+| 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
 ## 10. 백엔드 팀에 넘길 최소 구현 범위
@@ -210,7 +232,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 4. `GET /api/catalog/datasets`
 5. `POST /api/query/runs`
 
-대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
+대시보드 실제 저장 API는 현재 병합 기준에서 추가되어 있으며 아래 endpoint를 유지합니다.
 
 1. `GET /api/dashboards`
 2. `POST /api/dashboards/query`
@@ -236,7 +258,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | --- | --- | --- |
 | 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
-| 3 | dashboard list/runtime adapter와 conflict-safe API shape 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
+| 3 | dashboard list/runtime adapter와 FastAPI fallback 경로 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
@@ -260,5 +282,5 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 - ETL job/dataset/run persistence
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
-- Dashboard save/publish persistence
+- Dashboard 권한/공유/export API
 - Audit log server persistence
