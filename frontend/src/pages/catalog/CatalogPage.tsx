@@ -4,9 +4,7 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdat
 import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  BarChart3,
   BookOpen,
-  Bot,
   Calendar,
   Check,
   CircleUser,
@@ -217,13 +215,11 @@ function compareCatalogDatasetsBySort(
 export function CatalogPage({
   datasets,
   onAction,
-  onDatasetOpen,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDatasetOpen: (dataset: CatalogDataset) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
@@ -310,12 +306,14 @@ export function CatalogPage({
 
     const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
     const previewInResults = paginatedDatasets.find((dataset) => dataset.id === previewDataset.id);
-    const nextPreview = previewInResults ?? selectedInResults ?? paginatedDatasets[0];
+    const nextPreview = previewDataset.id === selectedDataset.id
+      ? selectedInResults ?? previewInResults ?? paginatedDatasets[0]
+      : previewInResults ?? selectedInResults ?? paginatedDatasets[0];
 
-    if (nextPreview.id !== previewDataset.id) {
+    if (nextPreview !== previewDataset) {
       setPreviewDataset(nextPreview);
     }
-  }, [hasCatalogResults, paginatedDatasets, previewDataset.id, selectedDataset.id]);
+  }, [hasCatalogResults, paginatedDatasets, previewDataset, selectedDataset.id]);
 
   const handleSearchSubmit = () => {
     const query = searchText.trim();
@@ -358,6 +356,11 @@ export function CatalogPage({
     const nextPinned = !isPreviewPinned;
     setPinnedDatasetIds((ids) => nextPinned ? [previewDataset.id, ...ids.filter((id) => id !== previewDataset.id)] : ids.filter((id) => id !== previewDataset.id));
     onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", `/api/catalog/datasets/${previewDataset.id}/pin`, previewDataset.id);
+  };
+
+  const selectPreviewDataset = (dataset: CatalogDataset) => {
+    setPreviewDataset(dataset);
+    onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
   };
 
   return (
@@ -462,12 +465,18 @@ export function CatalogPage({
                 const isActive = dataset.id === previewDataset.id;
 
                 return (
-                  <button
+                  <article
                     className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
                     key={dataset.id}
-                    type="button"
-                    onClick={() => setPreviewDataset(dataset)}
-                    onDoubleClick={() => onDatasetOpen(dataset)}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectPreviewDataset(dataset)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectPreviewDataset(dataset);
+                      }
+                    }}
                   >
                     {isPinned && (
                       <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
@@ -479,12 +488,11 @@ export function CatalogPage({
                       <strong>{dataset.name}</strong>
                       <DatasetStatusBadge dataset={dataset} />
                     </div>
-                    <p>{dataset.description}</p>
                     <div className="catalog-result-tags">
                       {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
                       {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
                     </div>
-                  </button>
+                  </article>
                 );
               })}
               {!hasCatalogResults && (
@@ -526,7 +534,6 @@ export function CatalogPage({
             <LayoutGrid size={20} />
             <div>
               <h2>{previewDataset.name}</h2>
-              <p>{previewDataset.description}</p>
             </div>
             <button
               aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
@@ -538,15 +545,6 @@ export function CatalogPage({
             >
               <Star size={18} />
             </button>
-          </div>
-
-          <div className="catalog-preview-metrics">
-            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
           </div>
 
           <article className="catalog-preview-card">
@@ -581,13 +579,13 @@ export function CatalogPage({
           }}>
             <Share2 size={16} />
             <div>
-              <strong>데이터 흐름 보기</strong>
+              <strong>Lineage 보기</strong>
             </div>
             <span>›</span>
           </article>
 
           <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
-            <ExternalLink size={16} /> 쿼리 편집기에서 열기
+            <ExternalLink size={16} /> SQL 분석에서 열기
           </button>
           <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
           </aside>
@@ -595,7 +593,7 @@ export function CatalogPage({
           <aside className="catalog-preview-panel catalog-preview-panel-empty">
             <LayoutGrid size={22} />
             <strong>선택할 데이터셋이 없습니다.</strong>
-            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
+            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, Lineage, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
           </aside>
         )}
       </div>
@@ -603,7 +601,7 @@ export function CatalogPage({
         <CatalogModal
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
-          title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
+          title={activeModal === "schema" ? "전체 스키마" : "Lineage"}
           variant={activeModal}
         >
           {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
@@ -649,14 +647,12 @@ export function CatalogDetailPage({
   dataset,
   onAction,
   onBack,
-  onCreateDashboard,
   onLineage,
   onOpenSql,
 }: {
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
-  onCreateDashboard: () => void;
   onLineage: () => void;
   onOpenSql: () => void;
 }) {
@@ -683,8 +679,7 @@ export function CatalogDetailPage({
           </div>
           <div className="job-detail-actions">
             <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
-            <button className="job-action-button primary soft" type="button" onClick={onCreateDashboard}><BarChart3 size={14} /> 대시보드 만들기</button>
-            <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
+            <button className="job-action-button" type="button" onClick={openLineage}>Lineage 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
         </div>
@@ -693,7 +688,7 @@ export function CatalogDetailPage({
             ["overview", "개요"],
             ["schema", "스키마"],
             ["sample", "샘플 데이터"],
-            ["lineage", "리니지"],
+            ["lineage", "Lineage"],
           ].map(([id, label]) => (
             <button className={activeTab === id ? "active" : ""} key={id} type="button" onClick={() => {
               if (id === "lineage") onLineage();
@@ -749,7 +744,7 @@ function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLi
       <section className="catalog-overview-card">
         <h2>연결된 흐름</h2>
         <CatalogLineageMini dataset={dataset} />
-        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 리니지 보기</button>
+        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 Lineage 보기</button>
       </section>
     </div>
   );
