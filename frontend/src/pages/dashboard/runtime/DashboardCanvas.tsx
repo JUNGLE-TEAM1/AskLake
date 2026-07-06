@@ -94,22 +94,12 @@ export function DashboardCanvas({
     () => editable ? `max(100%, ${layoutHeight(layout, editGridTrailingRows)}px)` : undefined,
     [editable, layout],
   );
-  const changedMultipleItems = (nextLayout: readonly LayoutItem[]) => {
-    const startById = new Map(layout.map((item) => [item.i, item]));
-    let changedCount = 0;
-
-    for (const item of nextLayout) {
-      const startItem = startById.get(item.i);
-      if (!startItem) continue;
-      const changed = item.x !== startItem.x || item.y !== startItem.y || item.w !== startItem.w || item.h !== startItem.h;
-      if (changed) changedCount += 1;
-      if (changedCount > 1) return true;
-    }
-
-    return false;
-  };
+  const layoutSignature = useMemo(
+    () => layout.map((item) => `${item.i}:${item.x}:${item.y}:${item.w}:${item.h}`).sort().join("|"),
+    [layout],
+  );
   const commitLayout = (nextLayout: readonly LayoutItem[]) => {
-    if (hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
+    if (hasAnyLayoutCollision(nextLayout)) {
       setResetKey((key) => key + 1);
       onLayoutRejected?.();
       return;
@@ -130,7 +120,7 @@ export function DashboardCanvas({
     <div className="asklake-dashboard-rgl-shell" ref={containerRef}>
       {mounted && (
         <Responsive
-          key={`${editable ? "draft" : "published"}-${resetKey}`}
+          key={`${editable ? "draft" : "published"}-${resetKey}-${layoutSignature}`}
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
