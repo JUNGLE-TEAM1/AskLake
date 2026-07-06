@@ -7,10 +7,11 @@ import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
-const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
+const sparkHostScriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || scriptsDir);
+const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
 const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
 const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
-const localOutputDir = path.join(backendDir, "tmp", "spark-output");
+const localOutputDir = path.resolve(process.env.ASKLAKE_SPARK_LOCAL_OUTPUT_DIR || path.join(backendDir, "tmp", "spark-output"));
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
@@ -34,7 +35,7 @@ export function runSparkPipeline(job, command, runId) {
     "--network",
     process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
     "-v",
-    `${scriptsDir}:/work/scripts:ro`,
+    `${sparkHostScriptsDir}:/work/scripts:ro`,
     "-v",
     `${ivyDir}:/tmp/.ivy2`,
     "-v",

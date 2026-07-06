@@ -27,6 +27,7 @@
 | Guardrail | Enforced By | Current Status | Failure Behavior | Owner | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
+| Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain | repo admin | `main <- dev`; `dev <- pair1, pair2, pair3` |
@@ -66,6 +67,7 @@
 | --- | --- |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
+| Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 
@@ -83,6 +85,7 @@
 
 - Repository admin이 secret scanning 상태를 확인한다.
 - CI가 추가되면 `frontend build`를 required check 후보로 등록한다.
+- 배포 workflow가 추가되면 prod compose config check를 required pre-deploy check 후보로 등록한다.
 - 백엔드 scaffold가 생기면 backend test/build check를 추가한다.
 - API adapter가 늘어나면 contract drift check script를 검토한다.
 
@@ -94,6 +97,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Test Layer | Runs By Default | Scope | Expected Result |
 | --- | --- | --- | --- |
 | Frontend build | no, local/manual until CI exists | `frontend` | TypeScript and Vite build pass |
+| Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

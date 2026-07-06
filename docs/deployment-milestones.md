@@ -392,42 +392,101 @@ Definition of Done:
 
 ```text
 deploy/docker-compose.prod.yml
+deploy/Caddyfile
 deploy/.env.example
+deploy/postgres/init/01-create-source-database.sql
+backend/Dockerfile
+backend/.dockerignore
+frontend/Dockerfile
+frontend/.dockerignore
+frontend/nginx.conf
+backend/src/sparkRunner.mjs
+.gitignore
 ```
 
 필수 서비스:
 
-- [ ] `caddy`
-- [ ] `frontend`
-- [ ] `backend`
-- [ ] `postgres`
-- [ ] `mongo`
+- [x] `caddy`
+- [x] `frontend`
+- [x] `backend`
+- [x] `postgres`
+- [x] `mongo`
 
 필수 volume:
 
-- [ ] `caddy_data`
-- [ ] `caddy_config`
-- [ ] `postgres_data`
-- [ ] `mongo_data`
+- [x] `caddy_data`
+- [x] `caddy_config`
+- [x] `postgres_data`
+- [x] `mongo_data`
+- [x] `lake_data`
 
 필수 health check 후보:
 
-- [ ] backend `/api/health`
-- [ ] frontend `/`
-- [ ] postgres readiness
-- [ ] mongo readiness
+- [x] backend `/api/health`
+- [x] frontend `/`
+- [x] postgres readiness
+- [x] mongo readiness
+- [x] caddy admin readiness
 
 주의:
 
 - 실제 secret은 compose 파일에 직접 쓰지 않는다.
 - `.env.example`에는 키 이름과 설명만 둔다.
-- frontend build에서 `VITE_API_BASE_URL`이 도메인 기준으로 들어가야 한다.
+- frontend build에서 `VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
+- local validation은 `deploy/.env.example`을 env-file로 사용한다.
+- EC2에서는 `deploy/.env.example`을 `deploy/.env`로 복사한 뒤 실제 domain/password 값으로 바꾼다.
+
+구현 결과:
+
+| File | Role |
+| --- | --- |
+| `deploy/docker-compose.prod.yml` | EC2/로컬 prod-like compose entrypoint |
+| `deploy/Caddyfile` | HTTPS termination과 `/api/*` reverse proxy |
+| `deploy/.env.example` | 서버 `.env` 작성 기준 |
+| `deploy/postgres/init/01-create-source-database.sql` | `asklake_sources` source fixture DB 생성 |
+| `backend/Dockerfile` | FastAPI backend image |
+| `frontend/Dockerfile` | Vite build + nginx static frontend image |
+| `frontend/nginx.conf` | SPA fallback static serving |
+| `backend/src/sparkRunner.mjs` | backend container에서 Spark Docker 실행 시 host scripts path를 env로 받도록 보정 |
+| `.gitignore` | `deploy/.env` 커밋 방지 |
+
+Spark runner 주의:
+
+- 현재 ETL Job command 경로는 backend에서 Node bridge를 거쳐 Docker 기반 Spark 컨테이너를 실행한다.
+- backend image에는 Node dependencies와 Docker CLI를 포함한다.
+- compose는 `/var/run/docker.sock`을 backend에 mount한다.
+- EC2에서는 repo 기준 경로가 `ASKLAKE_SPARK_HOST_SCRIPTS_DIR`와 일치해야 한다.
+- 기본 문서 기준은 `/opt/asklake/backend/scripts`이며, repo clone 위치가 다르면 서버 `deploy/.env`에서 바꾼다.
+- Spark job E2E는 Phase 8 QA에서 별도로 검증한다.
+
+검증 명령:
+
+```bash
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
+```
+
+로컬 실행 명령:
+
+```bash
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml up -d --build
+curl http://localhost:8080/api/health
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
+```
+
+Phase 3 로컬 검증 결과:
+
+- `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` 통과.
+- 임시 env로 `HTTP_PORT=19280`, `HTTPS_PORT=19444`, `COMPOSE_PROJECT_NAME=asklake_phase3_check`를 사용해 prod-like stack 실행 통과.
+- `curl http://localhost:19280/api/health`가 `{"ok":true,"statusCode":200,...}` 응답.
+- `curl -I http://localhost:19280/`가 `200 OK` 응답.
+- `caddy`, `frontend`, `backend`, `postgres`, `mongo` 모두 healthy 확인.
+- 검증 후 임시 stack은 `down --volumes --remove-orphans`로 정리.
 
 Definition of Done:
 
-- [ ] 로컬에서 `docker compose -f deploy/docker-compose.prod.yml config`가 통과한다.
-- [ ] 로컬에서 prod compose가 실행된다.
-- [ ] frontend가 backend API를 `/api` 경로로 호출한다.
+- [x] 로컬에서 `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config`가 통과한다.
+- [x] 로컬에서 prod compose가 실행된다.
+- [x] frontend가 backend API를 `/api` 경로로 호출하도록 `VITE_API_BASE_URL` origin 기준을 고정했다.
 
 ## Phase 4. AWS 최초 Bootstrap
 

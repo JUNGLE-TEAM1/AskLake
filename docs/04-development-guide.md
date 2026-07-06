@@ -49,7 +49,27 @@ uvicorn app.main:app --reload --port 8080
 로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다.
 FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
-## 4) 브랜치 전략
+## 4) Prod-Like Docker Compose
+
+AWS 배포 전에는 로컬에서 prod-like compose 구성이 유효한지 먼저 확인한다.
+실제 secret은 `deploy/.env`에만 두고, repo에는 `deploy/.env.example`만 커밋한다.
+
+```bash
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
+```
+
+로컬에서 전체 stack을 띄울 때는 예시 env를 기준으로 실행할 수 있다.
+
+```bash
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml up -d --build
+curl http://localhost:8080/api/health
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml down
+```
+
+`VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
+예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
+
+## 5) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.
 직접 push는 금지하며, PR source branch 정책을 따른다.
@@ -80,7 +100,7 @@ FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.
 - docs-only update
 - guardrail/CI update
 
-## 5) 구현 순서
+## 6) 구현 순서
 
 백엔드 연결 작업은 아래 순서를 기본으로 한다.
 
@@ -93,7 +113,7 @@ FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.
 상태값을 다룰 때는 API와 frontend internal state에 영어 canonical value를 사용한다.
 화면의 한국어 배지, 버튼명, 필터명은 프론트 mapper에서 변환한다.
 
-## 6) Pair Ownership
+## 7) Pair Ownership
 
 4일 데모 마일스톤은 2인 3개 Pair 기준으로 운영한다.
 Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 시작 시 채운다.
@@ -104,7 +124,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 | Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check, SQL Result -> ETL Review draft handoff | Pair A에는 처리 Job 생성 draft, Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 
-## 7) Daily Operating Loop
+## 8) Daily Operating Loop
 
 매일 종료 전 아래 질문을 확인한다.
 
@@ -119,7 +139,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQL -> Dashboard -> Publish 흐름 1회, 실패 케이스 1회, fallback 케이스 1회를 확인한다.
 
-## 8) PR 체크리스트
+## 9) PR 체크리스트
 
 - [ ] GitHub 기본 PR 템플릿을 채웠다.
 - [ ] 변경 목적이 명확하다.
@@ -127,9 +147,10 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - [ ] API/interface 변경이 있으면 `docs/03-api-reference.md`와 `docs/api-contract.md`가 최신 상태다.
 - [ ] backend 연결 순서 변경이 있으면 `docs/backend-integration-readiness.md`가 최신 상태다.
 - [ ] architecture, routing, state ownership 변경이 있으면 `docs/02-architecture.md`가 최신 상태다.
+- [ ] 배포 파일이나 env key가 바뀌면 `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config`를 실행했다.
 - [ ] repository/CI/platform guardrail 변경이 있으면 `docs/system-guardrails.md`가 최신 상태다.
 
-## 9) 테스트 전략
+## 10) 테스트 전략
 
 현재 최소 검증:
 
@@ -165,7 +186,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
 - dashboard persistence regression tests
 - dashboard publish/share/refresh runtime smoke tests
 
-## 10) Manual Smoke Checklist
+## 11) Manual Smoke Checklist
 
 - 수집/처리 목록이 열린다.
 - 새 수집/처리 생성 flow가 Review까지 이동한다.
@@ -176,7 +197,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
 - audit log와 toast가 동작한다.
 - dashboard draft를 publish하면 viewer로 이동하고, 공유 링크 복사와 새로고침 feedback이 보인다.
 
-## 11) 문서 업데이트 기준
+## 12) 문서 업데이트 기준
 
 - 제품 범위 변경: `docs/01-product-planning.md`
 - 구조/상태/데이터 소유권 변경: `docs/02-architecture.md`
@@ -185,7 +206,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
 - CI/ruleset/platform guardrail 변경: `docs/system-guardrails.md`
 - GitHub PR/Issue 템플릿 변경: 이 문서와 `docs/system-guardrails.md`
 
-## 12) Local Codex Workflow Overrides
+## 13) Local Codex Workflow Overrides
 
 `AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
 

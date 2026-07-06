@@ -140,6 +140,9 @@ dev 브랜치 업데이트
 deploy/docker-compose.prod.yml
 deploy/Caddyfile
 deploy/.env.example
+deploy/postgres/init/01-create-source-database.sql
+backend/Dockerfile
+frontend/Dockerfile
 scripts/deploy.sh
 scripts/seed-demo-data.sh
 .github/workflows/deploy-dev.yml
@@ -192,6 +195,8 @@ Catalog에 `orders_clean`이 없거나 Preview가 비어 있으면 배포 성공
 로컬에서 먼저 확인한다.
 
 ```bash
+docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
+
 cd frontend
 npm run build
 VITE_USE_MOCK_API=false npm run build

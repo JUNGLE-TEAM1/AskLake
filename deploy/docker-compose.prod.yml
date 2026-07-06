@@ -1,0 +1,122 @@
+name: ${COMPOSE_PROJECT_NAME:-asklake}
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:?VITE_API_BASE_URL is required}
+        VITE_USE_MOCK_API: ${VITE_USE_MOCK_API:-false}
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  backend:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      API_PREFIX: ${API_PREFIX:-/api}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:?BACKEND_CORS_ORIGINS is required}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      LOCAL_LAKE_STORAGE_DIR: ${LOCAL_LAKE_STORAGE_DIR:-/var/lib/asklake/lake}
+      ASKLAKE_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-asklake}_default
+      ASKLAKE_SPARK_HOST_SCRIPTS_DIR: ${ASKLAKE_SPARK_HOST_SCRIPTS_DIR:-/opt/asklake/backend/scripts}
+      ASKLAKE_SPARK_IVY_DIR: ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-ivy
+      ASKLAKE_SPARK_LOCAL_OUTPUT_DIR: ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output
+      ASKLAKE_SPARK_OUTPUT_VOLUME: ${ASKLAKE_SPARK_OUTPUT_VOLUME:-asklake-spark-output}
+      ASKLAKE_SPARK_PUBLISH_UI: ${ASKLAKE_SPARK_PUBLISH_UI:-false}
+      ASKLAKE_SPARK_REPORT_DIR: ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs
+      ASKLAKE_LOCAL_SAMPLE_DIR: ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples
+    expose:
+      - "8080"
+    volumes:
+      - lake_data:${LOCAL_LAKE_STORAGE_DIR:-/var/lib/asklake/lake}
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-ivy:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-ivy
+      - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output
+      - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs
+      - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples
+      - spark_output:/var/lib/asklake/spark-output-volume
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5).read()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-asklake_sources}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+    expose:
+      - "27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --username \"$${MONGO_INITDB_ROOT_USERNAME}\" --password \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval 'db.adminCommand({ ping: 1 }).ok' | grep 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  mongo_data:
+  lake_data:
+  spark_output:
+    name: ${ASKLAKE_SPARK_OUTPUT_VOLUME:-asklake-spark-output}
