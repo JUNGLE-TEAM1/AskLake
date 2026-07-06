@@ -423,29 +423,6 @@
   padding: 0;
 }
 
-.asklake-dashboard-filter-row {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--dash-border);
-  background: #ffffff;
-  padding: 0 24px;
-}
-
-.asklake-dashboard-filter-chip {
-  display: inline-flex;
-  min-height: 26px;
-  align-items: center;
-  border: 1px solid #c7d2fe;
-  border-radius: 6px;
-  background: #eef4ff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 750;
-  padding: 0 9px;
-}
-
 .asklake-dashboard-workspace {
   display: grid;
   flex: 1 1 auto;
@@ -1162,7 +1139,6 @@
   }
 
   .asklake-dashboard-subnav,
-  .asklake-dashboard-filter-row,
   .asklake-dashboard-topbar {
     padding-right: 16px;
     padding-left: 16px;

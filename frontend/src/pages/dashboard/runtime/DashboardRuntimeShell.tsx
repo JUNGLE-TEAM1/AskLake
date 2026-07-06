@@ -134,9 +134,6 @@ export function DashboardRuntimeShell({
           onSelectPage={onSelectPage}
         />
       </div>
-      <div className="asklake-dashboard-filter-row">
-        <span className="asklake-dashboard-filter-chip">필터가 설정되지 않았습니다</span>
-      </div>
       <div className={workspaceClassName}>
         {datasetSidebar}
         <main className={mode === "draft" ? "asklake-dashboard-canvas-wrap edit" : "asklake-dashboard-canvas-wrap"}>
