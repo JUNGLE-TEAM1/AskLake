@@ -136,7 +136,7 @@ JSONB 후보:
 
 초기 선택:
 
-- 1차 scaffold/live demo: DB 연결, health check, Pair A create/run, catalog hydrate/lineage fallback, SQL preview 중심
+- 1차 scaffold/live demo: DB 연결, health check, Pair1 source/schema/create/job command 중심
 - 2차 contract/schema 작업: models 정의와 migration 전략 확정
 - 이후 기능 PR: Alembic revision 추가 또는 demo 초기화 스크립트 확정
 
@@ -160,7 +160,7 @@ JSONB 후보:
 - Alembic migration 전체 도입
 - 프론트 API base URL 전환
 
-## 10. 1차 live demo 완료 기준
+## 10. 1차 Pair1 live demo 완료 기준
 
 - `backend/app/main.py`에서 FastAPI 앱이 import된다.
 - `/api/health`가 200 응답을 반환한다.
@@ -168,7 +168,6 @@ JSONB 후보:
 - `core/config.py`, `core/database.py`, `core/errors.py`가 분리되어 있다.
 - `backend/requirements.txt`와 `backend/.env.example`이 있다.
 - `POST /api/etl/jobs`, `GET /api/etl/jobs`, `POST /api/etl/jobs/{jobId}/commands`가 frontend contract shape로 응답한다.
-- `GET /api/catalog/datasets`, `GET /api/catalog/datasets/{datasetId}/lineage`, `POST /api/query/runs`가 생성 dataset 기반 demo flow를 끊지 않는다.
 - 이 문서와 개발 가이드에 실행 방법이 기록되어 있다.
 
 ## 11. Pair1 FastAPI 전환 상태
@@ -178,12 +177,4 @@ JSONB 후보:
 - `backend/app/models/etl.py`와 `backend/app/models/catalog.py`는 Job/Run과 생성 결과 Dataset을 저장한다.
 - `backend/app/repositories/etl_repository.py`는 DB 조회/저장을 담당한다.
 - `backend/app/services/etl_service.py`는 create/job command/source test 흐름을 담당한다.
-- Source/Schema 테스트 API는 기존 Node connector bridge를 통해 실제 source runtime을 호출한다. Alembic migration은 후속 작업 범위다.
-## 2026-07-05 FastAPI live connector update
-
-- `POST /api/etl/sources/test`는 FastAPI 내부 sample fixture가 아니라 기존 Node connector bridge를 호출한다.
-- 로컬 MinIO가 호스트 포트를 publish하지 않은 환경에서는 `m3-minio` 컨테이너 내부 `mc`로 실제 오브젝트 목록과 제한 샘플을 읽는다.
-- `POST /api/etl/jobs/{jobId}/commands`의 `run/retry`는 기존 Spark runner bridge를 호출한다.
-- Catalog Dataset은 pipeline create 시점이 아니라 Spark 실행이 성공한 뒤에만 저장한다.
-- `GET /api/catalog/datasets`, `GET /api/catalog/datasets/{datasetId}`는 FastAPI에서 실제 저장된 Catalog Dataset을 반환한다.
-- Alembic migration과 SQL/RAG ingestion API는 아직 후속 범위다.
+- Source/Schema 테스트 API는 FastAPI 전환 단계의 backend sample 응답을 반환한다. 외부 Source runtime, Spark/MinIO production 실행, Alembic migration은 후속 작업 범위다.
