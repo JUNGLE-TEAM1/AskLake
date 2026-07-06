@@ -1,4 +1,5 @@
 import type { LayoutItem } from "react-grid-layout";
+import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
@@ -11,7 +12,7 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
-import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import type { CreateDraftWidgetFormInput, DashboardDatasetOption, ToolbarDraftWidgetKind, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 
 type RuntimeNotice = {
   message: string;
@@ -25,6 +26,7 @@ type DashboardRuntimeState = {
   draftRuntime: DashboardRuntimeResponse | null;
   hasPublishedRevision: boolean;
   isAddingPage: boolean;
+  isCreatingToolbarWidget: boolean;
   isDatasetSidebarOpen: boolean;
   isPublishing: boolean;
   isRenamingTitle: boolean;
@@ -60,6 +62,7 @@ type DashboardRuntimeViewActions = {
   clearWidgetSelection: () => void;
   closeSharePanel: () => void;
   createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   deletePage: (pageId: string) => void;
   deleteWidget: (widgetId: string) => void;
   layoutCommit: (layout: LayoutItem[]) => void;
@@ -86,6 +89,38 @@ type DashboardRuntimeViewProps = {
   runtime: DashboardRuntimeState;
 };
 
+function DashboardEditToolbar({
+  disabled,
+  onCreateToolbarWidget,
+  onCursor,
+}: {
+  disabled: boolean;
+  onCreateToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
+  onCursor: () => void;
+}) {
+  return (
+    <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
+      <button aria-label="이동 모드" className="active" title="이동" type="button" onClick={onCursor}>
+        <MousePointer2 size={18} />
+      </button>
+      <span aria-hidden="true" />
+      <button aria-label="시각화 추가" disabled={disabled} title="시각화 추가" type="button" onClick={() => void onCreateToolbarWidget("visualization")}>
+        <BarChart3 size={18} />
+      </button>
+      <button aria-label="텍스트 추가" disabled={disabled} title="텍스트 추가" type="button" onClick={() => void onCreateToolbarWidget("text")}>
+        <Type size={18} />
+      </button>
+      <span aria-hidden="true" />
+      <button aria-label="실행 취소" disabled title="실행 취소" type="button">
+        <Undo2 size={18} />
+      </button>
+      <button aria-label="다시 실행" disabled title="다시 실행" type="button">
+        <Redo2 size={18} />
+      </button>
+    </div>
+  );
+}
+
 const emptyDashboardCopy = {
   description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
   title: "위젯을 추가해 주세요",
@@ -103,6 +138,7 @@ export function DashboardRuntimeView({
     draftRuntime,
     hasPublishedRevision,
     isAddingPage,
+    isCreatingToolbarWidget,
     isDatasetSidebarOpen,
     isPublishing,
     isRenamingTitle,
@@ -136,6 +172,7 @@ export function DashboardRuntimeView({
     clearWidgetSelection: onClearWidgetSelection,
     closeSharePanel: onCloseSharePanel,
     createDatasetWidget: onCreateDatasetWidget,
+    createToolbarWidget: onCreateToolbarWidget,
     deletePage: onDeletePage,
     deleteWidget: onDeleteWidget,
     layoutCommit: onLayoutCommit,
@@ -171,6 +208,16 @@ export function DashboardRuntimeView({
       다시 시도
     </button>
   );
+
+  const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {
+    config: {
+      ...widget.config,
+      ...patch,
+    } as UpdateDraftWidgetFormInput["config"],
+    datasetId: widget.datasetId ?? null,
+    title: widget.title ?? "제목 없는 위젯",
+    type: widget.type,
+  });
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
@@ -208,6 +255,7 @@ export function DashboardRuntimeView({
         onDeleteWidget={onDeleteWidget}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
+        onPatchWidgetConfig={patchWidgetConfig}
         onSelectWidget={onSelectWidget}
       />
     )
@@ -245,6 +293,8 @@ export function DashboardRuntimeView({
       {selectedPublishedWidgets.map((widget) => <WidgetFrame key={widget.id} widget={widget} />)}
     </div>
   );
+
+  const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
 
   return (
     <div className="dashboard-page dashboard-runtime-page">
@@ -299,7 +349,16 @@ export function DashboardRuntimeView({
         onShare={onShare}
         onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}
       >
-        {runtimeCanvas}
+        {canShowEditToolbar ? (
+          <div className="asklake-dashboard-edit-stage">
+            {runtimeCanvas}
+            <DashboardEditToolbar
+              disabled={isCreatingToolbarWidget || !selectedPageId}
+              onCursor={onClearWidgetSelection}
+              onCreateToolbarWidget={onCreateToolbarWidget}
+            />
+          </div>
+        ) : runtimeCanvas}
       </DashboardRuntimeShell>
     </div>
   );

@@ -278,7 +278,9 @@ export function DashboardPage({
 
   const {
     createDatasetDraftWidget,
+    createToolbarDraftWidget,
     isCreatingDatasetWidget,
+    isCreatingToolbarWidget,
   } = useDraftWidgetCreator({
     dashboardId: runtimeSelection.dashboardId,
     defaultLayouts: defaultDraftWidgetLayout,
@@ -909,6 +911,7 @@ export function DashboardPage({
       clearWidgetSelection: clearRuntimeWidgetSelection,
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
+      createToolbarWidget: createToolbarDraftWidget,
       deletePage: deleteRuntimePage,
       deleteWidget: deleteRuntimeWidget,
       layoutCommit: updateDraftWidgetLayouts,
@@ -944,6 +947,7 @@ export function DashboardPage({
       hasPublishedRevision: runtimeHasPublishedRevision,
       isAddingPage: isAddingRuntimePage,
       isDatasetSidebarOpen,
+      isCreatingToolbarWidget,
       isPublishing: isPublishingRuntime,
       isRenamingTitle: isRenamingRuntimeTitle,
       isRefreshing: isRefreshingRuntime,

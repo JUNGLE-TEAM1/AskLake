@@ -34,6 +34,7 @@ export function DashboardCanvas({
   onDeleteWidget,
   onLayoutCommit,
   onLayoutRejected,
+  onPatchWidgetConfig,
   onSelectWidget,
   selectedWidgetId,
   widgets,
@@ -43,6 +44,7 @@ export function DashboardCanvas({
   onDeleteWidget?: (widgetId: string) => void;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
+  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelectWidget?: (widgetId: string) => void;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
@@ -139,6 +141,7 @@ export function DashboardCanvas({
                 selected={selectedWidgetId === widget.id}
                 widget={widget}
                 onDelete={onDeleteWidget}
+                onPatchConfig={onPatchWidgetConfig}
                 onSelect={onSelectWidget}
               />
             </div>

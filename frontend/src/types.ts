@@ -1,7 +1,7 @@
 export { ApiError } from "./types/audit";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
 export type { CatalogDataset, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
-export type { BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, SavedDashboardCard, TableWidgetConfig } from "./types/dashboard";
+export type { BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, SavedDashboardCard, TableWidgetConfig } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
   DagStepsByRunId,
