@@ -151,6 +151,7 @@ export function useDraftWidgetCreator({
         title: input.title,
         type: input.type,
       });
+      setWidgetScrollTargetId?.(widget.id);
       await reloadDraftRuntime(dashboardId);
       setSelectedWidgetId(widget.id);
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });

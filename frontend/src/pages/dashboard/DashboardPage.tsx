@@ -313,8 +313,9 @@ export function DashboardPage({
     }
   };
 
-  const loadDraftRuntime = async (nextDashboardId: string) => {
-    setDraftLoading(true);
+  const loadDraftRuntime = async (nextDashboardId: string, options: { showLoading?: boolean } = {}) => {
+    const showLoading = options.showLoading ?? true;
+    if (showLoading) setDraftLoading(true);
     setDraftError(null);
     try {
       const runtime = await ensureDraftDashboard(nextDashboardId);
@@ -326,7 +327,7 @@ export function DashboardPage({
       setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
       return null;
     } finally {
-      setDraftLoading(false);
+      if (showLoading) setDraftLoading(false);
     }
   };
 
@@ -340,7 +341,7 @@ export function DashboardPage({
     defaultLayouts: defaultDraftWidgetLayout,
     mode: runtimeSelection.mode,
     onAction,
-    reloadDraftRuntime: loadDraftRuntime,
+    reloadDraftRuntime: (dashboardId) => loadDraftRuntime(dashboardId, { showLoading: false }),
     selectedPageId: selectedRuntimePageId,
     selectedWidgets: selectedDraftWidgets,
     setDraftError,
@@ -666,7 +667,19 @@ export function DashboardPage({
     try {
       await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
       if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
+      if (selectedRuntimePageId) {
+        setDraftRuntime((currentRuntime) => {
+          if (!currentRuntime) return currentRuntime;
+          const pageWidgets = currentRuntime.widgetsByPageId[selectedRuntimePageId] ?? [];
+          return {
+            ...currentRuntime,
+            widgetsByPageId: {
+              ...currentRuntime.widgetsByPageId,
+              [selectedRuntimePageId]: pageWidgets.filter((widget) => widget.id !== widgetId),
+            },
+          };
+        });
+      }
       setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
       onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
     } catch (error) {

@@ -1,5 +1,6 @@
-import { memo, useEffect, useState, type FormEvent } from "react";
+import { memo, useEffect, useMemo, useState, type FormEvent } from "react";
 import type { ApexOptions } from "apexcharts";
+import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, CheckCircle2, Loader2, Send } from "lucide-react";
 import Chart from "react-apexcharts";
 import type {
@@ -502,21 +503,48 @@ function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
   const configuredColumns = Array.isArray(widget.config.columns)
     ? widget.config.columns.filter((column) => availableColumns.includes(column))
     : [];
-  const columns = (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
+  const visibleColumns = (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
   const limit = Math.max(1, Math.min(widget.config.limit ?? 10, 100));
-  if (!rows.length || !columns.length) return <EmptyWidgetData />;
-  const sortedRows = sortRows(rows, widget.config.sortKey, widget.config.sortDirection);
+  const tableColumns = useMemo<ColumnDef<SimpleRow>[]>(
+    () => visibleColumns.map((column) => ({
+      accessorKey: column,
+      cell: (info) => formatCell(info.getValue()),
+      header: column,
+    })),
+    [visibleColumns],
+  );
+  const tableData = useMemo(
+    () => sortRows(rows, widget.config.sortKey, widget.config.sortDirection).slice(0, limit),
+    [limit, rows, widget.config.sortDirection, widget.config.sortKey],
+  );
+  const table = useReactTable({
+    columns: tableColumns,
+    data: tableData,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  if (!rows.length || !visibleColumns.length) return <EmptyWidgetData />;
 
   return (
     <div className="asklake-table-widget">
       <table>
         <thead>
-          <tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
         </thead>
         <tbody>
-          {sortedRows.slice(0, limit).map((row, rowIndex) => (
-            <tr key={`runtime-row-${rowIndex}`}>
-              {columns.map((column) => <td key={column}>{formatCell(row[column])}</td>)}
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
             </tr>
           ))}
         </tbody>

@@ -16,6 +16,7 @@
     "@mui/material": "^9.2.0",
     "@mui/system": "^9.2.0",
     "@mui/x-tree-view": "^9.8.0",
+    "@tanstack/react-table": "^8.21.3",
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "^12.11.1",
     "apexcharts": "^5.16.0",
