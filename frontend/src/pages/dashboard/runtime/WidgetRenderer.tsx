@@ -786,6 +786,28 @@ function PieLikeChartWidget({
   const baseOptions = buildBaseChartOptions(primaryColor);
   const paletteColors = colorsFromConfig(widget.config.color);
   const colors = points.map((_, index) => paletteColors[index % paletteColors.length] ?? primaryColor);
+  const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
+    ? {
+      pie: {
+        donut: {
+          labels: {
+            show: true,
+            total: {
+              formatter: () => formatCell(total),
+              label: "합계",
+              show: true,
+            },
+            value: {
+              formatter: (value: string) => formatCell(Number(value)),
+            },
+          },
+          size: "66%",
+        },
+      },
+    }
+    : {
+      pie: {},
+    };
   const options: ApexOptions = {
     ...baseOptions,
     chart: {
@@ -803,26 +825,7 @@ function PieLikeChartWidget({
       },
       position: "right",
     },
-    plotOptions: {
-      pie: {
-        donut: chartType === "donut"
-          ? {
-            labels: {
-              show: true,
-              total: {
-                formatter: () => formatCell(total),
-                label: "합계",
-                show: true,
-              },
-              value: {
-                formatter: (value: string) => formatCell(Number(value)),
-              },
-            },
-            size: "66%",
-          }
-          : undefined,
-      },
-    },
+    plotOptions: piePlotOptions,
     stroke: {
       colors: ["#ffffff"],
       width: 3,
