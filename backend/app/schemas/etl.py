@@ -205,6 +205,22 @@ class JobCommandResponse(CamelModel):
     processing_result: dict[str, Any] | None = None
 
 
+class QueryRunRequest(CamelModel):
+    dataset_id: str
+    query: str
+
+
+class QueryRunResponse(CamelModel):
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    executed_at: str
+    query: str
+    row_count: int
+    rows: list[list[str]]
+    run_id: str
+
+
 class SchemaDraft(CamelModel):
     columns: list[SchemaColumnDraft]
     sample_rows: list[list[str]]

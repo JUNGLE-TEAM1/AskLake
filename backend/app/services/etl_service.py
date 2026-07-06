@@ -20,6 +20,8 @@ from app.schemas.etl import (
     JobCommandResponse,
     JobDagStep,
     JobRowData,
+    QueryRunRequest,
+    QueryRunResponse,
     SchemaDraft,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
@@ -122,6 +124,28 @@ def get_dataset(db: Session, dataset_id: str) -> CatalogDataset:
     if dataset is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
     return dataset
+
+
+def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
+    dataset = etl_repository.get_dataset_by_id(db, request.dataset_id)
+    if dataset is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {request.dataset_id}", status.HTTP_404_NOT_FOUND)
+
+    columns = [column[0] for column in (dataset.schema_json or [])[:6] if column]
+    if not columns and dataset.sample_rows:
+        columns = [f"col_{index + 1}" for index in range(len(dataset.sample_rows[0]))]
+    width = max(len(columns), 1)
+    rows = [[str(cell) for cell in row[:width]] for row in (dataset.sample_rows or [])]
+    return QueryRunResponse(
+        columns=columns,
+        dataset_id=dataset.id,
+        dataset_name=dataset.name,
+        executed_at=iso_now(),
+        query=request.query,
+        row_count=len(rows),
+        rows=rows,
+        run_id=stable_id("sql", f"{dataset.id}:{request.query}:{iso_now()}"),
+    )
 
 
 def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:

@@ -5,23 +5,32 @@ from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.models.base import Base
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
 
+_schema_ready_bind_ids: set[int] = set()
+
 
 def ensure_schema(db: Session) -> None:
-    Base.metadata.create_all(bind=db.get_bind())
-    inspector = inspect(db.get_bind())
-    existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
-    column_defs = {
-        "compression": "VARCHAR(64)",
-        "dag_steps_by_run_id": "JSON",
-        "partition": "VARCHAR(255)",
-        "permission_roles": "JSON",
-        "storage_path": "VARCHAR(512)",
-        "storage_type": "VARCHAR(64)",
-    }
-    for column_name, column_type in column_defs.items():
-        if column_name not in existing_columns:
-            db.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
-    db.commit()
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+
+    with bind.begin() as connection:
+        Base.metadata.create_all(bind=connection)
+        inspector = inspect(connection)
+        existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+        column_defs = {
+            "compression": "VARCHAR(64)",
+            "dag_steps_by_run_id": "JSON",
+            "partition": "VARCHAR(255)",
+            "permission_roles": "JSON",
+            "storage_path": "VARCHAR(512)",
+            "storage_type": "VARCHAR(64)",
+        }
+        for column_name, column_type in column_defs.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+
+    _schema_ready_bind_ids.add(bind_key)
 
 
 def list_jobs(db: Session) -> list[JobRowData]:
