@@ -62,6 +62,18 @@ export function formatCell(value: unknown) {
   return String(value);
 }
 
+function formatCategoryAxisLabel(value: unknown) {
+  const text = String(value ?? "");
+  const dayMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (dayMatch) return `${dayMatch[1].slice(2)}.${dayMatch[2]}.${dayMatch[3]}`;
+
+  const monthMatch = text.match(/^(\d{4})-(\d{2})$/);
+  if (monthMatch) return `${monthMatch[1].slice(2)}.${monthMatch[2]}`;
+
+  if (text.length > 10) return `${text.slice(0, 9)}...`;
+  return text;
+}
+
 function firstNumericKey(row: SimpleRow | undefined) {
   if (!row) return null;
   return Object.keys(row).find((key) => typeof row[key] === "number") ?? null;
@@ -326,9 +338,9 @@ function buildBaseChartOptions(color: string): ApexOptions {
     grid: {
       borderColor: "#e2e8f0",
       padding: {
-        bottom: 4,
-        left: 8,
-        right: 14,
+        bottom: 12,
+        left: 14,
+        right: 34,
         top: 8,
       },
       strokeDashArray: 4,
@@ -384,7 +396,11 @@ function buildBaseChartOptions(color: string): ApexOptions {
         color: "#cbd5e1",
       },
       labels: {
-        rotate: -20,
+        formatter: (value) => formatCategoryAxisLabel(value),
+        hideOverlappingLabels: true,
+        maxHeight: 42,
+        offsetY: 4,
+        rotate: 0,
         style: {
           colors: "#64748b",
           fontSize: "11px",
