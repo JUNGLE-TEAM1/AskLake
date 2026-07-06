@@ -84,10 +84,24 @@
   .catalog-detail-grid,
   .sql-page,
   .sql-page.context-collapsed,
+  .sql-page.schema-open,
+  .sql-page.context-collapsed.schema-open,
   .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
     grid-template-columns: 1fr;
+  }
+
+  .sql-schema-panel {
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sql-schema-panel .sql-card-schema {
+    max-height: 360px;
+    overflow-y: auto;
   }
 
   .dashboard-filter-bar,

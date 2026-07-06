@@ -114,6 +114,10 @@ export function SqlAnalysisPage({
     [baseDataset.id, query, referenceDatasetIds],
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
+  const schemaDataset = useMemo(
+    () => datasets.find((item) => item.id === openSchemaDatasetId) ?? (openSchemaDatasetId === baseDataset.id ? baseDataset : null),
+    [baseDataset, datasets, openSchemaDatasetId],
+  );
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -379,7 +383,7 @@ export function SqlAnalysisPage({
     );
   };
 
-  const toggleSchema = (targetDataset: CatalogDataset) => {
+  const selectSchemaDataset = (targetDataset: CatalogDataset) => {
     const willOpen = openSchemaDatasetId !== targetDataset.id;
     setOpenSchemaDatasetId(willOpen ? targetDataset.id : null);
     onAction(
@@ -454,7 +458,11 @@ export function SqlAnalysisPage({
   };
 
   return (
-    <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
+    <div className={[
+      "sql-page",
+      contextCollapsed ? "context-collapsed" : "",
+      schemaDataset ? "schema-open" : "",
+    ].filter(Boolean).join(" ")}>
       {contextCollapsed && (
         <button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기">
           <PanelLeftOpen size={16} />
@@ -478,11 +486,10 @@ export function SqlAnalysisPage({
             <h2>BASE DATASET</h2>
             <SqlDatasetRow
               dataset={baseDataset}
-              expanded={openSchemaDatasetId === baseDataset.id}
+              selected={openSchemaDatasetId === baseDataset.id}
               isBase
               onInsert={insertTableName}
-              onSchemaToggle={toggleSchema}
-              onColumnClick={insertColumnName}
+              onSchemaSelect={selectSchemaDataset}
             />
           </section>
           <label className="sql-context-search">
@@ -504,14 +511,13 @@ export function SqlAnalysisPage({
               {paginatedContextDatasets.map((item) => (
                 <SqlDatasetRow
                   dataset={item}
-                  expanded={openSchemaDatasetId === item.id}
+                  selected={openSchemaDatasetId === item.id}
                   isReferenced={referenceDatasetIdSet.has(item.id)}
                   key={item.id}
                   onBaseChange={changeBaseDataset}
-                  onColumnClick={insertColumnName}
                   onInsert={insertTableName}
                   onReferenceToggle={toggleReferenceDataset}
-                  onSchemaToggle={toggleSchema}
+                  onSchemaSelect={selectSchemaDataset}
                 />
               ))}
               {filteredDatasets.length === 0 && (
@@ -741,6 +747,14 @@ export function SqlAnalysisPage({
           </section>
         </section>
       </main>
+      {schemaDataset && (
+        <SchemaDetailsPanel
+          dataset={schemaDataset}
+          isBase={schemaDataset.id === baseDataset.id}
+          isReferenced={referenceDatasetIdSet.has(schemaDataset.id)}
+          onColumnClick={insertColumnName}
+        />
+      )}
     </div>
   );
 }
@@ -761,6 +775,48 @@ function SchemaColumnList({
         </button>
       ))}
     </div>
+  );
+}
+
+function SchemaDetailsPanel({
+  dataset,
+  isBase,
+  isReferenced,
+  onColumnClick,
+}: {
+  dataset: CatalogDataset;
+  isBase: boolean;
+  isReferenced: boolean;
+  onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
+}) {
+  return (
+    <aside className="sql-schema-panel">
+      <header className="sql-schema-panel-header">
+        <span>SCHEMA</span>
+        <h2 title={dataset.name}>{dataset.name}</h2>
+        <div className="sql-schema-panel-pills">
+          {isBase && <span className="sql-table-base-pill">BASE</span>}
+          {isReferenced && <span className="sql-table-ref-pill">REF</span>}
+          <span className="sql-table-layer">{dataset.layer}</span>
+          {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
+        </div>
+      </header>
+      <dl className="sql-schema-panel-meta">
+        <div>
+          <dt>Source</dt>
+          <dd title={dataset.source}>{dataset.source}</dd>
+        </div>
+        <div>
+          <dt>Owner</dt>
+          <dd title={dataset.owner}>{dataset.owner}</dd>
+        </div>
+        <div>
+          <dt>Columns</dt>
+          <dd>{dataset.schema.length}</dd>
+        </div>
+      </dl>
+      <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
+    </aside>
   );
 }
 
@@ -795,36 +851,34 @@ function parseDerivedDatasetTags(value: string) {
 
 function SqlDatasetRow({
   dataset,
-  expanded,
+  selected,
   isBase = false,
   isReferenced = false,
   onBaseChange,
-  onColumnClick,
   onInsert,
   onReferenceToggle,
-  onSchemaToggle,
+  onSchemaSelect,
 }: {
   dataset: CatalogDataset;
-  expanded: boolean;
+  selected: boolean;
   isBase?: boolean;
   isReferenced?: boolean;
   onBaseChange?: (dataset: CatalogDataset) => void;
-  onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
   onInsert: (dataset: CatalogDataset) => void;
   onReferenceToggle?: (dataset: CatalogDataset) => void;
-  onSchemaToggle: (dataset: CatalogDataset) => void;
+  onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
   const rowClasses = [
     "sql-table-card",
-    expanded ? "active" : "",
+    selected ? "active" : "",
     isBase ? "base" : "",
     isReferenced ? "referenced" : "",
   ].filter(Boolean).join(" ");
 
   return (
     <article className={rowClasses}>
-      <button className="sql-table-row" type="button" aria-expanded={expanded} onClick={() => onSchemaToggle(dataset)}>
-        <span className="sql-table-toggle">{expanded ? "▾" : "▸"}</span>
+      <button className="sql-table-row" type="button" aria-pressed={selected} onClick={() => onSchemaSelect(dataset)}>
+        <span className="sql-table-toggle">{selected ? "▾" : "▸"}</span>
         <span className="sql-table-name">
           <strong title={dataset.name}>{dataset.name}</strong>
         </span>
@@ -835,7 +889,7 @@ function SqlDatasetRow({
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </span>
       </button>
-      {expanded && (
+      {selected && (
         <div className="sql-table-expanded">
           <div className="sql-table-card-actions">
             {!isBase && <button type="button" onClick={() => onBaseChange?.(dataset)}>Base로 설정</button>}
@@ -846,7 +900,6 @@ function SqlDatasetRow({
             )}
             <button type="button" onClick={() => onInsert(dataset)}>SQL에 삽입</button>
           </div>
-          <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
         </div>
       )}
     </article>
