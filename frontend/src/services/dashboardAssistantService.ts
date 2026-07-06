@@ -1,4 +1,4 @@
-import type { DashboardRuntimeWidget } from "../types";
+import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../types";
 import { apiClient } from "./apiClient";
 
 const assistantEndpoint = (import.meta.env.VITE_DASHBOARD_ASSISTANT_API_PATH ?? "").trim();
@@ -32,9 +32,37 @@ export type DashboardAssistantWidgetPatch = {
   type?: DashboardRuntimeWidget["type"];
 };
 
+export type DashboardAssistantCreateWidgetAction = {
+  type: "create_widget";
+  widget: {
+    config: DashboardRuntimeWidgetConfig;
+    datasetId: string;
+    title: string;
+    type: DashboardRuntimeWidget["type"];
+  };
+};
+
+export type DashboardAssistantUpdateWidgetAction = {
+  patch: DashboardAssistantWidgetPatch;
+  type: "update_widget";
+  widgetId: string;
+};
+
+export type DashboardAssistantReportAction = {
+  markdown: string;
+  type: "report";
+};
+
+export type DashboardAssistantAction =
+  | DashboardAssistantCreateWidgetAction
+  | DashboardAssistantUpdateWidgetAction
+  | DashboardAssistantReportAction;
+
 export type DashboardAssistantResponse = {
+  actions: DashboardAssistantAction[];
   configPatch?: Record<string, unknown>;
-  message?: string;
+  message: string;
+  warnings: string[];
   widgetPatch?: DashboardAssistantWidgetPatch;
 };
 

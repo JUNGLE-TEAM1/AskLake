@@ -434,7 +434,8 @@ type DataProcessingResult = {
 
 ### Dashboard Assistant UI Hook
 
-대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아직 실제 RAG/LLM 백엔드가 붙지 않았다.
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 `POST /api/dashboards/assistant` FastAPI mock endpoint에 연결할 수 있다.
+이 endpoint는 실제 OpenAI/RAG 호출을 하지 않고, 프론트와 백엔드가 맞춰야 하는 요청/응답 계약만 먼저 고정한다.
 프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 설정된 경우에만 해당 경로로 `POST` 요청을 보낸다.
 
 프론트 요청 payload:
@@ -463,7 +464,34 @@ type DashboardAssistantRequest = {
 
 ```ts
 type DashboardAssistantResponse = {
-  message?: string;
+  message: string;
+  actions: Array<
+    | {
+        type: "create_widget";
+        widget: {
+          title: string;
+          type: DashboardRuntimeWidgetType;
+          datasetId: string;
+          config: DashboardRuntimeWidgetConfig;
+        };
+      }
+    | {
+        type: "update_widget";
+        widgetId: string;
+        patch: {
+          title?: string | null;
+          type?: DashboardRuntimeWidgetType;
+          datasetId?: string | null;
+          config?: Record<string, unknown>;
+        };
+      }
+    | {
+        type: "report";
+        markdown: string;
+      }
+  >;
+  warnings: string[];
+  // 현재 visualization request 위젯 호환용 임시 필드.
   configPatch?: Record<string, unknown>;
   widgetPatch?: {
     title?: string | null;
@@ -474,7 +502,9 @@ type DashboardAssistantResponse = {
 };
 ```
 
-`visualization_request` 모드에서 `configPatch` 또는 `widgetPatch.config`가 내려오면 프론트는 현재 위젯 config에 병합한다.
+`dashboard_question` 모드는 리포트/분석 결과를 `actions: [{ type: "report", markdown }]` 형태로 받을 수 있다.
+`visualization_request` 모드는 장기적으로 `actions`의 `create_widget` 또는 `update_widget`을 적용한다.
+현재 시각화 요청 위젯은 기존 구현과의 호환을 위해 `configPatch` 또는 `widgetPatch.config`가 내려오면 현재 위젯 config에 병합한다.
 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 UI는 미설정 안내만 표시하고 요청을 보내지 않는다.
 
 ## 9) 변경 규칙

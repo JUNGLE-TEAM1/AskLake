@@ -1494,7 +1494,8 @@ Response `200 OK`:
 
 ### 8.5.11 Dashboard Assistant UI Hook
 
-대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 실제 RAG/LLM 백엔드가 붙기 전까지 프론트 연결 지점만 제공한다.
+대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI mock endpoint를 통해 요청/응답 계약을 먼저 맞춘다.
+이 endpoint는 실제 OpenAI/RAG 호출을 하지 않고, 후속 AI 구현에서 사용할 action shape를 검증하기 위한 임시 응답을 반환한다.
 프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 네트워크 요청을 보내지 않고 미설정 안내를 표시한다.
 값이 있으면 해당 경로로 `POST` 요청을 보낸다. 값은 `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
 
@@ -1528,7 +1529,34 @@ Response:
 
 ```ts
 type DashboardAssistantResponse = {
-  message?: string;
+  message: string;
+  actions: Array<
+    | {
+        type: "create_widget";
+        widget: {
+          title: string;
+          type: DashboardRuntimeWidgetType;
+          datasetId: string;
+          config: DashboardRuntimeWidgetConfig;
+        };
+      }
+    | {
+        type: "update_widget";
+        widgetId: string;
+        patch: {
+          title?: string | null;
+          type?: DashboardRuntimeWidgetType;
+          datasetId?: string | null;
+          config?: Record<string, unknown>;
+        };
+      }
+    | {
+        type: "report";
+        markdown: string;
+      }
+  >;
+  warnings: string[];
+  // 현재 visualization request 위젯 호환용 임시 필드.
   configPatch?: Record<string, unknown>;
   widgetPatch?: {
     title?: string | null;
@@ -1542,6 +1570,8 @@ type DashboardAssistantResponse = {
 현재 프론트 적용 범위:
 
 - `message`는 사용자에게 요청 결과 안내로 표시한다.
+- `actions.type: "report"`는 AskLake 보조 패널의 분석/리포트 응답에 사용한다.
+- `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 후속 작업에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
 - `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
 - `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 응답 shape에는 열어두지만, 자동 적용은 후속 백엔드/UX 결정 후 확장한다.
 
