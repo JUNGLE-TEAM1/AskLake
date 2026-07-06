@@ -217,12 +217,14 @@ function compareCatalogDatasetsBySort(
 export function CatalogPage({
   datasets,
   onAction,
+  onCreateDashboard,
   onDatasetOpen,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onCreateDashboard: (dataset: CatalogDataset) => void;
   onDatasetOpen: (dataset: CatalogDataset) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
@@ -360,6 +362,15 @@ export function CatalogPage({
     onAction(nextPinned ? "catalog.dataset.pinned" : "catalog.dataset.unpinned", `/api/catalog/datasets/${previewDataset.id}/pin`, previewDataset.id);
   };
 
+  const selectPreviewDataset = (dataset: CatalogDataset) => {
+    setPreviewDataset(dataset);
+    onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+  };
+
+  const requestRagFromCatalog = (dataset: CatalogDataset) => {
+    onAction("catalog.rag.use_requested", `/api/rag/datasets/${dataset.id}`, dataset.id);
+  };
+
   return (
     <div className="catalog-page">
       <PageTitle title="검색/카탈로그" description="테이블명, 컬럼명, 태그 또는 업무 키워드로 데이터셋을 검색합니다." />
@@ -462,12 +473,9 @@ export function CatalogPage({
                 const isActive = dataset.id === previewDataset.id;
 
                 return (
-                  <button
+                  <article
                     className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
                     key={dataset.id}
-                    type="button"
-                    onClick={() => setPreviewDataset(dataset)}
-                    onDoubleClick={() => onDatasetOpen(dataset)}
                   >
                     {isPinned && (
                       <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
@@ -484,7 +492,12 @@ export function CatalogPage({
                       {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
                       {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
                     </div>
-                  </button>
+                    <div className="catalog-result-actions" aria-label={`${dataset.name} 검색 결과 액션`}>
+                      <button type="button" onClick={() => selectPreviewDataset(dataset)}>미리보기 선택</button>
+                      <button type="button" onClick={() => onDatasetOpen(dataset)}>상세 보기</button>
+                      <button type="button" onClick={() => onOpenSql(dataset)}>SQL</button>
+                    </div>
+                  </article>
                 );
               })}
               {!hasCatalogResults && (
@@ -581,21 +594,29 @@ export function CatalogPage({
           }}>
             <Share2 size={16} />
             <div>
-              <strong>데이터 흐름 보기</strong>
+              <strong>Lineage 보기</strong>
             </div>
             <span>›</span>
           </article>
 
-          <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
-            <ExternalLink size={16} /> 쿼리 편집기에서 열기
-          </button>
+          <div className="catalog-preview-actions" aria-label={`${previewDataset.name} 활용 액션`}>
+            <button className="primary-button" type="button" onClick={() => onOpenSql(previewDataset)}>
+              <ExternalLink size={16} /> SQL 분석에서 열기
+            </button>
+            <button type="button" onClick={() => onCreateDashboard(previewDataset)}>
+              <BarChart3 size={16} /> 대시보드 만들기
+            </button>
+            <button type="button" onClick={() => requestRagFromCatalog(previewDataset)}>
+              <Bot size={16} /> RAG 활용
+            </button>
+          </div>
           <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
           </aside>
         ) : (
           <aside className="catalog-preview-panel catalog-preview-panel-empty">
             <LayoutGrid size={22} />
             <strong>선택할 데이터셋이 없습니다.</strong>
-            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
+            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, Lineage, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
           </aside>
         )}
       </div>
@@ -603,7 +624,7 @@ export function CatalogPage({
         <CatalogModal
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
-          title={activeModal === "schema" ? "전체 스키마" : "데이터 흐름도"}
+          title={activeModal === "schema" ? "전체 스키마" : "Lineage"}
           variant={activeModal}
         >
           {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
@@ -684,7 +705,8 @@ export function CatalogDetailPage({
           <div className="job-detail-actions">
             <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
             <button className="job-action-button primary soft" type="button" onClick={onCreateDashboard}><BarChart3 size={14} /> 대시보드 만들기</button>
-            <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
+            <button className="job-action-button" type="button" onClick={() => onAction("catalog.rag.use_requested", `/api/rag/datasets/${dataset.id}`, dataset.id)}><Bot size={14} /> RAG 활용</button>
+            <button className="job-action-button" type="button" onClick={openLineage}>Lineage 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
         </div>
@@ -693,7 +715,7 @@ export function CatalogDetailPage({
             ["overview", "개요"],
             ["schema", "스키마"],
             ["sample", "샘플 데이터"],
-            ["lineage", "리니지"],
+            ["lineage", "Lineage"],
           ].map(([id, label]) => (
             <button className={activeTab === id ? "active" : ""} key={id} type="button" onClick={() => {
               if (id === "lineage") onLineage();
@@ -749,7 +771,7 @@ function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLi
       <section className="catalog-overview-card">
         <h2>연결된 흐름</h2>
         <CatalogLineageMini dataset={dataset} />
-        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 리니지 보기</button>
+        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 Lineage 보기</button>
       </section>
     </div>
   );

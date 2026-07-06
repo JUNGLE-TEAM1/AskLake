@@ -255,12 +255,19 @@
   position: relative;
   display: grid;
   gap: 10px;
-  min-height: 128px;
+  min-height: 172px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
   padding: 18px 20px;
   text-align: left;
+}
+
+.catalog-result-card:hover {
+  border-color: #bfdbfe;
 }
 
 .catalog-result-card.pinned {
@@ -329,12 +336,16 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .catalog-result-title strong {
+  min-width: 0;
   color: #0f172a;
   font-size: 18px;
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 .catalog-result-card p,
@@ -344,18 +355,47 @@
   color: #64748b;
   font-size: 13px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .catalog-result-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .catalog-result-tags span {
   color: #475569;
   font-size: 12px;
   font-weight: 700;
+}
+
+.catalog-result-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding-top: 2px;
+}
+
+.catalog-result-actions button {
+  min-height: 30px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 6px 10px;
+}
+
+.catalog-result-actions button:hover {
+  background: #eff6ff;
 }
 
 .dataset-rag-badge,
@@ -402,6 +442,10 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr) 32px;
   gap: 12px;
+}
+
+.catalog-preview-title > div {
+  min-width: 0;
 }
 
 .catalog-favorite-button {
@@ -555,6 +599,40 @@
   color: inherit;
   font-size: 16px;
   font-weight: 800;
+}
+
+.catalog-preview-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.catalog-preview-actions button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 850;
+  padding: 9px 12px;
+}
+
+.catalog-preview-actions button:hover {
+  background: #eff6ff;
+}
+
+.catalog-preview-actions .primary-button {
+  border-color: transparent;
+  background: #2563eb;
+  color: #fff;
+}
+
+.catalog-preview-actions .primary-button:hover {
+  background: #1d4ed8;
 }
 
 .catalog-wide-button {
