@@ -60,6 +60,7 @@ export function SqlAnalysisPage({
   const [datasetSearch, setDatasetSearch] = useState("");
   const [contextPage, setContextPage] = useState(1);
   const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(null);
+  const [expandedDatasetId, setExpandedDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
@@ -150,6 +151,7 @@ export function SqlAnalysisPage({
     setBaseDatasetId(dataset.id);
     setReferenceDatasetIds([]);
     setOpenSchemaDatasetId(dataset.id);
+    setExpandedDatasetId(null);
   }, [dataset.id]);
 
   useEffect(() => {
@@ -361,6 +363,7 @@ export function SqlAnalysisPage({
     }
     setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
     setOpenSchemaDatasetId(targetDataset.id);
+    setExpandedDatasetId(null);
     resetResultState();
     onAction(
       "analysis.context.dataset_selected",
@@ -413,6 +416,15 @@ export function SqlAnalysisPage({
     onAction(
       "analysis.context.schema_opened",
       `/api/query/context/datasets/${targetDataset.id}/schema`,
+      targetDataset.id,
+    );
+  };
+
+  const toggleDatasetPreview = (targetDataset: CatalogDataset) => {
+    setExpandedDatasetId((id) => (id === targetDataset.id ? null : targetDataset.id));
+    onAction(
+      "analysis.context.dataset_schema_previewed",
+      `/api/query/context/datasets/${targetDataset.id}/schema-preview`,
       targetDataset.id,
     );
   };
@@ -506,8 +518,10 @@ export function SqlAnalysisPage({
               {paginatedContextDatasets.map((item) => (
                 <SqlDatasetRow
                   dataset={item}
+                  expanded={expandedDatasetId === item.id}
                   key={item.id}
                   onSelect={addSelectedDataset}
+                  onToggle={toggleDatasetPreview}
                 />
               ))}
               {filteredDatasets.length === 0 && (
