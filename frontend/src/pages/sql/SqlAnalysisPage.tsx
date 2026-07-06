@@ -342,8 +342,12 @@ export function SqlAnalysisPage({
       updateQuery(`${query.replace(/;$/, "")} ${text};`);
       return;
     }
-    const selectionStart = textarea.selectionStart;
-    const selectionEnd = textarea.selectionEnd;
+    const shouldUseRememberedCursor = document.activeElement !== textarea
+      && textarea.selectionStart === 0
+      && textarea.selectionEnd === 0
+      && cursorIndex > 0;
+    const selectionStart = shouldUseRememberedCursor ? Math.min(cursorIndex, query.length) : textarea.selectionStart;
+    const selectionEnd = shouldUseRememberedCursor ? selectionStart : textarea.selectionEnd;
     const nextQuery = `${query.slice(0, selectionStart)}${text}${query.slice(selectionEnd)}`;
     const caret = selectionStart + text.length;
     updateQuery(nextQuery);
