@@ -8,7 +8,6 @@ import {
 } from "@tanstack/react-table";
 import {
   BarChart3,
-  Bot,
   Database,
   Download,
   PanelLeftClose,
@@ -115,6 +114,7 @@ export function SqlAnalysisPage({
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
   const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
+  const [dashboardDialogOpen, setDashboardDialogOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -203,6 +203,7 @@ export function SqlAnalysisPage({
     setDerivedDatasetRag(baseDataset.rag);
     setDerivedDatasetDraft(null);
     setMaterializeDialogOpen(false);
+    setDashboardDialogOpen(false);
     setOpenSchemaDatasetId(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
@@ -221,6 +222,7 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setDerivedDatasetDraft(null);
     setMaterializeDialogOpen(false);
+    setDashboardDialogOpen(false);
   }, [baseDataset.id, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -261,6 +263,8 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetDraft(null);
+    setMaterializeDialogOpen(false);
+    setDashboardDialogOpen(false);
     onResultChange(null);
   };
 
@@ -455,12 +459,6 @@ export function SqlAnalysisPage({
     anchor.remove();
     URL.revokeObjectURL(url);
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
-  };
-
-  const requestRagFromResult = () => {
-    if (!resultDraft) return;
-
-    onAction("analysis.rag.use_requested", "/api/rag/datasets", resultDraft.datasetId);
   };
 
   const createDerivedDataset = async () => {
@@ -714,8 +712,7 @@ export function SqlAnalysisPage({
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> Preview 전체 CSV</button>
                   <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 새 데이터셋 저장</button>
-                  <button type="button" onClick={() => onCreateDashboard(resultDraft)}><BarChart3 size={14} /> 대시보드 만들기</button>
-                  <button type="button" onClick={requestRagFromResult}><Bot size={14} /> RAG 활용</button>
+                  <button type="button" onClick={() => setDashboardDialogOpen(true)}><BarChart3 size={14} /> 대시보드 만들기</button>
                 </div>
               </div>
               <div className="sql-result-scroll">
@@ -820,6 +817,49 @@ export function SqlAnalysisPage({
             </div>
             <div className="sql-materialize-summary">
               <span>source {resultDraft.runId} · {derivedDatasetTagList.length} tags · {resultDraft.columns.length} columns</span>
+            </div>
+          </section>
+        </div>
+      )}
+      {resultDraft && dashboardDialogOpen && (
+        <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
+          <section className="sql-materialize-dialog sql-dashboard-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-dashboard-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="sql-materialize-dialog-header">
+              <div>
+                <span>DASHBOARD</span>
+                <h2 id="sql-dashboard-dialog-title">SQL 결과 대시보드 만들기</h2>
+              </div>
+              <button type="button" onClick={() => setDashboardDialogOpen(false)} aria-label="대시보드 생성 닫기">닫기</button>
+            </header>
+            <div className="sql-dashboard-dialog-body">
+              <p>현재 Preview 결과를 기반으로 대시보드 초안을 엽니다. SQL 결과는 유지되고, 대시보드 화면에서 위젯 구성을 이어서 조정할 수 있습니다.</p>
+              <dl>
+                <div>
+                  <dt>Run ID</dt>
+                  <dd>{resultDraft.runId}</dd>
+                </div>
+                <div>
+                  <dt>Preview rows</dt>
+                  <dd>{resultDraft.rows.length} / {resultDraft.rowCount}</dd>
+                </div>
+                <div>
+                  <dt>Columns</dt>
+                  <dd>{resultDraft.columns.length}</dd>
+                </div>
+              </dl>
+            </div>
+            <div className="sql-dashboard-dialog-actions">
+              <button type="button" onClick={() => setDashboardDialogOpen(false)}>취소</button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => {
+                  setDashboardDialogOpen(false);
+                  onCreateDashboard(resultDraft);
+                }}
+              >
+                <BarChart3 size={15} /> 대시보드 만들기
+              </button>
             </div>
           </section>
         </div>

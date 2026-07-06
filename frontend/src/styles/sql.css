@@ -1184,6 +1184,73 @@
   line-height: 1.3;
 }
 
+.sql-dashboard-dialog-body {
+  display: grid;
+  gap: 14px;
+}
+
+.sql-dashboard-dialog-body p {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.sql-dashboard-dialog-body dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.sql-dashboard-dialog-body dl div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.sql-dashboard-dialog-body dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sql-dashboard-dialog-body dd {
+  margin: 0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.sql-dashboard-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sql-dashboard-dialog-actions button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 0 12px;
+}
+
+.sql-dashboard-dialog-actions .primary-button {
+  border-color: transparent;
+  background: #2563eb;
+  color: #fff;
+}
+
 @media (max-width: 860px) {
   .sql-materialize-form {
     grid-template-columns: 1fr;
