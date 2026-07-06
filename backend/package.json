@@ -7,6 +7,7 @@
     "dev": "node src/server.mjs",
     "start": "node src/server.mjs",
     "verify": "node scripts/verify-backend.mjs",
+    "verify:fastapi-etl-catalog": "node scripts/verify-fastapi-etl-catalog.mjs",
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
