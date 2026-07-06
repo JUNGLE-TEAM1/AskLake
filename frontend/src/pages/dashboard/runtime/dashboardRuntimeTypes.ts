@@ -1,4 +1,4 @@
-import type { DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
+import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
 
 export type ToolbarDraftWidgetKind = "visualization" | "text";
 
@@ -27,4 +27,11 @@ export type UpdateDraftWidgetFormInput = {
   datasetId?: string | null;
   title: string;
   type: DashboardRuntimeWidgetType;
+};
+
+export type DashboardAssistantRuntimeContext = {
+  dashboardId?: string;
+  pageId: string | null;
+  selectedWidgetId?: string | null;
+  widgets: DashboardRuntimeWidget[];
 };

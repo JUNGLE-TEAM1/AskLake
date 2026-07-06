@@ -3,6 +3,7 @@ import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutIte
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
@@ -39,6 +40,7 @@ function scaleLayout(layout: LayoutItem[], cols: number) {
 }
 
 export function DashboardCanvas({
+  assistantContext,
   deletingWidgetId,
   editable,
   onDeleteWidget,
@@ -49,6 +51,7 @@ export function DashboardCanvas({
   selectedWidgetId,
   widgets,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   deletingWidgetId?: string | null;
   editable: boolean;
   onDeleteWidget?: (widgetId: string) => void;
@@ -151,6 +154,7 @@ export function DashboardCanvas({
           {widgets.map((widget) => (
             <div key={widget.id}>
               <WidgetFrame
+                assistantContext={assistantContext}
                 deleteDisabled={deletingWidgetId === widget.id}
                 editable={editable}
                 selected={selectedWidgetId === widget.id}

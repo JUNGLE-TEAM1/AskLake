@@ -1,6 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { WidgetRenderer } from "./WidgetRenderer";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 
 const widgetTypeLabels: Record<DashboardRuntimeWidget["type"], string> = {
   bar_chart: "막대 차트",
@@ -32,6 +33,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export function WidgetFrame({
+  assistantContext,
   deleteDisabled = false,
   editable = false,
   onDelete,
@@ -40,6 +42,7 @@ export function WidgetFrame({
   selected = false,
   widget,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
@@ -87,6 +90,7 @@ export function WidgetFrame({
       </header>
       <div className="asklake-widget-frame-body">
         <WidgetRenderer
+          assistantContext={assistantContext}
           widget={widget}
           onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
         />
