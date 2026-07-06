@@ -21,9 +21,86 @@ class DashboardRuntimeMetaRecord:
     updated_at: datetime
 
 
+def ensure_dashboard_runtime_schema(db: Session) -> None:
+    bind = db.get_bind()
+    if bind.dialect.name == "sqlite":
+        return
+
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_revisions (
+            id varchar(64) PRIMARY KEY,
+            dashboard_id varchar(64) NOT NULL,
+            kind varchar(32) NOT NULL,
+            version integer NOT NULL DEFAULT 1,
+            published_at timestamptz,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS dashboard_id varchar(64) NOT NULL DEFAULT ''",
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS kind varchar(32) NOT NULL DEFAULT 'draft'",
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1",
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS published_at timestamptz",
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+        "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_pages (
+            id varchar(64) PRIMARY KEY,
+            revision_id varchar(64) NOT NULL REFERENCES dashboard_revisions(id) ON DELETE CASCADE,
+            title varchar(120) NOT NULL,
+            order_index integer NOT NULL DEFAULT 0,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS revision_id varchar(64) NOT NULL DEFAULT ''",
+        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS title varchar(120) NOT NULL DEFAULT 'Untitled page'",
+        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS order_index integer NOT NULL DEFAULT 0",
+        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+        "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_widgets (
+            id varchar(64) PRIMARY KEY,
+            page_id varchar(64) NOT NULL REFERENCES dashboard_pages(id) ON DELETE CASCADE,
+            type varchar(32) NOT NULL,
+            title varchar(160),
+            dataset_id varchar(64),
+            query_id varchar(64),
+            layout jsonb NOT NULL DEFAULT '{}'::jsonb,
+            config jsonb NOT NULL DEFAULT '{}'::jsonb,
+            data jsonb NOT NULL DEFAULT '[]'::jsonb,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        )
+        """,
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS page_id varchar(64) NOT NULL DEFAULT ''",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS type varchar(32) NOT NULL DEFAULT 'bar_chart'",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS title varchar(160)",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS dataset_id varchar(64)",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS query_id varchar(64)",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS layout jsonb NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS config jsonb NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS data jsonb NOT NULL DEFAULT '[]'::jsonb",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+        "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+        "UPDATE dashboard_widgets SET layout = '{}'::jsonb WHERE layout IS NULL",
+        "UPDATE dashboard_widgets SET config = '{}'::jsonb WHERE config IS NULL",
+        "UPDATE dashboard_widgets SET data = '[]'::jsonb WHERE data IS NULL",
+        "CREATE INDEX IF NOT EXISTS dashboard_revisions_dashboard_kind_idx ON dashboard_revisions (dashboard_id, kind, version DESC)",
+        "CREATE INDEX IF NOT EXISTS dashboard_pages_revision_idx ON dashboard_pages (revision_id, order_index)",
+        "CREATE INDEX IF NOT EXISTS dashboard_widgets_page_idx ON dashboard_widgets (page_id, created_at)",
+    ]
+
+    for statement in statements:
+        db.execute(text(statement))
+    db.commit()
+
+
 class DashboardRuntimeRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
+        ensure_dashboard_runtime_schema(self.db)
 
     def get_dashboard_meta(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
         self._ensure_dashboard_meta_table()
@@ -139,6 +216,8 @@ class DashboardRuntimeRepository:
         dataset_id: str | None = None,
         update_dataset_id: bool = False,
         config: dict[str, Any] | None = None,
+        data: list[dict[str, Any]] | None = None,
+        update_data: bool = False,
     ) -> DashboardWidget:
         if widget_type is not None:
             widget.type = widget_type
@@ -148,6 +227,8 @@ class DashboardRuntimeRepository:
             widget.dataset_id = dataset_id
         if config is not None:
             widget.config = config
+        if update_data:
+            widget.data = data or []
         self.db.flush()
         return widget
 

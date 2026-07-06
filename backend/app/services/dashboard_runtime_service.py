@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import status
 
@@ -38,6 +39,7 @@ from app.schemas.dashboard import (
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
+from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
 
 
 class DashboardRuntimeService:
@@ -104,7 +106,7 @@ class DashboardRuntimeService:
             query_id=None,
             layout=self._layout_to_json(request.layout or self._default_layout()),
             config=self._config_to_json(widget_type, request.config),
-            data=request.data or [],
+            data=self._resolve_widget_data(request.data, request.dataset_id),
         )
         self.repository.db.commit()
         return DashboardWidgetMutationResponse(id=widget.id)
@@ -122,6 +124,11 @@ class DashboardRuntimeService:
         next_config = None
         if request.config is not None or type_changed:
             next_config = self._config_to_json(next_type, request.config)
+        next_data = None
+        update_data = False
+        if "dataset_id" in request.model_fields_set:
+            next_data = self._resolve_widget_data(None, request.dataset_id)
+            update_data = True
         widget = self.repository.update_widget(
             widget,
             widget_type=next_type.value if type_changed else None,
@@ -130,6 +137,8 @@ class DashboardRuntimeService:
             dataset_id=request.dataset_id,
             update_dataset_id="dataset_id" in request.model_fields_set,
             config=next_config,
+            data=next_data,
+            update_data=update_data,
         )
         self.repository.db.commit()
         return DashboardWidgetMutationResponse(id=widget.id)
@@ -353,6 +362,15 @@ class DashboardRuntimeService:
     @staticmethod
     def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
         return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
+
+    @staticmethod
+    def _resolve_widget_data(
+        explicit_data: list[dict[str, Any]] | None,
+        dataset_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if explicit_data is not None:
+            return explicit_data
+        return dataset_rows_to_widget_data(get_demo_dataset(dataset_id))
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
