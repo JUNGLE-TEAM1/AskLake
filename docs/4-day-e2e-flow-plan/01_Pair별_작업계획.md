@@ -27,7 +27,7 @@
 
 ### 오늘 해야 할 일
 
-- `createPipelineDraft` 또는 `POST /api/etl/jobs` 응답을 `{ job, dataset }` 형태로 맞춘다.
+- `createPipelineDraft` 또는 `POST /api/etl/jobs` 응답은 `{ job, catalogTarget }` 형태로 맞추고, Spark run 성공 후 command 응답의 `dataset`을 Catalog에 반영한다.
 - 생성 성공 시 `jobs`와 `datasets` 맨 위에 결과를 추가한다.
 - `selectedJob`과 `selectedDataset`을 생성 결과로 갱신한다.
 - 실행 command 응답을 `job`, `run`, `dagSteps`로 정리한다.
@@ -67,7 +67,7 @@ Pair A는 볼륨이 크다. 2명만 고정으로 처리하지 말고, B/C가 빨
 | A5 Scheduling | manual/once/repeat 선택, schedule label, 다음 실행 요약 | A 또는 C | C 합류 좋음 |
 | A6 Permission/Target | 권한 요약, target dataset/layer, owner, Catalog handoff 필드 | A 또는 B | B 합류 좋음 |
 | A7 Review Summary | 앞 단계 값을 한 화면에 요약하고 누락값을 표시 | A 고정 | 보조 가능 |
-| A8 Create/Handoff | 생성 submit, `{ job, dataset }`, `jobs/datasets` prepend, selected state | A 고정 | 직접 수정 금지 |
+| A8 Create/Handoff | 생성 submit, `{ job, catalogTarget }`, `jobs` prepend, run 성공 `datasets` prepend, selected state | A 고정 | 직접 수정 금지 |
 | A9 Job Commands | 즉시 실행/재실행/일시정지/취소, loading/disabled | A 또는 C | C 합류 좋음 |
 | A10 Runs/History | `runsByJobId`, `selectedRun`, 실행 이력 row | A 또는 C | C 합류 좋음 |
 | A11 DAG Steps | `dagSteps` mapper, 현재 step 표시, 실패 step 표시 | A 또는 C | C 합류 좋음 |

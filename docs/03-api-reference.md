@@ -20,8 +20,9 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 ```
 
-- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query API를 실제 backend로 보낸다.
+- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
+- Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 
 ## 3) 공통 규칙
 
@@ -56,6 +57,8 @@ Canonical status values:
 
 | Method | Endpoint | Auth | 설명 | 상세 문서 |
 | --- | --- | --- | --- | --- |
+| `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
+| `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 취소 | `docs/api-contract.md` |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
@@ -68,7 +71,8 @@ Canonical status values:
 | `GET` | `/api/etl/jobs/{jobId}` | TBD | job 상세 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
-| `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate | `docs/api-contract.md` |
+| `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate 또는 fallback | `docs/api-contract.md` |
+| `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
 ## 6) P2 / 확장 API
 
@@ -93,12 +97,12 @@ Canonical status values:
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
-Pair3 Dashboard FastAPI 구현은 두 lane으로 나눈다.
+Dashboard FastAPI 구현은 두 lane으로 나눈다.
 
 | Lane | 목적 | Endpoint 범위 | Backend 파일 기준 |
 | --- | --- | --- | --- |
-| Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
-| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard.py`, `services/dashboard_service.py`, `repositories/dashboard_repository.py` |
+| Card/List | 랜딩 페이지 목록, 생성, 제목 수정, 삭제 | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` | `backend/app/schemas/dashboard.py`, `api/dashboard_card.py`, `services/dashboard_card_service.py`, `repositories/dashboard_card_repository.py` |
+| Runtime | 내부 조회/편집, page, widget, layout, publish | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, draft page/widget/layout/publish APIs | `backend/app/schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` |
 
 Card/List lane은 `DashboardCard`와 `DashboardListResponse`를 기준으로 한다.
 Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준으로 한다.
@@ -117,8 +121,10 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | SQL 결과 Dataset 생성 | `createDerivedDatasetFromSql` mock/live | `POST /api/catalog/derived-datasets` |
-| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `DELETE /api/dashboards/{dashboardId}`, draft/published runtime APIs |
+| 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
+
+반복 실행 schedule은 `scheduleLabel`에 더해 `scheduleSummary`, `startDate`, `endDate`, `timezone`을 create request에 포함해 Review와 생성 payload가 같은 값을 보게 한다.
 
 ## 8) Pair Handoff Contracts
 
@@ -244,6 +250,7 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - `dataset.upstream`이 있으면 Catalog lineage modal의 source/upstream -> current fallback을 만들 수 있다.
 - `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
+- Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
 
 Mock mode에서는 Pair A pipeline 생성 dataset과 SQL derived dataset을 모두 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합한다. 기존 `asklake.derivedDatasets` 값은 읽기 호환만 유지한다. Live API mode에서는 localStorage fallback을 사용하지 않고 backend catalog persistence와 `GET /api/catalog/datasets` 응답을 source of truth로 둔다.
 
@@ -277,6 +284,25 @@ type JobCommandResponse = {
 - `job`이 있으면 프론트는 해당 응답을 기준으로 Job 상태를 갱신한다.
 - `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
 - `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
+
+프론트 Run 상태 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+필수 규칙:
+
+- `runsByJobId[job.id]`는 최신 Run을 앞에 둔다.
+- 같은 `run.runId`가 다시 들어오면 기존 Run을 교체한다.
+- 새 Run이 들어오면 `selectedRunIdByJobId[job.id]`를 그 `run.runId`로 갱신한다.
+- `dagSteps`는 별도 `runId` 필드를 요구하지 않고, 같은 응답의 `run.runId` 기준으로 `dagStepsByRunId`에 저장한다.
+- DAG 화면은 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
+- History는 `selectRunForJob(jobId, runId)` action으로만 선택 Run을 바꾼다.
+- 초기 hydrate 시 `job.runHistory`는 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`는 최신 Run의 `runId`에 묶는다.
+- PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않고 frontend temp id `client:<jobId>:<timestamp>`를 만든 뒤, 서버 응답의 `run.runId`로 교체한다.
 
 ### Pair B -> Pair C
 
