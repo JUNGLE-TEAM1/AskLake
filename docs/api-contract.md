@@ -1314,7 +1314,7 @@ Request:
 ```
 
 `data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
-현재 demo backend는 실제 rows API가 없으므로 임시 demo catalog 또는 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+현재 FastAPI backend는 `catalog_datasets.payload.sampleRows`와 `schema`를 우선 사용하고, 오래된 demo dataset id에 대해서만 demo catalog fallback을 사용해 column name 기반 object row를 만듭니다.
 예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
 
 Response `201 Created`:

@@ -100,6 +100,39 @@ async function runSmoke() {
   assert(engines.includes("ICEBERG"), "ETL lineage should include ICEBERG node.");
   assert(lineage.edges.length >= 4, "ETL lineage should include column edges across source/job/target.");
 
+  const dashboard = await post("/api/dashboards", {
+    datasetId,
+    owner: "admin",
+    source: "catalog",
+    title: `ETL Catalog Smoke Dashboard ${suffix}`,
+  });
+  const dashboardId = dashboard.dashboard?.id;
+  assert(dashboardId, "Dashboard create response should include dashboard.id.");
+
+  const draft = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`, {});
+  const pageId = draft.pages?.[0]?.id;
+  assert(pageId, "Draft runtime should include a default page.");
+
+  const widget = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/pages/${encodeURIComponent(pageId)}/widgets`, {
+    config: {
+      columns: ["customer_id", "amount"],
+    },
+    datasetId,
+    title: "ETL catalog table",
+    type: "table",
+  });
+  assert(widget.id, "Draft widget create response should include widget id.");
+
+  const draftAfterWidget = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`, {});
+  const createdWidget = Object.values(draftAfterWidget.widgetsByPageId ?? {})
+    .flat()
+    .find((item) => item.id === widget.id);
+  assert(createdWidget, "Draft runtime should include the created dataset widget.");
+  assert(createdWidget.datasetId === datasetId, "Widget should keep the ETL catalog datasetId.");
+  assert(createdWidget.data?.length === 2, "Widget data should snapshot ETL catalog sample rows.");
+  assert(createdWidget.data[0]?.customer_id === "C-001", "Widget data should use catalog schema names.");
+  assert(createdWidget.data[0]?.amount === 42.5, "Widget data should coerce numeric catalog values.");
+
   console.log("verify-fastapi-etl-catalog: ok");
 }
 
