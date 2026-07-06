@@ -632,7 +632,7 @@ export function SqlAnalysisPage({
           </div>
         </section>
 
-        <section className="sql-result-card">
+        <section className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}>
           <div className="sql-result-header">
             <div>
               <span>PREVIEW RESULT</span>
@@ -662,11 +662,14 @@ export function SqlAnalysisPage({
               <span>SQL 점검을 통과한 뒤 Preview를 실행하면 결과 테이블이 표시됩니다.</span>
             </div>
           )}
-          <section className={resultDraft ? "sql-materialize-card" : "sql-materialize-card disabled"}>
-            <div>
+        </section>
+
+        {resultDraft ? (
+          <details className="sql-materialize-card" key={resultDraft.runId}>
+            <summary>
               <span>LAKE DATASET</span>
               <h3>SQL 결과 Lake Dataset 생성</h3>
-            </div>
+            </summary>
             <div className="sql-materialize-form">
               <label>
                 <span>Dataset name</span>
@@ -741,14 +744,22 @@ export function SqlAnalysisPage({
             <div className="sql-materialize-summary">
               {derivedDatasetDraft ? (
                 <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
-              ) : resultDraft ? (
-                <span>Preview 확인 완료 · 저장 시 로컬 Lake에 생성 · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
               ) : (
-                <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
+                <span>Preview 확인 완료 · 저장 시 로컬 Lake에 생성 · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
               )}
             </div>
+          </details>
+        ) : (
+          <section className="sql-materialize-card disabled">
+            <div>
+              <span>LAKE DATASET</span>
+              <h3>SQL 결과 Lake Dataset 생성</h3>
+            </div>
+            <div className="sql-materialize-summary">
+              <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
+            </div>
           </section>
-        </section>
+        )}
       </main>
       {schemaDataset && (
         <SchemaDetailsPanel

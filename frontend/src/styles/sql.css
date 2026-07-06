@@ -846,7 +846,10 @@
 }
 
 .sql-result-scroll {
+  min-height: 320px;
+  max-height: min(560px, 58vh);
   overflow-x: auto;
+  overflow-y: auto;
 }
 
 .sql-result-scroll .schema-table {
@@ -877,13 +880,11 @@
 }
 
 .sql-materialize-card {
-  display: grid;
-  align-items: start;
-  gap: 16px;
+  display: block;
   border: 1px solid #dbeafe;
   border-radius: 8px;
   background: #f8fbff;
-  padding: 18px;
+  padding: 14px 16px;
 }
 
 .sql-materialize-card.disabled {
@@ -891,13 +892,49 @@
   background: #f8fafc;
 }
 
+.sql-materialize-card summary,
 .sql-materialize-card > div:first-child {
   display: grid;
   gap: 4px;
   justify-items: start;
 }
 
+.sql-materialize-card summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.sql-materialize-card summary::-webkit-details-marker {
+  display: none;
+}
+
+.sql-materialize-card summary::after {
+  content: "설정 열기";
+  justify-self: end;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  padding: 5px 9px;
+}
+
+.sql-materialize-card[open] summary::after {
+  content: "설정 접기";
+}
+
+.sql-materialize-card summary,
+.sql-materialize-card > div:first-child {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.sql-materialize-card summary span,
 .sql-materialize-card > div:first-child span {
+  grid-column: 1;
   color: #2563eb;
   font-size: 11px;
   font-weight: 900;
@@ -908,6 +945,7 @@
 }
 
 .sql-materialize-card h3 {
+  grid-column: 1;
   margin: 0;
   color: #0f172a;
   font-size: 18px;
@@ -919,6 +957,15 @@
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
   max-width: 1180px;
+}
+
+.sql-materialize-card[open] .sql-materialize-form {
+  margin-top: 14px;
+}
+
+details.sql-materialize-card:not([open]) .sql-materialize-form,
+details.sql-materialize-card:not([open]) .sql-materialize-summary {
+  display: none;
 }
 
 .sql-materialize-form label {
@@ -1024,6 +1071,7 @@
   min-height: 34px;
   align-items: center;
   border-top: 1px solid #e2e8f0;
+  margin-top: 12px;
   padding-top: 10px;
 }
 
