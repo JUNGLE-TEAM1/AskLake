@@ -71,7 +71,7 @@ backend/
 ```
 
 1차 scaffold PR에서는 모든 파일을 완성하지 않아도 된다.
-다만 위 구조를 기준으로 각 Pair가 자기 영역 파일에 들어갈 수 있게 빈 라우터, 빈 repository/service 파일을 열어둘 수 있다.
+다만 위 구조를 기준으로 각 Pair가 자기 영역 파일에 들어갈 수 있게 라우터, repository, service 파일 경계를 먼저 둔다.
 
 ## 4. 계층별 역할
 
@@ -136,7 +136,7 @@ JSONB 후보:
 
 초기 선택:
 
-- 1차 scaffold: DB 연결과 health check 중심
+- 1차 scaffold/live demo: DB 연결, health check, Pair1 source/schema/create/job command 중심
 - 2차 contract/schema 작업: models 정의와 migration 전략 확정
 - 이후 기능 PR: Alembic revision 추가 또는 demo 초기화 스크립트 확정
 
@@ -144,12 +144,25 @@ JSONB 후보:
 
 | Pair | Backend 영역 | 주요 endpoint |
 | --- | --- | --- |
-| Pair1 | ETL / Job / Run | `POST /api/etl/jobs`, `GET /api/etl/jobs`, `POST /api/etl/jobs/{jobId}/commands` |
+| Pair1 | ETL / Job / Run / Source test | `POST /api/etl/sources/test`, `POST /api/etl/schema-inference`, `POST /api/etl/jobs`, `GET /api/etl/jobs`, `GET /api/etl/jobs/{jobId}`, `POST /api/etl/jobs/{jobId}/commands` |
 | Pair2 | Catalog / Lineage / SQL | `GET /api/catalog/datasets`, `GET /api/catalog/datasets/{datasetId}/lineage`, `POST /api/query/runs`, `POST /api/catalog/derived-datasets` |
 | Pair3 | Dashboard | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published/page/widget/publish APIs |
 
 `Dataset`은 세 Pair가 모두 공유하는 중심 리소스다.
 따라서 `catalog_datasets` table과 `CatalogDataset` response shape는 2차 contract/schema 작업에서 가장 먼저 고정한다.
+
+### Pair3 Dashboard 세부 경계
+
+Pair3는 Dashboard를 card/list lane과 runtime lane으로 나눠 병렬 구현한다.
+공통 schema skeleton은 `backend/app/schemas/dashboard.py`에 둔다.
+
+| Lane | 책임 | 주요 파일 | DB table 방향 |
+| --- | --- | --- | --- |
+| Card/List | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `schemas/dashboard.py`, `api/dashboard_card.py`, `services/dashboard_card_service.py`, `repositories/dashboard_card_repository.py` | `dashboards`, `dashboard_tags` |
+| Runtime | published 조회, draft ensure, page, widget, layout, publish | `schemas/dashboard.py`, `api/dashboard_runtime.py`, `services/dashboard_runtime_service.py`, `repositories/dashboard_runtime_repository.py` | `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` |
+
+현재 구현은 `dashboard_card_*`, `dashboard_runtime_*` 모듈로 분리되어 있다.
+Card/List lane과 Runtime lane은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
 
 ## 9. 오늘 하지 않는 것
 
@@ -160,11 +173,21 @@ JSONB 후보:
 - Alembic migration 전체 도입
 - 프론트 API base URL 전환
 
-## 10. 1차 scaffold 완료 기준
+## 10. 1차 Pair1 live demo 완료 기준
 
 - `backend/app/main.py`에서 FastAPI 앱이 import된다.
 - `/api/health`가 200 응답을 반환한다.
 - CORS가 `http://localhost:5173` 프론트 호출을 허용한다.
 - `core/config.py`, `core/database.py`, `core/errors.py`가 분리되어 있다.
 - `backend/requirements.txt`와 `backend/.env.example`이 있다.
+- `POST /api/etl/jobs`, `GET /api/etl/jobs`, `POST /api/etl/jobs/{jobId}/commands`가 frontend contract shape로 응답한다.
 - 이 문서와 개발 가이드에 실행 방법이 기록되어 있다.
+
+## 11. Pair1 FastAPI 전환 상태
+
+- `backend/app/api/etl.py`가 Pair1 ETL router를 연결한다.
+- `backend/app/schemas/etl.py`는 `CamelModel`을 상속해 request/response field를 camelCase로 직렬화한다.
+- `backend/app/models/etl.py`와 `backend/app/models/catalog.py`는 Job/Run과 생성 결과 Dataset을 저장한다.
+- `backend/app/repositories/etl_repository.py`는 DB 조회/저장을 담당한다.
+- `backend/app/services/etl_service.py`는 create/job command/source test 흐름을 담당한다.
+- Source/Schema 테스트 API는 FastAPI 전환 단계의 backend sample 응답을 반환한다. 외부 Source runtime, Spark/MinIO production 실행, Alembic migration은 후속 작업 범위다.

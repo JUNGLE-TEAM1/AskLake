@@ -65,7 +65,7 @@
 | Failure | How to fix |
 | --- | --- |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
-| Live API mode failed | `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
+| Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 

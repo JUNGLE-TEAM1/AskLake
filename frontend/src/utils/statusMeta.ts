@@ -1,7 +1,7 @@
 import type { CatalogDataset, DashboardStatus, JobStatus } from "../types";
 
 export const jobStatusMeta: Record<JobStatus, { className: string; label: string; summaryLabel: string }> = {
-  scheduled: { className: "scheduled", label: "스케줄됨", summaryLabel: "SCHEDULED" },
+  scheduled: { className: "scheduled", label: "실행 대기", summaryLabel: "READY" },
   failed: { className: "failed", label: "실패", summaryLabel: "FAILED" },
   running: { className: "running", label: "실행 중", summaryLabel: "RUNNING" },
   paused: { className: "paused", label: "일시정지", summaryLabel: "PAUSED" },
@@ -22,6 +22,7 @@ export function normalizeJobStatus(status: string): JobStatus {
   const statusMap: Record<string, JobStatus> = {
     scheduled: "scheduled",
     "스케줄됨": "scheduled",
+    "실행 대기": "scheduled",
     failed: "failed",
     "실패": "failed",
     running: "running",

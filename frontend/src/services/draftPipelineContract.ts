@@ -14,6 +14,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     jobName: `${targetDataset}_pipeline`,
     owner: draft.permission.owner,
     permissionSummary: draft.permission.summary,
+    permissionRoles: draft.permission.roles,
     rag: draft.target.rag,
     retryPolicy,
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
@@ -22,7 +23,11 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     qualityRules: draft.quality.rules,
     qualityScore: draft.quality.score,
     qualityStatus: draft.quality.status,
+    endDate: draft.schedule.endDate,
     scheduleLabel: draft.schedule.label,
+    scheduleSummary: draft.schedule.summary || draft.schedule.label,
+    startDate: draft.schedule.startDate,
+    timezone: draft.schedule.timezone,
     schemaColumns: draft.schema.columns,
     schemaFingerprint: draft.schema.schemaFingerprint,
     schemaSampleRows: draft.schema.sampleRows,
@@ -30,12 +35,32 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceConfig: draft.source.sourceConfig,
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
+    compression: draft.target.compression,
+    partition: draft.target.partition,
+    storagePath: draft.target.storagePath,
+    storageType: draft.target.storageType,
     targetDataset,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
-    transformOutputColumns: draft.transform.outputColumns,
+    transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
+}
+
+function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {
+  const includedBaseColumns = new Set(
+    draft.schema.columns
+      .filter((column) => column.included !== false)
+      .map((column) => (column.targetName || column.sourceName || "").trim())
+      .filter(Boolean),
+  );
+  const transformOutputs = new Set(
+    draft.transform.steps
+      .filter((step) => step.enabled !== false)
+      .map((step) => step.output.trim())
+      .filter(Boolean),
+  );
+  return draft.transform.outputColumns.filter(([name]) => includedBaseColumns.has(name) || transformOutputs.has(name));
 }
 
 export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipelinePatch): DraftPipeline {
@@ -69,8 +94,17 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
     next.schedule.label = patch.scheduleLabel;
     next.schedule.mode = scheduleModeFromLabel(patch.scheduleLabel);
   }
+  if (patch.scheduleSummary !== undefined) next.schedule.summary = patch.scheduleSummary;
+  if (patch.startDate !== undefined) next.schedule.startDate = patch.startDate;
+  if (patch.endDate !== undefined) next.schedule.endDate = patch.endDate;
+  if (patch.timezone !== undefined) next.schedule.timezone = patch.timezone;
   if (patch.permissionSummary !== undefined) next.permission.summary = patch.permissionSummary;
+  if (patch.permissionRoles !== undefined) next.permission.roles = patch.permissionRoles;
   if (patch.owner !== undefined) next.permission.owner = patch.owner;
+  if (patch.compression !== undefined) next.target.compression = patch.compression;
+  if (patch.partition !== undefined) next.target.partition = patch.partition;
+  if (patch.storagePath !== undefined) next.target.storagePath = patch.storagePath;
+  if (patch.storageType !== undefined) next.target.storageType = patch.storageType;
   if (patch.targetDataset !== undefined) next.target.datasetName = patch.targetDataset;
   if (patch.targetFormat !== undefined) next.target.format = patch.targetFormat;
   if (patch.targetLayer !== undefined) next.target.layer = patch.targetLayer;

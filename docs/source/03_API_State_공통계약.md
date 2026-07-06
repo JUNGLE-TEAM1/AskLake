@@ -70,13 +70,12 @@ type ErrorResponse = {
 - read-only SQL 위반이나 문법 오류는 `SQL_SYNTAX_ERROR`를 쓴다.
 - 시간 초과는 `BACKEND_TIMEOUT`을 쓴다.
 
-## Mock / Live API 전환 규칙
+## Live API 규칙
 
-- mock과 live는 같은 성공 응답 shape를 반환한다.
 - 성공 응답은 별도 envelope 없이 타입 그대로 반환한다.
 - 실패 응답은 항상 `ErrorResponse`로 반환한다.
-- API가 없으면 같은 fixture로 mock mode를 유지한다.
-- fallback을 쓴 경우 audit log나 known issues에 이유를 남긴다.
+- API가 없거나 실패하면 사용자가 다시 시도할 수 있게 error/toast/rollback 경로를 제공한다.
+- fallback을 쓴 경우 audit log나 known issues에 이유를 남기고, ETL Source/Create/Run의 authoritative 경로로 쓰지 않는다.
 - Dashboard 저장/Publish API가 없으면 localStorage snapshot을 사용한다.
 
 ## 주요 타입 요약
@@ -187,15 +186,20 @@ type LineageEdge = {
 ```ts
 type CreateJobResponse = {
   job: Job;
-  dataset: Dataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 
 필수 확인:
 
-- `dataset.id`가 있어야 한다.
-- `dataset.name`, `schema`, `sampleRows`, `rows`, `size`가 있어야 SQL context를 만들 수 있다.
-- `dataset.upstream`과 `dataset.downstream`이 있으면 Lineage 기본 화면을 만들 수 있다.
+- create 직후 Catalog Dataset을 만들지 않는다.
+- `catalogTarget.id`, `catalogTarget.name`, `catalogTarget.layer`, `catalogTarget.status`가 있어야 실행 전 대상 정보를 표시할 수 있다.
+- Spark run 성공 후 command 응답의 `dataset.name`, `schema`, `sampleRows`, `rows`, `size`가 SQL context를 만들 수 있다.
 
 ### Pair A -> Pair B/C
 
