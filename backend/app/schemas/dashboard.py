@@ -32,10 +32,15 @@ class DashboardCardWidgetType(str, Enum):
 
 class DashboardRuntimeWidgetType(str, Enum):
     METRIC = "metric"
+    TABLE = "table"
     BAR_CHART = "bar_chart"
     LINE_CHART = "line_chart"
+    AREA_CHART = "area_chart"
     DONUT_CHART = "donut_chart"
-    TABLE = "table"
+    PIE_CHART = "pie_chart"
+    RADIAL_BAR_CHART = "radial_bar_chart"
+    HEATMAP_CHART = "heatmap_chart"
+    TREEMAP_CHART = "treemap_chart"
 
 
 class DashboardWidgetAggregation(str, Enum):
@@ -56,6 +61,25 @@ class DashboardWidgetFormat(str, Enum):
     NUMBER = "number"
     CURRENCY = "currency"
     PERCENT = "percent"
+
+
+class DashboardWidgetLineCurve(str, Enum):
+    SMOOTH = "smooth"
+    STRAIGHT = "straight"
+    STEPLINE = "stepline"
+
+
+class DashboardWidgetOrientation(str, Enum):
+    VERTICAL = "vertical"
+    HORIZONTAL = "horizontal"
+
+
+class DashboardWidgetPaletteId(str, Enum):
+    ASKLAKE_DEFAULT = "asklake-default"
+    AURORA = "aurora"
+    SPECTRUM = "spectrum"
+    SIGNAL = "signal"
+    CUSTOM = "custom"
 
 
 class DashboardSortOption(str, Enum):
@@ -135,7 +159,6 @@ class DeleteDashboardResponse(CamelModel):
 
 class DashboardWidgetConfigBase(CamelModel):
     body: str | None = None
-    color: str | None = None
     description: str | None = None
     error: str | None = None
     error_message: str | None = None
@@ -143,9 +166,15 @@ class DashboardWidgetConfigBase(CamelModel):
     prompt: str | None = None
 
 
+class DashboardWidgetColorConfig(CamelModel):
+    colors: list[str] = Field(default_factory=list)
+    # Legacy fields kept only so older local mock rows do not fail validation.
+    palette_id: DashboardWidgetPaletteId | None = None
+    custom_colors: list[str] | None = None
+
+
 class MetricWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
     value_key: str
     format: DashboardWidgetFormat | None = None
 
@@ -159,24 +188,69 @@ class TableWidgetConfig(DashboardWidgetConfigBase):
 
 class BarChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
     x_key: str
     y_key: str
     group_key: str | None = None
+    orientation: DashboardWidgetOrientation | None = None
 
 
 class LineChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
     x_key: str
     y_key: str
+    curve: DashboardWidgetLineCurve | None = None
     date_unit: DashboardWidgetDateUnit | None = None
     series_key: str | None = None
 
 
+class AreaChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    x_key: str
+    y_key: str
+    date_unit: DashboardWidgetDateUnit | None = None
+    series_key: str | None = None
+    stacked: bool | None = None
+
+
 class DonutChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
+    center_label: str | None = None
+    label_key: str
+    value_key: str
+
+
+class PieChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    label_key: str
+    value_key: str
+
+
+class RadialBarChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    value_key: str
+    format: DashboardWidgetFormat | None = None
+    label_key: str | None = None
+    max: float | None = None
+    min: float | None = None
+
+
+class HeatmapChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    x_key: str
+    y_key: str
+    value_key: str
+
+
+class TreemapChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
     label_key: str
     value_key: str
 
@@ -186,7 +260,12 @@ DashboardRuntimeWidgetConfig = (
     | TableWidgetConfig
     | BarChartWidgetConfig
     | LineChartWidgetConfig
+    | AreaChartWidgetConfig
     | DonutChartWidgetConfig
+    | PieChartWidgetConfig
+    | RadialBarChartWidgetConfig
+    | HeatmapChartWidgetConfig
+    | TreemapChartWidgetConfig
 )
 
 

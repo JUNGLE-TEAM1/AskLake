@@ -45,6 +45,7 @@ export function DashboardCanvas({
   onPatchWidgetConfig,
   onScrollTargetHandled,
   onSelectWidget,
+  onSelectWidgetColorSlot,
   scrollTargetWidgetId,
   selectedWidgetId,
   widgets,
@@ -58,6 +59,7 @@ export function DashboardCanvas({
   onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;
+  onSelectWidgetColorSlot?: (widgetId: string, slotIndex: number) => void;
   scrollTargetWidgetId?: string | null;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
@@ -177,6 +179,7 @@ export function DashboardCanvas({
                 onDelete={onDeleteWidget}
                 onPatchConfig={onPatchWidgetConfig}
                 onSelect={onSelectWidget}
+                onSelectColorSlot={onSelectWidgetColorSlot}
               />
             </div>
           ))}

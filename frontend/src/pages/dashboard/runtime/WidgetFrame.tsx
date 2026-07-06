@@ -1,15 +1,8 @@
 import { Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
+import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
-
-const widgetTypeLabels: Record<DashboardRuntimeWidget["type"], string> = {
-  bar_chart: "막대 차트",
-  donut_chart: "도넛 차트",
-  line_chart: "라인 차트",
-  metric: "지표",
-  table: "테이블",
-};
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
   const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
@@ -20,7 +13,7 @@ function widgetTypeLabel(widget: DashboardRuntimeWidget) {
   const kind = placeholderKind(widget);
   if (kind === "visualization_request") return "시각화";
   if (kind === "text") return "텍스트";
-  return widgetTypeLabels[widget.type];
+  return dashboardWidgetDefinitions[widget.type]?.label ?? widget.type;
 }
 
 function clampSpan(value: number | undefined, fallback: number) {
@@ -39,6 +32,7 @@ export function WidgetFrame({
   onDelete,
   onPatchConfig,
   onSelect,
+  onSelectColorSlot,
   selected = false,
   widget,
 }: {
@@ -48,6 +42,7 @@ export function WidgetFrame({
   onDelete?: (widgetId: string) => void;
   onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
+  onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
 }) {
@@ -64,6 +59,7 @@ export function WidgetFrame({
       onClick={(event) => {
         if (!editable) return;
         event.stopPropagation();
+        if (selected) return;
         onSelect?.(widget.id);
       }}
     >
@@ -93,6 +89,7 @@ export function WidgetFrame({
           assistantContext={assistantContext}
           widget={widget}
           onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
         />
       </div>
     </article>

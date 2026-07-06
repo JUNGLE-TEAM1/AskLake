@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LayoutItem } from "react-grid-layout";
 import {
   Database,
@@ -68,11 +68,16 @@ type RuntimeLayoutSnapshot = Array<Pick<LayoutItem, "h" | "i" | "minH" | "minW" 
 const maxLayoutHistoryEntries = 40;
 
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
+  area_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
+  heatmap_chart: { h: 5, minH: 3, minW: 4, w: 7, x: 0, y: 0 },
   line_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
+  pie_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
+  radial_bar_chart: { h: 4, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
+  treemap_chart: { h: 5, minH: 3, minW: 4, w: 6, x: 0, y: 0 },
 };
 
 function normalizeLayoutSnapshot(layout: readonly LayoutItem[]): RuntimeLayoutSnapshot {
@@ -164,6 +169,7 @@ export function DashboardPage({
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
   const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [layoutRedoStack, setLayoutRedoStack] = useState<RuntimeLayoutSnapshot[]>([]);
   const [layoutUndoStack, setLayoutUndoStack] = useState<RuntimeLayoutSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
@@ -260,6 +266,14 @@ export function DashboardPage({
   const selectedDraftWidget = useMemo(
     () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
     [selectedDraftWidgets, selectedWidgetId],
+  );
+  const previewDraftWidgets = useMemo(
+    () => selectedDraftWidgets.map((widget) => (
+      previewDraftWidget?.id === widget.id && previewDraftWidget.pageId === widget.pageId
+        ? previewDraftWidget
+        : widget
+    )),
+    [previewDraftWidget, selectedDraftWidgets],
   );
   const selectedDraftWidgetIds = useMemo(
     () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
@@ -439,6 +453,7 @@ export function DashboardPage({
 
   useEffect(() => {
     setSelectedWidgetId(null);
+    setPreviewDraftWidget(null);
   }, [selectedRuntimePageId]);
 
   useEffect(() => {
@@ -666,6 +681,7 @@ export function DashboardPage({
     try {
       await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
       if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
+      if (previewDraftWidget?.id === widgetId) setPreviewDraftWidget(null);
       await loadDraftRuntime(runtimeSelection.dashboardId);
       setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
       onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
@@ -680,16 +696,24 @@ export function DashboardPage({
   };
 
   const selectRuntimeWidget = (widgetId: string) => {
+    const nextWidgetId = widgetId || null;
     const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
-    setSelectedWidgetId(widgetId);
+    setPreviewDraftWidget((current) => (current?.id === nextWidgetId ? current : null));
+    setSelectedWidgetId(nextWidgetId);
     if (widget?.datasetId) setSelectedDatasetId(widget.datasetId);
   };
 
   const clearRuntimeWidgetSelection = () => {
+    setPreviewDraftWidget(null);
     setSelectedWidgetId(null);
   };
 
+  const previewRuntimeWidget = useCallback((widget: DashboardRuntimeWidget | null) => {
+    setPreviewDraftWidget(widget);
+  }, []);
+
   const selectRuntimeDataset = (datasetId: string) => {
+    setPreviewDraftWidget(null);
     setSelectedDatasetId(datasetId);
     setSelectedWidgetId(null);
   };
@@ -702,6 +726,7 @@ export function DashboardPage({
     setRuntimeNotice({ message: "위젯 변경사항을 저장하는 중입니다.", tone: "info" });
     try {
       await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
+      setPreviewDraftWidget(null);
       await loadDraftRuntime(runtimeSelection.dashboardId);
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
@@ -1026,6 +1051,7 @@ export function DashboardPage({
       selectWidget: selectRuntimeWidget,
       share: shareRuntimeDashboard,
       toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
+      previewWidget: previewRuntimeWidget,
       undoLayout: undoRuntimeLayout,
       updateWidget: updateRuntimeWidget,
     };
@@ -1058,7 +1084,7 @@ export function DashboardPage({
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,
-      selectedDraftWidgets,
+      selectedDraftWidgets: previewDraftWidgets,
       selectedDraftWidget,
       selectedPageId: selectedRuntimePageId,
       selectedPublishedWidgets,

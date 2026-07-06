@@ -1,13 +1,12 @@
 # AskLake Frontend
 
-AskLake frontend is a React/Vite app for the data lake workflow. It expects a backend at `VITE_API_BASE_URL`; source tests, schema inference, pipeline creation, job commands, and SQL runs all go through backend endpoints.
+AskLake frontend is a React/Vite app for the data lake workflow. In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080`; set `VITE_API_BASE_URL` only when you need to point at a different backend.
 
 ## Run
 
 ```powershell
 cd frontend
 npm install
-$env:VITE_API_BASE_URL = "http://localhost:8080"
 npm run dev
 ```
 
@@ -26,7 +25,7 @@ npm run build
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-Restart the dev server after changing environment variables.
+`VITE_API_BASE_URL` is optional in local dev. Restart the dev server after changing environment variables.
 
 ## Main Files
 

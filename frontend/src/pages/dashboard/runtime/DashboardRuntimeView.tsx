@@ -15,7 +15,13 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
-import type { CreateDraftWidgetFormInput, DashboardDatasetOption, ToolbarDraftWidgetKind, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import type {
+  CreateDraftWidgetFormInput,
+  DashboardDatasetOption,
+  DashboardWidgetColorSlotFocus,
+  ToolbarDraftWidgetKind,
+  UpdateDraftWidgetFormInput,
+} from "./dashboardRuntimeTypes";
 
 type RuntimeNotice = {
   message: string;
@@ -76,6 +82,7 @@ type DashboardRuntimeViewActions = {
   layoutRejected: () => void;
   openDraft: () => void;
   openPublished: () => void;
+  previewWidget: (widget: DashboardRuntimeWidget | null) => void;
   publishDraft: () => void;
   redoLayout: () => void;
   refresh: () => void;
@@ -170,6 +177,7 @@ export function DashboardRuntimeView({
   datasets,
   runtime,
 }: DashboardRuntimeViewProps) {
+  const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const {
     canRedoLayout,
@@ -223,6 +231,7 @@ export function DashboardRuntimeView({
     layoutRejected: onLayoutRejected,
     openDraft: onOpenDraft,
     openPublished: onOpenPublished,
+    previewWidget: onPreviewWidget,
     publishDraft: onPublishDraft,
     redoLayout: onRedoLayout,
     refresh: onRefresh,
@@ -272,11 +281,17 @@ export function DashboardRuntimeView({
   };
   const handleCursorMode = () => {
     setInspectorMode("widget");
+    setFocusedColorSlot(null);
     onClearWidgetSelection();
   };
   const handleSelectWidget = (widgetId: string) => {
     setInspectorMode("widget");
     onSelectWidget(widgetId);
+  };
+  const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
+    setInspectorMode("widget");
+    setFocusedColorSlot({ slotIndex, widgetId });
+    if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
   };
   const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
     setInspectorMode("widget");
@@ -327,6 +342,7 @@ export function DashboardRuntimeView({
         onPatchWidgetConfig={patchWidgetConfig}
         onScrollTargetHandled={onClearWidgetScrollTarget}
         onSelectWidget={handleSelectWidget}
+        onSelectWidgetColorSlot={handleSelectWidgetColorSlot}
       />
     )
   ) : runtimeLoading ? (
@@ -398,9 +414,10 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
               editingWidget={configurableDraftWidget}
+              focusedColorSlot={focusedColorSlot}
               isCreating={isCreatingDatasetWidget}
               isUpdating={updatingWidgetId === configurableDraftWidget?.id}
-              onCancelEdit={onClearWidgetSelection}
+              onPreviewWidgetChange={onPreviewWidget}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
               onCreateWidget={onCreateDatasetWidget}

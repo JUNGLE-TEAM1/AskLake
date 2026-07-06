@@ -12,6 +12,7 @@ import type {
 } from "../../../types";
 import { findNextAvailableLayout, toCollisionLayout } from "./dashboardLayoutUtils";
 import type { CreateDraftWidgetFormInput, ToolbarDraftWidgetKind } from "./dashboardRuntimeTypes";
+import { defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type RuntimeNotice = {
   message: string;
@@ -56,7 +57,7 @@ const toolbarWidgetDefaults: Record<ToolbarDraftWidgetKind, {
   visualization: {
     config: {
       aggregation: "sum",
-      color: "blue",
+      color: defaultWidgetColorConfig,
       description: "",
       placeholderKind: "visualization_request",
       prompt: "",

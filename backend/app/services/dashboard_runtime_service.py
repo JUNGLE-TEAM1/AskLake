@@ -10,6 +10,7 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
+    AreaChartWidgetConfig,
     BarChartWidgetConfig,
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
@@ -23,19 +24,26 @@ from app.schemas.dashboard import (
     DashboardRuntimeWidget,
     DashboardRuntimeWidgetType,
     DashboardWidgetAggregation,
+    DashboardWidgetColorConfig,
     DashboardWidgetConfigBase,
     DashboardWidgetFormat,
     DashboardWidgetLayout,
+    DashboardWidgetLineCurve,
+    DashboardWidgetOrientation,
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
     DeleteDraftWidgetResponse,
     DonutChartWidgetConfig,
+    HeatmapChartWidgetConfig,
     LineChartWidgetConfig,
     MetricWidgetConfig,
     OkResponse,
+    PieChartWidgetConfig,
     PublishDashboardResponse,
+    RadialBarChartWidgetConfig,
     SaveDraftLayoutsRequest,
     TableWidgetConfig,
+    TreemapChartWidgetConfig,
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
@@ -43,6 +51,16 @@ from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_data
 
 
 class DashboardRuntimeService:
+    _legacy_color_map = {
+        "blue": "#2563eb",
+        "green": "#10b981",
+        "orange": "#f97316",
+        "pink": "#db2777",
+        "purple": "#8b5cf6",
+        "red": "#ef4444",
+        "yellow": "#f59e0b",
+    }
+
     def __init__(self, repository: DashboardRuntimeRepository) -> None:
         self.repository = repository
 
@@ -320,13 +338,14 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _widget_to_schema(widget: DashboardWidgetModel) -> DashboardRuntimeWidget:
+        widget_type = DashboardRuntimeWidgetType(widget.type)
         return DashboardRuntimeWidget(
             id=widget.id,
             page_id=widget.page_id,
-            type=DashboardRuntimeWidgetType(widget.type),
+            type=widget_type,
             title=widget.title,
             layout=DashboardWidgetLayout(**widget.layout),
-            config=widget.config,
+            config=DashboardRuntimeService._normalize_widget_config(widget_type, widget.config),
             data=widget.data,
             dataset_id=widget.dataset_id,
             query_id=widget.query_id,
@@ -364,6 +383,33 @@ class DashboardRuntimeService:
         return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
 
     @staticmethod
+    def _normalize_widget_config(
+        widget_type: DashboardRuntimeWidgetType,
+        config: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if config is None:
+            return DashboardRuntimeService._config_to_json(widget_type, None)
+
+        normalized = dict(config)
+        if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
+            return normalized
+
+        color = normalized.get("color")
+        if isinstance(color, str):
+            normalized["color"] = {
+                "colors": [
+                    DashboardRuntimeService._legacy_color_map.get(
+                        color,
+                        color if color.startswith("#") else "#2563eb",
+                    ),
+                ],
+            }
+        elif color is None:
+            normalized["color"] = {"colors": ["#2563eb"]}
+
+        return normalized
+
+    @staticmethod
     def _resolve_widget_data(
         explicit_data: list[dict[str, Any]] | None,
         dataset_id: str | None,
@@ -374,10 +420,10 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
+        color = DashboardWidgetColorConfig(colors=["#2563eb"])
         if widget_type == DashboardRuntimeWidgetType.METRIC:
             return MetricWidgetConfig(
                 aggregation=DashboardWidgetAggregation.COUNT,
-                color="#3b82f6",
                 format=DashboardWidgetFormat.NUMBER,
                 value_key="value",
             )
@@ -386,20 +432,61 @@ class DashboardRuntimeService:
         if widget_type == DashboardRuntimeWidgetType.LINE_CHART:
             return LineChartWidgetConfig(
                 aggregation=DashboardWidgetAggregation.SUM,
-                color="#6366f1",
+                color=color,
+                curve=DashboardWidgetLineCurve.SMOOTH,
+                x_key="category",
+                y_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.AREA_CHART:
+            return AreaChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                stacked=False,
                 x_key="category",
                 y_key="value",
             )
         if widget_type == DashboardRuntimeWidgetType.DONUT_CHART:
             return DonutChartWidgetConfig(
                 aggregation=DashboardWidgetAggregation.SUM,
-                color="#8b5cf6",
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.PIE_CHART:
+            return PieChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.RADIAL_BAR_CHART:
+            return RadialBarChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.AVG,
+                color=color,
+                format=DashboardWidgetFormat.PERCENT,
+                max=100,
+                min=0,
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.HEATMAP_CHART:
+            return HeatmapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                value_key="value",
+                x_key="category",
+                y_key="series",
+            )
+        if widget_type == DashboardRuntimeWidgetType.TREEMAP_CHART:
+            return TreemapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
                 label_key="category",
                 value_key="value",
             )
         return BarChartWidgetConfig(
             aggregation=DashboardWidgetAggregation.SUM,
-            color="#6366f1",
+            color=color,
+            orientation=DashboardWidgetOrientation.VERTICAL,
             x_key="category",
             y_key="value",
         )

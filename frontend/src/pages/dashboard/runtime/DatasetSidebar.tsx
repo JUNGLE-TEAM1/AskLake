@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
 import { CalendarDays, Copy, Database, Hash, LetterText, Server, Star, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
@@ -193,8 +193,8 @@ export function DatasetSidebar({
             className="asklake-dataset-tree"
             expandedItems={expandedItems}
             selectedItems={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : null}
-            onExpandedItemsChange={(_, itemIds) => setExpandedItems([...itemIds])}
-            onSelectedItemsChange={(_, itemId) => {
+            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => setExpandedItems([...itemIds])}
+            onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
               if (typeof itemId !== "string" || !itemId.startsWith(DATASET_ITEM_PREFIX)) return;
               onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
             }}
