@@ -1,5 +1,11 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import {
   Database,
   Download,
   PanelLeftClose,
@@ -647,10 +653,7 @@ export function SqlAnalysisPage({
                 <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
               </div>
               <div className="sql-result-scroll">
-                <table className="schema-table">
-                  <thead><tr>{resultDraft.columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-                  <tbody>{resultDraft.rows.map((row, rowIndex) => <tr key={`result-${rowIndex}`}>{row.slice(0, resultDraft.columns.length).map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
-                </table>
+                <SqlPreviewTable resultDraft={resultDraft} />
               </div>
             </>
           ) : (
@@ -775,6 +778,56 @@ function SchemaColumnList({
         </button>
       ))}
     </div>
+  );
+}
+
+type SqlPreviewRow = {
+  cells: string[];
+};
+
+function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
+  const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
+    () => resultDraft.columns.map((column, index) => ({
+      accessorFn: (row) => row.cells[index] ?? "",
+      cell: (info) => info.getValue<string>(),
+      header: column,
+      id: `${index}:${column}`,
+    })),
+    [resultDraft.columns],
+  );
+  const data = useMemo(
+    () => resultDraft.rows.map((row) => ({ cells: row.slice(0, resultDraft.columns.length) })),
+    [resultDraft.columns.length, resultDraft.rows],
+  );
+  const table = useReactTable({
+    columns,
+    data,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <table className="schema-table">
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th key={header.id}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

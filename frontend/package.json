@@ -11,6 +11,7 @@
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "^12.11.1",
     "lucide-react": "latest",
