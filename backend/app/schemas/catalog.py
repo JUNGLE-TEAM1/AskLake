@@ -54,7 +54,7 @@ class CatalogDatasetResponse(CamelModel):
     rag: bool
     rows: str
     sample_rows: list[list[str]]
-    schema: list[tuple[str, str]]
+    schema_: list[tuple[str, str]] = Field(alias="schema")
     size: str
     source: str
     source_run_id: str | None = None

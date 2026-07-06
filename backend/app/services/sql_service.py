@@ -88,7 +88,7 @@ class SqlService:
 
         columns = [
             column_name
-            for column_name, _ in preview_dataset.schema[:MAX_RESULT_COLUMNS]
+            for column_name, _ in preview_dataset.schema_[:MAX_RESULT_COLUMNS]
         ]
         row_width = max(len(columns), 1)
         preview_limit = request.limit or DEFAULT_PREVIEW_LIMIT

@@ -5,9 +5,12 @@ Node demo API는 아직 제거하지 않으며, FastAPI 전환 작업은 `app/` 
 
 ## FastAPI 실행
 
+FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우
+`psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
+
 ```bash
 cd backend
-python3 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
@@ -24,11 +27,16 @@ curl http://localhost:8080/api/health
 Pair2 Catalog / Lineage / SQL FastAPI smoke:
 
 ```bash
+docker compose up -d postgres
+
 cd backend
-npm run verify:fastapi-pair2
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
-이 검증은 `app.seed.seed_pair2_demo`로 `orders_clean` demo dataset을 넣고, 별도 포트의 FastAPI 서버를 띄운 뒤 아래 흐름을 확인한다.
+이 검증은 PostgreSQL이 `localhost:54328`에서 실행 중이어야 한다. `app.seed.seed_pair2_demo`로 `orders_clean` demo dataset을 넣고, 별도 포트의 FastAPI 서버를 띄운 뒤 아래 흐름을 확인한다.
 
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
@@ -42,6 +50,7 @@ npm run verify:fastapi-pair2
 ```bash
 ASKLAKE_FASTAPI_SMOKE_START_SERVER=false \
 ASKLAKE_FASTAPI_SMOKE_BASE_URL=http://127.0.0.1:8080 \
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
 npm run verify:fastapi-pair2
 ```
 
