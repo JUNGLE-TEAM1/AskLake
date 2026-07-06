@@ -45,7 +45,6 @@ export const dashboardWidgetColorChoices = [
   "#3b82f6",
   "#4357b8",
   "#8e24aa",
-  "#616161",
 ];
 
 export const defaultWidgetColorConfig = {
