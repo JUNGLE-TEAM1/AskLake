@@ -198,27 +198,40 @@
   overflow-y: auto;
 }
 
-.sql-selected-dataset-list button {
+.sql-selected-dataset-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 30px;
   min-height: 38px;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  color: #0f172a;
-  padding: 0 9px;
-  text-align: left;
+  padding: 3px;
 }
 
-.sql-selected-dataset-list button:hover,
-.sql-selected-dataset-list button.active {
+.sql-selected-dataset-item:hover,
+.sql-selected-dataset-item.active {
   border-color: #bfdbfe;
   background: #eff6ff;
 }
 
-.sql-selected-dataset-list button span {
+.sql-selected-dataset-main {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #0f172a;
+  padding: 0 6px;
+  text-align: left;
+}
+
+.sql-selected-dataset-main span {
   border-radius: 999px;
   background: #f1f5f9;
   color: #475569;
@@ -227,12 +240,12 @@
   padding: 3px 6px;
 }
 
-.sql-selected-dataset-list button.active span {
+.sql-selected-dataset-item.active .sql-selected-dataset-main span {
   background: #dbeafe;
   color: #1d4ed8;
 }
 
-.sql-selected-dataset-list button strong {
+.sql-selected-dataset-main strong {
   min-width: 0;
   color: #0f172a;
   font-size: 12px;
@@ -241,12 +254,33 @@
   white-space: nowrap;
 }
 
-.sql-selected-dataset-list button em {
+.sql-selected-dataset-main em {
   color: #64748b;
   font-size: 10px;
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.sql-selected-dataset-remove {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+}
+
+.sql-selected-dataset-remove:not(:disabled):hover {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.sql-selected-dataset-remove:disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
 }
 
 .sql-schema-panel-actions {
@@ -275,6 +309,13 @@
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+.sql-schema-panel-actions button:disabled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .sql-panel-title-row {
@@ -416,7 +457,8 @@
   padding-bottom: 12px;
 }
 
-.sql-query-context .sql-section-heading span {
+.sql-query-context .sql-section-heading span,
+.sql-dataset-search-results .sql-section-heading span {
   border-radius: 999px;
   background: #f1f5f9;
   color: #475569;
@@ -445,15 +487,6 @@
 .sql-table-card.active {
   border-color: #dbeafe;
   background: #f8fbff;
-}
-
-.sql-table-card.referenced {
-  border-color: #bae6fd;
-  background: #f0f9ff;
-}
-
-.sql-table-card.referenced.active {
-  border-color: #60a5fa;
 }
 
 .sql-section-heading {
@@ -497,10 +530,19 @@
   text-align: left;
 }
 
-.sql-table-toggle {
+.sql-table-add-icon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 6px;
+  background: #eff6ff;
   color: #94a3b8;
-  font-size: 12px;
-  font-weight: 900;
+}
+
+.sql-table-card:hover .sql-table-add-icon {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .sql-table-name {

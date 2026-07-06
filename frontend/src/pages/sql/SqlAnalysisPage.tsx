@@ -13,8 +13,10 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
+  Plus,
   RotateCcw,
   Search,
+  X,
 } from "lucide-react";
 import postgresqlParser from "node-sql-parser/build/postgresql.js";
 import { executeQueryPreview } from "../../services/mockApi";
@@ -83,7 +85,6 @@ export function SqlAnalysisPage({
   const [contextPage, setContextPage] = useState(1);
   const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
-  const [showReferencedOnly, setShowReferencedOnly] = useState(false);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
@@ -111,10 +112,6 @@ export function SqlAnalysisPage({
     [baseDataset.id, query, referenceDatasetIds],
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
-  const schemaDataset = useMemo(
-    () => datasets.find((item) => item.id === openSchemaDatasetId) ?? (openSchemaDatasetId === baseDataset.id || !openSchemaDatasetId ? baseDataset : null),
-    [baseDataset, datasets, openSchemaDatasetId],
-  );
   const selectedContextDatasets = useMemo(
     () => [
       baseDataset,
@@ -123,6 +120,14 @@ export function SqlAnalysisPage({
         .filter((item): item is CatalogDataset => Boolean(item)),
     ],
     [baseDataset, datasets, referenceDatasetIds],
+  );
+  const selectedDatasetIdSet = useMemo(
+    () => new Set(selectedContextDatasets.map((item) => item.id)),
+    [selectedContextDatasets],
+  );
+  const schemaDataset = useMemo(
+    () => selectedContextDatasets.find((item) => item.id === openSchemaDatasetId) ?? selectedContextDatasets[0] ?? null,
+    [openSchemaDatasetId, selectedContextDatasets],
   );
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
@@ -141,10 +146,7 @@ export function SqlAnalysisPage({
   }, [autocompleteContext, baseDataset, datasets, dismissedAutocompleteKey, referenceDatasetIdSet]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
-    const contextDatasets = datasets.filter((item) => {
-      if (showReferencedOnly && !referenceDatasetIdSet.has(item.id)) return false;
-      return true;
-    });
+    const contextDatasets = datasets.filter((item) => !selectedDatasetIdSet.has(item.id));
     const searchableDatasets = keyword
       ? contextDatasets.filter((item) => {
           const searchableText = [
@@ -161,7 +163,7 @@ export function SqlAnalysisPage({
       : contextDatasets;
 
     return searchableDatasets;
-  }, [datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
+  }, [datasetSearch, datasets, selectedDatasetIdSet]);
   const totalContextPages = Math.max(1, Math.ceil(filteredDatasets.length / SQL_CONTEXT_PAGE_SIZE));
   const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
   const contextPageStartIndex = (currentContextPage - 1) * SQL_CONTEXT_PAGE_SIZE;
@@ -170,6 +172,8 @@ export function SqlAnalysisPage({
   const canRestoreCachedResult = Boolean(cachedResult && cachedResultBaseDatasetId === baseDataset.id);
   useEffect(() => {
     setBaseDatasetId(dataset.id);
+    setReferenceDatasetIds([]);
+    setOpenSchemaDatasetId(dataset.id);
   }, [dataset.id]);
 
   useEffect(() => {
@@ -187,7 +191,7 @@ export function SqlAnalysisPage({
     setDerivedDatasetRag(baseDataset.rag);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
-    setOpenSchemaDatasetId(null);
+    setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset.id, canRestoreCachedResult, defaultQuery]);
@@ -205,6 +209,7 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
+    setOpenSchemaDatasetId(baseDataset.id);
   }, [baseDataset.id, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -221,7 +226,7 @@ export function SqlAnalysisPage({
 
   useEffect(() => {
     setContextPage(1);
-  }, [baseDataset.id, datasetSearch, showReferencedOnly]);
+  }, [baseDataset.id, datasetSearch, selectedDatasetIdSet]);
 
   useEffect(() => {
     if (contextPage === currentContextPage) return;
@@ -373,38 +378,57 @@ export function SqlAnalysisPage({
     onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
   };
 
-  const changeBaseDataset = (targetDataset: CatalogDataset) => {
-    setBaseDatasetId(targetDataset.id);
-    setReferenceDatasetIds((ids) => ids.filter((id) => id !== targetDataset.id));
+  const addSelectedDataset = (targetDataset: CatalogDataset) => {
+    if (selectedDatasetIdSet.has(targetDataset.id)) {
+      selectSchemaDataset(targetDataset);
+      return;
+    }
+    setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
     setOpenSchemaDatasetId(targetDataset.id);
-    const nextDefaultQuery = buildDefaultQuery(targetDataset);
-    setQuery(nextDefaultQuery);
-    setCursorIndex(nextDefaultQuery.length);
-    resetResultState();
-    onAction("analysis.context.base_dataset_changed", `/api/query/context/base-datasets/${targetDataset.id}`, targetDataset.id);
-  };
-
-  const toggleReferenceDataset = (targetDataset: CatalogDataset) => {
-    if (targetDataset.id === baseDataset.id) return;
-    const isReferenced = referenceDatasetIdSet.has(targetDataset.id);
-    setReferenceDatasetIds((ids) => (
-      isReferenced ? ids.filter((id) => id !== targetDataset.id) : [...ids, targetDataset.id]
-    ));
     resetResultState();
     onAction(
-      isReferenced ? "analysis.context.reference_removed" : "analysis.context.reference_added",
-      `/api/query/context/reference-datasets/${targetDataset.id}`,
+      "analysis.context.dataset_selected",
+      `/api/query/context/datasets/${targetDataset.id}/select`,
       targetDataset.id,
     );
   };
 
-  const toggleReferencedOnly = () => {
-    const nextValue = !showReferencedOnly;
-    setShowReferencedOnly(nextValue);
+  const removeSelectedDataset = (targetDataset: CatalogDataset) => {
+    const selectedIds = selectedContextDatasets.map((item) => item.id);
+    if (selectedIds.length <= 1) {
+      onAction(
+        "analysis.context.dataset_remove_blocked",
+        `/api/query/context/datasets/${targetDataset.id}/remove`,
+        targetDataset.id,
+        "failed",
+      );
+      return;
+    }
+
+    const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
+    const nextBaseDatasetId = targetDataset.id === baseDataset.id ? nextSelectedIds[0] : baseDataset.id;
+    const nextReferenceDatasetIds = nextSelectedIds.filter((id) => id !== nextBaseDatasetId);
+
+    if (targetDataset.id === baseDataset.id) {
+      const nextBaseDataset = selectedContextDatasets.find((item) => item.id === nextBaseDatasetId)
+        ?? datasets.find((item) => item.id === nextBaseDatasetId);
+      if (nextBaseDataset) {
+        const nextDefaultQuery = buildDefaultQuery(nextBaseDataset);
+        setQuery(nextDefaultQuery);
+        setCursorIndex(nextDefaultQuery.length);
+      }
+      setBaseDatasetId(nextBaseDatasetId);
+    }
+
+    setReferenceDatasetIds(nextReferenceDatasetIds);
+    setOpenSchemaDatasetId(
+      openSchemaDatasetId && nextSelectedIds.includes(openSchemaDatasetId) ? openSchemaDatasetId : nextBaseDatasetId,
+    );
+    resetResultState();
     onAction(
-      nextValue ? "analysis.context.references_filtered" : "analysis.context.references_filter_cleared",
-      "/api/query/context/reference-datasets",
-      baseDataset.id,
+      "analysis.context.dataset_removed",
+      `/api/query/context/datasets/${targetDataset.id}/remove`,
+      targetDataset.id,
     );
   };
 
@@ -482,7 +506,7 @@ export function SqlAnalysisPage({
             <div className="sql-panel-title-row">
               <strong>분석 테이블</strong>
               <span className="sql-panel-header-actions">
-                <em>{datasets.length} tables</em>
+                <em>{Math.max(0, datasets.length - selectedContextDatasets.length)} available</em>
                 <button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기">
                   <PanelLeftClose size={15} />
                 </button>
@@ -499,23 +523,19 @@ export function SqlAnalysisPage({
           </label>
           <section className="sql-dataset-search-results">
             <div className="sql-section-heading">
-              <h2>데이터셋/필드 검색</h2>
-              <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
-                {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
-              </button>
+              <h2>선택 가능한 테이블</h2>
+              <span>{filteredDatasets.length}개</span>
             </div>
             <div className="sql-context-result-list">
               {paginatedContextDatasets.map((item) => (
                 <SqlDatasetRow
                   dataset={item}
-                  selected={openSchemaDatasetId === item.id}
-                  isReferenced={referenceDatasetIdSet.has(item.id)}
                   key={item.id}
-                  onSchemaSelect={selectSchemaDataset}
+                  onSelect={addSelectedDataset}
                 />
               ))}
               {filteredDatasets.length === 0 && (
-                <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
+                <p>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</p>
               )}
             </div>
             {filteredDatasets.length > SQL_CONTEXT_PAGE_SIZE && (
@@ -549,7 +569,7 @@ export function SqlAnalysisPage({
           <div>
             <span>Analyze / Dataset-scoped SQL</span>
             <h1>읽기 전용 SQL 실행</h1>
-            <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
+            <p>{selectedContextDatasets.length}개 선택 테이블 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
           </div>
         </header>
 
@@ -608,7 +628,7 @@ export function SqlAnalysisPage({
           </div>
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              <span>Context: 선택 테이블 1 + 참조 {referenceDatasetIds.length} tables</span>
+              <span>Context: 선택 테이블 {selectedContextDatasets.length}개</span>
               {preflightSummary && (
                 <span className={`sql-check-pill ${preflightSummary.tone}`}>
                   {preflightSummary.label}
@@ -752,13 +772,10 @@ export function SqlAnalysisPage({
       <SchemaDetailsPanel
         dataset={schemaDataset}
         selectedDatasets={selectedContextDatasets}
-        isQueryDataset={schemaDataset?.id === baseDataset.id}
-        isReferenced={schemaDataset ? referenceDatasetIdSet.has(schemaDataset.id) : false}
         onColumnClick={insertColumnName}
         onInsert={insertTableName}
-        onQueryDatasetChange={changeBaseDataset}
+        onSelectedDatasetRemove={removeSelectedDataset}
         onSchemaSelect={selectSchemaDataset}
-        onReferenceToggle={toggleReferenceDataset}
       />
     </div>
   );
@@ -931,24 +948,20 @@ function SqlDashboardPreview({
 function SchemaDetailsPanel({
   dataset,
   selectedDatasets,
-  isQueryDataset,
-  isReferenced,
   onColumnClick,
   onInsert,
-  onQueryDatasetChange,
+  onSelectedDatasetRemove,
   onSchemaSelect,
-  onReferenceToggle,
 }: {
   dataset: CatalogDataset | null;
   selectedDatasets: CatalogDataset[];
-  isQueryDataset: boolean;
-  isReferenced: boolean;
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
   onInsert: (dataset: CatalogDataset) => void;
-  onQueryDatasetChange: (dataset: CatalogDataset) => void;
+  onSelectedDatasetRemove: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
-  onReferenceToggle: (dataset: CatalogDataset) => void;
 }) {
+  const canRemoveDataset = selectedDatasets.length > 1;
+
   if (!dataset) {
     return (
       <aside className="sql-schema-panel empty">
@@ -966,26 +979,37 @@ function SchemaDetailsPanel({
 
   return (
     <aside className="sql-schema-panel">
-      <section className="sql-selected-datasets-panel" aria-label="선택된 데이터셋">
+      <section className="sql-selected-datasets-panel" aria-label="선택 테이블">
         <div className="sql-selected-datasets-header">
-          <span>QUERY CONTEXT</span>
-          <strong>{selectedDatasets.length} selected</strong>
+          <span>선택 테이블</span>
+          <strong>{selectedDatasets.length}개 선택됨</strong>
         </div>
         <div className="sql-selected-dataset-list">
           {selectedDatasets.map((item, index) => {
             const active = item.id === dataset.id;
             return (
-              <button
-                aria-pressed={active}
-                className={active ? "active" : ""}
-                key={item.id}
-                type="button"
-                onClick={() => onSchemaSelect(item)}
-              >
-                <span>{index === 0 ? "BASE" : "REF"}</span>
-                <strong title={item.name}>{item.name}</strong>
-                <em>{item.schema.length} cols</em>
-              </button>
+              <div className={active ? "sql-selected-dataset-item active" : "sql-selected-dataset-item"} key={item.id}>
+                <button
+                  aria-pressed={active}
+                  className="sql-selected-dataset-main"
+                  type="button"
+                  onClick={() => onSchemaSelect(item)}
+                >
+                  <span>{index + 1}</span>
+                  <strong title={item.name}>{item.name}</strong>
+                  <em>{item.schema.length} cols</em>
+                </button>
+                <button
+                  aria-label={`${item.name} 선택 해제`}
+                  className="sql-selected-dataset-remove"
+                  disabled={!canRemoveDataset}
+                  onClick={() => onSelectedDatasetRemove(item)}
+                  title={canRemoveDataset ? "선택 해제" : "최소 1개 테이블은 필요합니다"}
+                  type="button"
+                >
+                  <X size={12} />
+                </button>
+              </div>
             );
           })}
         </div>
@@ -994,7 +1018,6 @@ function SchemaDetailsPanel({
         <span>SCHEMA</span>
         <h2 title={dataset.name}>{dataset.name}</h2>
         <div className="sql-schema-panel-pills">
-          {isReferenced && <span className="sql-table-ref-pill">REF</span>}
           <span className="sql-table-layer">{dataset.layer}</span>
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </div>
@@ -1014,15 +1037,15 @@ function SchemaDetailsPanel({
         </div>
       </dl>
       <div className="sql-schema-panel-actions">
-        {!isQueryDataset && (
-          <button type="button" onClick={() => onQueryDatasetChange(dataset)}>SQL 기준으로 사용</button>
-        )}
-        {!isQueryDataset && (
-          <button type="button" onClick={() => onReferenceToggle(dataset)}>
-            {isReferenced ? "참조 해제" : "참조 추가"}
-          </button>
-        )}
         <button type="button" onClick={() => onInsert(dataset)}>SQL에 삽입</button>
+        <button
+          disabled={!canRemoveDataset}
+          onClick={() => onSelectedDatasetRemove(dataset)}
+          title={canRemoveDataset ? "선택 테이블에서 제거" : "최소 1개 테이블은 필요합니다"}
+          type="button"
+        >
+          선택 해제
+        </button>
       </div>
       <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
     </aside>
@@ -1064,30 +1087,19 @@ function parseDerivedDatasetTags(value: string) {
 
 function SqlDatasetRow({
   dataset,
-  selected,
-  isReferenced = false,
-  onSchemaSelect,
+  onSelect,
 }: {
   dataset: CatalogDataset;
-  selected: boolean;
-  isReferenced?: boolean;
-  onSchemaSelect: (dataset: CatalogDataset) => void;
+  onSelect: (dataset: CatalogDataset) => void;
 }) {
-  const rowClasses = [
-    "sql-table-card",
-    selected ? "active" : "",
-    isReferenced ? "referenced" : "",
-  ].filter(Boolean).join(" ");
-
   return (
-    <article className={rowClasses}>
-      <button className="sql-table-row" type="button" aria-pressed={selected} onClick={() => onSchemaSelect(dataset)}>
-        <span className="sql-table-toggle">{selected ? "▾" : "▸"}</span>
+    <article className="sql-table-card">
+      <button className="sql-table-row" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)}>
+        <span className="sql-table-add-icon"><Plus size={14} /></span>
         <span className="sql-table-name">
           <strong title={dataset.name}>{dataset.name}</strong>
         </span>
         <span className="sql-table-pills">
-          {isReferenced && <span className="sql-table-ref-pill">REF</span>}
           <span className="sql-table-layer">{dataset.layer}</span>
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </span>
@@ -1172,7 +1184,7 @@ function runSqlPreflight(query: string, baseDataset: CatalogDataset, referenceDa
     };
   }
 
-  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. base + ${referenceDatasets.length} referenced tables 기준으로 Preview할 수 있습니다.` });
+  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. 선택 테이블 ${referenceDatasets.length + 1}개 기준으로 Preview할 수 있습니다.` });
   messages.push({ tone: "info", text: `Preview는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT} rows로 제한해 실행합니다.` });
   const tableAliases = extractTableAliases(statement);
   if (tableAliases.length > 0) {
@@ -1353,7 +1365,7 @@ function buildAutocompleteCandidates({
       type: "table",
       label: item.name,
       insertText: item.name,
-      detail: item.id === baseDataset.id ? "table · base" : referenceDatasetIdSet.has(item.id) ? "table · referenced" : "table",
+      detail: "table · selected",
       datasetId: item.id,
     }));
   const columnCandidates = contextDatasets.flatMap((item) => item.schema.flatMap(([name, type]) => {
