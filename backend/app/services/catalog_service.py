@@ -281,7 +281,7 @@ def infer_column_type(
     column_name: str,
 ) -> str:
     for dataset in datasets:
-        for schema_column_name, schema_column_type in dataset.schema:
+        for schema_column_name, schema_column_type in dataset.schema_:
             if schema_column_name == column_name:
                 return schema_column_type
     return "string"
@@ -444,7 +444,7 @@ def build_dataset_node(dataset: CatalogDatasetResponse) -> LineageGraphDataset:
                 name=name,
                 type=column_type,
             )
-            for name, column_type in dataset.schema
+            for name, column_type in dataset.schema_
         ],
         engine="ICEBERG",
         id=dataset.id,

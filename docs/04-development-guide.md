@@ -36,10 +36,11 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
 기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우 `psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
 
 ```bash
 cd backend
-python3 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
@@ -141,7 +142,17 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - adapter unit tests
 - backend endpoint tests
 - FastAPI `/api/health` smoke test
-- Pair2 FastAPI Catalog / Lineage / SQL smoke: `cd backend && npm run verify:fastapi-pair2`
+- Pair2 FastAPI Catalog / Lineage / SQL smoke:
+
+```bash
+docker compose up -d postgres
+cd backend
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
+```
+
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests
