@@ -6,6 +6,8 @@ import {
   type ColumnDef,
 } from "@tanstack/react-table";
 import {
+  BarChart3,
+  Bot,
   Database,
   Download,
   PanelLeftClose,
@@ -71,12 +73,14 @@ export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
+  onCreateDashboard,
   onCreateDerivedDataset,
   onResultChange,
 }: {
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onCreateDashboard: (result: SqlResultDraft) => void;
   onCreateDerivedDataset: (request: CreateDerivedDatasetRequest) => Promise<CatalogDataset | null>;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
@@ -424,6 +428,12 @@ export function SqlAnalysisPage({
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
+  const requestRagFromResult = () => {
+    if (!resultDraft) return;
+
+    onAction("analysis.rag.use_requested", "/api/rag/datasets", resultDraft.datasetId);
+  };
+
   const createDerivedDataset = async () => {
     if (!resultDraft) return;
     const request: CreateDerivedDatasetRequest = {
@@ -656,6 +666,8 @@ export function SqlAnalysisPage({
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
                   <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 새 데이터셋 저장</button>
+                  <button type="button" onClick={() => onCreateDashboard(resultDraft)}><BarChart3 size={14} /> 대시보드 만들기</button>
+                  <button type="button" onClick={requestRagFromResult}><Bot size={14} /> RAG 활용</button>
                 </div>
               </div>
               <div className="sql-result-scroll">
