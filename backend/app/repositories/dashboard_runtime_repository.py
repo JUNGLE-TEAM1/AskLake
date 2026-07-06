@@ -268,10 +268,13 @@ class DashboardRuntimeRepository:
 
         columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
         updates: list[str] = []
+        published_at_value = self._iso_timestamp(published_at)
         values: dict[str, Any] = {
             "dashboard_id": dashboard_id,
             "published_revision_id": published_revision_id,
             "published_at": published_at,
+            "updated": "방금 전",
+            "updated_at_value": published_at_value,
         }
         if "published_revision_id" in columns:
             updates.append("published_revision_id = :published_revision_id")
@@ -281,6 +284,18 @@ class DashboardRuntimeRepository:
             updates.append("status = 'published'")
         if "updated_at" in columns:
             updates.append("updated_at = :published_at")
+        if "payload" in columns:
+            updates.append(
+                """
+                payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+                    'publishedRevisionId', CAST(:published_revision_id AS text),
+                    'hasPublishedRevision', true,
+                    'status', 'published',
+                    'updated', CAST(:updated AS text),
+                    'updatedAtValue', CAST(:updated_at_value AS text)
+                )
+                """.strip()
+            )
         if not updates:
             return
 
@@ -311,6 +326,20 @@ class DashboardRuntimeRepository:
         for widget in self.db.scalars(statement).all():
             widgets_by_page_id.setdefault(widget.page_id, []).append(widget)
         return widgets_by_page_id
+
+    def delete_dashboard_runtime(self, dashboard_id: str) -> None:
+        revision_ids = list(
+            self.db.scalars(select(DashboardRevision.id).where(DashboardRevision.dashboard_id == dashboard_id)).all()
+        )
+        if not revision_ids:
+            return
+
+        page_ids = list(self.db.scalars(select(DashboardPage.id).where(DashboardPage.revision_id.in_(revision_ids))).all())
+        if page_ids:
+            self.db.execute(delete(DashboardWidget).where(DashboardWidget.page_id.in_(page_ids)))
+        self.db.execute(delete(DashboardPage).where(DashboardPage.revision_id.in_(revision_ids)))
+        self.db.execute(delete(DashboardRevision).where(DashboardRevision.dashboard_id == dashboard_id))
+        self.db.flush()
 
     def _get_revision_by_kind(self, dashboard_id: str, kind: DashboardRuntimeMode) -> DashboardRevision | None:
         statement = (
@@ -393,6 +422,12 @@ class DashboardRuntimeRepository:
         if isinstance(value, datetime):
             return value
         return datetime.now(UTC)
+
+    @staticmethod
+    def _iso_timestamp(value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _new_id(prefix: str) -> str:

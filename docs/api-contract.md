@@ -858,7 +858,7 @@ POST /api/dashboards/{dashboardId}/publish
 ↓
 draft snapshot을 새 published revision으로 복사
 ↓
-dashboards.published_revision_id, has_published_revision, status, updated_at 갱신
+dashboards.published_revision_id, has_published_revision, status, updated_at, payload 갱신
 ```
 
 published revision이 없는 dashboard의 published 조회는 오류가 아니라 빈 runtime 응답으로 처리한다.
@@ -930,6 +930,7 @@ type DashboardListResponse = {
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
 서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
@@ -1385,7 +1386,7 @@ Response `200 OK`:
 
 1. 현재 draft revision을 깊은 복사합니다.
 2. 새 revision을 `kind = "published"`로 저장합니다.
-3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
 
 Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 

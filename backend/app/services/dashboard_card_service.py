@@ -14,6 +14,7 @@ from app.repositories.dashboard_card_repository import (
     save_dashboard_card,
     split_dashboard_tags,
 )
+from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
     CreateDashboardRequest,
@@ -177,6 +178,7 @@ def delete_dashboard_card_with_permission(
             status.HTTP_403_FORBIDDEN,
         )
 
+    DashboardRuntimeRepository(db).delete_dashboard_runtime(dashboard_id)
     delete_dashboard_card(db, dashboard_id)
     db.commit()
     return dashboard_id
