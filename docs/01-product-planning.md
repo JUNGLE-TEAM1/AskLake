@@ -112,10 +112,10 @@ E2E fallback 寃利?湲곗?? `docs/e2e-fallback-verification.md`瑜??곕Ⅸ?
 
 | Day | 紐⑺몴 | 醫낅즺 ??蹂댁뿬???섎뒗 ?곹깭 |
 | --- | --- | --- |
-| Day 1 | ?앹꽦 寃곌낵瑜?ETL 紐⑸줉???곌껐?섍퀬 Spark run ?깃났 ??Catalog ?곸꽭??湲곕낯 lineage瑜??쒖떆 | ??Job, ?깃났 run ?댄썑 ??Dataset, Dataset schema, upstream/current/downstream lineage, Dashboard 鍮??곹깭媛 蹂댁씤?? |
-| Day 2 | Job ?ㅽ뻾 ?곹깭瑜??대젰/DAG???곌껐?섍퀬 Dataset??SQL context濡??꾨떖 | 媛숈? Run ID媛 ?대젰/DAG??蹂댁씠怨?SQL ?붾㈃???좏깮 Dataset query媛 梨꾩썙吏꾨떎. |
-| Day 3 | SQL Result瑜?Dashboard Widget?쇰줈 ?섍린怨?Lineage/SQL/Dashboard 議곗옉??蹂닿컯 | SQL Result Preview, Lineage ?좏깮 ?곹깭, Table Widget, Widget ?쒕ぉ ?섏젙/??젣媛 ?숈옉?쒕떎. |
-| Day 4 | ?꾩껜 ?먮쫫??諛섎났 QA?섍퀬 Dashboard ???Publish瑜??꾩꽦 | 諛쒗몴?먭? 5遺??덉뿉 ?꾩껜 ?먮쫫???ы쁽?섍퀬 Published Dashboard源뚯? ?뺤씤?쒕떎. |
+| Day 1 | 생성 결과를 ETL 목록과 Catalog에 연결하고 Catalog 상세에 기본 lineage를 표시 | 새 Job, 새 Dataset, Dataset schema, source/upstream -> current lineage, Dashboard 빈 상태가 보인다. |
+| Day 2 | Job 실행 상태를 이력/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 이력/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
+| Day 3 | SQL Result를 Dashboard Widget으로 넘기고 Lineage/SQL/Dashboard 조작을 보강 | SQL Result Preview, Lineage 선택 상태, Table Widget, Widget 제목 수정/삭제가 동작한다. |
+| Day 4 | 전체 흐름을 반복 QA하고 Dashboard 저장/Publish를 완성 | 발표자가 5분 안에 전체 흐름을 재현하고 Published Dashboard까지 확인한다. |
 
 ### Day蹂??몃? ?곗텧臾?
 

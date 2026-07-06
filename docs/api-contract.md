@@ -40,10 +40,13 @@ P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=true
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- Source/Schema/Create/Run 흐름은 실제 백엔드를 호출합니다.
+- `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
+- live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -80,6 +83,9 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 }
 ```
 
+FastAPI 구현에서도 모든 성공 응답을 `{ ok, data }` 같은 단일 envelope로 강제하지 않습니다.
+각 endpoint는 이 문서에 적힌 response shape를 우선하고, 목록 API처럼 pagination 정보가 필요한 경우에만 resource 배열과 page metadata를 함께 반환합니다.
+
 목록 API처럼 확장 필드가 필요한 경우에는 아래처럼 리소스 배열을 감싸서 반환합니다.
 
 ```json
@@ -91,6 +97,20 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
   }
 }
 ```
+
+page 번호 기반 목록 API는 아래 필드명을 사용합니다.
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+FastAPI 공통 schema에서는 `PageRequest`, `PageMeta`, `PageResponse`, `CursorPageMeta`를 재사용할 수 있습니다.
+단, 실제 resource key가 `items`가 아니라 `datasets`, `dashboards`처럼 정해진 endpoint는 해당 상세 계약을 우선합니다.
 
 ### Error Envelope
 
@@ -110,6 +130,7 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 
 프론트의 현재 필수 필드는 `code`, `message`입니다.
 `details`는 선택입니다.
+FastAPI 구현은 `backend/app/schemas/common.py`의 `ErrorResponse`와 `ErrorDetail`을 기준으로 이 envelope를 생성합니다.
 
 ### 상태 코드
 
@@ -235,21 +256,56 @@ type CatalogDataset = {
   sampleRows: string[][];
   upstream: string[];
   downstream: string[];
+  lineageGraph?: LineageGraph;
 };
 ```
+
+### LineageGraph
+
+```ts
+type LineageGraph = {
+  datasetId: string;
+  datasets: Array<{
+    id: string;
+    name: string;
+    layer: "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+    engine: string;
+    columns: Array<{
+      id: string;
+      name: string;
+      type: string;
+    }>;
+  }>;
+  edges: Array<{
+    fromDatasetId: string;
+    fromColumnId: string;
+    toDatasetId: string;
+    toColumnId: string;
+  }>;
+};
+```
+
+`LineageGraph`는 화면 좌표나 렌더링 스타일을 포함하지 않습니다.
+백엔드는 dataset/column/edge 관계만 반환하고, 프론트는 이를 React Flow node/edge와 column row handle로 변환합니다.
+`CatalogDataset.upstream`과 `CatalogDataset.downstream`은 요약/fallback context로 유지할 수 있습니다.
 
 ### SqlResultDraft
 
 ```ts
 type SqlResultDraft = {
   runId: string;
+  baseDatasetId?: string;
   datasetId: string;
   datasetName: string;
   query: string;
+  referenceDatasetIds?: string[];
   columns: string[];
   rows: string[][];
   rowCount: number;
   executedAt: string;
+  mode?: "preview" | "run";
+  previewLimit?: number;
+  validationKey?: string;
 };
 ```
 
@@ -395,6 +451,8 @@ Response 예시:
 - `selectedJob`을 응답값으로 변경합니다.
 - Catalog Dataset은 Spark run 성공 후 command 응답의 `dataset`으로 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
+- mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다. 없으면 `upstream` 기반 fallback graph를 사용합니다.
 
 Validation:
 
@@ -506,14 +564,20 @@ Validation:
 
 프론트 함수:
 
-- `executeQueryDraft(dataset, query)`
+- `executeQueryPreview(dataset, query, { limit, validationKey })`
+- `executeQueryDraft(dataset, query)`는 기존 화면 연결을 위한 호환 wrapper로 유지
 
 Request:
 
 ```ts
 type ExecuteQueryRequest = {
+  baseDatasetId?: string;
   datasetId: string;
+  mode?: "preview" | "run";
+  limit?: number;
   query: string;
+  referenceDatasetIds?: string[];
+  validationKey?: string;
 };
 ```
 
@@ -521,8 +585,13 @@ Request 예시:
 
 ```json
 {
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100"
+  "mode": "preview",
+  "limit": 100,
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
@@ -537,9 +606,13 @@ Response 예시:
 ```json
 {
   "runId": "sql_01J1Z8W2V7KX",
+  "baseDatasetId": "ds_customer_review_silver",
   "datasetId": "ds_customer_review_silver",
   "datasetName": "customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver LIMIT 100",
+  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
+  "referenceDatasetIds": ["ds_product_master"],
+  "mode": "preview",
+  "previewLimit": 100,
   "columns": ["review_id", "rating", "sentiment"],
   "rows": [
     ["10001", "5", "positive"],
@@ -547,13 +620,17 @@ Response 예시:
     ["10003", "1", "negative"]
   ],
   "rowCount": 3,
-  "executedAt": "2026-07-03T11:35:00.000Z"
+  "executedAt": "2026-07-03T11:35:00.000Z",
+  "validationKey": "frontend-generated-context-key"
 }
 ```
 
 Validation:
 
 - `datasetId`, `query`는 필수입니다.
+- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
+- frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
@@ -563,7 +640,75 @@ Validation:
 
 - `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
-- 실패 시 `analysis.query.failed` 감사 로그를 남깁니다.
+- 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
+
+### 7.4 SQL 결과 기반 Lake Dataset 생성
+
+`POST /api/catalog/derived-datasets`
+
+프론트 함수:
+
+- `createDerivedDatasetFromSql({ request, sourceDataset, sqlResult })`
+
+Request:
+
+```ts
+type CreateDerivedDatasetRequest = {
+  dataset: {
+    description: string;
+    layer: "SILVER" | "GOLD";
+    name: string;
+    rag: boolean;
+    refreshPolicy: "manual";
+    tags: string[];
+  };
+  previewLimit?: number;
+  query: string;
+  referenceDatasetIds?: string[];
+  sourceDatasetId: string;
+  sourceRunId: string;
+  validationKey?: string;
+};
+```
+
+Request 예시:
+
+```json
+{
+  "dataset": {
+    "description": "일별 매출 SQL Preview 결과로 생성한 분석 데이터셋",
+    "layer": "GOLD",
+    "name": "sales_daily_summary_analysis",
+    "rag": true,
+    "refreshPolicy": "manual",
+    "tags": ["#sql-derived", "#sales", "#dw"]
+  },
+  "previewLimit": 100,
+  "query": "SELECT ...",
+  "referenceDatasetIds": ["ds_product_master"],
+  "sourceDatasetId": "ds_sales_daily_summary",
+  "sourceRunId": "sql_preview_01J1Z8W2V7KX",
+  "validationKey": "frontend-generated-context-key"
+}
+```
+
+Response `201 Created`:
+
+```ts
+type CreateDerivedDatasetResponse = CatalogDataset;
+```
+
+프론트 기대 동작:
+
+- 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
+- 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
+- mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
+- live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
+- `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
+- 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
+- `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
+- 실패 시 `analysis.derived_dataset.create_failed` 감사 로그와 Toast를 남깁니다.
 
 ## 8. P1 API
 
@@ -621,6 +766,7 @@ Response `200 OK`:
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 Catalog에 추가하지 않습니다.
 - Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
+- mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세
 
@@ -640,18 +786,151 @@ GET /api/catalog/datasets/{datasetId}/sample-rows
 GET /api/catalog/datasets/{datasetId}/lineage
 ```
 
-현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 모두 포함해서 표시합니다.
+`GET /api/catalog/datasets/{datasetId}/lineage` Response `200 OK`:
 
-### 8.3 대시보드 초안 생성
+```ts
+type DatasetLineageResponse = LineageGraph;
+```
+
+Response 예시:
+
+```json
+{
+  "datasetId": "ds_customer_orders_gold",
+  "datasets": [
+    {
+      "id": "source-commerce-orders",
+      "name": "commerce.orders",
+      "layer": "SOURCE",
+      "engine": "POSTGRESQL",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    },
+    {
+      "id": "ds_customer_orders_gold",
+      "name": "orders_clean",
+      "layer": "GOLD",
+      "engine": "ICEBERG",
+      "columns": [
+        { "id": "order_id", "name": "order_id", "type": "string" }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "fromDatasetId": "source-commerce-orders",
+      "fromColumnId": "order_id",
+      "toDatasetId": "ds_customer_orders_gold",
+      "toColumnId": "order_id"
+    }
+  ]
+}
+```
+
+현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
+Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
+
+### 8.3 대시보드 목록 조회
+
+`POST /api/dashboards/query`
+
+첫 진입은 `GET /api/dashboards`가 기본 정렬 기준으로 10개만 반환합니다.
+검색, 필터, 정렬, 다음 page 요청은 프론트가 JSON body를 보내고 서버가 SQL 조건을 구성해 조회합니다.
+
+Request body:
+
+| 이름 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `search` | string | no | dashboard 이름, 소유자, 태그 검색어 |
+| `searchQuery` | string | no | local API 호환 검색어. `search`와 같은 의미 |
+| `owner` | string | no | 특정 소유자 필터 |
+| `tags` | string[] | no | 선택된 태그 목록. 예: `["Marketing", "ROI"]` |
+| `sort` | string | yes | `name-asc`, `name-desc`, `updated-asc`, `updated-desc`, `created-asc`, `created-desc` |
+| `page` | number | yes | 1부터 시작하는 page 번호 |
+| `pageSize` | number | yes | 한 page에 표시할 dashboard 개수 |
+
+Request 예시:
+
+```json
+{
+  "searchQuery": "roi",
+  "owner": "Jane Doe",
+  "tags": ["Marketing", "ROI"],
+  "sort": "updated-desc",
+  "page": 1,
+  "pageSize": 10
+}
+```
+
+Response `200 OK`:
+
+```ts
+type DashboardListResponse = {
+  items: SavedDashboardCard[];
+  total: number;
+  page: number;
+  pageSize: number;
+  filterOptions: {
+    owners: string[];
+    tags: string[];
+  };
+};
+```
+
+`items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
+프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
+`filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
+
+### 8.4 대시보드 삭제
+
+`DELETE /api/dashboards/{dashboardId}`
+
+대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
+서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+
+Request body는 없습니다.
+
+로컬 API 서버의 임시 권한 입력:
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
+| `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
+
+Response `200 OK`:
+
+```json
+{
+  "deletedDashboardId": "dash_sales_analytics_demo"
+}
+```
+
+Error:
+
+| Status | Code | 상황 |
+| --- | --- | --- |
+| `403` | `FORBIDDEN` | 삭제 권한이 없는 사용자 |
+| `404` | `NOT_FOUND` | 존재하지 않는 dashboard |
+
+삭제 성공 후 프론트는 dashboard 목록을 다시 조회합니다.
+
+### 8.5 대시보드 초안 생성
 
 `POST /api/dashboards`
+
+대시보드 랜딩 페이지의 `새 대시보드 생성` 버튼에서 호출한다.
+생성 즉시 `dashboards` 테이블에 `status: "draft"` 카드 정보를 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다.
+실제 편집용 draft revision/page/widget은 사용자가 내부 화면에서 `위젯 편집`을 눌렀을 때 `POST /api/dashboards/{dashboardId}/draft/ensure`로 준비한다.
+`게시` 동작은 `POST /api/dashboards/{dashboardId}/publish`를 호출하며, 이때 목록 status가 `published`로 바뀐다.
 
 Request:
 
 ```ts
 type CreateDashboardDraftRequest = {
-  datasetId: string;
-  source: "sql" | "catalog";
+  title?: string;
+  source?: "manual" | "sql" | "catalog";
+  datasetId?: string;
   sqlRunId?: string;
 };
 ```
@@ -660,9 +939,8 @@ Request 예시:
 
 ```json
 {
-  "datasetId": "ds_customer_review_silver",
-  "source": "sql",
-  "sqlRunId": "sql_01J1Z8W2V7KX"
+  "title": "새 대시보드 2026-07-05 16:42",
+  "source": "manual"
 }
 ```
 
@@ -670,34 +948,419 @@ Response `201 Created`:
 
 ```json
 {
-  "dashboardId": "dash_01J1Z8W5ABCD",
-  "view": "builder",
-  "widgets": [
-    {
-      "type": "table",
-      "title": "SQL 결과 테이블",
-      "fields": {
-        "columns": "review_id, rating, sentiment",
-        "sort": "review_id ASC"
-      }
-    },
-    {
-      "type": "bar",
-      "title": "sentiment별 rating",
-      "fields": {
-        "x": "sentiment",
-        "y": "rating",
-        "aggregation": "AVG"
-      }
-    }
-  ]
+  "dashboard": {
+    "id": "dash_1751710920000_ab12cd34",
+    "name": "새 대시보드 2026-07-05 16:42",
+    "owner": "Admin User",
+    "meta": "0개 위젯 · 수동 생성",
+    "status": "draft",
+    "tags": "초안 · Dashboard",
+    "createdAt": "2026-07-05 16:42",
+    "createdAtValue": "2026-07-05T07:42:00.000Z",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z",
+    "hasPublishedRevision": false,
+    "widgets": []
+  }
 }
 ```
 
 현재 프론트 동작:
 
-- SQL에서 넘어온 경우 `SqlResultDraft` 기준으로 `table`, `bar` 위젯을 기본 배치합니다.
-- 백엔드 연결 시 위젯 추천 결과를 이 응답으로 대체하면 됩니다.
+- 랜딩 페이지에서 새 대시보드 생성 시 빈 dashboard card를 `draft`로 생성합니다.
+- 생성 응답의 `dashboard.id`를 사용해 `/dashboards/{dashboardId}` 조회 화면으로 이동합니다.
+- 위젯 추가와 draft revision 생성은 내부 화면의 `위젯 편집` 이후 별도 runtime API에서 처리합니다.
+
+### 8.5.0 대시보드 제목 수정
+
+`PATCH /api/dashboards/{dashboardId}`
+
+대시보드 내부 draft 편집 화면에서 상단 제목을 수정할 때 사용합니다.
+서버는 기존 dashboard card payload를 유지하고 `name`, `title`, `updated`, `updatedAtValue`만 갱신합니다.
+
+Request:
+
+```json
+{
+  "title": "월별 물류비 대시보드"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "dashboard": {
+    "id": "dash_...",
+    "name": "월별 물류비 대시보드",
+    "updated": "방금 전",
+    "updatedAtValue": "2026-07-05T07:42:00.000Z"
+  }
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
+### 8.5 대시보드 revision runtime
+
+Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/published revision snapshot을 저장합니다.
+현재 demo API는 PostgreSQL JSONB 기반 서버 스타일에 맞춰 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`, `dashboard_tags` 테이블을 idempotent하게 생성합니다.
+
+공통 response:
+
+```ts
+type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
+type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetFormat = "number" | "currency" | "percent";
+type DashboardWidgetSortDirection = "asc" | "desc";
+
+type DashboardWidgetConfigBase = {
+  color?: string;
+  description?: string;
+  error?: string;
+  errorMessage?: string;
+};
+
+type MetricWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  format?: DashboardWidgetFormat;
+  valueKey: string;
+};
+
+type TableWidgetConfig = DashboardWidgetConfigBase & {
+  columns: string[];
+  limit?: number;
+  sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
+};
+
+type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  groupKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type DashboardRuntimeWidgetConfigByType = {
+  metric: MetricWidgetConfig;
+  table: TableWidgetConfig;
+  bar_chart: BarChartWidgetConfig;
+  line_chart: LineChartWidgetConfig;
+  donut_chart: DonutChartWidgetConfig;
+};
+
+type DashboardRuntimeWidget = {
+  [Type in DashboardRuntimeWidgetType]: {
+    id: string;
+    pageId: string;
+    type: Type;
+    title: string | null;
+    layout: {
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      minW?: number;
+      minH?: number;
+    };
+    config: DashboardRuntimeWidgetConfigByType[Type];
+    data: Array<Record<string, unknown>>;
+    queryId?: string | null;
+    datasetId?: string | null;
+  };
+}[DashboardRuntimeWidgetType];
+
+type DashboardRuntimeResponse = {
+  dashboard: {
+    id: string;
+    title: string;
+    status: "draft" | "published";
+    hasPublishedRevision: boolean;
+    updatedAt: string;
+  };
+  mode: "published" | "draft";
+  revision: {
+    id: string;
+    kind: "published" | "draft";
+    version: number;
+    publishedAt?: string | null;
+  } | null;
+  pages: Array<{
+    id: string;
+    title: string;
+    orderIndex: number;
+  }>;
+  widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
+  filters: Array<{ id: string; label: string; value: unknown }>;
+};
+```
+
+#### 8.5.1 Published 조회
+
+`GET /api/dashboards/{dashboardId}/published`
+
+Response `200 OK`:
+
+- published revision이 있으면 해당 revision의 pages/widgets를 반환합니다.
+- published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`로 정상 응답합니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.2 Draft 조회/생성
+
+`POST /api/dashboards/{dashboardId}/draft/ensure`
+
+동작:
+
+1. draft revision이 있으면 그대로 반환합니다.
+2. draft가 없고 published revision이 있으면 published revision을 복사해 draft를 만듭니다.
+3. 둘 다 없으면 빈 draft revision과 기본 page 1개를 만듭니다.
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.3 Draft page 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages`
+
+Request:
+
+```json
+{
+  "title": "제목 없는 페이지"
+}
+```
+
+Response `201 Created`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "제목 없는 페이지",
+  "orderIndex": 1
+}
+```
+
+#### 8.5.4 Draft page 이름 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+현재 draft revision에 속한 page의 표시 이름을 수정합니다.
+Published revision의 page 이름은 이 API로 직접 수정하지 않고, 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 draft snapshot이 published로 복사됩니다.
+
+Request:
+
+```json
+{
+  "title": "월별 비용"
+}
+```
+
+Response `200 OK`:
+
+```json
+{
+  "id": "dashpage_...",
+  "title": "월별 비용",
+  "orderIndex": 0
+}
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+- 빈 제목이면 `400 VALIDATION_ERROR`.
+
+#### 8.5.5 Draft page 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+
+동작:
+
+1. 현재 draft revision에 속한 page만 삭제합니다.
+2. 해당 page의 widgets는 cascade로 함께 삭제합니다.
+3. 남은 page의 `orderIndex`를 다시 정렬합니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+실패:
+
+- dashboard, draft revision, page가 없으면 `404 NOT_FOUND`.
+
+#### 8.5.6 Draft widget 추가
+
+`POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+
+Request:
+
+```json
+{
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "bar_chart",
+  "title": "월별 물류비",
+  "layout": { "x": 0, "y": 0, "w": 6, "h": 5, "minW": 3, "minH": 3 },
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "aggregation": "sum",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
+}
+```
+
+`data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
+현재 demo backend는 실제 rows API가 없으므로 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
+
+Response `201 Created`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`, common `color`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
+생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
+dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
+
+#### 8.5.7 Draft widget 수정
+
+`PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+Request:
+
+```json
+{
+  "datasetId": "gold_logistics_cost_overview",
+  "type": "line_chart",
+  "title": "월별 물류비 추이",
+  "config": {
+    "xKey": "month",
+    "yKey": "total_cost",
+    "aggregation": "sum",
+    "dateUnit": "month",
+    "color": "blue",
+    "description": "월 기준 총 물류비 추이"
+  }
+}
+```
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 수정합니다.
+2. `type`, `title`, `datasetId`, `config`를 갱신합니다.
+3. published revision의 widget은 직접 수정하지 않습니다.
+4. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 수정된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "id": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.8 Draft widget 삭제
+
+`DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+
+동작:
+
+1. 현재 draft revision에 속한 widget만 삭제합니다.
+2. published revision의 widget은 직접 삭제하지 않습니다.
+3. 이후 `POST /api/dashboards/{dashboardId}/publish` 시점에 삭제된 draft snapshot이 published로 복사됩니다.
+
+Response `200 OK`:
+
+```json
+{ "ok": true, "deletedWidgetId": "dashwidget_..." }
+```
+
+실패:
+
+- dashboard, draft revision, widget이 없거나 현재 draft revision에 속하지 않으면 `404 NOT_FOUND`.
+
+#### 8.5.9 Draft layout batch 저장
+
+`PATCH /api/dashboards/{dashboardId}/draft/layouts`
+
+Request:
+
+```json
+{
+  "pageId": "dashpage_...",
+  "layouts": [
+    { "widgetId": "dashwidget_...", "x": 0, "y": 0, "w": 6, "h": 4, "minW": 2, "minH": 2 }
+  ]
+}
+```
+
+Response `200 OK`:
+
+```json
+{ "ok": true }
+```
+
+서버는 `x`, `y`, `w`, `h`, `minW`, `minH`를 유한 숫자로 정규화하고, 음수 좌표나 1보다 작은 크기를 보정합니다.
+
+#### 8.5.10 Publish
+
+`POST /api/dashboards/{dashboardId}/publish`
+
+동작:
+
+1. 현재 draft revision을 깊은 복사합니다.
+2. 새 revision을 `kind = "published"`로 저장합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+
+Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
+
+Response `200 OK`:
+
+```json
+{
+  "dashboardId": "dash_...",
+  "publishedRevisionId": "dashrev_published_...",
+  "publishedAt": "2026-07-04T12:00:00.000Z"
+}
+```
+
+실패:
+
+- dashboard가 없으면 `404 NOT_FOUND`.
+- draft revision이 없으면 `422 NO_DRAFT_REVISION`.
 
 ## 9. P2 API
 
@@ -766,14 +1429,15 @@ Response `201 Created`:
 
 ## 11. 프론트 전환 순서
 
-1. 백엔드 서버를 실행합니다.
-2. `frontend/.env`에 `VITE_API_BASE_URL`을 설정합니다.
-3. 프론트 dev 서버를 재시작합니다.
-4. `POST /api/etl/sources/test` Source/Schema 연결 흐름을 확인합니다.
-5. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-6. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
-7. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
-8. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
+1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
+2. 백엔드 서버를 실행합니다.
+3. `frontend/.env`에 `VITE_API_BASE_URL`과 `VITE_USE_MOCK_API=false`를 설정합니다.
+4. 프론트 dev 서버를 재시작합니다.
+5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
+6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
+9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
 ## 12. 열린 결정 사항
 

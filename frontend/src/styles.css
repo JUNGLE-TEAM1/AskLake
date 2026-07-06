@@ -7,5 +7,6 @@
 @import "./styles/catalog.css";
 @import "./styles/sql.css";
 @import "./styles/dashboard.css";
+@import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
 @import "./styles/responsive.css";
