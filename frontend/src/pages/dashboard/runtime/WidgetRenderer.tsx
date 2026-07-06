@@ -734,14 +734,20 @@ function MetricWidget({ widget }: { widget: RuntimeWidgetByType<"metric"> }) {
 }
 
 function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
-  const rows = rowsFromWidget(widget);
-  const availableColumns = Object.keys(rows[0] ?? {});
-  const configuredColumns = Array.isArray(widget.config.columns)
-    ? widget.config.columns.filter((column) => availableColumns.includes(column))
-    : [];
-  const columns = (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
+  const rows = useMemo(() => rowsFromWidget(widget), [widget.data]);
+  const availableColumns = useMemo(() => Object.keys(rows[0] ?? {}), [rows]);
+  const configuredColumns = widget.config.columns;
+  const columns = useMemo(() => {
+    const validConfiguredColumns = Array.isArray(configuredColumns)
+      ? configuredColumns.filter((column) => availableColumns.includes(column))
+      : [];
+    return (validConfiguredColumns.length ? validConfiguredColumns : availableColumns).slice(0, 8);
+  }, [availableColumns, configuredColumns]);
   const limit = Math.max(1, Math.min(widget.config.limit ?? 10, 100));
-  const sortedRows = sortRows(rows, widget.config.sortKey, widget.config.sortDirection);
+  const sortedRows = useMemo(
+    () => sortRows(rows, widget.config.sortKey, widget.config.sortDirection),
+    [rows, widget.config.sortDirection, widget.config.sortKey],
+  );
   const visibleRows = useMemo(() => sortedRows.slice(0, limit), [limit, sortedRows]);
   const tableColumns = useMemo<ColumnDef<SimpleRow, unknown>[]>(
     () => columns.map((column) => ({
@@ -761,7 +767,7 @@ function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
   if (!rows.length || !columns.length) return <EmptyWidgetData />;
 
   return (
-    <div className="asklake-table-widget">
+    <div className="asklake-table-widget" data-table-engine="tanstack">
       <table>
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (

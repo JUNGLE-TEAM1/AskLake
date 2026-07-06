@@ -421,18 +421,27 @@ function buildConfig(
 function preserveRuntimeOnlyConfig(
   widget: DashboardRuntimeWidget | null | undefined,
   config: DashboardRuntimeWidgetConfig,
+  options: { preserveVisualizationRequest?: boolean } = {},
 ): DashboardRuntimeWidgetConfig {
   if (!widget) return config;
 
   const source = configRecord(widget.config);
   const placeholderKind = source.placeholderKind;
-  if (placeholderKind !== "visualization_request" && placeholderKind !== "text") return config;
+  if (placeholderKind === "text") {
+    return {
+      ...config,
+      placeholderKind,
+      ...(typeof source.body === "string" ? { body: source.body } : {}),
+    } as DashboardRuntimeWidgetConfig;
+  }
+
+  if (placeholderKind !== "visualization_request") return config;
+  if (!options.preserveVisualizationRequest) return config;
 
   return {
     ...config,
     placeholderKind,
     ...(typeof source.prompt === "string" ? { prompt: source.prompt } : {}),
-    ...(typeof source.body === "string" ? { body: source.body } : {}),
   } as DashboardRuntimeWidgetConfig;
 }
 
@@ -596,6 +605,7 @@ export function WidgetConfigPanel({
           color,
           description: description.trim() || undefined,
         }),
+        { preserveVisualizationRequest: true },
       ),
       title: title.trim() || "제목 없는 위젯",
       type,
@@ -639,8 +649,11 @@ export function WidgetConfigPanel({
       color,
       description: description.trim() || undefined,
     });
+    const nextDatasetId = selectedDatasetId ?? editingWidget?.datasetId ?? null;
     const nextInput = {
-      config: preserveRuntimeOnlyConfig(editingWidget, nextConfig),
+      config: preserveRuntimeOnlyConfig(editingWidget, nextConfig, {
+        preserveVisualizationRequest: !nextDatasetId,
+      }),
       title: title.trim() || "제목 없는 위젯",
       type,
     };
@@ -648,7 +661,7 @@ export function WidgetConfigPanel({
     if (editingWidget && onUpdateWidget) {
       await onUpdateWidget(editingWidget.id, {
         ...nextInput,
-        datasetId: selectedDatasetId ?? editingWidget.datasetId ?? null,
+        datasetId: nextDatasetId,
       });
       return;
     }

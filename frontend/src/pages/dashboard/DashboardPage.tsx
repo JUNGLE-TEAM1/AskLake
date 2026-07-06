@@ -737,25 +737,7 @@ export function DashboardPage({
     try {
       await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
       setPreviewDraftWidget(null);
-      setDraftRuntime((runtime) => runtime
-        ? {
-          ...runtime,
-          widgetsByPageId: Object.fromEntries(
-            Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
-              pageId,
-              widgets.map((widget) => widget.id === widgetId
-                ? {
-                  ...widget,
-                  config: input.config,
-                  datasetId: Object.prototype.hasOwnProperty.call(input, "datasetId") ? input.datasetId ?? null : widget.datasetId,
-                  title: input.title,
-                  type: input.type,
-                } as DashboardRuntimeWidget
-                : widget),
-            ]),
-          ),
-        }
-        : runtime);
+      await loadDraftRuntime(runtimeSelection.dashboardId, { silent: true });
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
       onAction("dashboard.widget.updated", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
