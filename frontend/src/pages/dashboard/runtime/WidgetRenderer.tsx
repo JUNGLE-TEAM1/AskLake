@@ -309,6 +309,9 @@ function buildBaseChartOptions(color: string): ApexOptions {
       foreColor: "#64748b",
       redrawOnParentResize: true,
       redrawOnWindowResize: true,
+      selection: {
+        enabled: false,
+      },
       toolbar: {
         show: false,
       },
@@ -338,6 +341,25 @@ function buildBaseChartOptions(color: string): ApexOptions {
       },
       markers: {
         size: 6,
+      },
+      onItemClick: {
+        toggleDataSeries: false,
+      },
+      onItemHover: {
+        highlightDataSeries: false,
+      },
+    },
+    states: {
+      active: {
+        allowMultipleDataPointsSelection: false,
+        filter: {
+          type: "none",
+        },
+      },
+      hover: {
+        filter: {
+          type: "none",
+        },
       },
     },
     stroke: {
@@ -826,27 +848,9 @@ function PieLikeChartWidget({
       markers: {
         size: 6,
       },
-      onItemClick: {
-        toggleDataSeries: false,
-      },
-      onItemHover: {
-        highlightDataSeries: false,
-      },
       position: "right",
     },
     plotOptions: piePlotOptions,
-    states: {
-      active: {
-        filter: {
-          type: "none",
-        },
-      },
-      hover: {
-        filter: {
-          type: "none",
-        },
-      },
-    },
     stroke: {
       colors: ["#ffffff"],
       width: 3,

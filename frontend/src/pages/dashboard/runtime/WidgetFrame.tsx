@@ -57,6 +57,7 @@ export function WidgetFrame({
       onClick={(event) => {
         if (!editable) return;
         event.stopPropagation();
+        if (selected) return;
         onSelect?.(widget.id);
       }}
     >
