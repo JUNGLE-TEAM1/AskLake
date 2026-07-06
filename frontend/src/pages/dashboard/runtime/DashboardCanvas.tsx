@@ -135,7 +135,7 @@ export function DashboardCanvas({
           containerPadding={[0, 0]}
           dragConfig={{
             bounded: true,
-            cancel: ".widget-control, button, input, select, textarea, a",
+            cancel: ".widget-control, button, select, a",
             enabled: editable,
             threshold: 6,
           }}

@@ -20,6 +20,8 @@ type RuntimeNotice = {
 };
 
 type DashboardRuntimeState = {
+  canRedoLayout: boolean;
+  canUndoLayout: boolean;
   deletingWidgetId: string | null;
   draftError: string | null;
   draftLoading: boolean;
@@ -70,6 +72,7 @@ type DashboardRuntimeViewActions = {
   openDraft: () => void;
   openPublished: () => void;
   publishDraft: () => void;
+  redoLayout: () => void;
   refresh: () => void;
   renamePage: (pageId: string, title: string) => Promise<void> | void;
   renameTitle: (title: string) => Promise<void> | void;
@@ -80,6 +83,7 @@ type DashboardRuntimeViewActions = {
   selectWidget: (widgetId: string) => void;
   share: () => void;
   toggleDatasetSidebar: () => void;
+  undoLayout: () => void;
   updateWidget: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
 };
 
@@ -90,13 +94,21 @@ type DashboardRuntimeViewProps = {
 };
 
 function DashboardEditToolbar({
+  canRedo,
+  canUndo,
   disabled,
   onCreateToolbarWidget,
   onCursor,
+  onRedo,
+  onUndo,
 }: {
+  canRedo: boolean;
+  canUndo: boolean;
   disabled: boolean;
   onCreateToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   onCursor: () => void;
+  onRedo: () => void;
+  onUndo: () => void;
 }) {
   return (
     <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
@@ -111,14 +123,18 @@ function DashboardEditToolbar({
         <Type size={18} />
       </button>
       <span aria-hidden="true" />
-      <button aria-label="실행 취소" disabled title="실행 취소" type="button">
+      <button aria-label="실행 취소" disabled={!canUndo} title="실행 취소" type="button" onClick={onUndo}>
         <Undo2 size={18} />
       </button>
-      <button aria-label="다시 실행" disabled title="다시 실행" type="button">
+      <button aria-label="다시 실행" disabled={!canRedo} title="다시 실행" type="button" onClick={onRedo}>
         <Redo2 size={18} />
       </button>
     </div>
   );
+}
+
+function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
+  return widget?.config.placeholderKind === "text";
 }
 
 const emptyDashboardCopy = {
@@ -132,6 +148,8 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const {
+    canRedoLayout,
+    canUndoLayout,
     deletingWidgetId,
     draftError,
     draftLoading,
@@ -180,6 +198,7 @@ export function DashboardRuntimeView({
     openDraft: onOpenDraft,
     openPublished: onOpenPublished,
     publishDraft: onPublishDraft,
+    redoLayout: onRedoLayout,
     refresh: onRefresh,
     renamePage: onRenamePage,
     renameTitle: onRenameTitle,
@@ -190,6 +209,7 @@ export function DashboardRuntimeView({
     selectWidget: onSelectWidget,
     share: onShare,
     toggleDatasetSidebar: onToggleDatasetSidebar,
+    undoLayout: onUndoLayout,
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
@@ -218,6 +238,8 @@ export function DashboardRuntimeView({
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
+  const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
+  const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
@@ -315,12 +337,12 @@ export function DashboardRuntimeView({
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isDraftMode ? (
+        inspector={isDraftMode && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
-              editingWidget={selectedDraftWidget}
+              editingWidget={configurableDraftWidget}
               isCreating={isCreatingDatasetWidget}
-              isUpdating={updatingWidgetId === selectedDraftWidget?.id}
+              isUpdating={updatingWidgetId === configurableDraftWidget?.id}
               onCancelEdit={onClearWidgetSelection}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
@@ -353,9 +375,13 @@ export function DashboardRuntimeView({
           <div className="asklake-dashboard-edit-stage">
             {runtimeCanvas}
             <DashboardEditToolbar
+              canRedo={canRedoLayout}
+              canUndo={canUndoLayout}
               disabled={isCreatingToolbarWidget || !selectedPageId}
               onCursor={onClearWidgetSelection}
               onCreateToolbarWidget={onCreateToolbarWidget}
+              onRedo={onRedoLayout}
+              onUndo={onUndoLayout}
             />
           </div>
         ) : runtimeCanvas}

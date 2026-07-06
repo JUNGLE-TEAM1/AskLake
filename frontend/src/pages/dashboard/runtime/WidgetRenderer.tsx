@@ -322,10 +322,12 @@ function VisualizationRequestWidget({
   widget: DashboardRuntimeWidget;
 }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [isPromptEditing, setIsPromptEditing] = useState(false);
   const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
 
   useEffect(() => {
     setPrompt(configText(widget, "prompt"));
+    setIsPromptEditing(false);
   }, [widget.id, widget.config]);
 
   const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
@@ -342,13 +344,23 @@ function VisualizationRequestWidget({
   };
 
   return (
-    <div className="asklake-visualization-request-widget widget-control" onClick={(event) => event.stopPropagation()}>
+    <div className="asklake-visualization-request-widget">
       <form className="asklake-visualization-request-form" onSubmit={(event) => void savePrompt(event)}>
         <input
           aria-label="시각화 요청"
+          className={isPromptEditing ? "widget-control" : undefined}
           placeholder="어시스턴트에게 이 차트의 편집을 요청하세요."
+          readOnly={!isPromptEditing}
           value={prompt}
+          onBlur={() => setIsPromptEditing(false)}
           onChange={(event) => setPrompt(event.target.value)}
+          onDoubleClick={() => setIsPromptEditing(true)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            setPrompt(configText(widget, "prompt"));
+            setIsPromptEditing(false);
+            event.currentTarget.blur();
+          }}
         />
         <button aria-label="요청 저장" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
           <Send size={18} />
@@ -367,10 +379,12 @@ function TextPlaceholderWidget({
   widget: DashboardRuntimeWidget;
 }) {
   const [body, setBody] = useState(() => configText(widget, "body"));
+  const [isBodyEditing, setIsBodyEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setBody(configText(widget, "body"));
+    setIsBodyEditing(false);
   }, [widget.id, widget.config]);
 
   const saveBody = async (event: FormEvent<HTMLFormElement>) => {
@@ -386,12 +400,22 @@ function TextPlaceholderWidget({
   };
 
   return (
-    <form className="asklake-text-placeholder-widget widget-control" onClick={(event) => event.stopPropagation()} onSubmit={(event) => void saveBody(event)}>
+    <form className="asklake-text-placeholder-widget" onSubmit={(event) => void saveBody(event)}>
       <textarea
         aria-label="텍스트 위젯 내용"
+        className={isBodyEditing ? "widget-control" : undefined}
         placeholder="편집을 시작하려면 텍스트를 입력하세요."
+        readOnly={!isBodyEditing}
         value={body}
+        onBlur={() => setIsBodyEditing(false)}
         onChange={(event) => setBody(event.target.value)}
+        onDoubleClick={() => setIsBodyEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          setBody(configText(widget, "body"));
+          setIsBodyEditing(false);
+          event.currentTarget.blur();
+        }}
       />
       <div className="asklake-text-placeholder-actions">
         <button disabled={!onPatchConfig || isSaving} type="submit">저장</button>
