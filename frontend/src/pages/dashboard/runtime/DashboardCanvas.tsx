@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
@@ -47,8 +47,10 @@ export function DashboardCanvas({
   onLayoutCommit,
   onLayoutRejected,
   onPatchWidgetConfig,
+  onScrollTargetHandled,
   onSelectWidget,
   onSelectWidgetColorSlot,
+  scrollTargetWidgetId,
   selectedWidgetId,
   widgets,
 }: {
@@ -59,13 +61,16 @@ export function DashboardCanvas({
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
   onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
+  onScrollTargetHandled?: () => void;
   onSelectWidget?: (widgetId: string) => void;
   onSelectWidgetColorSlot?: (widgetId: string, slotIndex: number) => void;
+  scrollTargetWidgetId?: string | null;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
 }) {
   const { containerRef, mounted, width } = useContainerWidth({ initialWidth: 1200 });
   const [resetKey, setResetKey] = useState(0);
+  const widgetNodeById = useRef(new Map<string, HTMLDivElement>());
   const layout = useMemo(
     () =>
       widgets.map((widget) => ({
@@ -120,6 +125,25 @@ export function DashboardCanvas({
     onLayoutCommit?.([...nextLayout]);
   };
 
+  useEffect(() => {
+    if (!mounted || !scrollTargetWidgetId) return undefined;
+
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const widgetNode = widgetNodeById.current.get(scrollTargetWidgetId);
+        if (!widgetNode) return;
+        widgetNode.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+        onScrollTargetHandled?.();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [mounted, onScrollTargetHandled, scrollTargetWidgetId, widgets.length]);
+
   if (widgets.length === 0) {
     return (
       <div className={editable ? "asklake-dashboard-empty-canvas edit" : "asklake-dashboard-empty-canvas"}>
@@ -154,7 +178,16 @@ export function DashboardCanvas({
           onResizeStop={(nextLayout) => commitLayout([...nextLayout])}
         >
           {widgets.map((widget) => (
-            <div key={widget.id}>
+            <div
+              key={widget.id}
+              ref={(node) => {
+                if (node) {
+                  widgetNodeById.current.set(widget.id, node);
+                  return;
+                }
+                widgetNodeById.current.delete(widget.id);
+              }}
+            >
               <WidgetFrame
                 assistantContext={assistantContext}
                 deleteDisabled={deletingWidgetId === widget.id}

@@ -72,6 +72,7 @@ export function DashboardRuntimeShell({
   title: string;
 }) {
   const hasDatasetSidebar = Boolean(datasetSidebar);
+  const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
   const workspaceClassName = [
     "asklake-dashboard-workspace",
     hasDatasetSidebar && "has-dataset-sidebar",
@@ -111,17 +112,18 @@ export function DashboardRuntimeShell({
         </div>
       )}
       <div className="asklake-dashboard-subnav">
-        <button
-          aria-controls={hasDatasetSidebar ? "asklake-dashboard-dataset-sidebar" : undefined}
-          aria-pressed={hasDatasetSidebar ? datasetSidebarOpen : undefined}
-          className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
-          disabled={!onToggleDatasetSidebar}
-          type="button"
-          onClick={onToggleDatasetSidebar}
-        >
-          <span aria-hidden="true">▦</span>
-          데이터
-        </button>
+        {canToggleDatasetSidebar && (
+          <button
+            aria-controls="asklake-dashboard-dataset-sidebar"
+            aria-pressed={datasetSidebarOpen}
+            className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
+            type="button"
+            onClick={onToggleDatasetSidebar}
+          >
+            <span aria-hidden="true">▦</span>
+            데이터
+          </button>
+        )}
         <DashboardPageTabs
           isAddingPage={isAddingPage}
           mode={mode}

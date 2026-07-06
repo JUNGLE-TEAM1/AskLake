@@ -1,8 +1,10 @@
+import type { Dispatch, SetStateAction } from "react";
 import { useState } from "react";
 import { createDraftWidget } from "../../../services/dashboardRuntimeApi";
 import type {
   AuditResult,
   DashboardRuntimeMode,
+  DashboardRuntimeResponse,
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetType,
   DashboardRuntimeWidgetConfig,
@@ -26,7 +28,9 @@ type UseDraftWidgetCreatorParams = {
   selectedPageId: string | null;
   selectedWidgets: DashboardRuntimeWidget[];
   setDraftError: (message: string | null) => void;
+  setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
   setSelectedWidgetId: (widgetId: string) => void;
+  setWidgetScrollTargetId?: (widgetId: string | null) => void;
   setRuntimeNotice: (notice: RuntimeNotice) => void;
 };
 
@@ -67,6 +71,53 @@ const toolbarWidgetDefaults: Record<ToolbarDraftWidgetKind, {
   },
 };
 
+function cloneWidgetData(data: Array<Record<string, unknown>>) {
+  return data.map((row) => ({ ...row }));
+}
+
+function appendToolbarWidgetToRuntime({
+  id,
+  input,
+  pageId,
+  setDraftRuntime,
+}: {
+  id: string;
+  input: {
+    config: DashboardRuntimeWidgetConfig;
+    data: Array<Record<string, unknown>>;
+    datasetId: null;
+    layout: DashboardWidgetLayout;
+    title: string;
+    type: DashboardRuntimeWidgetType;
+  };
+  pageId: string;
+  setDraftRuntime: Dispatch<SetStateAction<DashboardRuntimeResponse | null>>;
+}) {
+  const widget = {
+    config: input.config,
+    data: input.data,
+    datasetId: input.datasetId,
+    id,
+    layout: input.layout,
+    pageId,
+    queryId: null,
+    title: input.title,
+    type: input.type,
+  } as DashboardRuntimeWidget;
+
+  setDraftRuntime((currentRuntime) => {
+    if (!currentRuntime) return currentRuntime;
+    const pageWidgets = currentRuntime.widgetsByPageId[pageId] ?? [];
+    return {
+      ...currentRuntime,
+      widgetsByPageId: {
+        ...currentRuntime.widgetsByPageId,
+        [pageId]: [...pageWidgets.filter((existingWidget) => existingWidget.id !== id), widget],
+      },
+    };
+  });
+}
+
 export function useDraftWidgetCreator({
   dashboardId,
   defaultLayouts,
@@ -76,8 +127,10 @@ export function useDraftWidgetCreator({
   selectedPageId,
   selectedWidgets,
   setDraftError,
+  setDraftRuntime,
   setRuntimeNotice,
   setSelectedWidgetId,
+  setWidgetScrollTargetId,
 }: UseDraftWidgetCreatorParams) {
   const [isCreatingDatasetWidget, setIsCreatingDatasetWidget] = useState(false);
   const [isCreatingToolbarWidget, setIsCreatingToolbarWidget] = useState(false);
@@ -120,20 +173,34 @@ export function useDraftWidgetCreator({
         toCollisionLayout(selectedWidgets),
         defaults.layout,
       );
+      const input = {
+        config: { ...defaults.config } as DashboardRuntimeWidgetConfig,
+        data: cloneWidgetData(defaults.data),
+        datasetId: null,
+        layout,
+        title: defaults.title,
+        type: defaults.type,
+      };
 
       setIsCreatingToolbarWidget(true);
       setDraftError(null);
       try {
         const widget = await createDraftWidget(dashboardId, selectedPageId, {
-          config: defaults.config,
-          data: defaults.data,
-          datasetId: null,
-          layout,
-          title: defaults.title,
-          type: defaults.type,
+          config: input.config,
+          data: input.data,
+          datasetId: input.datasetId,
+          layout: input.layout,
+          title: input.title,
+          type: input.type,
         });
-        await reloadDraftRuntime(dashboardId);
+        appendToolbarWidgetToRuntime({
+          id: widget.id,
+          input,
+          pageId: selectedPageId,
+          setDraftRuntime,
+        });
         setSelectedWidgetId(widget.id);
+        setWidgetScrollTargetId?.(widget.id);
         setRuntimeNotice({
           message: kind === "text" ? "텍스트 위젯을 추가했습니다." : "시각화 요청 위젯을 추가했습니다.",
           tone: "success",

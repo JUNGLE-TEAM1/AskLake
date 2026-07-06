@@ -57,6 +57,7 @@ type DashboardRuntimeState = {
   shareLink: string | null;
   title: string;
   updatingWidgetId: string | null;
+  widgetScrollTargetId: string | null;
 };
 
 type DashboardRuntimeDatasetState = {
@@ -70,6 +71,8 @@ type DashboardRuntimeDatasetState = {
 
 type DashboardRuntimeViewActions = {
   addPage: () => void;
+  clearWidgetScrollTarget: () => void;
+  clearWidgetSelection: () => void;
   closeSharePanel: () => void;
   createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   createToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
@@ -205,6 +208,7 @@ export function DashboardRuntimeView({
     shareLink,
     title,
     updatingWidgetId,
+    widgetScrollTargetId,
   } = runtime;
   const {
     datasets: dashboardDatasets,
@@ -216,6 +220,8 @@ export function DashboardRuntimeView({
   } = datasets;
   const {
     addPage: onAddPage,
+    clearWidgetScrollTarget: onClearWidgetScrollTarget,
+    clearWidgetSelection: onClearWidgetSelection,
     closeSharePanel: onCloseSharePanel,
     createDatasetWidget: onCreateDatasetWidget,
     createToolbarWidget: onCreateToolbarWidget,
@@ -276,7 +282,7 @@ export function DashboardRuntimeView({
   const handleCursorMode = () => {
     setInspectorMode("widget");
     setFocusedColorSlot(null);
-    onSelectWidget("");
+    onClearWidgetSelection();
   };
   const handleSelectWidget = (widgetId: string) => {
     setInspectorMode("widget");
@@ -327,12 +333,14 @@ export function DashboardRuntimeView({
         deletingWidgetId={deletingWidgetId}
         editable
         selectedWidgetId={selectedWidgetId}
+        scrollTargetWidgetId={widgetScrollTargetId}
         widgets={selectedDraftWidgets}
         assistantContext={assistantContext}
         onDeleteWidget={onDeleteWidget}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
+        onScrollTargetHandled={onClearWidgetScrollTarget}
         onSelectWidget={handleSelectWidget}
         onSelectWidgetColorSlot={handleSelectWidgetColorSlot}
       />
