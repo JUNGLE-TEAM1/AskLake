@@ -26,10 +26,11 @@ In another terminal:
 cd frontend
 npm install
 $env:VITE_API_BASE_URL = "http://localhost:8080"
+$env:VITE_USE_MOCK_API = "false"
 npm run dev
 ```
 
-Initial ETL jobs and catalog datasets are intentionally empty. Create a pipeline from the UI to add them.
+For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Create a pipeline from the UI to add them.
 
 ## Validation
 
