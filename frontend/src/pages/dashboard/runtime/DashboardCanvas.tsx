@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
+import { MoreVertical, Pencil, Send, Sparkles } from "lucide-react";
 import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import type { DashboardRuntimeWidget } from "../../../types";
+import type { DashboardRuntimeWidget, DashboardWidgetLayout } from "../../../types";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
@@ -11,6 +12,15 @@ const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
 const noReflowCompactor = {
   ...noCompactor,
   preventCollision: true,
+};
+
+export type DashboardCanvasToolItemType = "assistant_visualization" | "text_box";
+
+export type DashboardCanvasToolItem = {
+  id: string;
+  layout: DashboardWidgetLayout;
+  text?: string;
+  type: DashboardCanvasToolItemType;
 };
 
 function scaleLayout(layout: LayoutItem[], cols: number) {
@@ -28,14 +38,83 @@ function scaleLayout(layout: LayoutItem[], cols: number) {
   });
 }
 
+function hasLayoutChanges(nextLayout: readonly LayoutItem[], startById: Map<string, LayoutItem>) {
+  return nextLayout.some((item) => {
+    const startItem = startById.get(item.i);
+    return startItem && (
+      item.x !== startItem.x ||
+      item.y !== startItem.y ||
+      item.w !== startItem.w ||
+      item.h !== startItem.h
+    );
+  });
+}
+
+function CanvasToolCard({
+  item,
+  onSelect,
+  selected,
+}: {
+  item: DashboardCanvasToolItem;
+  onSelect?: (itemId: string) => void;
+  selected?: boolean;
+}) {
+  return (
+    <article
+      className={`asklake-canvas-tool-card ${item.type === "text_box" ? "text" : "assistant"} ${selected ? "selected" : ""}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect?.(item.id);
+      }}
+    >
+      {item.type === "assistant_visualization" ? (
+        <div className="asklake-canvas-assistant-card">
+          <div className="asklake-canvas-assistant-prompt">
+            <Sparkles size={18} />
+            <span>어시스턴트에게 이 차트의 편집을 요청하세요.</span>
+            <button aria-label="어시스턴트 요청 보내기" className="widget-control" type="button">
+              <Send size={18} />
+            </button>
+          </div>
+          <div className="asklake-canvas-assistant-preview" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="asklake-canvas-assistant-scroll" aria-hidden="true">
+            <i />
+          </div>
+          <p>또는 시각화를 수동으로 생성하려면 시각화 편집기에서 필드를 하나 이상 선택합니다</p>
+        </div>
+      ) : (
+        <div className="asklake-canvas-text-card">
+          <textarea
+            aria-label="대시보드 텍스트"
+            className="widget-control"
+            defaultValue={item.text ?? "편집을 시작하려면 두 번 클릭하고 저장하려면 클릭하세요."}
+          />
+          <div className="asklake-canvas-text-actions" aria-hidden="true">
+            <Pencil size={18} />
+            <MoreVertical size={18} />
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 export function DashboardCanvas({
   deletingWidgetId,
   editable,
   onDeleteWidget,
   onLayoutCommit,
   onLayoutRejected,
+  onToolItemLayoutCommit,
+  onSelectToolItem,
   onSelectWidget,
   selectedWidgetId,
+  selectedToolItemId,
+  toolItems = [],
   widgets,
 }: {
   deletingWidgetId?: string | null;
@@ -43,27 +122,45 @@ export function DashboardCanvas({
   onDeleteWidget?: (widgetId: string) => void;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
+  onToolItemLayoutCommit?: (layout: LayoutItem[]) => void;
+  onSelectToolItem?: (itemId: string) => void;
   onSelectWidget?: (widgetId: string) => void;
   selectedWidgetId?: string | null;
+  selectedToolItemId?: string | null;
+  toolItems?: DashboardCanvasToolItem[];
   widgets: DashboardRuntimeWidget[];
 }) {
   const { containerRef, mounted, width } = useContainerWidth({ initialWidth: 1200 });
   const [resetKey, setResetKey] = useState(0);
   const layout = useMemo(
     () =>
-      widgets.map((widget) => ({
-        h: widget.layout.h,
-        i: widget.id,
-        isDraggable: editable,
-        isResizable: editable,
-        minH: widget.layout.minH ?? 2,
-        minW: widget.layout.minW ?? 2,
-        static: !editable,
-        w: widget.layout.w,
-        x: widget.layout.x,
-        y: widget.layout.y,
-      })) satisfies Layout,
-    [editable, widgets],
+      [
+        ...widgets.map((widget) => ({
+          h: widget.layout.h,
+          i: widget.id,
+          isDraggable: editable,
+          isResizable: editable,
+          minH: widget.layout.minH ?? 2,
+          minW: widget.layout.minW ?? 2,
+          static: !editable,
+          w: widget.layout.w,
+          x: widget.layout.x,
+          y: widget.layout.y,
+        })),
+        ...toolItems.map((item) => ({
+          h: item.layout.h,
+          i: item.id,
+          isDraggable: editable,
+          isResizable: editable,
+          minH: item.layout.minH ?? (item.type === "text_box" ? 2 : 4),
+          minW: item.layout.minW ?? (item.type === "text_box" ? 4 : 4),
+          static: !editable,
+          w: item.layout.w,
+          x: item.layout.x,
+          y: item.layout.y,
+        })),
+      ] satisfies Layout,
+    [editable, toolItems, widgets],
   );
   const responsiveLayouts = useMemo(
     () => ({
@@ -90,16 +187,24 @@ export function DashboardCanvas({
     return false;
   };
   const commitLayout = (nextLayout: readonly LayoutItem[]) => {
-    if (hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
+    const startById = new Map(layout.map((item) => [item.i, item]));
+    const widgetIds = new Set(widgets.map((widget) => widget.id));
+    const toolItemIds = new Set(toolItems.map((item) => item.id));
+    const widgetLayout = nextLayout.filter((item) => widgetIds.has(item.i));
+    const toolItemLayout = nextLayout.filter((item) => toolItemIds.has(item.i));
+    const hasWidgetLayoutChanges = hasLayoutChanges(widgetLayout, startById);
+
+    if ((hasWidgetLayoutChanges && hasAnyLayoutCollision(widgetLayout)) || changedMultipleItems(nextLayout)) {
       setResetKey((key) => key + 1);
       onLayoutRejected?.();
       return;
     }
 
-    onLayoutCommit?.([...nextLayout]);
+    if (hasWidgetLayoutChanges) onLayoutCommit?.([...widgetLayout]);
+    if (hasLayoutChanges(toolItemLayout, startById)) onToolItemLayoutCommit?.([...toolItemLayout]);
   };
 
-  if (widgets.length === 0) {
+  if (widgets.length === 0 && toolItems.length === 0) {
     return (
       <div className={editable ? "asklake-dashboard-empty-canvas edit" : "asklake-dashboard-empty-canvas"}>
         <EmptyDashboardCanvas editable={editable} />
@@ -140,6 +245,15 @@ export function DashboardCanvas({
                 widget={widget}
                 onDelete={onDeleteWidget}
                 onSelect={onSelectWidget}
+              />
+            </div>
+          ))}
+          {toolItems.map((item) => (
+            <div key={item.id}>
+              <CanvasToolCard
+                item={item}
+                selected={selectedToolItemId === item.id}
+                onSelect={onSelectToolItem}
               />
             </div>
           ))}

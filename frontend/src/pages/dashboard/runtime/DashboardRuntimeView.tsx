@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+import { BarChart3, MousePointer2, Redo2, Type as TypeIcon, Undo2 } from "lucide-react";
 import type { LayoutItem } from "react-grid-layout";
 import type {
   DashboardRuntimeMode,
@@ -5,7 +7,7 @@ import type {
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
-import { DashboardCanvas } from "./DashboardCanvas";
+import { DashboardCanvas, type DashboardCanvasToolItem, type DashboardCanvasToolItemType } from "./DashboardCanvas";
 import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
 import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
@@ -86,6 +88,86 @@ type DashboardRuntimeViewProps = {
   runtime: DashboardRuntimeState;
 };
 
+type CanvasToolbarTool = "select" | "visualization" | "text";
+
+function DashboardCanvasToolbar({
+  activeTool,
+  onAddText,
+  onAddVisualization,
+  onSelectTool,
+}: {
+  activeTool: CanvasToolbarTool;
+  onAddText: () => void;
+  onAddVisualization: () => void;
+  onSelectTool: (tool: CanvasToolbarTool) => void;
+}) {
+  return (
+    <div className="asklake-canvas-toolbar" role="toolbar" aria-label="대시보드 캔버스 도구">
+      <button
+        aria-label="선택 도구"
+        className={activeTool === "select" ? "active" : ""}
+        title="선택 도구"
+        type="button"
+        onClick={() => onSelectTool("select")}
+      >
+        <MousePointer2 size={20} />
+      </button>
+      <span aria-hidden="true" />
+      <button
+        aria-label="시각화 추가"
+        className={activeTool === "visualization" ? "active" : ""}
+        title="시각화 추가"
+        type="button"
+        onClick={onAddVisualization}
+      >
+        <BarChart3 size={20} />
+      </button>
+      <button
+        aria-label="텍스트 추가"
+        className={activeTool === "text" ? "active" : ""}
+        title="텍스트 추가"
+        type="button"
+        onClick={onAddText}
+      >
+        <TypeIcon size={19} />
+      </button>
+      <span aria-hidden="true" />
+      <button aria-label="실행 취소" disabled title="실행 취소" type="button">
+        <Undo2 size={20} />
+      </button>
+      <button aria-label="다시 실행" disabled title="다시 실행" type="button">
+        <Redo2 size={20} />
+      </button>
+    </div>
+  );
+}
+
+function nextCanvasToolLayout(
+  type: DashboardCanvasToolItemType,
+  _widgets: DashboardRuntimeWidget[],
+  toolItems: DashboardCanvasToolItem[],
+) {
+  const nextY = toolItems.reduce((max, item) => Math.max(max, item.layout.y + item.layout.h), 0);
+  const size = type === "text_box"
+    ? { h: 3, minH: 2, minW: 4, w: 10 }
+    : { h: 6, minH: 4, minW: 4, w: 6 };
+
+  return { ...size, x: 0, y: nextY };
+}
+
+function createCanvasToolItem(
+  type: DashboardCanvasToolItemType,
+  widgets: DashboardRuntimeWidget[],
+  toolItems: DashboardCanvasToolItem[],
+) {
+  return {
+    id: `canvas-${type}-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`,
+    layout: nextCanvasToolLayout(type, widgets, toolItems),
+    text: type === "text_box" ? "편집을 시작하려면 두 번 클릭하고 저장하려면 클릭하세요." : undefined,
+    type,
+  } satisfies DashboardCanvasToolItem;
+}
+
 const emptyDashboardCopy = {
   description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
   title: "위젯을 추가해 주세요",
@@ -96,6 +178,9 @@ export function DashboardRuntimeView({
   datasets,
   runtime,
 }: DashboardRuntimeViewProps) {
+  const [activeCanvasTool, setActiveCanvasTool] = useState<CanvasToolbarTool>("select");
+  const [canvasToolItemsByPageId, setCanvasToolItemsByPageId] = useState<Record<string, DashboardCanvasToolItem[]>>({});
+  const [selectedCanvasToolItemId, setSelectedCanvasToolItemId] = useState<string | null>(null);
   const {
     deletingWidgetId,
     draftError,
@@ -156,6 +241,61 @@ export function DashboardRuntimeView({
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
+  const selectedCanvasToolItems = useMemo(
+    () => selectedPageId ? canvasToolItemsByPageId[selectedPageId] ?? [] : [],
+    [canvasToolItemsByPageId, selectedPageId],
+  );
+
+  useEffect(() => {
+    setSelectedCanvasToolItemId(null);
+  }, [mode, selectedPageId]);
+
+  const addCanvasToolItem = (type: DashboardCanvasToolItemType) => {
+    if (!selectedPageId) return;
+    const item = createCanvasToolItem(type, selectedDraftWidgets, selectedCanvasToolItems);
+    setCanvasToolItemsByPageId((currentItems) => ({
+      ...currentItems,
+      [selectedPageId]: [...(currentItems[selectedPageId] ?? []), item],
+    }));
+    setActiveCanvasTool(type === "text_box" ? "text" : "visualization");
+    setSelectedCanvasToolItemId(item.id);
+    onClearWidgetSelection();
+  };
+
+  const updateCanvasToolLayouts = (layout: LayoutItem[]) => {
+    if (!selectedPageId) return;
+    const layoutById = new Map(layout.map((item) => [item.i, item]));
+    setCanvasToolItemsByPageId((currentItems) => ({
+      ...currentItems,
+      [selectedPageId]: (currentItems[selectedPageId] ?? []).map((item) => {
+        const nextLayout = layoutById.get(item.id);
+        if (!nextLayout) return item;
+        return {
+          ...item,
+          layout: {
+            ...item.layout,
+            h: nextLayout.h,
+            minH: item.layout.minH,
+            minW: item.layout.minW,
+            w: nextLayout.w,
+            x: nextLayout.x,
+            y: nextLayout.y,
+          },
+        };
+      }),
+    }));
+  };
+
+  const selectRuntimeWidget = (widgetId: string) => {
+    setSelectedCanvasToolItemId(null);
+    onSelectWidget(widgetId);
+  };
+
+  const selectCanvasToolItem = (itemId: string) => {
+    setSelectedCanvasToolItemId(itemId);
+    onClearWidgetSelection();
+  };
+
   const openDraftAction = (
     <button className="asklake-dashboard-empty-action" type="button" onClick={onOpenDraft}>
       위젯 편집
@@ -200,16 +340,28 @@ export function DashboardRuntimeView({
         />
       </div>
     ) : (
-      <DashboardCanvas
-        deletingWidgetId={deletingWidgetId}
-        editable
-        selectedWidgetId={selectedWidgetId}
-        widgets={selectedDraftWidgets}
-        onDeleteWidget={onDeleteWidget}
-        onLayoutCommit={onLayoutCommit}
-        onLayoutRejected={onLayoutRejected}
-        onSelectWidget={onSelectWidget}
-      />
+      <div className="asklake-dashboard-canvas-stage">
+        <DashboardCanvas
+          deletingWidgetId={deletingWidgetId}
+          editable
+          selectedToolItemId={selectedCanvasToolItemId}
+          selectedWidgetId={selectedWidgetId}
+          toolItems={selectedCanvasToolItems}
+          widgets={selectedDraftWidgets}
+          onDeleteWidget={onDeleteWidget}
+          onLayoutCommit={onLayoutCommit}
+          onLayoutRejected={onLayoutRejected}
+          onSelectToolItem={selectCanvasToolItem}
+          onSelectWidget={selectRuntimeWidget}
+          onToolItemLayoutCommit={updateCanvasToolLayouts}
+        />
+        <DashboardCanvasToolbar
+          activeTool={activeCanvasTool}
+          onAddText={() => addCanvasToolItem("text_box")}
+          onAddVisualization={() => addCanvasToolItem("assistant_visualization")}
+          onSelectTool={setActiveCanvasTool}
+        />
+      </div>
     )
   ) : runtimeLoading ? (
     <div className="asklake-dashboard-empty-canvas">
