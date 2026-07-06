@@ -967,6 +967,8 @@
 }
 
 .asklake-widget-type-field {
+  position: relative;
+  z-index: 40;
   display: grid;
   gap: 8px;
 }
@@ -980,15 +982,16 @@
 
 .asklake-widget-type-grid {
   display: grid;
-  grid-template-columns: repeat(5, 36px);
-  gap: 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .asklake-widget-type-button {
   position: relative;
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  width: 100%;
+  min-width: 0;
+  height: 42px;
   align-items: center;
   justify-content: center;
   border: 1px solid #d7dfec;
@@ -1012,12 +1015,11 @@
 
 .asklake-widget-type-button::after {
   position: absolute;
-  z-index: 20;
-  bottom: calc(100% + 8px);
-  left: 50%;
+  z-index: 999;
+  bottom: calc(100% + 10px);
+  left: 0;
   width: max-content;
-  max-width: 220px;
-  transform: translateX(-50%);
+  max-width: min(260px, calc(100vw - 32px));
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   background: #0f172a;
@@ -1031,6 +1033,12 @@
   pointer-events: none;
   text-align: center;
   white-space: normal;
+}
+
+.asklake-widget-type-button:nth-child(5n + 4)::after,
+.asklake-widget-type-button:nth-child(5n)::after {
+  right: 0;
+  left: auto;
 }
 
 .asklake-widget-type-button:hover::after,
