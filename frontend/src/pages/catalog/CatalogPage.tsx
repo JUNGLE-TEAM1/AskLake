@@ -4,9 +4,7 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdat
 import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  BarChart3,
   BookOpen,
-  Bot,
   Calendar,
   Check,
   CircleUser,
@@ -217,14 +215,12 @@ function compareCatalogDatasetsBySort(
 export function CatalogPage({
   datasets,
   onAction,
-  onCreateDashboard,
   onDatasetOpen,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCreateDashboard: (dataset: CatalogDataset) => void;
   onDatasetOpen: (dataset: CatalogDataset) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
@@ -365,10 +361,6 @@ export function CatalogPage({
   const selectPreviewDataset = (dataset: CatalogDataset) => {
     setPreviewDataset(dataset);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
-  };
-
-  const requestRagFromCatalog = (dataset: CatalogDataset) => {
-    onAction("catalog.rag.use_requested", `/api/rag/datasets/${dataset.id}`, dataset.id);
   };
 
   return (
@@ -599,17 +591,9 @@ export function CatalogPage({
             <span>›</span>
           </article>
 
-          <div className="catalog-preview-actions" aria-label={`${previewDataset.name} 활용 액션`}>
-            <button className="primary-button" type="button" onClick={() => onOpenSql(previewDataset)}>
-              <ExternalLink size={16} /> SQL 분석에서 열기
-            </button>
-            <button type="button" onClick={() => onCreateDashboard(previewDataset)}>
-              <BarChart3 size={16} /> 대시보드 만들기
-            </button>
-            <button type="button" onClick={() => requestRagFromCatalog(previewDataset)}>
-              <Bot size={16} /> RAG 활용
-            </button>
-          </div>
+          <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
+            <ExternalLink size={16} /> SQL 분석에서 열기
+          </button>
           <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
           </aside>
         ) : (
@@ -670,14 +654,12 @@ export function CatalogDetailPage({
   dataset,
   onAction,
   onBack,
-  onCreateDashboard,
   onLineage,
   onOpenSql,
 }: {
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
-  onCreateDashboard: () => void;
   onLineage: () => void;
   onOpenSql: () => void;
 }) {
@@ -704,8 +686,6 @@ export function CatalogDetailPage({
           </div>
           <div className="job-detail-actions">
             <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
-            <button className="job-action-button primary soft" type="button" onClick={onCreateDashboard}><BarChart3 size={14} /> 대시보드 만들기</button>
-            <button className="job-action-button" type="button" onClick={() => onAction("catalog.rag.use_requested", `/api/rag/datasets/${dataset.id}`, dataset.id)}><Bot size={14} /> RAG 활용</button>
             <button className="job-action-button" type="button" onClick={openLineage}>Lineage 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
