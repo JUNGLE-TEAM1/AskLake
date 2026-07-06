@@ -177,8 +177,10 @@ function normalizeSqlIdentifier(identifier: string) {
 
 type SqlAstNode = {
   as?: string | null;
+  ast?: SqlAstNode | SqlAstNode[];
   columns?: unknown;
   db?: string | null;
+  expr?: unknown;
   from?: SqlAstNode[] | null;
   limit?: { value?: Array<{ type?: string; value?: unknown }> } | null;
   name?: { value?: string } | string;
@@ -186,6 +188,7 @@ type SqlAstNode = {
   table?: string | null;
   type?: string;
   with?: SqlAstNode[] | null;
+  [key: string]: unknown;
 };
 
 function parseSqlQuery(query: string): { ast: SqlAstNode | SqlAstNode[]; ok: true } | { message: string; ok: false } {
@@ -231,40 +234,159 @@ function findLimitIssue(statement: SqlAstNode) {
 
 function extractCteNames(statement: SqlAstNode) {
   const cteNames = new Set<string>();
-  statement.with?.forEach((cte) => {
-    const cteName = typeof cte.name === "string" ? cte.name : cte.name?.value;
-    if (cteName) cteNames.add(normalizeSqlIdentifier(cteName));
-  });
+  const visitedExpressions = new WeakSet<object>();
+  const visitedStatements = new WeakSet<object>();
+
+  const collectFromStatement = (node: unknown) => {
+    if (!isSqlAstRecord(node) || visitedStatements.has(node)) return;
+    visitedStatements.add(node);
+
+    node.with?.forEach((cte) => {
+      const cteName = typeof cte.name === "string" ? cte.name : cte.name?.value;
+      if (cteName) cteNames.add(normalizeSqlIdentifier(cteName));
+      collectNestedSelects(cte.stmt);
+    });
+    collectNestedSelects(node.from);
+    collectNestedSelects(node.columns);
+    collectNestedSelects(node.where);
+    collectNestedSelects(node.groupby);
+    collectNestedSelects(node.having);
+    collectNestedSelects(node.orderby);
+  };
+
+  const collectNestedSelects = (value: unknown) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectNestedSelects(item));
+      return;
+    }
+    if (!isSqlAstRecord(value) || visitedExpressions.has(value)) return;
+    visitedExpressions.add(value);
+
+    if (isSelectStatement(value)) collectFromStatement(value);
+    if (value.ast) collectNestedSelects(value.ast);
+    if (value.stmt) collectNestedSelects(value.stmt);
+
+    Object.entries(value).forEach(([key, child]) => {
+      if (["as", "ast", "column", "db", "stmt", "table"].includes(key)) return;
+      collectNestedSelects(child);
+    });
+  };
+
+  collectFromStatement(statement);
   return cteNames;
 }
 
 function extractReferencedTableNames(statement: SqlAstNode) {
   const tableNames = new Set<string>();
-  const collectFromStatement = (node: SqlAstNode) => {
+  const visitedExpressions = new WeakSet<object>();
+  const visitedStatements = new WeakSet<object>();
+
+  const collectFromStatement = (node: unknown) => {
+    if (!isSqlAstRecord(node) || visitedStatements.has(node)) return;
+    visitedStatements.add(node);
+
     node.from?.forEach((fromItem) => {
-      if (fromItem.table) {
-        const qualifiedName = fromItem.db ? `${fromItem.db}.${fromItem.table}` : fromItem.table;
-        tableNames.add(normalizeSqlIdentifier(qualifiedName));
-      }
+      collectFromItem(fromItem);
     });
     node.with?.forEach((cte) => {
-      if (cte.stmt) collectFromStatement(cte.stmt);
+      collectNestedSelects(cte);
+    });
+    collectNestedSelects(node.columns);
+    collectNestedSelects(node.where);
+    collectNestedSelects(node.groupby);
+    collectNestedSelects(node.having);
+    collectNestedSelects(node.orderby);
+    collectNestedSelects(node.window);
+  };
+
+  const collectFromItem = (fromItem: unknown) => {
+    if (!isSqlAstRecord(fromItem)) return;
+    if (fromItem.table) {
+      const qualifiedName = fromItem.db ? `${fromItem.db}.${fromItem.table}` : fromItem.table;
+      tableNames.add(normalizeSqlIdentifier(qualifiedName));
+    }
+    collectNestedSelects(fromItem.expr);
+    collectNestedSelects(fromItem.on);
+    collectNestedSelects(fromItem.using);
+  };
+
+  const collectNestedSelects = (value: unknown) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectNestedSelects(item));
+      return;
+    }
+    if (!isSqlAstRecord(value) || visitedExpressions.has(value)) return;
+    visitedExpressions.add(value);
+
+    if (isSelectStatement(value)) {
+      collectFromStatement(value);
+    }
+    if (value.ast) collectNestedSelects(value.ast);
+    if (value.stmt) collectNestedSelects(value.stmt);
+
+    Object.entries(value).forEach(([key, child]) => {
+      if (["as", "ast", "column", "db", "stmt", "table"].includes(key)) return;
+      if (key === "from" && Array.isArray(child)) {
+        child.forEach((fromItem) => collectFromItem(fromItem));
+        return;
+      }
+      collectNestedSelects(child);
     });
   };
+
   collectFromStatement(statement);
   return Array.from(tableNames);
 }
 
+function isSqlAstRecord(value: unknown): value is SqlAstNode {
+  return typeof value === "object" && value !== null;
+}
+
 function extractTableAliases(statement: SqlAstNode) {
   const aliases = new Set<string>();
-  const collectFromStatement = (node: SqlAstNode) => {
+  const visitedExpressions = new WeakSet<object>();
+  const visitedStatements = new WeakSet<object>();
+
+  const collectFromStatement = (node: unknown) => {
+    if (!isSqlAstRecord(node) || visitedStatements.has(node)) return;
+    visitedStatements.add(node);
+
     node.from?.forEach((fromItem) => {
       if (fromItem.as) aliases.add(fromItem.as);
+      collectNestedSelects(fromItem.expr);
+      collectNestedSelects(fromItem.on);
     });
     node.with?.forEach((cte) => {
       if (cte.stmt) collectFromStatement(cte.stmt);
     });
+    collectNestedSelects(node.columns);
+    collectNestedSelects(node.where);
+    collectNestedSelects(node.groupby);
+    collectNestedSelects(node.having);
+    collectNestedSelects(node.orderby);
   };
+
+  const collectNestedSelects = (value: unknown) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectNestedSelects(item));
+      return;
+    }
+    if (!isSqlAstRecord(value) || visitedExpressions.has(value)) return;
+    visitedExpressions.add(value);
+
+    if (isSelectStatement(value)) collectFromStatement(value);
+    if (value.ast) collectNestedSelects(value.ast);
+    if (value.stmt) collectNestedSelects(value.stmt);
+
+    Object.entries(value).forEach(([key, child]) => {
+      if (["as", "ast", "column", "db", "stmt", "table"].includes(key)) return;
+      collectNestedSelects(child);
+    });
+  };
+
   collectFromStatement(statement);
   return Array.from(aliases);
 }
