@@ -34,30 +34,18 @@ export type DashboardWidgetColorPalette = {
 };
 
 export const dashboardWidgetColorChoices = [
-  "#c2185b",
   "#db1b62",
-  "#ef7d73",
   "#f0140a",
   "#ff5722",
-  "#f57c00",
   "#f59e0b",
-  "#fbc02d",
-  "#ecd24b",
   "#cbd532",
-  "#7cb342",
   "#058b4f",
-  "#34c38f",
   "#0ca6a0",
   "#0ea5e9",
   "#3b82f6",
-  "#7585d8",
   "#4357b8",
-  "#b49add",
-  "#9b59b6",
   "#8e24aa",
-  "#8d6e63",
   "#616161",
-  "#aaa093",
 ];
 
 export const defaultWidgetColorConfig = {

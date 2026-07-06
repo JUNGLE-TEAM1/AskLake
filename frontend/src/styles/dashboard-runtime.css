@@ -1121,9 +1121,10 @@
 }
 
 .asklake-widget-color-choice-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
+  display: grid;
+  grid-template-columns: repeat(6, 28px);
+  justify-content: space-between;
+  gap: 10px 8px;
 }
 
 .asklake-widget-color-choice {
