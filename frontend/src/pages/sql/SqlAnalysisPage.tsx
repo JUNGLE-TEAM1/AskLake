@@ -347,15 +347,6 @@ export function SqlAnalysisPage({
     });
   };
 
-  const insertTableName = (targetDataset: CatalogDataset) => {
-    insertSqlText(targetDataset.name);
-    setOpenSchemaDatasetId(targetDataset.id);
-    if (targetDataset.id !== baseDataset.id) {
-      setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
-    }
-    onAction("analysis.context.dataset_inserted", `/api/query/context/datasets/${targetDataset.id}`, targetDataset.id);
-  };
-
   const addSelectedDataset = (targetDataset: CatalogDataset) => {
     if (selectedDatasetIdSet.has(targetDataset.id)) {
       selectSchemaDataset(targetDataset);
@@ -763,7 +754,6 @@ export function SqlAnalysisPage({
         dataset={schemaDataset}
         selectedDatasets={selectedContextDatasets}
         onColumnClick={insertColumnName}
-        onInsert={insertTableName}
         onSelectedDatasetRemove={removeSelectedDataset}
         onSchemaSelect={selectSchemaDataset}
       />

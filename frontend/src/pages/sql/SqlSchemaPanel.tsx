@@ -1,25 +1,20 @@
 import { X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
-import { buildSelectedSchemaRows, countDuplicateSchemaRows, type SelectedSchemaRow } from "./sqlSchema";
 
 export function SchemaDetailsPanel({
   dataset,
   selectedDatasets,
   onColumnClick,
-  onInsert,
   onSelectedDatasetRemove,
   onSchemaSelect,
 }: {
   dataset: CatalogDataset | null;
   selectedDatasets: CatalogDataset[];
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
-  onInsert: (dataset: CatalogDataset) => void;
   onSelectedDatasetRemove: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
   const canRemoveDataset = selectedDatasets.length > 1;
-  const schemaRows = buildSelectedSchemaRows(selectedDatasets);
-  const duplicateColumnCount = countDuplicateSchemaRows(schemaRows);
 
   if (!dataset) {
     return (
@@ -74,65 +69,35 @@ export function SchemaDetailsPanel({
         </div>
       </section>
       <header className="sql-schema-panel-header">
-        <span>SCHEMA</span>
-        <h2>전체 선택 테이블 스키마</h2>
+        <span>선택한 테이블 스키마</span>
+        <h2 title={dataset.name}>{dataset.name}</h2>
         <div className="sql-schema-panel-pills">
-          <span className="sql-table-layer">{selectedDatasets.length} tables</span>
-          {duplicateColumnCount > 0 && <span className="sql-table-rag-pill">{duplicateColumnCount} duplicates</span>}
+          <span className="sql-table-layer">{dataset.layer}</span>
+          <span className="sql-table-layer">{dataset.schema.length} columns</span>
+          {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </div>
       </header>
-      <dl className="sql-schema-panel-meta">
-        <div>
-          <dt>Active</dt>
-          <dd title={dataset.name}>{dataset.name}</dd>
-        </div>
-        <div>
-          <dt>Tables</dt>
-          <dd>{selectedDatasets.length}</dd>
-        </div>
-        <div>
-          <dt>Columns</dt>
-          <dd>{schemaRows.length}</dd>
-        </div>
-      </dl>
-      <div className="sql-schema-panel-actions">
-        <button type="button" onClick={() => onInsert(dataset)}>활성 테이블 SQL에 삽입</button>
-        <button
-          disabled={!canRemoveDataset}
-          onClick={() => onSelectedDatasetRemove(dataset)}
-          title={canRemoveDataset ? "선택 테이블에서 제거" : "최소 1개 테이블은 필요합니다"}
-          type="button"
-        >
-          선택 해제
-        </button>
-      </div>
-      <SelectedSchemaColumnList rows={schemaRows} onColumnClick={onColumnClick} />
+      <SelectedSchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
     </aside>
   );
 }
 
 function SelectedSchemaColumnList({
-  rows,
+  dataset,
   onColumnClick,
 }: {
-  rows: SelectedSchemaRow[];
+  dataset: CatalogDataset;
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
 }) {
   return (
     <div className="sql-card-schema">
-      {rows.map((row) => (
-        <button key={row.columnKey} type="button" onClick={() => onColumnClick(row.primaryDataset, row.name)}>
-          <span className="sql-card-schema-name" title={`${row.name} · ${row.datasetNames.join(", ")}`}>
-            <strong>{row.name}</strong>
-            <small>{row.datasetNames.join(", ")}</small>
+      {dataset.schema.map(([name, type], index) => (
+        <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
+          <span className="sql-card-schema-name" title={name}>
+            <strong>{name}</strong>
           </span>
           <span className="sql-card-schema-type-group">
-            <em title={row.types.join(", ")}>{row.displayType}</em>
-            {row.occurrenceCount > 1 && (
-              <b className="sql-schema-duplicate-count" title={`${row.occurrenceCount}개 선택 테이블에 존재`}>
-                {row.occurrenceCount}
-              </b>
-            )}
+            <em title={type}>{type}</em>
           </span>
         </button>
       ))}
