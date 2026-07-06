@@ -681,7 +681,7 @@
 
 .sql-card-schema button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(78px, max-content);
   min-height: 28px;
   align-items: center;
   gap: 8px;
@@ -707,8 +707,9 @@
 }
 
 .sql-card-schema em {
-  max-width: 46%;
-  min-width: 0;
+  justify-self: end;
+  max-width: min(128px, 44vw);
+  min-width: 58px;
   overflow: hidden;
   border-radius: 999px;
   background: #f1f5f9;
@@ -717,6 +718,7 @@
   font-style: normal;
   font-weight: 800;
   padding: 3px 7px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
