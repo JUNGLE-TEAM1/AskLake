@@ -57,7 +57,11 @@ class CatalogDatasetResponse(CamelModel):
     schema: list[tuple[str, str]]
     size: str
     source: str
+    source_run_id: str | None = None
     status: DatasetStatus
+    storage_format: str | None = None
+    storage_location: str | None = None
+    storage_size_bytes: int | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
 

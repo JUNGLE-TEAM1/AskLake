@@ -19,14 +19,20 @@ from app.schemas.catalog import (
 )
 from app.schemas.common import CursorPageMeta, ErrorCode
 from app.schemas.sql import QueryRunResponse
+from app.services.lake_storage_service import (
+    LocalLakeStorageService,
+    MaterializedDatasetResult,
+)
 
 
 class CatalogService:
     def __init__(
         self,
+        lake_storage: LocalLakeStorageService,
         repository: CatalogRepository,
         sql_repository: SqlRepository,
     ) -> None:
+        self.lake_storage = lake_storage
         self.repository = repository
         self.sql_repository = sql_repository
 
@@ -71,12 +77,23 @@ class CatalogService:
             *reference_datasets,
             request_source_dataset,
         ])
+        dataset_name = build_derived_dataset_name(request, result_source_dataset)
+        dataset_id = build_unique_derived_dataset_id(dataset_name, self.repository)
+        materialized_result = self.lake_storage.materialize_sql_result(
+            columns=sql_result.columns,
+            dataset_id=dataset_id,
+            layer=request.dataset.layer,
+            rows=build_materialized_sql_rows(sql_result),
+            source_run_id=request.source_run_id,
+        )
         dataset_payload = build_derived_dataset_payload(
             request,
+            dataset_id,
+            dataset_name,
+            materialized_result,
             result_source_dataset,
             sql_result,
             schema_source_datasets,
-            self.repository,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
         lineage_graph = build_derived_dataset_lineage_graph(
@@ -101,6 +118,7 @@ class CatalogService:
                 {"sourceRunId": run_id},
             )
         return QueryRunResponse.model_validate(payload)
+
 
 def validate_derived_dataset_request(
     request: CreateDerivedDatasetRequest,
@@ -163,17 +181,17 @@ def validate_derived_dataset_request(
 
 def build_derived_dataset_payload(
     request: CreateDerivedDatasetRequest,
+    dataset_id: str,
+    dataset_name: str,
+    materialized_result: MaterializedDatasetResult,
     result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
-    repository: CatalogRepository,
 ) -> dict[str, object]:
-    dataset_name = request.dataset.name.strip() or f"{result_source_dataset.name}_analysis"
     dataset_description = (
         request.dataset.description.strip()
-        or f"{result_source_dataset.name} SQL Preview 결과로 생성한 분석 데이터셋"
+        or f"{result_source_dataset.name} SQL 결과로 생성한 분석 데이터셋"
     )
-    dataset_id = build_unique_derived_dataset_id(dataset_name, repository)
     upstream_reference_ids = [
         reference_dataset_id
         for reference_dataset_id in unique_values(request.reference_dataset_ids)
@@ -190,17 +208,21 @@ def build_derived_dataset_payload(
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
         "owner": result_source_dataset.owner,
-        "quality": "Preview verified",
+        "quality": "SQL materialized",
         "rag": request.dataset.rag,
-        "rows": f"{sql_result.row_count:,} preview rows",
-        "sampleRows": sql_result.rows,
+        "rows": f"{materialized_result.row_count:,} rows",
+        "sampleRows": materialized_result.sample_rows,
         "schema": [
             [column_name, infer_column_type(schema_source_datasets, column_name)]
             for column_name in sql_result.columns
         ],
-        "size": "Preview result",
-        "source": f"SQL Preview · {sql_result.run_id}",
+        "size": format_storage_size(materialized_result.storage_size_bytes),
+        "source": f"SQL Materialize · {sql_result.run_id}",
+        "sourceRunId": request.source_run_id,
         "status": "available",
+        "storageFormat": materialized_result.storage_format,
+        "storageLocation": materialized_result.storage_location,
+        "storageSizeBytes": materialized_result.storage_size_bytes,
         "tags": normalize_derived_dataset_tags(request.dataset.tags),
         "upstream": [
             result_source_dataset.name,
@@ -208,6 +230,26 @@ def build_derived_dataset_payload(
             request.source_run_id,
         ],
     }
+
+
+def build_derived_dataset_name(
+    request: CreateDerivedDatasetRequest,
+    result_source_dataset: CatalogDatasetResponse,
+) -> str:
+    return request.dataset.name.strip() or f"{result_source_dataset.name}_analysis"
+
+
+def build_materialized_sql_rows(
+    sql_result: QueryRunResponse,
+) -> list[list[str]]:
+    column_count = len(sql_result.columns)
+    return [
+        [
+            str(row[column_index]) if column_index < len(row) else ""
+            for column_index in range(column_count)
+        ]
+        for row in sql_result.rows
+    ]
 
 
 def build_unique_derived_dataset_id(
@@ -357,6 +399,18 @@ def unique_datasets_by_id(
         unique_datasets.append(dataset)
         seen_dataset_ids.add(dataset.id)
     return unique_datasets
+
+
+def format_storage_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    units = ["KB", "MB", "GB", "TB"]
+    size = float(size_bytes)
+    for unit in units:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+    return f"{size:.1f}PB"
 
 
 def current_utc_timestamp() -> str:

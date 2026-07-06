@@ -644,7 +644,7 @@ export function SqlAnalysisPage({
           <section className={resultDraft ? "sql-materialize-card" : "sql-materialize-card disabled"}>
             <div>
               <span>LAKE DATASET</span>
-              <h3>Preview 결과 저장</h3>
+              <h3>SQL 결과 Lake Dataset 생성</h3>
             </div>
             <div className="sql-materialize-form">
               <label>
@@ -721,7 +721,7 @@ export function SqlAnalysisPage({
               {derivedDatasetDraft ? (
                 <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
               ) : resultDraft ? (
-                <span>{resultDraft.rowCount} preview rows · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
+                <span>Preview 확인 완료 · 저장 시 로컬 Lake에 생성 · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
               ) : (
                 <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
               )}
@@ -764,7 +764,7 @@ function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
 }
 
 function buildDefaultDerivedDatasetDescription(dataset: CatalogDataset) {
-  return `${dataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  return `${dataset.name} SQL 결과로 생성한 분석 데이터셋`;
 }
 
 function buildDefaultDerivedDatasetTags(dataset: CatalogDataset) {
