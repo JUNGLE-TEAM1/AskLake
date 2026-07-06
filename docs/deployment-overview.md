@@ -114,6 +114,8 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 
 도메인과 서버는 매번 새로 만들지 않는다.
 한 번 고정한 뒤, 이후 배포는 코드만 갱신한다.
+EC2 HTTPS 배포에서는 `APP_DOMAIN=도메인`, `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
+frontend build-time API origin은 `VITE_API_BASE_URL=https://도메인`처럼 `/api`를 빼고 넣는다.
 
 ## 이후 반복 배포 흐름
 
@@ -134,7 +136,7 @@ dev 브랜치 업데이트
 
 ## 배포 파일
 
-추후 구현 대상 파일은 다음과 같다.
+Phase 3에서 추가된 prod-like compose 기준 파일과 이후 자동화 대상 파일은 다음과 같다.
 
 ```text
 deploy/docker-compose.prod.yml
@@ -147,6 +149,8 @@ scripts/deploy.sh
 scripts/seed-demo-data.sh
 .github/workflows/deploy-dev.yml
 ```
+
+`deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed script와 GitHub Actions workflow는 후속 phase에서 추가한다.
 
 이 문서들은 실제 secret 값을 포함하지 않는다.
 실제 값은 GitHub Secrets와 서버 `.env`에서 관리한다.

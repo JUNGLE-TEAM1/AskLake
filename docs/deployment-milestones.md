@@ -435,6 +435,8 @@ backend/src/sparkRunner.mjs
 - frontend build에서 `VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
 - local validation은 `deploy/.env.example`을 env-file로 사용한다.
 - EC2에서는 `deploy/.env.example`을 `deploy/.env`로 복사한 뒤 실제 domain/password 값으로 바꾼다.
+- EC2 HTTPS 배포에서는 `APP_DOMAIN`에 `https://`를 붙이지 않은 domain만 넣고, `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
+- dev PR 전에는 최신 `origin/dev`를 fetch한 뒤 compose config와 문서 drift를 다시 확인한다.
 
 구현 결과:
 
@@ -531,6 +533,7 @@ Definition of Done:
 ## Phase 5. HTTPS / Caddy
 
 목표: HTTPS를 Caddy reverse proxy로 처리한다.
+Phase 3에서 기본 Caddyfile은 추가했으며, 이 phase에서는 실제 도메인과 인증서 발급을 검증한다.
 
 대상 파일:
 
@@ -541,10 +544,11 @@ deploy/Caddyfile
 기본 구조:
 
 ```caddyfile
-APP_DOMAIN {
-  encode gzip
+{$APP_DOMAIN} {
+  encode zstd gzip
 
-  handle /api/* {
+  @api path /api/*
+  handle @api {
     reverse_proxy backend:8080
   }
 
@@ -556,9 +560,9 @@ APP_DOMAIN {
 
 체크리스트:
 
-- [ ] `APP_DOMAIN` env 치환 방식 결정.
+- [x] `APP_DOMAIN` env 치환 방식 결정.
 - [ ] `/api/*`가 backend로 proxy되는지 확인.
-- [ ] frontend route fallback이 필요한지 확인.
+- [x] frontend route fallback이 필요한지 확인.
 - [ ] Caddy volume으로 인증서가 유지되는지 확인.
 - [ ] 80/443 방화벽 열림 확인.
 
@@ -732,16 +736,21 @@ Definition of Done:
 
 ## Environment Variables
 
-서버 `.env` 후보:
+서버 `deploy/.env` 필수 후보:
 
 ```text
-APP_DOMAIN=https://도메인
-DATABASE_URL=postgresql+psycopg://...
-SOURCE_POSTGRES_URL=postgresql://...
-MONGO_URL=mongodb://...
+APP_DOMAIN=도메인
+HTTP_PORT=80
+HTTPS_PORT=443
 VITE_USE_MOCK_API=false
-VITE_API_BASE_URL=https://도메인/api
-CORS_ORIGINS=https://도메인
+VITE_API_BASE_URL=https://도메인
+BACKEND_CORS_ORIGINS=https://도메인
+POSTGRES_DB=asklake_metadata
+POSTGRES_USER=asklake
+POSTGRES_PASSWORD=strong-password
+MONGO_INITDB_DATABASE=asklake_sources
+MONGO_INITDB_ROOT_USERNAME=asklake
+MONGO_INITDB_ROOT_PASSWORD=strong-password
 ```
 
 주의:
@@ -749,6 +758,15 @@ CORS_ORIGINS=https://도메인
 - 실제 값은 문서에 쓰지 않는다.
 - repo에는 `.env.example`만 둔다.
 - credential은 GitHub Secrets나 서버 `.env`에서만 관리한다.
+- `VITE_API_BASE_URL`에는 `/api`를 붙이지 않는다. frontend 코드가 `/api/...` path를 붙인다.
+
+추후 외부 source나 managed DB로 분리할 때 검토할 후보:
+
+```text
+DATABASE_URL=postgresql+psycopg://...
+SOURCE_POSTGRES_URL=postgresql://...
+MONGO_URL=mongodb://...
+```
 
 ## Risks
 
@@ -758,7 +776,7 @@ CORS_ORIGINS=https://도메인
 | DB volume 유실 | demo data 손실 | seed script, volume backup 후보 |
 | seed 누락 | demo flow 실패 | demo 전 seed checklist |
 | secret 누락 | 배포 실패 | `.env.example`, GitHub Secrets checklist |
-| CORS 문제 | frontend API 실패 | `CORS_ORIGINS` 고정 |
+| CORS 문제 | frontend API 실패 | `BACKEND_CORS_ORIGINS` 고정 |
 | HTTPS 발급 실패 | 외부 접속 실패 | DNS/80/443 확인 |
 | empty preview | 데모 설득력 저하 | fixture sample rows 보장 |
 | branch policy 실패 | PR merge 불가 | `dev <- pair1|pair2|pair3` 준수 |

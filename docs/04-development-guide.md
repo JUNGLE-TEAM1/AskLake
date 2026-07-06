@@ -68,6 +68,8 @@ docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml 
 
 `VITE_API_BASE_URL`은 `/api`를 붙이지 않은 origin까지만 넣는다.
 예를 들어 로컬은 `http://localhost:8080`, EC2 HTTPS 배포는 `https://asklake.example.com` 형태를 사용한다.
+EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain을 넣고, Caddy가 인증서를 받을 수 있도록 `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
+배포 PR 전에는 최신 `origin/dev`를 fetch한 뒤 compose config와 관련 문서 예시를 다시 확인한다.
 
 ## 5) 브랜치 전략
 
