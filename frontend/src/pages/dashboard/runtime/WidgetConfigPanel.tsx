@@ -473,9 +473,13 @@ export function WidgetConfigPanel({
     previousEditingWidgetIdRef.current = nextEditingWidgetId;
 
     setFormError(null);
-    setCustomColorOpen(false);
-    if (shouldResetColorIndex) setCustomColorIndex(0);
+    if (shouldResetColorIndex) {
+      setCustomColorOpen(false);
+      setCustomColorIndex(0);
+    }
     if (editingWidget) {
+      if (!shouldResetColorIndex) return;
+
       setType(editingWidget.type);
       setTitle(editingWidget.title ?? "");
       setDescription(configString(editingWidget.config, "description") ?? "");

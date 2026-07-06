@@ -67,6 +67,18 @@ type RuntimeLayoutSnapshot = Array<Pick<LayoutItem, "h" | "i" | "minH" | "minW" 
 
 const maxLayoutHistoryEntries = 40;
 
+const previewDraftWidgetChanged = (
+  current: DashboardRuntimeWidget | null,
+  next: DashboardRuntimeWidget | null,
+) => {
+  if (!current || !next) return current !== next;
+  return current.id !== next.id
+    || current.pageId !== next.pageId
+    || current.title !== next.title
+    || current.type !== next.type
+    || JSON.stringify(current.config) !== JSON.stringify(next.config);
+};
+
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   area_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
@@ -263,17 +275,24 @@ export function DashboardPage({
       : [],
     [draftRuntime?.widgetsByPageId, runtimeSelection.mode, selectedRuntimePageId],
   );
-  const selectedDraftWidget = useMemo(
-    () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
-    [selectedDraftWidgets, selectedWidgetId],
-  );
   const previewDraftWidgets = useMemo(
     () => selectedDraftWidgets.map((widget) => (
       previewDraftWidget?.id === widget.id && previewDraftWidget.pageId === widget.pageId
-        ? previewDraftWidget
+        ? {
+          ...previewDraftWidget,
+          data: widget.data,
+          datasetId: previewDraftWidget.datasetId ?? widget.datasetId,
+          layout: widget.layout,
+          pageId: widget.pageId,
+          queryId: previewDraftWidget.queryId ?? widget.queryId,
+        } as DashboardRuntimeWidget
         : widget
     )),
     [previewDraftWidget, selectedDraftWidgets],
+  );
+  const selectedDraftWidget = useMemo(
+    () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
+    [selectedDraftWidgets, selectedWidgetId],
   );
   const selectedDraftWidgetIds = useMemo(
     () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
@@ -709,7 +728,7 @@ export function DashboardPage({
   };
 
   const previewRuntimeWidget = useCallback((widget: DashboardRuntimeWidget | null) => {
-    setPreviewDraftWidget(widget);
+    setPreviewDraftWidget((current) => (previewDraftWidgetChanged(current, widget) ? widget : current));
   }, []);
 
   const selectRuntimeDataset = (datasetId: string) => {
