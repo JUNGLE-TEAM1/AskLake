@@ -7,7 +7,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/src/server.mjs`: local JSON API server
 - `backend/src/connectors.mjs`: source connector runner
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
-- `backend/src/createPipeline.mjs`: `{ job, dataset }` create mapper
+- `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks

@@ -63,6 +63,7 @@ frontend/src/
 3. Run connection test to fetch a bounded backend sample.
 4. Review and edit inferred schema fields.
 5. Continue through Review and create the pipeline.
-6. The backend returns `{ job, dataset }`; the UI prepends them to ETL and Catalog state.
+6. The backend returns `{ job, catalogTarget }`; the UI prepends the job to ETL state.
+7. Run the job. After Spark succeeds, the command response returns `dataset` and the UI prepends it to Catalog state.
 
 Initial ETL and Catalog lists come from backend hydrate endpoints and start empty.

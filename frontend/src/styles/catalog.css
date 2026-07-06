@@ -494,9 +494,21 @@
   border-radius: 8px;
   background: #fff;
   color: #0f172a;
+  cursor: pointer;
   font-size: 13px;
   font-weight: 800;
+  line-height: 1.25;
   padding: 14px;
+  text-align: left;
+  width: 100%;
+}
+
+.lineage-node:hover,
+.lineage-node:focus-visible,
+.lineage-node.selected {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+  outline: none;
 }
 
 .lineage-node.current {
@@ -507,4 +519,64 @@
 
 .lineage-node.downstream {
   background: #f8fafc;
+}
+
+.catalog-lineage-inspector {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(180px, 1fr) minmax(280px, 2fr) auto;
+  padding: 14px;
+}
+
+.catalog-lineage-inspector div,
+.catalog-lineage-inspector dl {
+  margin: 0;
+}
+
+.catalog-lineage-inspector div {
+  display: grid;
+  gap: 4px;
+}
+
+.catalog-lineage-inspector strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.catalog-lineage-inspector span,
+.catalog-lineage-inspector dt {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.catalog-lineage-inspector dl {
+  display: grid;
+  gap: 6px 14px;
+  grid-template-columns: repeat(3, auto minmax(0, 1fr));
+}
+
+.catalog-lineage-inspector dd {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-lineage-inspector button {
+  background: #fff;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  color: #334155;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 10px 12px;
 }

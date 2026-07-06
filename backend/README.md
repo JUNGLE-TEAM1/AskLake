@@ -19,10 +19,7 @@ uvicorn app.main:app --reload --port 8080
 
 ```bash
 curl http://localhost:8080/api/health
-curl http://localhost:8080/api/etl/jobs
 ```
-
-`POST /api/etl/jobs`로 생성한 job과 dataset row는 Pair1 ETL create response와 `GET /api/etl/jobs` hydrate에서 확인한다.
 
 ## 설계 결정
 

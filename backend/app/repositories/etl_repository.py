@@ -1,13 +1,36 @@
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.models.base import Base
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
 
+_schema_ready_bind_ids: set[int] = set()
+
 
 def ensure_schema(db: Session) -> None:
-    Base.metadata.create_all(bind=db.get_bind())
+    bind = db.get_bind()
+    bind_key = id(bind)
+    if bind_key in _schema_ready_bind_ids:
+        return
+
+    with bind.begin() as connection:
+        Base.metadata.create_all(bind=connection)
+        inspector = inspect(connection)
+        existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+        column_defs = {
+            "compression": "VARCHAR(64)",
+            "dag_steps_by_run_id": "JSON",
+            "partition": "VARCHAR(255)",
+            "permission_roles": "JSON",
+            "storage_path": "VARCHAR(512)",
+            "storage_type": "VARCHAR(64)",
+        }
+        for column_name, column_type in column_defs.items():
+            if column_name not in existing_columns:
+                connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+
+    _schema_ready_bind_ids.add(bind_key)
 
 
 def list_jobs(db: Session) -> list[JobRowData]:
@@ -26,6 +49,16 @@ def get_job_schema(db: Session, job_id: str) -> JobRowData | None:
     if job is None:
         return None
     return job_to_schema(db, job)
+
+
+def get_job_by_dataset_id(db: Session, dataset_id: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    return db.scalar(select(ETLJobModel).where(ETLJobModel.dataset_id == dataset_id))
+
+
+def get_job_by_target(db: Session, target: str) -> ETLJobModel | None:
+    ensure_schema(db)
+    return db.scalar(select(ETLJobModel).where(ETLJobModel.target == target))
 
 
 def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
@@ -59,6 +92,53 @@ def create_job_and_dataset(db: Session, job: ETLJobModel, dataset: CatalogDatase
     db.refresh(job)
     db.refresh(dataset)
     return job_to_schema(db, job), dataset_to_schema(dataset)
+
+
+def save_dataset(db: Session, dataset: CatalogDatasetModel) -> CatalogDataset:
+    ensure_schema(db)
+    dataset = db.merge(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return dataset_to_schema(dataset)
+
+
+def save_command_result(
+    db: Session,
+    job: ETLJobModel,
+    run: ETLRunModel | None = None,
+    dataset: CatalogDatasetModel | None = None,
+) -> tuple[JobRowData, JobRunSummary | None, CatalogDataset | None]:
+    ensure_schema(db)
+    merged_dataset = db.merge(dataset) if dataset is not None else None
+    if run is not None:
+        db.add(run)
+    db.add(job)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(job)
+    if run is not None:
+        db.refresh(run)
+    if merged_dataset is not None:
+        db.refresh(merged_dataset)
+
+    return (
+        job_to_schema(db, job),
+        run_to_schema(run) if run is not None else None,
+        dataset_to_schema(merged_dataset) if merged_dataset is not None else None,
+    )
+
+
+def create_job(db: Session, job: ETLJobModel) -> JobRowData:
+    ensure_schema(db)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job_to_schema(db, job)
 
 
 def save_job(db: Session, job: ETLJobModel) -> JobRowData:
@@ -100,6 +180,11 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        permission_roles=job.permission_roles,
+        storage_type=job.storage_type,
+        partition=job.partition,
+        compression=job.compression,
+        storage_path=job.storage_path,
         target_format=job.target_format,
         target_layer=job.target_layer,
         target_path=job.target_path,
@@ -116,6 +201,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         stats=job.stats,
         run_history=list_runs_for_job(db, job.id),
         dag_steps=job.dag_steps,
+        dag_steps_by_run_id=job.dag_steps_by_run_id,
     )
 
 

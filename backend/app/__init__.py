@@ -1,1 +1,1 @@
-"""Service modules own business rules."""
+"""AskLake FastAPI backend package."""

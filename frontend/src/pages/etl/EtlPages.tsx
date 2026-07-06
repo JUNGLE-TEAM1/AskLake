@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
+  ArrowRight,
   BarChart3,
   BookOpen,
   Bot,
@@ -16,6 +17,7 @@ import {
   FileText,
   HardDrive,
   Info,
+  GitBranch,
   LayoutGrid,
   Maximize2,
   Minus,
@@ -54,7 +56,8 @@ type RepeatScheduleDraft = {
 };
 
 export function SchedulePage({
-  draft,
+  draftRetryPolicy,
+  draftScheduleLabel,
   mode,
   onDraftChange,
   onModeChange,
@@ -62,7 +65,8 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
-  draft: DraftPipeline;
+  draftRetryPolicy: RetryPolicyDraft;
+  draftScheduleLabel: string;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -70,32 +74,19 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const initialRepeat = parseRepeatScheduleLabel(draft.schedule.label);
+  const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
   const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(initialRepeat.frequency);
   const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
-  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draft.schedule.label));
-  const startDate = normalizeScheduleDate(draft.schedule.startDate, DEFAULT_SCHEDULE_START_DATE);
-  const endDate = normalizeOptionalScheduleDate(draft.schedule.endDate);
-  const timezone = normalizeTimezone(draft.schedule.timezone);
+  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
-  };
-  const updateScheduleDraft = (nextLabel: string, patch: DraftPipelinePatch = {}) => {
-    onDraftChange({
-      ...patch,
-      scheduleLabel: nextLabel,
-      scheduleSummary: buildScheduleSummary(nextLabel, mode, startDate, endDate, timezone),
-      startDate,
-      endDate,
-      timezone,
-    });
   };
   const applyScheduleDraft = () => {
     const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
@@ -105,17 +96,10 @@ export function SchedulePage({
     setRepeatMinute(normalizedRepeat.minute);
     setCustomCron(normalizedRepeat.cron);
     setOnceDateTime(normalizedOnceDateTime);
-    updateScheduleDraft(formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime));
+    onDraftChange({ scheduleLabel: formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime) });
   };
   const selectMode = (nextMode: ScheduleFlowId) => {
-    const nextLabel = formatScheduleLabel(nextMode, repeatDraft, onceDateTime);
-    onDraftChange({
-      scheduleLabel: nextLabel,
-      scheduleSummary: buildScheduleSummary(nextLabel, nextMode, startDate, endDate, timezone),
-      startDate,
-      endDate,
-      timezone,
-    });
+    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDraft, onceDateTime) });
     onModeChange(nextMode);
   };
   const goNext = () => {
@@ -129,7 +113,7 @@ export function SchedulePage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} summaryRows={mode === "repeat" ? buildScheduleSummaryRows(scheduleLabel, startDate, endDate, timezone) : undefined} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
         <section className="panel">
@@ -143,50 +127,39 @@ export function SchedulePage({
             <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings customCron={customCron} endDate={endDate} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draft.schedule.retryPolicy} selectedDay={repeatDay} startDate={startDate} time={repeatTime} timezone={timezone} onCronChange={(cron) => {
+        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
           const sanitizedCron = sanitizeCronInput(cron);
           setCustomCron(sanitizedCron);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
         }} onCronCommit={() => {
           const normalizedCron = normalizeCronExpression(customCron);
           setCustomCron(normalizedCron);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
         }} onDayChange={(day) => {
           setRepeatDay(day);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
         }} onFrequencyChange={(frequency) => {
           setRepeatFrequency(frequency);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
         }} onMinuteChange={(minute) => {
           setRepeatMinute(minute);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
         }} onTimeCommit={() => {
           const normalizedTime = normalizeTimeValue(repeatTime);
           setRepeatTime(normalizedTime);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime));
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime) });
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime));
-        }} onEndDateChange={(nextEndDate) => onDraftChange({
-          endDate: nextEndDate,
-          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, normalizeOptionalScheduleDate(nextEndDate), timezone),
-        })} onRetryPolicyChange={updateRetryPolicy} onStartDateChange={(nextStartDate) => onDraftChange({
-          startDate: nextStartDate,
-          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, normalizeScheduleDate(nextStartDate, DEFAULT_SCHEDULE_START_DATE), endDate, timezone),
-        })} onTimezoneChange={(nextTimezone) => onDraftChange({
-          timezone: nextTimezone,
-          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, endDate, normalizeTimezone(nextTimezone)),
-        })} />}
-        {mode === "manual" && <ManualSettings retryPolicy={draft.schedule.retryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draft.schedule.retryPolicy} onDateTimeChange={(dateTime) => {
+          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
+        }} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
-          const nextLabel = formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime);
-          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: nextLabel });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
         }} onDateTimeCommit={() => {
           const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
           setOnceDateTime(normalizedDateTime);
-          const nextLabel = formatScheduleLabel("once", repeatDraft, normalizedDateTime);
-          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: nextLabel });
+          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
         }} onRetryPolicyChange={updateRetryPolicy} />}
     </CreationFlowLayout>
   );
@@ -217,7 +190,7 @@ function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, resp
   return [
     ...responseFields.map(([label, value]) => {
       const currentValue = currentByLabel.get(label);
-      if (isCredentialSourceField(label) && !String(value ?? "").trim() && currentValue) {
+      if (isCredentialSourceField(label) && shouldPreserveCredentialValue(value) && currentValue) {
         return [label, currentValue] as [string, string];
       }
       return [label, value] as [string, string];
@@ -388,6 +361,11 @@ function isCredentialSourceField(label: string) {
   return /(access key|secret key|password|auth token|token|private key)/i.test(label);
 }
 
+function shouldPreserveCredentialValue(value: string) {
+  const normalized = String(value ?? "").trim();
+  return !normalized || /^[*•]+$/.test(normalized) || normalized.toLowerCase() === "redacted";
+}
+
 function publicSourceLog(value: string) {
   return value
     .replace(/^MinIO\/S3 reachable:\s*(\d+)\s*objects?$/i, "MinIO/S3 연결 성공: 오브젝트 $1개")
@@ -444,13 +422,6 @@ const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
 const DEFAULT_ONCE_DATE_TIME = "2026-07-05T10:00";
-const DEFAULT_SCHEDULE_START_DATE = "2026-07-02";
-const DEFAULT_SCHEDULE_TIMEZONE = "(GMT+09:00) Seoul, Tokyo";
-const SCHEDULE_TIMEZONE_OPTIONS = [
-  DEFAULT_SCHEDULE_TIMEZONE,
-  "(GMT+00:00) UTC",
-  "(GMT-08:00) Pacific Time",
-];
 const validRepeatMinutes = ["00", "15", "30", "45"];
 const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
@@ -474,37 +445,6 @@ function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("수동")) return "manual";
   if (label.includes("1회")) return "once";
   return "repeat";
-}
-
-function buildScheduleSummary(label: string, mode: ScheduleFlowId, startDate: string, endDate: string | undefined, timezone: string) {
-  if (mode !== "repeat") return label;
-  const endLabel = endDate ? `종료 ${formatScheduleDate(endDate)}` : "종료일 없음";
-  return `${label} · 시작 ${formatScheduleDate(startDate)} · ${endLabel} · ${timezone}`;
-}
-
-function buildScheduleSummaryRows(label: string, startDate: string, endDate: string | undefined, timezone: string): Array<[string, string]> {
-  return [
-    ["실행 방식", label],
-    ["시작 일시", formatScheduleDate(startDate)],
-    ["시간대", timezone],
-    ["종료 일시", endDate ? formatScheduleDate(endDate) : "종료일 없음"],
-  ];
-}
-
-function normalizeScheduleDate(value: string | undefined, fallback: string) {
-  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
-}
-
-function normalizeOptionalScheduleDate(value: string | undefined) {
-  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
-}
-
-function normalizeTimezone(value: string | undefined) {
-  return value && SCHEDULE_TIMEZONE_OPTIONS.includes(value) ? value : DEFAULT_SCHEDULE_TIMEZONE;
-}
-
-function formatScheduleDate(value: string) {
-  return value.replaceAll("-", ".");
 }
 
 function parseOnceScheduleLabel(label: string) {
@@ -572,15 +512,18 @@ const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT = "Parquet";
-const DEFAULT_STORAGE_TYPE = "S3";
-const DEFAULT_TARGET_PARTITION = "year/month/region";
-const DEFAULT_TARGET_COMPRESSION = "Snappy";
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
+const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
+  BRONZE: "수집 정제",
+  GOLD: "서비스 제공",
+  RAW: "원본 보관",
+  SILVER: "분석 표준",
+};
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -595,13 +538,14 @@ type PermissionDraftSlice = {
   owner?: string;
   permissionSummary?: string;
   permissionTemplate?: string;
+  roles?: Array<{ access: string[]; checked: boolean; name: string }>;
   summary?: string;
   template?: string;
   visibility?: string;
 };
 
 type TargetDraftSlice = {
-  compression?: string;
+  compression?: "Snappy" | "Gzip" | "None";
   datasetName?: string;
   format?: string;
   jobName?: string;
@@ -610,7 +554,7 @@ type TargetDraftSlice = {
   partition?: string;
   rag?: boolean;
   storagePath?: string;
-  storageType?: string;
+  storageType?: "S3" | "Local" | "HDFS";
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
@@ -623,10 +567,6 @@ type DraftPipelineWithSlices = DraftPipeline & {
   permissionSummary?: string;
   rag?: boolean;
   target?: TargetDraftSlice;
-  compression?: string;
-  partition?: string;
-  storagePath?: string;
-  storageType?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
@@ -646,12 +586,12 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
-function buildJobName(targetDataset: string) {
-  return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
+function displayTargetLayer(layer: TargetLayer) {
+  return TARGET_LAYER_LABELS[layer];
 }
 
-function buildStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}/${targetLayer.toLowerCase()}/`;
+function buildJobName(targetDataset: string) {
+  return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
 }
 
 function buildPermissionSummary(permissionTemplate: string, visibility: string, approvalStatus: string) {
@@ -692,13 +632,9 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
 
   return {
-    compression: getDisplayText(target?.compression ?? compatDraft.compression, DEFAULT_TARGET_COMPRESSION) as DraftPipeline["target"]["compression"],
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
-    partition: getDisplayText(target?.partition ?? compatDraft.partition, DEFAULT_TARGET_PARTITION),
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
-    storagePath: getDisplayText(target?.storagePath ?? compatDraft.storagePath, buildStoragePath(targetDataset, normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer))),
-    storageType: getDisplayText(target?.storageType ?? compatDraft.storageType, DEFAULT_STORAGE_TYPE) as DraftPipeline["target"]["storageType"],
     targetDataset,
     targetFormat,
     targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
@@ -728,12 +664,12 @@ export function SourceConnectionPage({
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <HardDrive size={18} />, label: "파일 / MinIO(S3)", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <Database size={18} />, label: "PostgreSQL", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <LayoutGrid size={18} />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <FileText size={18} />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <Table2 size={18} />, label: "데이터 레이크", status: "목록 조회" },
-    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <TerminalSquare size={18} />, label: "스트림 / Kafka", status: "메타데이터" },
+    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <SourceBrandIcon kind="s3" />, label: "MinIO/S3", status: "실제 연결" },
+    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
+    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -908,10 +844,9 @@ export function SourceConnectionPage({
     success: { badge: "미리보기 가능", title: "연결 검증 완료" },
     testing: { badge: "테스트 중", title: "연결 테스트 실행 중" },
   };
-  const visibleEditableFields = editableFields.filter(([label]) => !isInternalSourceField(label));
+  const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
   const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
   const displayAssets = sourceRuntime?.assets ?? current.assets;
-  const displayLogs = (sourceRuntime?.logs ?? current.logs).map(publicSourceLog).filter(Boolean);
   const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
   const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
@@ -1025,7 +960,7 @@ export function SourceConnectionPage({
         onSave();
       }} />}
     >
-        <PageTitle title="소스 연결" description="사용할 소스를 고르고 같은 영역에서 연결 정보를 입력한 뒤 실제 연결 테스트를 실행합니다." />
+        <PageTitle title="소스 연결" description="소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다." />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="panel-header">
             <Database size={18} />
@@ -1035,11 +970,9 @@ export function SourceConnectionPage({
           <div className="source-connect-stack">
             <div className="source-picker-strip" role="group" aria-label="소스 선택">
               {Object.entries(connectorMeta).map(([connector, meta]) => (
-                <button className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                <button aria-label={`${meta.label} ${meta.desc} ${meta.status}`} className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} title={`${meta.desc} · ${meta.status}`} type="button" onClick={() => selectSource(connector)}>
                   <span className="hegun-connector-icon">{meta.icon}</span>
                   <strong>{meta.label}</strong>
-                  <span>{meta.desc}</span>
-                  <em>{meta.status}</em>
                 </button>
               ))}
             </div>
@@ -1058,47 +991,33 @@ export function SourceConnectionPage({
                 ))}
               </div>
               {current.info && <InfoBox title="보안 연결" body={current.info} />}
-              <div className="form-actions inline source-connect-actions">
-                {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
-              </div>
+              <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
+                <div className="hegun-status-head">
+                  <div className="hegun-status-copy">
+                    {sourceStatusIcon(connectionStatus)}
+                    <h2>{connectionStatusCopy[connectionStatus].title}</h2>
+                    <span className="panel-note">{publicConnectionMessage}</span>
+                  </div>
+                  <div className="hegun-status-actions">
+                    {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                    {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+                  </div>
+                </div>
+                <div className="hegun-test-strip">
+                  {displayTestItems.map(([label, value], index) => (
+                    <span className={sourceCheckState(value)} key={`${activeSourceType}-${label}-${index}`}>
+                      <i>{sourceCheckIcon(label)}</i>
+                      <strong>{sourceFieldLabel(label)}</strong>
+                      <em>{sourceValueLabel(value)}</em>
+                    </span>
+                  ))}
+                </div>
+              </section>
             </div>
           </div>
         </section>
-        <div className="hegun-source-grid">
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <Check size={18} />
-              <h2>연결 테스트</h2>
-              <span className="panel-note">{displayTestItems.map(([label]) => sourceFieldLabel(label)).join(" · ")}</span>
-            </div>
-            <div className="hegun-test-summary">
-              <div>
-                <strong>{connectionStatusCopy[connectionStatus].title}</strong>
-                <span>{publicConnectionMessage || `${sourceTypeLabel(activeSourceType)}에 ${displayTestItems.length}개 확인 항목이 설정되었습니다.`}</span>
-              </div>
-              <em>{connectionStatusCopy[connectionStatus].badge}</em>
-            </div>
-            <div className="hegun-test-strip">
-              {displayTestItems.map(([label, value], index) => (
-                <span key={`${activeSourceType}-${label}-${index}`}>
-                  <i><Check size={13} /></i>
-                  <strong>{sourceFieldLabel(label)}</strong>
-                  <em>{sourceValueLabel(value)}</em>
-                </span>
-              ))}
-            </div>
-            <div className="hegun-log-panel" aria-label="연결 테스트 로그">
-              <div className="hegun-log-header">
-                <strong>검증 기록</strong>
-                <span>{connectionStatus === "success" ? "완료" : connectionStatus === "testing" ? "진행 중" : connectionStatus === "failed" ? "실패" : "대기"}</span>
-              </div>
-              <div className="hegun-log-lines">
-                {displayLogs.map((log, index) => <span key={`${activeSourceType}-log-${index}`}>{log}</span>)}
-              </div>
-            </div>
-          </section>
+        {displayAssets.length > 0 && (
           <section className="panel hegun-console-panel">
             <div className="panel-header">
               <LayoutGrid size={18} />
@@ -1115,33 +1034,111 @@ export function SourceConnectionPage({
               ))}
             </div>
           </section>
-        </div>
-        <section className="panel hegun-console-panel">
-          <div className="panel-header">
-            <FileText size={18} />
-            <h2>{current.previewTitle}</h2>
-            <span className="panel-note">{publicDisplayPreviewNote}</span>
-          </div>
-          <div className="hegun-preview-actions">
-            {current.actions?.includes("Refresh Preview") && <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>{sourceActionLabel("Refresh Preview")}</button>}
-            {current.actions?.includes("Download CSV") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_downloaded", "/api/etl/sources/preview/download", activeSourceType)}>{sourceActionLabel("Download CSV")}</button>}
-            {current.actions?.includes("Full Screen") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.preview_fullscreen_opened", "/api/etl/sources/preview/fullscreen", activeSourceType)}>{sourceActionLabel("Full Screen")}</button>}
-          </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
-              <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
-              <tbody>
-                {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
-                {displayPreviewRows.length === 0 && <tr><td colSpan={Math.max(displayPreviewColumns.length, 1)}>연결 테스트 후 소스 샘플 미리보기가 표시됩니다.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <div className="form-actions inline">
-          <button className="secondary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
-        </div>
+        )}
+        {displayPreviewRows.length > 0 && (
+          <section className="panel hegun-console-panel">
+            <div className="panel-header">
+              <FileText size={18} />
+              <h2>{current.previewTitle}</h2>
+              <span className="panel-note">{publicDisplayPreviewNote}</span>
+            </div>
+            <div className="hegun-table-scroll">
+              <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+                <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+                <tbody>
+                  {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
     </CreationFlowLayout>
   );
+}
+
+function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
+  if (status === "success") return <Check size={18} />;
+  if (status === "testing") return <RefreshCw size={18} />;
+  if (status === "failed") return <Info size={18} />;
+  return <Settings size={18} />;
+}
+
+function isVisibleSourceField(sourceType: string, label: string) {
+  if (isInternalSourceField(label)) return false;
+  if (sourceType === "File / S3") {
+    return !["Storage Provider", "Region", "Use Path Style", "Header"].includes(label);
+  }
+  return true;
+}
+
+function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
+  if (kind === "s3") {
+    return (
+      <svg className="source-brand-icon source-brand-s3" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M7 8.5 16 4l9 4.5v15L16 28l-9-4.5v-15Z" />
+        <path d="M11 10.5 16 8l5 2.5M11 21.5l5 2.5 5-2.5M16 8v16" />
+      </svg>
+    );
+  }
+  if (kind === "postgres") {
+    return (
+      <svg className="source-brand-icon source-brand-postgres" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" />
+        <path d="M10.5 13.4c.8-3.2 3.2-4.9 6.4-4.6 3.5.3 5.5 2.8 5 6.2l-.8 5.3c-.2 1.3-1.4 2.1-2.6 1.6l-2.1-.8-2.3 2.9c-.8 1-2.4.4-2.3-.9l.2-3.6-1.3-.5c-1.1-.4-1.7-1.6-1.4-2.8l1.2-2.8Z" />
+        <path d="M18.6 12.2c.9.4 1.4 1.2 1.4 2.4 0 1.1-.6 2-1.6 2.4" />
+      </svg>
+    );
+  }
+  if (kind === "mongo") {
+    return (
+      <svg className="source-brand-icon source-brand-mongo" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3c5.8 4.5 8.1 9.3 7 14.3-1 4.4-3.6 7.4-7 11.7-3.4-4.3-6-7.3-7-11.7C7.9 12.3 10.2 7.5 16 3Z" />
+        <path d="M16 7v18" />
+      </svg>
+    );
+  }
+  if (kind === "rest") {
+    return (
+      <svg className="source-brand-icon source-brand-rest" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="7" y="5" width="18" height="22" rx="3" />
+        <path d="m14 13-3 3 3 3M18 13l3 3-3 3M17 11l-2 10" />
+      </svg>
+    );
+  }
+  if (kind === "lake") {
+    return (
+      <svg className="source-brand-icon source-brand-lake" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M6 10c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+        <path d="M6 16c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+        <path d="M6 22c2.4-2 5.8-2 8.2 0 1.8 1.5 4.8 1.5 6.6 0 1.5-1.3 3.5-1.8 5.2-1.4" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="source-brand-icon source-brand-kafka" viewBox="0 0 32 32" aria-hidden="true">
+      <circle cx="10" cy="10" r="3.5" />
+      <circle cx="22" cy="10" r="3.5" />
+      <circle cx="16" cy="22" r="3.5" />
+      <path d="M13.4 11.9 18.6 20M18.6 11.9 13.4 20M13.5 10h5" />
+    </svg>
+  );
+}
+
+function sourceCheckIcon(label: string) {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("endpoint") || normalized.includes("broker") || normalized.includes("lake")) return <HardDrive size={14} />;
+  if (normalized.includes("bucket") || normalized.includes("database") || normalized.includes("table") || normalized.includes("collection") || normalized.includes("topic")) return <Database size={14} />;
+  if (normalized.includes("auth") || normalized.includes("access")) return <ShieldCheck size={14} />;
+  if (normalized.includes("sample") || normalized.includes("response") || normalized.includes("message") || normalized.includes("metadata")) return <FileText size={14} />;
+  return <Settings size={14} />;
+}
+
+function sourceCheckState(value: string) {
+  const normalized = value.toLowerCase();
+  if (/(ok|success|reachable|verified|fetched|listed|ready|완료|성공|가능)/.test(normalized)) return "success";
+  if (/(fail|error|denied|실패|오류)/.test(normalized)) return "failed";
+  if (/(pending|required|not tested|대기|필요|미확인)/.test(normalized)) return "idle";
+  return "idle";
 }
 
 const schemaTypeOptions = ["String", "Integer", "Float", "Boolean", "Timestamp", "JSON"];
@@ -1183,7 +1180,7 @@ function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScop
   }
   return [
     { label: "현재 샘플", shortLabel: "현재", value: "current" },
-    { label: "1GB 샘플", shortLabel: "1GB", value: "slice1gb" },
+    { label: "1GB 요청(기본 16MB 제한)", shortLabel: "1GB", value: "slice1gb" },
     { label: "전체", shortLabel: "전체", value: "full" },
   ];
 }
@@ -1205,11 +1202,18 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
 }
 
 function buildSchemaFingerprint(columns: SchemaColumnDraft[]) {
-  return columns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`).join("|");
+  return columns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}:${isSchemaColumnIncluded(column) ? "included" : "excluded"}`).join("|");
 }
 
 function summarizeSchemaColumns(columns: SchemaColumnDraft[], lowConfidenceCount: number, sourceFormat: string) {
-  return `${columns.length}개 출력 컬럼 구성 · ${lowConfidenceCount}개 검토 필요 · ${sourceFormat} 샘플 기준`;
+  const includedCount = columns.filter(isSchemaColumnIncluded).length;
+  const excludedCount = Math.max(0, columns.length - includedCount);
+  const excludedSummary = excludedCount > 0 ? ` · ${excludedCount}개 출력 제외` : "";
+  return `${includedCount}개 출력 컬럼 구성${excludedSummary} · ${lowConfidenceCount}개 검토 필요 · ${sourceFormat} 샘플 기준`;
+}
+
+function isSchemaColumnIncluded(column: SchemaColumnDraft) {
+  return column.included !== false;
 }
 
 function normalizeTargetColumnName(value: string) {
@@ -1278,6 +1282,7 @@ function compactSchemaByPathDepth(columns: SchemaColumnDraft[], sampleRows: stri
     const confidenceValues = group.columns.map(({ column }) => column.confidence ?? 70);
     return {
       confidence: Math.min(...confidenceValues),
+      included: group.columns.some(({ column }) => isSchemaColumnIncluded(column)),
       nullable: group.columns.some(({ column }) => column.nullable),
       sourceName: group.key,
       targetName: normalizeTargetColumnName(group.key),
@@ -1370,6 +1375,62 @@ function valueDistribution(values: string[]) {
     .map(([label, count]) => ({ count, label, percent: max > 0 ? Math.max(8, Math.round((count / max) * 100)) : 0 }));
 }
 
+function compactSchemaPreviewValue(value: string, maxLength = 44) {
+  const normalized = value.trim() || "null";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(8, maxLength - 14))}...${normalized.slice(-8)}`;
+}
+
+function schemaTransformLabel(column: SchemaColumnDraft) {
+  const actions: string[] = [];
+  if (!isSchemaColumnIncluded(column)) actions.push("출력 제외");
+  if (column.sourceName.includes(".")) actions.push("평탄화");
+  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
+  actions.push(`${column.type} 캐스팅`);
+  if (!column.nullable) actions.push("필수");
+  return actions.join(" · ");
+}
+
+function schemaTransformShortLabel(column: SchemaColumnDraft) {
+  const actions: string[] = [];
+  if (!isSchemaColumnIncluded(column)) actions.push("제외");
+  if (column.sourceName.includes(".")) actions.push("평탄화");
+  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
+  if (column.type) actions.push("타입 변환");
+  return actions.length > 0 ? actions.join(" + ") : "그대로";
+}
+
+function schemaChangeStats(columns: SchemaColumnDraft[]) {
+  const included = columns.filter(isSchemaColumnIncluded);
+  return {
+    casted: included.length,
+    excluded: columns.length - included.length,
+    flattened: included.filter((column) => column.sourceName.includes(".")).length,
+    included: included.length,
+    renamed: included.filter((column) => (column.targetName || "") !== normalizeTargetColumnName(column.sourceName)).length,
+  };
+}
+
+function schemaFlowWindow(columns: SchemaColumnDraft[], sampleRows: string[][], selectedIndex: number) {
+  const maxItems = 6;
+  const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(columns.length - 1, 0)));
+  const start = Math.max(0, Math.min(safeSelectedIndex - 3, Math.max(columns.length - maxItems, 0)));
+  return columns.slice(start, start + maxItems).map((column, offset) => {
+    const index = start + offset;
+    return {
+      action: schemaTransformLabel(column),
+      actionShort: schemaTransformShortLabel(column),
+      included: isSchemaColumnIncluded(column),
+      index,
+      nullable: column.nullable ? "Null 허용" : "필수",
+      sample: compactSchemaPreviewValue(sampleRows[0]?.[index] ?? ""),
+      sourceName: column.sourceName,
+      targetName: column.targetName || `column_${index + 1}`,
+      type: column.type,
+    };
+  });
+}
+
 function schemaRoleLabel(role?: string) {
   return schemaRoleOptions.find((option) => option.value === (role ?? ""))?.label ?? role ?? "일반";
 }
@@ -1398,7 +1459,6 @@ export function SchemaInferencePage({
   onSave: () => void;
 }) {
   const [schemaFilter, setSchemaFilter] = useState("");
-  const [schemaPreviewMode, setSchemaPreviewMode] = useState<"flat" | "raw">("flat");
   const [selectedSchemaIndex, setSelectedSchemaIndex] = useState(0);
   const [flattenObjects, setFlattenObjects] = useState(true);
   const [flattenDepth, setFlattenDepth] = useState(2);
@@ -1407,8 +1467,12 @@ export function SchemaInferencePage({
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
+  const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
+  const includedSchemaColumnItems = schemaColumns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => isSchemaColumnIncluded(column));
   const schemaSampleRows = draft.schema.sampleRows;
-  const lowConfidenceCount = schemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
+  const lowConfidenceCount = includedSchemaColumns.filter((column) => (column.confidence ?? 100) < 80).length;
   const averageConfidence = schemaColumns.length
     ? Math.round(schemaColumns.reduce((sum, column) => sum + (column.confidence ?? 70), 0) / schemaColumns.length)
     : 0;
@@ -1424,7 +1488,6 @@ export function SchemaInferencePage({
     : "소스 연결 후 원본 필드와 출력 컬럼 매핑을 확인할 수 있습니다.";
   const previewRow = schemaSampleRows[0] ?? [];
   const sourcePreviewText = buildSourceShapePreview(schemaColumns, previewRow);
-  const outputTableMinWidth = Math.max(880, schemaColumns.length * 148);
   const inferredSummary = hasInferredSchema ? publicSchemaSummary(draft.schema.summary) : "스키마 추론 전에 소스 연결이 필요합니다.";
   const approvedSummary = summarizeSchemaColumns(schemaColumns, lowConfidenceCount, sourceFormat);
   const sampleScopeOptions = schemaSampleScopeOptionsForSource(draft.source.sourceType);
@@ -1435,6 +1498,12 @@ export function SchemaInferencePage({
   const selectedSampleValues = selectedColumn ? sampleValuesForColumn(schemaSampleRows, selectedIndex) : [];
   const selectedNullRatio = selectedColumn ? estimateNullRatio(schemaSampleRows, selectedIndex) : 0;
   const selectedDistribution = selectedColumn ? valueDistribution(selectedSampleValues) : [];
+  const schemaFlowItems = schemaFlowWindow(schemaColumns, schemaSampleRows, selectedIndex);
+  const selectedFlowItem = schemaFlowItems.find((item) => item.index === selectedIndex) ?? schemaFlowItems[0];
+  const schemaStats = schemaChangeStats(schemaColumns);
+  const previewOutputItems = includedSchemaColumnItems.slice(0, 8);
+  const hiddenPreviewColumnCount = Math.max(0, includedSchemaColumnItems.length - previewOutputItems.length);
+  const previewOutputRows = schemaSampleRows.slice(0, 4);
   const visibleSchemaColumns = schemaColumns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => {
@@ -1557,6 +1626,11 @@ export function SchemaInferencePage({
       onNotify("확정할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
       return false;
     }
+    if (includedSchemaColumns.length === 0) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
+      onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
+      return false;
+    }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
     return true;
   };
@@ -1658,6 +1732,63 @@ export function SchemaInferencePage({
           <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
             <Check size={15} /> 스키마 승인
           </button>
+        </div>
+      </section>
+
+      <section className="schema-flow-preview" aria-label="스키마 변환 흐름">
+        <div className="schema-flow-summary">
+          <GitBranch size={16} />
+          <div>
+            <span>{sourceFormat} 변환 흐름</span>
+            <strong>{selectedFlowItem ? `${selectedFlowItem.sourceName} -> ${selectedFlowItem.targetName}` : "소스 연결 후 변환 흐름 표시"}</strong>
+          </div>
+          <em>{selectedFlowItem ? selectedFlowItem.action : hasInferredSchema ? `${schemaColumns.length}개 출력 컬럼 · ${nestedFieldCount}개 중첩 필드` : "스키마 추론 대기"}</em>
+          <div className="schema-flow-stat-grid">
+            <span><strong>{schemaStats.included}</strong> 출력</span>
+            <span><strong>{schemaStats.renamed}</strong> 이름 변경</span>
+            <span><strong>{schemaStats.flattened}</strong> 평탄화</span>
+            <span><strong>{schemaStats.excluded}</strong> 제외</span>
+          </div>
+        </div>
+        <div className="schema-flow-map">
+          {schemaFlowItems.length > 0 && (
+            <div className="schema-flow-column-head">
+              <span>원본 샘플</span>
+              <span>Spark 실행 계약</span>
+              <span>출력 컬럼</span>
+            </div>
+          )}
+          {schemaFlowItems.map((item) => (
+            <button
+              className={[
+                "schema-flow-card",
+                item.index === selectedIndex ? "selected" : "",
+                item.included ? "" : "excluded",
+              ].filter(Boolean).join(" ")}
+              key={`${item.sourceName}-${item.index}`}
+              onClick={() => setSelectedSchemaIndex(item.index)}
+              title={`${item.sourceName} -> ${item.targetName}`}
+              type="button"
+            >
+              <span className="schema-flow-source">
+                <small>원본</small>
+                <strong>{formatSourceFieldPath(item.sourceName)}</strong>
+                <em>{item.sample}</em>
+              </span>
+              <span className="schema-flow-arrow">
+                <ArrowRight size={15} />
+                <small>{item.included ? item.actionShort : "출력 제외"}</small>
+              </span>
+              <span className="schema-flow-target">
+                <small>{item.included ? "출력" : "제외됨"}</small>
+                <strong>{item.targetName}</strong>
+                <em>{item.type} · {item.nullable}</em>
+              </span>
+            </button>
+          ))}
+          {schemaFlowItems.length === 0 && (
+            <div className="schema-flow-empty">소스 연결 테스트 후 원본 필드가 어떤 출력 컬럼으로 바뀌는지 표시됩니다.</div>
+          )}
         </div>
       </section>
 
@@ -1772,11 +1903,11 @@ export function SchemaInferencePage({
                 {visibleSchemaColumns.map(({ column, index }) => {
                   const confidence = column.confidence ?? 70;
                   return (
-                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
+                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""} ${isSchemaColumnIncluded(column) ? "" : "excluded"}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
                       <td>
-                        <input aria-label={`${column.targetName} 포함`} checked type="checkbox" onChange={(event) => {
+                        <input aria-label={`${column.targetName} 포함`} checked={isSchemaColumnIncluded(column)} type="checkbox" onChange={(event) => {
                           event.stopPropagation();
-                          if (!event.currentTarget.checked) deleteSchemaColumn(index);
+                          updateSchemaColumn(index, { included: event.currentTarget.checked });
                         }} onClick={(event) => event.stopPropagation()} />
                       </td>
                       <td>#{index + 1}</td>
@@ -1793,7 +1924,7 @@ export function SchemaInferencePage({
                       <td>{column.nullable ? "허용" : "필수"}</td>
                       <td>{schemaRoleLabel(column.role)}</td>
                       <td>
-                        <button className="schema-table-delete" type="button" title="출력 컬럼에서 제외" onClick={(event) => {
+                        <button className="schema-table-delete" type="button" title="컬럼 삭제" onClick={(event) => {
                           event.stopPropagation();
                           deleteSchemaColumn(index);
                         }}>
@@ -1816,75 +1947,81 @@ export function SchemaInferencePage({
         <aside className="schema-inspector-panel">
           {selectedColumn ? (
             <>
-              <div className="schema-inspector-heading">
-                <div>
-                  <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
-                  <span>필드 ID: {selectedIndex + 1}</span>
-                </div>
-                <em>{selectedColumn.confidence ?? 70}% 확신</em>
-              </div>
-              <label className="schema-setting-field">
-                <span>출력 필드명</span>
-                <input
-                  className="input control-input"
-                  value={selectedColumn.targetName}
-                  onBlur={(event) => {
-                    if (event.currentTarget.value.trim()) return;
-                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
-                  }}
-                  onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
-                />
-              </label>
-              <label className="schema-setting-field">
-                <span>타입 재정의</span>
-                <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
-                  {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                </select>
-              </label>
-              <label className="schema-setting-field">
-                <span>Null 정책</span>
-                <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
-                  <option value="false">필수</option>
-                  <option value="true">허용</option>
-                </select>
-              </label>
-              <label className="schema-setting-field">
-                <span>역할</span>
-                <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
-                  {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
-                </select>
-              </label>
-              <div className="schema-inspector-metrics">
-                <div>
-                  <span>Null 비율</span>
-                  <strong>{selectedNullRatio}%</strong>
-                </div>
-                <div>
-                  <span>샘플 값 수</span>
-                  <strong>{selectedSampleValues.length}</strong>
-                </div>
-              </div>
-              <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
-              <div className="schema-distribution">
-                <span>값 분포</span>
-                {selectedDistribution.map((item) => (
-                  <div key={item.label}>
-                    <strong title={item.label}>{item.label}</strong>
-                    <span><i style={{ width: `${item.percent}%` }} /></span>
-                    <em>{item.count}</em>
+              <div className="schema-inspector-scroll">
+                <div className="schema-inspector-heading">
+                  <div>
+                    <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
+                    <span>필드 ID: {selectedIndex + 1}</span>
                   </div>
-                ))}
-                {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
-              </div>
-              <div className="schema-sample-chips">
-                <span>샘플 값</span>
-                <div>
-                  {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
-                  {selectedSampleValues.length === 0 && <em>값 없음</em>}
+                  <em>{selectedColumn.confidence ?? 70}% 확신</em>
+                </div>
+                <label className="schema-setting-field">
+                  <span>출력 필드명</span>
+                  <input
+                    className="input control-input"
+                    value={selectedColumn.targetName}
+                    onBlur={(event) => {
+                      if (event.currentTarget.value.trim()) return;
+                      updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
+                    }}
+                    onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
+                  />
+                </label>
+                <label className="schema-setting-field">
+                  <span>타입 재정의</span>
+                  <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
+                    {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </label>
+                <label className="schema-setting-field">
+                  <span>Null 정책</span>
+                  <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
+                    <option value="false">필수</option>
+                    <option value="true">허용</option>
+                  </select>
+                </label>
+                <label className="schema-setting-field">
+                  <span>역할</span>
+                  <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
+                    {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
+                  </select>
+                </label>
+                <div className="schema-inspector-metrics">
+                  <div>
+                    <span>Null 비율</span>
+                    <strong>{selectedNullRatio}%</strong>
+                  </div>
+                  <div>
+                    <span>샘플 값 수</span>
+                    <strong>{selectedSampleValues.length}</strong>
+                  </div>
+                </div>
+                <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
+                <div className="schema-distribution">
+                  <span>값 분포</span>
+                  {selectedDistribution.map((item) => (
+                    <div key={item.label}>
+                      <strong title={item.label}>{item.label}</strong>
+                      <span><i style={{ width: `${item.percent}%` }} /></span>
+                      <em>{item.count}</em>
+                    </div>
+                  ))}
+                  {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
+                </div>
+                <div className="schema-sample-chips">
+                  <span>샘플 값</span>
+                  <div>
+                    {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
+                    {selectedSampleValues.length === 0 && <em>값 없음</em>}
+                  </div>
                 </div>
               </div>
-              <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-              <button className="secondary-button schema-wide-button" type="button" onClick={() => deleteSchemaColumn(selectedIndex)}>출력 컬럼에서 제외</button>
+              <div className="schema-inspector-actions">
+                <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
+                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>
+                  {isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}
+                </button>
+              </div>
             </>
           ) : (
             <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>
@@ -1894,31 +2031,42 @@ export function SchemaInferencePage({
 
       <section className="schema-preview-panel">
         <div className="schema-preview-tabs">
-          <button className={schemaPreviewMode === "raw" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("raw")}>원본 샘플</button>
-          <button className={schemaPreviewMode === "flat" ? "active" : ""} type="button" onClick={() => setSchemaPreviewMode("flat")}>평탄화 미리보기</button>
+          <strong>원본 → 출력 미리보기</strong>
           <span>{mappingModeText}</span>
         </div>
-        {schemaPreviewMode === "raw" ? (
-          <pre className="schema-raw-preview">{sourcePreviewText}</pre>
-        ) : (
-          <div className="hegun-table-scroll">
-            <table className="schema-table schema-output-preview-table" style={{ minWidth: outputTableMinWidth }}>
-              <thead>
-                <tr>
-                  {schemaColumns.map((column, index) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {schemaSampleRows.slice(0, 8).map((row, rowIndex) => (
-                  <tr key={`schema-preview-${rowIndex}`}>
-                    {schemaColumns.map((column, columnIndex) => <td key={`${column.sourceName}-${columnIndex}`} title={row[columnIndex] ?? ""}>{row[columnIndex] ?? ""}</td>)}
-                  </tr>
-                ))}
-                {schemaColumns.length === 0 && <tr><td>소스 연결과 스키마 추론이 완료되면 출력 미리보기가 표시됩니다.</td></tr>}
-              </tbody>
-            </table>
+        <div className="schema-preview-comparison-grid">
+          <div className="schema-preview-card raw">
+            <div className="schema-preview-card-title">
+              <FileText size={15} />
+              <span>원본 구조</span>
+            </div>
+            <pre className="schema-raw-preview">{sourcePreviewText}</pre>
           </div>
-        )}
+          <div className="schema-preview-card output">
+            <div className="schema-preview-card-title">
+              <Table2 size={15} />
+              <span>출력 테이블</span>
+              {hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}
+            </div>
+            <div className="hegun-table-scroll">
+              <table className="schema-table schema-output-preview-table" style={{ minWidth: Math.max(680, previewOutputItems.length * 132) }}>
+                <thead>
+                  <tr>
+                    {previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewOutputRows.map((row, rowIndex) => (
+                    <tr key={`schema-preview-${rowIndex}`}>
+                      {previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}
+                    </tr>
+                  ))}
+                  {previewOutputItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="schema-bottom-bar">
@@ -2133,7 +2281,7 @@ function schemaColumnOutputName(column: SchemaColumnDraft) {
 }
 
 function getRuleSourceColumns(columns: SchemaColumnDraft[]) {
-  return columns.map(schemaColumnOutputName).filter(Boolean);
+  return columns.filter(isSchemaColumnIncluded).map(schemaColumnOutputName).filter(Boolean);
 }
 
 function getRuleDatasetId(draft: DraftPipeline) {
@@ -2150,6 +2298,7 @@ function schemaRowsToRuleSampleRows(columns: SchemaColumnDraft[], rows: string[]
   return rows.map((row, rowIndex) => {
     const nextRow: TransformQualitySampleRow = { row_id: String(rowIndex + 1) };
     columns.forEach((column, columnIndex) => {
+      if (!isSchemaColumnIncluded(column)) return;
       const value = row[columnIndex] ?? "";
       const outputName = schemaColumnOutputName(column);
       if (outputName) nextRow[outputName] = value;
@@ -2185,7 +2334,7 @@ function isCountryLikeColumn(column: SchemaColumnDraft) {
 }
 
 function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
-  const columns = draft.schema.columns;
+  const columns = draft.schema.columns.filter(isSchemaColumnIncluded);
   if (columns.length === 0) return FALLBACK_RECIPE_STEPS.slice(0, 1);
   const candidates: RecipeStep[] = [];
   const addStep = (column: SchemaColumnDraft, operation: TransformOperation, output?: string, params?: string, onError: TransformFailurePolicy = "Warn") => {
@@ -2216,7 +2365,7 @@ function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
 }
 
 function buildDefaultQualityRules(draft: DraftPipeline): QualityRule[] {
-  const columns = draft.schema.columns;
+  const columns = draft.schema.columns.filter(isSchemaColumnIncluded);
   if (columns.length === 0) return FALLBACK_QUALITY_RULES.slice(0, 1);
   const rules: QualityRule[] = [];
   const addRule = (
@@ -2245,7 +2394,7 @@ function buildDefaultQualityRules(draft: DraftPipeline): QualityRule[] {
 }
 
 function typeForOutputColumn(name: string, steps: RecipeStep[], schemaColumns: SchemaColumnDraft[], previewRows: TransformQualitySampleRow[]) {
-  const sourceColumn = schemaColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
+  const sourceColumn = schemaColumns.find((column) => isSchemaColumnIncluded(column) && (schemaColumnOutputName(column) === name || column.sourceName === name));
   const producingStep = steps.find((step) => step.output === name);
   if (producingStep) {
     const operation = producingStep.operation.toLowerCase();
@@ -3899,49 +4048,36 @@ function InvalidRowsPanel({
 
 function RepeatSettings({
   customCron,
-  endDate,
   frequency,
   minute,
   onCronChange,
   onCronCommit,
   onDayChange,
-  onEndDateChange,
   onFrequencyChange,
   onMinuteChange,
   onRetryPolicyChange,
-  onStartDateChange,
   onTimeCommit,
   onTimeChange,
-  onTimezoneChange,
   retryPolicy,
   selectedDay,
-  startDate,
   time,
-  timezone,
 }: {
   customCron: string;
-  endDate: string;
   frequency: RepeatFrequency;
   minute: string;
   onCronChange: (cron: string) => void;
   onCronCommit: () => void;
   onDayChange: (day: string) => void;
-  onEndDateChange: (endDate: string) => void;
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
   onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
-  onStartDateChange: (startDate: string) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
-  onTimezoneChange: (timezone: string) => void;
   retryPolicy: RetryPolicyDraft;
   selectedDay: string;
-  startDate: string;
   time: string;
-  timezone: string;
 }) {
   const cronIsValid = isValidCronExpression(customCron);
-  const endLabel = endDate ? formatScheduleDate(endDate) : "종료일 없음";
   const preview = frequency === "hourly"
     ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.05 11:${minute}`
     : frequency === "daily"
@@ -4005,24 +4141,11 @@ function RepeatSettings({
             <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
           </label>
         )}
-        <label className="field">
-          <span>시간대</span>
-          <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
-            {SCHEDULE_TIMEZONE_OPTIONS.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>시작 날짜</span>
-          <input className="input control-input" type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} />
-        </label>
-        <label className="field">
-          <span>종료 날짜</span>
-          <input className="input control-input" type="date" value={endDate} onChange={(event) => onEndDateChange(event.target.value)} />
-        </label>
+        <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
+        <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
+        <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
       </div>
-      <InfoBox title="실행 미리보기" body={`${preview} 시작: ${formatScheduleDate(startDate)} · 종료: ${endLabel} · ${timezone}`} />
+      <InfoBox title="실행 미리보기" body={preview} />
       {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
       <label className="policy-check-row">
         <input type="checkbox" defaultChecked />
@@ -4134,15 +4257,15 @@ export function TargetPage({
     const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
     const nextRag = patch.rag ?? ragEnabled;
-    const nextStoragePath = buildStoragePath(nextTargetDataset, nextTargetLayer);
+    const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
 
     onDraftChange({
-      compression: initialTarget.compression,
       jobName: buildJobName(nextTargetDataset),
       owner: nextOwner,
-      partition: initialTarget.partition,
+      compression: "Snappy",
+      partition: "year/month/region",
       storagePath: nextStoragePath,
-      storageType: initialTarget.storageType,
+      storageType: "S3",
       targetDataset: nextTargetDataset,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
@@ -4213,12 +4336,12 @@ export function TargetPage({
           <div className="format-grid">
             {TARGET_LAYER_OPTIONS.map((layer) => (
               <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
-                {layer}
+                {displayTargetLayer(layer)}
               </button>
             ))}
           </div>
           <div className="form-grid">
-            <Field label="저장소 유형" value={initialTarget.storageType} />
+            <Field label="저장소 유형" value="S3" />
             <label className="field">
               <span>파일 포맷</span>
               <select className="input control-input" value={targetFormat} onChange={(event) => {
@@ -4229,12 +4352,12 @@ export function TargetPage({
                 {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
               </select>
             </label>
-            <Field label="파티션" value={initialTarget.partition} />
-            <Field label="압축" value={initialTarget.compression} />
-            <Field label="저장 경로" value={buildStoragePath(targetDataset, selectedLayer)} wide />
+            <Field label="파티션" value="year/month/region" />
+            <Field label="압축" value="Snappy" />
+            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
           </div>
           <div className="target-status-grid">
-            <StatusTile label="카탈로그 등록" value="생성 후 자동 등록" status="준비됨" />
+            <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
             <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
           </div>
         </section>
@@ -4275,10 +4398,10 @@ export function PermissionPage({
   onSave: () => void;
 }) {
   const initialPermission = getPermissionDraftValues(draft);
-  const [permissionTemplate] = useState(initialPermission.permissionTemplate);
-  const [visibility] = useState(initialPermission.visibility);
-  const [dataOwner] = useState(initialPermission.owner);
-  const [approvalStatus] = useState(initialPermission.approvalStatus);
+  const [permissionTemplate, setPermissionTemplate] = useState(initialPermission.permissionTemplate);
+  const [visibility, setVisibility] = useState(initialPermission.visibility);
+  const [dataOwner, setDataOwner] = useState(initialPermission.owner);
+  const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
     ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
     [initialPermission.permissionTemplate]: true,
@@ -4294,9 +4417,18 @@ export function PermissionPage({
     const nextVisibility = getKnownOption(patch.visibility ?? visibility, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
     const nextApprovalStatus = getKnownOption(patch.approvalStatus ?? approvalStatus, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
     const nextOwner = getDisplayText(patch.owner ?? dataOwner, DEFAULT_OWNER);
+    const permissionRoles = PERMISSION_ROLES.map((role) => ({
+      access: [...role.access],
+      checked: Boolean(roleChecks[role.name] ?? role.checked),
+      name: role.name,
+    }));
 
     onDraftChange({
       owner: nextOwner,
+      permissionRoles,
+      permission: {
+        roles: permissionRoles,
+      },
       permissionSummary: buildPermissionSummary(nextPermissionTemplate, nextVisibility, nextApprovalStatus),
     });
   };
@@ -4324,6 +4456,54 @@ export function PermissionPage({
       )}
     >
         <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
+        <section className="panel permission-share-panel">
+          <div className="panel-header">
+            <ShieldCheck size={18} />
+            <h2>공유 대상</h2>
+          </div>
+          <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
+          <div className="form-grid">
+            <label className="field">
+              <span>권한 템플릿</span>
+              <select className="input control-input" value={permissionTemplate} onChange={(event) => {
+                const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
+                setPermissionTemplate(nextPermissionTemplate);
+                setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
+                applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
+              }}>
+                {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>공개 범위</span>
+              <select className="input control-input" value={visibility} onChange={(event) => {
+                const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
+                setVisibility(nextVisibility);
+                applyPermissionDraft({ visibility: nextVisibility });
+              }}>
+                {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>데이터 오너</span>
+              <input className="input control-input" value={dataOwner} onChange={(event) => {
+                const nextOwner = event.target.value;
+                setDataOwner(nextOwner);
+                applyPermissionDraft({ owner: nextOwner });
+              }} />
+            </label>
+            <label className="field">
+              <span>승인 상태</span>
+              <select className="input control-input" value={approvalStatus} onChange={(event) => {
+                const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
+                setApprovalStatus(nextApprovalStatus);
+                applyPermissionDraft({ approvalStatus: nextApprovalStatus });
+              }}>
+                {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+              </select>
+            </label>
+          </div>
+        </section>
         <section className="panel">
           <h2 className="panel-title">세부 권한</h2>
           <div className="permission-list">
@@ -4362,9 +4542,10 @@ export function ReviewPage({
   onSave: () => void;
 }) {
   const request = toCreatePipelineRequest(draft);
+  const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
   const schemaRows = draft.transform.outputColumns.length > 0
     ? draft.transform.outputColumns.map(([name, type]) => {
-        const sourceColumn = draft.schema.columns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
+        const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
         return [
           name,
           type,
@@ -4372,7 +4553,7 @@ export function ReviewPage({
           sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
         ];
       })
-    : draft.schema.columns.map((column) => [
+    : includedReviewColumns.map((column) => [
         column.targetName,
         column.type,
         column.nullable ? "예" : "아니오",
@@ -4386,13 +4567,13 @@ export function ReviewPage({
   const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", draft.schema.columns.length > 0 ? "확정됨" : "추론 필요"],
+    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
     ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
     ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
     ["실패 처리 정책", request.retryPolicySummary ? "유효함" : "확인 필요"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
   ];
-  const canCreate = draft.source.connectionStatus === "success" && draft.schema.columns.length > 0;
+  const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
   const createDisabled = createPending || !canCreate;
   const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
@@ -4411,7 +4592,7 @@ export function ReviewPage({
               <strong>{status}</strong>
             </div>
           ))}
-          <InfoBox title="안내사항" body="파이프라인 생성 후 데이터 카탈로그에서 즉시 조회 및 SQL 쿼리를 수행할 수 있습니다." />
+          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
         </CreationValidationPanel>
       )}
     >
@@ -4422,9 +4603,9 @@ export function ReviewPage({
             ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
             ["스키마", reviewSchemaSummary, "schema"],
             ["처리 규칙", request.ruleSummary, "rules"],
-            ["스케줄", request.scheduleSummary || request.scheduleLabel, scheduleEditFlow],
+            ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${targetReview.storagePath}`, "target"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -4459,10 +4640,6 @@ export function ReviewPage({
             <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
             <Field label="타겟 Layer" value={targetReview.targetLayer} />
             <Field label="타겟 Format" value={targetReview.targetFormat} />
-            <Field label="저장소 유형" value={targetReview.storageType} />
-            <Field label="파티션" value={targetReview.partition} />
-            <Field label="압축" value={targetReview.compression} />
-            <Field label="저장 경로" value={targetReview.storagePath} wide />
             <Field label="RAG 인덱싱" value={ragReviewLabel} />
             <Field label="데이터 오너" value={targetReview.owner} />
           </div>

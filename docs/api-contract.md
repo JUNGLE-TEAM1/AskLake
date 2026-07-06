@@ -76,7 +76,7 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 ```json
 {
   "job": {},
-  "dataset": {}
+  "catalogTarget": {}
 }
 ```
 
@@ -353,7 +353,12 @@ Response `201 Created`:
 ```ts
 type CreatePipelineResponse = {
   job: JobRowData;
-  dataset: CatalogDataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 
@@ -374,32 +379,11 @@ Response 예시:
     "lastState": "대기 중",
     "nextRun": "다음 예약 대기"
   },
-  "dataset": {
+  "catalogTarget": {
     "id": "ds_customer_review_silver",
     "name": "customer_review_silver",
-    "description": "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
-    "owner": "Data Engineer Group",
     "layer": "SILVER",
-    "status": "available",
-    "freshness": "latest",
-    "source": "customer_review_daily_ingest",
-    "rows": "0 rows",
-    "size": "Pending",
-    "quality": "95% (Draft verified)",
-    "lastUpdated": "2026-07-03T11:30:00.000Z",
-    "nextRefresh": "매일 09:00",
-    "rag": true,
-    "tags": ["#customer", "#RAG", "#리뷰"],
-    "schema": [
-      ["review_id", "bigint"],
-      ["product_id", "string"],
-      ["rating", "int"],
-      ["review_text", "string"],
-      ["sentiment", "string"]
-    ],
-    "sampleRows": [["-", "-", "-", "-", "Pipeline queued"]],
-    "upstream": ["Amazon S3", "customer_review_daily_ingest"],
-    "downstream": ["SQL 분석", "대시보드", "AI 활용"]
+    "status": "pending_run"
   }
 }
 ```
@@ -407,8 +391,9 @@ Response 예시:
 프론트 기대 동작:
 
 - `job`을 수집/처리 목록 최상단에 추가합니다.
-- `dataset`을 카탈로그 목록 최상단에 추가합니다.
-- `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
+- `catalogTarget`은 실행 전 대상 표시용으로만 사용합니다.
+- `selectedJob`을 응답값으로 변경합니다.
+- Catalog Dataset은 Spark run 성공 후 command 응답의 `dataset`으로 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
 
 Validation:
@@ -634,7 +619,8 @@ Response `200 OK`:
 프론트 연결 시점:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
-- 생성 직후에는 `POST /api/etl/jobs` 응답 dataset을 우선 반영한 뒤, 목록 재조회로 동기화하면 됩니다.
+- 생성 직후에는 Catalog에 추가하지 않습니다.
+- Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
 
 ### 8.2 데이터셋 상세
 

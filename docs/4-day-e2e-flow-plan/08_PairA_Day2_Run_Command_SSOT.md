@@ -1,34 +1,34 @@
-# 08 Pair A Day2 Run/Command SSOT
+﻿# 08 Pair A Day2 Run/Command SSOT
 
-이 문서는 2026-07-05 Day2 Pair A의 Run/Command 작업 기준이다.
-오늘은 이 문서를 Pair A Run/Command 작업의 SSOT로 사용한다.
+??臾몄꽌??2026-07-05 Day2 Pair A??Run/Command ?묒뾽 湲곗??대떎.
+?ㅻ뒛? ??臾몄꽌瑜?Pair A Run/Command ?묒뾽??SSOT濡??ъ슜?쒕떎.
 
-## 1. 현재 기준
+## 1. ?꾩옱 湲곗?
 
-이미 구현된 것은 새로 만들지 않는다.
+?대? 援ы쁽??寃껋? ?덈줈 留뚮뱾吏 ?딅뒗??
 
-현재 pair1 merge 이후 이미 있는 것:
+?꾩옱 pair1 merge ?댄썑 ?대? ?덈뒗 寃?
 
 - `POST /api/etl/jobs/{jobId}/commands` backend endpoint
 - `runJobCommand()` frontend adapter
-- `JobRunsPage` 화면
-- `JobDagPage` 화면
-- 기존 `jobExecutionEvidence` 임시 adapter
-- command 응답 `{ job, run, dagSteps }` 처리 흐름
+- `JobRunsPage` ?붾㈃
+- `JobDagPage` ?붾㈃
+- 湲곗〈 `jobExecutionEvidence` ?꾩떆 adapter
+- command ?묐떟 `{ job, run, dagSteps }` 泥섎━ ?먮쫫
 
-오늘 작업의 목적은 아래 구조를 새로 정리하는 것이다.
+?ㅻ뒛 ?묒뾽??紐⑹쟻? ?꾨옒 援ъ“瑜??덈줈 ?뺣━?섎뒗 寃껋씠??
 
 ```text
-임시 jobExecutionEvidence 중심 구조
-↓
-runId 기준 정식 Run 상태 구조
-↓
-Command / History / DAG가 같은 runId를 보는 구조
+?꾩떆 jobExecutionEvidence 以묒떖 援ъ“
+??
+runId 湲곗? ?뺤떇 Run ?곹깭 援ъ“
+??
+Command / History / DAG媛 媛숈? runId瑜?蹂대뒗 援ъ“
 ```
 
-## 2. 잠긴 계약
+## 2. ?좉릿 怨꾩빟
 
-PR0에서 잠그는 계약은 아래 3개 map이다.
+PR0?먯꽌 ?좉렇??怨꾩빟? ?꾨옒 3媛?map?대떎.
 
 ```ts
 type RunsByJobId = Record<string, JobRunSummary[]>;
@@ -36,7 +36,7 @@ type SelectedRunIdByJobId = Record<string, string>;
 type DagStepsByRunId = Record<string, JobDagStep[]>;
 ```
 
-상태 이름은 아래 이름을 사용한다.
+?곹깭 ?대쫫? ?꾨옒 ?대쫫???ъ슜?쒕떎.
 
 ```text
 runsByJobId
@@ -44,193 +44,192 @@ selectedRunIdByJobId
 dagStepsByRunId
 ```
 
-연결 규칙:
+?곌껐 洹쒖튃:
 
-- `job.id`는 `runsByJobId`의 key다.
-- `run.runId`는 `selectedRunIdByJobId[job.id]`의 value다.
-- `run.runId`는 `dagStepsByRunId`의 key다.
-- History는 `selectRunForJob(jobId, runId)`로 선택 Run만 바꾼다.
-- DAG는 `selectedRunIdByJobId[job.id]`가 가리키는 runId만 사용한다.
-- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아니다.
+- `job.id`??`runsByJobId`??key??
+- `run.runId`??`selectedRunIdByJobId[job.id]`??value??
+- `run.runId`??`dagStepsByRunId`??key??
+- History??`selectRunForJob(jobId, runId)`濡??좏깮 Run留?諛붽씔??
+- DAG??`selectedRunIdByJobId[job.id]`媛 媛由ы궎??runId留??ъ슜?쒕떎.
+- `jobExecutionEvidence`??湲곗〈 ?붾㈃ ?명솚 adapter?대ŉ ?뺤떇 source of truth媛 ?꾨땲??
 
-PR1 optimistic 실행 규칙:
+PR1 optimistic ?ㅽ뻾 洹쒖튃:
 
-- API request에 `clientRunId`를 추가하지 않는다.
-- 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만든다.
-- 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체한다.
+- API request??`clientRunId`瑜?異붽??섏? ?딅뒗??
+- ?꾨줎?멸? `client:<jobId>:<timestamp>` ?뺤떇??temp run id瑜?留뚮뱺??
+- ?쒕쾭 ?묐떟??`run.runId`媛 ?ㅻ㈃ temp run???ㅼ젣 Run?쇰줈 援먯껜?쒕떎.
 
-## 3. 오늘 PR 순서
+## 3. ?ㅻ뒛 PR ?쒖꽌
 
-오늘 작업은 아래 PR 순서로 나눈다.
+?ㅻ뒛 ?묒뾽? ?꾨옒 PR ?쒖꽌濡??섎늿??
 
-| PR | 제목 | 담당 성격 | 완료 기준 |
+| PR | ?쒕ぉ | ?대떦 ?깃꺽 | ?꾨즺 湲곗? |
 |---|---|---|---|
-| PR0 | Run 상태 계약 정리 | 공통 계약 | `runsByJobId`, `selectedRunIdByJobId`, `dagStepsByRunId` 계약이 코드/문서에 반영된다 |
-| PR1 | Command UX + 즉시 상태 반영 | 실행 버튼과 optimistic 상태 | 실행 버튼 클릭 직후 Job/Run이 running으로 보이고, 응답 후 실제 Run으로 교체된다 |
-| PR2 | Run History Page 보강 | History 화면 | `runsByJobId[selectedJob.id]`가 렌더되고 row 클릭으로 선택 Run이 바뀐다 |
-| PR3 | DAG Page 보강 | DAG 화면 | `selectedRunIdByJobId[selectedJob.id]` 기준 DAG step이 보인다 |
-| PR4 | Retry / Cancel / Pause 보강 | 추가 command | 상태에 맞는 command 버튼과 즉시 상태 반영이 동작한다 |
+| PR0 | Run ?곹깭 怨꾩빟 ?뺣━ | 怨듯넻 怨꾩빟 | `runsByJobId`, `selectedRunIdByJobId`, `dagStepsByRunId` 怨꾩빟??肄붾뱶/臾몄꽌??諛섏쁺?쒕떎 |
+| PR1 | Command UX + 利됱떆 ?곹깭 諛섏쁺 | ?ㅽ뻾 踰꾪듉怨?optimistic ?곹깭 | ?ㅽ뻾 踰꾪듉 ?대┃ 吏곹썑 Job/Run??running?쇰줈 蹂댁씠怨? ?묐떟 ???ㅼ젣 Run?쇰줈 援먯껜?쒕떎 |
+| PR2 | Run History Page 蹂닿컯 | History ?붾㈃ | `runsByJobId[selectedJob.id]`媛 ?뚮뜑?섍퀬 row ?대┃?쇰줈 ?좏깮 Run??諛붾먮떎 |
+| PR3 | DAG Page 蹂닿컯 | DAG ?붾㈃ | `selectedRunIdByJobId[selectedJob.id]` 湲곗? DAG step??蹂댁씤??|
+| PR4 | Retry / Cancel / Pause 蹂닿컯 | 異붽? command | ?곹깭??留욌뒗 command 踰꾪듉怨?利됱떆 ?곹깭 諛섏쁺???숈옉?쒕떎 |
 
-권장 merge 순서:
+沅뚯옣 merge ?쒖꽌:
 
 ```text
 PR0
-↓
+??
 PR1
-↓
+??
 PR2, PR3
-↓
+??
 PR4
 ```
 
-PR2와 PR3은 PR0 계약만 있으면 병렬 작업 가능하다.
-다만 실제 실행 버튼으로 end-to-end 확인하려면 PR1 이후 검증하는 것이 좋다.
+PR2? PR3? PR0 怨꾩빟留??덉쑝硫?蹂묐젹 ?묒뾽 媛?ν븯??
+?ㅻ쭔 ?ㅼ젣 ?ㅽ뻾 踰꾪듉?쇰줈 end-to-end ?뺤씤?섎젮硫?PR1 ?댄썑 寃利앺븯??寃껋씠 醫뗫떎.
 
-## 4. 오늘 2인 시작 분배
+## 4. ?ㅻ뒛 2???쒖옉 遺꾨같
 
-### 작업자 1
+### ?묒뾽??1
 
-먼저 잡을 작업:
-
-```text
-PR1: Command UX + 즉시 상태 반영
-```
-
-해야 할 일:
-
-- `commandPendingByJobId` 또는 동등한 per-job pending 상태 추가
-- 실행 버튼 클릭 직후 해당 Job 버튼 disabled/loading 처리
-- `run`/`retry` 클릭 직후 temp Run 생성
-- 클릭 직후 Job을 `running`처럼 표시
-- temp Run을 `runsByJobId[job.id]` 맨 앞에 추가
-- `selectedRunIdByJobId[job.id]`를 temp run id로 설정
-- 서버 응답 성공 시 temp Run을 실제 `response.run`으로 교체
-- `response.dagSteps`를 `dagStepsByRunId[response.run.runId]`에 저장
-- `response.job`으로 `jobs`와 `selectedJob` 갱신
-- 실패 시 temp Run 제거, 선택 Run과 Job 상태 복구
-- 성공/실패 toast 표시
-
-완료 문장:
+癒쇱? ?≪쓣 ?묒뾽:
 
 ```text
-즉시 실행을 누르면 2분 동안 먹통처럼 보이지 않고,
-Job과 Run이 바로 running으로 보인 뒤,
-서버 응답이 오면 실제 runId로 교체된다.
+PR1: Command UX + 利됱떆 ?곹깭 諛섏쁺
 ```
 
-### 작업자 2
+?댁빞 ????
 
-먼저 잡을 작업:
+- `commandPendingByJobId` ?먮뒗 ?숇벑??per-job pending ?곹깭 異붽?
+- ?ㅽ뻾 踰꾪듉 ?대┃ 吏곹썑 ?대떦 Job 踰꾪듉 disabled/loading 泥섎━
+- `run`/`retry` ?대┃ 吏곹썑 temp Run ?앹꽦
+- ?대┃ 吏곹썑 Job??`running`泥섎읆 ?쒖떆
+- temp Run??`runsByJobId[job.id]` 留??욎뿉 異붽?
+- `selectedRunIdByJobId[job.id]`瑜?temp run id濡??ㅼ젙
+- ?쒕쾭 ?묐떟 ?깃났 ??temp Run???ㅼ젣 `response.run`?쇰줈 援먯껜
+- `response.dagSteps`瑜?`dagStepsByRunId[response.run.runId]`?????
+- `response.job`?쇰줈 `jobs`? `selectedJob` 媛깆떊
+- ?ㅽ뙣 ??temp Run ?쒓굅, ?좏깮 Run怨?Job ?곹깭 蹂듦뎄
+- ?깃났/?ㅽ뙣 toast ?쒖떆
+
+?꾨즺 臾몄옣:
 
 ```text
-PR2: Run History Page 보강
+利됱떆 ?ㅽ뻾???꾨Ⅴ硫?2遺??숈븞 癒뱁넻泥섎읆 蹂댁씠吏 ?딄퀬,
+Job怨?Run??諛붾줈 running?쇰줈 蹂댁씤 ??
+?쒕쾭 ?묐떟???ㅻ㈃ ?ㅼ젣 runId濡?援먯껜?쒕떎.
 ```
 
-해야 할 일:
+### ?묒뾽??2
 
-- 기존 `JobRunsPage` 재사용
-- `runsByJobId[selectedJob.id]`를 렌더하도록 준비
-- Run ID, 상태, 시작/종료 시간, 입력/출력 행 표시 유지
-- row 클릭 시 `selectRunForJob(selectedJob.id, runId)` 호출
-- `selectedRunIdByJobId[selectedJob.id]` 기준 selected row 표시
-- Run 없음 empty state 유지
-- running 상태 Run 표시 확인
-
-완료 문장:
+癒쇱? ?≪쓣 ?묒뾽:
 
 ```text
-실행 직후 History에 running Run이 보이고,
-row를 클릭하면 selectedRunIdByJobId가 바뀐다.
+PR2: Run History Page 蹂닿컯
 ```
 
-## 5. 지원 인력이 오면 줄 작업
+?댁빞 ????
 
-지원 인력이 오면 아래 순서로 넘긴다.
+- 湲곗〈 `JobRunsPage` ?ъ궗??
+- `runsByJobId[selectedJob.id]`瑜??뚮뜑?섎룄濡?以鍮?
+- Run ID, ?곹깭, ?쒖옉/醫낅즺 ?쒓컙, ?낅젰/異쒕젰 ???쒖떆 ?좎?
+- row ?대┃ ??`selectRunForJob(selectedJob.id, runId)` ?몄텧
+- `selectedRunIdByJobId[selectedJob.id]` 湲곗? selected row ?쒖떆
+- Run ?놁쓬 empty state ?좎?
+- running ?곹깭 Run ?쒖떆 ?뺤씤
 
-| 우선순위 | 작업 | 맡기기 좋은 이유 | 주의할 점 |
+?꾨즺 臾몄옣:
+
+```text
+?ㅽ뻾 吏곹썑 History??running Run??蹂댁씠怨?
+row瑜??대┃?섎㈃ selectedRunIdByJobId媛 諛붾먮떎.
+```
+
+## 5. 吏???몃젰???ㅻ㈃ 以??묒뾽
+
+吏???몃젰???ㅻ㈃ ?꾨옒 ?쒖꽌濡??섍릿??
+
+| ?곗꽑?쒖쐞 | ?묒뾽 | 留↔린湲?醫뗭? ?댁쑀 | 二쇱쓽????|
 |---|---|---|---|
-| 1 | PR3 DAG Page 보강 | PR0 계약만 있으면 독립 렌더 가능 | command action을 직접 바꾸지 않는다 |
-| 2 | PR4 Retry / Cancel / Pause 보강 | PR1 command 흐름 위에 얹을 수 있음 | PR1의 optimistic helper를 재사용한다 |
-| 3 | 상태/empty/error 문구 정리 | UI polish가 아니라 상태 케이스 보강 | store 구조는 바꾸지 않는다 |
-| 4 | 브라우저 smoke | 충돌 없이 검증 가능 | 검증 결과를 PR 댓글/체크리스트에 남긴다 |
+| 1 | PR3 DAG Page 蹂닿컯 | PR0 怨꾩빟留??덉쑝硫??낅┰ ?뚮뜑 媛??| command action??吏곸젒 諛붽씀吏 ?딅뒗??|
+| 2 | PR4 Retry / Cancel / Pause 蹂닿컯 | PR1 command ?먮쫫 ?꾩뿉 ?뱀쓣 ???덉쓬 | PR1??optimistic helper瑜??ъ궗?⑺븳??|
+| 3 | ?곹깭/empty/error 臾멸뎄 ?뺣━ | UI polish媛 ?꾨땲???곹깭 耳?댁뒪 蹂닿컯 | store 援ъ“??諛붽씀吏 ?딅뒗??|
+| 4 | 釉뚮씪?곗? smoke | 異⑸룎 ?놁씠 寃利?媛??| 寃利?寃곌낵瑜?PR ?볤?/泥댄겕由ъ뒪?몄뿉 ?④릿??|
 
-## 6. 오늘 건드리면 안 되는 것
+## 6. ?ㅻ뒛 嫄대뱶由щ㈃ ???섎뒗 寃?
 
-아래는 오늘 각 PR에서 임의로 바꾸지 않는다.
+?꾨옒???ㅻ뒛 媛?PR?먯꽌 ?꾩쓽濡?諛붽씀吏 ?딅뒗??
 
-| 금지 항목 | 이유 |
+| 湲덉? ??ぉ | ?댁쑀 |
 |---|---|
-| `runsByJobId`, `selectedRunIdByJobId`, `dagStepsByRunId` 이름 변경 | PR0 계약이 깨진다 |
-| API request에 `clientRunId` 추가 | backend contract 변경으로 범위가 커진다 |
-| `dagSteps`에 `runId` 필드 강제 추가 | PR0 계약은 같은 응답의 `run.runId`로 묶는 방식이다 |
-| History에서 DAG state 직접 변경 | History는 selected run만 바꿔야 한다 |
-| DAG가 `runs[0]`을 직접 사용 | 선택 Run 기준이 깨진다 |
-| polling 주기나 GET runs API 설계 | 오늘 PR1 범위가 아니다 |
-| DAG 그래프 레이아웃 대개편 | PR3의 기능 검증보다 범위가 커진다 |
+| `runsByJobId`, `selectedRunIdByJobId`, `dagStepsByRunId` ?대쫫 蹂寃?| PR0 怨꾩빟??源⑥쭊??|
+| API request??`clientRunId` 異붽? | backend contract 蹂寃쎌쑝濡?踰붿쐞媛 而ㅼ쭊??|
+| `dagSteps`??`runId` ?꾨뱶 媛뺤젣 異붽? | PR0 怨꾩빟? 媛숈? ?묐떟??`run.runId`濡?臾띕뒗 諛⑹떇?대떎 |
+| History?먯꽌 DAG state 吏곸젒 蹂寃?| History??selected run留?諛붽퓭???쒕떎 |
+| DAG媛 `runs[0]`??吏곸젒 ?ъ슜 | ?좏깮 Run 湲곗???源⑥쭊??|
+| polling 二쇨린??GET runs API ?ㅺ퀎 | ?ㅻ뒛 PR1 踰붿쐞媛 ?꾨땲??|
+| DAG 洹몃옒???덉씠?꾩썐 ?媛쒗렪 | PR3??湲곕뒫 寃利앸낫??踰붿쐞媛 而ㅼ쭊??|
 
-## 7. PR별 하지 않을 일
+## 7. PR蹂??섏? ?딆쓣 ??
 
-### PR1에서 하지 않을 일
+### PR1?먯꽌 ?섏? ?딆쓣 ??
 
-- History row 클릭 구현
-- DAG 화면 selected run 마이그레이션
-- retry/cancel/pause 세부 조건 정리
-- polling API 설계
-- GET runs API 추가
+- History row ?대┃ 援ы쁽
+- DAG ?붾㈃ selected run 留덉씠洹몃젅?댁뀡
+- retry/cancel/pause ?몃? 議곌굔 ?뺣━
+- polling API ?ㅺ퀎
+- GET runs API 異붽?
 
-### PR2에서 하지 않을 일
+### PR2?먯꽌 ?섏? ?딆쓣 ??
 
-- command API 호출 방식 변경
-- optimistic temp Run 생성 방식 변경
-- DAG step 저장 방식 변경
+- command API ?몄텧 諛⑹떇 蹂寃?
+- optimistic temp Run ?앹꽦 諛⑹떇 蹂寃?
+- DAG step ???諛⑹떇 蹂寃?
 
-### PR3에서 하지 않을 일
+### PR3?먯꽌 ?섏? ?딆쓣 ??
 
-- command 버튼 조건 변경
-- History row 클릭 정책 변경
-- Run store 이름 변경
+- command 踰꾪듉 議곌굔 蹂寃?
+- History row ?대┃ ?뺤콉 蹂寃?
+- Run store ?대쫫 蹂寃?
 
-## 8. 오늘 종료 기준
+## 8. ?ㅻ뒛 醫낅즺 湲곗?
 
-오늘 Pair A Run/Command 작업은 아래 상태까지 가는 것을 목표로 한다.
+?ㅻ뒛 Pair A Run/Command ?묒뾽? ?꾨옒 ?곹깭源뚯? 媛??寃껋쓣 紐⑺몴濡??쒕떎.
 
-최소 목표:
-
-```text
-PR0와 PR1이 리뷰 가능한 상태다.
-실행 버튼 클릭 직후 화면이 running으로 반응한다.
-서버 응답 후 실제 runId로 Run/DAG 상태가 확정된다.
-```
-
-확장 목표:
+理쒖냼 紐⑺몴:
 
 ```text
-PR2까지 리뷰 가능한 상태다.
-History에 running/success/failed Run row가 보이고,
-row 클릭으로 selected run이 바뀐다.
+PR0? PR1??由щ럭 媛?ν븳 ?곹깭??
+?ㅽ뻾 踰꾪듉 ?대┃ 吏곹썑 ?붾㈃??running?쇰줈 諛섏쓳?쒕떎.
+?쒕쾭 ?묐떟 ???ㅼ젣 runId濡?Run/DAG ?곹깭媛 ?뺤젙?쒕떎.
 ```
 
-데모 문장:
+?뺤옣 紐⑺몴:
 
 ```text
-사용자가 즉시 실행을 누르면 화면이 바로 실행 중으로 바뀌고,
-같은 runId가 History와 DAG로 이어질 준비가 되어 있다.
+PR2源뚯? 由щ럭 媛?ν븳 ?곹깭??
+History??running/success/failed Run row媛 蹂댁씠怨?
+row ?대┃?쇰줈 selected run??諛붾먮떎.
 ```
 
-## 9. 검증 기준
+?곕え 臾몄옣:
 
-각 PR은 최소 아래를 확인한다.
+```text
+?ъ슜?먭? 利됱떆 ?ㅽ뻾???꾨Ⅴ硫??붾㈃??諛붾줈 ?ㅽ뻾 以묒쑝濡?諛붾뚭퀬,
+媛숈? runId媛 History? DAG濡??댁뼱吏?以鍮꾧? ?섏뼱 ?덈떎.
+```
+
+## 9. 寃利?湲곗?
+
+媛?PR? 理쒖냼 ?꾨옒瑜??뺤씤?쒕떎.
 
 ```bash
 cd frontend
 npm run build
 ```
 
-수동 smoke:
+?섎룞 smoke:
 
-- ETL 목록이 열린다.
-- 즉시 실행 버튼을 누를 수 있다.
-- 클릭 직후 버튼이 중복 클릭되지 않는다.
-- 클릭 직후 해당 Job이 running처럼 보인다.
-- 실패 시 이전 Job/Run 상태가 깨지지 않는다.
-
+- ETL 紐⑸줉???대┛??
+- 利됱떆 ?ㅽ뻾 踰꾪듉???꾨? ???덈떎.
+- ?대┃ 吏곹썑 踰꾪듉??以묐났 ?대┃?섏? ?딅뒗??
+- ?대┃ 吏곹썑 ?대떦 Job??running泥섎읆 蹂댁씤??
+- ?ㅽ뙣 ???댁쟾 Job/Run ?곹깭媛 源⑥?吏 ?딅뒗??

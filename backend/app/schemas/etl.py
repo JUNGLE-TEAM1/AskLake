@@ -34,6 +34,7 @@ class JobStats(CamelModel):
 
 class SchemaColumnDraft(CamelModel):
     confidence: int | None = None
+    included: bool = True
     nullable: bool = False
     role: str | None = None
     source_name: str
@@ -84,7 +85,9 @@ class JobRunSummary(CamelModel):
 
 
 class JobDagStep(CamelModel):
+    details: SourceFieldRows | None = None
     id: str
+    logs: list[str] | None = None
     meta: str
     note: str | None = None
     status: JobDagStepStatus
@@ -103,6 +106,11 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    permission_roles: list[dict[str, Any]] | None = None
+    storage_type: str | None = None
+    partition: str | None = None
+    compression: str | None = None
+    storage_path: str | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
@@ -119,6 +127,7 @@ class JobRowData(CamelModel):
     stats: JobStats | dict[str, Any] | None = None
     run_history: list[JobRunSummary] | list[dict[str, Any]] | None = None
     dag_steps: list[JobDagStep] | list[dict[str, Any]] | None = None
+    dag_steps_by_run_id: dict[str, list[JobDagStep] | list[dict[str, Any]]] | None = None
 
 
 class CatalogDataset(CamelModel):
@@ -165,6 +174,11 @@ class CreatePipelineRequest(CamelModel):
     retry_policy: RetryPolicyDraft | None = None
     retry_policy_summary: str = ""
     permission_summary: str = ""
+    permission_roles: list[dict[str, Any]] | None = None
+    storage_type: str | None = None
+    partition: str | None = None
+    compression: str | None = None
+    storage_path: str | None = None
     target_dataset: str
     target_layer: TargetLayer
     target_format: str
@@ -174,7 +188,7 @@ class CreatePipelineRequest(CamelModel):
 
 class CreatePipelineResponse(CamelModel):
     job: JobRowData
-    dataset: CatalogDataset
+    catalog_target: dict[str, Any] | None = None
 
 
 class JobCommandRequest(CamelModel):
@@ -184,11 +198,27 @@ class JobCommandRequest(CamelModel):
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str
+    dataset: CatalogDataset | None = None
     job: JobRowData | None = None
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
-    dataset_patch: dict[str, Any] | None = None
     processing_result: dict[str, Any] | None = None
+
+
+class QueryRunRequest(CamelModel):
+    dataset_id: str
+    query: str
+
+
+class QueryRunResponse(CamelModel):
+    columns: list[str]
+    dataset_id: str
+    dataset_name: str
+    executed_at: str
+    query: str
+    row_count: int
+    rows: list[list[str]]
+    run_id: str
 
 
 class SchemaDraft(CamelModel):

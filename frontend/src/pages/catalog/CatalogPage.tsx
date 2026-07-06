@@ -34,6 +34,17 @@ import { PageTitle } from "../../components/common";
 import type { AuditResult, CatalogDataset } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
+const layerDisplayLabels: Record<string, string> = {
+  BRONZE: "수집 정제 단계",
+  GOLD: "서비스 데이터셋",
+  RAW: "원본 보관 단계",
+  SILVER: "분석 표준 단계",
+};
+
+function displayLayer(layer: string) {
+  return layerDisplayLabels[layer] ?? layer;
+}
+
 export function CatalogPage({
   datasets,
   onAction,
@@ -96,7 +107,7 @@ export function CatalogPage({
               <div className="catalog-empty-state">
                 <BookOpen size={22} />
                 <strong>등록된 데이터셋이 없습니다.</strong>
-                <p>수집/처리에서 파이프라인을 생성하면 응답의 Dataset이 카탈로그에 추가됩니다.</p>
+                <p>수집/처리 작업을 실행해 Spark 적재가 성공하면 결과 데이터셋이 카탈로그에 추가됩니다.</p>
               </div>
             )}
             {datasets.map((dataset) => (
@@ -214,7 +225,7 @@ export function CatalogDetailPage({
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
               <span className="owner-chip">{dataset.owner}</span>
-              <span className="tag-chip">{dataset.layer} LAYER</span>
+              <span className="tag-chip">{displayLayer(dataset.layer)}</span>
               {dataset.tags.slice(0, 2).map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
             </div>
           </div>
@@ -330,7 +341,25 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
+type CatalogLineageNode = {
+  id: string;
+  label: string;
+  role: "upstream" | "current" | "downstream";
+  layer: string;
+};
+
 function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
+  const nodes: CatalogLineageNode[] = [
+    ...dataset.upstream.map((label, index) => ({ id: `upstream-${index}-${label}`, label, layer: "SOURCE", role: "upstream" as const })),
+    { id: `current-${dataset.id}`, label: dataset.name, layer: dataset.layer, role: "current" },
+    ...dataset.downstream.map((label, index) => ({ id: `downstream-${index}-${label}`, label, layer: "CONSUMER", role: "downstream" as const })),
+  ];
+  const [selectedNodeId, setSelectedNodeId] = useState<string | undefined>();
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId);
+  const toggleNode = (node: CatalogLineageNode) => {
+    setSelectedNodeId((current) => (current === node.id ? undefined : node.id));
+  };
+
   return (
     <section className="catalog-lineage-card">
       <div className="catalog-section-header">
@@ -341,20 +370,43 @@ function CatalogLineage({ dataset }: { dataset: CatalogDataset }) {
         <div className="catalog-lineage-graph">
           <div className="lineage-column">
             <span>Upstream</span>
-            {dataset.upstream.map((item) => <LineageNode key={item} label={item} tone="source" />)}
+            {nodes.filter((node) => node.role === "upstream").map((node) => (
+              <LineageNode key={node.id} node={node} onSelect={toggleNode} selected={node.id === selectedNodeId} tone="source" />
+            ))}
           </div>
           <div className="lineage-connector" />
           <div className="lineage-column current">
-            <span>{dataset.layer} LAYER</span>
-            <LineageNode label={dataset.name} tone="current" />
+            <span>{displayLayer(dataset.layer)}</span>
+            {nodes.filter((node) => node.role === "current").map((node) => (
+              <LineageNode key={node.id} node={node} onSelect={toggleNode} selected={node.id === selectedNodeId} tone="current" />
+            ))}
           </div>
           <div className="lineage-connector" />
           <div className="lineage-column">
             <span>Downstream</span>
-            {dataset.downstream.map((item) => <LineageNode key={item} label={item} tone="downstream" />)}
+            {nodes.filter((node) => node.role === "downstream").map((node) => (
+              <LineageNode key={node.id} node={node} onSelect={toggleNode} selected={node.id === selectedNodeId} tone="downstream" />
+            ))}
           </div>
         </div>
       </div>
+      {selectedNode && (
+        <aside className="catalog-lineage-inspector">
+          <div>
+            <strong>{selectedNode.label}</strong>
+            <span>{selectedNode.role === "current" ? "현재 데이터셋" : selectedNode.role === "upstream" ? "입력 데이터" : "소비/활용 대상"}</span>
+          </div>
+          <dl>
+            <dt>Layer</dt>
+            <dd>{selectedNode.layer}</dd>
+            <dt>Dataset</dt>
+            <dd>{selectedNode.role === "current" ? dataset.id : selectedNode.label}</dd>
+            <dt>상태</dt>
+            <dd>{selectedNode.role === "current" ? datasetStatusMeta[dataset.status].label : "연결됨"}</dd>
+          </dl>
+          <button type="button" onClick={() => setSelectedNodeId(undefined)}>닫기</button>
+        </aside>
+      )}
       <div className="catalog-lineage-footer">
         <span>Upstream {dataset.upstream.length}</span>
         <span>Layer {dataset.layer}</span>
@@ -374,11 +426,21 @@ function CatalogLineageMini({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
-function LineageNode({ label, tone }: { label: string; tone: "source" | "current" | "downstream" }) {
+function LineageNode({
+  node,
+  onSelect,
+  selected,
+  tone,
+}: {
+  node: CatalogLineageNode;
+  onSelect: (node: CatalogLineageNode) => void;
+  selected?: boolean;
+  tone: "source" | "current" | "downstream";
+}) {
   return (
-    <article className={`lineage-node ${tone}`}>
+    <button className={`lineage-node ${tone}${selected ? " selected" : ""}`} type="button" onClick={() => onSelect(node)}>
       <Database size={16} />
-      <span>{label}</span>
-    </article>
+      <span>{node.label}</span>
+    </button>
   );
 }

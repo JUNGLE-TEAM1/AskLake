@@ -20,7 +20,8 @@ const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
-    summary: "Data Engineer Group · 조직 내부",
+    roles: [],
+    summary: "Data Engineer Group · 조직 기본 권한",
   },
   quality: {
     invalidRows: [],
@@ -78,12 +79,12 @@ const initialDraftPipeline: DraftPipeline = {
   transform: {
     outputColumns: [],
     steps: [],
-    summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
+    summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
 };
 
 const emptySelectedDataset: CatalogDataset = {
-  description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하세요.",
+  description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
   downstream: [],
   freshness: "approval",
   id: "dataset_not_selected",
@@ -94,7 +95,7 @@ const emptySelectedDataset: CatalogDataset = {
   owner: "-",
   quality: "-",
   rag: false,
-  rows: "0 rows",
+  rows: "0행",
   sampleRows: [],
   schema: [],
   size: "-",
@@ -176,7 +177,10 @@ function buildJobExecutionEvidence(
 ): Record<string, JobExecutionEvidence> {
   return Object.fromEntries(
     Object.entries(runsByJobId).map(([jobId, runs]) => {
-      const selectedRunId = selectedRunIdByJobId[jobId] ?? runs[0]?.runId;
+      const requestedRunId = selectedRunIdByJobId[jobId];
+      const selectedRunId = requestedRunId && runs.some((run) => run.runId === requestedRunId)
+        ? requestedRunId
+        : runs[0]?.runId;
       return [
         jobId,
         {
@@ -201,7 +205,13 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
     runsByJobId[job.id] = runs;
     selectedRunIdByJobId[job.id] = selectedRunId;
 
-    if (job.dagSteps?.length) {
+    Object.entries(job.dagStepsByRunId ?? {}).forEach(([runId, steps]) => {
+      if (Array.isArray(steps) && steps.length > 0) {
+        dagStepsByRunId[runId] = steps;
+      }
+    });
+
+    if (job.dagSteps?.length && !dagStepsByRunId[selectedRunId]) {
       dagStepsByRunId[selectedRunId] = job.dagSteps;
     }
   });
@@ -214,10 +224,10 @@ function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry"
 }
 
 function commandSuccessMessage(command: ServerJobCommand): string {
-  if (command === "run") return "작업 실행 요청이 접수되었습니다.";
-  if (command === "retry") return "작업 재실행 요청이 접수되었습니다.";
-  if (command === "pause") return "작업 일시정지 요청이 접수되었습니다.";
-  return "작업 취소 요청이 접수되었습니다.";
+  if (command === "run") return "작업 실행 요청을 접수했습니다.";
+  if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
+  if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  return "작업 취소 요청을 접수했습니다.";
 }
 
 function buildClientRunId(jobId: string): string {
@@ -318,36 +328,28 @@ export function useAskLakeData({
 
   const createPipeline = async () => {
     if (createPendingRef.current) {
-      showToast("이미 생성 요청이 처리 중입니다.", "info");
       return;
     }
 
     const previousState = {
-      datasets,
       jobs,
-      selectedDataset,
       selectedJob,
     };
     createPendingRef.current = true;
     setApiPending(true);
     try {
-      const { dataset, job } = await createPipelineDraft(draftPipeline);
+      const { job } = await createPipelineDraft(draftPipeline);
       const normalizedJob = normalizeJobRow(job);
-      const normalizedDataset = normalizeDatasetRow(dataset);
       setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
-      setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
       setSelectedJob(normalizedJob);
-      setSelectedDataset(normalizedDataset);
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
       writeAuditLog("etl.run.queued", `/api/etl/jobs/${draftPipeline.id}/runs`, draftPipeline.id);
-      showToast("파이프라인 생성 요청이 접수되었습니다.");
+      showToast("파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       setDraftPipeline(initialDraftPipeline);
       onFlowChange("jobs");
     } catch {
       setJobs(previousState.jobs);
-      setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
-      setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
       showToast("파이프라인 생성 요청에 실패했습니다.", "info");
     } finally {
@@ -383,14 +385,23 @@ export function useAskLakeData({
     if (command === "delete") {
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
+      const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
       setJobs(remaining);
       setSelectedJob(remaining[0] ?? emptySelectedJob);
+      setRunsByJobId((state) => withoutRecordKey(state, job.id));
+      setSelectedRunIdByJobId((state) => withoutRecordKey(state, job.id));
+      setDagStepsByRunId((state) => Object.fromEntries(Object.entries(state).filter(([runId]) => !deletedRunIds.has(runId))));
+      commandPendingRef.current.delete(job.id);
+      setCommandPendingByJobId((state) => {
+        const { [job.id]: _pendingCommand, ...rest } = state;
+        return rest;
+      });
       onFlowChange("jobs");
       return;
     }
 
     if (commandPendingRef.current.has(job.id)) {
-      showToast("이미 작업 명령이 처리 중입니다.", "info");
+      showToast("이미 이 작업 명령을 처리 중입니다.", "info");
       return;
     }
 
@@ -427,7 +438,7 @@ export function useAskLakeData({
     }));
     setApiPending(true);
     try {
-      const { action, apiPath, dagSteps, job: updatedJob, run } = await runJobCommand(job, command);
+      const { action, apiPath, dagSteps, dataset, job: updatedJob, run } = await runJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
       if (run) {
@@ -453,6 +464,11 @@ export function useAskLakeData({
         showToast("실행 응답에 Run 정보가 없어 상태를 되돌렸습니다.", "info");
         return;
       }
+      if (dataset) {
+        const normalizedDataset = normalizeDatasetRow(dataset);
+        setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
+        setSelectedDataset(normalizedDataset);
+      }
       showToast(commandSuccessMessage(command));
     } catch {
       if (tempRunId) {
@@ -474,6 +490,12 @@ export function useAskLakeData({
     setSelectedJob(job);
     writeAuditLog("etl.job.detail_opened", `/api/etl/jobs/${job.id}`, job.id);
     onFlowChange("jobDetail");
+  };
+
+  const openJobDag = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.dag_opened", `/api/etl/jobs/${job.id}/dag`, job.id);
+    onFlowChange("jobDag");
   };
 
   const openDataset = (dataset: CatalogDataset) => {
@@ -498,6 +520,7 @@ export function useAskLakeData({
     dagStepsByRunId,
     jobExecutionEvidence,
     jobs,
+    openJobDag,
     openDataset,
     openDatasetInSql,
     openJobDetail,

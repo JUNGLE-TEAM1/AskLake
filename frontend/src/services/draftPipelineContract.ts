@@ -14,6 +14,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     jobName: `${targetDataset}_pipeline`,
     owner: draft.permission.owner,
     permissionSummary: draft.permission.summary,
+    permissionRoles: draft.permission.roles,
     rag: draft.target.rag,
     retryPolicy,
     retryPolicySummary: formatRetryPolicySummary(retryPolicy),
@@ -41,9 +42,25 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetDataset,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
-    transformOutputColumns: draft.transform.outputColumns,
+    transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
+}
+
+function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {
+  const includedBaseColumns = new Set(
+    draft.schema.columns
+      .filter((column) => column.included !== false)
+      .map((column) => (column.targetName || column.sourceName || "").trim())
+      .filter(Boolean),
+  );
+  const transformOutputs = new Set(
+    draft.transform.steps
+      .filter((step) => step.enabled !== false)
+      .map((step) => step.output.trim())
+      .filter(Boolean),
+  );
+  return draft.transform.outputColumns.filter(([name]) => includedBaseColumns.has(name) || transformOutputs.has(name));
 }
 
 export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipelinePatch): DraftPipeline {
@@ -82,6 +99,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.endDate !== undefined) next.schedule.endDate = patch.endDate;
   if (patch.timezone !== undefined) next.schedule.timezone = patch.timezone;
   if (patch.permissionSummary !== undefined) next.permission.summary = patch.permissionSummary;
+  if (patch.permissionRoles !== undefined) next.permission.roles = patch.permissionRoles;
   if (patch.owner !== undefined) next.permission.owner = patch.owner;
   if (patch.compression !== undefined) next.target.compression = patch.compression;
   if (patch.partition !== undefined) next.target.partition = patch.partition;

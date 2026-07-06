@@ -16,6 +16,11 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  permissionRoles?: PermissionDraft["roles"];
+  compression?: "Snappy" | "Gzip" | "None";
+  partition?: string;
+  storagePath?: string;
+  storageType?: "S3" | "Local" | "HDFS";
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
@@ -35,6 +40,7 @@ export type JobRowData = {
   stats?: JobStats;
   runHistory?: JobRunSummary[];
   dagSteps?: JobDagStep[];
+  dagStepsByRunId?: Record<string, JobDagStep[]>;
 };
 
 export type JobStats = {
@@ -61,6 +67,7 @@ export type SourceDraft = {
 
 export type SchemaColumnDraft = {
   confidence?: number;
+  included?: boolean;
   nullable: boolean;
   role?: string;
   sourceName: string;
@@ -117,9 +124,9 @@ export type ScheduleDraft = {
   mode: "manual" | "once" | "repeat";
   nextRun?: string;
   retryPolicy: RetryPolicyDraft;
-  startDate: string;
-  summary: string;
-  timezone: string;
+  startDate?: string;
+  summary?: string;
+  timezone?: string;
 };
 
 export type RetryFailureAction = "retry_then_fail" | "retry_then_quarantine" | "notify_only";
@@ -133,18 +140,23 @@ export type RetryPolicyDraft = {
 
 export type PermissionDraft = {
   owner: string;
+  roles?: Array<{
+    access: string[];
+    checked: boolean;
+    name: string;
+  }>;
   summary: string;
 };
 
 export type TargetDraft = {
-  compression: "Snappy" | "Gzip" | "None";
+  compression?: "Snappy" | "Gzip" | "None";
   datasetName: string;
   format: string;
   layer: TargetLayer;
-  partition: string;
+  partition?: string;
   rag: boolean;
-  storagePath: string;
-  storageType: "S3" | "Local" | "HDFS";
+  storagePath?: string;
+  storageType?: "S3" | "Local" | "HDFS";
 };
 
 export type DraftPipeline = {
@@ -175,18 +187,19 @@ export type CreatePipelineRequest = {
   qualityRules: QualityRuleDraft[];
   qualityScore?: number;
   qualityStatus: QualityDraft["status"];
-  endDate?: string;
   scheduleLabel: string;
-  scheduleSummary: string;
-  startDate: string;
-  timezone: string;
   retryPolicy: RetryPolicyDraft;
   retryPolicySummary: string;
+  scheduleSummary?: string;
+  startDate?: string;
+  endDate?: string;
+  timezone?: string;
   permissionSummary: string;
-  compression: "Snappy" | "Gzip" | "None";
-  partition: string;
-  storagePath: string;
-  storageType: "S3" | "Local" | "HDFS";
+  permissionRoles?: PermissionDraft["roles"];
+  storageType?: "S3" | "Local" | "HDFS";
+  partition?: string;
+  compression?: "Snappy" | "Gzip" | "None";
+  storagePath?: string;
   targetDataset: string;
   targetLayer: TargetLayer;
   targetFormat: string;
@@ -221,7 +234,9 @@ export type JobRunSummary = {
 };
 
 export type JobDagStep = {
+  details?: Array<[string, string]>;
   id: string;
+  logs?: string[];
   meta: string;
   note?: string;
   status: JobDagStepStatus;

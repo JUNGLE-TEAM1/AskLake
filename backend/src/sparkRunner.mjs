@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, normalizeColumnName } from "./profile.mjs";
@@ -10,6 +11,8 @@ const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
 const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
 const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 const localOutputDir = path.join(backendDir, "tmp", "spark-output");
+const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
+const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
 
@@ -18,6 +21,7 @@ export function runSparkPipeline(job, command, runId) {
   mkdirSync(ivyDir, { recursive: true });
   mkdirSync(reportDir, { recursive: true });
   mkdirSync(localOutputDir, { recursive: true });
+  mkdirSync(sampleHostDir, { recursive: true });
 
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
@@ -34,6 +38,8 @@ export function runSparkPipeline(job, command, runId) {
     `${ivyDir}:/tmp/.ivy2`,
     "-v",
     `${reportDir}:${reportContainerDir}`,
+    "-v",
+    `${sampleHostDir}:${sampleContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
     "-e",
@@ -59,6 +65,8 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_QUALITY_RULES=${JSON.stringify(job.qualityRules ?? [])}`,
     "-e",
+    `ASKLAKE_SPARK_SCHEMA_COLUMNS=${JSON.stringify(job.schemaColumns ?? [])}`,
+    "-e",
     `ASKLAKE_SPARK_REPORT_FILE=${dockerReportPath}`,
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
@@ -75,15 +83,17 @@ export function runSparkPipeline(job, command, runId) {
     "/work/scripts/spark_job_run.py",
   ];
 
-  const result = spawnSync("docker", dockerArgs, {
-    encoding: "utf8",
-    maxBuffer: 128 * 1024 * 1024,
-  });
-  const report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
-  if (result.status === 0 && report.status === "success") {
+  let result = runSparkSubmitContainer(dockerArgs);
+  let report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
+  if (report.status !== "success" && shouldRetryDockerWait(result)) {
+    rmSync(reportPath, { force: true });
+    result = runSparkSubmitContainer(dockerArgs);
+    report = normalizeSparkReport(readSparkReport(reportPath, result.stdout), output);
+  }
+  if (report.status === "success") {
     copySparkOutputToHost(output);
   }
-  if (result.status !== 0 || report.status !== "success") {
+  if (report.status !== "success") {
     return {
       ...report,
       error: report.error || result.stderr || result.stdout || "Spark job failed.",
@@ -100,6 +110,18 @@ export function runSparkPipeline(job, command, runId) {
     stderr: tail(result.stderr),
     stdout: tail(result.stdout),
   };
+}
+
+function runSparkSubmitContainer(dockerArgs) {
+  return spawnSync("docker", dockerArgs, {
+    encoding: "utf8",
+    maxBuffer: 128 * 1024 * 1024,
+  });
+}
+
+function shouldRetryDockerWait(result) {
+  const text = `${result.stderr || ""}\n${result.stdout || ""}`;
+  return result.status !== 0 && /error waiting for container: unexpected EOF/i.test(text);
 }
 
 function ensureSparkServer() {
@@ -142,7 +164,7 @@ function sparkSourceFromJob(job, runId) {
     };
   }
 
-  const samplePath = writeSampleRowsSource(job, runId);
+  const samplePath = writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId);
   if (samplePath) {
     return {
       format: "jsonl",
@@ -157,6 +179,37 @@ function writeSampleRowsSource(job, runId) {
   const rows = Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [];
   const columns = Array.isArray(job.schemaColumns) ? job.schemaColumns : [];
   if (rows.length === 0 || columns.length === 0) return "";
+  return writeRowsSource(runId, columns, rows);
+}
+
+function writeConnectorSampleRowsSource(job, runId) {
+  const sourceType = job.sourceType || "";
+  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka"].includes(sourceType)) return "";
+
+  const result = spawnSync(process.execPath, [path.join(scriptsDir, "export-connector-sample.mjs")], {
+    cwd: backendDir,
+    encoding: "utf8",
+    env: process.env,
+    input: JSON.stringify({
+      sourceConfig: Array.isArray(job.sourceConfig) ? job.sourceConfig : [],
+      sourceType,
+    }),
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw sparkError(`Connector sample export failed for ${sourceType}.\n${result.stdout}\n${result.stderr}`);
+  }
+
+  const marker = String(result.stdout || "").split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_CONNECTOR_SAMPLE="));
+  if (!marker) return "";
+  const sample = JSON.parse(marker.slice("ASKLAKE_CONNECTOR_SAMPLE=".length));
+  const rows = Array.isArray(sample.rows) ? sample.rows : [];
+  const columns = Array.isArray(sample.columns) ? sample.columns : [];
+  if (rows.length === 0 || columns.length === 0) return "";
+  return writeRowsSource(runId, columns, rows);
+}
+
+function writeRowsSource(runId, columns, rows) {
   const outputColumns = columns.map((column, index) => ({
     index,
     sourceName: String(column?.sourceName || ""),
@@ -166,14 +219,37 @@ function writeSampleRowsSource(job, runId) {
   const content = rows.map((row, rowIndex) => {
     const item = { row_id: String(rowIndex + 1) };
     outputColumns.forEach((column) => {
-      const value = row[column.index] ?? "";
-      item[column.targetName] = value;
-      if (column.sourceName && column.sourceName !== column.targetName) item[column.sourceName] = value;
+      const value = sourceRowValue(row, column);
+      setSourceField(item, column.targetName, value);
+      setSourceField(item, normalizeColumnName(column.targetName), value);
+      setSourceField(item, column.sourceName, value);
+      setSourceField(item, normalizeColumnName(column.sourceName), value);
     });
     return JSON.stringify(item);
   }).join("\n");
   writeFileSync(filePath, `${content}\n`, "utf8");
   return filePath;
+}
+
+function sourceRowValue(row, column) {
+  if (Array.isArray(row)) return row[column.index] ?? "";
+  if (!row || typeof row !== "object") return "";
+  const names = [
+    column.sourceName,
+    column.targetName,
+    normalizeColumnName(column.sourceName),
+    normalizeColumnName(column.targetName),
+  ].filter(Boolean);
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(row, name)) return row[name] ?? "";
+  }
+  return "";
+}
+
+function setSourceField(item, name, value) {
+  const key = String(name || "").trim();
+  if (!key || Object.prototype.hasOwnProperty.call(item, key)) return;
+  item[key] = value;
 }
 
 function sparkOutputPath(job, runId) {

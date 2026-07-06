@@ -27,9 +27,9 @@
 
 ### 오늘 해야 할 일
 
-- `createPipelineDraft` 또는 `POST /api/etl/jobs` 응답을 `{ job, dataset }` 형태로 맞춘다.
-- 생성 성공 시 `jobs`와 `datasets` 맨 위에 결과를 추가한다.
-- `selectedJob`과 `selectedDataset`을 생성 결과로 갱신한다.
+- `createPipelineDraft` 또는 `POST /api/etl/jobs` 응답을 `{ job, catalogTarget }` 형태로 맞춘다.
+- 생성 성공 시 `jobs` 맨 위에 결과를 추가하고 Catalog는 Spark run 성공 후 `dataset` 응답으로 추가한다.
+- `selectedJob`은 생성 결과로, `selectedDataset`은 Spark run 성공 결과로 갱신한다.
 - 실행 command 응답을 `job`, `run`, `dagSteps`로 정리한다.
 - 중복 클릭을 막고, 실패 시 입력값과 이전 목록을 유지한다.
 
@@ -37,7 +37,7 @@
 
 - Review에서 생성 버튼을 누르면 앱이 멈추지 않는다.
 - ETL 목록에 새 Job이 보인다.
-- Catalog 목록에 새 Dataset이 보인다.
+- Spark run 성공 후 Catalog 목록에 새 Dataset이 보인다.
 - Job 실행 후 같은 Run ID가 상세/이력/DAG에 보인다.
 - 실패 응답을 받아도 입력값과 이전 상태가 사라지지 않는다.
 
