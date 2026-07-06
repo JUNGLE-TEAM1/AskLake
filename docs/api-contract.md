@@ -775,6 +775,7 @@ Response `200 OK`:
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
+- SQL derived dataset 생성은 `CatalogService`와 `CatalogRepository.saveDatasetPayload` 경로만 사용합니다. ETL service는 pipeline/job/run 생성과 Spark 결과 dataset 저장만 소유합니다.
 - mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세
