@@ -61,7 +61,6 @@ export function SqlAnalysisPage({
   dataset,
   datasets,
   onAction,
-  onCreateDashboard,
   onPrepareDatasetJob,
   onResultChange,
 }: {
@@ -69,7 +68,6 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCreateDashboard: (result: SqlResultDraft) => void;
   onPrepareDatasetJob: (request: CreateDerivedDatasetRequest) => boolean;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
@@ -114,8 +112,17 @@ export function SqlAnalysisPage({
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const schemaDataset = useMemo(
-    () => datasets.find((item) => item.id === openSchemaDatasetId) ?? (openSchemaDatasetId === baseDataset.id ? baseDataset : null),
+    () => datasets.find((item) => item.id === openSchemaDatasetId) ?? (openSchemaDatasetId === baseDataset.id || !openSchemaDatasetId ? baseDataset : null),
     [baseDataset, datasets, openSchemaDatasetId],
+  );
+  const selectedContextDatasets = useMemo(
+    () => [
+      baseDataset,
+      ...referenceDatasetIds
+        .map((id) => datasets.find((item) => item.id === id))
+        .filter((item): item is CatalogDataset => Boolean(item)),
+    ],
+    [baseDataset, datasets, referenceDatasetIds],
   );
   const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
   const lineNumbers = useMemo(() => {
@@ -402,10 +409,9 @@ export function SqlAnalysisPage({
   };
 
   const selectSchemaDataset = (targetDataset: CatalogDataset) => {
-    const willOpen = openSchemaDatasetId !== targetDataset.id;
-    setOpenSchemaDatasetId(willOpen ? targetDataset.id : null);
+    setOpenSchemaDatasetId(targetDataset.id);
     onAction(
-      willOpen ? "analysis.context.schema_opened" : "analysis.context.schema_closed",
+      "analysis.context.schema_opened",
       `/api/query/context/datasets/${targetDataset.id}/schema`,
       targetDataset.id,
     );
@@ -735,50 +741,23 @@ export function SqlAnalysisPage({
             <header className="sql-materialize-dialog-header">
               <div>
                 <span>DASHBOARD</span>
-                <h2 id="sql-dashboard-dialog-title">SQL 결과 대시보드 만들기</h2>
+                <h2 id="sql-dashboard-dialog-title">SQL 결과 즉석 대시보드</h2>
               </div>
               <button type="button" onClick={() => setDashboardDialogOpen(false)} aria-label="대시보드 생성 닫기">닫기</button>
             </header>
-            <div className="sql-dashboard-dialog-body">
-              <p>현재 Preview 결과를 기반으로 대시보드 초안을 엽니다. SQL 결과는 유지되고, 대시보드 화면에서 위젯 구성을 이어서 조정할 수 있습니다.</p>
-              <dl>
-                <div>
-                  <dt>Run ID</dt>
-                  <dd>{resultDraft.runId}</dd>
-                </div>
-                <div>
-                  <dt>Preview rows</dt>
-                  <dd>{resultDraft.rows.length} / {resultDraft.rowCount}</dd>
-                </div>
-                <div>
-                  <dt>Columns</dt>
-                  <dd>{resultDraft.columns.length}</dd>
-                </div>
-              </dl>
-            </div>
-            <div className="sql-dashboard-dialog-actions">
-              <button type="button" onClick={() => setDashboardDialogOpen(false)}>취소</button>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={() => {
-                  setDashboardDialogOpen(false);
-                  onCreateDashboard(resultDraft);
-                }}
-              >
-                <BarChart3 size={15} /> 대시보드 만들기
-              </button>
-            </div>
+            <SqlDashboardPreview resultDraft={resultDraft} dataset={baseDataset} />
           </section>
         </div>
       )}
       <SchemaDetailsPanel
         dataset={schemaDataset}
+        selectedDatasets={selectedContextDatasets}
         isQueryDataset={schemaDataset?.id === baseDataset.id}
         isReferenced={schemaDataset ? referenceDatasetIdSet.has(schemaDataset.id) : false}
         onColumnClick={insertColumnName}
         onInsert={insertTableName}
         onQueryDatasetChange={changeBaseDataset}
+        onSchemaSelect={selectSchemaDataset}
         onReferenceToggle={toggleReferenceDataset}
       />
     </div>
@@ -875,21 +854,99 @@ function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
   );
 }
 
+function SqlDashboardPreview({
+  dataset,
+  resultDraft,
+}: {
+  dataset: CatalogDataset;
+  resultDraft: SqlResultDraft;
+}) {
+  const previewRows = resultDraft.rows.slice(0, 4);
+  const previewColumns = resultDraft.columns.slice(0, 4);
+  const numericColumnIndex = resultDraft.columns.findIndex((column) => {
+    const lowerColumn = column.toLowerCase();
+    return lowerColumn.includes("amount") || lowerColumn.includes("count") || lowerColumn.includes("score") || lowerColumn.includes("total");
+  });
+  const kpiValue = numericColumnIndex >= 0
+    ? formatDashboardNumber(previewRows.reduce((sum, row) => sum + (Number(row[numericColumnIndex]) || 0), 0))
+    : formatDashboardNumber(resultDraft.rowCount);
+  const barValues = previewRows.length > 0
+    ? previewRows.map((row, index) => {
+        const value = numericColumnIndex >= 0 ? Number(row[numericColumnIndex]) || 0 : index + 1;
+        return Math.max(12, Math.min(96, Math.round((value / Math.max(1, Math.max(...previewRows.map((item, itemIndex) => (
+          numericColumnIndex >= 0 ? Number(item[numericColumnIndex]) || 0 : itemIndex + 1
+        ))))) * 96)));
+      })
+    : [36, 58, 74, 52];
+
+  return (
+    <div className="sql-dashboard-preview">
+      <div className="sql-dashboard-preview-hero">
+        <div>
+          <span>LIVE PREVIEW</span>
+          <strong>{dataset.name}</strong>
+          <p>{resultDraft.rowCount.toLocaleString()} rows · {resultDraft.columns.length} columns · {resultDraft.runId}</p>
+        </div>
+        <div className="sql-dashboard-kpi">
+          <span>{numericColumnIndex >= 0 ? resultDraft.columns[numericColumnIndex] : "rows"}</span>
+          <strong>{kpiValue}</strong>
+          <em>Preview 기반</em>
+        </div>
+      </div>
+      <div className="sql-dashboard-preview-grid">
+        <section className="sql-dashboard-preview-panel">
+          <div className="sql-dashboard-preview-title">
+            <span>BAR</span>
+            <strong>{numericColumnIndex >= 0 ? resultDraft.columns[numericColumnIndex] : "row distribution"}</strong>
+          </div>
+          <div className="sql-dashboard-bars">
+            {barValues.map((value, index) => (
+              <i key={`${resultDraft.runId}-bar-${index}`} style={{ height: `${value}%` }} />
+            ))}
+          </div>
+        </section>
+        <section className="sql-dashboard-preview-panel">
+          <div className="sql-dashboard-preview-title">
+            <span>TABLE</span>
+            <strong>Preview sample</strong>
+          </div>
+          <table className="sql-dashboard-table-preview">
+            <thead>
+              <tr>{previewColumns.map((column) => <th key={column}>{column}</th>)}</tr>
+            </thead>
+            <tbody>
+              {previewRows.slice(0, 3).map((row, rowIndex) => (
+                <tr key={`${resultDraft.runId}-dashboard-row-${rowIndex}`}>
+                  {previewColumns.map((_, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{row[cellIndex] ?? "-"}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function SchemaDetailsPanel({
   dataset,
+  selectedDatasets,
   isQueryDataset,
   isReferenced,
   onColumnClick,
   onInsert,
   onQueryDatasetChange,
+  onSchemaSelect,
   onReferenceToggle,
 }: {
   dataset: CatalogDataset | null;
+  selectedDatasets: CatalogDataset[];
   isQueryDataset: boolean;
   isReferenced: boolean;
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
   onInsert: (dataset: CatalogDataset) => void;
   onQueryDatasetChange: (dataset: CatalogDataset) => void;
+  onSchemaSelect: (dataset: CatalogDataset) => void;
   onReferenceToggle: (dataset: CatalogDataset) => void;
 }) {
   if (!dataset) {
@@ -909,6 +966,30 @@ function SchemaDetailsPanel({
 
   return (
     <aside className="sql-schema-panel">
+      <section className="sql-selected-datasets-panel" aria-label="선택된 데이터셋">
+        <div className="sql-selected-datasets-header">
+          <span>QUERY CONTEXT</span>
+          <strong>{selectedDatasets.length} selected</strong>
+        </div>
+        <div className="sql-selected-dataset-list">
+          {selectedDatasets.map((item, index) => {
+            const active = item.id === dataset.id;
+            return (
+              <button
+                aria-pressed={active}
+                className={active ? "active" : ""}
+                key={item.id}
+                type="button"
+                onClick={() => onSchemaSelect(item)}
+              >
+                <span>{index === 0 ? "BASE" : "REF"}</span>
+                <strong title={item.name}>{item.name}</strong>
+                <em>{item.schema.length} cols</em>
+              </button>
+            );
+          })}
+        </div>
+      </section>
       <header className="sql-schema-panel-header">
         <span>SCHEMA</span>
         <h2 title={dataset.name}>{dataset.name}</h2>
@@ -946,6 +1027,10 @@ function SchemaDetailsPanel({
       <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
     </aside>
   );
+}
+
+function formatDashboardNumber(value: number) {
+  return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
 }
 
 function buildDefaultQuery(dataset: CatalogDataset) {

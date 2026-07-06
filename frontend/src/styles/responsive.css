@@ -119,6 +119,11 @@
     overflow-y: auto;
   }
 
+  .sql-dashboard-preview-hero,
+  .sql-dashboard-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .hegun-connector-grid,

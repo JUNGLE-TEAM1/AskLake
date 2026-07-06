@@ -215,13 +215,11 @@ function compareCatalogDatasetsBySort(
 export function CatalogPage({
   datasets,
   onAction,
-  onDatasetOpen,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onDatasetOpen: (dataset: CatalogDataset) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
@@ -470,6 +468,15 @@ export function CatalogPage({
                   <article
                     className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
                     key={dataset.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectPreviewDataset(dataset)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        selectPreviewDataset(dataset);
+                      }
+                    }}
                   >
                     {isPinned && (
                       <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
@@ -485,11 +492,6 @@ export function CatalogPage({
                     <div className="catalog-result-tags">
                       {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
                       {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
-                    </div>
-                    <div className="catalog-result-actions" aria-label={`${dataset.name} 검색 결과 액션`}>
-                      <button type="button" onClick={() => selectPreviewDataset(dataset)}>미리보기 선택</button>
-                      <button type="button" onClick={() => onDatasetOpen(dataset)}>상세 보기</button>
-                      <button type="button" onClick={() => onOpenSql(dataset)}>SQL</button>
                     </div>
                   </article>
                 );
