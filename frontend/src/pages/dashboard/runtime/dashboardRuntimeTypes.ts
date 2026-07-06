@@ -35,3 +35,8 @@ export type DashboardAssistantRuntimeContext = {
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
 };
+
+export type DashboardWidgetColorSlotFocus = {
+  slotIndex: number;
+  widgetId: string;
+};

@@ -27,7 +27,13 @@ import type {
   DashboardWidgetOrientation,
   DashboardWidgetSortDirection,
 } from "../../../types";
-import type { CreateDraftWidgetFormInput, DashboardDatasetColumn, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import type {
+  CreateDraftWidgetFormInput,
+  DashboardDatasetColumn,
+  DashboardDatasetOption,
+  DashboardWidgetColorSlotFocus,
+  UpdateDraftWidgetFormInput,
+} from "./dashboardRuntimeTypes";
 import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type WidgetConfigDraft = {
@@ -414,6 +420,7 @@ function buildConfig(
 
 export function WidgetConfigPanel({
   editingWidget = null,
+  focusedColorSlot = null,
   isCreating = false,
   isUpdating = false,
   onCreateWidget,
@@ -423,6 +430,7 @@ export function WidgetConfigPanel({
   selectedDatasetId,
 }: {
   editingWidget?: DashboardRuntimeWidget | null;
+  focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
   isCreating?: boolean;
   isUpdating?: boolean;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
@@ -517,6 +525,13 @@ export function WidgetConfigPanel({
       colors: normalizeColorSlots(current.colors, colorSlotLabels.length),
     }));
   }, [colorSlotLabels.length, customColorIndex]);
+
+  useEffect(() => {
+    if (!focusedColorSlot || focusedColorSlot.widgetId !== editingWidget?.id || !colorSlotLabels.length) return;
+    const nextIndex = Math.max(0, Math.min(focusedColorSlot.slotIndex, colorSlotLabels.length - 1));
+    setCustomColorOpen(false);
+    setCustomColorIndex(nextIndex);
+  }, [colorSlotLabels.length, editingWidget?.id, focusedColorSlot]);
 
   const validationMessage = selectedDataset || isEditMode
     ? validateConfig(type, currentConfig)

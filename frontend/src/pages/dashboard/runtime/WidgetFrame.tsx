@@ -32,6 +32,7 @@ export function WidgetFrame({
   onDelete,
   onPatchConfig,
   onSelect,
+  onSelectColorSlot,
   selected = false,
   widget,
 }: {
@@ -41,6 +42,7 @@ export function WidgetFrame({
   onDelete?: (widgetId: string) => void;
   onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
+  onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
 }) {
@@ -87,6 +89,7 @@ export function WidgetFrame({
           assistantContext={assistantContext}
           widget={widget}
           onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
         />
       </div>
     </article>
