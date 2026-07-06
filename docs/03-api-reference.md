@@ -75,10 +75,24 @@ Canonical status values:
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
-| `POST` | `/api/dashboards` | dashboard draft 생성 |
-| `PATCH` | `/api/dashboards/{dashboardId}` | dashboard 저장 |
+| `GET` | `/api/dashboards` | dashboard 목록 조회 |
+| `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
+| `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
+| `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
+| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. 소유자 또는 관리자 권한 필요 |
+| `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 runtime 조회 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft page 추가 |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page 이름 수정 |
+| `DELETE` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}` | draft page와 해당 page widgets 삭제 |
+| `POST` | `/api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets` | draft page에 widget 추가 |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget type/title/datasetId/config 수정 |
+| `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
+| `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
+
+Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
 ## 7) 화면별 데이터 계약
 
@@ -93,13 +107,112 @@ Canonical status values:
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | SQL 결과 Dataset 생성 | `createDerivedDatasetFromSql` mock/live | `POST /api/catalog/derived-datasets` |
-| 대시보드 | local builder state | dashboard APIs |
+| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `DELETE /api/dashboards/{dashboardId}`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 ## 8) Pair Handoff Contracts
 
 Pair 간 전달 객체는 API field name을 사용한다.
 ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 전달 객체에 넣지 않는다.
+
+### Dashboard Runtime Contract
+
+Dashboard 상세/편집 runtime은 dashboard card metadata와 revision snapshot을 분리한다.
+
+```ts
+type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
+type DashboardWidgetDateUnit = "day" | "month" | "year";
+type DashboardWidgetFormat = "number" | "currency" | "percent";
+type DashboardWidgetSortDirection = "asc" | "desc";
+
+type DashboardWidgetConfigBase = {
+  color?: string;
+  description?: string;
+  error?: string;
+  errorMessage?: string;
+};
+
+type MetricWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  format?: DashboardWidgetFormat;
+  valueKey: string;
+};
+
+type TableWidgetConfig = DashboardWidgetConfigBase & {
+  columns: string[];
+  limit?: number;
+  sortDirection?: DashboardWidgetSortDirection;
+  sortKey?: string;
+};
+
+type BarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  groupKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type LineChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  xKey: string;
+  yKey: string;
+};
+
+type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type DashboardRuntimeWidget = {
+  id: string;
+  pageId: string;
+  type: DashboardRuntimeWidgetType;
+  title: string | null;
+  layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
+  config: MetricWidgetConfig | TableWidgetConfig | BarChartWidgetConfig | LineChartWidgetConfig | DonutChartWidgetConfig;
+  data: Array<Record<string, unknown>>;
+  queryId?: string | null;
+  datasetId?: string | null;
+};
+
+type DashboardRuntimeResponse = {
+  dashboard: {
+    id: string;
+    title: string;
+    status: "draft" | "published";
+    hasPublishedRevision: boolean;
+    updatedAt: string;
+  };
+  mode: "published" | "draft";
+  revision: {
+    id: string;
+    kind: "published" | "draft";
+    version: number;
+    publishedAt?: string | null;
+  } | null;
+  pages: Array<{
+    id: string;
+    title: string;
+    orderIndex: number;
+  }>;
+  widgetsByPageId: Record<string, DashboardRuntimeWidget[]>;
+  filters: Array<{ id: string; label: string; value: unknown }>;
+};
+```
+
+`POST /api/dashboards`는 랜딩 페이지의 새 대시보드 생성 버튼에서 사용한다. 생성 즉시 `status: "draft"` dashboard card를 DB에 저장하고, 프론트는 응답받은 `dashboard.id`로 `/dashboards/{dashboardId}` 조회 화면에 진입한다. 편집용 draft revision/page/widget은 `위젯 편집` 이후 `POST /api/dashboards/{dashboardId}/draft/ensure`에서 준비한다.
+
+`GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
+
+Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 표시값을 계산한다.
 
 ### Pair A -> Pair B
 

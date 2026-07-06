@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "api": "node server/index.js",
     "dev": "vite --host 0.0.0.0",
+    "db:seed": "node server/seed.js",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
@@ -13,8 +15,11 @@
     "@xyflow/react": "^12.11.1",
     "lucide-react": "latest",
     "node-sql-parser": "^5.4.0",
+    "pg": "^8.22.0",
     "react": "latest",
     "react-dom": "latest",
+    "react-grid-layout": "^2.2.3",
+    "react-resizable": "^4.0.2",
     "typescript": "latest",
     "vite": "latest"
   },
