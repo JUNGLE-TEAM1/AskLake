@@ -168,6 +168,7 @@ export function DashboardPage({
   const [layoutUndoStack, setLayoutUndoStack] = useState<RuntimeLayoutSnapshot[]>([]);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
+  const [widgetScrollTargetId, setWidgetScrollTargetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
   const [selectedDashboard, setSelectedDashboard] = useState<SavedDashboardCard | null>(null);
   const [savedDashboards, setSavedDashboards] = useState<SavedDashboardCard[]>(() => {
@@ -343,8 +344,10 @@ export function DashboardPage({
     selectedPageId: selectedRuntimePageId,
     selectedWidgets: selectedDraftWidgets,
     setDraftError,
+    setDraftRuntime,
     setRuntimeNotice,
     setSelectedWidgetId,
+    setWidgetScrollTargetId,
   });
 
   const { updateDraftWidgetLayouts } = useDraftWidgetLayouts({
@@ -1000,6 +1003,7 @@ export function DashboardPage({
   if (view === "runtime") {
     const runtimeViewActions = {
       addPage: addRuntimePage,
+      clearWidgetScrollTarget: () => setWidgetScrollTargetId(null),
       clearWidgetSelection: clearRuntimeWidgetSelection,
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
@@ -1062,6 +1066,7 @@ export function DashboardPage({
       shareLink: runtimeShareLink,
       title: runtimeTitle,
       updatingWidgetId: updatingRuntimeWidgetId,
+      widgetScrollTargetId,
     };
 
     return (
