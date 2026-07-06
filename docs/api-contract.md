@@ -254,6 +254,10 @@ type CatalogDataset = {
   tags: string[];
   schema: Array<[string, string]>;
   sampleRows: string[][];
+  sourceRunId?: string;
+  storageFormat?: string;
+  storageLocation?: string;
+  storageSizeBytes?: number;
   upstream: string[];
   downstream: string[];
   lineageGraph?: LineageGraph;
@@ -766,6 +770,7 @@ Response `200 OK`:
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 Catalog에 추가하지 않습니다.
 - Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
+- Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세

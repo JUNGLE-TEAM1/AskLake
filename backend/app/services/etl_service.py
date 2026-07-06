@@ -363,8 +363,11 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
+    dataset_id = f"ds_{normalize_column_name(job.target)}"
+    dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now)
     return CatalogDatasetModel(
-        id=f"ds_{normalize_column_name(job.target)}",
+        id=dataset_id,
+        payload=dataset_payload,
         name=job.target,
         description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         owner=job.owner,
@@ -384,6 +387,40 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         upstream=[job.source_label, job.name],
         downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
     )
+
+
+def dataset_payload_from_spark_result(
+    job: ETLJobModel,
+    result: dict[str, Any],
+    dataset_id: str,
+    schema_json: list[list[str]],
+    last_updated: str,
+) -> dict[str, Any]:
+    output_path = str(result.get("outputPath") or "-")
+    return {
+        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        "freshness": "latest",
+        "id": dataset_id,
+        "layer": job.target_layer,
+        "lastUpdated": last_updated,
+        "name": job.target,
+        "nextRefresh": job.schedule,
+        "owner": job.owner,
+        "quality": quality_summary_from_spark_result(job, result),
+        "rag": job.rag,
+        "rows": format_rows(result.get("outputRows")),
+        "sampleRows": job.schema_sample_rows or [],
+        "schema": schema_json,
+        "size": output_path,
+        "source": job.name,
+        "sourceRunId": result.get("runId"),
+        "status": "available",
+        "storageFormat": "parquet",
+        "storageLocation": output_path,
+        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "upstream": [job.source_label, job.name],
+    }
 
 
 def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
