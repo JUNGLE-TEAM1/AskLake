@@ -487,7 +487,6 @@ export function SqlAnalysisPage({
       {!contextCollapsed && (
         <aside className="sql-dataset-panel">
           <div className="sql-panel-header">
-            <span>TABLE SEARCH</span>
             <div className="sql-panel-title-row">
               <strong>분석 테이블</strong>
               <span className="sql-panel-header-actions">

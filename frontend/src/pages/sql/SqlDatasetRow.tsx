@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 import { SqlDatasetSchemaPreview } from "./SqlDatasetSchemaPreview";
 
@@ -24,7 +24,6 @@ export function SqlDatasetRow({
           type="button"
           onClick={() => onToggle(dataset)}
         >
-          <span className="sql-table-expand-icon">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
           <span className="sql-table-name">
             <strong title={dataset.name}>{dataset.name}</strong>
           </span>

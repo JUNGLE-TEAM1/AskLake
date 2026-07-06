@@ -452,7 +452,7 @@
 
 .sql-table-row {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   min-height: 68px;
   align-items: start;
@@ -469,22 +469,6 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   min-width: 0;
-}
-
-.sql-table-expand-icon {
-  display: inline-grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border-radius: 6px;
-  background: #eff6ff;
-  color: #94a3b8;
-}
-
-.sql-table-card:hover .sql-table-expand-icon,
-.sql-table-card.expanded .sql-table-expand-icon {
-  background: #dbeafe;
-  color: #1d4ed8;
 }
 
 .sql-table-select-button {
@@ -518,7 +502,7 @@
 .sql-table-pills {
   display: flex;
   flex-wrap: wrap;
-  grid-column: 2;
+  grid-column: 1;
   justify-content: flex-start;
   gap: 4px;
   max-width: none;
