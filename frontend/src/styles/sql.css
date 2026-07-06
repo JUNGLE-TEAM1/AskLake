@@ -9,7 +9,7 @@
 }
 
 .sql-page.schema-open {
-  grid-template-columns: clamp(300px, 21vw, 340px) minmax(0, 1fr) clamp(280px, 20vw, 340px);
+  grid-template-columns: clamp(280px, 20vw, 320px) minmax(420px, 1fr) clamp(260px, 18vw, 300px);
 }
 
 .sql-page.context-collapsed {
@@ -17,7 +17,7 @@
 }
 
 .sql-page.context-collapsed.schema-open {
-  grid-template-columns: minmax(0, 1fr) clamp(280px, 20vw, 340px);
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 18vw, 300px);
 }
 
 .sql-dataset-panel,
