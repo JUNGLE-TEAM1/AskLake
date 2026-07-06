@@ -2,7 +2,6 @@ import type { Dispatch, SetStateAction } from "react";
 import type { LayoutItem } from "react-grid-layout";
 import { saveDraftLayouts } from "../../../services/dashboardRuntimeApi";
 import type { AuditResult, DashboardRuntimeResponse } from "../../../types";
-import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
 
 type RuntimeNotice = {
   message: string;
@@ -28,10 +27,6 @@ export function useDraftWidgetLayouts({
 }: UseDraftWidgetLayoutsParams) {
   const updateDraftWidgetLayouts = (layout: LayoutItem[]) => {
     if (!selectedPageId) return;
-    if (hasAnyLayoutCollision(layout)) {
-      setRuntimeNotice({ message: "위젯이 겹쳐 레이아웃을 저장하지 않았습니다. 위치를 다시 조정해 주세요.", tone: "error" });
-      return;
-    }
 
     const layoutByWidgetId = new Map(layout.map((item) => [item.i, item]));
 
