@@ -2,14 +2,14 @@
   position: relative;
   display: grid;
   width: 100%;
-  grid-template-columns: clamp(300px, 21vw, 400px) minmax(360px, 1fr) clamp(310px, 22vw, 440px);
+  grid-template-columns: clamp(340px, 24vw, 440px) minmax(320px, 1fr) clamp(420px, 28vw, 560px);
   align-items: start;
   gap: 12px;
   max-width: none;
 }
 
 .sql-page.context-collapsed {
-  grid-template-columns: minmax(0, 1fr) clamp(310px, 22vw, 440px);
+  grid-template-columns: minmax(0, 1fr) clamp(420px, 28vw, 560px);
 }
 
 .sql-dataset-panel,
@@ -163,10 +163,10 @@
 
 .sql-selected-datasets-panel {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
   border-bottom: 1px solid #e2e8f0;
-  padding-bottom: 12px;
+  padding-bottom: 14px;
 }
 
 .sql-selected-datasets-header {
@@ -178,36 +178,36 @@
 
 .sql-selected-datasets-header span {
   color: #64748b;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .sql-selected-datasets-header strong {
   color: #2563eb;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
 }
 
 .sql-selected-dataset-list {
   display: grid;
-  gap: 6px;
-  max-height: 168px;
+  gap: 8px;
+  max-height: min(320px, 36vh);
   min-width: 0;
   overflow-y: auto;
 }
 
 .sql-selected-dataset-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
-  min-height: 38px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  min-height: 50px;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
-  padding: 3px;
+  padding: 5px;
 }
 
 .sql-selected-dataset-item:hover,
@@ -219,15 +219,15 @@
 .sql-selected-dataset-main {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  min-height: 32px;
+  min-height: 40px;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: #0f172a;
-  padding: 0 6px;
+  padding: 0 8px;
   text-align: left;
 }
 
@@ -235,9 +235,9 @@
   border-radius: 999px;
   background: #f1f5f9;
   color: #475569;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 900;
-  padding: 3px 6px;
+  padding: 4px 7px;
 }
 
 .sql-selected-dataset-item.active .sql-selected-dataset-main span {
@@ -248,7 +248,7 @@
 .sql-selected-dataset-main strong {
   min-width: 0;
   color: #0f172a;
-  font-size: 12px;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -256,7 +256,7 @@
 
 .sql-selected-dataset-main em {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
@@ -264,8 +264,8 @@
 
 .sql-selected-dataset-remove {
   display: inline-grid;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border: 0;
   border-radius: 6px;
@@ -523,15 +523,15 @@
 
 .sql-table-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
   width: 100%;
-  min-height: 56px;
+  min-height: 68px;
   align-items: start;
-  gap: 8px;
+  gap: 10px;
   border: 0;
   background: transparent;
   color: #0f172a;
-  padding: 8px 10px;
+  padding: 10px 12px;
   text-align: left;
 }
 
@@ -544,8 +544,8 @@
 
 .sql-table-expand-icon {
   display: inline-grid;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   place-items: center;
   border-radius: 6px;
   background: #eff6ff;
@@ -560,18 +560,18 @@
 
 .sql-table-select-button {
   display: inline-flex;
-  min-height: 28px;
+  min-height: 32px;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   border: 1px solid #bfdbfe;
   border-radius: 7px;
   background: #eff6ff;
   color: #1d4ed8;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
-  margin: 8px 8px 0 0;
-  padding: 0 8px;
+  margin: 10px 10px 0 0;
+  padding: 0 10px;
   white-space: nowrap;
 }
 
@@ -599,9 +599,9 @@
 .sql-table-rag-pill,
 .sql-table-layer {
   border-radius: 999px;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 900;
-  padding: 2px 6px;
+  padding: 3px 7px;
   text-transform: uppercase;
 }
 
@@ -625,7 +625,7 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   color: #0f172a;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.35;
   overflow: hidden;
   overflow-wrap: anywhere;
@@ -633,10 +633,10 @@
 
 .sql-table-schema-preview {
   display: grid;
-  gap: 7px;
+  gap: 8px;
   border-top: 1px solid #e2e8f0;
-  margin: 0 8px 8px 34px;
-  padding-top: 8px;
+  margin: 0 10px 10px;
+  padding-top: 10px;
 }
 
 .sql-table-schema-preview-header {
@@ -649,33 +649,33 @@
 .sql-table-schema-preview-header span,
 .sql-table-schema-preview-header strong {
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .sql-table-schema-preview-list {
   display: grid;
-  gap: 4px;
-  max-height: 170px;
+  gap: 6px;
+  max-height: 260px;
   overflow-y: auto;
 }
 
 .sql-table-schema-preview-list div {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(58px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(76px, auto);
   align-items: center;
-  gap: 6px;
-  min-height: 26px;
+  gap: 8px;
+  min-height: 34px;
   border-radius: 6px;
   background: #fff;
-  padding: 0 6px;
+  padding: 0 8px;
 }
 
 .sql-table-schema-preview-list span {
   min-width: 0;
   color: #334155;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -687,10 +687,10 @@
   border-radius: 999px;
   background: #f1f5f9;
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
-  padding: 3px 7px;
+  padding: 4px 8px;
   white-space: nowrap;
 }
 
@@ -761,34 +761,34 @@
 
 .sql-card-schema {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   max-height: min(188px, 32vh);
   min-width: 0;
   overflow-y: auto;
   border: 1px solid #e2e8f0;
   border-radius: 6px;
   background: rgba(248, 250, 252, 0.72);
-  padding: 6px;
+  padding: 8px;
 }
 
 .sql-schema-panel .sql-card-schema {
   align-content: start;
   max-height: none;
-  min-height: 0;
+  min-height: 180px;
 }
 
 .sql-card-schema button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(78px, max-content);
-  min-height: 28px;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, max-content);
+  min-height: 38px;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: #334155;
-  padding: 0 6px;
+  padding: 0 8px;
   text-align: left;
 }
 
@@ -806,7 +806,7 @@
 .sql-card-schema-name strong {
   min-width: 0;
   color: #334155;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -816,7 +816,7 @@
 .sql-card-schema-name small {
   min-width: 0;
   color: #94a3b8;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 850;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -834,15 +834,15 @@
 .sql-card-schema-type-group em {
   justify-self: end;
   max-width: min(128px, 44vw);
-  min-width: 58px;
+  min-width: 70px;
   overflow: hidden;
   border-radius: 999px;
   background: #f1f5f9;
   color: #64748b;
-  font-size: 10px;
+  font-size: 11px;
   font-style: normal;
   font-weight: 800;
-  padding: 3px 7px;
+  padding: 4px 8px;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -850,13 +850,13 @@
 
 .sql-schema-duplicate-count {
   display: inline-grid;
-  min-width: 18px;
-  height: 18px;
+  min-width: 20px;
+  height: 20px;
   place-items: center;
   border-radius: 999px;
   background: #dbeafe;
   color: #1d4ed8;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 950;
   line-height: 1;
 }
@@ -1670,7 +1670,61 @@
   color: #fff;
 }
 
+@media (max-width: 1160px) {
+  .sql-page {
+    grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  }
+
+  .sql-page.context-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sql-page.context-collapsed .sql-workspace {
+    padding-left: 44px;
+  }
+
+  .sql-schema-panel {
+    position: relative;
+    grid-column: 1 / -1;
+    height: auto;
+    max-height: none;
+  }
+
+  .sql-selected-dataset-list {
+    max-height: min(320px, 42vh);
+  }
+}
+
 @media (max-width: 860px) {
+  .sql-page,
+  .sql-page.context-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sql-page.context-collapsed .sql-workspace {
+    padding-left: 0;
+  }
+
+  .sql-dataset-panel,
+  .sql-schema-panel {
+    position: relative;
+    height: auto;
+    max-height: none;
+  }
+
+  .sql-context-rail-button {
+    position: static;
+    margin-bottom: 10px;
+  }
+
+  .sql-selected-dataset-list {
+    max-height: min(320px, 46vh);
+  }
+
+  .sql-schema-panel .sql-card-schema {
+    max-height: 52vh;
+  }
+
   .sql-materialize-form {
     grid-template-columns: 1fr;
   }
