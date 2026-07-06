@@ -453,92 +453,96 @@ export function SqlAnalysisPage({
 
   return (
     <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
-      <aside className="sql-dataset-panel" aria-hidden={contextCollapsed}>
-        <div className="sql-panel-header">
-          <span>TABLE SEARCH</span>
-          <div>
-            <strong>분석 테이블</strong>
-            <em>{datasets.length} tables</em>
-          </div>
-        </div>
-        <section className="sql-base-table">
-          <h2>BASE DATASET</h2>
-          <SqlDatasetRow
-            dataset={baseDataset}
-            expanded={openSchemaDatasetId === baseDataset.id}
-            isBase
-            onInsert={insertTableName}
-            onSchemaToggle={toggleSchema}
-            onColumnClick={insertColumnName}
-          />
-        </section>
-        <label className="sql-context-search">
-          <Search size={15} />
-          <input
-            value={datasetSearch}
-            onChange={(event) => setDatasetSearch(event.target.value)}
-            placeholder="데이터셋, 컬럼, 태그 검색"
-          />
-        </label>
-        <section className="sql-dataset-search-results">
-          <div className="sql-section-heading">
-            <h2>table search</h2>
-            <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
-              {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
-            </button>
-          </div>
-          <div className="sql-context-result-list">
-            {paginatedContextDatasets.map((item) => (
-              <SqlDatasetRow
-                dataset={item}
-                expanded={openSchemaDatasetId === item.id}
-                isReferenced={referenceDatasetIdSet.has(item.id)}
-                key={item.id}
-                onBaseChange={changeBaseDataset}
-                onColumnClick={insertColumnName}
-                onInsert={insertTableName}
-                onReferenceToggle={toggleReferenceDataset}
-                onSchemaToggle={toggleSchema}
-              />
-            ))}
-            {filteredDatasets.length === 0 && (
-              <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
-            )}
-          </div>
-          {filteredDatasets.length > SQL_CONTEXT_PAGE_SIZE && (
-            <div className="sql-context-pagination" aria-label="table search pagination">
-              <span>{contextPageStartIndex + 1}-{contextPageStartIndex + paginatedContextDatasets.length} / {filteredDatasets.length}</span>
-              <div>
-                <button
-                  type="button"
-                  disabled={currentContextPage === 1}
-                  onClick={() => setContextPage((page) => Math.max(1, page - 1))}
-                >
-                  이전
-                </button>
-                <strong>{currentContextPage} / {totalContextPages}</strong>
-                <button
-                  type="button"
-                  disabled={currentContextPage === totalContextPages}
-                  onClick={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
-                >
-                  다음
-                </button>
-              </div>
+      {!contextCollapsed && (
+        <aside className="sql-dataset-panel">
+          <div className="sql-panel-header">
+            <span>TABLE SEARCH</span>
+            <div>
+              <strong>분석 테이블</strong>
+              <em>{datasets.length} tables</em>
             </div>
-          )}
-        </section>
-      </aside>
-
-      <button className="sql-collapse-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "SQL context 펼치기" : "SQL context 접기"}>
-        {contextCollapsed ? "›" : "‹"}
-      </button>
+          </div>
+          <section className="sql-base-table">
+            <h2>BASE DATASET</h2>
+            <SqlDatasetRow
+              dataset={baseDataset}
+              expanded={openSchemaDatasetId === baseDataset.id}
+              isBase
+              onInsert={insertTableName}
+              onSchemaToggle={toggleSchema}
+              onColumnClick={insertColumnName}
+            />
+          </section>
+          <label className="sql-context-search">
+            <Search size={15} />
+            <input
+              value={datasetSearch}
+              onChange={(event) => setDatasetSearch(event.target.value)}
+              placeholder="데이터셋, 컬럼, 태그 검색"
+            />
+          </label>
+          <section className="sql-dataset-search-results">
+            <div className="sql-section-heading">
+              <h2>table search</h2>
+              <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
+                {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
+              </button>
+            </div>
+            <div className="sql-context-result-list">
+              {paginatedContextDatasets.map((item) => (
+                <SqlDatasetRow
+                  dataset={item}
+                  expanded={openSchemaDatasetId === item.id}
+                  isReferenced={referenceDatasetIdSet.has(item.id)}
+                  key={item.id}
+                  onBaseChange={changeBaseDataset}
+                  onColumnClick={insertColumnName}
+                  onInsert={insertTableName}
+                  onReferenceToggle={toggleReferenceDataset}
+                  onSchemaToggle={toggleSchema}
+                />
+              ))}
+              {filteredDatasets.length === 0 && (
+                <p>{showReferencedOnly ? "참조된 테이블이 없습니다." : "검색 결과가 없습니다."}</p>
+              )}
+            </div>
+            {filteredDatasets.length > SQL_CONTEXT_PAGE_SIZE && (
+              <div className="sql-context-pagination" aria-label="table search pagination">
+                <span>{contextPageStartIndex + 1}-{contextPageStartIndex + paginatedContextDatasets.length} / {filteredDatasets.length}</span>
+                <div>
+                  <button
+                    type="button"
+                    disabled={currentContextPage === 1}
+                    onClick={() => setContextPage((page) => Math.max(1, page - 1))}
+                  >
+                    이전
+                  </button>
+                  <strong>{currentContextPage} / {totalContextPages}</strong>
+                  <button
+                    type="button"
+                    disabled={currentContextPage === totalContextPages}
+                    onClick={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
+                  >
+                    다음
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+        </aside>
+      )}
 
       <main className="sql-workspace">
         <header className="sql-page-header">
-          <span>Analyze / Dataset-scoped SQL</span>
-          <h1>읽기 전용 SQL 실행</h1>
-          <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
+          <div>
+            <span>Analyze / Dataset-scoped SQL</span>
+            <h1>읽기 전용 SQL 실행</h1>
+            <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
+          </div>
+          <button className="sql-context-toggle-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "분석 테이블 열기" : "분석 테이블 접기"}>
+            <Database size={15} />
+            {contextCollapsed ? "분석 테이블 열기" : "분석 테이블 접기"}
+          </button>
         </header>
 
         <section className="sql-editor-card">
