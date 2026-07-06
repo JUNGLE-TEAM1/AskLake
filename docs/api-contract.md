@@ -809,6 +809,70 @@ Response 예시:
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
+### 8.2 Pair3 Dashboard FastAPI 구현 경계
+
+Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해서 구현한다.
+목록 화면은 card metadata만 사용하고, 대시보드 내부 화면은 draft/published revision snapshot을 사용한다.
+공통 Pydantic schema skeleton은 `backend/app/schemas/dashboard.py`를 기준으로 한다.
+
+#### 8.2.1 작업 lane
+
+| Lane | 담당 범위 | 주요 schema | 주요 endpoint |
+| --- | --- | --- | --- |
+| Dashboard card/list | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `DashboardCard`, `DashboardListQuery`, `DashboardListResponse`, `CreateDashboardRequest`, `UpdateDashboardRequest` | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` |
+| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish | `DashboardRuntimeResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
+
+Card/list lane은 `dashboards`와 `dashboard_tags` 중심으로 작업한다.
+Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` 중심으로 작업한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 서로의 DB 쿼리를 직접 수정하지 않는다.
+
+#### 8.2.2 DB table 방향
+
+초기 FastAPI 구현의 table 방향은 아래처럼 둔다.
+정식 migration 파일은 후속 PR에서 작성하되, repository/service는 이 소유 경계를 기준으로 나눈다.
+
+| Table | 소유 lane | 역할 | 핵심 필드 |
+| --- | --- | --- | --- |
+| `dashboards` | card/list | 목록 card의 source of truth | `id`, `name`, `owner`, `status`, `dataset_id`, `source_run_id`, `published_revision_id`, `has_published_revision`, `created_at`, `updated_at`, `payload` |
+| `dashboard_tags` | card/list | 목록 필터용 tag normalize | `dashboard_id`, `tag` |
+| `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at`, `updated_at` |
+| `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
+| `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
+
+`layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
+API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
+
+#### 8.2.3 publish 규칙
+
+Published 조회는 published revision만 읽는다.
+Draft 변경은 published revision을 직접 수정하지 않는다.
+
+```text
+위젯 편집 진입
+↓
+POST /api/dashboards/{dashboardId}/draft/ensure
+↓
+draft revision/page/widget 수정
+↓
+POST /api/dashboards/{dashboardId}/publish
+↓
+draft snapshot을 새 published revision으로 복사
+↓
+dashboards.published_revision_id, has_published_revision, status, updated_at, payload 갱신
+```
+
+published revision이 없는 dashboard의 published 조회는 오류가 아니라 빈 runtime 응답으로 처리한다.
+즉 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다.
+
+#### 8.2.4 PR 순서
+
+1. Dashboard 계약/schema skeleton 정리
+2. Dashboard card/list API 구현
+3. Published 조회와 draft ensure API 구현
+4. Draft page API 구현
+5. Draft widget/layout/publish API 구현
+6. Frontend API adapter와 FastAPI E2E 확인
+
 ### 8.3 대시보드 목록 조회
 
 `POST /api/dashboards/query`
@@ -866,6 +930,7 @@ type DashboardListResponse = {
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
 서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
@@ -1217,7 +1282,7 @@ Request:
 ```
 
 `data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
-현재 demo backend는 실제 rows API가 없으므로 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+현재 demo backend는 실제 rows API가 없으므로 임시 demo catalog 또는 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
 예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
 
 Response `201 Created`:
@@ -1321,7 +1386,7 @@ Response `200 OK`:
 
 1. 현재 draft revision을 깊은 복사합니다.
 2. 새 revision을 `kind = "published"`로 저장합니다.
-3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
 
 Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 

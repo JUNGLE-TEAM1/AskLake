@@ -23,6 +23,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 FastAPI 1차 scaffold의 범위는 기능 endpoint 구현이 아니라 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이다.
 이후 ETL/Catalog/SQL/Dashboard API는 Pair별 후속 PR에서 구현한다.
 FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
+현재 FastAPI live mode smoke 확인을 위해 `GET /api/etl/jobs`, `GET /api/catalog/datasets`는 최소 demo hydrate 응답을 반환한다. 이는 Dashboard 화면 진입을 막지 않기 위한 임시 데이터이며, ETL/Catalog의 실제 persistence 구현은 후속 Pair 작업 범위로 둔다.
 
 ## 2. Pair A Live Contract
 
@@ -163,7 +164,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | --- | --- | --- |
 | 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
 | 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
-| 목록 삭제 | 확인 후 dashboard 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| 목록 삭제 | 확인 후 dashboard와 runtime snapshot 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
 | Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
 | Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
 | Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
@@ -180,6 +181,25 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
 Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
+
+현재 FastAPI live smoke에서는 실제 Catalog persistence가 아직 완성되지 않았기 때문에 `backend/app/services/demo_catalog.py`가 임시 dataset 공급처 역할을 한다. Dashboard runtime service는 `datasetId -> widget.data snapshot` 흐름만 소유하고, demo catalog의 구체 데이터 구조는 해당 파일 안에 가둔다. 이후 실제 Catalog/SQL Result API가 준비되면 `get_demo_dataset()` 호출부를 실제 dataset/query result service 호출로 교체하고, `dataset_rows_to_widget_data()`와 같은 row snapshot 변환 경계는 유지한다.
+
+Runtime table 보강 코드는 Alembic migration 도입 전까지 로컬 PostgreSQL smoke를 막지 않기 위한 임시 안전장치다. `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`에 `created_at`, `updated_at`, JSON snapshot 컬럼이 빠져 있으면 repository에서 `ADD COLUMN IF NOT EXISTS`로 보강하지만, 장기 운영 기준의 source of truth는 후속 Alembic migration으로 옮겨야 한다.
+
+Pair3 FastAPI 구현은 아래 순서로 분리한다.
+
+1. Dashboard 계약/schema skeleton 정리: `backend/app/schemas/dashboard.py`
+2. Card/List API: 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제
+3. Runtime 조회 API: published 조회, draft ensure
+4. Draft page API: page 추가/이름 수정/삭제
+5. Draft widget/layout/publish API: widget 생성/수정/삭제, layout 저장, publish
+6. Frontend adapter E2E: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
+Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
+두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
+Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
+구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 9. 아직 실제 저장되지 않는 기능
 
