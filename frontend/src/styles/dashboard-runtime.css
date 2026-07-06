@@ -747,7 +747,11 @@
   align-items: stretch;
 }
 
-.asklake-dashboard-rgl-shell,
+.asklake-dashboard-rgl-shell {
+  min-height: 100%;
+  width: 100%;
+}
+
 .asklake-dashboard-rgl {
   width: 100%;
 }

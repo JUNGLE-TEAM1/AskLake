@@ -88,7 +88,7 @@ export function DashboardCanvas({
     [layout],
   );
   const editGridMinHeight = useMemo(
-    () => editable ? layoutHeight(layout, editGridTrailingRows) : undefined,
+    () => editable ? `max(100%, ${layoutHeight(layout, editGridTrailingRows)}px)` : undefined,
     [editable, layout],
   );
   const changedMultipleItems = (nextLayout: readonly LayoutItem[]) => {
