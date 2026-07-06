@@ -1,5 +1,18 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Check } from "lucide-react";
+import {
+  Boxes,
+  ChartArea,
+  ChartColumn,
+  ChartLine,
+  ChartPie,
+  Check,
+  CircleDot,
+  CircleGauge,
+  Grid3X3,
+  Hash,
+  Table2,
+  type LucideIcon,
+} from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import type {
   DashboardRuntimeWidget,
@@ -70,6 +83,19 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "가로", value: "horizontal" },
 ];
 const multiColorFallbackCount = 6;
+
+const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
+  area_chart: ChartArea,
+  bar_chart: ChartColumn,
+  donut_chart: CircleDot,
+  heatmap_chart: Grid3X3,
+  line_chart: ChartLine,
+  metric: Hash,
+  pie_chart: ChartPie,
+  radial_bar_chart: CircleGauge,
+  table: Table2,
+  treemap_chart: Boxes,
+};
 
 function columnNames(columns: DashboardDatasetColumn[]) {
   return columns.map((column) => column.name);
@@ -586,14 +612,33 @@ export function WidgetConfigPanel({
           />
         </label>
 
-        <label>
+        <div className="asklake-widget-type-field">
           <span>위젯 타입</span>
-          <select value={type} onChange={(event) => setType(event.target.value as DashboardRuntimeWidgetType)}>
-            {dashboardWidgetTypeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+          <div className="asklake-widget-type-grid">
+            {dashboardWidgetTypeOptions.map((option) => {
+              const definition = dashboardWidgetDefinitions[option.value];
+              const Icon = widgetTypeIcons[option.value];
+              const tooltip = `${definition.label}: ${definition.description}`;
+              const isSelected = type === option.value;
+              return (
+                <button
+                  key={option.value}
+                  aria-label={tooltip}
+                  className={`asklake-widget-type-button${isSelected ? " selected" : ""}`}
+                  data-tooltip={tooltip}
+                  title={tooltip}
+                  type="button"
+                  onClick={() => {
+                    setCustomColorIndex(0);
+                    setType(option.value);
+                  }}
+                >
+                  <Icon aria-hidden="true" size={18} strokeWidth={2.3} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {colorSlotLabels.length > 0 && (
           <div className="asklake-widget-palette-field">
