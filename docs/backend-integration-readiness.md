@@ -199,6 +199,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
 | Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
 | Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
+| Assistant mock | AskLake 보조 패널/시각화 요청 위젯의 요청/응답 계약 확인. 실제 OpenAI/RAG 호출은 하지 않음 | `POST /api/dashboards/assistant` |
 | Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
@@ -266,6 +267,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 13. `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
 14. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 15. `POST /api/dashboards/{dashboardId}/publish`
+16. `POST /api/dashboards/assistant`
 
 ## 11. 프론트에서 다음에 할 작업
 

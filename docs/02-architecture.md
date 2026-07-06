@@ -118,12 +118,19 @@ FastAPI가 현재 소유하는 책임:
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
+- Dashboard Assistant mock contract endpoint
 - 공통 error envelope
 
 후속으로 넘길 책임:
 
 - Audit log persistence
 - 인증/권한 판정
+- 실제 OpenAI/RAG 기반 Dashboard Assistant 응답 생성
+
+Dashboard Assistant는 현재 `POST /api/dashboards/assistant` mock endpoint까지만 FastAPI가 소유한다.
+이 endpoint는 대시보드/위젯 컨텍스트를 받아 `message`, `actions`, `warnings`를 반환하고,
+현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
+실제 OpenAI API 호출, RAG 검색, action 자동 적용은 후속 작업 범위다.
 
 ## 8) 데이터 모델 요약
 

@@ -34,7 +34,8 @@ npm run build
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 실제 RAG/LLM API가 준비된 경우에만 아래 optional 값을 설정한다.
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
+현재 FastAPI는 `POST /api/dashboards/assistant` mock endpoint를 제공하며, 실제 OpenAI/RAG 호출은 후속 작업에서 붙인다.
 설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
 
 ```bash

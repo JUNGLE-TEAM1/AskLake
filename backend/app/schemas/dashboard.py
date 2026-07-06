@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -20,6 +20,11 @@ class DashboardSource(str, Enum):
 class DashboardRuntimeMode(str, Enum):
     PUBLISHED = "published"
     DRAFT = "draft"
+
+
+class DashboardAssistantMode(str, Enum):
+    DASHBOARD_QUESTION = "dashboard_question"
+    VISUALIZATION_REQUEST = "visualization_request"
 
 
 class DashboardCardWidgetType(str, Enum):
@@ -386,3 +391,69 @@ class PublishDashboardResponse(CamelModel):
     dashboard_id: str
     published_revision_id: str
     published_at: str
+
+
+class DashboardAssistantWidgetContext(CamelModel):
+    id: str
+    title: str
+    type: DashboardRuntimeWidgetType
+    dataset_id: str | None = None
+    layout: DashboardWidgetLayout
+    config: dict[str, Any] = Field(default_factory=dict)
+    data_sample: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DashboardAssistantRequest(CamelModel):
+    dashboard_id: str | None = None
+    mode: DashboardAssistantMode
+    page_id: str | None = None
+    prompt: str = Field(min_length=1)
+    selected_widget_id: str | None = None
+    widget_id: str | None = None
+    widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list)
+
+
+class DashboardAssistantWidgetPatch(CamelModel):
+    title: str | None = None
+    type: DashboardRuntimeWidgetType | None = None
+    dataset_id: str | None = None
+    config: dict[str, Any] | None = None
+
+
+class DashboardAssistantCreateWidgetInput(CamelModel):
+    title: str
+    type: DashboardRuntimeWidgetType
+    dataset_id: str
+    config: DashboardRuntimeWidgetConfig
+
+
+class DashboardAssistantCreateWidgetAction(CamelModel):
+    type: Literal["create_widget"] = "create_widget"
+    widget: DashboardAssistantCreateWidgetInput
+
+
+class DashboardAssistantUpdateWidgetAction(CamelModel):
+    type: Literal["update_widget"] = "update_widget"
+    widget_id: str
+    patch: DashboardAssistantWidgetPatch
+
+
+class DashboardAssistantReportAction(CamelModel):
+    type: Literal["report"] = "report"
+    markdown: str
+
+
+DashboardAssistantAction = (
+    DashboardAssistantCreateWidgetAction
+    | DashboardAssistantUpdateWidgetAction
+    | DashboardAssistantReportAction
+)
+
+
+class DashboardAssistantResponse(CamelModel):
+    message: str
+    actions: list[DashboardAssistantAction] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    # Backward-compatible fields used by the current visualization request widget.
+    config_patch: dict[str, Any] | None = None
+    widget_patch: DashboardAssistantWidgetPatch | None = None
