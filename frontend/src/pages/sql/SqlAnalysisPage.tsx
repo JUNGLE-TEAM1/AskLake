@@ -748,8 +748,8 @@ function SchemaColumnList({
     <div className="sql-card-schema">
       {dataset.schema.map(([name, type], index) => (
         <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
-          <span>{name}</span>
-          <em>{type}</em>
+          <span title={name}>{name}</span>
+          <em title={type}>{type}</em>
         </button>
       ))}
     </div>
@@ -818,7 +818,7 @@ function SqlDatasetRow({
       <button className="sql-table-row" type="button" aria-expanded={expanded} onClick={() => onSchemaToggle(dataset)}>
         <span className="sql-table-toggle">{expanded ? "▾" : "▸"}</span>
         <span className="sql-table-name">
-          <strong>{dataset.name}</strong>
+          <strong title={dataset.name}>{dataset.name}</strong>
         </span>
         <span className="sql-table-pills">
           {isBase && <span className="sql-table-base-pill">BASE</span>}
