@@ -20,8 +20,9 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 ```
 
-- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query API를 실제 backend로 보낸다.
+- `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
+- Dashboard API는 FastAPI Pair3 전까지 local/mock fallback을 사용한다.
 
 ## 3) 공통 규칙
 
@@ -70,7 +71,8 @@ Canonical status values:
 | `GET` | `/api/etl/jobs/{jobId}` | TBD | job 상세 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
-| `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate | `docs/api-contract.md` |
+| `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate 또는 fallback | `docs/api-contract.md` |
+| `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
 ## 6) P2 / 확장 API
 
@@ -108,7 +110,7 @@ Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`�
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
 | SQL 결과 Dataset 생성 | `createDerivedDatasetFromSql` mock/live | `POST /api/catalog/derived-datasets` |
-| 대시보드 | Postgres/API adapter state | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `DELETE /api/dashboards/{dashboardId}`, draft/published runtime APIs |
+| 대시보드 | local/mock fallback, Node demo API reference | FastAPI Pair3 future: `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
 반복 실행 schedule은 `scheduleLabel`에 더해 `scheduleSummary`, `startDate`, `endDate`, `timezone`을 create request에 포함해 Review와 생성 payload가 같은 값을 보게 한다.

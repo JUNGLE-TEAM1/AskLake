@@ -15,8 +15,8 @@
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
-현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출합니다.
-P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면 됩니다.
+현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름은 live backend API를 호출합니다.
+Dashboard API 계약은 Pair3 FastAPI 전환 대상이며, 그 전까지 프론트는 local/mock fallback 또는 Node demo API reference를 사용합니다.
 
 ## 2. 프론트 연결 위치
 

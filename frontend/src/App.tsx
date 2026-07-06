@@ -44,6 +44,9 @@ const placeholderAuditConfig: Record<PlaceholderFlow, { targetType: AuditTargetT
   },
 };
 
+const emptyDatasetId = "dataset_not_selected";
+const emptyJobId = "JOB-NONE";
+
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
@@ -71,6 +74,14 @@ function dashboardEntryFromRoute(route: DashboardRouteState, version: number): D
 function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
   const encodedId = encodeURIComponent(dashboardId);
   return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
+}
+
+function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[]) {
+  return dataset.id !== emptyDatasetId && datasets.some((item) => item.id === dataset.id);
+}
+
+function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
+  return jobId !== emptyJobId && jobs.some((job) => job.id === jobId);
 }
 
 export function App() {
@@ -121,6 +132,11 @@ export function App() {
     if (activeFlow === "admin") return "admin";
     return "ingest";
   }, [activeFlow]);
+  const selectedDatasetAvailable = hasSelectedDataset(selectedDataset, datasets);
+  const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
+  const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns" || activeFlow === "jobDag";
+  const requiresSelectedDataset = activeFlow === "catalogDetail" || activeFlow === "sql" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -176,7 +192,7 @@ export function App() {
 
   const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
     const targetDataset = dataset ?? selectedDataset;
-    if (!targetDataset) {
+    if (!targetDataset || !hasSelectedDataset(targetDataset, datasets)) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -188,7 +204,7 @@ export function App() {
   };
 
   const openDashboardFromSql = (result: SqlResultDraft) => {
-    if (!selectedDataset) {
+    if (!selectedDatasetAvailable) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -255,7 +271,14 @@ export function App() {
               <p>{dataError}</p>
             </div>
           )}
-          {!dataLoading && !dataError && (
+          {!dataLoading && !dataError && !canRenderActiveFlow && (
+            <div className="module-placeholder-page">
+              <span>EMPTY STATE</span>
+              <h1>먼저 실제 데이터를 선택해주세요</h1>
+              <p>목록에서 Job 또는 Dataset을 선택하거나, 새 파이프라인을 생성하고 실행해 주세요.</p>
+            </div>
+          )}
+          {!dataLoading && !dataError && canRenderActiveFlow && (
             <>
           {activeFlow === "jobs" && <JobsLandingPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={openJobDag} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage commandPending={commandPendingByJobId[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}

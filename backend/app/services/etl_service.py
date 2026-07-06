@@ -15,6 +15,7 @@ from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CatalogDataset,
+    CreateDerivedDatasetRequest,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
@@ -124,6 +125,59 @@ def get_dataset(db: Session, dataset_id: str) -> CatalogDataset:
     if dataset is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
     return dataset
+
+
+def get_dataset_lineage(db: Session, dataset_id: str) -> dict[str, Any]:
+    dataset = etl_repository.get_dataset_by_id(db, dataset_id)
+    if dataset is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    return dataset.lineage_graph or fallback_lineage_graph(dataset)
+
+
+def create_derived_dataset(db: Session, request: CreateDerivedDatasetRequest) -> CatalogDataset:
+    source = etl_repository.get_dataset_by_id(db, request.source_dataset_id)
+    if source is None:
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"Source dataset not found: {request.source_dataset_id}",
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    dataset_name = request.dataset.name.strip()
+    if not dataset_name:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Derived dataset name is required.", status.HTTP_400_BAD_REQUEST)
+
+    dataset_id = f"ds_{normalize_column_name(dataset_name)}"
+    if etl_repository.get_dataset_by_id(db, dataset_id) or etl_repository.get_dataset_by_name(db, dataset_name):
+        raise ApiError(ErrorCode.CONFLICT, f"Dataset already exists: {dataset_name}", status.HTTP_409_CONFLICT)
+
+    preview_limit = request.preview_limit or 100
+    source_schema = source.schema_json or []
+    sample_rows = [list(map(str, row[:len(source_schema) or None])) for row in (source.sample_rows or [])[:preview_limit]]
+    source_lineage = source.lineage_graph or fallback_lineage_graph(source)
+    derived = CatalogDatasetModel(
+        id=dataset_id,
+        name=dataset_name,
+        description=request.dataset.description.strip() or f"{source.name} SQL Preview 결과 데이터셋",
+        owner=source.owner,
+        layer=request.dataset.layer,
+        status="available",
+        freshness="latest",
+        source=f"SQL Preview · {request.source_run_id}",
+        rows=f"{len(sample_rows):,} preview rows",
+        size="Preview result",
+        quality="Preview verified",
+        last_updated=iso_now(),
+        next_refresh="수동 갱신",
+        rag=request.dataset.rag,
+        tags=normalize_tags(request.dataset.tags, "#sql-derived"),
+        schema_json=source_schema,
+        sample_rows=sample_rows,
+        upstream=[source.name, *request.reference_dataset_ids, request.source_run_id],
+        downstream=["SQL 분석", "대시보드"],
+        lineage_graph=derived_lineage_graph(source, dataset_id, dataset_name, request.dataset.layer, source_schema, source_lineage),
+    )
+    return etl_repository.save_dataset(db, derived)
 
 
 def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
@@ -714,6 +768,106 @@ def normalize_column_name(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip().lower())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     return normalized or "dataset"
+
+
+def normalize_tags(tags: list[str], fallback: str) -> list[str]:
+    normalized = []
+    for tag in tags:
+        value = str(tag).strip()
+        if not value:
+            continue
+        normalized.append(value if value.startswith("#") else f"#{value}")
+    return list(dict.fromkeys(normalized or [fallback]))
+
+
+def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
+    current_node = lineage_node(dataset.id, dataset.name, dataset.layer, dataset.schema_json or [], "ICEBERG")
+    upstream_nodes = [
+        lineage_node(
+            normalize_lineage_id(f"{dataset.id}-{item}"),
+            item,
+            "SOURCE" if index == 0 else "BRONZE",
+            dataset.schema_json or [],
+            "SOURCE" if index == 0 else "ICEBERG",
+        )
+        for index, item in enumerate(dataset.upstream or [])
+    ]
+    edges = []
+    for upstream_node in upstream_nodes:
+        for source_column, target_column in zip(upstream_node["columns"], current_node["columns"], strict=False):
+            edges.append({
+                "fromColumnId": source_column["id"],
+                "fromDatasetId": upstream_node["id"],
+                "toColumnId": target_column["id"],
+                "toDatasetId": current_node["id"],
+            })
+    return {
+        "datasetId": dataset.id,
+        "datasets": [*upstream_nodes, current_node],
+        "edges": edges,
+    }
+
+
+def derived_lineage_graph(
+    source: CatalogDatasetModel,
+    dataset_id: str,
+    dataset_name: str,
+    layer: str,
+    schema: list[list[str]],
+    source_lineage: dict[str, Any],
+) -> dict[str, Any]:
+    source_node = lineage_node(source.id, source.name, source.layer, source.schema_json or [], "ICEBERG")
+    derived_node = lineage_node(dataset_id, dataset_name, layer, schema, "ICEBERG")
+    base_nodes = [
+        node for node in source_lineage.get("datasets", [])
+        if isinstance(node, dict) and node.get("id") != dataset_id
+    ]
+    if not any(node.get("id") == source.id for node in base_nodes):
+        base_nodes.append(source_node)
+    base_edges = [
+        edge for edge in source_lineage.get("edges", [])
+        if isinstance(edge, dict)
+        and edge.get("fromDatasetId") != dataset_id
+        and edge.get("toDatasetId") != dataset_id
+    ]
+    derived_edges = []
+    for index, target_column in enumerate(derived_node["columns"]):
+        source_columns = source_node["columns"]
+        source_column = source_columns[index] if index < len(source_columns) else target_column
+        derived_edges.append({
+            "fromColumnId": source_column["id"],
+            "fromDatasetId": source_node["id"],
+            "toColumnId": target_column["id"],
+            "toDatasetId": derived_node["id"],
+        })
+    return {
+        "datasetId": dataset_id,
+        "datasets": [*base_nodes, derived_node],
+        "edges": [*base_edges, *derived_edges],
+    }
+
+
+def lineage_node(dataset_id: str, name: str, layer: str, schema: list[list[str]], engine: str) -> dict[str, Any]:
+    return {
+        "columns": [
+            {
+                "id": normalize_lineage_id(f"{dataset_id}-{column_name}"),
+                "name": str(column_name),
+                "type": str(column_type or "string"),
+            }
+            for column_name, column_type in schema
+            if column_name
+        ],
+        "engine": engine,
+        "id": dataset_id,
+        "layer": layer,
+        "name": name,
+    }
+
+
+def normalize_lineage_id(value: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower())
+    return normalized.strip("-") or "lineage"
 
 
 def tuple_rows_to_lists(rows: list[tuple[str, str]]) -> list[list[str]]:
