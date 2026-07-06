@@ -396,6 +396,7 @@ export function WidgetConfigPanel({
   isUpdating = false,
   onCancelEdit,
   onCreateWidget,
+  onPreviewWidgetChange,
   onUpdateWidget,
   selectedDataset,
   selectedDatasetId,
@@ -405,6 +406,7 @@ export function WidgetConfigPanel({
   isUpdating?: boolean;
   onCancelEdit?: () => void;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onPreviewWidgetChange?: (widget: DashboardRuntimeWidget | null) => void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
@@ -518,6 +520,31 @@ export function WidgetConfigPanel({
       return { colors: nextColors };
     });
   };
+
+  useEffect(() => {
+    if (!editingWidget) {
+      onPreviewWidgetChange?.(null);
+      return;
+    }
+
+    onPreviewWidgetChange?.({
+      ...editingWidget,
+      config: buildConfig(type, currentConfig, {
+        color,
+        description: description.trim() || undefined,
+      }),
+      title: title.trim() || "제목 없는 위젯",
+      type,
+    } as DashboardRuntimeWidget);
+  }, [
+    color,
+    currentConfig,
+    description,
+    editingWidget,
+    onPreviewWidgetChange,
+    title,
+    type,
+  ]);
 
   const toggleTableColumn = (columnName: string) => {
     const currentColumns = currentConfig.columns ?? [];

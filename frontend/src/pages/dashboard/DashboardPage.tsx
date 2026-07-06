@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Database,
   Maximize2,
@@ -122,6 +122,7 @@ export function DashboardPage({
   const [runtimeNotice, setRuntimeNotice] = useState<RuntimeNotice | null>(null);
   const [runtimeShareLink, setRuntimeShareLink] = useState<string | null>(null);
   const [isDatasetSidebarOpen, setIsDatasetSidebarOpen] = useState(true);
+  const [previewDraftWidget, setPreviewDraftWidget] = useState<DashboardRuntimeWidget | null>(null);
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [selectedRuntimePageId, setSelectedRuntimePageId] = useState<string | null>(defaultRuntimePages[0].id);
@@ -215,6 +216,14 @@ export function DashboardPage({
   const selectedDraftWidget = useMemo(
     () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
     [selectedDraftWidgets, selectedWidgetId],
+  );
+  const previewDraftWidgets = useMemo(
+    () => selectedDraftWidgets.map((widget) => (
+      previewDraftWidget?.id === widget.id && previewDraftWidget.pageId === widget.pageId
+        ? previewDraftWidget
+        : widget
+    )),
+    [previewDraftWidget, selectedDraftWidgets],
   );
   const editorDatasetId = selectedDraftWidget?.datasetId ?? selectedDatasetId;
   const editorDataset = useMemo(
@@ -352,6 +361,7 @@ export function DashboardPage({
 
   useEffect(() => {
     setSelectedWidgetId(null);
+    setPreviewDraftWidget(null);
   }, [selectedRuntimePageId]);
 
   useEffect(() => {
@@ -574,6 +584,7 @@ export function DashboardPage({
     try {
       await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
       if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
+      if (previewDraftWidget?.id === widgetId) setPreviewDraftWidget(null);
       await loadDraftRuntime(runtimeSelection.dashboardId);
       setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
       onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
@@ -589,15 +600,22 @@ export function DashboardPage({
 
   const selectRuntimeWidget = (widgetId: string) => {
     const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
+    setPreviewDraftWidget(null);
     setSelectedWidgetId(widgetId);
     if (widget?.datasetId) setSelectedDatasetId(widget.datasetId);
   };
 
   const clearRuntimeWidgetSelection = () => {
+    setPreviewDraftWidget(null);
     setSelectedWidgetId(null);
   };
 
+  const previewRuntimeWidget = useCallback((widget: DashboardRuntimeWidget | null) => {
+    setPreviewDraftWidget(widget);
+  }, []);
+
   const selectRuntimeDataset = (datasetId: string) => {
+    setPreviewDraftWidget(null);
     setSelectedDatasetId(datasetId);
     setSelectedWidgetId(null);
   };
@@ -610,6 +628,7 @@ export function DashboardPage({
     setRuntimeNotice({ message: "위젯 변경사항을 저장하는 중입니다.", tone: "info" });
     try {
       await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
+      setPreviewDraftWidget(null);
       await loadDraftRuntime(runtimeSelection.dashboardId);
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
@@ -931,6 +950,7 @@ export function DashboardPage({
       selectWidget: selectRuntimeWidget,
       share: shareRuntimeDashboard,
       toggleDatasetSidebar: () => setIsDatasetSidebarOpen((open) => !open),
+      previewWidget: previewRuntimeWidget,
       updateWidget: updateRuntimeWidget,
     };
     const runtimeDatasetState = {
@@ -959,7 +979,7 @@ export function DashboardPage({
       renamingPageId: renamingRuntimePageId,
       runtimeError,
       runtimeLoading,
-      selectedDraftWidgets,
+      selectedDraftWidgets: previewDraftWidgets,
       selectedDraftWidget,
       selectedPageId: selectedRuntimePageId,
       selectedPublishedWidgets,

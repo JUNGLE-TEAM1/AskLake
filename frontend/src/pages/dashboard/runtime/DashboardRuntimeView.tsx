@@ -66,6 +66,7 @@ type DashboardRuntimeViewActions = {
   layoutRejected: () => void;
   openDraft: () => void;
   openPublished: () => void;
+  previewWidget: (widget: DashboardRuntimeWidget | null) => void;
   publishDraft: () => void;
   refresh: () => void;
   renamePage: (pageId: string, title: string) => Promise<void> | void;
@@ -142,6 +143,7 @@ export function DashboardRuntimeView({
     layoutRejected: onLayoutRejected,
     openDraft: onOpenDraft,
     openPublished: onOpenPublished,
+    previewWidget: onPreviewWidget,
     publishDraft: onPublishDraft,
     refresh: onRefresh,
     renamePage: onRenamePage,
@@ -272,6 +274,7 @@ export function DashboardRuntimeView({
               isCreating={isCreatingDatasetWidget}
               isUpdating={updatingWidgetId === selectedDraftWidget?.id}
               onCancelEdit={onClearWidgetSelection}
+              onPreviewWidgetChange={onPreviewWidget}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
               onCreateWidget={onCreateDatasetWidget}
