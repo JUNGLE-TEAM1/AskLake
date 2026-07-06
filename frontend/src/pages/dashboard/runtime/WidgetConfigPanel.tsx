@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Check } from "lucide-react";
+import { HexColorInput, HexColorPicker } from "react-colorful";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
@@ -68,6 +70,8 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "세로", value: "vertical" },
   { label: "가로", value: "horizontal" },
 ];
+const defaultCustomPalette = dashboardWidgetColorPalettes.find((palette) => palette.id === "custom")?.colors
+  ?? ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 
 function columnNames(columns: DashboardDatasetColumn[]) {
   return columns.map((column) => column.name);
@@ -122,6 +126,11 @@ function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColor
     };
   }
   return defaultWidgetColorConfig;
+}
+
+function normalizeCustomColors(colors?: string[]) {
+  const source = colors?.length ? colors : defaultCustomPalette;
+  return source.slice(0, 12);
 }
 
 function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
@@ -357,6 +366,7 @@ export function WidgetConfigPanel({
 }) {
   const [color, setColor] = useState<DashboardWidgetColorConfig>(defaultWidgetColorConfig);
   const [configsByType, setConfigsByType] = useState<Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>>>({});
+  const [customColorIndex, setCustomColorIndex] = useState(0);
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -381,6 +391,7 @@ export function WidgetConfigPanel({
 
   useEffect(() => {
     setFormError(null);
+    setCustomColorIndex(0);
     if (editingWidget) {
       setType(editingWidget.type);
       setTitle(editingWidget.title ?? "");
@@ -414,6 +425,35 @@ export function WidgetConfigPanel({
         ...patch,
       },
     }));
+  };
+
+  const selectedPalette = dashboardWidgetColorPalettes.find((palette) => palette.id === color.paletteId)
+    ?? dashboardWidgetColorPalettes[0];
+  const customColors = normalizeCustomColors(color.customColors);
+  const activeCustomColor = customColors[customColorIndex] ?? customColors[0] ?? defaultCustomPalette[0];
+
+  const handlePaletteSelect = (paletteId: DashboardWidgetPaletteId) => {
+    if (paletteId === "custom") {
+      const sourcePalette = dashboardWidgetColorPalettes.find((palette) => palette.id === color.paletteId);
+      setColor({
+        customColors: normalizeCustomColors(color.paletteId === "custom" ? color.customColors : sourcePalette?.colors),
+        paletteId,
+      });
+      return;
+    }
+
+    setColor({ paletteId });
+  };
+
+  const updateCustomColor = (nextColor: string) => {
+    setColor((current) => {
+      const nextColors = normalizeCustomColors(current.customColors);
+      nextColors[customColorIndex] = nextColor;
+      return {
+        customColors: nextColors,
+        paletteId: "custom",
+      };
+    });
   };
 
   const toggleTableColumn = (columnName: string) => {
@@ -518,17 +558,54 @@ export function WidgetConfigPanel({
           </select>
         </label>
 
-        <label>
+        <div className="asklake-widget-palette-field">
           <span>색상 팔레트</span>
-          <select
-            value={color.paletteId}
-            onChange={(event) => setColor({ paletteId: event.target.value as DashboardWidgetPaletteId })}
-          >
-            {dashboardWidgetColorPalettes.map((palette) => (
-              <option key={palette.id} value={palette.id}>{palette.label}</option>
-            ))}
-          </select>
-        </label>
+          <div className="asklake-widget-palette-list">
+            {dashboardWidgetColorPalettes.map((palette) => {
+              const isSelected = color.paletteId === palette.id;
+              return (
+                <button
+                  key={palette.id}
+                  className={`asklake-widget-palette-button${isSelected ? " selected" : ""}`}
+                  type="button"
+                  onClick={() => handlePaletteSelect(palette.id)}
+                >
+                  <span>{palette.label}</span>
+                  <span className="asklake-widget-palette-preview" aria-hidden="true">
+                    {palette.colors.slice(0, 6).map((paletteColor) => (
+                      <i key={`${palette.id}-${paletteColor}`} style={{ backgroundColor: paletteColor }} />
+                    ))}
+                  </span>
+                  {isSelected && <Check aria-hidden="true" size={16} strokeWidth={3} />}
+                </button>
+              );
+            })}
+          </div>
+
+          {color.paletteId === "custom" && (
+            <div className="asklake-widget-custom-color-panel">
+              <div className="asklake-widget-custom-swatches" aria-label="사용자 지정 색상">
+                {customColors.map((customColor, index) => (
+                  <button
+                    key={`${customColor}-${index}`}
+                    className={`asklake-widget-custom-swatch${customColorIndex === index ? " selected" : ""}`}
+                    style={{ backgroundColor: customColor }}
+                    type="button"
+                    onClick={() => setCustomColorIndex(index)}
+                  >
+                    {customColorIndex === index && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
+                  </button>
+                ))}
+              </div>
+              <HexColorPicker color={activeCustomColor} onChange={updateCustomColor} />
+              <label className="asklake-widget-hex-input">
+                <span>HEX</span>
+                <HexColorInput prefixed color={activeCustomColor} onChange={updateCustomColor} />
+              </label>
+            </div>
+          )}
+          <small>{selectedPalette.label} 팔레트가 차트 색상에 순서대로 적용됩니다.</small>
+        </div>
 
         {type === "metric" && (
           <>

@@ -966,6 +966,125 @@
   resize: vertical;
 }
 
+.asklake-widget-palette-field {
+  display: grid;
+  gap: 8px;
+}
+
+.asklake-widget-palette-field > span {
+  color: var(--dash-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.asklake-widget-palette-field small {
+  color: var(--dash-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.asklake-widget-palette-list {
+  display: grid;
+  gap: 7px;
+}
+
+.asklake-widget-palette-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 18px;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #d7dfec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--dash-text);
+  font-size: 12px;
+  font-weight: 850;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.asklake-widget-palette-button.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.asklake-widget-palette-button svg {
+  color: #2563eb;
+}
+
+.asklake-widget-palette-preview {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.asklake-widget-palette-preview i {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+}
+
+.asklake-widget-custom-color-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #dbe5f4;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.asklake-widget-custom-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asklake-widget-custom-swatch {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  color: #0f172a;
+  padding: 0;
+}
+
+.asklake-widget-custom-swatch.selected {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+
+.asklake-widget-custom-swatch svg {
+  color: #0f172a;
+  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.7));
+}
+
+.asklake-widget-custom-color-panel .react-colorful {
+  width: 100%;
+  height: 154px;
+}
+
+.asklake-widget-custom-color-panel .react-colorful__saturation {
+  border-radius: 6px 6px 0 0;
+}
+
+.asklake-widget-custom-color-panel .react-colorful__hue {
+  height: 16px;
+  border-radius: 0 0 6px 6px;
+}
+
+.asklake-widget-hex-input {
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+}
+
 .asklake-widget-column-picker {
   display: grid;
   gap: 8px;

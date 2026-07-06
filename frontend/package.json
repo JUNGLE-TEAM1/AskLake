@@ -19,6 +19,7 @@
     "pg": "^8.22.0",
     "react": "latest",
     "react-apexcharts": "^2.1.1",
+    "react-colorful": "^5.7.0",
     "react-dom": "latest",
     "react-grid-layout": "^2.2.3",
     "react-resizable": "^4.0.2",
