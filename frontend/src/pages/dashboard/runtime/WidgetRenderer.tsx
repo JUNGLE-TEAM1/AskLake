@@ -1,4 +1,6 @@
-import { memo, type CSSProperties } from "react";
+import { memo } from "react";
+import type { ApexOptions } from "apexcharts";
+import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
   DashboardWidgetAggregation,
@@ -180,8 +182,116 @@ function configColor(color: string | undefined) {
   return color ? chartColorByConfig[color] ?? color : chartColorByConfig.blue;
 }
 
-function gradientFromColor(color: string) {
-  return `linear-gradient(180deg, ${color} 0%, ${color} 100%)`;
+function formatAxisNumber(value: number) {
+  return new Intl.NumberFormat("ko-KR", {
+    maximumFractionDigits: 1,
+    notation: Math.abs(value) >= 10000 ? "compact" : "standard",
+  }).format(value);
+}
+
+function buildBaseChartOptions(color: string): ApexOptions {
+  return {
+    chart: {
+      animations: {
+        enabled: true,
+        speed: 450,
+      },
+      fontFamily: "inherit",
+      foreColor: "#64748b",
+      redrawOnParentResize: true,
+      redrawOnWindowResize: true,
+      toolbar: {
+        show: false,
+      },
+      zoom: {
+        enabled: false,
+      },
+    },
+    colors: [color],
+    dataLabels: {
+      enabled: false,
+    },
+    grid: {
+      borderColor: "#e2e8f0",
+      padding: {
+        bottom: 4,
+        left: 8,
+        right: 14,
+        top: 8,
+      },
+      strokeDashArray: 4,
+    },
+    legend: {
+      fontSize: "12px",
+      fontWeight: 700,
+      labels: {
+        colors: "#475569",
+      },
+      markers: {
+        size: 6,
+      },
+    },
+    stroke: {
+      curve: "smooth",
+      lineCap: "round",
+      width: 3,
+    },
+    theme: {
+      mode: "light",
+    },
+    tooltip: {
+      theme: "light",
+      y: {
+        formatter: (value: number) => formatCell(value),
+      },
+    },
+    xaxis: {
+      axisBorder: {
+        color: "#cbd5e1",
+      },
+      axisTicks: {
+        color: "#cbd5e1",
+      },
+      labels: {
+        rotate: -20,
+        style: {
+          colors: "#64748b",
+          fontSize: "11px",
+          fontWeight: 700,
+        },
+        trim: true,
+      },
+      tooltip: {
+        enabled: false,
+      },
+    },
+    yaxis: {
+      labels: {
+        formatter: (value: number) => formatAxisNumber(value),
+        style: {
+          colors: "#64748b",
+          fontSize: "11px",
+          fontWeight: 700,
+        },
+      },
+    },
+  };
+}
+
+function RuntimeApexChart({
+  options,
+  series,
+  type,
+}: {
+  options: ApexOptions;
+  series: ApexOptions["series"];
+  type: "bar" | "donut" | "line";
+}) {
+  return (
+    <div className="asklake-apex-widget">
+      <Chart height="100%" options={options} series={series} type={type} width="100%" />
+    </div>
+  );
 }
 
 function EmptyWidgetData() {
@@ -251,25 +361,28 @@ function BarChartWidget({ widget }: { widget: RuntimeWidgetByType<"bar_chart"> }
   const points = groupedChartPoints({ aggregation, labelKey, limit: 10, rows, valueKey });
   if (!points.length) return <EmptyWidgetData />;
 
-  const maxValue = Math.max(...points.map((point) => point.value), 1);
   const color = configColor(widget.config.color);
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "bar",
+    },
+    plotOptions: {
+      bar: {
+        borderRadius: 5,
+        columnWidth: "48%",
+      },
+    },
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories: points.map((point) => point.label),
+    },
+  };
+  const series = [{ data: points.map((point) => point.value), name: aggregationLabels[aggregation] }];
 
-  return (
-    <div className="asklake-bar-widget">
-      {points.map((point, index) => (
-        <span
-          key={`${point.label}-${index}`}
-          style={{
-            background: gradientFromColor(color),
-            height: `${Math.max(10, (point.value / maxValue) * 100)}%`,
-          }}
-          title={`${point.label}: ${formatCell(point.value)}`}
-        >
-          <i>{point.label}</i>
-        </span>
-      ))}
-    </div>
-  );
+  return <RuntimeApexChart options={options} series={series} type="bar" />;
 }
 
 function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart"> }) {
@@ -289,33 +402,28 @@ function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart">
   });
   if (!points.length) return <EmptyWidgetData />;
 
-  const values = points.map((point) => point.value);
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const range = Math.max(1, maxValue - minValue);
-  const width = 100;
-  const height = 72;
-  const step = points.length > 1 ? width / (points.length - 1) : width;
-  const coordinates = points.map((point, index) => {
-    const x = points.length > 1 ? index * step : width / 2;
-    const y = height - ((point.value - minValue) / range) * (height - 8) - 4;
-    return { ...point, x, y };
-  });
-  const polyline = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
   const color = configColor(widget.config.color);
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "line",
+    },
+    markers: {
+      colors: ["#ffffff"],
+      size: 4,
+      strokeColors: color,
+      strokeWidth: 3,
+    },
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories: points.map((point) => point.label),
+    },
+  };
+  const series = [{ data: points.map((point) => point.value), name: aggregationLabels[aggregation] }];
 
-  return (
-    <div className="asklake-line-widget">
-      <svg aria-label="라인 차트" preserveAspectRatio="none" viewBox={`0 0 ${width} ${height}`}>
-        <polyline points={polyline} style={{ stroke: color }} />
-        {coordinates.map((point, index) => (
-          <circle key={`${point.label}-${index}`} cx={point.x} cy={point.y} r="2.5" style={{ stroke: color }}>
-            <title>{`${point.label}: ${formatCell(point.value)}`}</title>
-          </circle>
-        ))}
-      </svg>
-    </div>
-  );
+  return <RuntimeApexChart options={options} series={series} type="line" />;
 }
 
 function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart"> }) {
@@ -330,32 +438,58 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
   const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
   if (total <= 0) return <EmptyWidgetData />;
 
-  let cursor = 0;
-  const segments = points.map((point, index) => {
-    const start = cursor;
-    const size = (Math.max(0, point.value) / total) * 100;
-    cursor += size;
-    const color = index === 0 ? configColor(widget.config.color) : chartColors[index % chartColors.length];
-    return `${color} ${start}% ${cursor}%`;
-  });
-  const ringStyle = {
-    "--asklake-donut-segments": segments.join(", "),
-  } as CSSProperties;
+  const primaryColor = configColor(widget.config.color);
+  const baseOptions = buildBaseChartOptions(primaryColor);
+  const colors = points.map((_, index) => index === 0 ? primaryColor : chartColors[index % chartColors.length]);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "donut",
+    },
+    colors,
+    labels: points.map((point) => point.label),
+    legend: {
+      ...baseOptions.legend,
+      fontSize: "12px",
+      fontWeight: 800,
+      markers: {
+        size: 6,
+      },
+      position: "right",
+    },
+    plotOptions: {
+      pie: {
+        donut: {
+          labels: {
+            show: true,
+            total: {
+              formatter: () => formatCell(total),
+              label: "합계",
+              show: true,
+            },
+            value: {
+              formatter: (value: string) => formatCell(Number(value)),
+            },
+          },
+          size: "66%",
+        },
+      },
+    },
+    stroke: {
+      colors: ["#ffffff"],
+      width: 3,
+    },
+    tooltip: {
+      theme: "light",
+      y: {
+        formatter: (value: number) => formatCell(value),
+      },
+    },
+  };
+  const series = points.map((point) => Math.max(0, point.value));
 
-  return (
-    <div className="asklake-donut-widget">
-      <div className="asklake-donut-widget__ring" style={ringStyle} />
-      <div className="asklake-donut-widget__legend">
-        {points.map((point, index) => (
-          <p key={`${point.label}-${index}`}>
-            <i style={{ background: index === 0 ? configColor(widget.config.color) : chartColors[index % chartColors.length] }} />
-            <span>{point.label}</span>
-            <strong>{formatCell(point.value)}</strong>
-          </p>
-        ))}
-      </div>
-    </div>
-  );
+  return <RuntimeApexChart options={options} series={series} type="donut" />;
 }
 
 export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
