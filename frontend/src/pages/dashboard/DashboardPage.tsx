@@ -605,11 +605,6 @@ export function DashboardPage({
     if (widget?.datasetId) setSelectedDatasetId(widget.datasetId);
   };
 
-  const clearRuntimeWidgetSelection = () => {
-    setPreviewDraftWidget(null);
-    setSelectedWidgetId(null);
-  };
-
   const previewRuntimeWidget = useCallback((widget: DashboardRuntimeWidget | null) => {
     setPreviewDraftWidget(widget);
   }, []);
@@ -930,7 +925,6 @@ export function DashboardPage({
   if (view === "runtime") {
     const runtimeViewActions = {
       addPage: addRuntimePage,
-      clearWidgetSelection: clearRuntimeWidgetSelection,
       closeSharePanel: () => setRuntimeShareLink(null),
       createDatasetWidget: createDatasetDraftWidget,
       deletePage: deleteRuntimePage,

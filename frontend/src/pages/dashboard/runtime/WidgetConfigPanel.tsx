@@ -394,7 +394,6 @@ export function WidgetConfigPanel({
   editingWidget = null,
   isCreating = false,
   isUpdating = false,
-  onCancelEdit,
   onCreateWidget,
   onPreviewWidgetChange,
   onUpdateWidget,
@@ -404,7 +403,6 @@ export function WidgetConfigPanel({
   editingWidget?: DashboardRuntimeWidget | null;
   isCreating?: boolean;
   isUpdating?: boolean;
-  onCancelEdit?: () => void;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onPreviewWidgetChange?: (widget: DashboardRuntimeWidget | null) => void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
@@ -616,7 +614,7 @@ export function WidgetConfigPanel({
     <section className="asklake-widget-config-panel">
       <div className="asklake-widget-config-heading">
         <div>
-          <span>{isEditMode ? "Selected widget" : "Dataset widget"}</span>
+          <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
           <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
         </div>
       </div>
@@ -634,7 +632,7 @@ export function WidgetConfigPanel({
         <label>
           <span>설명</span>
           <textarea
-            placeholder="이 위젯이 보여줄 지표를 짧게 적어주세요."
+            placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
             rows={3}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -1008,11 +1006,6 @@ export function WidgetConfigPanel({
         {(formError || validationMessage) && <p className="asklake-widget-config-error">{formError ?? validationMessage}</p>}
 
         <div className="asklake-widget-config-actions">
-          {isEditMode && (
-            <button className="asklake-widget-secondary-button" type="button" onClick={onCancelEdit}>
-              새 위젯 만들기
-            </button>
-          )}
           <button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
             {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
           </button>

@@ -57,7 +57,6 @@ type DashboardRuntimeDatasetState = {
 
 type DashboardRuntimeViewActions = {
   addPage: () => void;
-  clearWidgetSelection: () => void;
   closeSharePanel: () => void;
   createDatasetWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   deletePage: (pageId: string) => void;
@@ -134,7 +133,6 @@ export function DashboardRuntimeView({
   } = datasets;
   const {
     addPage: onAddPage,
-    clearWidgetSelection: onClearWidgetSelection,
     closeSharePanel: onCloseSharePanel,
     createDatasetWidget: onCreateDatasetWidget,
     deletePage: onDeletePage,
@@ -273,7 +271,6 @@ export function DashboardRuntimeView({
               editingWidget={selectedDraftWidget}
               isCreating={isCreatingDatasetWidget}
               isUpdating={updatingWidgetId === selectedDraftWidget?.id}
-              onCancelEdit={onClearWidgetSelection}
               onPreviewWidgetChange={onPreviewWidget}
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
