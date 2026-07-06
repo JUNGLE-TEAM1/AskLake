@@ -749,11 +749,10 @@
 
 .asklake-dashboard-rgl-shell,
 .asklake-dashboard-rgl {
-  min-height: 100%;
   width: 100%;
 }
 
-.asklake-dashboard-rgl.edit {
+.asklake-dashboard-rgl:not(.edit) {
   min-height: 100%;
 }
 
@@ -919,19 +918,6 @@
 .asklake-text-placeholder-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
-}
-
-.asklake-visualization-request-skeleton {
-  display: grid;
-  grid-template-columns: 1fr 1fr 0.6fr;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.asklake-visualization-request-skeleton span {
-  min-height: 38px;
-  border-radius: 6px;
-  background: #e2e8f0;
 }
 
 .asklake-visualization-request-widget p {
@@ -1356,10 +1342,6 @@
   .asklake-visualization-request-widget,
   .asklake-text-placeholder-widget {
     padding: 14px;
-  }
-
-  .asklake-visualization-request-skeleton {
-    grid-template-columns: 1fr;
   }
 
   .asklake-dashboard-widget-grid {

@@ -354,11 +354,6 @@ function VisualizationRequestWidget({
           <Send size={18} />
         </button>
       </form>
-      <div className="asklake-visualization-request-skeleton" aria-hidden="true">
-        <span />
-        <span />
-        <span />
-      </div>
       <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
     </div>
   );
