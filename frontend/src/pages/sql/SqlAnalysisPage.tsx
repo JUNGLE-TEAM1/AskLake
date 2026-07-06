@@ -151,7 +151,6 @@ export function SqlAnalysisPage({
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
     const contextDatasets = datasets.filter((item) => {
-      if (item.id === baseDataset.id) return false;
       if (showReferencedOnly && !referenceDatasetIdSet.has(item.id)) return false;
       return true;
     });
@@ -171,13 +170,7 @@ export function SqlAnalysisPage({
       : contextDatasets;
 
     return searchableDatasets;
-  }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
-  const referencedDatasets = useMemo(
-    () => referenceDatasetIds
-      .map((id) => datasets.find((item) => item.id === id))
-      .filter((item): item is CatalogDataset => Boolean(item)),
-    [datasets, referenceDatasetIds],
-  );
+  }, [datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
   const totalContextPages = Math.max(1, Math.ceil(filteredDatasets.length / SQL_CONTEXT_PAGE_SIZE));
   const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
   const contextPageStartIndex = (currentContextPage - 1) * SQL_CONTEXT_PAGE_SIZE;
@@ -507,7 +500,6 @@ export function SqlAnalysisPage({
     <div className={[
       "sql-page",
       contextCollapsed ? "context-collapsed" : "",
-      schemaDataset ? "schema-open" : "",
     ].filter(Boolean).join(" ")}>
       {contextCollapsed && (
         <button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기">
@@ -528,33 +520,6 @@ export function SqlAnalysisPage({
               </span>
             </div>
           </div>
-          <section className="sql-query-context">
-            <div className="sql-section-heading">
-              <h2>현재 쿼리 데이터셋</h2>
-              <span>{1 + referencedDatasets.length} tables</span>
-            </div>
-            <div className="sql-query-context-list">
-              <SqlDatasetRow
-                dataset={baseDataset}
-                selected={openSchemaDatasetId === baseDataset.id}
-                isBase
-                onInsert={insertTableName}
-                onSchemaSelect={selectSchemaDataset}
-              />
-              {referencedDatasets.map((item) => (
-                <SqlDatasetRow
-                  dataset={item}
-                  selected={openSchemaDatasetId === item.id}
-                  isReferenced
-                  key={item.id}
-                  onBaseChange={changeBaseDataset}
-                  onInsert={insertTableName}
-                  onReferenceToggle={toggleReferenceDataset}
-                  onSchemaSelect={selectSchemaDataset}
-                />
-              ))}
-            </div>
-          </section>
           <label className="sql-context-search">
             <Search size={15} />
             <input
@@ -577,9 +542,6 @@ export function SqlAnalysisPage({
                   selected={openSchemaDatasetId === item.id}
                   isReferenced={referenceDatasetIdSet.has(item.id)}
                   key={item.id}
-                  onBaseChange={changeBaseDataset}
-                  onInsert={insertTableName}
-                  onReferenceToggle={toggleReferenceDataset}
                   onSchemaSelect={selectSchemaDataset}
                 />
               ))}
@@ -626,7 +588,7 @@ export function SqlAnalysisPage({
           <div className="sql-editor-header">
             <div>
               <span>QUERY EDITOR</span>
-              <h2>Base Dataset 기준 SQL</h2>
+              <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
               <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
@@ -677,7 +639,7 @@ export function SqlAnalysisPage({
           </div>
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+              <span>Context: 선택 테이블 1 + 참조 {referenceDatasetIds.length} tables</span>
               {preflightSummary && (
                 <span className={`sql-check-pill ${preflightSummary.tone}`}>
                   {preflightSummary.label}
@@ -864,14 +826,15 @@ export function SqlAnalysisPage({
           </section>
         </div>
       )}
-      {schemaDataset && (
-        <SchemaDetailsPanel
-          dataset={schemaDataset}
-          isBase={schemaDataset.id === baseDataset.id}
-          isReferenced={referenceDatasetIdSet.has(schemaDataset.id)}
-          onColumnClick={insertColumnName}
-        />
-      )}
+      <SchemaDetailsPanel
+        dataset={schemaDataset}
+        isQueryDataset={schemaDataset?.id === baseDataset.id}
+        isReferenced={schemaDataset ? referenceDatasetIdSet.has(schemaDataset.id) : false}
+        onColumnClick={insertColumnName}
+        onInsert={insertTableName}
+        onQueryDatasetChange={changeBaseDataset}
+        onReferenceToggle={toggleReferenceDataset}
+      />
     </div>
   );
 }
@@ -968,22 +931,42 @@ function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
 
 function SchemaDetailsPanel({
   dataset,
-  isBase,
+  isQueryDataset,
   isReferenced,
   onColumnClick,
+  onInsert,
+  onQueryDatasetChange,
+  onReferenceToggle,
 }: {
-  dataset: CatalogDataset;
-  isBase: boolean;
+  dataset: CatalogDataset | null;
+  isQueryDataset: boolean;
   isReferenced: boolean;
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
+  onInsert: (dataset: CatalogDataset) => void;
+  onQueryDatasetChange: (dataset: CatalogDataset) => void;
+  onReferenceToggle: (dataset: CatalogDataset) => void;
 }) {
+  if (!dataset) {
+    return (
+      <aside className="sql-schema-panel empty">
+        <header className="sql-schema-panel-header">
+          <span>SCHEMA</span>
+          <h2>선택된 테이블 없음</h2>
+        </header>
+        <div className="sql-schema-panel-empty">
+          <strong>선택 없음</strong>
+          <span>Source, owner, columns</span>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="sql-schema-panel">
       <header className="sql-schema-panel-header">
         <span>SCHEMA</span>
         <h2 title={dataset.name}>{dataset.name}</h2>
         <div className="sql-schema-panel-pills">
-          {isBase && <span className="sql-table-base-pill">BASE</span>}
           {isReferenced && <span className="sql-table-ref-pill">REF</span>}
           <span className="sql-table-layer">{dataset.layer}</span>
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
@@ -1003,6 +986,17 @@ function SchemaDetailsPanel({
           <dd>{dataset.schema.length}</dd>
         </div>
       </dl>
+      <div className="sql-schema-panel-actions">
+        {!isQueryDataset && (
+          <button type="button" onClick={() => onQueryDatasetChange(dataset)}>SQL 기준으로 사용</button>
+        )}
+        {!isQueryDataset && (
+          <button type="button" onClick={() => onReferenceToggle(dataset)}>
+            {isReferenced ? "참조 해제" : "참조 추가"}
+          </button>
+        )}
+        <button type="button" onClick={() => onInsert(dataset)}>SQL에 삽입</button>
+      </div>
       <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
     </aside>
   );
@@ -1040,26 +1034,17 @@ function parseDerivedDatasetTags(value: string) {
 function SqlDatasetRow({
   dataset,
   selected,
-  isBase = false,
   isReferenced = false,
-  onBaseChange,
-  onInsert,
-  onReferenceToggle,
   onSchemaSelect,
 }: {
   dataset: CatalogDataset;
   selected: boolean;
-  isBase?: boolean;
   isReferenced?: boolean;
-  onBaseChange?: (dataset: CatalogDataset) => void;
-  onInsert: (dataset: CatalogDataset) => void;
-  onReferenceToggle?: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
   const rowClasses = [
     "sql-table-card",
     selected ? "active" : "",
-    isBase ? "base" : "",
     isReferenced ? "referenced" : "",
   ].filter(Boolean).join(" ");
 
@@ -1071,25 +1056,11 @@ function SqlDatasetRow({
           <strong title={dataset.name}>{dataset.name}</strong>
         </span>
         <span className="sql-table-pills">
-          {isBase && <span className="sql-table-base-pill">BASE</span>}
           {isReferenced && <span className="sql-table-ref-pill">REF</span>}
           <span className="sql-table-layer">{dataset.layer}</span>
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </span>
       </button>
-      {selected && (
-        <div className="sql-table-expanded">
-          <div className="sql-table-card-actions">
-            {!isBase && <button type="button" onClick={() => onBaseChange?.(dataset)}>Base로 설정</button>}
-            {!isBase && (
-              <button type="button" onClick={() => onReferenceToggle?.(dataset)}>
-                {isReferenced ? "참조 해제" : "참조 추가"}
-              </button>
-            )}
-            <button type="button" onClick={() => onInsert(dataset)}>SQL에 삽입</button>
-          </div>
-        </div>
-      )}
     </article>
   );
 }

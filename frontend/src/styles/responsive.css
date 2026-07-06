@@ -84,8 +84,6 @@
   .catalog-detail-grid,
   .sql-page,
   .sql-page.context-collapsed,
-  .sql-page.schema-open,
-  .sql-page.context-collapsed.schema-open,
   .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
@@ -93,10 +91,27 @@
   }
 
   .sql-schema-panel {
+    order: 2;
     position: static;
     height: auto;
     max-height: none;
     overflow: visible;
+  }
+
+  .sql-dataset-panel {
+    order: 1;
+  }
+
+  .sql-workspace {
+    order: 3;
+  }
+
+  .sql-page.context-collapsed .sql-workspace {
+    order: 2;
+  }
+
+  .sql-page.context-collapsed .sql-schema-panel {
+    order: 3;
   }
 
   .sql-schema-panel .sql-card-schema {
