@@ -80,6 +80,8 @@ Canonical status values:
 | 대시보드 | local builder state | dashboard APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
+반복 실행 schedule은 `scheduleLabel`에 더해 `scheduleSummary`, `startDate`, `endDate`, `timezone`을 create request에 포함해 Review와 생성 payload가 같은 값을 보게 한다.
+
 ## 8) Pair Handoff Contracts
 
 Pair 간 전달 객체는 API field name을 사용한다.
@@ -101,6 +103,7 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - `dataset.id`, `dataset.name`, `dataset.schema`, `dataset.sampleRows`, `dataset.rows`, `dataset.size`가 있어야 SQL context를 만들 수 있다.
 - `dataset.upstream`과 `dataset.downstream`이 있으면 Lineage fallback을 만들 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
+- Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
 
 ### Pair A -> Pair C
 

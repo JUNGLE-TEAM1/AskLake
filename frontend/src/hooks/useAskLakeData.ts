@@ -30,6 +30,7 @@ const initialDraftPipeline: DraftPipeline = {
     summary: "품질 규칙 5개 · 유효하지 않은 행 격리",
   },
   schedule: {
+    endDate: "",
     label: "매주 목요일 10:30",
     mode: "repeat",
     nextRun: "다음 예약 대기",
@@ -39,6 +40,9 @@ const initialDraftPipeline: DraftPipeline = {
       retryIntervalMinutes: 10,
       timeoutMinutes: 60,
     },
+    startDate: "2026-07-02",
+    summary: "매주 목요일 10:30 · 시작 2026.07.02 · 종료일 없음 · (GMT+09:00) Seoul, Tokyo",
+    timezone: "(GMT+09:00) Seoul, Tokyo",
   },
   schema: {
     columns: [],
@@ -62,10 +66,14 @@ const initialDraftPipeline: DraftPipeline = {
     sourceType: "File / S3",
   },
   target: {
+    compression: "Snappy",
     datasetName: "pair_a_customer_review_gold",
     format: "Parquet",
     layer: "GOLD",
+    partition: "year/month/region",
     rag: true,
+    storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
+    storageType: "S3",
   },
   transform: {
     outputColumns: [],

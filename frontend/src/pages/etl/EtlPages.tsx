@@ -54,8 +54,7 @@ type RepeatScheduleDraft = {
 };
 
 export function SchedulePage({
-  draftRetryPolicy,
-  draftScheduleLabel,
+  draft,
   mode,
   onDraftChange,
   onModeChange,
@@ -63,8 +62,7 @@ export function SchedulePage({
   onNext,
   onSave,
 }: {
-  draftRetryPolicy: RetryPolicyDraft;
-  draftScheduleLabel: string;
+  draft: DraftPipeline;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -72,19 +70,32 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
+  const initialRepeat = parseRepeatScheduleLabel(draft.schedule.label);
   const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(initialRepeat.frequency);
   const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
-  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
+  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draft.schedule.label));
+  const startDate = normalizeScheduleDate(draft.schedule.startDate, DEFAULT_SCHEDULE_START_DATE);
+  const endDate = normalizeOptionalScheduleDate(draft.schedule.endDate);
+  const timezone = normalizeTimezone(draft.schedule.timezone);
   const title = "스케줄링 설정";
   const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
+  };
+  const updateScheduleDraft = (nextLabel: string, patch: DraftPipelinePatch = {}) => {
+    onDraftChange({
+      ...patch,
+      scheduleLabel: nextLabel,
+      scheduleSummary: buildScheduleSummary(nextLabel, mode, startDate, endDate, timezone),
+      startDate,
+      endDate,
+      timezone,
+    });
   };
   const applyScheduleDraft = () => {
     const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
@@ -94,10 +105,17 @@ export function SchedulePage({
     setRepeatMinute(normalizedRepeat.minute);
     setCustomCron(normalizedRepeat.cron);
     setOnceDateTime(normalizedOnceDateTime);
-    onDraftChange({ scheduleLabel: formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime) });
+    updateScheduleDraft(formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime));
   };
   const selectMode = (nextMode: ScheduleFlowId) => {
-    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDraft, onceDateTime) });
+    const nextLabel = formatScheduleLabel(nextMode, repeatDraft, onceDateTime);
+    onDraftChange({
+      scheduleLabel: nextLabel,
+      scheduleSummary: buildScheduleSummary(nextLabel, nextMode, startDate, endDate, timezone),
+      startDate,
+      endDate,
+      timezone,
+    });
     onModeChange(nextMode);
   };
   const goNext = () => {
@@ -111,7 +129,7 @@ export function SchedulePage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} summaryRows={mode === "repeat" ? buildScheduleSummaryRows(scheduleLabel, startDate, endDate, timezone) : undefined} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
         <section className="panel">
@@ -125,39 +143,50 @@ export function SchedulePage({
             <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
+        {mode === "repeat" && <RepeatSettings customCron={customCron} endDate={endDate} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draft.schedule.retryPolicy} selectedDay={repeatDay} startDate={startDate} time={repeatTime} timezone={timezone} onCronChange={(cron) => {
           const sanitizedCron = sanitizeCronInput(cron);
           setCustomCron(sanitizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
         }} onCronCommit={() => {
           const normalizedCron = normalizeCronExpression(customCron);
           setCustomCron(normalizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
         }} onDayChange={(day) => {
           setRepeatDay(day);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
         }} onFrequencyChange={(frequency) => {
           setRepeatFrequency(frequency);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime));
         }} onMinuteChange={(minute) => {
           setRepeatMinute(minute);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime));
         }} onTimeCommit={() => {
           const normalizedTime = normalizeTimeValue(repeatTime);
           setRepeatTime(normalizedTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime) });
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime));
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
-        }} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onDateTimeChange={(dateTime) => {
+          updateScheduleDraft(formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime));
+        }} onEndDateChange={(nextEndDate) => onDraftChange({
+          endDate: nextEndDate,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, normalizeOptionalScheduleDate(nextEndDate), timezone),
+        })} onRetryPolicyChange={updateRetryPolicy} onStartDateChange={(nextStartDate) => onDraftChange({
+          startDate: nextStartDate,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, normalizeScheduleDate(nextStartDate, DEFAULT_SCHEDULE_START_DATE), endDate, timezone),
+        })} onTimezoneChange={(nextTimezone) => onDraftChange({
+          timezone: nextTimezone,
+          scheduleSummary: buildScheduleSummary(scheduleLabel, mode, startDate, endDate, normalizeTimezone(nextTimezone)),
+        })} />}
+        {mode === "manual" && <ManualSettings retryPolicy={draft.schedule.retryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draft.schedule.retryPolicy} onDateTimeChange={(dateTime) => {
           setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
+          const nextLabel = formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime);
+          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: nextLabel });
         }} onDateTimeCommit={() => {
           const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
           setOnceDateTime(normalizedDateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
+          const nextLabel = formatScheduleLabel("once", repeatDraft, normalizedDateTime);
+          onDraftChange({ scheduleLabel: nextLabel, scheduleSummary: nextLabel });
         }} onRetryPolicyChange={updateRetryPolicy} />}
     </CreationFlowLayout>
   );
@@ -415,6 +444,13 @@ const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
 const DEFAULT_ONCE_DATE_TIME = "2026-07-05T10:00";
+const DEFAULT_SCHEDULE_START_DATE = "2026-07-02";
+const DEFAULT_SCHEDULE_TIMEZONE = "(GMT+09:00) Seoul, Tokyo";
+const SCHEDULE_TIMEZONE_OPTIONS = [
+  DEFAULT_SCHEDULE_TIMEZONE,
+  "(GMT+00:00) UTC",
+  "(GMT-08:00) Pacific Time",
+];
 const validRepeatMinutes = ["00", "15", "30", "45"];
 const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
@@ -438,6 +474,37 @@ function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
   if (label.includes("수동")) return "manual";
   if (label.includes("1회")) return "once";
   return "repeat";
+}
+
+function buildScheduleSummary(label: string, mode: ScheduleFlowId, startDate: string, endDate: string | undefined, timezone: string) {
+  if (mode !== "repeat") return label;
+  const endLabel = endDate ? `종료 ${formatScheduleDate(endDate)}` : "종료일 없음";
+  return `${label} · 시작 ${formatScheduleDate(startDate)} · ${endLabel} · ${timezone}`;
+}
+
+function buildScheduleSummaryRows(label: string, startDate: string, endDate: string | undefined, timezone: string): Array<[string, string]> {
+  return [
+    ["실행 방식", label],
+    ["시작 일시", formatScheduleDate(startDate)],
+    ["시간대", timezone],
+    ["종료 일시", endDate ? formatScheduleDate(endDate) : "종료일 없음"],
+  ];
+}
+
+function normalizeScheduleDate(value: string | undefined, fallback: string) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
+}
+
+function normalizeOptionalScheduleDate(value: string | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+function normalizeTimezone(value: string | undefined) {
+  return value && SCHEDULE_TIMEZONE_OPTIONS.includes(value) ? value : DEFAULT_SCHEDULE_TIMEZONE;
+}
+
+function formatScheduleDate(value: string) {
+  return value.replaceAll("-", ".");
 }
 
 function parseOnceScheduleLabel(label: string) {
@@ -505,6 +572,9 @@ const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT = "Parquet";
+const DEFAULT_STORAGE_TYPE = "S3";
+const DEFAULT_TARGET_PARTITION = "year/month/region";
+const DEFAULT_TARGET_COMPRESSION = "Snappy";
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
@@ -531,12 +601,16 @@ type PermissionDraftSlice = {
 };
 
 type TargetDraftSlice = {
+  compression?: string;
   datasetName?: string;
   format?: string;
   jobName?: string;
   layer?: string;
   owner?: string;
+  partition?: string;
   rag?: boolean;
+  storagePath?: string;
+  storageType?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
@@ -549,6 +623,10 @@ type DraftPipelineWithSlices = DraftPipeline & {
   permissionSummary?: string;
   rag?: boolean;
   target?: TargetDraftSlice;
+  compression?: string;
+  partition?: string;
+  storagePath?: string;
+  storageType?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
@@ -570,6 +648,10 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
 
 function buildJobName(targetDataset: string) {
   return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
+}
+
+function buildStoragePath(targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://asklake-output/${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}/${targetLayer.toLowerCase()}/`;
 }
 
 function buildPermissionSummary(permissionTemplate: string, visibility: string, approvalStatus: string) {
@@ -610,9 +692,13 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
 
   return {
+    compression: getDisplayText(target?.compression ?? compatDraft.compression, DEFAULT_TARGET_COMPRESSION) as DraftPipeline["target"]["compression"],
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
+    partition: getDisplayText(target?.partition ?? compatDraft.partition, DEFAULT_TARGET_PARTITION),
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
+    storagePath: getDisplayText(target?.storagePath ?? compatDraft.storagePath, buildStoragePath(targetDataset, normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer))),
+    storageType: getDisplayText(target?.storageType ?? compatDraft.storageType, DEFAULT_STORAGE_TYPE) as DraftPipeline["target"]["storageType"],
     targetDataset,
     targetFormat,
     targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
@@ -3813,36 +3899,49 @@ function InvalidRowsPanel({
 
 function RepeatSettings({
   customCron,
+  endDate,
   frequency,
   minute,
   onCronChange,
   onCronCommit,
   onDayChange,
+  onEndDateChange,
   onFrequencyChange,
   onMinuteChange,
   onRetryPolicyChange,
+  onStartDateChange,
   onTimeCommit,
   onTimeChange,
+  onTimezoneChange,
   retryPolicy,
   selectedDay,
+  startDate,
   time,
+  timezone,
 }: {
   customCron: string;
+  endDate: string;
   frequency: RepeatFrequency;
   minute: string;
   onCronChange: (cron: string) => void;
   onCronCommit: () => void;
   onDayChange: (day: string) => void;
+  onEndDateChange: (endDate: string) => void;
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
   onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
+  onStartDateChange: (startDate: string) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
+  onTimezoneChange: (timezone: string) => void;
   retryPolicy: RetryPolicyDraft;
   selectedDay: string;
+  startDate: string;
   time: string;
+  timezone: string;
 }) {
   const cronIsValid = isValidCronExpression(customCron);
+  const endLabel = endDate ? formatScheduleDate(endDate) : "종료일 없음";
   const preview = frequency === "hourly"
     ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.05 11:${minute}`
     : frequency === "daily"
@@ -3906,11 +4005,24 @@ function RepeatSettings({
             <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
           </label>
         )}
-        <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
-        <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
-        <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
+        <label className="field">
+          <span>시간대</span>
+          <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+            {SCHEDULE_TIMEZONE_OPTIONS.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>시작 날짜</span>
+          <input className="input control-input" type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} />
+        </label>
+        <label className="field">
+          <span>종료 날짜</span>
+          <input className="input control-input" type="date" value={endDate} onChange={(event) => onEndDateChange(event.target.value)} />
+        </label>
       </div>
-      <InfoBox title="실행 미리보기" body={preview} />
+      <InfoBox title="실행 미리보기" body={`${preview} 시작: ${formatScheduleDate(startDate)} · 종료: ${endLabel} · ${timezone}`} />
       {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
       <label className="policy-check-row">
         <input type="checkbox" defaultChecked />
@@ -4022,10 +4134,15 @@ export function TargetPage({
     const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
     const nextRag = patch.rag ?? ragEnabled;
+    const nextStoragePath = buildStoragePath(nextTargetDataset, nextTargetLayer);
 
     onDraftChange({
+      compression: initialTarget.compression,
       jobName: buildJobName(nextTargetDataset),
       owner: nextOwner,
+      partition: initialTarget.partition,
+      storagePath: nextStoragePath,
+      storageType: initialTarget.storageType,
       targetDataset: nextTargetDataset,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
@@ -4101,7 +4218,7 @@ export function TargetPage({
             ))}
           </div>
           <div className="form-grid">
-            <Field label="저장소 유형" value="S3" />
+            <Field label="저장소 유형" value={initialTarget.storageType} />
             <label className="field">
               <span>파일 포맷</span>
               <select className="input control-input" value={targetFormat} onChange={(event) => {
@@ -4112,9 +4229,9 @@ export function TargetPage({
                 {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
               </select>
             </label>
-            <Field label="파티션" value="year/month/region" />
-            <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
+            <Field label="파티션" value={initialTarget.partition} />
+            <Field label="압축" value={initialTarget.compression} />
+            <Field label="저장 경로" value={buildStoragePath(targetDataset, selectedLayer)} wide />
           </div>
           <div className="target-status-grid">
             <StatusTile label="카탈로그 등록" value="생성 후 자동 등록" status="준비됨" />
@@ -4158,10 +4275,10 @@ export function PermissionPage({
   onSave: () => void;
 }) {
   const initialPermission = getPermissionDraftValues(draft);
-  const [permissionTemplate, setPermissionTemplate] = useState(initialPermission.permissionTemplate);
-  const [visibility, setVisibility] = useState(initialPermission.visibility);
-  const [dataOwner, setDataOwner] = useState(initialPermission.owner);
-  const [approvalStatus, setApprovalStatus] = useState(initialPermission.approvalStatus);
+  const [permissionTemplate] = useState(initialPermission.permissionTemplate);
+  const [visibility] = useState(initialPermission.visibility);
+  const [dataOwner] = useState(initialPermission.owner);
+  const [approvalStatus] = useState(initialPermission.approvalStatus);
   const [roleChecks, setRoleChecks] = useState<Record<string, boolean>>(() => ({
     ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
     [initialPermission.permissionTemplate]: true,
@@ -4207,54 +4324,6 @@ export function PermissionPage({
       )}
     >
         <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
-        <section className="panel permission-share-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>공유 대상</h2>
-          </div>
-          <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="form-grid">
-            <label className="field">
-              <span>권한 템플릿</span>
-              <select className="input control-input" value={permissionTemplate} onChange={(event) => {
-                const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
-                setPermissionTemplate(nextPermissionTemplate);
-                setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
-                applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
-              }}>
-                {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>공개 범위</span>
-              <select className="input control-input" value={visibility} onChange={(event) => {
-                const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
-                setVisibility(nextVisibility);
-                applyPermissionDraft({ visibility: nextVisibility });
-              }}>
-                {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>데이터 오너</span>
-              <input className="input control-input" value={dataOwner} onChange={(event) => {
-                const nextOwner = event.target.value;
-                setDataOwner(nextOwner);
-                applyPermissionDraft({ owner: nextOwner });
-              }} />
-            </label>
-            <label className="field">
-              <span>승인 상태</span>
-              <select className="input control-input" value={approvalStatus} onChange={(event) => {
-                const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
-                setApprovalStatus(nextApprovalStatus);
-                applyPermissionDraft({ approvalStatus: nextApprovalStatus });
-              }}>
-                {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
-          </div>
-        </section>
         <section className="panel">
           <h2 className="panel-title">세부 권한</h2>
           <div className="permission-list">
@@ -4353,9 +4422,9 @@ export function ReviewPage({
             ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
             ["스키마", reviewSchemaSummary, "schema"],
             ["처리 규칙", request.ruleSummary, "rules"],
-            ["스케줄", request.scheduleLabel, scheduleEditFlow],
+            ["스케줄", request.scheduleSummary || request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${targetReview.storagePath}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -4390,6 +4459,10 @@ export function ReviewPage({
             <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
             <Field label="타겟 Layer" value={targetReview.targetLayer} />
             <Field label="타겟 Format" value={targetReview.targetFormat} />
+            <Field label="저장소 유형" value={targetReview.storageType} />
+            <Field label="파티션" value={targetReview.partition} />
+            <Field label="압축" value={targetReview.compression} />
+            <Field label="저장 경로" value={targetReview.storagePath} wide />
             <Field label="RAG 인덱싱" value={ragReviewLabel} />
             <Field label="데이터 오너" value={targetReview.owner} />
           </div>
