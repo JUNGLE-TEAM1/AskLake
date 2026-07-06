@@ -291,8 +291,8 @@ export function DashboardPage({
     [previewDraftWidget, selectedDraftWidgets],
   );
   const selectedDraftWidget = useMemo(
-    () => previewDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
-    [previewDraftWidgets, selectedWidgetId],
+    () => selectedDraftWidgets.find((widget) => widget.id === selectedWidgetId) ?? null,
+    [selectedDraftWidgets, selectedWidgetId],
   );
   const selectedDraftWidgetIds = useMemo(
     () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
