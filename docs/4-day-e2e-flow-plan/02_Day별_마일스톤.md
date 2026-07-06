@@ -20,7 +20,7 @@
 | A2 | Schema Inference preview | A 또는 B | 컬럼명/타입 preview와 선택 schema가 draft에 저장된다. |
 | A3 | Transform/Quality 요약 | A 또는 B | rule/quality 결과가 Review에 요약된다. |
 | A4 | Schedule/Permission/Target 요약 | A 또는 C/B | schedule label, owner, target dataset/layer가 Review에 보인다. |
-| A5 | Review/Create/Handoff | A 고정 | `{ job, dataset }` 생성 후 ETL/Catalog state가 갱신된다. |
+| A5 | Review/Create/Handoff | A 고정 | `{ job, catalogTarget }` 생성 후 ETL state가 갱신되고, Spark run 성공 후 Catalog state가 갱신된다. |
 
 ## DAY1-B-CATALOG-LINEAGE-BASIC. Catalog 상세와 기본 Lineage 표시
 

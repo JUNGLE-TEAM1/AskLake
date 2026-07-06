@@ -36,10 +36,11 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
 기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우 `psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
 
 ```bash
 cd backend
-python3 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
@@ -99,7 +100,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 | Pair | Primary Area | Deliverables | Handoff |
 | --- | --- | --- | --- |
-| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
+| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | create `{ job, catalogTarget }`, run 성공 `dataset`, `RunSummary`, `JobCommandResponse` | Pair B에는 성공 run 이후 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
 | Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 
@@ -141,6 +142,17 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - adapter unit tests
 - backend endpoint tests
 - FastAPI `/api/health` smoke test
+- Pair2 FastAPI Catalog / Lineage / SQL smoke:
+
+```bash
+docker compose up -d postgres
+cd backend
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
+```
+
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests

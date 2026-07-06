@@ -15,6 +15,52 @@
 }
 
 @media (max-width: 1180px) {
+  .main-shell.schema-shell {
+    height: auto;
+    overflow: visible;
+  }
+
+  .schema-shell .topbar {
+    min-height: 64px;
+  }
+
+  .schema-shell .stepper-inner {
+    height: auto;
+  }
+
+  .page-body.schema-body {
+    height: auto;
+    overflow: visible;
+    padding: 20px;
+  }
+
+  .schema-shell .footer {
+    display: flex;
+  }
+
+  .schema-workbench {
+    height: auto;
+    grid-template-rows: auto;
+  }
+
+  .schema-flow-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .schema-flow-summary {
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .schema-flow-column-head,
+  .schema-flow-card {
+    grid-template-columns: minmax(0, 1fr) 118px minmax(0, 1fr);
+  }
+
+  .schema-preview-comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
     grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   }
@@ -250,13 +296,27 @@
     min-width: 0;
   }
 
+  .job-runs-page,
+  .runs-body-content {
+    min-height: 0;
+    height: auto;
+  }
+
+  .runs-table-scroll {
+    max-height: 420px;
+  }
+
+  .runs-stats-summary {
+    grid-template-columns: 1fr;
+  }
+
   .dag-summary-grid,
   .runs-stats-summary > div {
     grid-template-columns: 1fr;
   }
 
   .dag-flow-topbar,
-  .dag-selected-strip,
+  .dag-output-strip,
   .panel-header,
   .sql-editor-header,
   .sql-result-header,
@@ -267,6 +327,34 @@
   .dashboard-publish-card {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dag-output-strip {
+    align-items: stretch;
+  }
+
+  .dag-workspace-grid,
+  .dag-workspace-grid.with-inspector {
+    grid-template-columns: 1fr;
+  }
+
+  .dag-step-inspector {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "title"
+      "meta"
+      "details"
+      "error"
+      "logs";
+    max-height: 280px;
+    overflow: auto;
+  }
+
+  .dag-output-strip > span,
+  .dag-output-strip em,
+  .dag-output-strip button {
+    width: 100%;
   }
 
   .sql-editor-actions,

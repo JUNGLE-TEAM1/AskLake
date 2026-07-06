@@ -1,7 +1,9 @@
 from typing import Any
 
 from fastapi import Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.schemas.common import ErrorCode, ErrorDetail, ErrorResponse
 
@@ -42,6 +44,20 @@ def error_response(
 
 async def api_error_handler(_: Request, exc: ApiError) -> JSONResponse:
     return error_response(exc.code, exc.message, exc.status_code, exc.details)
+
+
+async def validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    return error_response(
+        ErrorCode.VALIDATION_ERROR,
+        "Request validation failed",
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        {"errors": exc.errors()},
+    )
+
+
+async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    code = ErrorCode.NOT_FOUND if exc.status_code == status.HTTP_404_NOT_FOUND else ErrorCode.INTERNAL_ERROR
+    return error_response(code, str(exc.detail or "HTTP error"), exc.status_code)
 
 
 async def unhandled_error_handler(_: Request, __: Exception) -> JSONResponse:

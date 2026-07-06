@@ -7,7 +7,7 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 - `backend/src/server.mjs`: local JSON API server
 - `backend/src/connectors.mjs`: source connector runner
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
-- `backend/src/createPipeline.mjs`: `{ job, dataset }` create mapper
+- `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
 - `backend/scripts/start-spark-server.mjs`: Spark standalone master/worker startup
 - `backend/scripts/spark_validate.py`: Spark validation and transform type checks
@@ -20,8 +20,15 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 ```powershell
 cd backend
 npm install
+npm run minio:seed-verify
 npm run verify
 npm run dev
+```
+
+로컬 MinIO가 없다면 먼저 repo root에서 실행한다.
+
+```powershell
+docker compose up -d minio
 ```
 
 Initial endpoints:
@@ -126,6 +133,8 @@ npm run verify:spark-run
 ```
 
 This verifier starts from an empty in-memory ETL/Catalog state, creates one live job from a MinIO sample, submits a run command, and verifies that Spark writes Parquet output. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+
+Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
 ## 8. Frontend
 

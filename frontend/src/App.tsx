@@ -44,6 +44,9 @@ const placeholderAuditConfig: Record<PlaceholderFlow, { targetType: AuditTargetT
   },
 };
 
+const emptyDatasetId = "dataset_not_selected";
+const emptyJobId = "JOB-NONE";
+
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
@@ -73,6 +76,14 @@ function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
   return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
 }
 
+function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[]) {
+  return dataset.id !== emptyDatasetId && datasets.some((item) => item.id === dataset.id);
+}
+
+function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
+  return jobId !== emptyJobId && jobs.some((job) => job.id === jobId);
+}
+
 export function App() {
   const initialDashboardRoute = parseDashboardRoute(window.location.pathname);
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : "jobs");
@@ -83,6 +94,7 @@ export function App() {
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
   const {
     apiPending,
+    commandPendingByJobId,
     createPipeline,
     createSqlDerivedDataset,
     dataError,
@@ -94,15 +106,24 @@ export function App() {
     jobs,
     openDataset,
     openDatasetInSql,
+    openJobDag,
     openJobDetail,
+    runsByJobId,
     selectedDataset,
     selectedJob,
+    selectedRunIdByJobId,
+    selectRunForJob,
     setSelectedDataset,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
   } = useAskLakeData({ onFlowChange: setActiveFlow, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
+  const selectedJobRuns = runsByJobId[selectedJob.id] ?? [];
+  const requestedRunId = selectedRunIdByJobId[selectedJob.id];
+  const selectedRunId = requestedRunId && selectedJobRuns.some((run) => run.runId === requestedRunId)
+    ? requestedRunId
+    : selectedJobRuns[0]?.runId;
   const activeNavId = useMemo<NavId>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
@@ -111,6 +132,11 @@ export function App() {
     if (activeFlow === "admin") return "admin";
     return "ingest";
   }, [activeFlow]);
+  const selectedDatasetAvailable = hasSelectedDataset(selectedDataset, datasets);
+  const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
+  const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns" || activeFlow === "jobDag";
+  const requiresSelectedDataset = activeFlow === "catalogDetail" || activeFlow === "sql" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -166,7 +192,7 @@ export function App() {
 
   const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
     const targetDataset = dataset ?? selectedDataset;
-    if (!targetDataset) {
+    if (!targetDataset || !hasSelectedDataset(targetDataset, datasets)) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -178,7 +204,7 @@ export function App() {
   };
 
   const openDashboardFromSql = (result: SqlResultDraft) => {
-    if (!selectedDataset) {
+    if (!selectedDatasetAvailable) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -225,12 +251,12 @@ export function App() {
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onNavigate={navigateSidebar} />
-      <main className="main-shell">
+      <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : "page-body"}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : "page-body"}>
           {dataLoading && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
@@ -245,19 +271,19 @@ export function App() {
               <p>{dataError}</p>
             </div>
           )}
-          {!dataLoading && !dataError && (!selectedDataset || !selectedJob) && (
+          {!dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
-              <span>POSTGRES EMPTY</span>
-              <h1>표시할 seed 데이터가 없습니다</h1>
-              <p>Postgres seed를 다시 실행한 뒤 새로고침해주세요.</p>
+              <span>EMPTY STATE</span>
+              <h1>먼저 실제 데이터를 선택해주세요</h1>
+              <p>목록에서 Job 또는 Dataset을 선택하거나, 새 파이프라인을 생성하고 실행해 주세요.</p>
             </div>
           )}
-          {!dataLoading && !dataError && selectedDataset && selectedJob && (
+          {!dataLoading && !dataError && canRenderActiveFlow && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobDag" && <JobDagPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onEdit={() => moveToFlow("rules")} onRuns={() => moveToFlow("jobRuns")} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={openJobDag} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage commandPending={commandPendingByJobId[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
+          {activeFlow === "jobRuns" && <JobRunsPage commandPending={commandPendingByJobId[selectedJob.id]} job={selectedJob} runs={selectedJobRuns} selectedRunId={selectedRunId} onRunSelect={selectRunForJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
+          {activeFlow === "jobDag" && <JobDagPage commandPending={commandPendingByJobId[selectedJob.id]} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} selectedRunId={selectedRunId} onRunSelect={selectRunForJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onEdit={() => moveToFlow("rules")} onRuns={() => moveToFlow("jobRuns")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("rules")} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftRetryPolicy={draftPipeline.schedule.retryPolicy} draftScheduleLabel={draftPipeline.schedule.label} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}
