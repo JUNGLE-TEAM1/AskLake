@@ -4,6 +4,7 @@ import type { DashboardRuntimeWidget } from "../../../types";
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
+  type DashboardAssistantReportAction,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
@@ -75,12 +76,15 @@ export function DashboardAssistantPanel({
         selectedWidgetId: selectedWidget?.id ?? null,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       });
+      const reportAction = response.actions.find(
+        (action): action is DashboardAssistantReportAction => action.type === "report",
+      );
       setMessages((current) => [
         ...current,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          text: response.message?.trim() || "Assistant 요청을 보냈습니다.",
+          text: reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
         },
       ]);
     } catch (requestError) {
