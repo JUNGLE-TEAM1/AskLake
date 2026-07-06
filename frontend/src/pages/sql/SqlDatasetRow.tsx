@@ -1,17 +1,20 @@
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import type { CatalogDataset } from "../../types";
+import { SqlDatasetSchemaPreview } from "./SqlDatasetSchemaPreview";
+
+type SqlDatasetRowProps = {
+  dataset: CatalogDataset;
+  expanded: boolean;
+  onSelect: (dataset: CatalogDataset) => void;
+  onToggle: (dataset: CatalogDataset) => void;
+};
 
 export function SqlDatasetRow({
   dataset,
   expanded,
   onSelect,
   onToggle,
-}: {
-  dataset: CatalogDataset;
-  expanded: boolean;
-  onSelect: (dataset: CatalogDataset) => void;
-  onToggle: (dataset: CatalogDataset) => void;
-}) {
+}: SqlDatasetRowProps) {
   return (
     <article className={expanded ? "sql-table-card active expanded" : "sql-table-card"}>
       <div className="sql-table-row-shell">
@@ -34,22 +37,7 @@ export function SqlDatasetRow({
           <Plus size={13} /> 선택
         </button>
       </div>
-      {expanded && (
-        <div className="sql-table-schema-preview" aria-label={`${dataset.name} 스키마 미리보기`}>
-          <div className="sql-table-schema-preview-header">
-            <span>SCHEMA</span>
-            <strong>{dataset.schema.length} columns</strong>
-          </div>
-          <div className="sql-table-schema-preview-list">
-            {dataset.schema.map(([name, type], index) => (
-              <div key={`${dataset.id}-${name}-${index}`}>
-                <span title={name}>{name}</span>
-                <em title={type}>{type}</em>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {expanded && <SqlDatasetSchemaPreview dataset={dataset} />}
     </article>
   );
 }

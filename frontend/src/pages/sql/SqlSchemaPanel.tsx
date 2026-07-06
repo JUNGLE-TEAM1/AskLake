@@ -1,5 +1,6 @@
 import { X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
+import { buildSelectedSchemaRows, countDuplicateSchemaRows, type SelectedSchemaRow } from "./sqlSchema";
 
 export function SchemaDetailsPanel({
   dataset,
@@ -18,7 +19,7 @@ export function SchemaDetailsPanel({
 }) {
   const canRemoveDataset = selectedDatasets.length > 1;
   const schemaRows = buildSelectedSchemaRows(selectedDatasets);
-  const duplicateColumnCount = schemaRows.filter((row) => row.occurrenceCount > 1).length;
+  const duplicateColumnCount = countDuplicateSchemaRows(schemaRows);
 
   if (!dataset) {
     return (
@@ -110,44 +111,6 @@ export function SchemaDetailsPanel({
   );
 }
 
-type SelectedSchemaRow = {
-  datasetNames: string[];
-  displayType: string;
-  name: string;
-  occurrenceCount: number;
-  primaryDataset: CatalogDataset;
-  types: string[];
-};
-
-function buildSelectedSchemaRows(datasets: CatalogDataset[]): SelectedSchemaRow[] {
-  const rowMap = new Map<string, SelectedSchemaRow>();
-
-  datasets.forEach((dataset) => {
-    dataset.schema.forEach(([name, type]) => {
-      const key = name.toLowerCase();
-      const existing = rowMap.get(key);
-      if (!existing) {
-        rowMap.set(key, {
-          datasetNames: [dataset.name],
-          displayType: type,
-          name,
-          occurrenceCount: 1,
-          primaryDataset: dataset,
-          types: [type],
-        });
-        return;
-      }
-
-      existing.occurrenceCount += 1;
-      if (!existing.datasetNames.includes(dataset.name)) existing.datasetNames.push(dataset.name);
-      if (!existing.types.includes(type)) existing.types.push(type);
-      existing.displayType = existing.types.length > 1 ? `${existing.types[0]} +${existing.types.length - 1}` : existing.types[0];
-    });
-  });
-
-  return Array.from(rowMap.values());
-}
-
 function SelectedSchemaColumnList({
   rows,
   onColumnClick,
@@ -158,7 +121,7 @@ function SelectedSchemaColumnList({
   return (
     <div className="sql-card-schema">
       {rows.map((row) => (
-        <button key={row.name.toLowerCase()} type="button" onClick={() => onColumnClick(row.primaryDataset, row.name)}>
+        <button key={row.columnKey} type="button" onClick={() => onColumnClick(row.primaryDataset, row.name)}>
           <span className="sql-card-schema-name" title={`${row.name} · ${row.datasetNames.join(", ")}`}>
             <strong>{row.name}</strong>
             <small>{row.datasetNames.join(", ")}</small>
