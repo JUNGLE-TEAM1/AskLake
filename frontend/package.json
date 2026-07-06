@@ -13,10 +13,12 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "^12.11.1",
+    "apexcharts": "^5.16.0",
     "lucide-react": "latest",
     "node-sql-parser": "^5.4.0",
     "pg": "^8.22.0",
     "react": "latest",
+    "react-apexcharts": "^2.1.1",
     "react-dom": "latest",
     "react-grid-layout": "^2.2.3",
     "react-resizable": "^4.0.2",
