@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, type FormEvent } from "react";
 import type { ApexOptions } from "apexcharts";
-import { Send } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Send } from "lucide-react";
 import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
@@ -8,6 +8,13 @@ import type {
   DashboardWidgetDateUnit,
   DashboardWidgetSortDirection,
 } from "../../../types";
+import {
+  buildDashboardAssistantWidgetContext,
+  dashboardAssistantEndpointLabel,
+  isDashboardAssistantConfigured,
+  requestDashboardAssistant,
+} from "../../../services/dashboardAssistantService";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -315,29 +322,67 @@ function WidgetDataError() {
 }
 
 function VisualizationRequestWidget({
+  assistantContext,
   onPatchConfig,
   widget,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   widget: DashboardRuntimeWidget;
 }) {
+  const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPromptEditing, setIsPromptEditing] = useState(false);
   const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
+  const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
 
   useEffect(() => {
     setPrompt(configText(widget, "prompt"));
     setIsPromptEditing(false);
   }, [widget.id, widget.config]);
 
+  useEffect(() => {
+    setMessage(null);
+    setRequestTone(null);
+  }, [widget.id]);
+
   const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextPrompt = prompt.trim();
     if (!nextPrompt || !onPatchConfig || isSaving) return;
 
+    setMessage(null);
+    setRequestTone(null);
     setIsSaving(true);
     try {
       await onPatchConfig({ prompt: nextPrompt });
+      if (!isDashboardAssistantConfigured()) {
+        setRequestTone("info");
+        setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
+        setIsPromptEditing(false);
+        return;
+      }
+
+      const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+      const response = await requestDashboardAssistant({
+        dashboardId: assistantContext?.dashboardId,
+        mode: "visualization_request",
+        pageId: assistantContext?.pageId ?? widget.pageId,
+        prompt: nextPrompt,
+        selectedWidgetId: widget.id,
+        widgetId: widget.id,
+        widgets: widgets.map(buildDashboardAssistantWidgetContext),
+      });
+      const configPatch = response.widgetPatch?.config ?? response.configPatch;
+      if (configPatch && Object.keys(configPatch).length > 0) {
+        await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+      }
+      setRequestTone("success");
+      setMessage(response.message?.trim() || "Assistant 요청을 보냈습니다.");
+      setIsPromptEditing(false);
+    } catch (error) {
+      setRequestTone("error");
+      setMessage(error instanceof Error ? error.message : "Assistant 요청에 실패했습니다.");
     } finally {
       setIsSaving(false);
     }
@@ -362,11 +407,17 @@ function VisualizationRequestWidget({
             event.currentTarget.blur();
           }}
         />
-        <button aria-label="요청 저장" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
-          <Send size={18} />
+        <button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
+          {isSaving ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
         </button>
       </form>
       <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
+      {message && (
+        <div className={`asklake-visualization-request-status ${requestTone ?? "info"}`}>
+          {requestTone === "success" ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+          <span>{message}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -615,14 +666,16 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
 }
 
 export const WidgetRenderer = memo(function WidgetRenderer({
+  assistantContext,
   onPatchConfig,
   widget,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   widget: DashboardRuntimeWidget;
 }) {
   const kind = placeholderKind(widget);
-  if (kind === "visualization_request") return <VisualizationRequestWidget widget={widget} onPatchConfig={onPatchConfig} />;
+  if (kind === "visualization_request") return <VisualizationRequestWidget assistantContext={assistantContext} widget={widget} onPatchConfig={onPatchConfig} />;
   if (kind === "text") return <TextPlaceholderWidget widget={widget} onPatchConfig={onPatchConfig} />;
 
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);

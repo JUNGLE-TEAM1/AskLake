@@ -1,12 +1,15 @@
 import type { LayoutItem } from "react-grid-layout";
 import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
+import { useState } from "react";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
   DashboardRuntimeResponse,
   DashboardRuntimeWidget,
 } from "../../../types";
+import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import { DashboardCanvas } from "./DashboardCanvas";
+import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
 import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
@@ -93,18 +96,26 @@ type DashboardRuntimeViewProps = {
   runtime: DashboardRuntimeState;
 };
 
+function AskLakeNessiIcon({ size = 20 }: { size?: number }) {
+  return <img alt="" aria-hidden="true" className="asklake-toolbar-nessi-icon" height={size} src={askLakeNessiIconUrl} width={size} />;
+}
+
 function DashboardEditToolbar({
+  assistantActive,
   canRedo,
   canUndo,
   disabled,
+  onAssistant,
   onCreateToolbarWidget,
   onCursor,
   onRedo,
   onUndo,
 }: {
+  assistantActive: boolean;
   canRedo: boolean;
   canUndo: boolean;
   disabled: boolean;
+  onAssistant: () => void;
   onCreateToolbarWidget: (kind: ToolbarDraftWidgetKind) => Promise<void> | void;
   onCursor: () => void;
   onRedo: () => void;
@@ -112,7 +123,17 @@ function DashboardEditToolbar({
 }) {
   return (
     <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
-      <button aria-label="이동 모드" className="active" title="이동" type="button" onClick={onCursor}>
+      <button
+        aria-label="AskLake 보조 패널"
+        className={assistantActive ? "active asklake-toolbar-assistant" : "asklake-toolbar-assistant"}
+        title="AskLake 보조 패널"
+        type="button"
+        onClick={onAssistant}
+      >
+        <AskLakeNessiIcon />
+      </button>
+      <span aria-hidden="true" />
+      <button aria-label="이동 모드" className={!assistantActive ? "active" : undefined} title="이동" type="button" onClick={onCursor}>
         <MousePointer2 size={18} />
       </button>
       <span aria-hidden="true" />
@@ -147,6 +168,7 @@ export function DashboardRuntimeView({
   datasets,
   runtime,
 }: DashboardRuntimeViewProps) {
+  const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const {
     canRedoLayout,
     canUndoLayout,
@@ -238,7 +260,26 @@ export function DashboardRuntimeView({
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
+  const assistantContext = {
+    dashboardId: draftRuntime?.dashboard.id ?? title,
+    pageId: selectedPageId,
+    selectedWidgetId,
+    widgets: selectedDraftWidgets,
+  };
+  const handleCursorMode = () => {
+    setInspectorMode("widget");
+    onClearWidgetSelection();
+  };
+  const handleSelectWidget = (widgetId: string) => {
+    setInspectorMode("widget");
+    onSelectWidget(widgetId);
+  };
+  const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
+    setInspectorMode("widget");
+    await onCreateToolbarWidget(kind);
+  };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
+  const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
 
   const runtimeCanvas = isDraftMode ? (
@@ -274,11 +315,12 @@ export function DashboardRuntimeView({
         editable
         selectedWidgetId={selectedWidgetId}
         widgets={selectedDraftWidgets}
+        assistantContext={assistantContext}
         onDeleteWidget={onDeleteWidget}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
-        onSelectWidget={onSelectWidget}
+        onSelectWidget={handleSelectWidget}
       />
     )
   ) : runtimeLoading ? (
@@ -337,7 +379,16 @@ export function DashboardRuntimeView({
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isDraftMode && !selectedWidgetHidesInspector ? (
+        inspector={isAssistantInspectorOpen ? (
+          <aside className="asklake-dashboard-inspector">
+            <DashboardAssistantPanel
+              dashboardId={assistantContext.dashboardId}
+              pageId={selectedPageId}
+              selectedWidget={selectedDraftWidget}
+              widgets={selectedDraftWidgets}
+            />
+          </aside>
+        ) : isDraftMode && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
               editingWidget={configurableDraftWidget}
@@ -375,11 +426,13 @@ export function DashboardRuntimeView({
           <div className="asklake-dashboard-edit-stage">
             {runtimeCanvas}
             <DashboardEditToolbar
+              assistantActive={isAssistantInspectorOpen}
               canRedo={canRedoLayout}
               canUndo={canUndoLayout}
               disabled={isCreatingToolbarWidget || !selectedPageId}
-              onCursor={onClearWidgetSelection}
-              onCreateToolbarWidget={onCreateToolbarWidget}
+              onAssistant={() => setInspectorMode("assistant")}
+              onCursor={handleCursorMode}
+              onCreateToolbarWidget={handleCreateToolbarWidget}
               onRedo={onRedoLayout}
               onUndo={onUndoLayout}
             />

@@ -364,6 +364,51 @@ type DataProcessingResult = {
 `DataProcessingResult`는 대용량 처리 증거가 필요할 때만 쓰는 optional demo evidence 확장 객체다.
 정식 persistence API가 생기기 전에는 `JobCommandResponse.processingResult` 또는 fixture로 전달한다.
 
+### Dashboard Assistant UI Hook
+
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아직 실제 RAG/LLM 백엔드가 붙지 않았다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 설정된 경우에만 해당 경로로 `POST` 요청을 보낸다.
+
+프론트 요청 payload:
+
+```ts
+type DashboardAssistantRequest = {
+  dashboardId?: string;
+  mode: "dashboard_question" | "visualization_request";
+  pageId?: string | null;
+  prompt: string;
+  selectedWidgetId?: string | null;
+  widgetId?: string | null;
+  widgets: Array<{
+    id: string;
+    title: string;
+    type: DashboardRuntimeWidgetType;
+    datasetId: string | null;
+    layout: DashboardWidgetLayout;
+    config: Record<string, unknown>;
+    dataSample: Array<Record<string, unknown>>;
+  }>;
+};
+```
+
+권장 응답 payload:
+
+```ts
+type DashboardAssistantResponse = {
+  message?: string;
+  configPatch?: Record<string, unknown>;
+  widgetPatch?: {
+    title?: string | null;
+    type?: DashboardRuntimeWidgetType;
+    datasetId?: string | null;
+    config?: Record<string, unknown>;
+  };
+};
+```
+
+`visualization_request` 모드에서 `configPatch` 또는 `widgetPatch.config`가 내려오면 프론트는 현재 위젯 config에 병합한다.
+`VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 UI는 미설정 안내만 표시하고 요청을 보내지 않는다.
+
 ## 9) 변경 규칙
 
 - Endpoint, request, response, status code, error code가 바뀌면 이 문서와 `docs/api-contract.md`를 함께 업데이트한다.
