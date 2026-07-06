@@ -54,6 +54,7 @@ export function useDraftWidgetCreator({
     try {
       const widget = await createDraftWidget(dashboardId, selectedPageId, {
         config: input.config,
+        data: input.data,
         datasetId: input.datasetId,
         layout,
         title: input.title,

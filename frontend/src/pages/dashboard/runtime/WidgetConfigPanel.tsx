@@ -334,13 +334,14 @@ export function WidgetConfigPanel({
       return;
     }
 
-    if (!selectedDatasetId) {
+    if (!selectedDataset || !selectedDatasetId) {
       setFormError("왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.");
       return;
     }
 
     await onCreateWidget({
       ...nextInput,
+      data: selectedDataset.rows,
       datasetId: selectedDatasetId,
     });
     setTitle("");
