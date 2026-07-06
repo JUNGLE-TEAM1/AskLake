@@ -2,6 +2,7 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import {
   flexRender,
   getCoreRowModel,
+  getPaginationRowModel,
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
@@ -65,6 +66,7 @@ type DerivedDatasetDraft = {
 };
 
 const PREVIEW_ROW_LIMIT = 100;
+const SQL_RESULT_PAGE_SIZE = 25;
 const SQL_CONTEXT_PAGE_SIZE = 15;
 const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
@@ -710,7 +712,7 @@ export function SqlAnalysisPage({
                   {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
                 </span>
                 <div className="sql-result-actions">
-                  <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+                  <button type="button" onClick={downloadCsv}><Download size={14} /> Preview 전체 CSV</button>
                   <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 새 데이터셋 저장</button>
                   <button type="button" onClick={() => onCreateDashboard(resultDraft)}><BarChart3 size={14} /> 대시보드 만들기</button>
                   <button type="button" onClick={requestRagFromResult}><Bot size={14} /> RAG 활용</button>
@@ -858,6 +860,7 @@ type SqlPreviewRow = {
 };
 
 function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => ({
       accessorFn: (row) => row.cells[index] ?? "",
@@ -875,31 +878,47 @@ function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
     columns,
     data,
     getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    onPaginationChange: setPagination,
+    state: { pagination },
   });
+  const pageRows = table.getRowModel().rows;
+  const pageStart = data.length === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
+  const pageEnd = data.length === 0 ? 0 : Math.min(data.length, pageStart + pageRows.length - 1);
+  const pageCount = Math.max(table.getPageCount(), 1);
 
   return (
-    <table className="schema-table">
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id}>
-                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <div className="sql-preview-table-wrap">
+      <table className="schema-table">
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {pageRows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="sql-result-pagination" aria-label="SQL preview result pagination">
+        <span>{pageStart}-{pageEnd} / {data.length} preview rows · page {pagination.pageIndex + 1} / {pageCount}</span>
+        <div>
+          <button type="button" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>이전</button>
+          <button type="button" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>다음</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
