@@ -87,6 +87,7 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
 ];
 
 const catalogPageSize = 5;
+const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
 const lineageColumnRowHeight = 32;
@@ -233,12 +234,14 @@ export function CatalogPage({
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const sortMenuRef = useRef<HTMLDivElement>(null);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const topTags = useMemo(() => tags.slice(0, 10), [tags]);
-  const searchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
-  const selectedSearchTags = useMemo(() => new Set(searchQuery.tags), [searchQuery.tags]);
+  const inputSearchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
+  const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
+  const selectedSearchTags = useMemo(() => new Set(inputSearchQuery.tags), [inputSearchQuery.tags]);
   const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
@@ -274,8 +277,16 @@ export function CatalogPage({
   const isPreviewPinned = pinnedDatasetIds.includes(previewDataset.id);
 
   useEffect(() => {
+    const debounceTimerId = window.setTimeout(() => {
+      setDebouncedSearchText(searchText);
+    }, catalogSearchDebounceMs);
+
+    return () => window.clearTimeout(debounceTimerId);
+  }, [searchText]);
+
+  useEffect(() => {
     setCurrentPage(1);
-  }, [filterState.approvalRequired, filterState.available, filterState.rag, searchText, sortMode]);
+  }, [debouncedSearchText, filterState.approvalRequired, filterState.available, filterState.rag, sortMode]);
 
   useEffect(() => {
     if (currentPage === currentCatalogPage) return;
@@ -308,6 +319,7 @@ export function CatalogPage({
 
   const handleSearchSubmit = () => {
     const query = searchText.trim();
+    setDebouncedSearchText(searchText);
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
