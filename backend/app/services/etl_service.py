@@ -365,6 +365,8 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
     ] if isinstance(schema, list) and schema else schema_from_job(job)
     dataset_id = f"ds_{normalize_column_name(job.target)}"
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now)
+    storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     return CatalogDatasetModel(
         id=dataset_id,
         payload=dataset_payload,
@@ -376,7 +378,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         freshness="latest",
         source=job.name,
         rows=format_rows(result.get("outputRows")),
-        size=str(result.get("outputPath") or "-"),
+        size=display_size,
         quality=quality_summary_from_spark_result(job, result),
         last_updated=now,
         next_refresh=job.schedule,
@@ -397,6 +399,8 @@ def dataset_payload_from_spark_result(
     last_updated: str,
 ) -> dict[str, Any]:
     output_path = str(result.get("outputPath") or "-")
+    storage_size_bytes = dataset_storage_size_bytes(output_path)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     return {
         "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
@@ -412,15 +416,41 @@ def dataset_payload_from_spark_result(
         "rows": format_rows(result.get("outputRows")),
         "sampleRows": job.schema_sample_rows or [],
         "schema": schema_json,
-        "size": output_path,
+        "size": display_size,
         "source": job.name,
         "sourceRunId": result.get("runId"),
         "status": "available",
         "storageFormat": "parquet",
         "storageLocation": output_path,
+        "storageSizeBytes": storage_size_bytes,
         "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
         "upstream": [job.source_label, job.name],
     }
+
+
+def dataset_storage_size_bytes(output_path: str) -> int:
+    path = Path(output_path)
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def format_storage_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    units = ["KB", "MB", "GB", "TB"]
+    size = float(size_bytes)
+    for unit in units:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+    return f"{size:.1f}PB"
 
 
 def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
