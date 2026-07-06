@@ -17,6 +17,7 @@ type ChartPoint = {
   value: number;
 };
 type RuntimeWidgetByType<Type extends DashboardRuntimeWidget["type"]> = Extract<DashboardRuntimeWidget, { type: Type }>;
+type RuntimeApexChartType = "area" | "bar" | "donut" | "heatmap" | "line" | "pie" | "radialBar" | "treemap";
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
@@ -174,6 +175,74 @@ function groupedChartPoints({
   return points.slice(0, limit);
 }
 
+function groupedSeriesChartPoints({
+  aggregation,
+  dateUnit,
+  defaultSeriesName,
+  labelKey,
+  limit,
+  rows,
+  seriesKey,
+  sortByLabel = false,
+  valueKey,
+}: {
+  aggregation: DashboardWidgetAggregation;
+  dateUnit?: DashboardWidgetDateUnit;
+  defaultSeriesName: string;
+  labelKey: string | null;
+  limit: number;
+  rows: SimpleRow[];
+  seriesKey?: string;
+  sortByLabel?: boolean;
+  valueKey: string | null;
+}) {
+  const labelGroups = new Map<string, {
+    label: string;
+    order: number;
+    seriesValues: Map<string, number[]>;
+    sortValue: number | string;
+  }>();
+  const seriesLabels: string[] = [];
+
+  rows.forEach((row, index) => {
+    const label = labelValue(row, labelKey, `#${index + 1}`, dateUnit);
+    const seriesLabel = seriesKey ? labelValue(row, seriesKey, defaultSeriesName) : defaultSeriesName;
+    const value = aggregation === "count" ? 1 : numericValue(row, valueKey);
+    if (value === null) return;
+
+    if (!seriesLabels.includes(seriesLabel)) seriesLabels.push(seriesLabel);
+
+    const labelGroup = labelGroups.get(label) ?? {
+      label,
+      order: index,
+      seriesValues: new Map<string, number[]>(),
+      sortValue: labelKey ? sortComparableValue(dateUnit ? label : row[labelKey]) : index,
+    };
+    const values = labelGroup.seriesValues.get(seriesLabel) ?? [];
+    values.push(value);
+    labelGroup.seriesValues.set(seriesLabel, values);
+    labelGroups.set(label, labelGroup);
+  });
+
+  const labels = Array.from(labelGroups.values());
+  labels.sort((a, b) => {
+    if (sortByLabel) return compareValues(a.sortValue, b.sortValue);
+    return a.order - b.order;
+  });
+
+  const visibleLabels = labels.slice(0, limit);
+  const categories = visibleLabels.map((group) => group.label);
+  const series = seriesLabels.map((seriesLabel) => ({
+    data: visibleLabels.map((group) => {
+      const values = group.seriesValues.get(seriesLabel) ?? [];
+      return aggregateNumbers(values, aggregation) ?? 0;
+    }),
+    name: seriesLabel,
+  }));
+
+  return { categories, series };
+}
+
 function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
   if (typeof color === "object" && color !== null && !Array.isArray(color)) {
     const record = color as Record<string, unknown>;
@@ -195,6 +264,10 @@ function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
 
 function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {
   return colorsFromConfig(color)[0] ?? fallbackChartColors[0];
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, value));
 }
 
 function formatAxisNumber(value: number) {
@@ -300,7 +373,7 @@ function RuntimeApexChart({
 }: {
   options: ApexOptions;
   series: ApexOptions["series"];
-  type: "bar" | "donut" | "line";
+  type: RuntimeApexChartType;
 }) {
   return (
     <div className="asklake-apex-widget">
@@ -373,10 +446,19 @@ function BarChartWidget({ widget }: { widget: RuntimeWidgetByType<"bar_chart"> }
   const aggregation = aggregationValue(widget.config.aggregation);
   const labelKey = widget.config.xKey || firstTextKey(firstRow);
   const valueKey = widget.config.yKey || firstNumericKey(firstRow);
-  const points = groupedChartPoints({ aggregation, labelKey, limit: 10, rows, valueKey });
-  if (!points.length) return <EmptyWidgetData />;
+  const chartData = groupedSeriesChartPoints({
+    aggregation,
+    defaultSeriesName: aggregationLabels[aggregation],
+    labelKey,
+    limit: 10,
+    rows,
+    seriesKey: widget.config.groupKey,
+    valueKey,
+  });
+  if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
 
-  const color = primaryChartColor(widget.config.color);
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
     ...baseOptions,
@@ -384,20 +466,21 @@ function BarChartWidget({ widget }: { widget: RuntimeWidgetByType<"bar_chart"> }
       ...baseOptions.chart,
       type: "bar",
     },
+    colors,
     plotOptions: {
       bar: {
         borderRadius: 5,
+        horizontal: widget.config.orientation === "horizontal",
         columnWidth: "48%",
       },
     },
     xaxis: {
       ...baseOptions.xaxis,
-      categories: points.map((point) => point.label),
+      categories: chartData.categories,
     },
   };
-  const series = [{ data: points.map((point) => point.value), name: aggregationLabels[aggregation] }];
 
-  return <RuntimeApexChart options={options} series={series} type="bar" />;
+  return <RuntimeApexChart options={options} series={chartData.series} type="bar" />;
 }
 
 function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart"> }) {
@@ -406,18 +489,21 @@ function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart">
   const aggregation = aggregationValue(widget.config.aggregation);
   const labelKey = widget.config.xKey || firstTextKey(firstRow);
   const valueKey = widget.config.yKey || firstNumericKey(firstRow);
-  const points = groupedChartPoints({
+  const chartData = groupedSeriesChartPoints({
     aggregation,
     dateUnit: widget.config.dateUnit,
+    defaultSeriesName: aggregationLabels[aggregation],
     labelKey,
     limit: 12,
     rows,
+    seriesKey: widget.config.seriesKey,
     sortByLabel: true,
     valueKey,
   });
-  if (!points.length) return <EmptyWidgetData />;
+  if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
 
-  const color = primaryChartColor(widget.config.color);
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
     ...baseOptions,
@@ -425,23 +511,91 @@ function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart">
       ...baseOptions.chart,
       type: "line",
     },
+    colors,
     markers: {
       colors: ["#ffffff"],
       size: 4,
-      strokeColors: color,
+      strokeColors: colors,
       strokeWidth: 3,
+    },
+    stroke: {
+      ...baseOptions.stroke,
+      curve: widget.config.curve ?? "smooth",
     },
     xaxis: {
       ...baseOptions.xaxis,
-      categories: points.map((point) => point.label),
+      categories: chartData.categories,
     },
   };
-  const series = [{ data: points.map((point) => point.value), name: aggregationLabels[aggregation] }];
 
-  return <RuntimeApexChart options={options} series={series} type="line" />;
+  return <RuntimeApexChart options={options} series={chartData.series} type="line" />;
 }
 
-function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart"> }) {
+function AreaChartWidget({ widget }: { widget: RuntimeWidgetByType<"area_chart"> }) {
+  const rows = rowsFromWidget(widget);
+  const firstRow = rows[0];
+  const aggregation = aggregationValue(widget.config.aggregation);
+  const labelKey = widget.config.xKey || firstTextKey(firstRow);
+  const valueKey = widget.config.yKey || firstNumericKey(firstRow);
+  const chartData = groupedSeriesChartPoints({
+    aggregation,
+    dateUnit: widget.config.dateUnit,
+    defaultSeriesName: aggregationLabels[aggregation],
+    labelKey,
+    limit: 12,
+    rows,
+    seriesKey: widget.config.seriesKey,
+    sortByLabel: true,
+    valueKey,
+  });
+  if (!chartData.categories.length || !chartData.series.length) return <EmptyWidgetData />;
+
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      stacked: widget.config.stacked ?? false,
+      type: "area",
+    },
+    colors,
+    fill: {
+      gradient: {
+        opacityFrom: 0.45,
+        opacityTo: 0.08,
+        shadeIntensity: 0.35,
+      },
+      type: "gradient",
+    },
+    markers: {
+      colors: ["#ffffff"],
+      size: 3,
+      strokeColors: colors,
+      strokeWidth: 2,
+    },
+    stroke: {
+      ...baseOptions.stroke,
+      curve: "smooth",
+      width: 2,
+    },
+    xaxis: {
+      ...baseOptions.xaxis,
+      categories: chartData.categories,
+    },
+  };
+
+  return <RuntimeApexChart options={options} series={chartData.series} type="area" />;
+}
+
+function PieLikeChartWidget({
+  chartType,
+  widget,
+}: {
+  chartType: "donut" | "pie";
+  widget: RuntimeWidgetByType<"donut_chart"> | RuntimeWidgetByType<"pie_chart">;
+}) {
   const rows = rowsFromWidget(widget);
   const firstRow = rows[0];
   const aggregation = aggregationValue(widget.config.aggregation);
@@ -461,7 +615,7 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
     ...baseOptions,
     chart: {
       ...baseOptions.chart,
-      type: "donut",
+      type: chartType,
     },
     colors,
     labels: points.map((point) => point.label),
@@ -476,20 +630,22 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
     },
     plotOptions: {
       pie: {
-        donut: {
-          labels: {
-            show: true,
-            total: {
-              formatter: () => formatCell(total),
-              label: "합계",
+        donut: chartType === "donut"
+          ? {
+            labels: {
               show: true,
+              total: {
+                formatter: () => formatCell(total),
+                label: "합계",
+                show: true,
+              },
+              value: {
+                formatter: (value: string) => formatCell(Number(value)),
+              },
             },
-            value: {
-              formatter: (value: string) => formatCell(Number(value)),
-            },
-          },
-          size: "66%",
-        },
+            size: "66%",
+          }
+          : undefined,
       },
     },
     stroke: {
@@ -505,7 +661,171 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
   };
   const series = points.map((point) => Math.max(0, point.value));
 
-  return <RuntimeApexChart options={options} series={series} type="donut" />;
+  return <RuntimeApexChart options={options} series={series} type={chartType} />;
+}
+
+function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart"> }) {
+  return <PieLikeChartWidget chartType="donut" widget={widget} />;
+}
+
+function PieChartWidget({ widget }: { widget: RuntimeWidgetByType<"pie_chart"> }) {
+  return <PieLikeChartWidget chartType="pie" widget={widget} />;
+}
+
+function RadialBarChartWidget({ widget }: { widget: RuntimeWidgetByType<"radial_bar_chart"> }) {
+  const rows = rowsFromWidget(widget);
+  const firstRow = rows[0];
+  const aggregation = aggregationValue(widget.config.aggregation, "avg");
+  const labelKey = widget.config.labelKey || firstTextKey(firstRow);
+  const valueKey = widget.config.valueKey || firstNumericKey(firstRow);
+  const points = labelKey
+    ? groupedChartPoints({ aggregation, labelKey, limit: 5, rows, valueKey })
+    : (() => {
+      const values = aggregation === "count"
+        ? rows.map(() => 1)
+        : rows.map((row) => numericValue(row, valueKey)).filter((value): value is number => value !== null);
+      const value = aggregateNumbers(values, aggregation);
+      return value === null ? [] : [{ label: valueKey ?? "값", sortValue: 0, value }];
+    })();
+  if (!points.length) return <EmptyWidgetData />;
+
+  const min = widget.config.min ?? 0;
+  const max = widget.config.max ?? 100;
+  const range = max > min ? max - min : 100;
+  const series = points.map((point) => clampPercent(((point.value - min) / range) * 100));
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "radialBar",
+    },
+    colors,
+    labels: points.map((point) => point.label),
+    plotOptions: {
+      radialBar: {
+        dataLabels: {
+          name: {
+            color: "#475569",
+            fontSize: "13px",
+            fontWeight: 800,
+          },
+          value: {
+            color: "#0f172a",
+            formatter: (value: number) => `${formatAxisNumber(value)}%`,
+            fontSize: "24px",
+            fontWeight: 900,
+          },
+        },
+        hollow: {
+          size: "46%",
+        },
+        track: {
+          background: "#e2e8f0",
+        },
+      },
+    },
+  };
+
+  return <RuntimeApexChart options={options} series={series} type="radialBar" />;
+}
+
+function HeatmapChartWidget({ widget }: { widget: RuntimeWidgetByType<"heatmap_chart"> }) {
+  const rows = rowsFromWidget(widget);
+  const firstRow = rows[0];
+  const aggregation = aggregationValue(widget.config.aggregation);
+  const xKey = widget.config.xKey || firstTextKey(firstRow);
+  const yKey = widget.config.yKey || firstTextKey(firstRow);
+  const valueKey = widget.config.valueKey || firstNumericKey(firstRow);
+  const xLabels: string[] = [];
+  const yLabels: string[] = [];
+  const cellValues = new Map<string, number[]>();
+
+  rows.forEach((row, index) => {
+    const xLabel = labelValue(row, xKey, `X${index + 1}`);
+    const yLabel = labelValue(row, yKey, `Y${index + 1}`);
+    const value = aggregation === "count" ? 1 : numericValue(row, valueKey);
+    if (value === null) return;
+    if (!xLabels.includes(xLabel)) xLabels.push(xLabel);
+    if (!yLabels.includes(yLabel)) yLabels.push(yLabel);
+    const cellKey = `${yLabel}\u0000${xLabel}`;
+    const values = cellValues.get(cellKey) ?? [];
+    values.push(value);
+    cellValues.set(cellKey, values);
+  });
+
+  const visibleXLabels = xLabels.slice(0, 12);
+  const visibleYLabels = yLabels.slice(0, 8);
+  if (!visibleXLabels.length || !visibleYLabels.length) return <EmptyWidgetData />;
+
+  const series = visibleYLabels.map((yLabel) => ({
+    data: visibleXLabels.map((xLabel) => {
+      const value = aggregateNumbers(cellValues.get(`${yLabel}\u0000${xLabel}`) ?? [], aggregation) ?? 0;
+      return { x: xLabel, y: value };
+    }),
+    name: yLabel,
+  }));
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "heatmap",
+    },
+    colors: [color],
+    dataLabels: {
+      enabled: false,
+    },
+    plotOptions: {
+      heatmap: {
+        enableShades: true,
+        shadeIntensity: 0.6,
+      },
+    },
+  };
+
+  return <RuntimeApexChart options={options} series={series} type="heatmap" />;
+}
+
+function TreemapChartWidget({ widget }: { widget: RuntimeWidgetByType<"treemap_chart"> }) {
+  const rows = rowsFromWidget(widget);
+  const firstRow = rows[0];
+  const aggregation = aggregationValue(widget.config.aggregation);
+  const labelKey = widget.config.labelKey || firstTextKey(firstRow);
+  const valueKey = widget.config.valueKey || firstNumericKey(firstRow);
+  const points = groupedChartPoints({ aggregation, labelKey, limit: 12, rows, valueKey })
+    .filter((point) => point.value > 0);
+  if (!points.length) return <EmptyWidgetData />;
+
+  const colors = colorsFromConfig(widget.config.color);
+  const color = colors[0] ?? fallbackChartColors[0];
+  const baseOptions = buildBaseChartOptions(color);
+  const options: ApexOptions = {
+    ...baseOptions,
+    chart: {
+      ...baseOptions.chart,
+      type: "treemap",
+    },
+    colors,
+    legend: {
+      show: false,
+    },
+    plotOptions: {
+      treemap: {
+        distributed: true,
+        enableShades: false,
+      },
+    },
+  };
+  const series = [{
+    data: points.map((point) => ({ x: point.label, y: point.value })),
+  }];
+
+  return <RuntimeApexChart options={options} series={series} type="treemap" />;
 }
 
 export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
@@ -516,7 +836,12 @@ export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget:
   if (widget.type === "table") return <TableWidget widget={widget} />;
   if (widget.type === "bar_chart") return <BarChartWidget widget={widget} />;
   if (widget.type === "line_chart") return <LineChartWidget widget={widget} />;
+  if (widget.type === "area_chart") return <AreaChartWidget widget={widget} />;
   if (widget.type === "donut_chart") return <DonutChartWidget widget={widget} />;
+  if (widget.type === "pie_chart") return <PieChartWidget widget={widget} />;
+  if (widget.type === "radial_bar_chart") return <RadialBarChartWidget widget={widget} />;
+  if (widget.type === "heatmap_chart") return <HeatmapChartWidget widget={widget} />;
+  if (widget.type === "treemap_chart") return <TreemapChartWidget widget={widget} />;
 
   return <EmptyWidgetData />;
 });
