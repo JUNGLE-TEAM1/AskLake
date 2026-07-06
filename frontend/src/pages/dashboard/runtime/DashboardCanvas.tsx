@@ -1,21 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
+import { Responsive, useContainerWidth, verticalCompactor, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
-import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
+import { hasAnyLayoutCollision, hasLayoutOutOfBounds } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
 const gridMargin: [number, number] = [12, 12];
 const gridRowHeight = 48;
 const editGridTrailingRows = 1;
-const noReflowCompactor = {
-  ...noCompactor,
-  preventCollision: true,
-};
 
 function layoutHeight(layout: LayoutItem[], trailingRows = 0) {
   const bottomRow = layout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
@@ -99,22 +95,8 @@ export function DashboardCanvas({
     () => editable ? `max(100%, ${layoutHeight(layout, editGridTrailingRows)}px)` : undefined,
     [editable, layout],
   );
-  const changedMultipleItems = (nextLayout: readonly LayoutItem[]) => {
-    const startById = new Map(layout.map((item) => [item.i, item]));
-    let changedCount = 0;
-
-    for (const item of nextLayout) {
-      const startItem = startById.get(item.i);
-      if (!startItem) continue;
-      const changed = item.x !== startItem.x || item.y !== startItem.y || item.w !== startItem.w || item.h !== startItem.h;
-      if (changed) changedCount += 1;
-      if (changedCount > 1) return true;
-    }
-
-    return false;
-  };
   const commitLayout = (nextLayout: readonly LayoutItem[]) => {
-    if (hasAnyLayoutCollision(nextLayout) || changedMultipleItems(nextLayout)) {
+    if (hasLayoutOutOfBounds(nextLayout, breakpointCols.lg) || hasAnyLayoutCollision(nextLayout)) {
       setResetKey((key) => key + 1);
       onLayoutRejected?.();
       return;
@@ -158,7 +140,7 @@ export function DashboardCanvas({
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
-          compactor={noReflowCompactor}
+          compactor={verticalCompactor}
           containerPadding={[0, 0]}
           dragConfig={{
             bounded: true,
@@ -168,7 +150,7 @@ export function DashboardCanvas({
           }}
           layouts={responsiveLayouts}
           margin={gridMargin}
-          resizeConfig={{ enabled: editable, handles: ["se"] }}
+          resizeConfig={{ enabled: editable, handles: ["n", "s", "e", "w", "ne", "nw", "se", "sw"] }}
           rowHeight={gridRowHeight}
           style={editGridMinHeight ? { minHeight: editGridMinHeight } : undefined}
           width={width}
