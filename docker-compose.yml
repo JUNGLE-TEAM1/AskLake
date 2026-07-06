@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: asklake-postgres
+    environment:
+      POSTGRES_DB: asklake
+      POSTGRES_PASSWORD: asklake_dev
+      POSTGRES_USER: asklake
+    ports:
+      - "54328:5432"
+    volumes:
+      - asklake_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asklake -d asklake"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  asklake_postgres_data:

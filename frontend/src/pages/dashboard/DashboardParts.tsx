@@ -1,39 +1,12 @@
 import type React from "react";
 import { Download, Maximize2, Save, Share2 } from "lucide-react";
-import type { DashboardStatus, DashboardWidgetType } from "../../types";
-
-export type SavedDashboardCard = {
-  datasetId?: string;
-  id: string;
-  meta: string;
-  name: string;
-  owner: string;
-  sourceRunId?: string;
-  sqlResult?: {
-    columns: string[];
-    query: string;
-    rowCount: number;
-    runId: string;
-  };
-  status: DashboardStatus;
-  tags: string;
-  updated: string;
-  widgets?: DashboardWidgetType[];
-};
+import type { DashboardWidgetType } from "../../types";
 
 export type ExpandedChart = {
   kind: "category" | "orders" | "channels";
   subtitle: string;
   title: string;
 };
-
-export const defaultDashboardCards: SavedDashboardCard[] = [
-  { id: "dash_sales_demo", name: "Sales Analytics Demo 2026-06-26 22:04:05", tags: "Sales · Revenue · Demo", owner: "Admin User", updated: "2시간 전", status: "published", meta: "최근 7일 · 자동 갱신" },
-  { id: "dash_marketing_roi", name: "Marketing Campaign ROI Tracking", tags: "Marketing · ROI", owner: "Jane Doe", updated: "어제", status: "draft", meta: "권한 검토 필요" },
-  { id: "dash_qbr", name: "Executive QBR Dashboard", tags: "Executive · Quarterly", owner: "Robert Wilson", updated: "3일 전", status: "published", meta: "GOLD mart 연결" },
-  { id: "dash_apac_sales", name: "Regional Sales Performance - APAC", tags: "Regional · Sales", owner: "Sarah Kim", updated: "1주일 전", status: "published", meta: "APAC 영업팀 공유" },
-  { id: "dash_inventory_leakage", name: "Inventory Leakage Report", tags: "Inventory · Ops", owner: "Michael Chen", updated: "2주일 전", status: "draft", meta: "운영 검토 중" },
-];
 
 export function DashboardWorkspaceHeader({
   isPublished,

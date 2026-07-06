@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { catalogDatasets, etlJobs } from "../data/mockData";
-import { apiClient, apiConfig } from "../services/apiClient";
+import { apiConfig } from "../services/apiClient";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import {
   createDerivedDatasetFromSql,
   createPipelineDraft as createMockPipelineDraft,
+  getDatasets,
+  getJobs,
   runJobCommand as runMockJobCommand,
 } from "../services/mockApi";
 import {
@@ -214,42 +216,51 @@ export function useAskLakeData({
   const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
-  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
-  const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
+  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset | null>(() => getInitialDatasets()[0] ?? null);
+  const [selectedJob, setSelectedJob] = useState<JobRowData | null>(() => getInitialJobs()[0] ?? null);
   const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
+  const [dataLoading, setDataLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
 
   useEffect(() => {
-    if (apiConfig.useMock) return;
+    if (apiConfig.useMock) {
+      setDataLoading(false);
+      setDataError(null);
+      return;
+    }
 
     let cancelled = false;
-    setApiPending(true);
-    Promise.all([
-      apiClient.get<JobRowData[]>("/api/etl/jobs"),
-      apiClient.get<CatalogDataset[]>("/api/catalog/datasets"),
-    ])
-      .then(([nextJobs, nextDatasets]) => {
+
+    async function hydrateData() {
+      setDataLoading(true);
+      setDataError(null);
+      try {
+        const [nextJobs, nextDatasets] = await Promise.all([getJobs(), getDatasets()]);
         if (cancelled) return;
         const normalizedJobs = nextJobs.map(normalizeJobRow);
         const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
         setJobs(normalizedJobs);
         setDatasets(normalizedDatasets);
-        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
-      })
-      .catch(() => {
-        if (!cancelled) showToast("백엔드 초기 데이터를 불러오지 못했습니다.", "info");
-      })
-      .finally(() => {
-        if (!cancelled) setApiPending(false);
-      });
+        setSelectedJob((job) => job ?? normalizedJobs[0] ?? null);
+        setSelectedDataset((dataset) => dataset ?? normalizedDatasets[0] ?? null);
+      } catch (error) {
+        if (cancelled) return;
+        setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
+        showToast("DB API에서 초기 데이터를 불러오지 못했습니다.", "info");
+      } finally {
+        if (!cancelled) setDataLoading(false);
+      }
+    }
+
+    void hydrateData();
 
     return () => {
       cancelled = true;
     };
-  }, [showToast]);
+  }, []);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
@@ -328,7 +339,7 @@ export function useAskLakeData({
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
-    setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
+    setSelectedJob((job) => (job?.id === jobId ? updater(job) : job));
   };
 
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
@@ -343,7 +354,7 @@ export function useAskLakeData({
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
       setJobs(remaining);
-      setSelectedJob(remaining[0] ?? emptySelectedJob);
+      setSelectedJob(remaining[0] ?? null);
       onFlowChange("jobs");
       return;
     }
@@ -397,6 +408,8 @@ export function useAskLakeData({
     apiPending,
     createPipeline,
     createSqlDerivedDataset,
+    dataError,
+    dataLoading,
     datasets,
     draftPipeline,
     handleJobCommand,

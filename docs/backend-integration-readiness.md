@@ -17,7 +17,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
 | Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과 반영 | 상세/lineage/search persistence |
 | SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
-| Dashboard | frontend flow 유지 | dashboard 저장/게시 persistence |
+| Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
 FastAPI 1차 scaffold의 범위는 기능 endpoint 구현이 아니라 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이다.
@@ -178,14 +178,25 @@ Pair2 FastAPI 5단계 완료 기준:
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| 위젯 타입 선택 | 프론트 상태 변경 | 없음 |
-| 위젯 추가 | local canvas에 추가 | `POST /api/dashboards/{id}/widgets` |
-| 위젯 삭제 | local canvas에서 제거 | `DELETE /api/dashboards/{id}/widgets/{widgetId}` |
-| 저장 | localStorage snapshot과 감사 로그 기록 | `PATCH /api/dashboards/{id}` |
-| Publish | published view로 전환 | `POST /api/dashboards/{id}/publish` |
-| Share | 감사 로그만 기록 | `POST /api/dashboards/{id}/share` |
+| 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
+| 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
+| 목록 삭제 | 확인 후 dashboard 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
+| Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
+| Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
+| Page 추가 | DB-backed draft page 추가 | `POST /api/dashboards/{id}/draft/pages` |
+| Page 이름 수정 | DB-backed draft page title 수정 | `PATCH /api/dashboards/{id}/draft/pages/{pageId}` |
+| Page 삭제 | DB-backed draft page와 하위 widgets 삭제 | `DELETE /api/dashboards/{id}/draft/pages/{pageId}` |
+| 위젯 추가 | selected dataset과 type별 config로 draft widget 생성 | `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` |
+| 위젯 수정 | draft widget title/type/datasetId/config 수정 | `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| 위젯 삭제 | draft widget 삭제 | `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` |
+| Layout 저장 | drag/resize 종료 시 layout batch 저장 | `PATCH /api/dashboards/{id}/draft/layouts` |
+| Publish | 현재 draft revision을 published revision으로 복사 | `POST /api/dashboards/{id}/publish` |
+| Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
+
+Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
 
 ## 9. 아직 실제 저장되지 않는 기능
 
@@ -197,7 +208,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
 | 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
 | SQL | 쿼리 저장, Lake 저장, CSV 다운로드 |
-| 대시보드 | 위젯 저장, 게시 상태 유지, 공유, 내보내기 |
+| 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
 ## 10. 백엔드 팀에 넘길 최소 구현 범위
@@ -210,11 +221,23 @@ Pair2 FastAPI 5단계 완료 기준:
 4. `GET /api/catalog/datasets`
 5. `POST /api/query/runs`
 
-대시보드까지 실제 저장하려면 아래 3개를 추가합니다.
+대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
 
-1. `POST /api/dashboards`
-2. `PATCH /api/dashboards/{dashboardId}`
-3. `POST /api/dashboards/{dashboardId}/publish`
+1. `GET /api/dashboards`
+2. `POST /api/dashboards/query`
+3. `POST /api/dashboards`
+4. `PATCH /api/dashboards/{dashboardId}`
+5. `DELETE /api/dashboards/{dashboardId}`
+6. `GET /api/dashboards/{dashboardId}/published`
+7. `POST /api/dashboards/{dashboardId}/draft/ensure`
+8. `POST /api/dashboards/{dashboardId}/draft/pages`
+9. `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+10. `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+11. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+12. `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+13. `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+14. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+15. `POST /api/dashboards/{dashboardId}/publish`
 
 ## 11. 프론트에서 다음에 할 작업
 
@@ -224,7 +247,7 @@ Pair2 FastAPI 5단계 완료 기준:
 | --- | --- | --- |
 | 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
-| 3 | dashboard adapter 추가 | `frontend/src/services/mockApi.ts` |
+| 3 | dashboard list/runtime adapter와 conflict-safe API shape 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
