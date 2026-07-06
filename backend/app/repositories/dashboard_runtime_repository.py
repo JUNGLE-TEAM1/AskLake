@@ -6,7 +6,12 @@ from uuid import uuid4
 from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
-from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
+from app.models.base import Base
+from app.models.dashboard_runtime import (
+    DashboardPage,
+    DashboardRevision,
+    DashboardWidget,
+)
 from app.repositories.dashboard_card_repository import ensure_dashboard_card_schema
 from app.schemas.dashboard import DashboardRuntimeMode, DashboardStatus
 
@@ -24,20 +29,117 @@ class DashboardRuntimeMetaRecord:
 class DashboardRuntimeRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self._runtime_schema_ready = False
 
-    def get_dashboard_meta(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
+    def ensure_dashboard_runtime_schema(self) -> None:
+        if self._runtime_schema_ready:
+            return
+
+        bind = self.db.get_bind()
+        Base.metadata.create_all(
+            bind=bind,
+            tables=[
+                DashboardRevision.__table__,
+                DashboardPage.__table__,
+                DashboardWidget.__table__,
+            ],
+        )
+
+        if bind.dialect.name != "postgresql":
+            self._runtime_schema_ready = True
+            return
+
+        statements = [
+            "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1",
+            "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS published_at timestamptz",
+            "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+            "ALTER TABLE dashboard_revisions ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+            "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS title varchar(120) NOT NULL DEFAULT 'Untitled page'",
+            "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS order_index integer NOT NULL DEFAULT 0",
+            "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+            "ALTER TABLE dashboard_pages ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS title varchar(160)",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS dataset_id varchar(64)",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS query_id varchar(64)",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS layout jsonb NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS config jsonb NOT NULL DEFAULT '{}'::jsonb",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS data jsonb NOT NULL DEFAULT '[]'::jsonb",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()",
+            "ALTER TABLE dashboard_widgets ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()",
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'dashboard_widgets'
+                      AND column_name = 'layout_json'
+                ) THEN
+                    ALTER TABLE dashboard_widgets ALTER COLUMN layout_json SET DEFAULT '{}'::jsonb;
+                    UPDATE dashboard_widgets
+                    SET layout = layout_json
+                    WHERE layout_json IS NOT NULL
+                      AND layout_json <> '{}'::jsonb
+                      AND layout = '{}'::jsonb;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'dashboard_widgets'
+                      AND column_name = 'config_json'
+                ) THEN
+                    ALTER TABLE dashboard_widgets ALTER COLUMN config_json SET DEFAULT '{}'::jsonb;
+                    UPDATE dashboard_widgets
+                    SET config = config_json
+                    WHERE config_json IS NOT NULL
+                      AND config_json <> '{}'::jsonb
+                      AND config = '{}'::jsonb;
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.columns
+                    WHERE table_name = 'dashboard_widgets'
+                      AND column_name = 'data_json'
+                ) THEN
+                    ALTER TABLE dashboard_widgets ALTER COLUMN data_json SET DEFAULT '[]'::jsonb;
+                    UPDATE dashboard_widgets
+                    SET data = data_json
+                    WHERE data_json IS NOT NULL
+                      AND data_json <> '[]'::jsonb
+                      AND data = '[]'::jsonb;
+                END IF;
+            END $$;
+            """,
+            "CREATE INDEX IF NOT EXISTS dashboard_revisions_dashboard_id_idx ON dashboard_revisions (dashboard_id)",
+            "CREATE INDEX IF NOT EXISTS dashboard_revisions_kind_idx ON dashboard_revisions (kind)",
+            "CREATE INDEX IF NOT EXISTS dashboard_pages_revision_id_idx ON dashboard_pages (revision_id)",
+            "CREATE INDEX IF NOT EXISTS dashboard_widgets_page_id_idx ON dashboard_widgets (page_id)",
+        ]
+        for statement in statements:
+            self.db.execute(text(statement))
+        self.db.commit()
+        self._runtime_schema_ready = True
+
+    def get_dashboard_meta(
+        self, dashboard_id: str
+    ) -> DashboardRuntimeMetaRecord | None:
         self._ensure_dashboard_meta_table()
         if self._dashboards_table_exists():
             return self._get_dashboard_meta_from_card_list_table(dashboard_id)
         return None
 
     def get_published_revision(self, dashboard_id: str) -> DashboardRevision | None:
+        self.ensure_dashboard_runtime_schema()
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.PUBLISHED)
 
     def get_draft_revision(self, dashboard_id: str) -> DashboardRevision | None:
+        self.ensure_dashboard_runtime_schema()
         return self._get_revision_by_kind(dashboard_id, DashboardRuntimeMode.DRAFT)
 
     def get_next_revision_version(self, dashboard_id: str) -> int:
+        self.ensure_dashboard_runtime_schema()
         statement = (
             select(DashboardRevision.version)
             .where(DashboardRevision.dashboard_id == dashboard_id)
@@ -54,6 +156,7 @@ class DashboardRuntimeRepository:
         *,
         published_at: datetime | None = None,
     ) -> DashboardRevision:
+        self.ensure_dashboard_runtime_schema()
         revision = DashboardRevision(
             id=self._new_id("dashrev"),
             dashboard_id=dashboard_id,
@@ -65,7 +168,10 @@ class DashboardRuntimeRepository:
         self.db.flush()
         return revision
 
-    def create_page(self, revision_id: str, title: str, order_index: int) -> DashboardPage:
+    def create_page(
+        self, revision_id: str, title: str, order_index: int
+    ) -> DashboardPage:
+        self.ensure_dashboard_runtime_schema()
         page = DashboardPage(
             id=self._new_id("dashpage"),
             revision_id=revision_id,
@@ -77,9 +183,11 @@ class DashboardRuntimeRepository:
         return page
 
     def get_page(self, page_id: str) -> DashboardPage | None:
+        self.ensure_dashboard_runtime_schema()
         return self.db.get(DashboardPage, page_id)
 
     def get_next_page_order(self, revision_id: str) -> int:
+        self.ensure_dashboard_runtime_schema()
         statement = (
             select(DashboardPage.order_index)
             .where(DashboardPage.revision_id == revision_id)
@@ -90,12 +198,16 @@ class DashboardRuntimeRepository:
         return (current_order if current_order is not None else -1) + 1
 
     def update_page_title(self, page: DashboardPage, title: str) -> DashboardPage:
+        self.ensure_dashboard_runtime_schema()
         page.title = title
         self.db.flush()
         return page
 
     def delete_page(self, page: DashboardPage) -> None:
-        self.db.execute(delete(DashboardWidget).where(DashboardWidget.page_id == page.id))
+        self.ensure_dashboard_runtime_schema()
+        self.db.execute(
+            delete(DashboardWidget).where(DashboardWidget.page_id == page.id)
+        )
         self.db.delete(page)
         self.db.flush()
 
@@ -111,6 +223,7 @@ class DashboardRuntimeRepository:
         dataset_id: str | None = None,
         query_id: str | None = None,
     ) -> DashboardWidget:
+        self.ensure_dashboard_runtime_schema()
         widget = DashboardWidget(
             id=self._new_id("dashwidget"),
             page_id=page_id,
@@ -127,6 +240,7 @@ class DashboardRuntimeRepository:
         return widget
 
     def get_widget(self, widget_id: str) -> DashboardWidget | None:
+        self.ensure_dashboard_runtime_schema()
         return self.db.get(DashboardWidget, widget_id)
 
     def update_widget(
@@ -140,6 +254,7 @@ class DashboardRuntimeRepository:
         update_dataset_id: bool = False,
         config: dict[str, Any] | None = None,
     ) -> DashboardWidget:
+        self.ensure_dashboard_runtime_schema()
         if widget_type is not None:
             widget.type = widget_type
         if update_title:
@@ -152,23 +267,38 @@ class DashboardRuntimeRepository:
         return widget
 
     def delete_widget(self, widget: DashboardWidget) -> None:
+        self.ensure_dashboard_runtime_schema()
         self.db.delete(widget)
         self.db.flush()
 
-    def update_widget_layout(self, widget: DashboardWidget, layout: dict[str, Any]) -> DashboardWidget:
+    def update_widget_layout(
+        self, widget: DashboardWidget, layout: dict[str, Any]
+    ) -> DashboardWidget:
+        self.ensure_dashboard_runtime_schema()
         widget.layout = layout
         self.db.flush()
         return widget
 
-    def copy_revision(self, source_revision: DashboardRevision, target_kind: DashboardRuntimeMode) -> DashboardRevision:
+    def copy_revision(
+        self, source_revision: DashboardRevision, target_kind: DashboardRuntimeMode
+    ) -> DashboardRevision:
+        self.ensure_dashboard_runtime_schema()
         target_revision = self.create_revision(
             source_revision.dashboard_id,
             target_kind,
-            published_at=datetime.now(UTC) if target_kind == DashboardRuntimeMode.PUBLISHED else None,
+            published_at=(
+                datetime.now(UTC)
+                if target_kind == DashboardRuntimeMode.PUBLISHED
+                else None
+            ),
         )
         for source_page in self.list_pages(source_revision.id):
-            target_page = self.create_page(target_revision.id, source_page.title, source_page.order_index)
-            for source_widget in self.list_widgets_by_page_ids([source_page.id]).get(source_page.id, []):
+            target_page = self.create_page(
+                target_revision.id, source_page.title, source_page.order_index
+            )
+            for source_widget in self.list_widgets_by_page_ids([source_page.id]).get(
+                source_page.id, []
+            ):
                 self.create_widget(
                     target_page.id,
                     widget_type=source_widget.type,
@@ -181,16 +311,24 @@ class DashboardRuntimeRepository:
                 )
         return target_revision
 
-    def update_dashboard_published_metadata(self, dashboard_id: str, published_revision_id: str, published_at: datetime) -> None:
+    def update_dashboard_published_metadata(
+        self, dashboard_id: str, published_revision_id: str, published_at: datetime
+    ) -> None:
         if not self._dashboards_table_exists():
             return
 
-        columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
+        columns = {
+            column["name"]
+            for column in inspect(self.db.connection()).get_columns("dashboards")
+        }
         updates: list[str] = []
+        published_at_value = self._iso_timestamp(published_at)
         values: dict[str, Any] = {
             "dashboard_id": dashboard_id,
             "published_revision_id": published_revision_id,
             "published_at": published_at,
+            "updated": "방금 전",
+            "updated_at_value": published_at_value,
         }
         if "published_revision_id" in columns:
             updates.append("published_revision_id = :published_revision_id")
@@ -200,16 +338,31 @@ class DashboardRuntimeRepository:
             updates.append("status = 'published'")
         if "updated_at" in columns:
             updates.append("updated_at = :published_at")
+        if "payload" in columns:
+            updates.append(
+                """
+                payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object(
+                    'publishedRevisionId', CAST(:published_revision_id AS text),
+                    'hasPublishedRevision', true,
+                    'status', 'published',
+                    'updated', CAST(:updated AS text),
+                    'updatedAtValue', CAST(:updated_at_value AS text)
+                )
+                """.strip()
+            )
         if not updates:
             return
 
         self.db.execute(
-            text(f"UPDATE dashboards SET {', '.join(updates)} WHERE id = :dashboard_id"),
+            text(
+                f"UPDATE dashboards SET {', '.join(updates)} WHERE id = :dashboard_id"
+            ),
             values,
         )
         self.db.flush()
 
     def list_pages(self, revision_id: str) -> list[DashboardPage]:
+        self.ensure_dashboard_runtime_schema()
         statement = (
             select(DashboardPage)
             .where(DashboardPage.revision_id == revision_id)
@@ -217,7 +370,10 @@ class DashboardRuntimeRepository:
         )
         return list(self.db.scalars(statement).all())
 
-    def list_widgets_by_page_ids(self, page_ids: list[str]) -> dict[str, list[DashboardWidget]]:
+    def list_widgets_by_page_ids(
+        self, page_ids: list[str]
+    ) -> dict[str, list[DashboardWidget]]:
+        self.ensure_dashboard_runtime_schema()
         if not page_ids:
             return {}
 
@@ -231,14 +387,51 @@ class DashboardRuntimeRepository:
             widgets_by_page_id.setdefault(widget.page_id, []).append(widget)
         return widgets_by_page_id
 
-    def _get_revision_by_kind(self, dashboard_id: str, kind: DashboardRuntimeMode) -> DashboardRevision | None:
+    def delete_dashboard_runtime(self, dashboard_id: str) -> None:
+        self.ensure_dashboard_runtime_schema()
+        revision_ids = list(
+            self.db.scalars(
+                select(DashboardRevision.id).where(
+                    DashboardRevision.dashboard_id == dashboard_id
+                )
+            ).all()
+        )
+        if not revision_ids:
+            return
+
+        page_ids = list(
+            self.db.scalars(
+                select(DashboardPage.id).where(
+                    DashboardPage.revision_id.in_(revision_ids)
+                )
+            ).all()
+        )
+        if page_ids:
+            self.db.execute(
+                delete(DashboardWidget).where(DashboardWidget.page_id.in_(page_ids))
+            )
+        self.db.execute(
+            delete(DashboardPage).where(DashboardPage.revision_id.in_(revision_ids))
+        )
+        self.db.execute(
+            delete(DashboardRevision).where(
+                DashboardRevision.dashboard_id == dashboard_id
+            )
+        )
+        self.db.flush()
+
+    def _get_revision_by_kind(
+        self, dashboard_id: str, kind: DashboardRuntimeMode
+    ) -> DashboardRevision | None:
         statement = (
             select(DashboardRevision)
             .where(
                 DashboardRevision.dashboard_id == dashboard_id,
                 DashboardRevision.kind == kind.value,
             )
-            .order_by(DashboardRevision.version.desc(), DashboardRevision.created_at.desc())
+            .order_by(
+                DashboardRevision.version.desc(), DashboardRevision.created_at.desc()
+            )
             .limit(1)
         )
         return self.db.scalars(statement).first()
@@ -259,7 +452,10 @@ class DashboardRuntimeRepository:
             ensure_dashboard_card_schema(self.db)
 
     def _dashboard_meta_columns_ready(self) -> bool:
-        columns = {column["name"] for column in inspect(self.db.connection()).get_columns("dashboards")}
+        columns = {
+            column["name"]
+            for column in inspect(self.db.connection()).get_columns("dashboards")
+        }
         required_columns = {
             "id",
             "payload",
@@ -272,10 +468,13 @@ class DashboardRuntimeRepository:
         }
         return required_columns.issubset(columns)
 
-    def _get_dashboard_meta_from_card_list_table(self, dashboard_id: str) -> DashboardRuntimeMetaRecord | None:
-        row = self.db.execute(
-            text(
-                """
+    def _get_dashboard_meta_from_card_list_table(
+        self, dashboard_id: str
+    ) -> DashboardRuntimeMetaRecord | None:
+        row = (
+            self.db.execute(
+                text(
+                    """
                 SELECT
                     id,
                     name,
@@ -286,9 +485,12 @@ class DashboardRuntimeRepository:
                 FROM dashboards
                 WHERE id = :dashboard_id
                 """
-            ),
-            {"dashboard_id": dashboard_id},
-        ).mappings().first()
+                ),
+                {"dashboard_id": dashboard_id},
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             return None
 
@@ -312,6 +514,12 @@ class DashboardRuntimeRepository:
         if isinstance(value, datetime):
             return value
         return datetime.now(UTC)
+
+    @staticmethod
+    def _iso_timestamp(value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _new_id(prefix: str) -> str:
