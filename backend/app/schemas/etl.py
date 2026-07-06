@@ -153,6 +153,25 @@ class CatalogDataset(CamelModel):
     lineage_graph: dict[str, Any] | None = None
 
 
+class DerivedDatasetSpec(CamelModel):
+    description: str
+    layer: Literal["SILVER", "GOLD"]
+    name: str
+    rag: bool = False
+    refresh_policy: Literal["manual"] = "manual"
+    tags: list[str] = Field(default_factory=list)
+
+
+class CreateDerivedDatasetRequest(CamelModel):
+    dataset: DerivedDatasetSpec
+    preview_limit: int | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    source_dataset_id: str
+    source_run_id: str
+    validation_key: str | None = None
+
+
 class CreatePipelineRequest(CamelModel):
     id: str
     job_name: str

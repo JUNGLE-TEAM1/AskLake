@@ -11,6 +11,7 @@ npm run dev
 ```
 
 기본 dev server는 Vite 설정을 따른다.
+Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
 
 ## 2) 빌드
 
@@ -30,6 +31,22 @@ VITE_API_BASE_URL=http://localhost:8080
 ```
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+
+### FastAPI scaffold
+
+FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
+기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+```
+
+로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다.
+FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 ## 4) 브랜치 전략
 
@@ -123,9 +140,11 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - API contract tests
 - adapter unit tests
 - backend endpoint tests
+- FastAPI `/api/health` smoke test
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests
+- dashboard publish/share/refresh runtime smoke tests
 
 ## 10) Manual Smoke Checklist
 
@@ -136,6 +155,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - catalog 상세에서 SQL 화면으로 이동한다.
 - SQL 실행 결과로 dashboard builder를 열 수 있다.
 - audit log와 toast가 동작한다.
+- dashboard draft를 publish하면 viewer로 이동하고, 공유 링크 복사와 새로고침 feedback이 보인다.
 
 ## 11) 문서 업데이트 기준
 
@@ -145,3 +165,9 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - 개발 명령/검증/브랜치 규칙 변경: 이 문서
 - CI/ruleset/platform guardrail 변경: `docs/system-guardrails.md`
 - GitHub PR/Issue 템플릿 변경: 이 문서와 `docs/system-guardrails.md`
+
+## 12) Local Codex Workflow Overrides
+
+`AGENTS.local.md` may be used for local-only Codex workflow preferences, such as routing natural-language issue, PR, and review requests to installed personal skills.
+
+This file is ignored by git and must not contain shared team policy, secrets, tokens, private keys, or real credentials.

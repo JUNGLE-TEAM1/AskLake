@@ -1,151 +1,133 @@
 # 01. Product Planning
 
-## Current Pair A Correction (2026-07-06)
+이 문서는 AskLake의 제품 범위와 MVP 기준을 정하는 최상위 기획 문서다.
 
-- Earlier mock/demo planning notes in this document are historical.
-- Current Pair A work uses live backend Source / Schema / Create / Run paths and Spark validation.
-- The initial ETL list can be empty; test data should be connected through MinIO/S3 or the implemented live connectors rather than seeded UI fixtures.
+## 1) 프로젝트 한 줄 소개
 
+- 프로젝트명: AskLake
+- 한 줄 설명: 데이터 수집, 카탈로그, SQL 분석, 대시보드, AI 활용 흐름을 하나의 신뢰 가능한 데이터 플랫폼 경험으로 연결하는 프로젝트
+- 현재 Pair A 기준: Source, Schema, Create, Run 흐름은 live backend API를 목표 경로로 사용한다.
+- 현재 초기 데이터 기준: ETL job과 Catalog dataset은 비어 있을 수 있으며, 사용자가 파이프라인을 생성하고 실행한 뒤 Catalog dataset이 생긴다.
 
-??臾몄꽌??AskLake???쒗뭹 踰붿쐞? MVP 湲곗????뺥븯??理쒖긽??湲고쉷 臾몄꽌??
+## 2) 문제 정의
 
-## 1) ?꾨줈?앺듃 ??以??뚭컻
+기업 데이터는 수집, 정제, 분석, 대시보드, AI 활용 단계가 서로 끊어지기 쉽다.
+AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, 근거를 한 흐름에서 확인할 수 있게 만드는 것을 목표로 한다.
 
-- ?꾨줈?앺듃紐? AskLake
-- ??以??ㅻ챸: ?곗씠???섏쭛, 移댄깉濡쒓렇, SQL 遺꾩꽍, ??쒕낫?? AI ?쒖슜 ?먮쫫???섎굹???좊ː 媛?ν븳 ?곗씠???뚮옯??寃쏀뿕?쇰줈 ?곌껐?섎뒗 ?꾨줈?앺듃
-- ?꾩옱 ?곹깭: React/Vite frontend demo
-- ?ㅼ쓬 ?뺤옣: backend API, persistence, authentication/authorization, audit logging
+현재 해결해야 하는 문제:
 
-## 2) 臾몄젣 ?뺤쓽
+- 생성 flow의 draft가 실제 backend request와 어긋나지 않아야 한다.
+- Job 실행 결과가 Run History, DAG, Catalog dataset으로 같은 `runId` 기준에 맞게 이어져야 한다.
+- Catalog, SQL, Dashboard 화면은 dataset이 실제로 존재할 때만 분석/생성 동작을 허용해야 한다.
+- FastAPI 전환 중인 endpoint와 아직 Node demo/mock에 남은 endpoint를 문서에서 분명히 구분해야 한다.
 
-湲곗뾽 ?곗씠?곕뒗 ?섏쭛, ?뺤젣, 遺꾩꽍, ??쒕낫?? AI ?쒖슜 ?④퀎媛 ?쒕줈 ?딆뼱吏湲??쎈떎.
-AskLake???ъ슜?먭? ?곗씠?곗뀑??異쒖쿂, ?덉쭏, 沅뚰븳, ?ㅽ뻾 寃곌낵, 洹쇨굅瑜????먮쫫?먯꽌 ?뺤씤?????덇쾶 留뚮뱶??寃껋쓣 紐⑺몴濡??쒕떎.
+## 3) 타겟 사용자
 
-?꾩옱 ?닿껐?댁빞 ?섎뒗 臾몄젣:
+- 데이터 엔지니어: 수집/처리 작업 생성, 실행, 재실행, 일시정지, 실패 확인
+- 데이터 분석가: 카탈로그 탐색, SQL 분석, SQL 결과 dataset 생성
+- 운영/관리자: 권한, 감사 로그, API 사용 상태 확인
+- 향후 AI 사용자: 신뢰 가능한 데이터셋과 근거를 기반으로 자연어 질의
 
-- ?꾨줎?몄뿏???곕え??mock state 湲곕컲?대씪 ?덈줈怨좎묠 ???곹깭媛 ?좎??섏? ?딅뒗??
-- 諛깆뿏??API 怨꾩빟? ?덉?留??ㅼ젣 ?쒕쾭 援ы쁽怨???μ냼媛 ?꾩쭅 ?녿떎.
-- AI ?쒖슜怨?愿由??곸뿭? placeholder ?곹깭??MVP 踰붿쐞 ?뺤젙???꾩슂?섎떎.
-- ?곗씠?곗뀑 ?좊ː ?곹깭, 媛먯궗 濡쒓렇, 沅뚰븳 紐⑤뜽???꾩쭅 ?쒗뭹 洹쒖튃?쇰줈 異⑸텇??怨좎젙?섏? ?딆븯??
+## 4) 현재 MVP 범위
 
-## 3) ?寃??ъ슜??
+현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
-- ?곗씠???붿??덉뼱: ?섏쭛/泥섎━ ?묒뾽 ?앹꽦, ?ㅽ뻾, ?ъ떎?? ?쇱떆?뺤?, ?ㅽ뙣 ?뺤씤
-- ?곗씠??遺꾩꽍媛: 移댄깉濡쒓렇 ?먯깋, SQL 遺꾩꽍, ??쒕낫???앹꽦
-- ?댁쁺/愿由ъ옄: 沅뚰븳, 媛먯궗 濡쒓렇, API ?ъ슜 ?곹깭 ?뺤씤
-- ?ν썑 AI ?ъ슜?? ?좊ː 媛?ν븳 ?곗씠?곗뀑怨?洹쇨굅瑜?湲곕컲?쇰줈 ?먯뿰??吏덉쓽
+- Source 연결 테스트와 Schema 추론
+- 새 수집/처리 Job 생성
+- 작업 명령 UI: 실행, 재실행, 일시정지, 취소
+- Run History와 Run별 DAG 표시
+- 실행 성공 후 Catalog dataset 등록
+- Catalog 목록/상세/lineage fallback
+- Dataset 범위의 read-only SQL preview
+- SQL preview 결과 기반 Lake Dataset 생성
+- Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
+- 감사 로그와 toast feedback
 
-## 4) ?꾩옱 MVP 踰붿쐞
+## 5) Backend 확장 범위
 
-?꾩옱 frontend baseline?먯꽌 蹂댁뿬以????덈뒗 踰붿쐞:
+FastAPI live backend에서 현재 우선 구현하는 범위:
 
-- ?섏쭛/泥섎━ 紐⑸줉怨??곸꽭 ?붾㈃
-- ???섏쭛/泥섎━ ?앹꽦 flow
-- ?묒뾽 紐낅졊 UI: 利됱떆 ?ㅽ뻾, ?ъ떎?? ?쇱떆?뺤?, 痍⑥냼
-- 移댄깉濡쒓렇 紐⑸줉/?곸꽭/由щ땲吏
-- SQL 遺꾩꽍 mock ?ㅽ뻾
-- SQL 寃곌낵 湲곕컲 ??쒕낫??builder
-- 媛먯궗 濡쒓렇? toast feedback
-- AI ?쒖슜/愿由?placeholder
-
-## 5) 諛깆뿏???뺤옣 踰붿쐞
-
-諛깆뿏??1李??곕룞?먯꽌 ?곗꽑 援ы쁽??踰붿쐞:
-
-| 湲곕뒫 | ?ㅻ챸 | ?곗꽑?쒖쐞 | 湲곗? 臾몄꽌 |
+| 기능 | 설명 | 우선순위 | 기준 문서 |
 | --- | --- | --- | --- |
-| ETL job ?앹꽦 | ?앹꽦 flow 理쒖쥌 ?쒖텧???쒕쾭 由ъ냼?ㅻ줈 ???| High | `docs/api-contract.md` |
-| Job command | ?ㅽ뻾/?ъ떎???쇱떆?뺤?/痍⑥냼 ?곹깭 ?꾩씠 | High | `docs/api-contract.md` |
-| SQL run | read-only SQL ?ㅽ뻾 寃곌낵 諛섑솚 | High | `docs/api-contract.md` |
-| Job hydrate | 紐⑸줉/?곸꽭瑜??쒕쾭 ?곗씠?곕줈 議고쉶 | Medium | `docs/backend-integration-readiness.md` |
-| Catalog hydrate | ?곗씠?곗뀑 紐⑸줉/?곸꽭瑜??쒕쾭 ?곗씠?곕줈 議고쉶 | Medium | `docs/backend-integration-readiness.md` |
-| Dashboard persistence | ??쒕낫?????寃뚯떆 ?곹깭 ?좎? | Medium | `docs/backend-integration-readiness.md` |
-| Audit log persistence | 媛먯궗 濡쒓렇 ?쒕쾭 ???| Low | `docs/backend-integration-readiness.md` |
+| ETL job 생성 | 생성 flow 최종 제출을 서버 리소스로 저장 | High | `docs/api-contract.md` |
+| Job command | 실행/재실행/일시정지/취소 상태 전이 | High | `docs/api-contract.md` |
+| Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
+| Catalog hydrate | 데이터셋 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
+| Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
+| SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
+| SQL derived dataset | SQL preview 결과를 Catalog dataset으로 저장 | Medium | `docs/api-contract.md` |
 
-## 6) 鍮껶VP 踰붿쐞
+FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 
-?꾩옱 ?④퀎?먯꽌 ?섎룄?곸쑝濡??쒖쇅?섍굅??蹂대쪟?섎뒗 寃?
-
-- ?꾩쟾???몄쬆/?멸? ?쒖뒪??
-- ?ㅼ젣 ??⑸웾 ETL engine
+- Dashboard persistence 전체
+- Dashboard draft/published runtime persistence 전체
+- Audit log server persistence
+- 실제 인증/인가 시스템
 - production-grade scheduler
-- ?ㅼ젣 RAG indexing/runtime
-- 怨좉툒 愿由ъ옄 肄섏넄
-- multi-tenant billing ?먮뒗 議곗쭅 愿由?
+- 실제 RAG indexing/runtime
 
-## 7) ?듭떖 ?ъ슜???먮쫫
+## 6) 핵심 사용자 흐름
 
-### Flow A. ?섏쭛/泥섎━ ?앹꽦
+### Flow A. 수집/처리 생성
 
-1. ?ъ슜?먮뒗 source, schema, rule, schedule, permission, target???ㅼ젙?쒕떎.
-2. ?쒖뒪?쒖? draft瑜?寃利앺븯怨?`POST /api/etl/jobs` ?꾨낫 payload濡?留뚮뱺??
-3. ?깃났 ??job怨?dataset??紐⑸줉??諛섏쁺?쒕떎.
-4. ?ㅽ뙣 ??toast? audit log???ㅽ뙣 湲곕줉???④릿??
+1. 사용자는 source, schema, rule, schedule, permission, target을 설정한다.
+2. 시스템은 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
+3. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
+4. 사용자가 Job을 실행한다.
+5. 실행이 성공하면 Run, DAG, Catalog dataset이 같은 run 결과 기준으로 갱신된다.
+6. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
-### Flow B. 移댄깉濡쒓렇?먯꽌 SQL 遺꾩꽍
+### Flow B. 카탈로그에서 SQL 분석
 
-1. ?ъ슜?먮뒗 catalog dataset???곕떎.
-2. ?쒖뒪?쒖? schema, sample rows, lineage瑜?蹂댁뿬以??
-3. ?ъ슜?먮뒗 SQL ?붾㈃?쇰줈 ?대룞??read-only query瑜??ㅽ뻾?쒕떎.
-4. 寃곌낵??dashboard builder濡??섍만 ???덈떎.
+1. 사용자는 Catalog dataset을 연다.
+2. 시스템은 schema, sample rows, lineage를 보여준다.
+3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
+4. Preview 결과는 Lake Dataset으로 저장할 수 있다.
+5. Dashboard builder 진입은 실제 dataset이 있을 때만 허용한다.
 
-### Flow C. 諛깆뿏???곌껐
+### Flow C. FastAPI live backend 연결
 
-1. ?꾨줎?몃뒗 湲곕낯?곸쑝濡?live backend API 紐⑤뱶濡??숈옉?쒕떎.
-2. API adapter??`VITE_API_BASE_URL` ?먮뒗 湲곕낯 `http://localhost:8080` 湲곗??쇰줈 ?쒕쾭瑜??몄텧?쒕떎.
-3. ?쒕쾭 ?묐떟???깃났?섎㈃ ?꾨줎???곹깭瑜??쒕쾭 ?묐떟 湲곗??쇰줈 媛깆떊?쒕떎.
-4. ?ㅽ뙣?섎㈃ ?ъ슜?먯뿉寃??뚮━怨?rollback ?먮뒗 retry 寃쎈줈瑜??쒓났?쒕떎.
+1. 프론트는 `VITE_USE_MOCK_API=false`일 때 live backend API를 호출한다.
+2. API adapter는 `VITE_API_BASE_URL` 또는 기본 `http://localhost:8080` 기준으로 서버를 호출한다.
+3. 서버 응답이 성공하면 프론트 상태를 서버 응답 기준으로 갱신한다.
+4. 실패하면 사용자에게 알리고 rollback 또는 retry 경로를 제공한다.
+5. Dashboard API는 FastAPI Pair3 전까지 local/mock fallback을 사용한다.
 
-## 8) ?깃났 湲곗?
+## 7) 성공 기준
 
-- `npm run build`媛 ?듦낵?쒕떎.
-- live backend 湲곗? ?듭떖 ?먮쫫???딄린吏 ?딅뒗??
-- 諛깆뿏???꾩엯 ?꾪썑??API 怨꾩빟??臾몄꽌? 肄붾뱶?먯꽌 ?닿툔?섏? ?딅뒗??
-- 理쒖냼 P0 backend API瑜?遺숈씠硫??앹꽦/紐낅졊/SQL ?ㅽ뻾??live mode濡??숈옉?쒕떎.
-- README? docs媛 ?꾩옱 援ы쁽 ?곹깭瑜?怨쇱옣?섏? ?딅뒗??
+- `npm run build`가 통과한다.
+- FastAPI app import와 backend Python compile이 통과한다.
+- conflict marker가 남아 있지 않다.
+- 문서에 깨진 문자가 남아 있지 않다.
+- Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
+- Dashboard 영역은 아직 FastAPI live 구현이라고 과장하지 않는다.
 
-## 9) 4???곕え 留덉씪?ㅽ넠
+## 8) 4일 데모 마일스톤
 
-?④린 ?ㅽ뻾 紐⑺몴???묒? ?섑뵆 ?곗씠?곕씪??`Review ?앹꽦 -> ETL Job ?ㅽ뻾 -> Catalog Dataset ?뺤씤 -> Lineage ?뺤씤 -> SQL ?ㅽ뻾 -> Dashboard Widget ?앹꽦 -> Dashboard ???Publish` ?먮쫫??釉뚮씪?곗??먯꽌 ?앷퉴吏 ?딄린吏 ?딄쾶 留뚮뱶??寃껋씠??
-??留덉씪?ㅽ넠? demo readiness 湲곗??대ŉ, ?ㅼ젣 backend/runtime ?꾩꽦 踰붿쐞瑜?怨쇱옣?섏? ?딅뒗??
-E2E fallback 寃利?湲곗?? `docs/e2e-fallback-verification.md`瑜??곕Ⅸ??
+단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL Preview -> Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
+이 마일스톤은 demo readiness 기준이며, 실제 production runtime 완성 범위를 과장하지 않는다.
 
-| Day | 紐⑺몴 | 醫낅즺 ??蹂댁뿬???섎뒗 ?곹깭 |
+| Day | 목표 | 종료 시 보여야 하는 상태 |
 | --- | --- | --- |
-| Day 1 | ?앹꽦 寃곌낵瑜?ETL 紐⑸줉???곌껐?섍퀬 Spark run ?깃났 ??Catalog ?곸꽭??湲곕낯 lineage瑜??쒖떆 | ??Job, ?깃났 run ?댄썑 ??Dataset, Dataset schema, upstream/current/downstream lineage, Dashboard 鍮??곹깭媛 蹂댁씤?? |
-| Day 2 | Job ?ㅽ뻾 ?곹깭瑜??대젰/DAG???곌껐?섍퀬 Dataset??SQL context濡??꾨떖 | 媛숈? Run ID媛 ?대젰/DAG??蹂댁씠怨?SQL ?붾㈃???좏깮 Dataset query媛 梨꾩썙吏꾨떎. |
-| Day 3 | SQL Result瑜?Dashboard Widget?쇰줈 ?섍린怨?Lineage/SQL/Dashboard 議곗옉??蹂닿컯 | SQL Result Preview, Lineage ?좏깮 ?곹깭, Table Widget, Widget ?쒕ぉ ?섏젙/??젣媛 ?숈옉?쒕떎. |
-| Day 4 | ?꾩껜 ?먮쫫??諛섎났 QA?섍퀬 Dashboard ???Publish瑜??꾩꽦 | 諛쒗몴?먭? 5遺??덉뿉 ?꾩껜 ?먮쫫???ы쁽?섍퀬 Published Dashboard源뚯? ?뺤씤?쒕떎. |
+| Day 1 | 생성 결과를 ETL 목록에 연결하고 실행 성공 후 Catalog dataset 생성 | 새 Job, 성공 Run, 새 Dataset, 기본 lineage가 보인다. |
+| Day 2 | Job 실행 상태를 History/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 History/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
+| Day 3 | SQL Preview와 derived dataset 저장을 보강 | SQL Preview 결과와 새 Catalog dataset이 확인된다. |
+| Day 4 | 전체 흐름을 반복 QA하고 Dashboard fallback을 확인 | 발표자가 5분 안에 전체 흐름을 재현하고 Dashboard 화면이 404 없이 열린다. |
 
-### Day蹂??몃? ?곗텧臾?
+## 9) 보류 범위
 
-| Day | Pair A: ETL Creation & Job Operations | Pair B: Catalog, Lineage & SQL Analysis | Pair C: Dashboard Builder & Publish |
-| --- | --- | --- | --- |
-| Day 1 | Review ?앹꽦 ??`{ job, catalogTarget }` 諛섏쁺, run ?깃났 ??`dataset` 諛섏쁺, 以묐났 ?대┃ 諛⑹?, ?ㅽ뙣 rollback | Catalog ?곸꽭, schema, 湲곕낯 lineage ?쒖떆 | Dashboard 紐⑸줉怨?Builder 吏꾩엯 ?덉젙??|
-| Day 2 | Job command 寃곌낵瑜?Run/DAG ?곹깭濡??곌껐 | Dataset??SQL context濡??꾨떖?섍퀬 result reset 湲곗? ?뺣━ | `SqlResult`瑜?Table Widget 珥덉븞?쇰줈 蹂??|
-| Day 3 | duplicate submit, 500/422/timeout ?ㅽ뙣 蹂듦뎄 | read-only SQL guard, Lineage node selection, SQL result ?뚮뜑留?| Widget ?쒕ぉ ?섏젙/??젣/異붽?, local draft reducer |
-| Day 4 | ETL ?앹꽦/?ㅽ뻾 諛섎났 QA | Catalog/Lineage/SQL 諛섎났 ?대룞 QA | Dashboard save/publish, localStorage fallback, published snapshot 怨좎젙 |
+- 모든 source type의 production 연결
+- 대용량 처리 성능 검증
+- Kafka 실시간 스트리밍 완성
+- Spark, Trino, Kafka, Airflow 전체 운영 완성
+- 완전한 인증/인가 시스템
+- Dashboard 권한 공유 실제 저장
+- 완전한 Airflow DAG 생성기
+- SQL 저장, Lake 저장, CSV export production 완성
+- 서버 검색/정렬, saved query, SQL history 전체 구현
 
-## 10) 4??踰붿쐞 諛?
+## 10) 오픈 질문
 
-?대쾲 ?곕え 留덉씪?ㅽ넠?먯꽌 ?섎룄?곸쑝濡??섏? ?딅뒗 寃?
-
-- 紐⑤뱺 source type???ㅼ젣 ?곌껐
-- ??⑸웾 泥섎━ ?깅뒫 寃利?
-- Kafka ?ㅼ떆媛??ㅽ듃由щ컢 ?꾩꽦
-- Spark, Trino, Kafka, Airflow ?꾩껜 ?댁쁺 ?꾩꽦
-- ?꾩쟾???몄쬆/?멸? ?쒖뒪??
-- Dashboard 沅뚰븳 怨듭쑀 ?ㅼ젣 ???
-- ?꾩쟾??Airflow DAG ?앹꽦湲?
-- SQL ??? Lake ??? CSV export ?꾩꽦
-- Dashboard drag/resize ?꾩쟾 ???
-- ?쒕쾭 寃???뺣젹, saved query, SQL history ?꾩껜 援ы쁽
-- ???붾㈃??留롮씠 異붽??섎뒗 ?묒뾽
-
-## 11) ?ㅽ뵂 吏덈Ц
-
-- 諛깆뿏???ㅽ깮? 臾댁뾿?쇰줈 ?뺤젙??寃껋씤媛?
-- 珥덇린 DB??SQLite, PostgreSQL, ?먮뒗 ?ㅻⅨ ??μ냼 以?臾댁뾿???ъ슜??寃껋씤媛?
-- ?몄쬆/沅뚰븳? MVP???ы븿??寃껋씤媛, demo actor濡???寃껋씤媛?
-- AI ?쒖슜 ?붾㈃? MVP?먯꽌 ?대뒓 ?섏?源뚯? 援ы쁽??寃껋씤媛?
-- 媛먯궗 濡쒓렇??product feature?몄? operational evidence?몄? 癒쇱? ?뺥빐???쒕떎.
+- Dashboard FastAPI 구현은 Pair3에서 Node demo API를 옮겨올지, 새 SQLAlchemy 모델로 다시 만들지 결정해야 한다.
+- 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다.
+- Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.

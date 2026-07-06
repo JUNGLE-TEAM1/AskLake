@@ -1,6 +1,7 @@
 # AskLake Backend Integration Readiness
 
-이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 live backend를 기준으로 검증한다.
+이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
+FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
@@ -10,18 +11,24 @@
 | --- | --- | --- |
 | 수집/처리 목록 | `GET /api/etl/jobs` hydrate. 서버 상태가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 persistence |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결 | 중간 단계별 서버 저장 API는 후속 범위 |
-| Source/Schema | `POST /api/etl/sources/test`로 실제 connector 확인 및 schema/sampleRows 반영 | Kafka message payload sampling, Parquet physical schema inference |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
 | Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
-| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과 반영 | 상세/lineage/search persistence |
-| SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
-| Dashboard | frontend flow 유지 | dashboard 저장/게시 persistence |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과 반영 | search persistence |
+| SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지 | read-only SQL engine 고도화 |
+| Dashboard | FastAPI Pair3 전까지 local/mock fallback과 Node demo API reference 유지 | FastAPI persistence, 권한/공유 API, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
+
+FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
+현재 브랜치는 ETL/Catalog/SQL 일부 live endpoint를 포함하고, Dashboard API는 Pair3 후속 PR에서 FastAPI로 옮긴다.
+FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
 
 ## 2. Pair A Live Contract
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
+
+Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode로 동작한다. 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환해야 한다. `VITE_USE_MOCK_API=false`일 때만 live backend connector를 호출한다.
 
 필수 create payload:
 
@@ -123,7 +130,130 @@ Browser smoke:
 - Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
 
-## 7. 남은 작업
+## 7. Catalog/SQL 연결 범위
+
+### Catalog
+
+| 기능 | 현재 동작 | 필요한 백엔드 |
+| --- | --- | --- |
+| 목록 | live mode에서는 `GET /api/catalog/datasets`, mock mode에서는 fixture 표시 | `GET /api/catalog/datasets` |
+| 검색/태그/필터 | 프론트 이벤트 로그 중심 | `GET /api/catalog/datasets?q=&tag=&layer=` |
+| 상세 | selectedDataset 표시 | `GET /api/catalog/datasets/{datasetId}` |
+| 스키마 | dataset.schema 표시 | 상세 포함 또는 `/schema` |
+| 샘플 row | dataset.sampleRows 표시 | 상세 포함 또는 `/sample-rows` |
+| 리니지 | `LineageGraph` contract를 React Flow로 렌더링, 없으면 upstream fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
+| SQL로 열기 | SQL 화면 이동 | 없음, datasetId 유지 |
+
+### SQL 분석
+
+| 기능 | 현재 동작 | 필요한 백엔드 |
+| --- | --- | --- |
+| SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
+| Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
+| Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
+| 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
+| 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
+| SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
+| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 Catalog Dataset 생성. mock mode에서는 localStorage fallback 유지 | `POST /api/catalog/derived-datasets` |
+| CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
+| 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
+| 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 datasets state에 prepend하고 mock mode에서는 `asklake.catalogDatasets`에서 재hydrate하며 SQL 화면 context는 유지 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
+
+Mock mode에서는 수집/처리 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다. Live API mode에서는 localStorage fallback을 쓰지 않고 backend catalog persistence와 `GET /api/catalog/datasets` hydrate를 source of truth로 둡니다.
+
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. 수집/처리 생성 dataset도 가능하면 source -> target 기본 `lineageGraph`를 포함해야 하며, 없으면 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
+
+## 8. 대시보드
+
+| 기능 | 현재 동작 | 필요한 백엔드 |
+| --- | --- | --- |
+| 목록 조회 | local/mock fallback. Node demo API reference는 `GET /api/dashboards`, `POST /api/dashboards/query` | FastAPI Pair3 |
+| 새 대시보드 생성 | local/mock fallback으로 draft card 생성. Node demo API reference는 `POST /api/dashboards` | FastAPI Pair3 |
+| 목록 삭제 | local/mock fallback으로 목록에서 제거. Node demo API reference는 `DELETE /api/dashboards/{id}` | FastAPI Pair3 |
+| Dashboard title 수정 | local/mock fallback으로 title 반영. Node demo API reference는 `PATCH /api/dashboards/{id}` | FastAPI Pair3 |
+| Published 조회 | local/mock runtime store. Node demo API reference는 `GET /api/dashboards/{id}/published` | FastAPI Pair3 |
+| Draft 조회/생성 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/ensure` | FastAPI Pair3 |
+| Page 추가 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/pages` | FastAPI Pair3 |
+| Page 이름 수정 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/pages/{pageId}` | FastAPI Pair3 |
+| Page 삭제 | local/mock runtime store. Node demo API reference는 `DELETE /api/dashboards/{id}/draft/pages/{pageId}` | FastAPI Pair3 |
+| 위젯 추가 | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/draft/pages/{pageId}/widgets` | FastAPI Pair3 |
+| 위젯 수정 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/widgets/{widgetId}` | FastAPI Pair3 |
+| 위젯 삭제 | local/mock runtime store. Node demo API reference는 `DELETE /api/dashboards/{id}/draft/widgets/{widgetId}` | FastAPI Pair3 |
+| Layout 저장 | local/mock runtime store. Node demo API reference는 `PATCH /api/dashboards/{id}/draft/layouts` | FastAPI Pair3 |
+| Publish | local/mock runtime store. Node demo API reference는 `POST /api/dashboards/{id}/publish` | FastAPI Pair3 |
+| Share | 프론트에서 runtime 링크 복사 feedback 표시 | 별도 share API는 현재 없음 |
+| 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
+| 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
+
+Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
+
+## 9. 아직 실제 저장되지 않는 기능
+
+아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
+
+| 영역 | 기능 |
+| --- | --- |
+| 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
+| 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
+| 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
+| SQL | 쿼리 저장, Lake 저장, CSV 다운로드 |
+| 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
+| 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
+
+## 10. 백엔드 팀에 넘길 최소 구현 범위
+
+최소 데모 연동만 목표라면 아래 5개면 충분합니다.
+
+1. `POST /api/etl/jobs`
+2. `POST /api/etl/jobs/{jobId}/commands`
+3. `GET /api/etl/jobs`
+4. `GET /api/catalog/datasets`
+5. `POST /api/query/runs`
+
+대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
+
+1. `GET /api/dashboards`
+2. `POST /api/dashboards/query`
+3. `POST /api/dashboards`
+4. `PATCH /api/dashboards/{dashboardId}`
+5. `DELETE /api/dashboards/{dashboardId}`
+6. `GET /api/dashboards/{dashboardId}/published`
+7. `POST /api/dashboards/{dashboardId}/draft/ensure`
+8. `POST /api/dashboards/{dashboardId}/draft/pages`
+9. `PATCH /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+10. `DELETE /api/dashboards/{dashboardId}/draft/pages/{pageId}`
+11. `POST /api/dashboards/{dashboardId}/draft/pages/{pageId}/widgets`
+12. `PATCH /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+13. `DELETE /api/dashboards/{dashboardId}/draft/widgets/{widgetId}`
+14. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
+15. `POST /api/dashboards/{dashboardId}/publish`
+
+## 11. 프론트에서 다음에 할 작업
+
+백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
+
+| 순서 | 작업 | 파일 |
+| --- | --- | --- |
+| 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
+| 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
+| 3 | dashboard list/runtime adapter와 conflict-safe API shape 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
+| 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
+| 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
+
+## 12. 인수 기준
+
+백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
+
+- `.env`에서 `VITE_USE_MOCK_API=false`로 실행해도 앱이 정상 로딩됩니다.
+- 새 수집/처리 생성 후 목록과 카탈로그에 서버 응답 데이터가 표시됩니다.
+- 즉시 실행/재실행/일시정지/취소 버튼이 서버 상태 전이를 반영합니다.
+- SQL 실행 결과가 서버 응답 columns/rows 그대로 표시됩니다.
+- SQL 결과에서 대시보드 생성 시 같은 `runId`가 dashboard request에 포함됩니다.
+- 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.
+- 실패 응답은 토스트와 감사 로그에 남습니다.
+- 콘솔에 React key/layout 관련 error가 없어야 합니다.
+
+## 13. 남은 작업
 
 - Kafka message payload schema sampling
 - Parquet physical schema inference endpoint

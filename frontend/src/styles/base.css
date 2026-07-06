@@ -3,7 +3,7 @@
   --layout-main-width: 1240px;
   --layout-wide-width: 1360px;
   --layout-page-padding: 40px;
-  --sql-context-width: 280px;
+  --sql-context-width: 380px;
   color: #171a1f;
   background: #f9fbfc;
   font-family:
@@ -13,6 +13,10 @@
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -338,6 +342,10 @@ p {
 }
 
 .main-shell {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+  flex-direction: column;
   min-width: 0;
 }
 
@@ -353,7 +361,7 @@ p {
   display: flex;
   min-height: 64px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   border-bottom: 1px solid #dee1e6;
   background: #fff;
   padding: 0 32px;
@@ -620,7 +628,11 @@ p {
 }
 
 .page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: 24px var(--layout-page-padding) 40px;
+  scrollbar-gutter: stable;
 }
 
 .page-body.schema-body {
