@@ -1098,9 +1098,12 @@ type DashboardWidgetColorConfig = {
 };
 
 type DashboardWidgetConfigBase = {
+  body?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: "visualization_request" | "text";
+  prompt?: string;
 };
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
@@ -1488,6 +1491,59 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
+
+### 8.5.11 Dashboard Assistant UI Hook
+
+대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 실제 RAG/LLM 백엔드가 붙기 전까지 프론트 연결 지점만 제공한다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 네트워크 요청을 보내지 않고 미설정 안내를 표시한다.
+값이 있으면 해당 경로로 `POST` 요청을 보낸다. 값은 `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
+
+Request:
+
+```ts
+type DashboardAssistantRequest = {
+  dashboardId?: string;
+  mode: "dashboard_question" | "visualization_request";
+  pageId?: string | null;
+  prompt: string;
+  selectedWidgetId?: string | null;
+  widgetId?: string | null;
+  widgets: Array<{
+    id: string;
+    title: string;
+    type: DashboardRuntimeWidgetType;
+    datasetId: string | null;
+    layout: DashboardWidgetLayout;
+    config: Record<string, unknown>;
+    dataSample: Array<Record<string, unknown>>;
+  }>;
+};
+```
+
+`mode: "dashboard_question"`은 오른쪽 AskLake 보조 패널에서 사용한다.
+`mode: "visualization_request"`는 시각화 요청 위젯 내부 입력창에서 사용한다.
+`widgets`는 현재 등록된 위젯의 title/type/datasetId/config/layout 및 최대 5개 샘플 row를 포함한다.
+
+Response:
+
+```ts
+type DashboardAssistantResponse = {
+  message?: string;
+  configPatch?: Record<string, unknown>;
+  widgetPatch?: {
+    title?: string | null;
+    type?: DashboardRuntimeWidgetType;
+    datasetId?: string | null;
+    config?: Record<string, unknown>;
+  };
+};
+```
+
+현재 프론트 적용 범위:
+
+- `message`는 사용자에게 요청 결과 안내로 표시한다.
+- `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
+- `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 응답 shape에는 열어두지만, 자동 적용은 후속 백엔드/UX 결정 후 확장한다.
 
 ## 9. P2 API
 

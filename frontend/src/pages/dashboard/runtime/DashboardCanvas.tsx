@@ -3,15 +3,26 @@ import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutIte
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
 import { hasAnyLayoutCollision } from "./dashboardLayoutUtils";
 
 const breakpointCols = { lg: 12, md: 12, sm: 6, xs: 4, xxs: 2 };
+const gridMargin: [number, number] = [12, 12];
+const gridRowHeight = 48;
+const editGridTrailingRows = 1;
 const noReflowCompactor = {
   ...noCompactor,
   preventCollision: true,
 };
+
+function layoutHeight(layout: LayoutItem[], trailingRows = 0) {
+  const bottomRow = layout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
+  const rows = bottomRow + trailingRows;
+  if (rows <= 0) return 0;
+  return rows * (gridRowHeight + gridMargin[1]) - gridMargin[1];
+}
 
 function scaleLayout(layout: LayoutItem[], cols: number) {
   return layout.map((item) => {
@@ -29,20 +40,24 @@ function scaleLayout(layout: LayoutItem[], cols: number) {
 }
 
 export function DashboardCanvas({
+  assistantContext,
   deletingWidgetId,
   editable,
   onDeleteWidget,
   onLayoutCommit,
   onLayoutRejected,
+  onPatchWidgetConfig,
   onSelectWidget,
   selectedWidgetId,
   widgets,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   deletingWidgetId?: string | null;
   editable: boolean;
   onDeleteWidget?: (widgetId: string) => void;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
+  onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelectWidget?: (widgetId: string) => void;
   selectedWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];
@@ -74,6 +89,10 @@ export function DashboardCanvas({
       xxs: scaleLayout([...layout], breakpointCols.xxs),
     }),
     [layout],
+  );
+  const editGridMinHeight = useMemo(
+    () => editable ? `max(100%, ${layoutHeight(layout, editGridTrailingRows)}px)` : undefined,
+    [editable, layout],
   );
   const changedMultipleItems = (nextLayout: readonly LayoutItem[]) => {
     const startById = new Map(layout.map((item) => [item.i, item]));
@@ -119,14 +138,15 @@ export function DashboardCanvas({
           containerPadding={[0, 0]}
           dragConfig={{
             bounded: true,
-            cancel: ".widget-control, button, input, select, textarea, a",
+            cancel: ".widget-control, button, select, a",
             enabled: editable,
             threshold: 6,
           }}
           layouts={responsiveLayouts}
-          margin={[12, 12]}
+          margin={gridMargin}
           resizeConfig={{ enabled: editable, handles: ["se"] }}
-          rowHeight={48}
+          rowHeight={gridRowHeight}
+          style={editGridMinHeight ? { minHeight: editGridMinHeight } : undefined}
           width={width}
           onDragStop={(nextLayout) => commitLayout([...nextLayout])}
           onResizeStop={(nextLayout) => commitLayout([...nextLayout])}
@@ -134,11 +154,13 @@ export function DashboardCanvas({
           {widgets.map((widget) => (
             <div key={widget.id}>
               <WidgetFrame
+                assistantContext={assistantContext}
                 deleteDisabled={deletingWidgetId === widget.id}
                 editable={editable}
                 selected={selectedWidgetId === widget.id}
                 widget={widget}
                 onDelete={onDeleteWidget}
+                onPatchConfig={onPatchWidgetConfig}
                 onSelect={onSelectWidget}
               />
             </div>

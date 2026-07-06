@@ -20,15 +20,19 @@ export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
+export type DashboardWidgetPlaceholderKind = "visualization_request" | "text";
 
 export type DashboardWidgetColorConfig = {
   colors: string[];
 };
 
 export type DashboardWidgetConfigBase = {
+  body?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: DashboardWidgetPlaceholderKind;
+  prompt?: string;
 };
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {

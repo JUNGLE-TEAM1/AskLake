@@ -34,6 +34,13 @@ npm run build
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 실제 RAG/LLM API가 준비된 경우에만 아래 optional 값을 설정한다.
+설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
+
+```bash
+VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+```
+
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
 ### FastAPI scaffold

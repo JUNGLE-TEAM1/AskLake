@@ -2,6 +2,19 @@ import { Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
+
+function placeholderKind(widget: DashboardRuntimeWidget) {
+  const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
+  return kind === "visualization_request" || kind === "text" ? kind : null;
+}
+
+function widgetTypeLabel(widget: DashboardRuntimeWidget) {
+  const kind = placeholderKind(widget);
+  if (kind === "visualization_request") return "시각화";
+  if (kind === "text") return "텍스트";
+  return dashboardWidgetDefinitions[widget.type]?.label ?? widget.type;
+}
 
 function clampSpan(value: number | undefined, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -13,16 +26,20 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export function WidgetFrame({
+  assistantContext,
   deleteDisabled = false,
   editable = false,
   onDelete,
+  onPatchConfig,
   onSelect,
   selected = false,
   widget,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
+  onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
@@ -45,7 +62,7 @@ export function WidgetFrame({
     >
       <header>
         <div>
-          <span>{dashboardWidgetDefinitions[widget.type].label}</span>
+          <span>{widgetTypeLabel(widget)}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         {editable && selected && (
@@ -65,7 +82,11 @@ export function WidgetFrame({
         )}
       </header>
       <div className="asklake-widget-frame-body">
-        <WidgetRenderer widget={widget} />
+        <WidgetRenderer
+          assistantContext={assistantContext}
+          widget={widget}
+          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+        />
       </div>
     </article>
   );

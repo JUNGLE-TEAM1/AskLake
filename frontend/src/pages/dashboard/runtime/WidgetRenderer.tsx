@@ -1,5 +1,6 @@
-import { memo } from "react";
+import { memo, useEffect, useState, type FormEvent } from "react";
 import type { ApexOptions } from "apexcharts";
+import { AlertCircle, CheckCircle2, Loader2, Send } from "lucide-react";
 import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
@@ -9,6 +10,13 @@ import type {
   DashboardWidgetSortDirection,
 } from "../../../types";
 import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetDefinitions";
+import {
+  buildDashboardAssistantWidgetContext,
+  dashboardAssistantEndpointLabel,
+  isDashboardAssistantConfigured,
+  requestDashboardAssistant,
+} from "../../../services/dashboardAssistantService";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -18,6 +26,7 @@ type ChartPoint = {
 };
 type RuntimeWidgetByType<Type extends DashboardRuntimeWidget["type"]> = Extract<DashboardRuntimeWidget, { type: Type }>;
 type RuntimeApexChartType = "area" | "bar" | "donut" | "heatmap" | "line" | "pie" | "radialBar" | "treemap";
+type WidgetConfigPatch = Record<string, unknown>;
 
 const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
@@ -35,6 +44,16 @@ function isSimpleRow(value: unknown): value is SimpleRow {
 
 function rowsFromWidget(widget: DashboardRuntimeWidget) {
   return Array.isArray(widget.data) ? widget.data.filter(isSimpleRow) : [];
+}
+
+function configText(widget: DashboardRuntimeWidget, key: string) {
+  const value = (widget.config as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : "";
+}
+
+function placeholderKind(widget: DashboardRuntimeWidget) {
+  const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
+  return kind === "visualization_request" || kind === "text" ? kind : null;
 }
 
 export function formatCell(value: unknown) {
@@ -390,6 +409,160 @@ function EmptyWidgetData() {
 
 function WidgetDataError() {
   return <div className="asklake-widget-empty error">위젯 데이터를 불러오지 못했습니다.</div>;
+}
+
+function VisualizationRequestWidget({
+  assistantContext,
+  onPatchConfig,
+  widget,
+}: {
+  assistantContext?: DashboardAssistantRuntimeContext;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const [message, setMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isPromptEditing, setIsPromptEditing] = useState(false);
+  const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
+  const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
+
+  useEffect(() => {
+    setPrompt(configText(widget, "prompt"));
+    setIsPromptEditing(false);
+  }, [widget.id, widget.config]);
+
+  useEffect(() => {
+    setMessage(null);
+    setRequestTone(null);
+  }, [widget.id]);
+
+  const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextPrompt = prompt.trim();
+    if (!nextPrompt || !onPatchConfig || isSaving) return;
+
+    setMessage(null);
+    setRequestTone(null);
+    setIsSaving(true);
+    try {
+      await onPatchConfig({ prompt: nextPrompt });
+      if (!isDashboardAssistantConfigured()) {
+        setRequestTone("info");
+        setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
+        setIsPromptEditing(false);
+        return;
+      }
+
+      const widgets = assistantContext?.widgets?.length ? assistantContext.widgets : [widget];
+      const response = await requestDashboardAssistant({
+        dashboardId: assistantContext?.dashboardId,
+        mode: "visualization_request",
+        pageId: assistantContext?.pageId ?? widget.pageId,
+        prompt: nextPrompt,
+        selectedWidgetId: widget.id,
+        widgetId: widget.id,
+        widgets: widgets.map(buildDashboardAssistantWidgetContext),
+      });
+      const configPatch = response.widgetPatch?.config ?? response.configPatch;
+      if (configPatch && Object.keys(configPatch).length > 0) {
+        await onPatchConfig({ prompt: nextPrompt, ...configPatch });
+      }
+      setRequestTone("success");
+      setMessage(response.message?.trim() || "Assistant 요청을 보냈습니다.");
+      setIsPromptEditing(false);
+    } catch (error) {
+      setRequestTone("error");
+      setMessage(error instanceof Error ? error.message : "Assistant 요청에 실패했습니다.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="asklake-visualization-request-widget">
+      <form className="asklake-visualization-request-form" onSubmit={(event) => void savePrompt(event)}>
+        <input
+          aria-label="시각화 요청"
+          className={isPromptEditing ? "widget-control" : undefined}
+          placeholder="어시스턴트에게 이 차트의 편집을 요청하세요."
+          readOnly={!isPromptEditing}
+          value={prompt}
+          onBlur={() => setIsPromptEditing(false)}
+          onChange={(event) => setPrompt(event.target.value)}
+          onDoubleClick={() => setIsPromptEditing(true)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            setPrompt(configText(widget, "prompt"));
+            setIsPromptEditing(false);
+            event.currentTarget.blur();
+          }}
+        />
+        <button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
+          {isSaving ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+        </button>
+      </form>
+      <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
+      {message && (
+        <div className={`asklake-visualization-request-status ${requestTone ?? "info"}`}>
+          {requestTone === "success" ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+          <span>{message}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TextPlaceholderWidget({
+  onPatchConfig,
+  widget,
+}: {
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const [body, setBody] = useState(() => configText(widget, "body"));
+  const [isBodyEditing, setIsBodyEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setBody(configText(widget, "body"));
+    setIsBodyEditing(false);
+  }, [widget.id, widget.config]);
+
+  const saveBody = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!onPatchConfig || isSaving) return;
+
+    setIsSaving(true);
+    try {
+      await onPatchConfig({ body });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <form className="asklake-text-placeholder-widget" onSubmit={(event) => void saveBody(event)}>
+      <textarea
+        aria-label="텍스트 위젯 내용"
+        className={isBodyEditing ? "widget-control" : undefined}
+        placeholder="편집을 시작하려면 텍스트를 입력하세요."
+        readOnly={!isBodyEditing}
+        value={body}
+        onBlur={() => setIsBodyEditing(false)}
+        onChange={(event) => setBody(event.target.value)}
+        onDoubleClick={() => setIsBodyEditing(true)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          setBody(configText(widget, "body"));
+          setIsBodyEditing(false);
+          event.currentTarget.blur();
+        }}
+      />
+      <div className="asklake-text-placeholder-actions">
+        <button disabled={!onPatchConfig || isSaving} type="submit">저장</button>
+      </div>
+    </form>
+  );
 }
 
 function MetricWidget({ widget }: { widget: RuntimeWidgetByType<"metric"> }) {
@@ -830,7 +1003,19 @@ function TreemapChartWidget({ widget }: { widget: RuntimeWidgetByType<"treemap_c
   return <RuntimeApexChart options={options} series={series} type="treemap" />;
 }
 
-export const WidgetRenderer = memo(function WidgetRenderer({ widget }: { widget: DashboardRuntimeWidget }) {
+export const WidgetRenderer = memo(function WidgetRenderer({
+  assistantContext,
+  onPatchConfig,
+  widget,
+}: {
+  assistantContext?: DashboardAssistantRuntimeContext;
+  onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
+  widget: DashboardRuntimeWidget;
+}) {
+  const kind = placeholderKind(widget);
+  if (kind === "visualization_request") return <VisualizationRequestWidget assistantContext={assistantContext} widget={widget} onPatchConfig={onPatchConfig} />;
+  if (kind === "text") return <TextPlaceholderWidget widget={widget} onPatchConfig={onPatchConfig} />;
+
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);
   if (hasError) return <WidgetDataError />;
 
