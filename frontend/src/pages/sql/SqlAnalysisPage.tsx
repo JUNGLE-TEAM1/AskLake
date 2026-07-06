@@ -2,6 +2,8 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import {
   Database,
   Download,
+  PanelLeftClose,
+  PanelLeftOpen,
   PlayCircle,
   RotateCcw,
   Search,
@@ -453,13 +455,23 @@ export function SqlAnalysisPage({
 
   return (
     <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
+      {contextCollapsed && (
+        <button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기">
+          <PanelLeftOpen size={16} />
+        </button>
+      )}
       {!contextCollapsed && (
         <aside className="sql-dataset-panel">
           <div className="sql-panel-header">
             <span>TABLE SEARCH</span>
-            <div>
+            <div className="sql-panel-title-row">
               <strong>분석 테이블</strong>
-              <em>{datasets.length} tables</em>
+              <span className="sql-panel-header-actions">
+                <em>{datasets.length} tables</em>
+                <button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기">
+                  <PanelLeftClose size={15} />
+                </button>
+              </span>
             </div>
           </div>
           <section className="sql-base-table">
@@ -539,10 +551,6 @@ export function SqlAnalysisPage({
             <h1>읽기 전용 SQL 실행</h1>
             <p>{baseDataset.name} 데이터셋 범위에서 쿼리를 작성하고 결과를 내보냅니다.</p>
           </div>
-          <button className="sql-context-toggle-button" type="button" onClick={toggleContext} aria-label={contextCollapsed ? "분석 테이블 열기" : "분석 테이블 접기"}>
-            <Database size={15} />
-            {contextCollapsed ? "분석 테이블 열기" : "분석 테이블 접기"}
-          </button>
         </header>
 
         <section className="sql-editor-card">

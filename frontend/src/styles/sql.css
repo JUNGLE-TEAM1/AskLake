@@ -54,18 +54,27 @@
   text-transform: uppercase;
 }
 
-.sql-panel-header div {
+.sql-panel-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
 }
 
 .sql-panel-header strong {
   color: #0f172a;
+  min-width: 0;
   font-size: 20px;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+.sql-panel-header-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
 }
 
 .sql-panel-header em {
@@ -77,6 +86,37 @@
   font-weight: 900;
   padding: 5px 8px;
   white-space: nowrap;
+}
+
+.sql-panel-header-actions button,
+.sql-context-rail-button {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+}
+
+.sql-panel-header-actions button:hover,
+.sql-context-rail-button:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sql-context-rail-button {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+}
+
+.sql-page.context-collapsed .sql-workspace {
+  padding-left: 44px;
 }
 
 .sql-base-table,
@@ -454,28 +494,6 @@
   color: #64748b;
   font-size: 14px;
   line-height: 1.5;
-}
-
-.sql-context-toggle-button {
-  display: inline-flex;
-  min-height: 36px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid #d8dee8;
-  border-radius: 8px;
-  background: #fff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 900;
-  padding: 0 12px;
-  white-space: nowrap;
-}
-
-.sql-context-toggle-button:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .sql-editor-card,
