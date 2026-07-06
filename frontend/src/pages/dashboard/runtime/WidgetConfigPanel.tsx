@@ -11,11 +11,10 @@ import type {
   DashboardWidgetFormat,
   DashboardWidgetLineCurve,
   DashboardWidgetOrientation,
-  DashboardWidgetPaletteId,
   DashboardWidgetSortDirection,
 } from "../../../types";
 import type { CreateDraftWidgetFormInput, DashboardDatasetColumn, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
-import { dashboardWidgetColorPalettes, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
+import { dashboardWidgetColorChoices, dashboardWidgetDefinitions, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type WidgetConfigDraft = {
   aggregation?: DashboardWidgetAggregation;
@@ -70,8 +69,7 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
   { label: "세로", value: "vertical" },
   { label: "가로", value: "horizontal" },
 ];
-const defaultCustomPalette = dashboardWidgetColorPalettes.find((palette) => palette.id === "custom")?.colors
-  ?? ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
+const multiColorFallbackCount = 6;
 
 function columnNames(columns: DashboardDatasetColumn[]) {
   return columns.map((column) => column.name);
@@ -106,31 +104,49 @@ function configBoolean(config: DashboardRuntimeWidgetConfig, key: string) {
   return typeof value === "boolean" ? value : undefined;
 }
 
-function paletteIdValue(value: unknown): DashboardWidgetPaletteId {
-  const paletteIds = dashboardWidgetColorPalettes.map((palette) => palette.id);
-  return typeof value === "string" && paletteIds.includes(value as DashboardWidgetPaletteId)
-    ? value as DashboardWidgetPaletteId
-    : defaultWidgetColorConfig.paletteId;
-}
-
 function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColorConfig {
   const value = configRecord(config).color;
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
+    const colors = Array.isArray(record.colors)
+      ? record.colors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : undefined;
+    if (colors?.length) return { colors };
+
     const customColors = Array.isArray(record.customColors)
       ? record.customColors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
       : undefined;
-    return {
-      customColors,
-      paletteId: paletteIdValue(record.paletteId),
-    };
+    if (customColors?.length) return { colors: customColors };
   }
   return defaultWidgetColorConfig;
 }
 
-function normalizeCustomColors(colors?: string[]) {
-  const source = colors?.length ? colors : defaultCustomPalette;
-  return source.slice(0, 12);
+function normalizeColorSlots(colors: string[] | undefined, count: number) {
+  return Array.from({ length: count }, (_, index) => (
+    colors?.[index]
+    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
+    ?? defaultWidgetColorConfig.colors[0]
+  ));
+}
+
+function isDataRow(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function uniqueLabelsFromWidget(widget: DashboardRuntimeWidget | null | undefined, key: string | undefined, limit = 8) {
+  if (!widget || !key) return [];
+  const labels: string[] = [];
+  widget.data.filter(isDataRow).forEach((row) => {
+    const value = row[key];
+    if (value === null || value === undefined || value === "") return;
+    const label = String(value);
+    if (!labels.includes(label)) labels.push(label);
+  });
+  return labels.slice(0, limit);
+}
+
+function fallbackColorLabels(count: number) {
+  return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
 }
 
 function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
@@ -257,8 +273,11 @@ function buildConfig(
   common: { color: DashboardWidgetColorConfig; description?: string },
 ): DashboardRuntimeWidgetConfig {
   const base = {
-    color: common.color,
     description: common.description,
+  };
+  const chartBase = {
+    ...base,
+    color: common.color,
   };
 
   if (type === "metric") {
@@ -282,7 +301,7 @@ function buildConfig(
 
   if (type === "line_chart") {
     return {
-      ...base,
+      ...chartBase,
       aggregation: config.aggregation ?? "sum",
       curve: config.curve ?? "smooth",
       dateUnit: config.dateUnit,
@@ -294,7 +313,7 @@ function buildConfig(
 
   if (type === "area_chart") {
     return {
-      ...base,
+      ...chartBase,
       aggregation: config.aggregation ?? "sum",
       dateUnit: config.dateUnit,
       seriesKey: config.seriesKey || undefined,
@@ -306,7 +325,7 @@ function buildConfig(
 
   if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
     return {
-      ...base,
+      ...chartBase,
       aggregation: config.aggregation ?? "sum",
       labelKey: config.labelKey ?? "",
       valueKey: config.valueKey ?? "",
@@ -315,7 +334,7 @@ function buildConfig(
 
   if (type === "radial_bar_chart") {
     return {
-      ...base,
+      ...chartBase,
       aggregation: config.aggregation ?? "avg",
       format: config.format ?? "percent",
       labelKey: config.labelKey || undefined,
@@ -327,7 +346,7 @@ function buildConfig(
 
   if (type === "heatmap_chart") {
     return {
-      ...base,
+      ...chartBase,
       aggregation: config.aggregation ?? "sum",
       valueKey: config.valueKey ?? "",
       xKey: config.xKey ?? "",
@@ -336,7 +355,7 @@ function buildConfig(
   }
 
   return {
-    ...base,
+    ...chartBase,
     aggregation: config.aggregation ?? "sum",
     groupKey: config.groupKey || undefined,
     orientation: config.orientation ?? "vertical",
@@ -412,6 +431,42 @@ export function WidgetConfigPanel({
   }, [editingWidget, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const colorSlotLabels = useMemo(() => {
+    if (type === "metric" || type === "table") return [];
+
+    if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
+      const labels = uniqueLabelsFromWidget(editingWidget, currentConfig.labelKey, multiColorFallbackCount);
+      return labels.length ? labels : fallbackColorLabels(multiColorFallbackCount);
+    }
+
+    if (type === "heatmap_chart") return ["강도 색상"];
+
+    if (type === "radial_bar_chart") {
+      const labels = uniqueLabelsFromWidget(editingWidget, currentConfig.labelKey, multiColorFallbackCount);
+      return currentConfig.labelKey && labels.length ? labels : ["기본 색상"];
+    }
+
+    const seriesKey = type === "bar_chart" ? currentConfig.groupKey : currentConfig.seriesKey;
+    const labels = uniqueLabelsFromWidget(editingWidget, seriesKey, multiColorFallbackCount);
+    if (seriesKey) return labels.length ? labels : fallbackColorLabels(multiColorFallbackCount);
+
+    return ["기본 색상"];
+  }, [
+    currentConfig.groupKey,
+    currentConfig.labelKey,
+    currentConfig.seriesKey,
+    editingWidget,
+    type,
+  ]);
+
+  useEffect(() => {
+    if (!colorSlotLabels.length) return;
+    if (customColorIndex >= colorSlotLabels.length) setCustomColorIndex(0);
+    setColor((current) => ({
+      colors: normalizeColorSlots(current.colors, colorSlotLabels.length),
+    }));
+  }, [colorSlotLabels.length, customColorIndex]);
+
   const validationMessage = selectedDataset || isEditMode
     ? validateConfig(type, currentConfig)
     : "왼쪽에서 Gold 데이터셋을 먼저 선택해 주세요.";
@@ -427,32 +482,14 @@ export function WidgetConfigPanel({
     }));
   };
 
-  const selectedPalette = dashboardWidgetColorPalettes.find((palette) => palette.id === color.paletteId)
-    ?? dashboardWidgetColorPalettes[0];
-  const customColors = normalizeCustomColors(color.customColors);
-  const activeCustomColor = customColors[customColorIndex] ?? customColors[0] ?? defaultCustomPalette[0];
+  const activeColors = normalizeColorSlots(color.colors, Math.max(colorSlotLabels.length, 1));
+  const activeCustomColor = activeColors[customColorIndex] ?? activeColors[0] ?? defaultWidgetColorConfig.colors[0];
 
-  const handlePaletteSelect = (paletteId: DashboardWidgetPaletteId) => {
-    if (paletteId === "custom") {
-      const sourcePalette = dashboardWidgetColorPalettes.find((palette) => palette.id === color.paletteId);
-      setColor({
-        customColors: normalizeCustomColors(color.paletteId === "custom" ? color.customColors : sourcePalette?.colors),
-        paletteId,
-      });
-      return;
-    }
-
-    setColor({ paletteId });
-  };
-
-  const updateCustomColor = (nextColor: string) => {
+  const updateColorSlot = (slotIndex: number, nextColor: string) => {
     setColor((current) => {
-      const nextColors = normalizeCustomColors(current.customColors);
-      nextColors[customColorIndex] = nextColor;
-      return {
-        customColors: nextColors,
-        paletteId: "custom",
-      };
+      const nextColors = normalizeColorSlots(current.colors, Math.max(colorSlotLabels.length, 1));
+      nextColors[slotIndex] = nextColor;
+      return { colors: nextColors };
     });
   };
 
@@ -558,54 +595,62 @@ export function WidgetConfigPanel({
           </select>
         </label>
 
-        <div className="asklake-widget-palette-field">
-          <span>색상 팔레트</span>
-          <div className="asklake-widget-palette-list">
-            {dashboardWidgetColorPalettes.map((palette) => {
-              const isSelected = color.paletteId === palette.id;
-              return (
+        {colorSlotLabels.length > 0 && (
+          <div className="asklake-widget-palette-field">
+            <span>색상</span>
+            <div className="asklake-widget-color-slots">
+              {colorSlotLabels.map((label, index) => (
                 <button
-                  key={palette.id}
-                  className={`asklake-widget-palette-button${isSelected ? " selected" : ""}`}
+                  key={`${label}-${index}`}
+                  className={`asklake-widget-color-slot${customColorIndex === index ? " selected" : ""}`}
                   type="button"
-                  onClick={() => handlePaletteSelect(palette.id)}
+                  onClick={() => setCustomColorIndex(index)}
                 >
-                  <span>{palette.label}</span>
-                  <span className="asklake-widget-palette-preview" aria-hidden="true">
-                    {palette.colors.slice(0, 6).map((paletteColor) => (
-                      <i key={`${palette.id}-${paletteColor}`} style={{ backgroundColor: paletteColor }} />
-                    ))}
-                  </span>
-                  {isSelected && <Check aria-hidden="true" size={16} strokeWidth={3} />}
+                  <i style={{ backgroundColor: activeColors[index] }} />
+                  <span>{label}</span>
                 </button>
-              );
-            })}
-          </div>
-
-          {color.paletteId === "custom" && (
-            <div className="asklake-widget-custom-color-panel">
-              <div className="asklake-widget-custom-swatches" aria-label="사용자 지정 색상">
-                {customColors.map((customColor, index) => (
-                  <button
-                    key={`${customColor}-${index}`}
-                    className={`asklake-widget-custom-swatch${customColorIndex === index ? " selected" : ""}`}
-                    style={{ backgroundColor: customColor }}
-                    type="button"
-                    onClick={() => setCustomColorIndex(index)}
-                  >
-                    {customColorIndex === index && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
-                  </button>
-                ))}
-              </div>
-              <HexColorPicker color={activeCustomColor} onChange={updateCustomColor} />
-              <label className="asklake-widget-hex-input">
-                <span>HEX</span>
-                <HexColorInput prefixed color={activeCustomColor} onChange={updateCustomColor} />
-              </label>
+              ))}
             </div>
-          )}
-          <small>{selectedPalette.label} 팔레트가 차트 색상에 순서대로 적용됩니다.</small>
-        </div>
+
+            <div className="asklake-widget-color-choice-panel">
+              <div className="asklake-widget-color-choice-list" aria-label={`${colorSlotLabels[customColorIndex] ?? "선택 색상"} 색상 선택`}>
+                {dashboardWidgetColorChoices.map((choice) => {
+                  const isSelected = activeCustomColor.toLowerCase() === choice.toLowerCase();
+                  return (
+                    <button
+                      key={choice}
+                      className={`asklake-widget-color-choice${isSelected ? " selected" : ""}`}
+                      style={{ backgroundColor: choice }}
+                      type="button"
+                      onClick={() => updateColorSlot(customColorIndex, choice)}
+                    >
+                      {isSelected && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <details className="asklake-widget-custom-color-panel">
+                <summary>직접 색상 만들기</summary>
+                <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
+                <label className="asklake-widget-hex-input">
+                  <span>HEX</span>
+                  <HexColorInput
+                    prefixed
+                    color={activeCustomColor}
+                    onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
+                  />
+                </label>
+              </details>
+            </div>
+
+            <small>
+              {colorSlotLabels.length === 1
+                ? "선택한 색상 하나가 차트에 적용됩니다."
+                : "위 항목을 하나씩 선택해서 각 요소의 색상을 바꿀 수 있습니다."}
+            </small>
+          </div>
+        )}
 
         {type === "metric" && (
           <>

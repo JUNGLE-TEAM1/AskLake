@@ -1,7 +1,4 @@
-import type {
-  DashboardRuntimeWidgetType,
-  DashboardWidgetPaletteId,
-} from "../../../types";
+import type { DashboardRuntimeWidgetType } from "../../../types";
 
 export type DashboardWidgetColumnKind = "any" | "dimension" | "numeric" | "time";
 export type DashboardWidgetColumnRole = "label" | "series" | "value" | "x" | "y";
@@ -33,40 +30,38 @@ export type DashboardWidgetDefinition = {
 
 export type DashboardWidgetColorPalette = {
   colors: string[];
-  id: DashboardWidgetPaletteId;
   label: string;
 };
 
-export const dashboardWidgetColorPalettes: DashboardWidgetColorPalette[] = [
-  {
-    colors: ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"],
-    id: "asklake-default",
-    label: "AskLake 기본",
-  },
-  {
-    colors: ["#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#22c55e", "#06b6d4"],
-    id: "aurora",
-    label: "Aurora",
-  },
-  {
-    colors: ["#6366f1", "#14b8a6", "#f43f5e", "#eab308", "#0ea5e9", "#84cc16"],
-    id: "spectrum",
-    label: "Spectrum",
-  },
-  {
-    colors: ["#0f172a", "#2563eb", "#059669", "#d97706", "#dc2626", "#9333ea"],
-    id: "signal",
-    label: "Signal",
-  },
-  {
-    colors: ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"],
-    id: "custom",
-    label: "사용자 지정",
-  },
+export const dashboardWidgetColorChoices = [
+  "#c2185b",
+  "#db1b62",
+  "#ef7d73",
+  "#f0140a",
+  "#ff5722",
+  "#f57c00",
+  "#f59e0b",
+  "#fbc02d",
+  "#ecd24b",
+  "#cbd532",
+  "#7cb342",
+  "#058b4f",
+  "#34c38f",
+  "#0ca6a0",
+  "#0ea5e9",
+  "#3b82f6",
+  "#7585d8",
+  "#4357b8",
+  "#b49add",
+  "#9b59b6",
+  "#8e24aa",
+  "#8d6e63",
+  "#616161",
+  "#aaa093",
 ];
 
 export const defaultWidgetColorConfig = {
-  paletteId: "asklake-default" as const,
+  colors: ["#2563eb"],
 };
 
 export const dashboardWidgetDefinitions: Record<DashboardRuntimeWidgetType, DashboardWidgetDefinition> = {

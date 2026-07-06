@@ -313,8 +313,8 @@ function updateLocalWidget(widget: DashboardRuntimeWidget, input: UpdateDraftWid
 }
 
 function defaultConfigForType(type: DashboardRuntimeWidgetType): Record<string, unknown> {
-  const color = { paletteId: "asklake-default" };
-  if (type === "metric") return { aggregation: "sum", color, format: "number", valueKey: "value" };
+  const color = { colors: ["#2563eb"] };
+  if (type === "metric") return { aggregation: "sum", format: "number", valueKey: "value" };
   if (type === "table") return { columns: ["label", "value"], limit: 10 };
   if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
     return { aggregation: "sum", color, labelKey: "label", valueKey: "value" };

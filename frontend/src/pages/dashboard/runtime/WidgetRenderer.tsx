@@ -8,7 +8,7 @@ import type {
   DashboardWidgetDateUnit,
   DashboardWidgetSortDirection,
 } from "../../../types";
-import { dashboardWidgetColorPalettes, defaultWidgetColorConfig } from "./widgetDefinitions";
+import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -246,20 +246,22 @@ function groupedSeriesChartPoints({
 function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
   if (typeof color === "object" && color !== null && !Array.isArray(color)) {
     const record = color as Record<string, unknown>;
+    if (Array.isArray(record.colors)) {
+      const colors = record.colors.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+      if (colors.length) return colors;
+    }
+
     if (record.paletteId === "custom" && Array.isArray(record.customColors)) {
       const customColors = record.customColors.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
       if (customColors.length) return customColors;
     }
-
-    const palette = dashboardWidgetColorPalettes.find((item) => item.id === record.paletteId);
-    if (palette) return palette.colors;
   }
 
   if (typeof color === "string" && color.trim()) {
     return [color];
   }
 
-  return dashboardWidgetColorPalettes.find((item) => item.id === defaultWidgetColorConfig.paletteId)?.colors ?? fallbackChartColors;
+  return defaultWidgetColorConfig.colors.length ? defaultWidgetColorConfig.colors : dashboardWidgetColorChoices.slice(0, 6);
 }
 
 function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {

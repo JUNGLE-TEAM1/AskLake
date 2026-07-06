@@ -1092,11 +1092,9 @@ type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
-type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
 
 type DashboardWidgetColorConfig = {
-  paletteId: DashboardWidgetPaletteId;
-  customColors?: string[];
+  colors: string[];
 };
 
 type DashboardWidgetConfigBase = {
@@ -1107,7 +1105,6 @@ type DashboardWidgetConfigBase = {
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -1362,7 +1359,7 @@ Request:
     "xKey": "month",
     "yKey": "total_cost",
     "aggregation": "sum",
-    "color": { "paletteId": "asklake-default" },
+    "color": { "colors": ["#2563eb"] },
     "description": "월 기준 총 물류비 추이"
   }
 }
@@ -1379,7 +1376,7 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
-기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. 공통 색상 계약은 문자열이 아니라 `color: { paletteId, customColors? }` 객체입니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`, optional `orientation`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `curve`; `area_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `stacked`; `donut_chart`와 `pie_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`; `radial_bar_chart`는 `valueKey`, `aggregation`, `color`, optional `labelKey`, optional `min`, optional `max`, optional `format`; `heatmap_chart`는 `xKey`, `yKey`, `valueKey`, `aggregation`, `color`; `treemap_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다. 향후 AI widget 생성 기능은 이 type/config 계약을 그대로 재사용합니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. 색상 계약은 문자열이나 팔레트 이름이 아니라 `color: { colors: string[] }` 객체입니다. `metric`과 `table`은 색상 설정을 보내지 않습니다. 단일 색상 차트는 `colors`에 1개 색상을 보내고, 도넛/파이/트리맵처럼 여러 요소 색상이 필요한 차트는 요소 순서대로 여러 색상을 보냅니다. `metric`은 `valueKey`, `aggregation`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`, optional `orientation`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `curve`; `area_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `stacked`; `donut_chart`와 `pie_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`; `radial_bar_chart`는 `valueKey`, `aggregation`, `color`, optional `labelKey`, optional `min`, optional `max`, optional `format`; `heatmap_chart`는 `xKey`, `yKey`, `valueKey`, `aggregation`, `color`; `treemap_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다. 향후 AI widget 생성 기능은 이 type/config 계약을 그대로 재사용합니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
 dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
 
@@ -1399,7 +1396,7 @@ Request:
     "yKey": "total_cost",
     "aggregation": "sum",
     "dateUnit": "month",
-    "color": { "paletteId": "asklake-default" },
+    "color": { "colors": ["#2563eb"] },
     "description": "월 기준 총 물류비 추이"
   }
 }

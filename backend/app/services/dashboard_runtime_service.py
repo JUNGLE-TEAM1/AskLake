@@ -30,7 +30,6 @@ from app.schemas.dashboard import (
     DashboardWidgetLayout,
     DashboardWidgetLineCurve,
     DashboardWidgetOrientation,
-    DashboardWidgetPaletteId,
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
     DeleteDraftWidgetResponse,
@@ -383,11 +382,10 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
-        color = DashboardWidgetColorConfig(palette_id=DashboardWidgetPaletteId.ASKLAKE_DEFAULT)
+        color = DashboardWidgetColorConfig(colors=["#2563eb"])
         if widget_type == DashboardRuntimeWidgetType.METRIC:
             return MetricWidgetConfig(
                 aggregation=DashboardWidgetAggregation.COUNT,
-                color=color,
                 format=DashboardWidgetFormat.NUMBER,
                 value_key="value",
             )

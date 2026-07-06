@@ -152,11 +152,9 @@ type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
-type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
 
 type DashboardWidgetColorConfig = {
-  paletteId: DashboardWidgetPaletteId;
-  customColors?: string[];
+  colors: string[];
 };
 
 type DashboardWidgetConfigBase = {
@@ -167,7 +165,6 @@ type DashboardWidgetConfigBase = {
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };

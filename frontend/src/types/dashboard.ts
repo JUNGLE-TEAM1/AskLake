@@ -18,13 +18,11 @@ export type DashboardWidgetDateUnit = "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
 export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
 export type DashboardWidgetOrientation = "vertical" | "horizontal";
-export type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 
 export type DashboardWidgetColorConfig = {
-  customColors?: string[];
-  paletteId: DashboardWidgetPaletteId;
+  colors: string[];
 };
 
 export type DashboardWidgetConfigBase = {
@@ -35,7 +33,6 @@ export type DashboardWidgetConfigBase = {
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };

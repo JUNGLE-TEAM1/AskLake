@@ -985,51 +985,48 @@
   line-height: 1.4;
 }
 
-.asklake-widget-palette-list {
+.asklake-widget-color-slots {
   display: grid;
   gap: 7px;
 }
 
-.asklake-widget-palette-button {
+.asklake-widget-color-slot {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 18px;
-  min-height: 42px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 36px;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   border: 1px solid #d7dfec;
   border-radius: 6px;
   background: #ffffff;
   color: var(--dash-text);
   font-size: 12px;
   font-weight: 850;
-  padding: 8px 9px;
+  padding: 6px 8px;
   text-align: left;
 }
 
-.asklake-widget-palette-button.selected {
+.asklake-widget-color-slot.selected {
   border-color: #2563eb;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.asklake-widget-palette-button svg {
-  color: #2563eb;
-}
-
-.asklake-widget-palette-preview {
-  display: inline-flex;
-  justify-content: flex-end;
-  gap: 3px;
-}
-
-.asklake-widget-palette-preview i {
-  width: 14px;
-  height: 14px;
+.asklake-widget-color-slot i {
+  width: 22px;
+  height: 22px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 999px;
 }
 
-.asklake-widget-custom-color-panel {
+.asklake-widget-color-slot span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asklake-widget-color-choice-panel {
   display: grid;
   gap: 10px;
   border: 1px solid #dbe5f4;
@@ -1038,13 +1035,13 @@
   padding: 10px;
 }
 
-.asklake-widget-custom-swatches {
+.asklake-widget-color-choice-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 9px;
 }
 
-.asklake-widget-custom-swatch {
+.asklake-widget-color-choice {
   display: inline-flex;
   width: 28px;
   height: 28px;
@@ -1056,14 +1053,26 @@
   padding: 0;
 }
 
-.asklake-widget-custom-swatch.selected {
+.asklake-widget-color-choice.selected {
   border-color: #0f172a;
   box-shadow: 0 0 0 2px #ffffff;
 }
 
-.asklake-widget-custom-swatch svg {
+.asklake-widget-color-choice svg {
   color: #0f172a;
   filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.7));
+}
+
+.asklake-widget-custom-color-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.asklake-widget-custom-color-panel summary {
+  cursor: pointer;
+  color: var(--dash-text);
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .asklake-widget-custom-color-panel .react-colorful {

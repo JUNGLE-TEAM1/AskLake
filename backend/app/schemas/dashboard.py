@@ -164,13 +164,14 @@ class DashboardWidgetConfigBase(CamelModel):
 
 
 class DashboardWidgetColorConfig(CamelModel):
-    palette_id: DashboardWidgetPaletteId
+    colors: list[str] = Field(default_factory=list)
+    # Legacy fields kept only so older local mock rows do not fail validation.
+    palette_id: DashboardWidgetPaletteId | None = None
     custom_colors: list[str] | None = None
 
 
 class MetricWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: DashboardWidgetColorConfig
     value_key: str
     format: DashboardWidgetFormat | None = None
 
