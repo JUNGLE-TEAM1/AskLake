@@ -24,7 +24,7 @@ type UseDraftWidgetCreatorParams = {
   defaultLayouts: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout>;
   mode: DashboardRuntimeMode;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  reloadDraftRuntime: (dashboardId: string) => Promise<unknown>;
+  reloadDraftRuntime: (dashboardId: string, options?: { silent?: boolean }) => Promise<unknown>;
   selectedPageId: string | null;
   selectedWidgets: DashboardRuntimeWidget[];
   setDraftError: (message: string | null) => void;
@@ -152,8 +152,9 @@ export function useDraftWidgetCreator({
         title: input.title,
         type: input.type,
       });
-      await reloadDraftRuntime(dashboardId);
+      await reloadDraftRuntime(dashboardId, { silent: true });
       setSelectedWidgetId(widget.id);
+      setWidgetScrollTargetId?.(widget.id);
       setRuntimeNotice({ message: "데이터셋 기반 위젯을 추가했습니다.", tone: "success" });
       onAction("dashboard.widget.dataset_added", `/api/dashboards/${dashboardId}/draft/pages/${selectedPageId}/widgets`, input.datasetId);
     } catch (error) {
