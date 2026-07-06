@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import {
   Boxes,
   ChartArea,
@@ -48,6 +49,12 @@ type WidgetConfigDraft = {
   valueKey?: string;
   xKey?: string;
   yKey?: string;
+};
+
+type WidgetTypeTooltip = {
+  left: number;
+  text: string;
+  top: number;
 };
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
@@ -173,6 +180,21 @@ function uniqueLabelsFromWidget(widget: DashboardRuntimeWidget | null | undefine
 
 function fallbackColorLabels(count: number) {
   return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
+}
+
+function createWidgetTypeTooltip(target: HTMLElement, text: string): WidgetTypeTooltip {
+  const rect = target.getBoundingClientRect();
+  const halfTooltipWidth = 150;
+  const safeLeft = Math.min(
+    Math.max(rect.left + rect.width / 2, halfTooltipWidth),
+    window.innerWidth - halfTooltipWidth,
+  );
+
+  return {
+    left: safeLeft,
+    text,
+    top: Math.max(rect.top - 10, 12),
+  };
 }
 
 function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
@@ -417,6 +439,7 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
+  const [widgetTypeTooltip, setWidgetTypeTooltip] = useState<WidgetTypeTooltip | null>(null);
   const isEditMode = Boolean(editingWidget);
 
   const columnGroups = useMemo(() => {
@@ -647,18 +670,21 @@ export function WidgetConfigPanel({
               const Icon = widgetTypeIcons[option.value];
               const tooltip = `${definition.label}: ${definition.description}`;
               const isSelected = type === option.value;
+              const showTooltip = (target: HTMLElement) => setWidgetTypeTooltip(createWidgetTypeTooltip(target, tooltip));
               return (
                 <button
                   key={option.value}
                   aria-label={tooltip}
                   className={`asklake-widget-type-button${isSelected ? " selected" : ""}`}
-                  data-tooltip={tooltip}
-                  title={tooltip}
                   type="button"
+                  onBlur={() => setWidgetTypeTooltip(null)}
+                  onFocus={(event) => showTooltip(event.currentTarget)}
                   onClick={() => {
                     setCustomColorIndex(0);
                     setType(option.value);
                   }}
+                  onMouseEnter={(event) => showTooltip(event.currentTarget)}
+                  onMouseLeave={() => setWidgetTypeTooltip(null)}
                 >
                   <Icon aria-hidden="true" size={18} strokeWidth={2.3} />
                 </button>
@@ -1011,6 +1037,19 @@ export function WidgetConfigPanel({
           </button>
         </div>
       </form>
+      {widgetTypeTooltip && typeof document !== "undefined" && createPortal(
+        <div
+          className="asklake-widget-type-tooltip-layer"
+          role="tooltip"
+          style={{
+            left: widgetTypeTooltip.left,
+            top: widgetTypeTooltip.top,
+          }}
+        >
+          {widgetTypeTooltip.text}
+        </div>,
+        document.body,
+      )}
     </section>
   );
 }
