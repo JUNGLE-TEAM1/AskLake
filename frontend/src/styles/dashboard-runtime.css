@@ -882,6 +882,7 @@
   display: grid;
   justify-items: stretch;
   gap: 12px;
+  min-width: 0;
   width: 100%;
   text-align: left;
 }
@@ -930,6 +931,7 @@
 .asklake-widget-config-form {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .asklake-widget-config-form label {
@@ -971,6 +973,7 @@
   z-index: 40;
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .asklake-widget-type-field > span {
@@ -1049,6 +1052,7 @@
 .asklake-widget-palette-field {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .asklake-widget-palette-field > span {
@@ -1109,6 +1113,7 @@
 .asklake-widget-color-choice-panel {
   display: grid;
   gap: 10px;
+  min-width: 0;
   border: 1px solid #dbe5f4;
   border-radius: 8px;
   background: #f8fafc;
@@ -1286,7 +1291,9 @@
   display: grid;
   align-content: start;
   gap: 20px;
+  min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   border-left: 1px solid var(--dash-border);
   background: #f8fafc;
