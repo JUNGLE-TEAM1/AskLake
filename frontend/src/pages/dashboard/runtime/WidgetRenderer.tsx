@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type FormEvent } from "react";
+import { memo, useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import { AlertCircle, CheckCircle2, Loader2, Send } from "lucide-react";
 import Chart from "react-apexcharts";
@@ -313,7 +313,31 @@ function clampPercent(value: number) {
 }
 
 function validChartIndex(value: unknown) {
-  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null;
+  const parsed = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return Number.isInteger(parsed) && Number(parsed) >= 0 ? Number(parsed) : null;
+}
+
+function chartSelectionFromElement(target: EventTarget | null): ChartSelectionPayload | null {
+  if (!(target instanceof Element)) return null;
+
+  const element = target.closest(
+    ".apexcharts-bar-area, .apexcharts-pie-area, .apexcharts-treemap-rect, .apexcharts-marker, [j], [rel], [data\\:realIndex]",
+  );
+  if (!element) return null;
+
+  const dataPointIndex = validChartIndex(
+    element.getAttribute("j")
+      ?? element.getAttribute("data:realIndex")
+      ?? element.getAttribute("data\\:realIndex")
+      ?? element.className.toString().match(/(?:slice|rect|area)-(\d+)/)?.[1],
+  );
+  const seriesIndex = validChartIndex(element.getAttribute("rel") ?? element.closest(".apexcharts-series")?.getAttribute("rel"));
+
+  if (dataPointIndex === null && seriesIndex === null) return null;
+  return {
+    dataPointIndex: dataPointIndex ?? undefined,
+    seriesIndex: seriesIndex ?? undefined,
+  };
 }
 
 function colorSlotIndexFromChartSelection(widget: DashboardRuntimeWidget, selection: ChartSelectionPayload) {
@@ -507,9 +531,19 @@ function RuntimeApexChart({
   widget: DashboardRuntimeWidget;
 }) {
   const chartOptions = withColorSlotSelection(options, widget, onSelectColorSlot);
+  const handleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
+    if (!onSelectColorSlot) return;
+
+    const selection = chartSelectionFromElement(event.target);
+    const slotIndex = selection ? colorSlotIndexFromChartSelection(widget, selection) : null;
+    if (slotIndex === null) return;
+
+    event.stopPropagation();
+    onSelectColorSlot(slotIndex);
+  };
 
   return (
-    <div className="asklake-apex-widget">
+    <div className="asklake-apex-widget" onClickCapture={handleClickCapture}>
       <Chart height="100%" options={chartOptions} series={series} type={type} width="100%" />
     </div>
   );

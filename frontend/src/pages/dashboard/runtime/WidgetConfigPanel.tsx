@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   Boxes,
@@ -448,6 +448,7 @@ export function WidgetConfigPanel({
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
   const [widgetTypeTooltip, setWidgetTypeTooltip] = useState<WidgetTypeTooltip | null>(null);
+  const previousEditingWidgetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
 
   const columnGroups = useMemo(() => {
@@ -467,9 +468,13 @@ export function WidgetConfigPanel({
   }, [selectedDataset]);
 
   useEffect(() => {
+    const nextEditingWidgetId = editingWidget?.id ?? null;
+    const shouldResetColorIndex = previousEditingWidgetIdRef.current !== nextEditingWidgetId;
+    previousEditingWidgetIdRef.current = nextEditingWidgetId;
+
     setFormError(null);
     setCustomColorOpen(false);
-    setCustomColorIndex(0);
+    if (shouldResetColorIndex) setCustomColorIndex(0);
     if (editingWidget) {
       setType(editingWidget.type);
       setTitle(editingWidget.title ?? "");

@@ -284,11 +284,8 @@ export function DashboardRuntimeView({
   };
   const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
     setInspectorMode("widget");
-    setFocusedColorSlot((current) => {
-      if (current?.widgetId === widgetId && current.slotIndex === slotIndex) return current;
-      return { slotIndex, widgetId };
-    });
-    onSelectWidget(widgetId);
+    setFocusedColorSlot({ slotIndex, widgetId });
+    if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
   };
   const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
     setInspectorMode("widget");
