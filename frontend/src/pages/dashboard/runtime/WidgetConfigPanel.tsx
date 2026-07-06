@@ -414,6 +414,7 @@ export function WidgetConfigPanel({
   const [color, setColor] = useState<DashboardWidgetColorConfig>(defaultWidgetColorConfig);
   const [configsByType, setConfigsByType] = useState<Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>>>({});
   const [customColorIndex, setCustomColorIndex] = useState(0);
+  const [customColorOpen, setCustomColorOpen] = useState(false);
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -438,6 +439,7 @@ export function WidgetConfigPanel({
 
   useEffect(() => {
     setFormError(null);
+    setCustomColorOpen(false);
     setCustomColorIndex(0);
     if (editingWidget) {
       setType(editingWidget.type);
@@ -694,26 +696,38 @@ export function WidgetConfigPanel({
                       className={`asklake-widget-color-choice${isSelected ? " selected" : ""}`}
                       style={{ backgroundColor: choice }}
                       type="button"
-                      onClick={() => updateColorSlot(customColorIndex, choice)}
+                      onClick={() => {
+                        setCustomColorOpen(false);
+                        updateColorSlot(customColorIndex, choice);
+                      }}
                     >
                       {isSelected && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
                     </button>
                   );
                 })}
+                <button
+                  aria-label="직접 색상 만들기"
+                  className={`asklake-widget-color-choice custom${customColorOpen ? " selected" : ""}`}
+                  type="button"
+                  onClick={() => setCustomColorOpen((open) => !open)}
+                >
+                  {customColorOpen && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
+                </button>
               </div>
 
-              <details className="asklake-widget-custom-color-panel">
-                <summary>직접 색상 만들기</summary>
-                <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
-                <label className="asklake-widget-hex-input">
-                  <span>HEX</span>
-                  <HexColorInput
-                    prefixed
-                    color={activeCustomColor}
-                    onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
-                  />
-                </label>
-              </details>
+              {customColorOpen && (
+                <div className="asklake-widget-custom-color-panel">
+                  <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
+                  <label className="asklake-widget-hex-input">
+                    <span>HEX</span>
+                    <HexColorInput
+                      prefixed
+                      color={activeCustomColor}
+                      onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
+                    />
+                  </label>
+                </div>
+              )}
             </div>
 
             <small>
