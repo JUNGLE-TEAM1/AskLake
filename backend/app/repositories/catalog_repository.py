@@ -63,7 +63,10 @@ def ensure_catalog_schema(db: Session) -> None:
             CatalogDatasetModel.__table__.create(bind=connection)
 
         existing_columns = {column["name"] for column in inspector.get_columns("catalog_datasets")}
+        column_by_name = {column["name"]: column for column in inspector.get_columns("catalog_datasets")}
         column_defs = {
+            "created_at": "TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            "updated_at": "TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
             "payload": "JSONB",
             "name": "VARCHAR(255)",
             "description": "TEXT",
@@ -88,6 +91,8 @@ def ensure_catalog_schema(db: Session) -> None:
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE catalog_datasets ADD COLUMN {column_name} {column_type}"))
+        if column_by_name.get("payload", {}).get("nullable") is False:
+            connection.execute(text("ALTER TABLE catalog_datasets ALTER COLUMN payload DROP NOT NULL"))
 
     _schema_ready_bind_ids.add(bind_key)
 
