@@ -211,12 +211,17 @@ def _widget_model_to_context(
 ) -> AssistantWidgetContext:
     widget_type = DashboardRuntimeWidgetType(widget.type)
     normalized_config = DashboardRuntimeService._normalize_widget_config(widget_type, widget.config)
+    config_payload = (
+        normalized_config.model_dump(by_alias=True, exclude_none=True, mode="json")
+        if hasattr(normalized_config, "model_dump")
+        else dict(normalized_config)
+    )
     return AssistantWidgetContext(
         id=widget.id,
         title=widget.title or "제목 없는 위젯",
         type=widget_type,
         dataset_id=widget.dataset_id,
-        config=normalized_config.model_dump(by_alias=True, exclude_none=True, mode="json"),
+        config=config_payload,
         data_sample=list(widget.data or [])[:max_sample_rows],
     )
 

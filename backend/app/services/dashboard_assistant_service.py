@@ -153,6 +153,101 @@ def _assistant_instructions() -> str:
 
 
 def _assistant_response_schema() -> dict[str, Any]:
+    string_array_schema = {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    nullable_string = {"type": ["string", "null"]}
+    nullable_number = {"type": ["number", "null"]}
+    nullable_integer = {"type": ["integer", "null"]}
+    nullable_boolean = {"type": ["boolean", "null"]}
+    nullable_string_array = {
+        "type": ["array", "null"],
+        "items": {"type": "string"},
+    }
+    color_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "colors": nullable_string_array,
+            "paletteId": nullable_string,
+            "customColors": nullable_string_array,
+        },
+        "required": ["colors", "paletteId", "customColors"],
+    }
+    config_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "aggregation": {"type": ["string", "null"], "enum": ["sum", "avg", "count", "min", "max", None]},
+            "body": nullable_string,
+            "centerLabel": nullable_string,
+            "color": {"anyOf": [color_schema, {"type": "null"}]},
+            "columns": nullable_string_array,
+            "curve": {"type": ["string", "null"], "enum": ["smooth", "straight", "stepline", None]},
+            "dateUnit": {"type": ["string", "null"], "enum": ["day", "month", "year", None]},
+            "description": nullable_string,
+            "error": nullable_string,
+            "errorMessage": nullable_string,
+            "format": {"type": ["string", "null"], "enum": ["number", "currency", "percent", None]},
+            "groupKey": nullable_string,
+            "labelKey": nullable_string,
+            "limit": nullable_integer,
+            "max": nullable_number,
+            "min": nullable_number,
+            "orientation": {"type": ["string", "null"], "enum": ["vertical", "horizontal", None]},
+            "placeholderKind": nullable_string,
+            "prompt": nullable_string,
+            "seriesKey": nullable_string,
+            "sortDirection": {"type": ["string", "null"], "enum": ["asc", "desc", None]},
+            "sortKey": nullable_string,
+            "stacked": nullable_boolean,
+            "valueKey": nullable_string,
+            "xKey": nullable_string,
+            "yKey": nullable_string,
+        },
+    }
+    config_schema["required"] = list(config_schema["properties"].keys())
+    widget_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": nullable_string,
+            "type": {
+                "type": ["string", "null"],
+                "enum": [
+                    "metric",
+                    "table",
+                    "bar_chart",
+                    "line_chart",
+                    "area_chart",
+                    "donut_chart",
+                    "pie_chart",
+                    "radial_bar_chart",
+                    "heatmap_chart",
+                    "treemap_chart",
+                    None,
+                ],
+            },
+            "datasetId": nullable_string,
+            "config": {"anyOf": [config_schema, {"type": "null"}]},
+        },
+        "required": ["title", "type", "datasetId", "config"],
+    }
+    patch_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": {"type": "string"},
+            "type": widget_schema["properties"]["type"],
+            "datasetId": {"type": "string"},
+            "config": config_schema,
+        },
+        "required": ["title", "type", "datasetId", "config"],
+    }
+    patch_schema["properties"]["title"] = nullable_string
+    patch_schema["properties"]["datasetId"] = nullable_string
+    patch_schema["properties"]["config"] = {"anyOf": [config_schema, {"type": "null"}]}
     return {
         "type": "object",
         "additionalProperties": False,
@@ -166,18 +261,18 @@ def _assistant_response_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "additionalProperties": True,
+                    "additionalProperties": False,
                     "properties": {
                         "type": {
                             "type": "string",
                             "enum": ["create_widget", "update_widget", "report"],
                         },
-                        "widgetId": {"type": "string"},
-                        "markdown": {"type": "string"},
-                        "widget": {"type": "object"},
-                        "patch": {"type": "object"},
+                        "widgetId": nullable_string,
+                        "markdown": nullable_string,
+                        "widget": {"anyOf": [widget_schema, {"type": "null"}]},
+                        "patch": {"anyOf": [patch_schema, {"type": "null"}]},
                     },
-                    "required": ["type"],
+                    "required": ["type", "widgetId", "markdown", "widget", "patch"],
                 },
             },
         },
