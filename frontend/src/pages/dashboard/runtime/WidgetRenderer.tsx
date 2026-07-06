@@ -498,12 +498,14 @@ function MetricWidget({ widget }: { widget: RuntimeWidgetByType<"metric"> }) {
 }
 
 function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
-  const rows = rowsFromWidget(widget);
-  const availableColumns = Object.keys(rows[0] ?? {});
-  const configuredColumns = Array.isArray(widget.config.columns)
-    ? widget.config.columns.filter((column) => availableColumns.includes(column))
-    : [];
-  const visibleColumns = (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
+  const rows = useMemo(() => rowsFromWidget(widget), [widget.data]);
+  const visibleColumns = useMemo(() => {
+    const availableColumns = Object.keys(rows[0] ?? {});
+    const configuredColumns = Array.isArray(widget.config.columns)
+      ? widget.config.columns.filter((column) => availableColumns.includes(column))
+      : [];
+    return (configuredColumns.length ? configuredColumns : availableColumns).slice(0, 8);
+  }, [rows, widget.config.columns]);
   const limit = Math.max(1, Math.min(widget.config.limit ?? 10, 100));
   const tableColumns = useMemo<ColumnDef<SimpleRow>[]>(
     () => visibleColumns.map((column) => ({

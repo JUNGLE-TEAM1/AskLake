@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Responsive, useContainerWidth, verticalCompactor, type Layout, type LayoutItem } from "react-grid-layout";
+import { noCompactor, Responsive, useContainerWidth, type Layout, type LayoutItem } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
@@ -140,7 +140,7 @@ export function DashboardCanvas({
           breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
           className={editable ? "asklake-dashboard-rgl edit" : "asklake-dashboard-rgl"}
           cols={breakpointCols}
-          compactor={verticalCompactor}
+          compactor={noCompactor}
           containerPadding={[0, 0]}
           dragConfig={{
             bounded: true,
