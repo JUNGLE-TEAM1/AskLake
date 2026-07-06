@@ -418,6 +418,24 @@ function buildConfig(
   };
 }
 
+function preserveRuntimeOnlyConfig(
+  widget: DashboardRuntimeWidget | null | undefined,
+  config: DashboardRuntimeWidgetConfig,
+): DashboardRuntimeWidgetConfig {
+  if (!widget) return config;
+
+  const source = configRecord(widget.config);
+  const placeholderKind = source.placeholderKind;
+  if (placeholderKind !== "visualization_request" && placeholderKind !== "text") return config;
+
+  return {
+    ...config,
+    placeholderKind,
+    ...(typeof source.prompt === "string" ? { prompt: source.prompt } : {}),
+    ...(typeof source.body === "string" ? { body: source.body } : {}),
+  } as DashboardRuntimeWidgetConfig;
+}
+
 export function WidgetConfigPanel({
   editingWidget = null,
   focusedColorSlot = null,
@@ -572,10 +590,13 @@ export function WidgetConfigPanel({
 
     onPreviewWidgetChange?.({
       ...editingWidget,
-      config: buildConfig(type, currentConfig, {
-        color,
-        description: description.trim() || undefined,
-      }),
+      config: preserveRuntimeOnlyConfig(
+        editingWidget,
+        buildConfig(type, currentConfig, {
+          color,
+          description: description.trim() || undefined,
+        }),
+      ),
       title: title.trim() || "제목 없는 위젯",
       type,
     } as DashboardRuntimeWidget);
@@ -614,11 +635,12 @@ export function WidgetConfigPanel({
     }
 
     setFormError(null);
+    const nextConfig = buildConfig(type, currentConfig, {
+      color,
+      description: description.trim() || undefined,
+    });
     const nextInput = {
-      config: buildConfig(type, currentConfig, {
-        color,
-        description: description.trim() || undefined,
-      }),
+      config: preserveRuntimeOnlyConfig(editingWidget, nextConfig),
       title: title.trim() || "제목 없는 위젯",
       type,
     };

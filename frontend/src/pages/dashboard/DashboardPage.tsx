@@ -65,7 +65,7 @@ type RuntimeNotice = {
 
 type RuntimeLayoutSnapshot = Array<Pick<LayoutItem, "h" | "i" | "minH" | "minW" | "w" | "x" | "y">>;
 
-const maxLayoutHistoryEntries = 40;
+const maxLayoutHistoryEntries = 5;
 
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   area_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
@@ -327,8 +327,8 @@ export function DashboardPage({
     }
   };
 
-  const loadDraftRuntime = async (nextDashboardId: string) => {
-    setDraftLoading(true);
+  const loadDraftRuntime = async (nextDashboardId: string, options: { silent?: boolean } = {}) => {
+    if (!options.silent) setDraftLoading(true);
     setDraftError(null);
     try {
       const runtime = await ensureDraftDashboard(nextDashboardId);
@@ -336,11 +336,11 @@ export function DashboardPage({
       selectRuntimePageFromResponse(runtime);
       return runtime;
     } catch (error) {
-      setDraftRuntime(null);
+      if (!options.silent) setDraftRuntime(null);
       setDraftError(error instanceof Error ? error.message : "Failed to load the draft dashboard.");
       return null;
     } finally {
-      setDraftLoading(false);
+      if (!options.silent) setDraftLoading(false);
     }
   };
 
@@ -682,7 +682,17 @@ export function DashboardPage({
       await deleteDraftWidget(runtimeSelection.dashboardId, widgetId);
       if (selectedWidgetId === widgetId) setSelectedWidgetId(null);
       if (previewDraftWidget?.id === widgetId) setPreviewDraftWidget(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setDraftRuntime((runtime) => runtime
+        ? {
+          ...runtime,
+          widgetsByPageId: Object.fromEntries(
+            Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
+              pageId,
+              widgets.filter((widget) => widget.id !== widgetId),
+            ]),
+          ),
+        }
+        : runtime);
       setRuntimeNotice({ message: "위젯을 삭제했습니다.", tone: "success" });
       onAction("dashboard.widget.deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
     } catch (error) {
@@ -727,7 +737,25 @@ export function DashboardPage({
     try {
       await updateDraftWidget(runtimeSelection.dashboardId, widgetId, input);
       setPreviewDraftWidget(null);
-      await loadDraftRuntime(runtimeSelection.dashboardId);
+      setDraftRuntime((runtime) => runtime
+        ? {
+          ...runtime,
+          widgetsByPageId: Object.fromEntries(
+            Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
+              pageId,
+              widgets.map((widget) => widget.id === widgetId
+                ? {
+                  ...widget,
+                  config: input.config,
+                  datasetId: Object.prototype.hasOwnProperty.call(input, "datasetId") ? input.datasetId ?? null : widget.datasetId,
+                  title: input.title,
+                  type: input.type,
+                } as DashboardRuntimeWidget
+                : widget),
+            ]),
+          ),
+        }
+        : runtime);
       setSelectedWidgetId(widgetId);
       setRuntimeNotice({ message: "위젯 변경사항을 저장했습니다.", tone: "success" });
       onAction("dashboard.widget.updated", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);

@@ -1168,8 +1168,11 @@
 .asklake-metric-widget {
   display: grid;
   align-content: center;
+  justify-items: center;
   gap: 8px;
+  height: 100%;
   padding: 20px;
+  text-align: center;
 }
 
 .asklake-metric-widget span {
@@ -1182,6 +1185,8 @@
   color: #0f172a;
   font-size: 34px;
   line-height: 1.1;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .asklake-table-widget {
