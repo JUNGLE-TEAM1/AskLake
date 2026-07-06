@@ -1,3 +1,4 @@
+import { ApiError } from "../types";
 import type { DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardSortOption, SavedDashboardCard } from "../types";
 import { normalizeDashboardStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
@@ -63,6 +64,10 @@ function normalizeDashboardCard(card: SavedDashboardCard): SavedDashboardCard {
     ...card,
     status: normalizeDashboardStatus(card.status),
   };
+}
+
+function shouldUseLocalDashboardFallback(error: unknown) {
+  return error instanceof ApiError && error.status === 404;
 }
 
 function sortDashboards(dashboards: SavedDashboardCard[], sort: DashboardSortOption) {
@@ -173,45 +178,39 @@ function normalizeDashboardPageResponse(response: DashboardPageResponse): Dashbo
 export async function listDashboards(query: DashboardListQuery, mockDashboards: SavedDashboardCard[]): Promise<DashboardListResponse> {
   if (apiConfig.useMock) return getMockDashboardListResponse(query, mockDashboards);
 
-  const response = await apiClient.post<DashboardListResponse | DashboardPageResponse>("/api/dashboards/query", toDashboardQueryPayload(query));
-  if ("dashboards" in response) return normalizeDashboardPageResponse(response);
-  return normalizeDashboardListResponse(response);
+  try {
+    const response = await apiClient.post<DashboardListResponse | DashboardPageResponse>("/api/dashboards/query", toDashboardQueryPayload(query));
+    if ("dashboards" in response) return normalizeDashboardPageResponse(response);
+    return normalizeDashboardListResponse(response);
+  } catch (error) {
+    if (shouldUseLocalDashboardFallback(error)) return getMockDashboardListResponse(query, mockDashboards);
+    throw error;
+  }
 }
 
 export async function createDashboard(input: CreateDashboardInput = {}): Promise<CreateDashboardResponse> {
-  if (apiConfig.useMock) {
-    const createdAt = new Date();
-    const createdAtValue = createdAt.toISOString();
-    return {
-      dashboard: normalizeDashboardCard({
-        createdAt: formatDashboardTimestamp(createdAt),
-        createdAtValue,
-        datasetId: input.datasetId,
-        hasPublishedRevision: false,
-        id: `dash_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-        meta: "0개 위젯 · 수동 생성",
-        name: input.title?.trim() || `새 대시보드 ${formatDashboardTimestamp(createdAt)}`,
-        owner: input.owner?.trim() || "Admin User",
-        sourceRunId: input.sqlRunId,
-        status: "draft",
-        tags: "초안 · Dashboard",
-        updated: "방금 전",
-        updatedAtValue: createdAtValue,
-        widgets: [],
-      }),
-    };
-  }
+  if (apiConfig.useMock) return createLocalDashboard(input);
 
-  const response = await apiClient.post<CreateDashboardResponse>("/api/dashboards", input);
-  return {
-    dashboard: normalizeDashboardCard(response.dashboard),
-  };
+  try {
+    const response = await apiClient.post<CreateDashboardResponse>("/api/dashboards", input);
+    return {
+      dashboard: normalizeDashboardCard(response.dashboard),
+    };
+  } catch (error) {
+    if (shouldUseLocalDashboardFallback(error)) return createLocalDashboard(input);
+    throw error;
+  }
 }
 
 export async function deleteDashboard(dashboardId: string): Promise<DeleteDashboardResponse> {
   if (apiConfig.useMock) return { deletedDashboardId: dashboardId };
 
-  return apiClient.delete<DeleteDashboardResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`);
+  try {
+    return await apiClient.delete<DeleteDashboardResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`);
+  } catch (error) {
+    if (shouldUseLocalDashboardFallback(error)) return { deletedDashboardId: dashboardId };
+    throw error;
+  }
 }
 
 export async function updateDashboardTitle(dashboardId: string, title: string): Promise<UpdateDashboardTitleResponse> {
@@ -227,7 +226,42 @@ export async function updateDashboardTitle(dashboardId: string, title: string): 
     };
   }
 
-  return apiClient.patch<UpdateDashboardTitleResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`, {
-    title: nextTitle,
-  });
+  try {
+    return await apiClient.patch<UpdateDashboardTitleResponse>(`/api/dashboards/${encodeURIComponent(dashboardId)}`, {
+      title: nextTitle,
+    });
+  } catch (error) {
+    if (!shouldUseLocalDashboardFallback(error)) throw error;
+    return {
+      dashboard: {
+        id: dashboardId,
+        name: nextTitle,
+        updated: "방금 전",
+        updatedAtValue: new Date().toISOString(),
+      },
+    };
+  }
+}
+
+function createLocalDashboard(input: CreateDashboardInput = {}): CreateDashboardResponse {
+  const createdAt = new Date();
+  const createdAtValue = createdAt.toISOString();
+  return {
+    dashboard: normalizeDashboardCard({
+      createdAt: formatDashboardTimestamp(createdAt),
+      createdAtValue,
+      datasetId: input.datasetId,
+      hasPublishedRevision: false,
+      id: `dash_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+      meta: "0개 위젯 · FastAPI Dashboard endpoint 대기",
+      name: input.title?.trim() || `새 대시보드 ${formatDashboardTimestamp(createdAt)}`,
+      owner: input.owner?.trim() || "Admin User",
+      sourceRunId: input.sqlRunId,
+      status: "draft",
+      tags: "초안 · Dashboard",
+      updated: "방금 전",
+      updatedAtValue: createdAtValue,
+      widgets: [],
+    }),
+  };
 }

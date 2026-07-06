@@ -100,7 +100,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 | Pair | Primary Area | Deliverables | Handoff |
 | --- | --- | --- | --- |
-| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
+| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | create `{ job, catalogTarget }`, run 성공 `dataset`, `RunSummary`, `JobCommandResponse` | Pair B에는 성공 run 이후 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
 | Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 

@@ -15,8 +15,8 @@
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
-현재 Pair A Source/Schema/Create/Run 흐름은 live backend API를 호출합니다.
-P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면 됩니다.
+현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
+Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
 
 ## 2. 프론트 연결 위치
 
@@ -79,7 +79,7 @@ P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 res
 ```json
 {
   "job": {},
-  "dataset": {}
+  "catalogTarget": {}
 }
 ```
 
@@ -355,7 +355,15 @@ type CreatePipelineRequest = {
   qualityScore?: number;
   qualityStatus: "idle" | "pass" | "warn" | "fail";
   scheduleLabel: string;
+  scheduleSummary: string;
+  startDate: string;
+  endDate?: string;
+  timezone: string;
   permissionSummary: string;
+  storageType: "S3" | "Local" | "HDFS";
+  partition: string;
+  compression: "Snappy" | "Gzip" | "None";
+  storagePath: string;
   targetDataset: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;
@@ -380,7 +388,14 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
+  "scheduleSummary": "매일 09:00 · 시작 2026.07.02 · 종료일 없음 · (GMT+09:00) Seoul, Tokyo",
+  "startDate": "2026-07-02",
+  "timezone": "(GMT+09:00) Seoul, Tokyo",
   "permissionSummary": "Data Engineer Group / 조직 내부",
+  "storageType": "S3",
+  "partition": "year/month/region",
+  "compression": "Snappy",
+  "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
@@ -394,7 +409,12 @@ Response `201 Created`:
 ```ts
 type CreatePipelineResponse = {
   job: JobRowData;
-  dataset: CatalogDataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 
@@ -415,32 +435,11 @@ Response 예시:
     "lastState": "대기 중",
     "nextRun": "다음 예약 대기"
   },
-  "dataset": {
+  "catalogTarget": {
     "id": "ds_customer_review_silver",
     "name": "customer_review_silver",
-    "description": "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
-    "owner": "Data Engineer Group",
     "layer": "SILVER",
-    "status": "available",
-    "freshness": "latest",
-    "source": "customer_review_daily_ingest",
-    "rows": "0 rows",
-    "size": "Pending",
-    "quality": "95% (Draft verified)",
-    "lastUpdated": "2026-07-03T11:30:00.000Z",
-    "nextRefresh": "매일 09:00",
-    "rag": true,
-    "tags": ["#customer", "#RAG", "#리뷰"],
-    "schema": [
-      ["review_id", "bigint"],
-      ["product_id", "string"],
-      ["rating", "int"],
-      ["review_text", "string"],
-      ["sentiment", "string"]
-    ],
-    "sampleRows": [["-", "-", "-", "-", "Pipeline queued"]],
-    "upstream": ["Amazon S3", "customer_review_daily_ingest"],
-    "downstream": ["SQL 분석", "대시보드", "AI 활용"]
+    "status": "pending_run"
   }
 }
 ```
@@ -448,8 +447,9 @@ Response 예시:
 프론트 기대 동작:
 
 - `job`을 수집/처리 목록 최상단에 추가합니다.
-- `dataset`을 카탈로그 목록 최상단에 추가합니다.
-- `selectedJob`, `selectedDataset`을 응답값으로 변경합니다.
+- `catalogTarget`은 실행 전 대상 표시용으로만 사용합니다.
+- `selectedJob`을 응답값으로 변경합니다.
+- Catalog Dataset은 Spark run 성공 후 command 응답의 `dataset`으로 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
 - 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다. 없으면 `upstream` 기반 fallback graph를 사용합니다.
@@ -458,6 +458,7 @@ Validation:
 
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
+- `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
 ### 7.2 작업 명령
@@ -495,6 +496,26 @@ type JobCommandResponse = {
   dagSteps?: JobDagStep[];
 };
 ```
+
+프론트 상태 반영 계약:
+
+```ts
+type RunsByJobId = Record<string, JobRunSummary[]>;
+type SelectedRunIdByJobId = Record<string, string>;
+type DagStepsByRunId = Record<string, JobDagStep[]>;
+```
+
+- `job.id`는 `runsByJobId`의 key입니다.
+- `run.runId`는 `selectedRunIdByJobId[job.id]`의 value이자 `dagStepsByRunId`의 key입니다.
+- `run`이 있으면 `runsByJobId[job.id]`에 최신순으로 upsert합니다.
+- 같은 `run.runId`가 이미 있으면 기존 Run을 교체하고 중복 row를 만들지 않습니다.
+- 새 `run`이 있으면 `selectedRunIdByJobId[job.id]`는 해당 `run.runId`로 갱신합니다.
+- `dagSteps`는 같은 응답의 `run.runId`에 묶어 `dagStepsByRunId[run.runId]`에 저장합니다.
+- `dagSteps`에 별도 `runId` 필드를 요구하지 않습니다.
+- History row 선택은 `selectRunForJob(jobId, runId)` action으로 `selectedRunIdByJobId[job.id]`만 갱신합니다.
+- 초기 `/api/etl/jobs` hydrate에서는 `job.runHistory`를 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`를 최신 Run의 `runId`에 연결합니다.
+- PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않습니다. 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만들고, 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체합니다.
+- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아닙니다.
 
 Response 예시:
 
@@ -743,7 +764,8 @@ Response `200 OK`:
 프론트 연결 시점:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
-- 생성 직후에는 `POST /api/etl/jobs` 응답 dataset을 우선 반영한 뒤, 목록 재조회로 동기화하면 됩니다.
+- 생성 직후에는 Catalog에 추가하지 않습니다.
+- Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
 - mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
 
 ### 8.2 데이터셋 상세
@@ -809,6 +831,70 @@ Response 예시:
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
+### 8.2 Dashboard FastAPI 구현 경계
+
+Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해서 구현한다.
+목록 화면은 card metadata만 사용하고, 대시보드 내부 화면은 draft/published revision snapshot을 사용한다.
+공통 Pydantic schema skeleton은 `backend/app/schemas/dashboard.py`를 기준으로 한다.
+
+#### 8.2.1 작업 lane
+
+| Lane | 담당 범위 | 주요 schema | 주요 endpoint |
+| --- | --- | --- | --- |
+| Dashboard card/list | 랜딩 페이지 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제 | `DashboardCard`, `DashboardListQuery`, `DashboardListResponse`, `CreateDashboardRequest`, `UpdateDashboardRequest` | `GET /api/dashboards`, `POST /api/dashboards/query`, `POST /api/dashboards`, `PATCH /api/dashboards/{dashboardId}`, `DELETE /api/dashboards/{dashboardId}` |
+| Dashboard runtime | 내부 조회/편집 화면, draft/published revision, page, widget, layout, publish | `DashboardRuntimeResponse`, `DashboardRuntimeWidget`, `CreateDraftWidgetRequest`, `SaveDraftLayoutsRequest`, `PublishDashboardResponse` | `GET /api/dashboards/{dashboardId}/published`, `POST /api/dashboards/{dashboardId}/draft/ensure`, page/widget/layout/publish APIs |
+
+Card/list lane은 `dashboards`와 `dashboard_tags` 중심으로 작업한다.
+Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` 중심으로 작업한다.
+두 lane은 `dashboardId`와 `publishedRevisionId`만 공유하고, 서로의 DB 쿼리를 직접 수정하지 않는다.
+
+#### 8.2.2 DB table 방향
+
+초기 FastAPI 구현의 table 방향은 아래처럼 둔다.
+정식 migration 파일은 후속 PR에서 작성하되, repository/service는 이 소유 경계를 기준으로 나눈다.
+
+| Table | 소유 lane | 역할 | 핵심 필드 |
+| --- | --- | --- | --- |
+| `dashboards` | card/list | 목록 card의 source of truth | `id`, `name`, `owner`, `status`, `dataset_id`, `source_run_id`, `published_revision_id`, `has_published_revision`, `created_at`, `updated_at`, `payload` |
+| `dashboard_tags` | card/list | 목록 필터용 tag normalize | `dashboard_id`, `tag` |
+| `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at`, `updated_at` |
+| `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
+| `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
+
+`layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
+API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
+
+#### 8.2.3 publish 규칙
+
+Published 조회는 published revision만 읽는다.
+Draft 변경은 published revision을 직접 수정하지 않는다.
+
+```text
+위젯 편집 진입
+↓
+POST /api/dashboards/{dashboardId}/draft/ensure
+↓
+draft revision/page/widget 수정
+↓
+POST /api/dashboards/{dashboardId}/publish
+↓
+draft snapshot을 새 published revision으로 복사
+↓
+dashboards.published_revision_id, has_published_revision, status, updated_at, payload 갱신
+```
+
+published revision이 없는 dashboard의 published 조회는 오류가 아니라 빈 runtime 응답으로 처리한다.
+즉 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다.
+
+#### 8.2.4 PR 순서
+
+1. Dashboard 계약/schema skeleton 정리
+2. Dashboard card/list API 구현
+3. Published 조회와 draft ensure API 구현
+4. Draft page API 구현
+5. Draft widget/layout/publish API 구현
+6. Frontend API adapter와 FastAPI E2E 확인
+
 ### 8.3 대시보드 목록 조회
 
 `POST /api/dashboards/query`
@@ -866,6 +952,7 @@ type DashboardListResponse = {
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
 서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
@@ -1217,7 +1304,7 @@ Request:
 ```
 
 `data`는 optional입니다. 호출자가 `data`를 명시하지 않고 `datasetId`를 보내면 서버는 catalog dataset의 rows 또는 sample rows를 찾아 `Array<Record<string, unknown>>` 형태로 변환한 뒤 widget `data` snapshot으로 저장합니다.
-현재 demo backend는 실제 rows API가 없으므로 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
+현재 demo backend는 실제 rows API가 없으므로 임시 demo catalog 또는 `catalog_datasets.payload.sampleRows`와 `schema`를 사용해 column name 기반 object row를 만듭니다.
 예를 들어 `sampleRows: [["2026-01", "KR", "FastShip", "4200000"]]`, `schema: [["month", "date"], ["region", "string"], ["carrier", "string"], ["transport_cost", "decimal"]]`는 `[{ "month": "2026-01", "region": "KR", "carrier": "FastShip", "transport_cost": 4200000 }]`로 저장됩니다.
 
 Response `201 Created`:
@@ -1321,7 +1408,7 @@ Response `200 OK`:
 
 1. 현재 draft revision을 깊은 복사합니다.
 2. 새 revision을 `kind = "published"`로 저장합니다.
-3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
 
 Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 

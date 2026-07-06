@@ -1,7 +1,8 @@
 .jobs-landing {
   display: grid;
   gap: 18px;
-  max-width: var(--layout-main-width);
+  width: 100%;
+  max-width: none;
   font-family: "Gothic A1", "Apple SD Gothic Neo", "Noto Sans KR", Inter, system-ui, sans-serif;
 }
 
@@ -171,13 +172,13 @@
   border: 1px solid #e8ecf0;
   border-radius: 8px;
   background: #fff;
-  padding: 15px 19px 13px 20px;
+  padding: 14px 19px 12px 20px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  min-height: 147px;
+  min-height: 118px;
 }
 
 .job-row:first-of-type {
-  min-height: 160px;
+  min-height: 118px;
 }
 
 .job-row::before {
@@ -209,7 +210,7 @@
 }
 
 .job-row.running {
-  min-height: 175px;
+  min-height: 138px;
 }
 
 .job-row-status {
@@ -225,8 +226,8 @@
     "title title"
     "progress progress"
     "details actions";
-  grid-template-columns: minmax(0, 1fr) 195px;
-  column-gap: 20px;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  column-gap: 24px;
   row-gap: 8px;
   align-items: start;
   min-width: 0;
@@ -238,12 +239,21 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+}
+
+.job-title-row > div:first-child {
+  min-width: 0;
 }
 
 .job-title-row strong {
+  display: block;
+  overflow: hidden;
   color: #171a1f;
   font-size: 15px;
   font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-title-row p {
@@ -285,8 +295,8 @@
 .job-row-details {
   grid-area: details;
   display: grid;
-  grid-template-columns: minmax(150px, 1.08fr) minmax(128px, 0.9fr) minmax(110px, 0.75fr) minmax(160px, 1fr) minmax(124px, 0.78fr);
-  gap: 14px;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) minmax(220px, 1fr);
+  gap: 18px;
   margin: 0;
 }
 
@@ -298,11 +308,13 @@
 }
 
 .job-row-details dd {
+  overflow: hidden;
   color: #171a1f;
   font-size: 13px;
   line-height: 1.32;
   margin: 0;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .danger-text {
@@ -398,6 +410,16 @@
   color: #dc2626;
 }
 
+.job-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
+.job-action-button.primary:disabled {
+  border-color: #93c5fd;
+  background: #93c5fd;
+}
+
 .job-table-footer {
   display: flex;
   align-items: center;
@@ -414,10 +436,15 @@
   gap: 24px;
 }
 
+.job-table-footer .ghost-link:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
+}
+
 .job-detail-page {
   display: grid;
   gap: 20px;
-  max-width: var(--layout-main-width);
+  max-width: none;
   font-family: "Gothic A1", "Noto Sans KR", "Apple SD Gothic Neo", Inter, system-ui, sans-serif;
 }
 
@@ -427,6 +454,8 @@
 }
 
 .job-detail-breadcrumb {
+  max-width: min(560px, 100%);
+  overflow: hidden;
   justify-self: start;
   border: 0;
   background: transparent;
@@ -434,6 +463,8 @@
   font-size: 12px;
   font-weight: 500;
   padding: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-detail-title-row {
@@ -443,10 +474,18 @@
   gap: 24px;
 }
 
+.job-detail-title-row > div:first-child {
+  min-width: 0;
+}
+
 .job-detail-title-row h1 {
+  max-width: min(600px, 100%);
+  overflow: hidden;
   color: #0f172a;
   font-size: 22px;
   line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .job-detail-meta {
@@ -459,6 +498,7 @@
 
 .job-detail-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
@@ -484,6 +524,34 @@
 .job-detail-tabs button.active {
   border-color: #2563eb;
   color: #2563eb;
+}
+
+.job-detail-subnav {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px;
+}
+
+.job-detail-subnav button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.job-detail-subnav button.active {
+  background: #2563eb;
+  color: #fff;
 }
 
 .job-detail-section {
@@ -797,7 +865,9 @@
 
 .runs-body-content {
   display: grid;
+  grid-template-rows: auto auto auto;
   gap: 24px;
+  min-height: 0;
 }
 
 .runs-filter-bar {
@@ -854,18 +924,28 @@
   background: #fff;
 }
 
+.runs-table-card {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .runs-table-scroll {
-  overflow-x: auto;
+  max-height: clamp(260px, 42vh, 460px);
+  overflow: auto;
 }
 
 .runs-table {
   width: 100%;
-  min-width: 1060px;
+  min-width: 960px;
   border-collapse: collapse;
   table-layout: fixed;
 }
 
 .runs-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   height: 48px;
   background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
@@ -882,55 +962,85 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   padding: 0 12px;
+  text-overflow: ellipsis;
   vertical-align: middle;
+  white-space: nowrap;
 }
 
 .runs-table th:nth-child(1),
 .runs-table td:nth-child(1) {
-  width: 100px;
+  width: 112px;
 }
 
 .runs-table th:nth-child(2),
 .runs-table td:nth-child(2) {
-  width: 90px;
+  width: 72px;
 }
 
 .runs-table th:nth-child(3),
 .runs-table td:nth-child(3),
 .runs-table th:nth-child(4),
-.runs-table td:nth-child(4),
+.runs-table td:nth-child(4) {
+  width: 96px;
+}
+
 .runs-table th:nth-child(5),
 .runs-table td:nth-child(5) {
-  width: 78px;
+  width: 76px;
 }
 
 .runs-table th:nth-child(6),
 .runs-table td:nth-child(6),
 .runs-table th:nth-child(7),
 .runs-table td:nth-child(7) {
-  width: 100px;
+  width: 82px;
 }
 
 .runs-table th:nth-child(8),
 .runs-table td:nth-child(8) {
-  width: 145px;
+  width: 104px;
 }
 
 .runs-table th:nth-child(9),
 .runs-table td:nth-child(9) {
-  width: 150px;
+  width: 112px;
 }
 
 .runs-table th:nth-child(10),
 .runs-table td:nth-child(10) {
-  width: 90px;
+  width: 78px;
 }
 
 .run-row.failed {
   position: relative;
   background: #fffafa;
+}
+
+.run-row {
+  cursor: pointer;
+}
+
+.run-row:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.run-row:hover {
+  background: #f8fafc;
+}
+
+.run-row.selected {
+  background: #eff6ff;
+}
+
+.run-row.selected td:first-child {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.run-row.running td:first-child {
+  box-shadow: inset 3px 0 0 #16a34a;
 }
 
 .run-row.failed td {
@@ -939,6 +1049,26 @@
 
 .run-row.failed td:first-child {
   box-shadow: inset 3px 0 0 #dc2626;
+}
+
+.runs-empty-cell {
+  padding: 28px 12px;
+}
+
+.runs-empty-state {
+  display: flex;
+  min-height: 120px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #64748b;
+  text-align: center;
+}
+
+.runs-empty-state strong {
+  color: #0f172a;
+  font-size: 15px;
 }
 
 .run-status-pill {
@@ -987,6 +1117,7 @@
 
 .runs-pagination {
   display: flex;
+  flex: 0 0 auto;
   min-height: 68px;
   align-items: center;
   justify-content: space-between;
@@ -1030,8 +1161,8 @@
 
 .runs-stats-summary > div {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 60px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 24px;
 }
 
 .run-summary-metric {
@@ -1124,6 +1255,11 @@
 .status-pill.danger {
   background: #fef2f2;
   color: #dc2626;
+}
+
+.status-pill.success {
+  background: #ecfdf5;
+  color: #059669;
 }
 
 .status-pill.running {

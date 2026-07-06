@@ -4,6 +4,7 @@ export type { CatalogDataset, LineageGraph, LineageGraphColumn, LineageGraphData
 export type { BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, SavedDashboardCard, TableWidgetConfig } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
+  DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
   DraftPipelineSlicePatch,
@@ -24,6 +25,8 @@ export type {
   ScheduleDraft,
   SchemaColumnDraft,
   SchemaDraft,
+  RunsByJobId,
+  SelectedRunIdByJobId,
   SourceDraft,
   TargetDraft,
   TargetLayer,

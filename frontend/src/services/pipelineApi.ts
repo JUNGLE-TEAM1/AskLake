@@ -3,7 +3,13 @@ import { toCreatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
 export type PipelineCreationResult = {
-  dataset: CatalogDataset;
+  catalogTarget?: {
+    id: string;
+    layer: string;
+    name: string;
+    status: "pending_run";
+  };
+  dataset?: CatalogDataset;
   job: JobRowData;
 };
 
@@ -11,6 +17,7 @@ export type JobCommandResult = {
   action: string;
   apiPath: string;
   dagSteps?: JobDagStep[];
+  dataset?: CatalogDataset;
   job?: JobRowData;
   run?: JobRunSummary;
 };

@@ -45,6 +45,19 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 - `POST /api/catalog/derived-datasets`
 - 생성된 derived dataset의 catalog 재조회와 lineage 조회
 
+Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
+
+```bash
+docker compose up -d minio postgres
+
+cd backend
+npm install
+npm run minio:seed-verify
+npm run verify
+```
+
+이 검증은 MinIO가 `localhost:9000`에서 실행 중이고 `m3-raw/nyc_taxi/csv/` 아래 CSV 샘플 객체가 있어야 한다.
+
 이미 켜진 서버를 대상으로만 확인하려면 아래처럼 실행한다.
 
 ```bash

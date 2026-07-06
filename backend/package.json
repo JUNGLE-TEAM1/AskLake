@@ -10,6 +10,7 @@
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",
+    "minio:seed-verify": "node scripts/seed-minio-verify-sample.mjs",
     "minio:prepare-samples": "node scripts/prepare-minio-samples.mjs",
     "sources:fixtures": "node scripts/setup-source-fixtures.mjs",
     "spark:start": "node scripts/start-spark-server.mjs",
