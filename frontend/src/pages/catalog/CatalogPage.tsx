@@ -549,15 +549,6 @@ export function CatalogPage({
             </button>
           </div>
 
-          <div className="catalog-preview-metrics">
-            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-          </div>
-
           <article className="catalog-preview-card">
             <div className="catalog-preview-card-header">
               <TerminalSquare size={16} />
