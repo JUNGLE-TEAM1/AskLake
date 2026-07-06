@@ -188,48 +188,157 @@ Definition of Done:
 
 ## Phase 2. Fixture 데이터 설계
 
-목표: 외부 장애에 의존하지 않는 seeded fixture를 만든다.
+목표: 외부 장애에 의존하지 않는 seeded fixture 구조를 고정하고, Phase 7에서 구현할 seed/reset 기준을 만든다.
+
+현재 구현 경계:
+
+- FastAPI SQL preview는 아직 실제 PostgreSQL source table을 직접 실행하지 않고 `catalog_datasets.payload.sampleRows`를 preview row로 사용한다.
+- 따라서 배포 fixture는 `catalog_datasets.payload.schema`, `catalog_datasets.payload.sampleRows`, 물리 source fixture row가 서로 달라지지 않게 같은 원본 seed에서 만들어야 한다.
+- 실제 SQL engine이 source DB를 직접 조회하도록 확장되더라도 demo query와 결과가 유지되도록 PostgreSQL fixture table을 먼저 설계한다.
+- MongoDB fixture는 메인 발표 흐름이 아니라 source type 확장성과 schema inference 확인용 보조 시나리오로 둔다.
 
 PostgreSQL 역할:
 
 ```text
-postgres
-  - asklake_metadata
-  - asklake_sources
+postgres container
+  - asklake_metadata database
+      - FastAPI metadata DB
+      - catalog_datasets
+      - sql_runs
+      - etl_jobs / etl_runs
+      - dashboard tables
+  - asklake_sources database
+      - demo source fixture tables
+      - source connector/schema inference 테스트 대상
 ```
 
 MongoDB 역할:
 
 ```text
-mongo
-  - asklake_sources
+mongo container
+  - asklake_sources database
+      - customer_reviews collection
+      - app_events collection
 ```
 
 체크리스트:
 
-- [ ] `asklake_metadata` schema 요구사항을 정리한다.
-- [ ] `asklake_sources` PostgreSQL fixture table을 정한다.
-- [ ] MongoDB fixture collection을 정한다.
-- [ ] Catalog demo dataset과 source fixture의 관계를 정한다.
-- [ ] SQL Preview 결과가 비어 보이지 않도록 sample rows를 보장한다.
-- [ ] seed script를 idempotent하게 설계한다.
-- [ ] reset script가 demo state만 초기화하도록 설계한다.
+- [x] `asklake_metadata` schema 요구사항을 정리한다.
+- [x] `asklake_sources` PostgreSQL fixture table을 정한다.
+- [x] MongoDB fixture collection을 정한다.
+- [x] Catalog demo dataset과 source fixture의 관계를 정한다.
+- [x] SQL Preview 결과가 비어 보이지 않도록 sample rows를 보장한다.
+- [x] seed script를 idempotent하게 설계한다.
+- [x] reset script가 demo state만 초기화하도록 설계한다.
 
-권장 fixture:
+`asklake_metadata` 요구사항:
 
-| Source | Purpose |
-| --- | --- |
-| PostgreSQL `orders_clean` | SQL preview 기본 table |
-| PostgreSQL `customers` | join demo 후보 |
-| PostgreSQL `user_activity` | nested query/preflight demo 후보 |
-| MongoDB `customer_reviews` | document source demo |
-| MongoDB `app_events` | nested field schema demo |
+| Table | 역할 | seed/reset 기준 |
+| --- | --- | --- |
+| `catalog_datasets` | Catalog 목록, 상세, lineage, SQL context source | demo dataset은 고정 id로 upsert한다. derived dataset은 reset 때 삭제 가능하다. |
+| `sql_runs` | SQL preview run payload 저장 | reset 때 demo run만 삭제한다. 발표 중 생성한 run은 재실행 가능해야 한다. |
+| `etl_jobs` / `etl_runs` | SQL Result 처리 Job 생성 및 실행 상태 | reset 때 demo-generated job/run만 삭제한다. |
+| dashboard tables | derived dataset 기반 dashboard preview/runtime | reset 때 demo-generated dashboard만 삭제한다. |
+
+PostgreSQL source fixture:
+
+| Table | Purpose | Required columns |
+| --- | --- | --- |
+| `public.orders_clean` | SQL preview 기본 table. Phase 1 기본 demo dataset과 같은 이름을 유지한다. | `order_id`, `customer_id`, `order_date`, `total_amount`, `status` |
+| `public.customers` | 추후 join demo 후보. Phase 1 메인 흐름에서는 사용하지 않는다. | `customer_id`, `customer_name`, `segment`, `region`, `customer_status`, `created_at` |
+| `public.user_activity` | 이벤트/행동 데이터 demo 후보. JSONB column으로 nested 형태를 보조한다. | `event_id`, `customer_id`, `event_time`, `page_path`, `event_type`, `device`, `payload` |
+
+`orders_clean` seed row 기준:
+
+| order_id | customer_id | order_date | total_amount | status |
+| --- | --- | --- | --- | --- |
+| `ORD-1001` | `CUS-204` | `2026-07-02` | `128000` | `paid` |
+| `ORD-1002` | `CUS-118` | `2026-07-02` | `56000` | `shipped` |
+| `ORD-1003` | `CUS-204` | `2026-07-03` | `91000` | `paid` |
+| `ORD-1004` | `CUS-311` | `2026-07-03` | `43000` | `refunded` |
+
+MongoDB source fixture:
+
+| Collection | Purpose | Required fields |
+| --- | --- | --- |
+| `customer_reviews` | document source schema inference demo | `reviewId`, `customerId`, `sku`, `rating`, `comment`, `sentiment`, `createdAt`, `metadata` |
+| `app_events` | nested field schema demo | `eventId`, `customerId`, `eventTime`, `eventType`, `properties`, `device` |
+
+MongoDB sample document shape:
+
+```json
+{
+  "reviewId": "RV-991",
+  "customerId": "CUS-204",
+  "sku": "SKU-200",
+  "rating": 5,
+  "comment": "배송이 빨라요",
+  "sentiment": "positive",
+  "createdAt": "2026-07-03T09:10:00Z",
+  "metadata": {
+    "channel": "mobile",
+    "locale": "ko-KR"
+  }
+}
+```
+
+Catalog demo dataset 매핑:
+
+| Catalog dataset | Physical fixture | Lineage source node | 비고 |
+| --- | --- | --- | --- |
+| `ds_orders_clean` / `orders_clean` | PostgreSQL `asklake_sources.public.orders_clean` | `source-commerce-orders` / `commerce.orders` | Phase 1 메인 demo dataset |
+| `ds_orders_clean_analysis` 또는 suffix dataset | Local lake materialized SQL result | `ds_orders_clean` + `sourceRunId` | 발표 중 생성되는 derived dataset |
+| `ds_customer_reviews_source` | MongoDB `asklake_sources.customer_reviews` | `source-mongo-customer-reviews` | 보조 source type demo 후보 |
+| `ds_app_events_source` | MongoDB `asklake_sources.app_events` | `source-mongo-app-events` | nested schema demo 후보 |
+
+동기화 규칙:
+
+- `orders_clean` catalog `schema`는 PostgreSQL `orders_clean` column 정의와 같아야 한다.
+- `orders_clean` catalog `sampleRows`는 PostgreSQL `orders_clean`의 앞쪽 deterministic row와 같아야 한다.
+- `orders_clean` catalog `lineageGraph.datasets[].columns`는 catalog `schema`와 같은 column name/type을 사용해야 한다.
+- MongoDB catalog fixture를 추가할 때도 collection sample document에서 inference한 schema와 catalog `schema`를 맞춘다.
+- seed data는 날짜와 id를 고정한다. 현재 시각 기반 row는 smoke test 전용 derived dataset 이름에만 허용한다.
+
+Seed script 설계:
+
+```text
+scripts/seed-demo-data.sh
+  -> backend app metadata table 생성 확인
+  -> asklake_sources PostgreSQL fixture upsert
+  -> asklake_sources MongoDB fixture upsert
+  -> catalog_datasets 고정 demo dataset upsert
+  -> seed summary 출력
+```
+
+Idempotency 기준:
+
+- 여러 번 실행해도 `ds_orders_clean`은 1개만 남는다.
+- source fixture row는 primary key 기준 upsert한다.
+- MongoDB document는 `reviewId` / `eventId` unique key 기준 upsert한다.
+- seed script는 secret 값을 출력하지 않는다.
+
+Reset script 설계:
+
+```text
+scripts/reset-demo-data.sh
+  -> demo-generated derived catalog dataset 삭제
+  -> demo-generated sql_runs 삭제
+  -> demo-generated etl jobs/runs 삭제
+  -> demo-generated dashboard 삭제
+  -> base fixture는 삭제하지 않고 다시 upsert
+```
+
+Reset 보호 규칙:
+
+- `ds_orders_clean` 같은 base fixture는 삭제하지 않는다.
+- `sourceRunId`, tag `#sql-derived`, 이름 prefix `orders_clean_analysis` 등 demo marker가 있는 데이터만 지운다.
+- 사용자가 수동으로 만든 dataset을 지우지 않도록 reset 대상 조건을 명시적으로 제한한다.
 
 Definition of Done:
 
-- [ ] PostgreSQL fixture로 SQL Preview가 가능하다.
-- [ ] MongoDB fixture로 schema inference demo가 가능하다.
-- [ ] seed/reset 후 demo 결과가 매번 동일하다.
+- [x] PostgreSQL fixture로 SQL Preview가 가능하도록 catalog sampleRows와 source table 기준을 맞췄다.
+- [x] MongoDB fixture로 schema inference demo가 가능하도록 collection과 sample document shape를 정했다.
+- [x] seed/reset 후 demo 결과가 매번 동일하도록 idempotency와 reset 보호 규칙을 정했다.
 
 ## Phase 3. Docker Compose Prod 구성
 

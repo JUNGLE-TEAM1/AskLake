@@ -74,6 +74,18 @@ PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
 MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 
+기본 fixture는 다음처럼 고정한다.
+
+| 저장소 | Fixture | 용도 |
+| --- | --- | --- |
+| PostgreSQL `asklake_metadata` | `catalog_datasets`, `sql_runs`, ETL/Dashboard metadata | FastAPI가 실제로 읽고 쓰는 metadata |
+| PostgreSQL `asklake_sources` | `orders_clean` | Catalog -> SQL Preview -> Job 생성 메인 demo |
+| PostgreSQL `asklake_sources` | `customers`, `user_activity` | 추후 join/event demo 후보 |
+| MongoDB `asklake_sources` | `customer_reviews`, `app_events` | document source와 nested schema 보조 demo |
+
+현재 FastAPI SQL Preview는 물리 DB를 직접 조회하지 않고 Catalog payload의 `sampleRows`를 사용한다.
+따라서 `orders_clean`의 catalog `schema`/`sampleRows`와 PostgreSQL fixture row는 같은 seed 기준으로 맞춘다.
+
 ## 처음 한 번 할 일
 
 아래 작업은 최초 세팅 때 한 번만 한다.
