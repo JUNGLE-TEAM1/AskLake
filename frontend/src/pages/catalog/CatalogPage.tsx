@@ -488,7 +488,6 @@ export function CatalogPage({
                       <strong>{dataset.name}</strong>
                       <DatasetStatusBadge dataset={dataset} />
                     </div>
-                    <p>{dataset.description}</p>
                     <div className="catalog-result-tags">
                       {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
                       {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
@@ -535,7 +534,6 @@ export function CatalogPage({
             <LayoutGrid size={20} />
             <div>
               <h2>{previewDataset.name}</h2>
-              <p>{previewDataset.description}</p>
             </div>
             <button
               aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
