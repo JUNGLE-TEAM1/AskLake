@@ -45,6 +45,15 @@ FROM ${dataset.name}
 LIMIT 100;`;
 }
 
+export function getColumnInsertText(dataset: CatalogDataset, columnName: string, selectedDatasets: CatalogDataset[]) {
+  const normalizedColumnName = columnName.trim().toLowerCase();
+  const matchingDatasetCount = selectedDatasets.filter((item) => (
+    item.schema.some(([name]) => name.trim().toLowerCase() === normalizedColumnName)
+  )).length;
+
+  return matchingDatasetCount > 1 ? `${dataset.name}.${columnName}` : columnName;
+}
+
 export function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
   return `${dataset.name}_analysis`;
 }

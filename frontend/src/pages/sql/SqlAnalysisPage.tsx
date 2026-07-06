@@ -27,6 +27,7 @@ import {
   formatDuration,
   formatResultTimestamp,
   getAutocompleteContext,
+  getColumnInsertText,
   getPreflightSummary,
   parseDerivedDatasetTags,
   runSqlPreflight,
@@ -421,7 +422,8 @@ export function SqlAnalysisPage({
   };
 
   const insertColumnName = (targetDataset: CatalogDataset, columnName: string) => {
-    insertSqlText(columnName);
+    const insertText = getColumnInsertText(targetDataset, columnName, selectedContextDatasets);
+    insertSqlText(insertText);
     onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
   };
 

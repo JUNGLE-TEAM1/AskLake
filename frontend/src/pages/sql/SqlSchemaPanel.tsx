@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type { CatalogDataset } from "../../types";
 
 export function SchemaDetailsPanel({
@@ -92,12 +92,21 @@ function SelectedSchemaColumnList({
   return (
     <div className="sql-card-schema">
       {dataset.schema.map(([name, type], index) => (
-        <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
+        <button
+          aria-label={`${dataset.name}.${name} 컬럼 SQL에 삽입`}
+          key={`${dataset.id}-${name}-${index}`}
+          title="SQL에 삽입"
+          type="button"
+          onClick={() => onColumnClick(dataset, name)}
+        >
           <span className="sql-card-schema-name" title={name}>
             <strong>{name}</strong>
           </span>
           <span className="sql-card-schema-type-group">
             <em title={type}>{type}</em>
+            <span className="sql-card-schema-insert">
+              <Plus size={12} /> 삽입
+            </span>
           </span>
         </button>
       ))}
