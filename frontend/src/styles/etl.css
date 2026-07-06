@@ -794,6 +794,10 @@
   background: #fff;
 }
 
+.schema-workbench.schema-workbench-focused {
+  grid-template-rows: auto minmax(0, 1fr) minmax(128px, 156px) auto;
+}
+
 .schema-status-strip {
   display: grid;
   min-width: 0;
@@ -1437,6 +1441,37 @@
   font-style: normal;
   font-weight: 900;
   padding: 6px 10px;
+}
+
+.schema-flow-detail {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.schema-flow-detail span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.schema-flow-detail strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schema-flow-detail small {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.35;
 }
 
 .schema-inspector-metrics {

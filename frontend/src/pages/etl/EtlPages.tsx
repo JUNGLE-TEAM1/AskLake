@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
-  ArrowRight,
   BarChart3,
   BookOpen,
   Bot,
@@ -17,7 +16,6 @@ import {
   FileText,
   HardDrive,
   Info,
-  GitBranch,
   LayoutGrid,
   Maximize2,
   Minus,
@@ -1383,11 +1381,11 @@ function compactSchemaPreviewValue(value: string, maxLength = 44) {
 
 function schemaTransformLabel(column: SchemaColumnDraft) {
   const actions: string[] = [];
-  if (!isSchemaColumnIncluded(column)) actions.push("출력 제외");
-  if (column.sourceName.includes(".")) actions.push("평탄화");
-  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("이름 변경");
-  actions.push(`${column.type} 캐스팅`);
-  if (!column.nullable) actions.push("필수");
+  if (!isSchemaColumnIncluded(column)) actions.push("출력에서 제외");
+  if (column.sourceName.includes(".")) actions.push("중첩 경로 평탄화");
+  if ((column.targetName || "") !== normalizeTargetColumnName(column.sourceName)) actions.push("출력 필드명 변경");
+  if (column.type) actions.push(`${column.type} 타입 변환`);
+  actions.push(column.nullable ? "Null 허용" : "필수");
   return actions.join(" · ");
 }
 
@@ -1399,18 +1397,6 @@ function schemaTransformShortLabel(column: SchemaColumnDraft) {
   if (column.type) actions.push("타입 변환");
   return actions.length > 0 ? actions.join(" + ") : "그대로";
 }
-
-function schemaChangeStats(columns: SchemaColumnDraft[]) {
-  const included = columns.filter(isSchemaColumnIncluded);
-  return {
-    casted: included.length,
-    excluded: columns.length - included.length,
-    flattened: included.filter((column) => column.sourceName.includes(".")).length,
-    included: included.length,
-    renamed: included.filter((column) => (column.targetName || "") !== normalizeTargetColumnName(column.sourceName)).length,
-  };
-}
-
 function schemaFlowWindow(columns: SchemaColumnDraft[], sampleRows: string[][], selectedIndex: number) {
   const maxItems = 6;
   const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(columns.length - 1, 0)));
@@ -1500,7 +1486,6 @@ export function SchemaInferencePage({
   const selectedDistribution = selectedColumn ? valueDistribution(selectedSampleValues) : [];
   const schemaFlowItems = schemaFlowWindow(schemaColumns, schemaSampleRows, selectedIndex);
   const selectedFlowItem = schemaFlowItems.find((item) => item.index === selectedIndex) ?? schemaFlowItems[0];
-  const schemaStats = schemaChangeStats(schemaColumns);
   const previewOutputItems = includedSchemaColumnItems.slice(0, 8);
   const hiddenPreviewColumnCount = Math.max(0, includedSchemaColumnItems.length - previewOutputItems.length);
   const previewOutputRows = schemaSampleRows.slice(0, 4);
@@ -1710,7 +1695,7 @@ export function SchemaInferencePage({
   };
 
   return (
-    <div className="schema-workbench">
+    <div className="schema-workbench schema-workbench-focused">
       <section className="schema-status-strip">
         <div className="schema-status-item source">
           <Database size={17} />
@@ -1732,63 +1717,6 @@ export function SchemaInferencePage({
           <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
             <Check size={15} /> 스키마 승인
           </button>
-        </div>
-      </section>
-
-      <section className="schema-flow-preview" aria-label="스키마 변환 흐름">
-        <div className="schema-flow-summary">
-          <GitBranch size={16} />
-          <div>
-            <span>{sourceFormat} 변환 흐름</span>
-            <strong>{selectedFlowItem ? `${selectedFlowItem.sourceName} -> ${selectedFlowItem.targetName}` : "소스 연결 후 변환 흐름 표시"}</strong>
-          </div>
-          <em>{selectedFlowItem ? selectedFlowItem.action : hasInferredSchema ? `${schemaColumns.length}개 출력 컬럼 · ${nestedFieldCount}개 중첩 필드` : "스키마 추론 대기"}</em>
-          <div className="schema-flow-stat-grid">
-            <span><strong>{schemaStats.included}</strong> 출력</span>
-            <span><strong>{schemaStats.renamed}</strong> 이름 변경</span>
-            <span><strong>{schemaStats.flattened}</strong> 평탄화</span>
-            <span><strong>{schemaStats.excluded}</strong> 제외</span>
-          </div>
-        </div>
-        <div className="schema-flow-map">
-          {schemaFlowItems.length > 0 && (
-            <div className="schema-flow-column-head">
-              <span>원본 샘플</span>
-              <span>Spark 실행 계약</span>
-              <span>출력 컬럼</span>
-            </div>
-          )}
-          {schemaFlowItems.map((item) => (
-            <button
-              className={[
-                "schema-flow-card",
-                item.index === selectedIndex ? "selected" : "",
-                item.included ? "" : "excluded",
-              ].filter(Boolean).join(" ")}
-              key={`${item.sourceName}-${item.index}`}
-              onClick={() => setSelectedSchemaIndex(item.index)}
-              title={`${item.sourceName} -> ${item.targetName}`}
-              type="button"
-            >
-              <span className="schema-flow-source">
-                <small>원본</small>
-                <strong>{formatSourceFieldPath(item.sourceName)}</strong>
-                <em>{item.sample}</em>
-              </span>
-              <span className="schema-flow-arrow">
-                <ArrowRight size={15} />
-                <small>{item.included ? item.actionShort : "출력 제외"}</small>
-              </span>
-              <span className="schema-flow-target">
-                <small>{item.included ? "출력" : "제외됨"}</small>
-                <strong>{item.targetName}</strong>
-                <em>{item.type} · {item.nullable}</em>
-              </span>
-            </button>
-          ))}
-          {schemaFlowItems.length === 0 && (
-            <div className="schema-flow-empty">소스 연결 테스트 후 원본 필드가 어떤 출력 컬럼으로 바뀌는지 표시됩니다.</div>
-          )}
         </div>
       </section>
 
@@ -1911,9 +1839,7 @@ export function SchemaInferencePage({
                         }} onClick={(event) => event.stopPropagation()} />
                       </td>
                       <td>#{index + 1}</td>
-                      <td>
-                        <strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong>
-                      </td>
+                      <td><strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong></td>
                       <td>
                         <button type="button" onClick={(event) => {
                           event.stopPropagation();
@@ -1934,11 +1860,7 @@ export function SchemaInferencePage({
                     </tr>
                   );
                 })}
-                {visibleSchemaColumns.length === 0 && (
-                  <tr>
-                    <td colSpan={8}>표시할 스키마 필드가 없습니다. 소스 연결 테스트를 먼저 실행하거나 검색어를 지우세요.</td>
-                  </tr>
-                )}
+                {visibleSchemaColumns.length === 0 && <tr><td colSpan={8}>표시할 스키마 필드가 없습니다. 소스 연결 테스트를 먼저 실행하거나 검색어를 지우세요.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1955,17 +1877,17 @@ export function SchemaInferencePage({
                   </div>
                   <em>{selectedColumn.confidence ?? 70}% 확신</em>
                 </div>
+                <div className="schema-flow-detail">
+                  <span>원본 → 출력</span>
+                  <strong>{selectedColumn.sourceName} → {selectedColumn.targetName || `column_${selectedIndex + 1}`}</strong>
+                  <small>{selectedFlowItem?.action ?? mappingModeText}</small>
+                </div>
                 <label className="schema-setting-field">
                   <span>출력 필드명</span>
-                  <input
-                    className="input control-input"
-                    value={selectedColumn.targetName}
-                    onBlur={(event) => {
-                      if (event.currentTarget.value.trim()) return;
-                      updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
-                    }}
-                    onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })}
-                  />
+                  <input className="input control-input" value={selectedColumn.targetName} onBlur={(event) => {
+                    if (event.currentTarget.value.trim()) return;
+                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
+                  }} onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })} />
                 </label>
                 <label className="schema-setting-field">
                   <span>타입 재정의</span>
@@ -1987,14 +1909,8 @@ export function SchemaInferencePage({
                   </select>
                 </label>
                 <div className="schema-inspector-metrics">
-                  <div>
-                    <span>Null 비율</span>
-                    <strong>{selectedNullRatio}%</strong>
-                  </div>
-                  <div>
-                    <span>샘플 값 수</span>
-                    <strong>{selectedSampleValues.length}</strong>
-                  </div>
+                  <div><span>Null 비율</span><strong>{selectedNullRatio}%</strong></div>
+                  <div><span>샘플 값 수</span><strong>{selectedSampleValues.length}</strong></div>
                 </div>
                 <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
                 <div className="schema-distribution">
@@ -2018,14 +1934,10 @@ export function SchemaInferencePage({
               </div>
               <div className="schema-inspector-actions">
                 <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>
-                  {isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}
-                </button>
+                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>{isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}</button>
               </div>
             </>
-          ) : (
-            <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>
-          )}
+          ) : <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>}
         </aside>
       </section>
 
@@ -2036,31 +1948,16 @@ export function SchemaInferencePage({
         </div>
         <div className="schema-preview-comparison-grid">
           <div className="schema-preview-card raw">
-            <div className="schema-preview-card-title">
-              <FileText size={15} />
-              <span>원본 구조</span>
-            </div>
+            <div className="schema-preview-card-title"><FileText size={15} /><span>원본 구조</span></div>
             <pre className="schema-raw-preview">{sourcePreviewText}</pre>
           </div>
           <div className="schema-preview-card output">
-            <div className="schema-preview-card-title">
-              <Table2 size={15} />
-              <span>출력 테이블</span>
-              {hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}
-            </div>
+            <div className="schema-preview-card-title"><Table2 size={15} /><span>출력 테이블</span>{hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}</div>
             <div className="hegun-table-scroll">
               <table className="schema-table schema-output-preview-table" style={{ minWidth: Math.max(680, previewOutputItems.length * 132) }}>
-                <thead>
-                  <tr>
-                    {previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}
-                  </tr>
-                </thead>
+                <thead><tr>{previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}</tr></thead>
                 <tbody>
-                  {previewOutputRows.map((row, rowIndex) => (
-                    <tr key={`schema-preview-${rowIndex}`}>
-                      {previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}
-                    </tr>
-                  ))}
+                  {previewOutputRows.map((row, rowIndex) => <tr key={`schema-preview-${rowIndex}`}>{previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}</tr>)}
                   {previewOutputItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
                 </tbody>
               </table>
@@ -2071,9 +1968,7 @@ export function SchemaInferencePage({
 
       <section className="schema-bottom-bar">
         <button className="secondary-button" type="button" onClick={onPrev}>이전: 소스 연결</button>
-        <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}>
-          <Download size={15} /> 스키마 JSON 내보내기
-        </button>
+        <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
         <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
         <button className="ghost-button" type="button" onClick={saveSchemaDraft}>설정 저장</button>
@@ -2081,7 +1976,6 @@ export function SchemaInferencePage({
     </div>
   );
 }
-
 type RuleCategory = "transform" | "quality";
 type RuleActionHandler = (action: string, path: string, targetId?: string) => void;
 type RuleStepDraft = {
