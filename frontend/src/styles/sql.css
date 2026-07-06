@@ -831,7 +831,15 @@
   font-weight: 800;
 }
 
-.sql-result-toolbar button {
+.sql-result-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sql-result-toolbar button,
+.sql-materialize-dialog-header button {
   display: inline-flex;
   min-height: 28px;
   align-items: center;
@@ -887,52 +895,25 @@
   padding: 14px 16px;
 }
 
+.sql-materialize-card.saved {
+  background: #f8fbff;
+}
+
 .sql-materialize-card.disabled {
   border-color: #e2e8f0;
   background: #f8fafc;
 }
 
-.sql-materialize-card summary,
 .sql-materialize-card > div:first-child {
   display: grid;
   gap: 4px;
   justify-items: start;
 }
 
-.sql-materialize-card summary {
-  cursor: pointer;
-  list-style: none;
-}
-
-.sql-materialize-card summary::-webkit-details-marker {
-  display: none;
-}
-
-.sql-materialize-card summary::after {
-  content: "설정 열기";
-  justify-self: end;
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: center;
-  border: 1px solid #bfdbfe;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  font-size: 11px;
-  font-weight: 900;
-  padding: 5px 9px;
-}
-
-.sql-materialize-card[open] summary::after {
-  content: "설정 접기";
-}
-
-.sql-materialize-card summary,
 .sql-materialize-card > div:first-child {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
-.sql-materialize-card summary span,
 .sql-materialize-card > div:first-child span {
   grid-column: 1;
   color: #2563eb;
@@ -957,15 +938,6 @@
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
   max-width: 1180px;
-}
-
-.sql-materialize-card[open] .sql-materialize-form {
-  margin-top: 14px;
-}
-
-details.sql-materialize-card:not([open]) .sql-materialize-form,
-details.sql-materialize-card:not([open]) .sql-materialize-summary {
-  display: none;
 }
 
 .sql-materialize-form label {
@@ -1079,6 +1051,57 @@ details.sql-materialize-card:not([open]) .sql-materialize-summary {
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+}
+
+.sql-materialize-dialog-backdrop {
+  position: fixed;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.32);
+  padding: 24px;
+}
+
+.sql-materialize-dialog {
+  display: grid;
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  gap: 16px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  padding: 20px;
+}
+
+.sql-materialize-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 14px;
+}
+
+.sql-materialize-dialog-header div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sql-materialize-dialog-header span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sql-materialize-dialog-header h2 {
+  color: #0f172a;
+  font-size: 20px;
+  line-height: 1.3;
 }
 
 @media (max-width: 860px) {

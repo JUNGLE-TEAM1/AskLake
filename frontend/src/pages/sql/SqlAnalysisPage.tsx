@@ -106,6 +106,7 @@ export function SqlAnalysisPage({
   const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
   const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
+  const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -183,6 +184,7 @@ export function SqlAnalysisPage({
     setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
     setDerivedDatasetRag(baseDataset.rag);
     setDerivedDatasetDraft(null);
+    setMaterializeDialogOpen(false);
     setOpenSchemaDatasetId(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
@@ -458,6 +460,7 @@ export function SqlAnalysisPage({
         sourceRunId: resultDraft.runId,
         tags: dataset.tags,
       });
+      setMaterializeDialogOpen(false);
     } finally {
       setDerivedDatasetPending(false);
     }
@@ -650,7 +653,10 @@ export function SqlAnalysisPage({
                   Run ID {resultDraft.runId}
                   {resultDraft.previewLimit ? ` · Preview ${resultDraft.previewLimit} rows` : ""}
                 </span>
-                <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+                <div className="sql-result-actions">
+                  <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+                  <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 새 데이터셋 저장</button>
+                </div>
               </div>
               <div className="sql-result-scroll">
                 <SqlPreviewTable resultDraft={resultDraft} />
@@ -664,17 +670,32 @@ export function SqlAnalysisPage({
           )}
         </section>
 
-        {resultDraft ? (
-          <details className="sql-materialize-card" key={resultDraft.runId}>
-            <summary>
+        {resultDraft && derivedDatasetDraft && (
+          <section className="sql-materialize-card saved">
+            <div>
               <span>LAKE DATASET</span>
-              <h3>SQL 결과 Lake Dataset 생성</h3>
-            </summary>
+              <h3>생성된 Lake Dataset</h3>
+            </div>
+            <div className="sql-materialize-summary">
+              <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
+            </div>
+          </section>
+        )}
+      </main>
+      {resultDraft && materializeDialogOpen && (
+        <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setMaterializeDialogOpen(false)}>
+          <section className="sql-materialize-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-materialize-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="sql-materialize-dialog-header">
+              <div>
+                <span>LAKE DATASET</span>
+                <h2 id="sql-materialize-dialog-title">SQL 결과 Lake Dataset 생성</h2>
+              </div>
+              <button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기">닫기</button>
+            </header>
             <div className="sql-materialize-form">
               <label>
                 <span>Dataset name</span>
                 <input
-                  disabled={!resultDraft}
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -685,7 +706,6 @@ export function SqlAnalysisPage({
               <label className="wide">
                 <span>Description</span>
                 <textarea
-                  disabled={!resultDraft}
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -697,7 +717,6 @@ export function SqlAnalysisPage({
               <label className="wide">
                 <span>Tags</span>
                 <input
-                  disabled={!resultDraft}
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
                     setDerivedDatasetDraft(null);
@@ -709,7 +728,6 @@ export function SqlAnalysisPage({
               <label>
                 <span>Layer</span>
                 <select
-                  disabled={!resultDraft}
                   onChange={(event) => {
                     setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
                     setDerivedDatasetDraft(null);
@@ -723,7 +741,6 @@ export function SqlAnalysisPage({
               <label className="sql-materialize-checkbox">
                 <input
                   checked={derivedDatasetRag}
-                  disabled={!resultDraft}
                   onChange={(event) => {
                     setDerivedDatasetRag(event.target.checked);
                     setDerivedDatasetDraft(null);
@@ -734,33 +751,19 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={!resultDraft || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0 || derivedDatasetPending || Boolean(derivedDatasetDraft)}
+                disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0 || derivedDatasetPending}
                 onClick={createDerivedDataset}
                 type="button"
               >
-                <Database size={15} /> {derivedDatasetDraft ? "생성됨" : derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
+                <Database size={15} /> {derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
               </button>
             </div>
             <div className="sql-materialize-summary">
-              {derivedDatasetDraft ? (
-                <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
-              ) : (
-                <span>Preview 확인 완료 · 저장 시 로컬 Lake에 생성 · {derivedDatasetTagList.length} tags · source {resultDraft.runId}</span>
-              )}
-            </div>
-          </details>
-        ) : (
-          <section className="sql-materialize-card disabled">
-            <div>
-              <span>LAKE DATASET</span>
-              <h3>SQL 결과 Lake Dataset 생성</h3>
-            </div>
-            <div className="sql-materialize-summary">
-              <span>Preview 성공 후 Lake Dataset을 생성할 수 있습니다.</span>
+              <span>source {resultDraft.runId} · {derivedDatasetTagList.length} tags · {resultDraft.columns.length} columns</span>
             </div>
           </section>
-        )}
-      </main>
+        </div>
+      )}
       {schemaDataset && (
         <SchemaDetailsPanel
           dataset={schemaDataset}
