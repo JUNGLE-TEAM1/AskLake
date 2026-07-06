@@ -3,6 +3,7 @@ import type { DashboardRuntimeWidget } from "../../../types";
 import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
+import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
   const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
@@ -30,6 +31,7 @@ export function WidgetFrame({
   deleteDisabled = false,
   editable = false,
   onDelete,
+  onApplyWidgetPatch,
   onPatchConfig,
   onSelect,
   onSelectColorSlot,
@@ -40,6 +42,7 @@ export function WidgetFrame({
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
   onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
@@ -88,6 +91,7 @@ export function WidgetFrame({
         <WidgetRenderer
           assistantContext={assistantContext}
           widget={widget}
+          onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
           onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
           onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
         />

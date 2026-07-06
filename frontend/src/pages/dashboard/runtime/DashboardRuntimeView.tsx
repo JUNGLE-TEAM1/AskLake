@@ -8,6 +8,7 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
+import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
@@ -273,6 +274,15 @@ export function DashboardRuntimeView({
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
+  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
+    config: {
+      ...widget.config,
+      ...(patch.config ?? {}),
+    } as UpdateDraftWidgetFormInput["config"],
+    datasetId: patch.datasetId ?? widget.datasetId ?? null,
+    title: patch.title ?? widget.title ?? "제목 없는 위젯",
+    type: patch.type ?? widget.type,
+  });
   const assistantContext = {
     dashboardId: draftRuntime?.dashboard.id ?? title,
     pageId: selectedPageId,
@@ -337,6 +347,7 @@ export function DashboardRuntimeView({
         widgets={selectedDraftWidgets}
         assistantContext={assistantContext}
         onDeleteWidget={onDeleteWidget}
+        onApplyWidgetPatch={applyWidgetPatch}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
@@ -408,6 +419,8 @@ export function DashboardRuntimeView({
               pageId={selectedPageId}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
+              onCreateWidget={onCreateDatasetWidget}
+              onUpdateWidget={onUpdateWidget}
             />
           </aside>
         ) : isDraftMode && !selectedWidgetHidesInspector ? (

@@ -3,6 +3,7 @@ import { Responsive, useContainerWidth, verticalCompactor, type Layout, type Lay
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import type { DashboardRuntimeWidget } from "../../../types";
+import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetFrame } from "./WidgetFrame";
@@ -40,6 +41,7 @@ export function DashboardCanvas({
   deletingWidgetId,
   editable,
   onDeleteWidget,
+  onApplyWidgetPatch,
   onLayoutCommit,
   onLayoutRejected,
   onPatchWidgetConfig,
@@ -54,6 +56,7 @@ export function DashboardCanvas({
   deletingWidgetId?: string | null;
   editable: boolean;
   onDeleteWidget?: (widgetId: string) => void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onLayoutCommit?: (layout: LayoutItem[]) => void;
   onLayoutRejected?: () => void;
   onPatchWidgetConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
@@ -177,6 +180,7 @@ export function DashboardCanvas({
                 selected={selectedWidgetId === widget.id}
                 widget={widget}
                 onDelete={onDeleteWidget}
+                onApplyWidgetPatch={onApplyWidgetPatch}
                 onPatchConfig={onPatchWidgetConfig}
                 onSelect={onSelectWidget}
                 onSelectColorSlot={onSelectWidgetColorSlot}

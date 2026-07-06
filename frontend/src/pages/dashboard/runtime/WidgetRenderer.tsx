@@ -14,6 +14,7 @@ import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetD
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
+  type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
@@ -560,10 +561,12 @@ function WidgetDataError() {
 
 function VisualizationRequestWidget({
   assistantContext,
+  onApplyWidgetPatch,
   onPatchConfig,
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   widget: DashboardRuntimeWidget;
 }) {
@@ -611,7 +614,15 @@ function VisualizationRequestWidget({
         widgets: widgets.map(buildDashboardAssistantWidgetContext),
       });
       const configPatch = response.widgetPatch?.config ?? response.configPatch;
-      if (configPatch && Object.keys(configPatch).length > 0) {
+      if (response.widgetPatch && onApplyWidgetPatch) {
+        await onApplyWidgetPatch({
+          ...response.widgetPatch,
+          config: {
+            prompt: nextPrompt,
+            ...(response.widgetPatch.config ?? {}),
+          },
+        });
+      } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
       }
       setRequestTone("success");
@@ -1244,17 +1255,28 @@ function TreemapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
 
 export const WidgetRenderer = memo(function WidgetRenderer({
   assistantContext,
+  onApplyWidgetPatch,
   onPatchConfig,
   onSelectColorSlot,
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: DashboardRuntimeWidget;
 }) {
   const kind = placeholderKind(widget);
-  if (kind === "visualization_request") return <VisualizationRequestWidget assistantContext={assistantContext} widget={widget} onPatchConfig={onPatchConfig} />;
+  if (kind === "visualization_request") {
+    return (
+      <VisualizationRequestWidget
+        assistantContext={assistantContext}
+        widget={widget}
+        onApplyWidgetPatch={onApplyWidgetPatch}
+        onPatchConfig={onPatchConfig}
+      />
+    );
+  }
   if (kind === "text") return <TextPlaceholderWidget widget={widget} onPatchConfig={onPatchConfig} />;
 
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);

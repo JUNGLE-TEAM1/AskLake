@@ -2,16 +2,22 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
+  type DashboardAssistantCreateWidgetAction,
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
   type DashboardAssistantReportAction,
+  type DashboardAssistantResponse,
+  type DashboardAssistantUpdateWidgetAction,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
+import type { CreateDraftWidgetFormInput, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   pageId: string | null;
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
@@ -29,6 +35,8 @@ function AskLakeAssistantMark() {
 
 export function DashboardAssistantPanel({
   dashboardId,
+  onCreateWidget,
+  onUpdateWidget,
   pageId,
   selectedWidget,
   widgets,
@@ -79,12 +87,25 @@ export function DashboardAssistantPanel({
       const reportAction = response.actions.find(
         (action): action is DashboardAssistantReportAction => action.type === "report",
       );
+      const actionMessages = await applyAssistantWidgetActions({
+        onCreateWidget,
+        onUpdateWidget,
+        response,
+        widgets,
+      });
+      const warningMessage = response.warnings.length > 0
+        ? `경고: ${response.warnings.join(" / ")}`
+        : "";
       setMessages((current) => [
         ...current,
         {
           id: `assistant-${Date.now()}`,
           role: "assistant",
-          text: reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
+          text: [
+            reportAction?.markdown?.trim() || response.message?.trim() || "Assistant 요청을 보냈습니다.",
+            ...actionMessages,
+            warningMessage,
+          ].filter(Boolean).join("\n\n"),
         },
       ]);
     } catch (requestError) {
@@ -133,4 +154,77 @@ export function DashboardAssistantPanel({
       {error && <span className="asklake-assistant-error">{error}</span>}
     </section>
   );
+}
+
+async function applyAssistantWidgetActions({
+  onCreateWidget,
+  onUpdateWidget,
+  response,
+  widgets,
+}: {
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  response: DashboardAssistantResponse;
+  widgets: DashboardRuntimeWidget[];
+}) {
+  const messages: string[] = [];
+
+  for (const action of response.actions) {
+    if (action.type === "report") continue;
+
+    if (action.type === "create_widget") {
+      const result = await applyCreateWidgetAction(action, onCreateWidget);
+      if (result) messages.push(result);
+      continue;
+    }
+
+    if (action.type === "update_widget") {
+      const result = await applyUpdateWidgetAction(action, widgets, onUpdateWidget);
+      if (result) messages.push(result);
+    }
+  }
+
+  if (messages.length === 0 && response.actions.some((action) => action.type !== "report")) {
+    messages.push("위젯 변경 action을 받았지만 화면에 적용하지 못했습니다.");
+  }
+
+  return messages;
+}
+
+async function applyCreateWidgetAction(
+  action: DashboardAssistantCreateWidgetAction,
+  onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void,
+) {
+  if (!onCreateWidget) return "위젯 생성 함수가 연결되지 않아 새 위젯을 추가하지 못했습니다.";
+  await onCreateWidget({
+    config: action.widget.config,
+    datasetId: action.widget.datasetId,
+    title: action.widget.title || "AI 추천 위젯",
+    type: action.widget.type,
+  });
+  return "AI가 제안한 위젯을 추가했습니다.";
+}
+
+async function applyUpdateWidgetAction(
+  action: DashboardAssistantUpdateWidgetAction,
+  widgets: DashboardRuntimeWidget[],
+  onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void,
+) {
+  if (!onUpdateWidget) return "위젯 수정 함수가 연결되지 않아 변경사항을 적용하지 못했습니다.";
+
+  const currentWidget = widgets.find((widget) => widget.id === action.widgetId);
+  if (!currentWidget && (!action.patch.type || !action.patch.config)) {
+    return "수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.";
+  }
+
+  await onUpdateWidget(action.widgetId, {
+    config: {
+      ...(currentWidget?.config ?? {}),
+      ...(action.patch.config ?? {}),
+    } as UpdateDraftWidgetFormInput["config"],
+    datasetId: action.patch.datasetId ?? currentWidget?.datasetId ?? null,
+    title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
+    type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
+  });
+  return "AI가 제안한 위젯 변경사항을 적용했습니다.";
 }

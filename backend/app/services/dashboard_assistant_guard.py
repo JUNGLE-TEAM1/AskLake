@@ -72,6 +72,7 @@ def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResp
             if action_type == "create_widget":
                 actions.append(DashboardAssistantCreateWidgetAction.model_validate(raw_action))
             elif action_type == "update_widget":
+                raw_action = _normalize_update_widget_action(raw_action)
                 actions.append(DashboardAssistantUpdateWidgetAction.model_validate(raw_action))
             elif action_type == "report":
                 actions.append(DashboardAssistantReportAction.model_validate(raw_action))
@@ -85,6 +86,30 @@ def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResp
         actions=actions,
         warnings=warnings,
     )
+
+
+def _normalize_update_widget_action(raw_action: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(raw_action.get("patch"), dict):
+        return raw_action
+
+    widget = raw_action.get("widget")
+    if not isinstance(widget, dict):
+        return raw_action
+
+    patch = {
+        "title": widget.get("title"),
+        "type": widget.get("type"),
+        "datasetId": widget.get("datasetId"),
+        "config": widget.get("config"),
+    }
+    return {
+        **raw_action,
+        "patch": {
+            key: value
+            for key, value in patch.items()
+            if value is not None
+        },
+    }
 
 
 def guard_assistant_response(
@@ -121,8 +146,12 @@ def guard_assistant_response(
             if checked_action is not None:
                 guarded_actions.append(checked_action)
 
+    message = response.message
+    if response.actions and not guarded_actions and warnings:
+        message = "AI 응답은 받았지만 대시보드에 적용 가능한 위젯 변경사항이 없었습니다."
+
     return DashboardAssistantResponse(
-        message=response.message,
+        message=message,
         actions=guarded_actions,
         warnings=warnings,
         config_patch=_config_patch_from_actions(guarded_actions),
@@ -137,7 +166,8 @@ def _guard_create_widget_action(
     dataset = datasets.get(action.widget.dataset_id)
     if dataset is None:
         return None, [f"create_widget datasetId {action.widget.dataset_id!r}는 접근 가능한 GOLD 데이터셋이 아니어서 제외했습니다."]
-    config, warnings = _validate_config(action.widget.type, action.widget.config, dataset)
+    widget_type = _widget_type_enum(action.widget.type)
+    config, warnings = _validate_config(widget_type, action.widget.config, dataset)
     if config is None:
         return None, warnings
     action.widget.config = config
@@ -154,7 +184,7 @@ def _guard_update_widget_action(
         return None, [f"update_widget widgetId {action.widget_id!r}는 현재 대시보드 page 위젯이 아니어서 제외했습니다."]
 
     patch = action.patch
-    target_type = patch.type or widget.type
+    target_type = _widget_type_enum(patch.type or widget.type)
     dataset_id = patch.dataset_id or widget.dataset_id
     if target_type not in WIDGET_OPTIONS:
         return None, [f"update_widget type {target_type!r}는 지원하지 않는 위젯 타입이어서 제외했습니다."]
@@ -179,10 +209,11 @@ def _guard_update_widget_action(
 
 
 def _validate_config(
-    widget_type: DashboardRuntimeWidgetType,
+    widget_type: DashboardRuntimeWidgetType | str,
     config: Any,
     dataset: AssistantDatasetContext,
 ) -> tuple[Any | None, list[str]]:
+    widget_type = _widget_type_enum(widget_type)
     if widget_type not in WIDGET_OPTIONS:
         return None, [f"{widget_type!r}는 지원하지 않는 위젯 타입입니다."]
 
@@ -200,6 +231,10 @@ def _validate_config(
     if warnings:
         return None, warnings
     return parsed_config, []
+
+
+def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
+    return value if isinstance(value, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(value)
 
 
 def _validate_columns(

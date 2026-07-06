@@ -148,6 +148,8 @@ def _assistant_instructions() -> str:
         "Do not invent datasetIds, widgetIds, column names, or chart types. "
         "For dashboard_question, prefer a report action. "
         "For visualization_request, use update_widget when widgetId or selectedWidgetId targets an existing widget; otherwise use create_widget. "
+        "For update_widget actions, put changed title, type, datasetId, and config under patch, not widget. "
+        "If the user asks for a column or dimension that is not available in context.availableDatasets, explain that limitation instead of inventing a column. "
         "Write user-facing message and report markdown in Korean."
     )
 
