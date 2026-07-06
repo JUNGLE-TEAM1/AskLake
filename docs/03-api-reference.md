@@ -96,7 +96,7 @@ Canonical status values:
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
-Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
+Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 
@@ -137,14 +137,29 @@ ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 �
 Dashboard 상세/편집 runtime은 dashboard card metadata와 revision snapshot을 분리한다.
 
 ```ts
-type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardRuntimeWidgetType =
+  | "metric"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "area_chart"
+  | "donut_chart"
+  | "pie_chart"
+  | "radial_bar_chart"
+  | "heatmap_chart"
+  | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
+type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
+
+type DashboardWidgetColorConfig = {
+  paletteId: DashboardWidgetPaletteId;
+  customColors?: string[];
+};
 
 type DashboardWidgetConfigBase = {
-  color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
@@ -152,7 +167,7 @@ type DashboardWidgetConfigBase = {
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -166,24 +181,69 @@ type TableWidgetConfig = DashboardWidgetConfigBase & {
 
 type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   groupKey?: string;
+  orientation?: "vertical" | "horizontal";
   xKey: string;
   yKey: string;
 };
 
 type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  curve?: "smooth" | "straight" | "stepline";
   dateUnit?: DashboardWidgetDateUnit;
   seriesKey?: string;
   xKey: string;
   yKey: string;
 };
 
+type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  stacked?: boolean;
+  xKey: string;
+  yKey: string;
+};
+
 type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  centerLabel?: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type PieChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  labelKey: string;
+  valueKey: string;
+};
+
+type RadialBarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  format?: DashboardWidgetFormat;
+  labelKey?: string;
+  max?: number;
+  min?: number;
+  valueKey: string;
+};
+
+type HeatmapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  valueKey: string;
+  xKey: string;
+  yKey: string;
+};
+
+type TreemapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
   labelKey: string;
   valueKey: string;
 };
@@ -194,7 +254,17 @@ type DashboardRuntimeWidget = {
   type: DashboardRuntimeWidgetType;
   title: string | null;
   layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
-  config: MetricWidgetConfig | TableWidgetConfig | BarChartWidgetConfig | LineChartWidgetConfig | DonutChartWidgetConfig;
+  config:
+    | MetricWidgetConfig
+    | TableWidgetConfig
+    | BarChartWidgetConfig
+    | LineChartWidgetConfig
+    | AreaChartWidgetConfig
+    | DonutChartWidgetConfig
+    | PieChartWidgetConfig
+    | RadialBarChartWidgetConfig
+    | HeatmapChartWidgetConfig
+    | TreemapChartWidgetConfig;
   data: Array<Record<string, unknown>>;
   queryId?: string | null;
   datasetId?: string | null;
@@ -229,7 +299,7 @@ type DashboardRuntimeResponse = {
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
-Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 표시값을 계산한다.
+Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, ApexCharts 차트 8종 표시값을 계산한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 

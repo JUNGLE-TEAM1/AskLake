@@ -4,9 +4,11 @@ import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
   DashboardWidgetAggregation,
+  DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
   DashboardWidgetSortDirection,
 } from "../../../types";
+import { dashboardWidgetColorPalettes, defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -16,13 +18,7 @@ type ChartPoint = {
 };
 type RuntimeWidgetByType<Type extends DashboardRuntimeWidget["type"]> = Extract<DashboardRuntimeWidget, { type: Type }>;
 
-const chartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
-const chartColorByConfig: Record<string, string> = {
-  amber: "#f59e0b",
-  blue: "#2563eb",
-  green: "#16a34a",
-  slate: "#475569",
-};
+const fallbackChartColors = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"];
 const aggregationLabels: Record<DashboardWidgetAggregation, string> = {
   avg: "평균",
   count: "개수",
@@ -178,8 +174,27 @@ function groupedChartPoints({
   return points.slice(0, limit);
 }
 
-function configColor(color: string | undefined) {
-  return color ? chartColorByConfig[color] ?? color : chartColorByConfig.blue;
+function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
+  if (typeof color === "object" && color !== null && !Array.isArray(color)) {
+    const record = color as Record<string, unknown>;
+    if (record.paletteId === "custom" && Array.isArray(record.customColors)) {
+      const customColors = record.customColors.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+      if (customColors.length) return customColors;
+    }
+
+    const palette = dashboardWidgetColorPalettes.find((item) => item.id === record.paletteId);
+    if (palette) return palette.colors;
+  }
+
+  if (typeof color === "string" && color.trim()) {
+    return [color];
+  }
+
+  return dashboardWidgetColorPalettes.find((item) => item.id === defaultWidgetColorConfig.paletteId)?.colors ?? fallbackChartColors;
+}
+
+function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {
+  return colorsFromConfig(color)[0] ?? fallbackChartColors[0];
 }
 
 function formatAxisNumber(value: number) {
@@ -361,7 +376,7 @@ function BarChartWidget({ widget }: { widget: RuntimeWidgetByType<"bar_chart"> }
   const points = groupedChartPoints({ aggregation, labelKey, limit: 10, rows, valueKey });
   if (!points.length) return <EmptyWidgetData />;
 
-  const color = configColor(widget.config.color);
+  const color = primaryChartColor(widget.config.color);
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
     ...baseOptions,
@@ -402,7 +417,7 @@ function LineChartWidget({ widget }: { widget: RuntimeWidgetByType<"line_chart">
   });
   if (!points.length) return <EmptyWidgetData />;
 
-  const color = configColor(widget.config.color);
+  const color = primaryChartColor(widget.config.color);
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
     ...baseOptions,
@@ -438,9 +453,10 @@ function DonutChartWidget({ widget }: { widget: RuntimeWidgetByType<"donut_chart
   const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
   if (total <= 0) return <EmptyWidgetData />;
 
-  const primaryColor = configColor(widget.config.color);
+  const primaryColor = primaryChartColor(widget.config.color);
   const baseOptions = buildBaseChartOptions(primaryColor);
-  const colors = points.map((_, index) => index === 0 ? primaryColor : chartColors[index % chartColors.length]);
+  const paletteColors = colorsFromConfig(widget.config.color);
+  const colors = points.map((_, index) => paletteColors[index % paletteColors.length] ?? primaryColor);
   const options: ApexOptions = {
     ...baseOptions,
     chart: {

@@ -10,6 +10,7 @@ from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
+    AreaChartWidgetConfig,
     BarChartWidgetConfig,
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
@@ -23,19 +24,27 @@ from app.schemas.dashboard import (
     DashboardRuntimeWidget,
     DashboardRuntimeWidgetType,
     DashboardWidgetAggregation,
+    DashboardWidgetColorConfig,
     DashboardWidgetConfigBase,
     DashboardWidgetFormat,
     DashboardWidgetLayout,
+    DashboardWidgetLineCurve,
+    DashboardWidgetOrientation,
+    DashboardWidgetPaletteId,
     DashboardWidgetMutationResponse,
     DeleteDraftPageResponse,
     DeleteDraftWidgetResponse,
     DonutChartWidgetConfig,
+    HeatmapChartWidgetConfig,
     LineChartWidgetConfig,
     MetricWidgetConfig,
     OkResponse,
+    PieChartWidgetConfig,
     PublishDashboardResponse,
+    RadialBarChartWidgetConfig,
     SaveDraftLayoutsRequest,
     TableWidgetConfig,
+    TreemapChartWidgetConfig,
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
@@ -374,10 +383,11 @@ class DashboardRuntimeService:
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:
+        color = DashboardWidgetColorConfig(palette_id=DashboardWidgetPaletteId.ASKLAKE_DEFAULT)
         if widget_type == DashboardRuntimeWidgetType.METRIC:
             return MetricWidgetConfig(
                 aggregation=DashboardWidgetAggregation.COUNT,
-                color="#3b82f6",
+                color=color,
                 format=DashboardWidgetFormat.NUMBER,
                 value_key="value",
             )
@@ -386,20 +396,61 @@ class DashboardRuntimeService:
         if widget_type == DashboardRuntimeWidgetType.LINE_CHART:
             return LineChartWidgetConfig(
                 aggregation=DashboardWidgetAggregation.SUM,
-                color="#6366f1",
+                color=color,
+                curve=DashboardWidgetLineCurve.SMOOTH,
+                x_key="category",
+                y_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.AREA_CHART:
+            return AreaChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                stacked=False,
                 x_key="category",
                 y_key="value",
             )
         if widget_type == DashboardRuntimeWidgetType.DONUT_CHART:
             return DonutChartWidgetConfig(
                 aggregation=DashboardWidgetAggregation.SUM,
-                color="#8b5cf6",
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.PIE_CHART:
+            return PieChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                label_key="category",
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.RADIAL_BAR_CHART:
+            return RadialBarChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.AVG,
+                color=color,
+                format=DashboardWidgetFormat.PERCENT,
+                max=100,
+                min=0,
+                value_key="value",
+            )
+        if widget_type == DashboardRuntimeWidgetType.HEATMAP_CHART:
+            return HeatmapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
+                value_key="value",
+                x_key="category",
+                y_key="series",
+            )
+        if widget_type == DashboardRuntimeWidgetType.TREEMAP_CHART:
+            return TreemapChartWidgetConfig(
+                aggregation=DashboardWidgetAggregation.SUM,
+                color=color,
                 label_key="category",
                 value_key="value",
             )
         return BarChartWidgetConfig(
             aggregation=DashboardWidgetAggregation.SUM,
-            color="#6366f1",
+            color=color,
+            orientation=DashboardWidgetOrientation.VERTICAL,
             x_key="category",
             y_key="value",
         )

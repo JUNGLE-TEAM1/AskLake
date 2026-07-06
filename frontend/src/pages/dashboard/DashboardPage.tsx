@@ -63,11 +63,16 @@ type RuntimeNotice = {
 };
 
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
+  area_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   donut_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
+  heatmap_chart: { h: 5, minH: 3, minW: 4, w: 7, x: 0, y: 0 },
   line_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
+  pie_chart: { h: 5, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
+  radial_bar_chart: { h: 4, minH: 3, minW: 3, w: 4, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
+  treemap_chart: { h: 5, minH: 3, minW: 4, w: 6, x: 0, y: 0 },
 };
 
 export function DashboardPage({

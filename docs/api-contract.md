@@ -1077,14 +1077,29 @@ Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/pu
 공통 response:
 
 ```ts
-type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardRuntimeWidgetType =
+  | "metric"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "area_chart"
+  | "donut_chart"
+  | "pie_chart"
+  | "radial_bar_chart"
+  | "heatmap_chart"
+  | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
+type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
+
+type DashboardWidgetColorConfig = {
+  paletteId: DashboardWidgetPaletteId;
+  customColors?: string[];
+};
 
 type DashboardWidgetConfigBase = {
-  color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
@@ -1092,7 +1107,7 @@ type DashboardWidgetConfigBase = {
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -1106,34 +1121,84 @@ type TableWidgetConfig = DashboardWidgetConfigBase & {
 
 type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   groupKey?: string;
+  orientation?: "vertical" | "horizontal";
   xKey: string;
   yKey: string;
 };
 
 type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  curve?: "smooth" | "straight" | "stepline";
   dateUnit?: DashboardWidgetDateUnit;
   seriesKey?: string;
   xKey: string;
   yKey: string;
 };
 
+type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  stacked?: boolean;
+  xKey: string;
+  yKey: string;
+};
+
 type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  centerLabel?: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type PieChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  labelKey: string;
+  valueKey: string;
+};
+
+type RadialBarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  format?: DashboardWidgetFormat;
+  labelKey?: string;
+  max?: number;
+  min?: number;
+  valueKey: string;
+};
+
+type HeatmapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  valueKey: string;
+  xKey: string;
+  yKey: string;
+};
+
+type TreemapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
   labelKey: string;
   valueKey: string;
 };
 
 type DashboardRuntimeWidgetConfigByType = {
+  area_chart: AreaChartWidgetConfig;
   metric: MetricWidgetConfig;
   table: TableWidgetConfig;
   bar_chart: BarChartWidgetConfig;
   line_chart: LineChartWidgetConfig;
   donut_chart: DonutChartWidgetConfig;
+  pie_chart: PieChartWidgetConfig;
+  radial_bar_chart: RadialBarChartWidgetConfig;
+  heatmap_chart: HeatmapChartWidgetConfig;
+  treemap_chart: TreemapChartWidgetConfig;
 };
 
 type DashboardRuntimeWidget = {
@@ -1297,7 +1362,7 @@ Request:
     "xKey": "month",
     "yKey": "total_cost",
     "aggregation": "sum",
-    "color": "blue",
+    "color": { "paletteId": "asklake-default" },
     "description": "월 기준 총 물류비 추이"
   }
 }
@@ -1314,7 +1379,7 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
-기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`, common `color`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. 공통 색상 계약은 문자열이 아니라 `color: { paletteId, customColors? }` 객체입니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`, optional `orientation`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `curve`; `area_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `stacked`; `donut_chart`와 `pie_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`; `radial_bar_chart`는 `valueKey`, `aggregation`, `color`, optional `labelKey`, optional `min`, optional `max`, optional `format`; `heatmap_chart`는 `xKey`, `yKey`, `valueKey`, `aggregation`, `color`; `treemap_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다. 향후 AI widget 생성 기능은 이 type/config 계약을 그대로 재사용합니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
 dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
 
@@ -1334,7 +1399,7 @@ Request:
     "yKey": "total_cost",
     "aggregation": "sum",
     "dateUnit": "month",
-    "color": "blue",
+    "color": { "paletteId": "asklake-default" },
     "description": "월 기준 총 물류비 추이"
   }
 }

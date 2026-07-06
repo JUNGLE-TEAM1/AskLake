@@ -313,19 +313,33 @@ function updateLocalWidget(widget: DashboardRuntimeWidget, input: UpdateDraftWid
 }
 
 function defaultConfigForType(type: DashboardRuntimeWidgetType): Record<string, unknown> {
-  if (type === "metric") return { aggregation: "sum", color: "#2563eb", format: "number", valueKey: "value" };
+  const color = { paletteId: "asklake-default" };
+  if (type === "metric") return { aggregation: "sum", color, format: "number", valueKey: "value" };
   if (type === "table") return { columns: ["label", "value"], limit: 10 };
-  if (type === "donut_chart") return { aggregation: "sum", color: "#0f766e", labelKey: "label", valueKey: "value" };
-  return { aggregation: "sum", color: "#2563eb", xKey: "label", yKey: "value" };
+  if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
+    return { aggregation: "sum", color, labelKey: "label", valueKey: "value" };
+  }
+  if (type === "radial_bar_chart") {
+    return { aggregation: "avg", color, format: "percent", max: 100, min: 0, valueKey: "value" };
+  }
+  if (type === "heatmap_chart") {
+    return { aggregation: "sum", color, valueKey: "value", xKey: "label", yKey: "series" };
+  }
+  return { aggregation: "sum", color, xKey: "label", yKey: "value" };
 }
 
 function defaultTitleForType(type: DashboardRuntimeWidgetType) {
   return {
+    area_chart: "영역 차트",
     bar_chart: "막대 차트",
     donut_chart: "도넛 차트",
+    heatmap_chart: "히트맵",
     line_chart: "라인 차트",
     metric: "지표",
+    pie_chart: "파이 차트",
+    radial_bar_chart: "방사형 차트",
     table: "테이블",
+    treemap_chart: "트리맵",
   }[type];
 }
 

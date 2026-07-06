@@ -1,14 +1,7 @@
 import { Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
+import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
-
-const widgetTypeLabels: Record<DashboardRuntimeWidget["type"], string> = {
-  bar_chart: "막대 차트",
-  donut_chart: "도넛 차트",
-  line_chart: "라인 차트",
-  metric: "지표",
-  table: "테이블",
-};
 
 function clampSpan(value: number | undefined, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -52,7 +45,7 @@ export function WidgetFrame({
     >
       <header>
         <div>
-          <span>{widgetTypeLabels[widget.type]}</span>
+          <span>{dashboardWidgetDefinitions[widget.type].label}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         {editable && selected && (

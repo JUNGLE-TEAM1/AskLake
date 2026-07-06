@@ -2,15 +2,32 @@ export type DashboardRuntimeMode = "published" | "draft";
 export type DashboardView = "list" | "builder" | "detail" | "runtime";
 export type DashboardStatus = "draft" | "published";
 export type DashboardWidgetType = "kpi" | "bar" | "line" | "donut" | "table";
-export type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+export type DashboardRuntimeWidgetType =
+  | "metric"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "area_chart"
+  | "donut_chart"
+  | "pie_chart"
+  | "radial_bar_chart"
+  | "heatmap_chart"
+  | "treemap_chart";
 export type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 export type DashboardWidgetDateUnit = "day" | "month" | "year";
 export type DashboardWidgetFormat = "number" | "currency" | "percent";
+export type DashboardWidgetLineCurve = "smooth" | "straight" | "stepline";
+export type DashboardWidgetOrientation = "vertical" | "horizontal";
+export type DashboardWidgetPaletteId = "asklake-default" | "aurora" | "spectrum" | "signal" | "custom";
 export type DashboardWidgetSortDirection = "asc" | "desc";
 export type DashboardSortOption = "name-asc" | "name-desc" | "updated-asc" | "updated-desc" | "created-asc" | "created-desc";
 
+export type DashboardWidgetColorConfig = {
+  customColors?: string[];
+  paletteId: DashboardWidgetPaletteId;
+};
+
 export type DashboardWidgetConfigBase = {
-  color?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
@@ -18,7 +35,7 @@ export type DashboardWidgetConfigBase = {
 
 export type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -32,34 +49,84 @@ export type TableWidgetConfig = DashboardWidgetConfigBase & {
 
 export type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   groupKey?: string;
+  orientation?: DashboardWidgetOrientation;
   xKey: string;
   yKey: string;
 };
 
 export type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  curve?: DashboardWidgetLineCurve;
   dateUnit?: DashboardWidgetDateUnit;
   seriesKey?: string;
   xKey: string;
   yKey: string;
 };
 
+export type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  stacked?: boolean;
+  xKey: string;
+  yKey: string;
+};
+
 export type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  centerLabel?: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+export type PieChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  labelKey: string;
+  valueKey: string;
+};
+
+export type RadialBarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  format?: DashboardWidgetFormat;
+  labelKey?: string;
+  max?: number;
+  min?: number;
+  valueKey: string;
+};
+
+export type HeatmapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  valueKey: string;
+  xKey: string;
+  yKey: string;
+};
+
+export type TreemapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
   labelKey: string;
   valueKey: string;
 };
 
 export type DashboardRuntimeWidgetConfigByType = {
+  area_chart: AreaChartWidgetConfig;
   bar_chart: BarChartWidgetConfig;
   donut_chart: DonutChartWidgetConfig;
+  heatmap_chart: HeatmapChartWidgetConfig;
   line_chart: LineChartWidgetConfig;
   metric: MetricWidgetConfig;
+  pie_chart: PieChartWidgetConfig;
+  radial_bar_chart: RadialBarChartWidgetConfig;
   table: TableWidgetConfig;
+  treemap_chart: TreemapChartWidgetConfig;
 };
 
 export type DashboardRuntimeWidgetConfig = DashboardRuntimeWidgetConfigByType[DashboardRuntimeWidgetType];

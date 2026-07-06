@@ -4,40 +4,37 @@ import type {
   DashboardRuntimeWidgetConfig,
   DashboardRuntimeWidgetType,
   DashboardWidgetAggregation,
+  DashboardWidgetColorConfig,
   DashboardWidgetDateUnit,
   DashboardWidgetFormat,
+  DashboardWidgetLineCurve,
+  DashboardWidgetOrientation,
+  DashboardWidgetPaletteId,
   DashboardWidgetSortDirection,
 } from "../../../types";
 import type { CreateDraftWidgetFormInput, DashboardDatasetColumn, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import { dashboardWidgetColorPalettes, dashboardWidgetTypeOptions, defaultWidgetColorConfig } from "./widgetDefinitions";
 
 type WidgetConfigDraft = {
   aggregation?: DashboardWidgetAggregation;
   columns?: string[];
+  curve?: DashboardWidgetLineCurve;
   dateUnit?: DashboardWidgetDateUnit;
   format?: DashboardWidgetFormat;
+  groupKey?: string;
   labelKey?: string;
   limit?: number;
+  max?: number;
+  min?: number;
+  orientation?: DashboardWidgetOrientation;
+  seriesKey?: string;
   sortDirection?: DashboardWidgetSortDirection;
   sortKey?: string;
+  stacked?: boolean;
   valueKey?: string;
   xKey?: string;
   yKey?: string;
 };
-
-const widgetTypeOptions: Array<{ label: string; value: DashboardRuntimeWidgetType }> = [
-  { label: "지표", value: "metric" },
-  { label: "테이블", value: "table" },
-  { label: "막대 차트", value: "bar_chart" },
-  { label: "라인 차트", value: "line_chart" },
-  { label: "도넛 차트", value: "donut_chart" },
-];
-
-const colorOptions = [
-  { label: "Blue", value: "blue" },
-  { label: "Green", value: "green" },
-  { label: "Slate", value: "slate" },
-  { label: "Amber", value: "amber" },
-];
 
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
@@ -59,6 +56,17 @@ const dateUnitOptions: Array<{ label: string; value: DashboardWidgetDateUnit }> 
   { label: "일", value: "day" },
   { label: "월", value: "month" },
   { label: "년", value: "year" },
+];
+
+const curveOptions: Array<{ label: string; value: DashboardWidgetLineCurve }> = [
+  { label: "부드럽게", value: "smooth" },
+  { label: "직선", value: "straight" },
+  { label: "계단형", value: "stepline" },
+];
+
+const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientation }> = [
+  { label: "세로", value: "vertical" },
+  { label: "가로", value: "horizontal" },
 ];
 
 function columnNames(columns: DashboardDatasetColumn[]) {
@@ -89,17 +97,50 @@ function configStringArray(config: DashboardRuntimeWidgetConfig, key: string) {
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
+function configBoolean(config: DashboardRuntimeWidgetConfig, key: string) {
+  const value = configRecord(config)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function paletteIdValue(value: unknown): DashboardWidgetPaletteId {
+  const paletteIds = dashboardWidgetColorPalettes.map((palette) => palette.id);
+  return typeof value === "string" && paletteIds.includes(value as DashboardWidgetPaletteId)
+    ? value as DashboardWidgetPaletteId
+    : defaultWidgetColorConfig.paletteId;
+}
+
+function configColor(config: DashboardRuntimeWidgetConfig): DashboardWidgetColorConfig {
+  const value = configRecord(config).color;
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const customColors = Array.isArray(record.customColors)
+      ? record.customColors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : undefined;
+    return {
+      customColors,
+      paletteId: paletteIdValue(record.paletteId),
+    };
+  }
+  return defaultWidgetColorConfig;
+}
+
 function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
   const config = widget.config;
   return {
     aggregation: configString(config, "aggregation") as DashboardWidgetAggregation | undefined,
     columns: configStringArray(config, "columns"),
+    curve: configString(config, "curve") as DashboardWidgetLineCurve | undefined,
     dateUnit: configString(config, "dateUnit") as DashboardWidgetDateUnit | undefined,
     format: configString(config, "format") as DashboardWidgetFormat | undefined,
     labelKey: configString(config, "labelKey"),
     limit: configNumber(config, "limit"),
+    max: configNumber(config, "max"),
+    min: configNumber(config, "min"),
+    orientation: configString(config, "orientation") as DashboardWidgetOrientation | undefined,
+    seriesKey: configString(config, "seriesKey"),
     sortDirection: configString(config, "sortDirection") as DashboardWidgetSortDirection | undefined,
     sortKey: configString(config, "sortKey"),
+    stacked: configBoolean(config, "stacked"),
     valueKey: configString(config, "valueKey"),
     xKey: configString(config, "xKey"),
     yKey: configString(config, "yKey"),
@@ -114,28 +155,62 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   const timeColumns = allColumns.filter((column) => column.type === "date");
   const lineXAxisColumns = timeColumns.length ? timeColumns : dimensionColumns;
   const tableColumns = columnNames(allColumns.slice(0, 5));
+  const dimensionFallback = firstName(dimensionColumns);
+  const numericFallback = firstName(numericColumns);
+  const categoryFallback = firstName(categoricalColumns.length ? categoricalColumns : dimensionColumns);
 
   return {
+    area_chart: {
+      aggregation: "sum",
+      dateUnit: timeColumns.length ? "month" : undefined,
+      seriesKey: "",
+      stacked: false,
+      xKey: firstName(lineXAxisColumns),
+      yKey: numericFallback,
+    },
     bar_chart: {
       aggregation: "sum",
-      xKey: firstName(dimensionColumns),
-      yKey: firstName(numericColumns),
+      groupKey: "",
+      orientation: "vertical",
+      xKey: dimensionFallback,
+      yKey: numericFallback,
     },
     donut_chart: {
       aggregation: "sum",
-      labelKey: firstName(categoricalColumns.length ? categoricalColumns : dimensionColumns),
-      valueKey: firstName(numericColumns),
+      labelKey: categoryFallback,
+      valueKey: numericFallback,
+    },
+    heatmap_chart: {
+      aggregation: "sum",
+      valueKey: numericFallback,
+      xKey: dimensionFallback,
+      yKey: firstName(categoricalColumns.length > 1 ? categoricalColumns.slice(1) : dimensionColumns),
     },
     line_chart: {
       aggregation: "sum",
+      curve: "smooth",
       dateUnit: timeColumns.length ? "month" : undefined,
+      seriesKey: "",
       xKey: firstName(lineXAxisColumns),
-      yKey: firstName(numericColumns),
+      yKey: numericFallback,
     },
     metric: {
       aggregation: "sum",
       format: "number",
-      valueKey: firstName(numericColumns),
+      valueKey: numericFallback,
+    },
+    pie_chart: {
+      aggregation: "sum",
+      labelKey: categoryFallback,
+      valueKey: numericFallback,
+    },
+    radial_bar_chart: {
+      aggregation: "avg",
+      format: "percent",
+      labelKey: categoryFallback,
+      max: 100,
+      min: 0,
+      valueKey: numericFallback,
     },
     table: {
       columns: tableColumns,
@@ -143,23 +218,34 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
       sortDirection: "asc",
       sortKey: tableColumns[0] ?? "",
     },
+    treemap_chart: {
+      aggregation: "sum",
+      labelKey: categoryFallback,
+      valueKey: numericFallback,
+    },
   };
 }
 
 function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
   if (type === "metric" && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
-  if ((type === "bar_chart" || type === "line_chart") && (!config.xKey || !config.yKey)) {
+  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || !config.yKey)) {
     return "X축과 Y축 컬럼을 선택해 주세요.";
   }
-  if (type === "donut_chart" && (!config.labelKey || !config.valueKey)) return "분류와 값 컬럼을 선택해 주세요.";
+  if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || !config.valueKey)) {
+    return "분류와 값 컬럼을 선택해 주세요.";
+  }
+  if (type === "radial_bar_chart" && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "heatmap_chart" && (!config.xKey || !config.yKey || !config.valueKey)) {
+    return "X축, Y축, 값 컬럼을 선택해 주세요.";
+  }
   return null;
 }
 
 function buildConfig(
   type: DashboardRuntimeWidgetType,
   config: WidgetConfigDraft,
-  common: { color: string; description?: string },
+  common: { color: DashboardWidgetColorConfig; description?: string },
 ): DashboardRuntimeWidgetConfig {
   const base = {
     color: common.color,
@@ -177,8 +263,8 @@ function buildConfig(
 
   if (type === "table") {
     return {
-      ...base,
       columns: config.columns ?? [],
+      description: common.description,
       limit: config.limit,
       sortDirection: config.sortDirection,
       sortKey: config.sortKey || undefined,
@@ -189,13 +275,27 @@ function buildConfig(
     return {
       ...base,
       aggregation: config.aggregation ?? "sum",
+      curve: config.curve ?? "smooth",
       dateUnit: config.dateUnit,
+      seriesKey: config.seriesKey || undefined,
       xKey: config.xKey ?? "",
       yKey: config.yKey ?? "",
     };
   }
 
-  if (type === "donut_chart") {
+  if (type === "area_chart") {
+    return {
+      ...base,
+      aggregation: config.aggregation ?? "sum",
+      dateUnit: config.dateUnit,
+      seriesKey: config.seriesKey || undefined,
+      stacked: config.stacked ?? false,
+      xKey: config.xKey ?? "",
+      yKey: config.yKey ?? "",
+    };
+  }
+
+  if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
     return {
       ...base,
       aggregation: config.aggregation ?? "sum",
@@ -204,9 +304,33 @@ function buildConfig(
     };
   }
 
+  if (type === "radial_bar_chart") {
+    return {
+      ...base,
+      aggregation: config.aggregation ?? "avg",
+      format: config.format ?? "percent",
+      labelKey: config.labelKey || undefined,
+      max: config.max ?? 100,
+      min: config.min ?? 0,
+      valueKey: config.valueKey ?? "",
+    };
+  }
+
+  if (type === "heatmap_chart") {
+    return {
+      ...base,
+      aggregation: config.aggregation ?? "sum",
+      valueKey: config.valueKey ?? "",
+      xKey: config.xKey ?? "",
+      yKey: config.yKey ?? "",
+    };
+  }
+
   return {
     ...base,
     aggregation: config.aggregation ?? "sum",
+    groupKey: config.groupKey || undefined,
+    orientation: config.orientation ?? "vertical",
     xKey: config.xKey ?? "",
     yKey: config.yKey ?? "",
   };
@@ -231,7 +355,7 @@ export function WidgetConfigPanel({
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
 }) {
-  const [color, setColor] = useState("blue");
+  const [color, setColor] = useState<DashboardWidgetColorConfig>(defaultWidgetColorConfig);
   const [configsByType, setConfigsByType] = useState<Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>>>({});
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -261,7 +385,7 @@ export function WidgetConfigPanel({
       setType(editingWidget.type);
       setTitle(editingWidget.title ?? "");
       setDescription(configString(editingWidget.config, "description") ?? "");
-      setColor(configString(editingWidget.config, "color") ?? "blue");
+      setColor(configColor(editingWidget.config));
       setConfigsByType({
         ...(selectedDataset ? createDefaultConfigs(selectedDataset) : {}),
         [editingWidget.type]: configDraftFromWidget(editingWidget),
@@ -269,7 +393,7 @@ export function WidgetConfigPanel({
       return;
     }
 
-    setColor("blue");
+    setColor(defaultWidgetColorConfig);
     setDescription("");
     setTitle("");
     setType("bar_chart");
@@ -388,17 +512,20 @@ export function WidgetConfigPanel({
         <label>
           <span>위젯 타입</span>
           <select value={type} onChange={(event) => setType(event.target.value as DashboardRuntimeWidgetType)}>
-            {widgetTypeOptions.map((option) => (
+            {dashboardWidgetTypeOptions.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
             ))}
           </select>
         </label>
 
         <label>
-          <span>색상</span>
-          <select value={color} onChange={(event) => setColor(event.target.value)}>
-            {colorOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+          <span>색상 팔레트</span>
+          <select
+            value={color.paletteId}
+            onChange={(event) => setColor({ paletteId: event.target.value as DashboardWidgetPaletteId })}
+          >
+            {dashboardWidgetColorPalettes.map((palette) => (
+              <option key={palette.id} value={palette.id}>{palette.label}</option>
             ))}
           </select>
         </label>
@@ -475,7 +602,7 @@ export function WidgetConfigPanel({
           </>
         )}
 
-        {(type === "bar_chart" || type === "line_chart") && (
+        {(type === "bar_chart" || type === "line_chart" || type === "area_chart") && (
           <>
             <label>
               <span>X축</span>
@@ -501,7 +628,38 @@ export function WidgetConfigPanel({
                 ))}
               </select>
             </label>
-            {type === "line_chart" && (
+            {type === "bar_chart" && (
+              <>
+                <label>
+                  <span>그룹 컬럼</span>
+                  <select value={currentConfig.groupKey ?? ""} onChange={(event) => patchCurrentConfig({ groupKey: event.target.value })}>
+                    <option value="">선택 안 함</option>
+                    {columnGroups.dimensionColumns.map((column) => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>방향</span>
+                  <select value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
+                    {orientationOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+            {(type === "line_chart" || type === "area_chart") && (
+              <>
+                <label>
+                  <span>시리즈 컬럼</span>
+                  <select value={currentConfig.seriesKey ?? ""} onChange={(event) => patchCurrentConfig({ seriesKey: event.target.value })}>
+                    <option value="">선택 안 함</option>
+                    {columnGroups.dimensionColumns.map((column) => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </label>
               <label>
                 <span>날짜 단위</span>
                 <select value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
@@ -510,11 +668,32 @@ export function WidgetConfigPanel({
                   ))}
                 </select>
               </label>
+              </>
+            )}
+            {type === "line_chart" && (
+              <label>
+                <span>선 모양</span>
+                <select value={currentConfig.curve ?? "smooth"} onChange={(event) => patchCurrentConfig({ curve: event.target.value as DashboardWidgetLineCurve })}>
+                  {curveOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {type === "area_chart" && (
+              <label className="asklake-widget-checkbox-row">
+                <input
+                  checked={currentConfig.stacked ?? false}
+                  type="checkbox"
+                  onChange={(event) => patchCurrentConfig({ stacked: event.target.checked })}
+                />
+                <span>누적 영역으로 표시</span>
+              </label>
             )}
           </>
         )}
 
-        {type === "donut_chart" && (
+        {(type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (
           <>
             <label>
               <span>분류</span>
@@ -536,6 +715,81 @@ export function WidgetConfigPanel({
               <span>집계 방식</span>
               <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {donutAggregationOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+
+        {type === "radial_bar_chart" && (
+          <>
+            <label>
+              <span>값</span>
+              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+                {columnGroups.numericColumns.map((column) => (
+                  <option key={column.name} value={column.name}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>분류</span>
+              <select value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
+                <option value="">선택 안 함</option>
+                {columnGroups.dimensionColumns.map((column) => (
+                  <option key={column.name} value={column.name}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>집계 방식</span>
+              <select value={currentConfig.aggregation ?? "avg"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+                {aggregationOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>최솟값</span>
+              <input type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
+            </label>
+            <label>
+              <span>최댓값</span>
+              <input type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
+            </label>
+          </>
+        )}
+
+        {type === "heatmap_chart" && (
+          <>
+            <label>
+              <span>X축</span>
+              <select value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+                {columnGroups.dimensionColumns.map((column) => (
+                  <option key={column.name} value={column.name}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Y축</span>
+              <select value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+                {columnGroups.dimensionColumns.map((column) => (
+                  <option key={column.name} value={column.name}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>값</span>
+              <select value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+                {columnGroups.numericColumns.map((column) => (
+                  <option key={column.name} value={column.name}>{column.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>집계 방식</span>
+              <select value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+                {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
