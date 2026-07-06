@@ -1,5 +1,4 @@
 import type React from "react";
-import { Filter } from "lucide-react";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 
@@ -122,9 +121,6 @@ export function DashboardRuntimeShell({
         >
           <span aria-hidden="true">▦</span>
           데이터
-        </button>
-        <button className="asklake-dashboard-filter-button" type="button" aria-label="필터">
-          <Filter size={17} />
         </button>
         <DashboardPageTabs
           isAddingPage={isAddingPage}

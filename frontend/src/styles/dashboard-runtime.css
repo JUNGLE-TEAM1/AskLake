@@ -154,7 +154,6 @@
 .asklake-dashboard-action:focus-visible,
 .asklake-dashboard-icon-action:focus-visible,
 .asklake-dashboard-data-tab:focus-visible,
-.asklake-dashboard-filter-button:focus-visible,
 .asklake-dashboard-tab-button:focus-visible,
 .asklake-dashboard-tab-edit input:focus-visible,
 .asklake-dashboard-tab-edit button:focus-visible,
@@ -182,7 +181,6 @@
 
 .asklake-dashboard-action:hover,
 .asklake-dashboard-icon-action:hover,
-.asklake-dashboard-filter-button:hover,
 .asklake-dashboard-page-tab:hover,
 .asklake-dashboard-tab-add:hover {
   border-color: #94a3b8;
@@ -298,17 +296,6 @@
   color: #475569;
   font-size: 17px;
   line-height: 1;
-}
-
-.asklake-dashboard-filter-button {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #64748b;
 }
 
 .asklake-dashboard-tabs {
