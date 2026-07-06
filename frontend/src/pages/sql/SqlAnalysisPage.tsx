@@ -70,6 +70,7 @@ const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
 
 export function SqlAnalysisPage({
+  cachedResult,
   dataset,
   datasets,
   onAction,
@@ -77,6 +78,7 @@ export function SqlAnalysisPage({
   onCreateDerivedDataset,
   onResultChange,
 }: {
+  cachedResult?: SqlResultDraft | null;
   dataset: CatalogDataset;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -178,11 +180,15 @@ export function SqlAnalysisPage({
   const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
   const contextPageStartIndex = (currentContextPage - 1) * SQL_CONTEXT_PAGE_SIZE;
   const paginatedContextDatasets = filteredDatasets.slice(contextPageStartIndex, contextPageStartIndex + SQL_CONTEXT_PAGE_SIZE);
+  const cachedResultBaseDatasetId = cachedResult ? cachedResult.baseDatasetId ?? cachedResult.datasetId : null;
+  const canRestoreCachedResult = Boolean(cachedResult && cachedResultBaseDatasetId === baseDataset.id);
   useEffect(() => {
     setBaseDatasetId(dataset.id);
   }, [dataset.id]);
 
   useEffect(() => {
+    if (canRestoreCachedResult) return;
+
     setExecuted(false);
     setQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
@@ -198,7 +204,22 @@ export function SqlAnalysisPage({
     setOpenSchemaDatasetId(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
-  }, [baseDataset.id, defaultQuery]);
+  }, [baseDataset.id, canRestoreCachedResult, defaultQuery]);
+
+  useEffect(() => {
+    if (!cachedResult || !canRestoreCachedResult) return;
+
+    const cachedReferences = (cachedResult.referenceDatasetIds ?? []).filter((id) => id !== baseDataset.id);
+
+    setExecuted(true);
+    setQuery(cachedResult.query);
+    setCursorIndex(cachedResult.query.length);
+    setReferenceDatasetIds(cachedReferences);
+    setResultDraft(cachedResult);
+    setExecutionMs(null);
+    setDerivedDatasetDraft(null);
+    setMaterializeDialogOpen(false);
+  }, [baseDataset.id, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
@@ -685,6 +706,8 @@ export function SqlAnalysisPage({
                 <span>
                   Run ID {resultDraft.runId}
                   {resultDraft.previewLimit ? ` · Preview ${resultDraft.previewLimit} rows` : ""}
+                  {` · ${resultDraft.rows.length}/${resultDraft.rowCount} rows shown · ${resultDraft.columns.length} columns`}
+                  {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
                 </span>
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
@@ -1323,4 +1346,11 @@ function escapeCsvCell(value: string) {
 function formatDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatResultTimestamp(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "executed";
+
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
