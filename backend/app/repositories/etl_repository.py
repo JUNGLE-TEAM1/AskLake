@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.models.base import Base
+from app.repositories.catalog_repository import ensure_catalog_schema
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
 
 _schema_ready_bind_ids: set[int] = set()
@@ -30,6 +31,7 @@ def ensure_schema(db: Session) -> None:
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
 
+    ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
 
 
@@ -206,26 +208,51 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
 
 
 def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
+    if dataset.payload and dataset.name is None:
+        payload = dataset.payload
+        return CatalogDataset(
+            id=str(payload.get("id") or dataset.id),
+            name=str(payload.get("name") or dataset.id),
+            description=str(payload.get("description") or ""),
+            owner=str(payload.get("owner") or ""),
+            layer=payload.get("layer") or "RAW",
+            status=payload.get("status") or "available",
+            freshness=payload.get("freshness") or "latest",
+            source=str(payload.get("source") or ""),
+            rows=str(payload.get("rows") or "0"),
+            size=str(payload.get("size") or "Pending"),
+            quality=str(payload.get("quality") or "확인 대기"),
+            last_updated=str(payload.get("lastUpdated") or ""),
+            next_refresh=str(payload.get("nextRefresh") or "-"),
+            rag=bool(payload.get("rag")),
+            tags=payload.get("tags") or [],
+            schema_=payload.get("schema") or [],
+            sample_rows=payload.get("sampleRows") or [],
+            upstream=payload.get("upstream") or [],
+            downstream=payload.get("downstream") or [],
+            lineage_graph=payload.get("lineageGraph"),
+        )
+
     return CatalogDataset(
         id=dataset.id,
-        name=dataset.name,
-        description=dataset.description,
-        owner=dataset.owner,
-        layer=dataset.layer,
-        status=dataset.status,
-        freshness=dataset.freshness,
-        source=dataset.source,
-        rows=dataset.rows,
-        size=dataset.size,
-        quality=dataset.quality,
-        last_updated=dataset.last_updated,
-        next_refresh=dataset.next_refresh,
-        rag=dataset.rag,
-        tags=dataset.tags,
-        schema_=dataset.schema_json,
-        sample_rows=dataset.sample_rows,
-        upstream=dataset.upstream,
-        downstream=dataset.downstream,
+        name=dataset.name or dataset.id,
+        description=dataset.description or "",
+        owner=dataset.owner or "",
+        layer=dataset.layer or "RAW",
+        status=dataset.status or "available",
+        freshness=dataset.freshness or "latest",
+        source=dataset.source or "",
+        rows=dataset.rows or "0",
+        size=dataset.size or "Pending",
+        quality=dataset.quality or "확인 대기",
+        last_updated=dataset.last_updated or "",
+        next_refresh=dataset.next_refresh or "-",
+        rag=bool(dataset.rag),
+        tags=dataset.tags or [],
+        schema_=dataset.schema_json or [],
+        sample_rows=dataset.sample_rows or [],
+        upstream=dataset.upstream or [],
+        downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
     )
 
