@@ -193,6 +193,7 @@ Pair3 FastAPI 구현은 아래 순서로 분리한다.
 Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
 Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
 두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
+구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 9. 아직 실제 저장되지 않는 기능
 
