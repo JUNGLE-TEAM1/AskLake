@@ -86,6 +86,16 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 현재 FastAPI SQL Preview는 물리 DB를 직접 조회하지 않고 Catalog payload의 `sampleRows`를 사용한다.
 따라서 `orders_clean`의 catalog `schema`/`sampleRows`와 PostgreSQL fixture row는 같은 seed 기준으로 맞춘다.
 
+다른 demo 후보를 무시하지는 않는다.
+다만 모든 후보를 배포 성공 조건으로 삼으면 초기 배포가 무거워지므로, 아래처럼 우선순위를 나눈다.
+
+| 우선순위 | 범위 | 판단 기준 |
+| --- | --- | --- |
+| P0 | `orders_clean` Catalog, SQL Preview, 처리 Job 생성, Catalog 재확인 | 발표 메인 흐름이므로 반드시 통과해야 한다. |
+| P1 | `customers`, `user_activity`, MongoDB `customer_reviews`, `app_events`, dashboard preview | 보조 시연과 회귀 테스트에 넣는다. |
+| P2 | 기존 mock catalog 후보 전체 | seed 후보 registry에 남기고 시간이 될 때 확장한다. |
+| P3 | MinIO/S3, auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
+
 ## 처음 한 번 할 일
 
 아래 작업은 최초 세팅 때 한 번만 한다.

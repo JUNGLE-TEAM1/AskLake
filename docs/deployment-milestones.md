@@ -282,6 +282,49 @@ MongoDB sample document shape:
 }
 ```
 
+Fixture coverage 원칙:
+
+- P0는 배포 성공 조건이다. 실패하면 배포 완료로 보지 않는다.
+- P1은 seed/reset과 QA에 가능하면 포함한다. 실패해도 메인 발표 flow를 막지는 않는다.
+- P2는 기존 mock/demo 자산을 잃지 않기 위한 registry다. Phase 7 구현 때 시간이 남으면 확장한다.
+- P3는 이번 EC2 demo 배포 이후 별도 milestone으로 넘긴다.
+
+전체 coverage matrix:
+
+| Priority | 영역 | 대상 | 용도 |
+| --- | --- | --- | --- |
+| P0 | Catalog/Search | `ds_orders_clean` / `orders_clean` | 메인 dataset 검색과 상세 확인 |
+| P0 | Lineage | `ds_orders_clean.lineageGraph` | Catalog lineage 확인 |
+| P0 | SQL Preview | `orders_clean` | `SELECT ... FROM orders_clean LIMIT 100` |
+| P0 | SQL Derived | `orders_clean_analysis` 또는 suffix dataset | SQL 결과를 Lake Dataset으로 저장 |
+| P0 | ETL/Job | SQL Result 처리 Job | SQL 분석에서 Review/Job 생성으로 이어지는 흐름 |
+| P1 | PostgreSQL source | `customers` | 추후 join/query context 확장 후보 |
+| P1 | PostgreSQL source | `user_activity` | 이벤트/품질/스키마 preview 후보 |
+| P1 | MongoDB source | `customer_reviews` | document source schema inference 후보 |
+| P1 | MongoDB source | `app_events` | nested document schema 후보 |
+| P1 | Dashboard | `orders_clean` 또는 derived dataset 기반 widget | 배포 후 dashboard runtime smoke 후보 |
+| P2 | Existing mock catalog | frontend mock dataset 후보 전체 | seed 후보 보관, UI fallback 비교 |
+| P3 | External storage | MinIO/S3 | 이번 기본 배포에서는 optional |
+| P3 | Ops | auth, backup, monitoring, production scheduler | 데모 안정화 뒤 별도 작업 |
+
+기존 mock/demo catalog 후보 registry:
+
+| Dataset | Existing id | Seed priority | 비고 |
+| --- | --- | --- | --- |
+| `orders_clean` | `ds_customer_orders_gold` / FastAPI seed `ds_orders_clean` | P0 | id 정합성은 Phase 7에서 `ds_orders_clean` 기준으로 통일한다. |
+| `user_activity` | `ds_user_activity` | P1 | 품질/스키마 오류 예시 후보 |
+| `clickstream_events` | `ds_clickstream_events` | P2 | event source 후보 |
+| `sales_daily_summary` | `ds_sales_daily_summary` | P2 | dashboard/chart 후보 |
+| `customer_review_gold` | `ds_customer_review_gold` | P2 | review/sentiment/RAG 후보 |
+| `product_health_gold` | `ds_product_health_gold` | P2 | product health dashboard 후보 |
+| `inventory_snapshot` | `ds_inventory_snapshot` | P2 | inventory dashboard 후보 |
+| `marketing_attribution_mart` | `ds_marketing_attribution_mart` | P2 | marketing dashboard 후보 |
+| `support_ticket_clean` | `ds_support_ticket_clean` | P2 | support/customer ops 후보 |
+| `revenue_forecast_gold` | `ds_revenue_forecast_gold` | P2 | forecast dashboard 후보 |
+| `Logistics Cost Overview` | `gold_logistics_cost_overview` | P2 | FastAPI demo catalog fallback 후보 |
+| `Shipment Performance` | `gold_shipment_performance` | P2 | FastAPI demo catalog fallback 후보 |
+| `Inventory Status` | `gold_inventory_status` | P2 | FastAPI demo catalog fallback 후보 |
+
 Catalog demo dataset 매핑:
 
 | Catalog dataset | Physical fixture | Lineage source node | 비고 |
