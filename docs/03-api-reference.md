@@ -224,8 +224,6 @@ type DashboardRuntimeResponse = {
 
 Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 표시값을 계산한다.
 
-`DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
-
 ### Pair A -> Pair B
 
 ```ts

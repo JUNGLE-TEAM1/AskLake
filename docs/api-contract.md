@@ -835,9 +835,9 @@ Runtime lane은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` �
 | --- | --- | --- | --- |
 | `dashboards` | card/list | 목록 card의 source of truth | `id`, `name`, `owner`, `status`, `dataset_id`, `source_run_id`, `published_revision_id`, `has_published_revision`, `created_at`, `updated_at`, `payload` |
 | `dashboard_tags` | card/list | 목록 필터용 tag normalize | `dashboard_id`, `tag` |
-| `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at`, `updated_at` |
-| `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index`, `created_at`, `updated_at` |
-| `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data`, `created_at`, `updated_at` |
+| `dashboard_revisions` | runtime | draft/published snapshot 단위 | `id`, `dashboard_id`, `kind`, `version`, `published_at`, `created_at` |
+| `dashboard_pages` | runtime | revision 안의 page | `id`, `revision_id`, `title`, `order_index` |
+| `dashboard_widgets` | runtime | page 안의 widget snapshot | `id`, `page_id`, `type`, `title`, `dataset_id`, `query_id`, `layout`, `config`, `data` |
 
 `layout`, `config`, `data`, dashboard card의 보조 payload는 PostgreSQL JSONB 후보로 둔다.
 API response field는 `camelCase`, DB column은 `snake_case`를 사용한다.
@@ -858,7 +858,7 @@ POST /api/dashboards/{dashboardId}/publish
 ↓
 draft snapshot을 새 published revision으로 복사
 ↓
-dashboards.published_revision_id, has_published_revision, status, updated_at, payload 갱신
+dashboards.published_revision_id, has_published_revision, status, updated_at 갱신
 ```
 
 published revision이 없는 dashboard의 published 조회는 오류가 아니라 빈 runtime 응답으로 처리한다.
@@ -930,7 +930,6 @@ type DashboardListResponse = {
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
 서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
-삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
@@ -1051,7 +1050,6 @@ Response `200 OK`:
 
 Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/published revision snapshot을 저장합니다.
 현재 demo API는 PostgreSQL JSONB 기반 서버 스타일에 맞춰 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`, `dashboard_tags` 테이블을 idempotent하게 생성합니다.
-Runtime endpoint는 조회/수정 전에 runtime table을 생성하고 `TimestampMixin.updated_at` 등 누락 컬럼을 보강합니다.
 
 공통 response:
 
@@ -1387,7 +1385,7 @@ Response `200 OK`:
 
 1. 현재 draft revision을 깊은 복사합니다.
 2. 새 revision을 `kind = "published"`로 저장합니다.
-3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updated`, `updatedAtValue`와 `dashboards.updated_at`를 갱신합니다.
+3. dashboard card payload의 `publishedRevisionId`, `hasPublishedRevision`, `status`, `updatedAtValue`를 갱신합니다.
 
 Draft editor에서 page를 추가/삭제하거나 widget layout을 바꾼 뒤 이 endpoint를 호출하면, 그 시점의 draft pages/widgets가 published viewer의 `GET /api/dashboards/{dashboardId}/published` 응답에 반영됩니다.
 

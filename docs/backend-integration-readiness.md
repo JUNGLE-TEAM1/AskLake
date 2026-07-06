@@ -163,7 +163,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | --- | --- | --- |
 | 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
 | 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
-| 목록 삭제 | 확인 후 dashboard와 runtime snapshot 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| 목록 삭제 | 확인 후 dashboard 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
 | Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
 | Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
 | Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
@@ -193,7 +193,6 @@ Pair3 FastAPI 구현은 아래 순서로 분리한다.
 Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
 Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
 두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
-Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
 구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 9. 아직 실제 저장되지 않는 기능
