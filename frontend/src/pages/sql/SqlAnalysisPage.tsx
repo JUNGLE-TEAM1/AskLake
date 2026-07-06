@@ -80,6 +80,7 @@ export function SqlAnalysisPage({
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
+  const skipNextBaseDatasetResetRef = useRef(false);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -156,6 +157,11 @@ export function SqlAnalysisPage({
   }, [dataset.id]);
 
   useEffect(() => {
+    if (skipNextBaseDatasetResetRef.current) {
+      skipNextBaseDatasetResetRef.current = false;
+      return;
+    }
+
     if (canRestoreCachedResult) return;
 
     setExecuted(false);
@@ -381,13 +387,7 @@ export function SqlAnalysisPage({
     const nextReferenceDatasetIds = nextSelectedIds.filter((id) => id !== nextBaseDatasetId);
 
     if (targetDataset.id === baseDataset.id) {
-      const nextBaseDataset = selectedContextDatasets.find((item) => item.id === nextBaseDatasetId)
-        ?? datasets.find((item) => item.id === nextBaseDatasetId);
-      if (nextBaseDataset) {
-        const nextDefaultQuery = buildDefaultQuery(nextBaseDataset);
-        setQuery(nextDefaultQuery);
-        setCursorIndex(nextDefaultQuery.length);
-      }
+      skipNextBaseDatasetResetRef.current = true;
       setBaseDatasetId(nextBaseDatasetId);
     }
 
