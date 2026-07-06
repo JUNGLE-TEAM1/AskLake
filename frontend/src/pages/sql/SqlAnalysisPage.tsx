@@ -861,6 +861,10 @@ type SqlPreviewRow = {
 
 function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
+  useEffect(() => {
+    setPagination({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
+  }, [resultDraft.runId]);
+
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => ({
       accessorFn: (row) => row.cells[index] ?? "",
