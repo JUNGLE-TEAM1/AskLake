@@ -9,7 +9,7 @@
 }
 
 .sql-page.schema-open {
-  grid-template-columns: clamp(280px, 20vw, 320px) minmax(420px, 1fr) clamp(260px, 18vw, 300px);
+  grid-template-columns: clamp(280px, 20vw, 320px) minmax(360px, 1fr) clamp(260px, 18vw, 300px);
 }
 
 .sql-page.context-collapsed {
@@ -205,6 +205,7 @@
 }
 
 .sql-base-table,
+.sql-query-context,
 .sql-dataset-search-results,
 .sql-dataset-metrics,
 .sql-workspace {
@@ -265,10 +266,32 @@
   flex: 0 0 auto;
 }
 
-.sql-base-table h2 {
+.sql-base-table h2,
+.sql-query-context h2 {
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
+}
+
+.sql-query-context {
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 12px;
+}
+
+.sql-query-context .sql-section-heading span {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.sql-query-context-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
 .sql-table-card {
@@ -581,10 +604,12 @@
 }
 
 .sql-page-header p {
+  min-width: 0;
   max-width: 680px;
   color: #64748b;
   font-size: 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .sql-editor-card,

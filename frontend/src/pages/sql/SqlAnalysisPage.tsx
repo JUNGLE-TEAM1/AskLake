@@ -168,6 +168,12 @@ export function SqlAnalysisPage({
 
     return searchableDatasets;
   }, [baseDataset.id, datasetSearch, datasets, referenceDatasetIdSet, showReferencedOnly]);
+  const referencedDatasets = useMemo(
+    () => referenceDatasetIds
+      .map((id) => datasets.find((item) => item.id === id))
+      .filter((item): item is CatalogDataset => Boolean(item)),
+    [datasets, referenceDatasetIds],
+  );
   const totalContextPages = Math.max(1, Math.ceil(filteredDatasets.length / SQL_CONTEXT_PAGE_SIZE));
   const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
   const contextPageStartIndex = (currentContextPage - 1) * SQL_CONTEXT_PAGE_SIZE;
@@ -501,15 +507,32 @@ export function SqlAnalysisPage({
               </span>
             </div>
           </div>
-          <section className="sql-base-table">
-            <h2>BASE DATASET</h2>
-            <SqlDatasetRow
-              dataset={baseDataset}
-              selected={openSchemaDatasetId === baseDataset.id}
-              isBase
-              onInsert={insertTableName}
-              onSchemaSelect={selectSchemaDataset}
-            />
+          <section className="sql-query-context">
+            <div className="sql-section-heading">
+              <h2>현재 쿼리 데이터셋</h2>
+              <span>{1 + referencedDatasets.length} tables</span>
+            </div>
+            <div className="sql-query-context-list">
+              <SqlDatasetRow
+                dataset={baseDataset}
+                selected={openSchemaDatasetId === baseDataset.id}
+                isBase
+                onInsert={insertTableName}
+                onSchemaSelect={selectSchemaDataset}
+              />
+              {referencedDatasets.map((item) => (
+                <SqlDatasetRow
+                  dataset={item}
+                  selected={openSchemaDatasetId === item.id}
+                  isReferenced
+                  key={item.id}
+                  onBaseChange={changeBaseDataset}
+                  onInsert={insertTableName}
+                  onReferenceToggle={toggleReferenceDataset}
+                  onSchemaSelect={selectSchemaDataset}
+                />
+              ))}
+            </div>
           </section>
           <label className="sql-context-search">
             <Search size={15} />
@@ -521,7 +544,7 @@ export function SqlAnalysisPage({
           </label>
           <section className="sql-dataset-search-results">
             <div className="sql-section-heading">
-              <h2>table search</h2>
+              <h2>데이터셋/필드 검색</h2>
               <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
                 {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
               </button>
