@@ -165,12 +165,12 @@ Browser smoke:
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
-| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 Catalog Dataset 생성. mock mode에서는 localStorage fallback 유지 | `POST /api/catalog/derived-datasets` |
+| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 현재 UI에서는 ETL Review draft로 넘겨 처리 Job 생성을 준비한다. backend direct materialize API는 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
-| 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 datasets state에 prepend하고 mock mode에서는 `asklake.catalogDatasets`에서 재hydrate하며 SQL 화면 context는 유지 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
+| 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 SQL Result source의 `DraftPipeline`을 만들고 Review에서 기존 Job 생성 경로를 사용한다. direct materialize API 응답을 Catalog에 반영하는 경로는 backend 호환으로 유지 | `POST /api/etl/jobs` 또는 `POST /api/catalog/derived-datasets` |
 
-Mock mode에서는 수집/처리 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다. Live API mode에서는 localStorage fallback을 쓰지 않고 backend catalog persistence와 `GET /api/catalog/datasets` hydrate를 source of truth로 둡니다.
+Mock mode에서는 수집/처리 pipeline 생성 dataset과 backend direct SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다. 현재 SQL 화면의 처리 Job 생성 UI는 direct dataset write 대신 ETL Review draft를 만들고, Review 생성 이후 pipeline 생성 dataset 경로를 사용합니다. SQL Result source로 생성된 mock dataset은 Preview schema, sample rows, sourceRunId, query summary를 Catalog metadata에 보존합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다. Live API mode에서는 localStorage fallback을 쓰지 않고 backend catalog persistence와 `GET /api/catalog/datasets` hydrate를 source of truth로 둡니다. SQL Result 처리 Job은 생성 직후 Job 목록에 먼저 반영되고, run 성공 후 backend가 반환/저장한 Catalog dataset이 hydrate됩니다.
 
 FastAPI Catalog persistence는 `catalog_datasets.payload`를 canonical dataset 계약으로 사용합니다. Spark run 성공으로 생성된 ETL dataset과 SQL derived dataset은 같은 payload shape로 저장하며, payload가 없는 기존 컬럼 기반 row는 목록/상세 조회에서 payload shape로 변환해 읽기 호환만 유지합니다. 두 생성 경로 모두 `size`는 표시용 저장 크기 문자열로 사용하고, 물리 저장 정보는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 둡니다. ETL dataset은 source -> Spark job -> target 기본 `lineageGraph`를 저장하고, SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 
@@ -182,7 +182,8 @@ Pair2 FastAPI 5단계 완료 기준:
 - live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
-- Lake Dataset 생성은 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
+- SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
+- Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
 
 ## 8. 대시보드

@@ -637,6 +637,7 @@ Validation:
 - `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
+- 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
@@ -655,6 +656,7 @@ Validation:
 프론트 함수:
 
 - `createDerivedDatasetFromSql({ request, sourceDataset, sqlResult })`
+- 현재 SQL 화면의 `처리 Job 생성` UI는 `prepareSqlDatasetJobDraft(request)`로 같은 metadata를 ETL `DraftPipeline`에 주입한 뒤 Review 화면에서 `POST /api/etl/jobs`를 호출한다.
 
 Request:
 
@@ -706,6 +708,8 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 프론트 기대 동작:
 
+- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명/태그/레이어/RAG 여부와 `sourceRunId`, `query`, `referenceDatasetIds`를 보존한 ETL Review draft를 만든다.
+- Review에서 `파이프라인 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
 - 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
 - mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.

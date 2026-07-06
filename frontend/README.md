@@ -1,6 +1,6 @@
 # AskLake Frontend
 
-AskLake frontend is a React/Vite app for the data lake workflow. It expects a backend at `VITE_API_BASE_URL`; source tests, schema inference, pipeline creation, job commands, and SQL runs all go through backend endpoints.
+AskLake frontend is a React/Vite app for the data lake workflow. By default it runs in frontend mock mode. Set `VITE_USE_MOCK_API=false` when you want source tests, schema inference, pipeline creation, job commands, and SQL runs to go through the backend at `VITE_API_BASE_URL`.
 
 ## Run
 
@@ -8,10 +8,13 @@ AskLake frontend is a React/Vite app for the data lake workflow. It expects a ba
 cd frontend
 npm install
 $env:VITE_API_BASE_URL = "http://localhost:8080"
+$env:VITE_USE_MOCK_API = "false"
 npm run dev
 ```
 
 Vite prints the local URL after startup.
+
+For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`.
 
 ## Build
 
@@ -24,6 +27,7 @@ npm run build
 
 ```powershell
 VITE_API_BASE_URL=http://localhost:8080
+VITE_USE_MOCK_API=false
 ```
 
 Restart the dev server after changing environment variables.
@@ -66,4 +70,4 @@ frontend/src/
 6. The backend returns `{ job, catalogTarget }`; the UI prepends the job to ETL state.
 7. Run the job. After Spark succeeds, the command response returns `dataset` and the UI prepends it to Catalog state.
 
-Initial ETL and Catalog lists come from backend hydrate endpoints and start empty.
+In live mode, initial ETL and Catalog lists come from backend hydrate endpoints and may start empty. In mock mode, the UI uses frontend fixtures and local fallback storage.

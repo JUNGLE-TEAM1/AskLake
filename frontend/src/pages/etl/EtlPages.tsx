@@ -219,6 +219,7 @@ const sourceTypeLabels: Record<string, string> = {
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
+  "SQL Result": "SQL Result",
   "Stream / Kafka": "스트림 / Kafka",
 };
 
@@ -253,12 +254,20 @@ const sourceFieldLabels: Record<string, string> = {
   "Password / Auth Token": "비밀번호 / 인증 토큰",
   Path: "경로",
   "Path / Prefix": "경로 / 프리픽스",
+  "Preview Limit": "Preview 제한",
+  "Preview Row Count": "Preview 행 수",
   Port: "포트",
+  Query: "SQL Query",
+  "Reference Dataset IDs": "참조 데이터셋 ID",
   Region: "리전",
   Response: "응답",
   Result: "결과",
   Schema: "스키마",
   "Secret Key": "시크릿 키",
+  "Source Dataset": "원본 데이터셋",
+  "Source Dataset ID": "원본 데이터셋 ID",
+  "SQL Preview": "SQL Preview",
+  "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
   Table: "테이블",
@@ -317,8 +326,14 @@ const sourceValueLabels: Record<string, string> = {
   "Not tested": "미테스트",
   Pending: "대기",
   Reachable: "접근 가능",
+  "read-only": "읽기 전용",
   Required: "필수",
+  "Read-only": "읽기 전용",
   sampled: "샘플링됨",
+  skipped: "생략",
+  Skipped: "생략",
+  verified: "검증됨",
+  Verified: "검증됨",
 };
 
 const sourceActionLabels: Record<string, string> = {
@@ -667,6 +682,7 @@ export function SourceConnectionPage({
     MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
     "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
     "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
     "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
@@ -684,6 +700,29 @@ export function SourceConnectionPage({
     actions?: string[];
     info?: string;
   }> = {
+    "SQL Result": {
+      title: "SQL 결과 입력",
+      description: "SQL Preview 결과와 query/run metadata를 처리 Job 입력으로 사용합니다.",
+      fields: [
+        ["Source Dataset", ""],
+        ["Source Dataset ID", ""],
+        ["SQL Run ID", ""],
+        ["Preview Limit", "100"],
+        ["Preview Row Count", ""],
+        ["Reference Dataset IDs", "-"],
+        ["Validation Key", "-"],
+        ["Query", ""],
+      ],
+      testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
+      logs: ["SQL Preview 결과가 이미 검증되어 소스 연결 단계를 생략합니다.", "Review에서 Job 생성 후 실행 정책과 타겟 저장소를 확정합니다."],
+      assetsTitle: "SQL 실행 근거",
+      assets: [],
+      previewTitle: "SQL Preview 결과",
+      previewNote: "SQL 분석 화면에서 전달된 Preview 결과를 사용합니다.",
+      previewColumns: ["Column", "Type", "Source"],
+      previewRows: [],
+      info: "SQL 결과 저장은 Catalog 직접 저장이 아니라 수집/처리 Job 생성 검토로 이어집니다.",
+    },
     PostgreSQL: {
       title: "PostgreSQL 연결",
       description: "백엔드 커넥터가 PostgreSQL 테이블 목록, 샘플 행, 스키마를 조회합니다.",
@@ -835,7 +874,9 @@ export function SourceConnectionPage({
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
   );
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const isSqlResultSource = activeSourceType === "SQL Result";
+  const hasSqlResultPreview = isSqlResultSource && hasSqlResultPreviewConfig(editableFields);
+  const sourceLabel = editableFields.find(([label]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 테스트 대기" },
@@ -855,10 +896,10 @@ export function SourceConnectionPage({
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
   const sourceSummaryRows: Array<[string, string]> = [
     ["선택 커넥터", sourceTypeLabel(activeSourceType)],
-    ["연결 상태", connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
-    ["감지 파일", `${displayAssets.length}개`],
-    ["인증 방식", activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
-    ["다음 단계", "스키마 추론"],
+    ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
+    ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
+    ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
   ];
 
   const applySourceDraft = (
@@ -880,26 +921,47 @@ export function SourceConnectionPage({
   };
 
   const selectSource = (value: string) => {
-    const nextMessage = `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
+    const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
+    const nextIsSqlResult = value === "SQL Result";
+    const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
+    const nextStatus: SourceDraft["connectionStatus"] = nextIsSqlResult ? (nextHasSqlResultPreview ? "success" : "idle") : "idle";
+    const nextMessage = nextIsSqlResult
+      ? nextHasSqlResultPreview
+        ? "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다."
+        : "SQL Result는 SQL 분석 Preview에서 처리 Job 생성으로 진입할 때 사용합니다."
+      : `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
     setSourceRuntime(null);
-    setConnectionStatus("idle");
+    setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
-    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields, "idle", nextMessage);
+    applySourceDraft(value, nextFields, nextStatus, nextMessage);
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
   const updateSourceField = (label: string, value: string) => {
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
-    const nextMessage = "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
+    const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
+    const nextStatus = isSqlResultSource ? connectionStatus : "idle";
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
-    setConnectionStatus("idle");
+    setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
-    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
   };
 
   const testConnection = async () => {
+    if (isSqlResultSource) {
+      const message = hasSqlResultPreview
+        ? "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다."
+        : "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요.";
+      const nextStatus: SourceDraft["connectionStatus"] = hasSqlResultPreview ? "success" : "idle";
+      setConnectionStatus(nextStatus);
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, editableFields, nextStatus, message);
+      onNotify(message);
+      return;
+    }
+
     const testingMessage = `${sourceTypeLabel(activeSourceType)} 커넥터 테스트 실행 중입니다.`;
     setConnectionStatus("testing");
     setConnectionMessage(testingMessage);
@@ -948,7 +1010,7 @@ export function SourceConnectionPage({
     <CreationFlowLayout
       side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceTypeLabel(activeSourceType)} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
         if (connectionStatus !== "success") {
-          onNotify("먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+          onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
           return;
         }
         applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
@@ -958,7 +1020,7 @@ export function SourceConnectionPage({
         onSave();
       }} />}
     >
-        <PageTitle title="소스 연결" description="소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다." />
+        <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="panel-header">
             <Database size={18} />
@@ -984,11 +1046,11 @@ export function SourceConnectionPage({
                 {visibleEditableFields.map(([label, value]) => (
                   <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
                     <span>{sourceFieldLabel(label)}</span>
-                    <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                    <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                   </label>
                 ))}
               </div>
-              {current.info && <InfoBox title="보안 연결" body={current.info} />}
+              {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
                   <div className="hegun-status-copy">
@@ -999,7 +1061,7 @@ export function SourceConnectionPage({
                   <div className="hegun-status-actions">
                     {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
                     {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
                   </div>
                 </div>
                 <div className="hegun-test-strip">
@@ -1133,7 +1195,7 @@ function sourceCheckIcon(label: string) {
 
 function sourceCheckState(value: string) {
   const normalized = value.toLowerCase();
-  if (/(ok|success|reachable|verified|fetched|listed|ready|완료|성공|가능)/.test(normalized)) return "success";
+  if (/(ok|success|reachable|verified|fetched|listed|ready|skipped|완료|성공|가능|생략)/.test(normalized)) return "success";
   if (/(fail|error|denied|실패|오류)/.test(normalized)) return "failed";
   if (/(pending|required|not tested|대기|필요|미확인)/.test(normalized)) return "idle";
   return "idle";
@@ -1162,6 +1224,11 @@ type SchemaSampleScopeOption = {
 };
 
 function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScopeOption[] {
+  if (sourceType === "SQL Result") {
+    return [
+      { label: "SQL Preview", shortLabel: "Preview", value: "current" },
+    ];
+  }
   if (sourceType === "MongoDB") {
     return [
       { label: "현재 문서", shortLabel: "현재", value: "current" },
@@ -1196,6 +1263,7 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
   if (draft.source.sourceType === "PostgreSQL") return "TABLE";
   if (draft.source.sourceType === "MongoDB") return "JSON";
   if (draft.source.sourceType === "Stream / Kafka") return "JSON";
+  if (draft.source.sourceType === "SQL Result") return "SQL";
   return "SAMPLE";
 }
 
@@ -1665,6 +1733,12 @@ export function SchemaInferencePage({
   };
 
   const rerunCurrentInference = async () => {
+    if (draft.source.sourceType === "SQL Result") {
+      onAction("etl.schema.inference_skipped", "/api/query/runs", draft.source.sourceLabel || "SQL Result");
+      onNotify("SQL Preview에서 전달된 schema를 사용하므로 재확인을 생략합니다.");
+      return;
+    }
+
     if (!draft.source.sourceType || draft.source.sourceConfig.length === 0) {
       onNotify("다시 확인할 소스 연결 정보가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
       return;
@@ -4588,5 +4662,13 @@ function sourceLabelFromFields(sourceType: string, fields: Array<[string, string
     if (bucket) return bucket;
   }
 
-  return fields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
+  return fields.find(([fieldLabel]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
+}
+
+function sourceConfigValue(fields: Array<[string, string]>, label: string) {
+  return fields.find(([fieldLabel]) => fieldLabel === label)?.[1]?.trim() ?? "";
+}
+
+function hasSqlResultPreviewConfig(fields: Array<[string, string]>) {
+  return Boolean(sourceConfigValue(fields, "Source Dataset") && sourceConfigValue(fields, "SQL Run ID") && sourceConfigValue(fields, "Query"));
 }
