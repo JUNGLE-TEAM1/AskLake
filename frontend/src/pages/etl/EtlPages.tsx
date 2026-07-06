@@ -219,6 +219,7 @@ const sourceTypeLabels: Record<string, string> = {
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
+  "SQL Result": "SQL Result",
   "Stream / Kafka": "스트림 / Kafka",
 };
 
@@ -253,12 +254,19 @@ const sourceFieldLabels: Record<string, string> = {
   "Password / Auth Token": "비밀번호 / 인증 토큰",
   Path: "경로",
   "Path / Prefix": "경로 / 프리픽스",
+  "Preview Limit": "Preview 제한",
   Port: "포트",
+  Query: "SQL Query",
+  "Reference Dataset IDs": "참조 데이터셋 ID",
   Region: "리전",
   Response: "응답",
   Result: "결과",
   Schema: "스키마",
   "Secret Key": "시크릿 키",
+  "Source Dataset": "원본 데이터셋",
+  "Source Dataset ID": "원본 데이터셋 ID",
+  "SQL Preview": "SQL Preview",
+  "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
   Table: "테이블",
@@ -667,6 +675,7 @@ export function SourceConnectionPage({
     MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
     "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
     "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
     "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
@@ -684,6 +693,28 @@ export function SourceConnectionPage({
     actions?: string[];
     info?: string;
   }> = {
+    "SQL Result": {
+      title: "SQL 결과 입력",
+      description: "SQL Preview 결과와 query/run metadata를 처리 Job 입력으로 사용합니다.",
+      fields: [
+        ["Source Dataset", ""],
+        ["Source Dataset ID", ""],
+        ["SQL Run ID", ""],
+        ["Preview Limit", "100"],
+        ["Reference Dataset IDs", "-"],
+        ["Validation Key", "-"],
+        ["Query", ""],
+      ],
+      testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
+      logs: ["SQL Preview 결과가 이미 검증되어 소스 연결 단계를 생략합니다.", "Review에서 Job 생성 후 실행 정책과 타겟 저장소를 확정합니다."],
+      assetsTitle: "SQL 실행 근거",
+      assets: [],
+      previewTitle: "SQL Preview 결과",
+      previewNote: "SQL 분석 화면에서 전달된 Preview 결과를 사용합니다.",
+      previewColumns: ["Column", "Type", "Source"],
+      previewRows: [],
+      info: "SQL 결과 저장은 Catalog 직접 저장이 아니라 수집/처리 Job 생성 검토로 이어집니다.",
+    },
     PostgreSQL: {
       title: "PostgreSQL 연결",
       description: "백엔드 커넥터가 PostgreSQL 테이블 목록, 샘플 행, 스키마를 조회합니다.",
@@ -835,7 +866,7 @@ export function SourceConnectionPage({
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
   );
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const sourceLabel = editableFields.find(([label]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 테스트 대기" },
@@ -4588,5 +4619,5 @@ function sourceLabelFromFields(sourceType: string, fields: Array<[string, string
     if (bucket) return bucket;
   }
 
-  return fields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
+  return fields.find(([fieldLabel]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
 }

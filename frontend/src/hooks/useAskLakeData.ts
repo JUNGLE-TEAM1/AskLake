@@ -3,7 +3,6 @@ import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import {
-  createDerivedDatasetFromSql,
   createPipelineDraft as createMockPipelineDraft,
   getDatasets,
   getJobs,
@@ -29,7 +28,9 @@ import type {
   JobRunSummary,
   RunsByJobId,
   SelectedRunIdByJobId,
+  SchemaColumnDraft,
   SqlResultDraft,
+  TransformStepDraft,
 } from "../types";
 
 type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?: AuditResult, options?: { targetType?: AuditTargetType }) => void;
@@ -212,6 +213,112 @@ function getInitialDatasets() {
 
 function getInitialJobs() {
   return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+}
+
+function buildSqlDatasetJobDraft(
+  request: CreateDerivedDatasetRequest,
+  sourceDataset: CatalogDataset,
+  sqlResult: SqlResultDraft,
+): DraftPipeline {
+  const targetDataset = normalizeDraftDatasetName(request.dataset.name, `${sourceDataset.name}_analysis`);
+  const targetLayer = request.dataset.layer;
+  const outputColumns: Array<[string, string]> = sqlResult.columns.map((column) => [column, inferSqlResultColumnType(sourceDataset, column)]);
+  const schemaColumns: SchemaColumnDraft[] = outputColumns.map(([name, type], index) => ({
+    confidence: 1,
+    included: true,
+    nullable: true,
+    role: index === 0 ? "primary" : "derived",
+    sourceName: name,
+    targetName: name,
+    type,
+  }));
+  const transformStep: TransformStepDraft = {
+    enabled: true,
+    id: "sql-preview-materialize",
+    input: sourceDataset.name,
+    kind: "derive",
+    label: "SQL Preview 결과 저장",
+    onError: "Fail Run",
+    operation: "SQL_RESULT_MATERIALIZE",
+    output: targetDataset,
+    params: request.query,
+  };
+
+  return {
+    ...initialDraftPipeline,
+    id: `sql_${normalizeDraftId(targetDataset)}_${normalizeDraftId(sqlResult.runId).slice(-8)}`,
+    permission: {
+      ...initialDraftPipeline.permission,
+      owner: sourceDataset.owner || initialDraftPipeline.permission.owner,
+      summary: "Data Engineer Group · 조직 내부 · 승인 완료",
+    },
+    quality: {
+      invalidRows: [],
+      rules: [],
+      score: 100,
+      status: "pass",
+      summary: `SQL Preview 검증 완료 · ${sqlResult.rowCount.toLocaleString()} rows · read-only query`,
+    },
+    schedule: {
+      ...initialDraftPipeline.schedule,
+      endDate: "",
+      label: "수동 실행",
+      mode: "manual",
+      nextRun: "수동 실행 대기",
+      startDate: "",
+      summary: "SQL 결과 저장 Job · 수동 실행",
+    },
+    schema: {
+      columns: schemaColumns,
+      sampleRows: sqlResult.rows,
+      schemaFingerprint: `${sqlResult.runId}:${sqlResult.columns.join("|")}`,
+      summary: `${schemaColumns.length}개 컬럼 · Preview ${sqlResult.rows.length}/${sqlResult.rowCount} rows`,
+    },
+    source: {
+      connectionMessage: `SQL Preview ${sqlResult.runId} 결과를 처리 Job 입력으로 사용합니다.`,
+      connectionStatus: "success",
+      sourceConfig: [
+        ["Source Dataset", sourceDataset.name],
+        ["Source Dataset ID", sourceDataset.id],
+        ["SQL Run ID", sqlResult.runId],
+        ["Preview Limit", String(sqlResult.previewLimit ?? request.previewLimit ?? "")],
+        ["Reference Dataset IDs", (request.referenceDatasetIds ?? []).join(", ") || "-"],
+        ["Validation Key", request.validationKey ?? "-"],
+        ["Query", request.query],
+      ],
+      sourceLabel: `${sourceDataset.name} / ${sqlResult.runId}`,
+      sourceType: "SQL Result",
+    },
+    target: {
+      ...initialDraftPipeline.target,
+      compression: "Snappy",
+      datasetName: targetDataset,
+      format: "Parquet",
+      layer: targetLayer,
+      partition: "sql_run_date",
+      rag: request.dataset.rag,
+      storagePath: `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`,
+      storageType: "S3",
+    },
+    transform: {
+      outputColumns,
+      steps: [transformStep],
+      summary: `SQL Preview ${sqlResult.runId} 결과를 ${targetDataset} 데이터셋으로 저장`,
+    },
+  };
+}
+
+function inferSqlResultColumnType(dataset: CatalogDataset, columnName: string) {
+  return dataset.schema.find(([name]) => name === columnName)?.[1] ?? "string";
+}
+
+function normalizeDraftDatasetName(value: string, fallback: string) {
+  const normalized = value.trim() || fallback;
+  return normalized.replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "sql_derived_dataset";
+}
+
+function normalizeDraftId(value: string) {
+  return normalizeDraftDatasetName(value, "sql_derived").toLowerCase();
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
@@ -482,32 +589,23 @@ export function useAskLakeData({
     }
   };
 
-  const createSqlDerivedDataset = async (request: CreateDerivedDatasetRequest) => {
-    setApiPending(true);
-    try {
-      const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
-      const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
+  const prepareSqlDatasetJobDraft = (request: CreateDerivedDatasetRequest) => {
+    const sourceDataset = datasets.find((item) => item.id === request.sourceDatasetId);
+    const currentSqlResult = sqlResultDraft?.runId === request.sourceRunId ? sqlResultDraft : null;
 
-      if (!sourceDataset || !currentSqlResult) {
-        writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
-        showToast("Lake Dataset 생성에 필요한 Preview 결과를 찾지 못했습니다.", "info");
-        return null;
-      }
-
-      const dataset = normalizeDatasetRow(await createDerivedDatasetFromSql({ request, sourceDataset, sqlResult: currentSqlResult }));
-      saveStoredCatalogDataset(dataset);
-      setDatasets((items) => [dataset, ...items.filter((item) => item.id !== dataset.id)]);
-      setSelectedDataset(dataset);
-      writeAuditLog("analysis.derived_dataset.created", "/api/catalog/derived-datasets", dataset.id);
-      showToast("SQL 결과 기반 Lake Dataset이 생성되었습니다.");
-      return dataset;
-    } catch {
-      writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
-      showToast("Lake Dataset 생성에 실패했습니다.", "info");
-      return null;
-    } finally {
-      setApiPending(false);
+    if (!sourceDataset || !currentSqlResult) {
+      writeAuditLog("analysis.derived_dataset.job_draft_failed", "/api/etl/jobs", request.sourceDatasetId, "failed");
+      showToast("처리 Job 생성에 필요한 SQL Preview 결과를 찾지 못했습니다.", "info");
+      return false;
     }
+
+    const nextDraft = buildSqlDatasetJobDraft(request, sourceDataset, currentSqlResult);
+    setDraftPipeline(nextDraft);
+    setSelectedDataset(sourceDataset);
+    writeAuditLog("analysis.derived_dataset.job_draft_prepared", "/api/etl/jobs", nextDraft.id);
+    showToast("SQL 결과 기반 처리 Job 초안을 만들었습니다.");
+    onFlowChange("review");
+    return true;
   };
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
@@ -670,7 +768,6 @@ export function useAskLakeData({
     apiPending,
     commandPendingByJobId,
     createPipeline,
-    createSqlDerivedDataset,
     dataError,
     dataLoading,
     datasets,
@@ -683,6 +780,7 @@ export function useAskLakeData({
     openDatasetInSql,
     openJobDag,
     openJobDetail,
+    prepareSqlDatasetJobDraft,
     runsByJobId,
     selectedDataset,
     selectedJob,

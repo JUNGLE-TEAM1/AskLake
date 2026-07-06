@@ -96,7 +96,6 @@ export function App() {
     apiPending,
     commandPendingByJobId,
     createPipeline,
-    createSqlDerivedDataset,
     dataError,
     dataLoading,
     datasets,
@@ -108,6 +107,7 @@ export function App() {
     openDatasetInSql,
     openJobDag,
     openJobDetail,
+    prepareSqlDatasetJobDraft,
     runsByJobId,
     selectedDataset,
     selectedJob,
@@ -292,7 +292,7 @@ export function App() {
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
           {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onDatasetOpen={openDataset} onOpenSql={openDatasetInSql} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onCreateDashboard={openDashboardFromSql} onCreateDerivedDataset={createSqlDerivedDataset} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onCreateDashboard={openDashboardFromSql} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}

@@ -101,7 +101,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 | Pair | Primary Area | Deliverables | Handoff |
 | --- | --- | --- | --- |
 | Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | create `{ job, catalogTarget }`, run 성공 `dataset`, `RunSummary`, `JobCommandResponse` | Pair B에는 성공 run 이후 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
-| Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
+| Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check, SQL Result -> ETL Review draft handoff | Pair A에는 처리 Job 생성 draft, Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 
 ## 7) Daily Operating Loop
@@ -110,6 +110,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 - 오늘 데모 흐름에서 끊기는 화면은 어디인가?
 - Pair 간 넘겨야 하는 `jobId`, `runId`, `datasetId`, `sqlResult.runId`, `dashboardId`, `sourceRunId`가 같은가?
+- SQL Result를 처리 Job으로 저장할 때 Review draft에 `sourceRunId`, `query`, `referenceDatasetIds`, target dataset metadata가 유지되는가?
 - Dataset을 바꾸면 schema, lineage, SQL query, SQL result가 같이 바뀌는가?
 - Dashboard Widget은 SQL Result의 `columns`/`rows`를 실제로 쓰는가?
 - 실패했을 때 입력값과 이전 상태가 유지되는가?

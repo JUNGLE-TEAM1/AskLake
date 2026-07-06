@@ -50,20 +50,6 @@ type SqlPreflightResult = {
   messages: SqlPreflightMessage[];
 };
 
-type DerivedDatasetDraft = {
-  columnCount: number;
-  datasetId?: string;
-  description: string;
-  layer: DerivedDatasetLayer;
-  name: string;
-  rag: boolean;
-  refreshPolicy: "manual";
-  rowCount: number;
-  sourceDatasetId: string;
-  sourceRunId: string;
-  tags: string[];
-};
-
 const PREVIEW_ROW_LIMIT = 100;
 const SQL_RESULT_PAGE_SIZE = 25;
 const SQL_CONTEXT_PAGE_SIZE = 15;
@@ -76,7 +62,7 @@ export function SqlAnalysisPage({
   datasets,
   onAction,
   onCreateDashboard,
-  onCreateDerivedDataset,
+  onPrepareDatasetJob,
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
@@ -84,7 +70,7 @@ export function SqlAnalysisPage({
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCreateDashboard: (result: SqlResultDraft) => void;
-  onCreateDerivedDataset: (request: CreateDerivedDatasetRequest) => Promise<CatalogDataset | null>;
+  onPrepareDatasetJob: (request: CreateDerivedDatasetRequest) => boolean;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
   const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
@@ -111,8 +97,6 @@ export function SqlAnalysisPage({
   const [derivedDatasetTags, setDerivedDatasetTags] = useState(buildDefaultDerivedDatasetTags(baseDataset));
   const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<DerivedDatasetLayer>("GOLD");
   const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
-  const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
-  const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
   const [dashboardDialogOpen, setDashboardDialogOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
@@ -194,7 +178,6 @@ export function SqlAnalysisPage({
     setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
     setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
     setDerivedDatasetRag(baseDataset.rag);
-    setDerivedDatasetDraft(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
     setOpenSchemaDatasetId(null);
@@ -213,7 +196,6 @@ export function SqlAnalysisPage({
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
     setExecutionMs(null);
-    setDerivedDatasetDraft(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
   }, [baseDataset.id, cachedResult, canRestoreCachedResult]);
@@ -255,7 +237,6 @@ export function SqlAnalysisPage({
     setResultDraft(null);
     setExecutionMs(null);
     setPreflightResult(null);
-    setDerivedDatasetDraft(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
     onResultChange(null);
@@ -330,7 +311,6 @@ export function SqlAnalysisPage({
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
-      setDerivedDatasetDraft(null);
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch {
@@ -454,7 +434,7 @@ export function SqlAnalysisPage({
     onAction("analysis.result.downloaded", `/api/query/runs/${resultDraft.runId}/download`, resultDraft.datasetId);
   };
 
-  const createDerivedDataset = async () => {
+  const prepareDerivedDatasetJob = () => {
     if (!resultDraft) return;
     const request: CreateDerivedDatasetRequest = {
       dataset: {
@@ -473,26 +453,9 @@ export function SqlAnalysisPage({
       validationKey: resultDraft.validationKey,
     };
 
-    setDerivedDatasetPending(true);
-    try {
-      const dataset = await onCreateDerivedDataset(request);
-      if (!dataset) return;
-      setDerivedDatasetDraft({
-        columnCount: resultDraft.columns.length,
-        datasetId: dataset.id,
-        description: dataset.description,
-        layer: request.dataset.layer,
-        name: dataset.name,
-        rag: dataset.rag,
-        refreshPolicy: "manual",
-        rowCount: resultDraft.rowCount,
-        sourceDatasetId: request.sourceDatasetId,
-        sourceRunId: resultDraft.runId,
-        tags: dataset.tags,
-      });
+    const prepared = onPrepareDatasetJob(request);
+    if (prepared) {
       setMaterializeDialogOpen(false);
-    } finally {
-      setDerivedDatasetPending(false);
     }
   };
 
@@ -673,7 +636,7 @@ export function SqlAnalysisPage({
                 </span>
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> Preview 전체 CSV</button>
-                  <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 새 데이터셋 저장</button>
+                  <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>
                   <button type="button" onClick={() => setDashboardDialogOpen(true)}><BarChart3 size={14} /> 대시보드 만들기</button>
                 </div>
               </div>
@@ -688,26 +651,14 @@ export function SqlAnalysisPage({
             </div>
           )}
         </section>
-
-        {resultDraft && derivedDatasetDraft && (
-          <section className="sql-materialize-card saved">
-            <div>
-              <span>LAKE DATASET</span>
-              <h3>생성된 Lake Dataset</h3>
-            </div>
-            <div className="sql-materialize-summary">
-              <span>{derivedDatasetDraft.layer} · {derivedDatasetDraft.name} · {derivedDatasetDraft.columnCount} columns · {derivedDatasetDraft.tags.join(" ")} · {derivedDatasetDraft.rag ? "RAG" : "No RAG"} · {derivedDatasetDraft.datasetId}</span>
-            </div>
-          </section>
-        )}
       </main>
       {resultDraft && materializeDialogOpen && (
         <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setMaterializeDialogOpen(false)}>
           <section className="sql-materialize-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-materialize-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
             <header className="sql-materialize-dialog-header">
               <div>
-                <span>LAKE DATASET</span>
-                <h2 id="sql-materialize-dialog-title">SQL 결과 Lake Dataset 생성</h2>
+                <span>PROCESSING JOB</span>
+                <h2 id="sql-materialize-dialog-title">SQL 결과 처리 Job 생성</h2>
               </div>
               <button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기">닫기</button>
             </header>
@@ -717,7 +668,6 @@ export function SqlAnalysisPage({
                 <input
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
-                    setDerivedDatasetDraft(null);
                   }}
                   value={derivedDatasetName}
                 />
@@ -727,7 +677,6 @@ export function SqlAnalysisPage({
                 <textarea
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
-                    setDerivedDatasetDraft(null);
                   }}
                   rows={2}
                   value={derivedDatasetDescription}
@@ -738,7 +687,6 @@ export function SqlAnalysisPage({
                 <input
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
-                    setDerivedDatasetDraft(null);
                   }}
                   placeholder="#sql-derived #analysis"
                   value={derivedDatasetTags}
@@ -749,7 +697,6 @@ export function SqlAnalysisPage({
                 <select
                   onChange={(event) => {
                     setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
-                    setDerivedDatasetDraft(null);
                   }}
                   value={derivedDatasetLayer}
                 >
@@ -762,7 +709,6 @@ export function SqlAnalysisPage({
                   checked={derivedDatasetRag}
                   onChange={(event) => {
                     setDerivedDatasetRag(event.target.checked);
-                    setDerivedDatasetDraft(null);
                   }}
                   type="checkbox"
                 />
@@ -770,15 +716,15 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0 || derivedDatasetPending}
-                onClick={createDerivedDataset}
+                disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
+                onClick={prepareDerivedDatasetJob}
                 type="button"
               >
-                <Database size={15} /> {derivedDatasetPending ? "생성 중" : "Lake Dataset 생성"}
+                <Database size={15} /> Job 생성 검토로 이동
               </button>
             </div>
             <div className="sql-materialize-summary">
-              <span>source {resultDraft.runId} · {derivedDatasetTagList.length} tags · {resultDraft.columns.length} columns</span>
+              <span>source {resultDraft.runId} · {derivedDatasetTagList.length} tags · {resultDraft.columns.length} columns · Review 단계에서 생성 요청</span>
             </div>
           </section>
         </div>
