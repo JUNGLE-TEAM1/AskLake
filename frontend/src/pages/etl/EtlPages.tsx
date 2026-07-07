@@ -632,6 +632,8 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
+type TargetToggleSectionKey = "tags" | "partition" | "schemaRules" | "preview" | "testRun" | "lineage" | "debugConfig";
+
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
   owner?: string;
@@ -4482,6 +4484,15 @@ export function TargetPage({
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [saveMessage, setSaveMessage] = useState("");
   const [debugOpen, setDebugOpen] = useState(false);
+  const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
+    debugConfig: true,
+    lineage: true,
+    partition: true,
+    preview: true,
+    schemaRules: true,
+    tags: true,
+    testRun: true,
+  });
   const [savedConfig, setSavedConfig] = useState<TargetSavedConfig | null>(() => {
     if (typeof window === "undefined") return null;
     const saved = window.localStorage.getItem(TARGET_CONFIG_STORAGE_KEY);
@@ -4695,6 +4706,37 @@ export function TargetPage({
     onNext();
   };
 
+  const toggleTargetSection = (section: TargetToggleSectionKey) => {
+    setOpenTargetSections((currentSections) => ({
+      ...currentSections,
+      [section]: !currentSections[section],
+    }));
+  };
+
+  const renderToggleSection = (
+    section: TargetToggleSectionKey,
+    title: string,
+    icon: React.ReactNode,
+    children: React.ReactNode,
+    actions?: React.ReactNode,
+  ) => {
+    const open = openTargetSections[section];
+
+    return (
+      <section className="panel target-toggle-panel">
+        <div className="panel-header target-toggle-header">
+          <button aria-expanded={open} className="target-toggle-trigger" type="button" onClick={() => toggleTargetSection(section)}>
+            {icon}
+            <h2>{title}</h2>
+            {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {actions ? <div className="target-toggle-actions">{actions}</div> : null}
+        </div>
+        {open ? <div className="target-toggle-body">{children}</div> : null}
+      </section>
+    );
+  };
+
   return (
     <CreationFlowLayout
       side={(
@@ -4758,93 +4800,85 @@ export function TargetPage({
           </label>
         </div>
       </section>
-      <section className="panel">
-        <div className="panel-header">
-          <BookOpen size={18} />
-          <h2>태그</h2>
-        </div>
-        {targetTags.length > 0 ? (
-        <div className="target-chip-grid" role="group" aria-label="타겟 태그">
-          {targetTags.map((tag) => (
-            <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
-              {tag}
-            </button>
-          ))}
-        </div>
-        ) : null}
-        <div className="target-inline-controls">
-          <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              addCustomTag();
-            }
-          }} />
-          <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <SlidersHorizontal size={18} />
-          <h2>파티션</h2>
-        </div>
-        <div className="target-option-section">
-          <div className="target-subsection-title">파티션 컬럼</div>
-          <p className="target-option-help">데이터를 폴더 단위로 나누는 기준입니다.</p>
-          <div className="target-chip-grid partition" role="group" aria-label="파티션 컬럼">
-            {partitionCandidates.map((rule) => {
-              const selected = filteredPartitionColumns.includes(rule.name);
-              const disabled = !rule.use;
-              return (
-                <button
-                  aria-pressed={selected}
-                  className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
-                  disabled={disabled}
-                  key={rule.name}
-                  type="button"
-                  onClick={() => togglePartitionColumn(rule.name)}
-                >
-                  <span className="target-chip-check">{selected ? "✓" : ""}</span>
-                  <span className="target-chip-label">{rule.name}</span>
-                  {rule.recommendedPartition ? <span className="target-chip-badge">추천</span> : null}
+      {renderToggleSection("tags", "태그", <BookOpen size={18} />, (
+        <>
+          {targetTags.length > 0 ? (
+            <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+              {targetTags.map((tag) => (
+                <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                  {tag}
                 </button>
-              );
-            })}
+              ))}
+            </div>
+          ) : null}
+          <div className="target-inline-controls">
+            <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomTag();
+              }
+            }} />
+            <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
           </div>
-        </div>
-        <div className="target-option-section">
-          <div className="target-subsection-title">인덱스 후보</div>
-          <p className="target-option-help">자주 조회할 컬럼 후보입니다. S3/Parquet 저장소에서는 실제 DB 인덱스가 아니라 메타데이터 추천값으로 저장됩니다.</p>
-          <div className="target-chip-grid partition" role="group" aria-label="인덱스 컬럼">
-            {indexCandidates.map((rule) => {
-              const selected = filteredIndexColumns.includes(rule.name);
-              const disabled = !rule.use;
-              return (
-                <button
-                  aria-pressed={selected}
-                  className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
-                  disabled={disabled}
-                  key={rule.name}
-                  type="button"
-                  onClick={() => toggleIndexColumn(rule.name)}
-                >
-                  <span className="target-chip-check">{selected ? "✓" : ""}</span>
-                  <span className="target-chip-label">{rule.name}</span>
-                  {rule.recommendedIndex ? <span className="target-chip-badge">추천</span> : null}
-                </button>
-              );
-            })}
+        </>
+      ))}
+      {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
+        <>
+          <div className="target-option-section">
+            <div className="target-subsection-title">파티션 컬럼</div>
+            <p className="target-option-help">데이터를 폴더 단위로 나누는 기준입니다.</p>
+            <div className="target-chip-grid partition" role="group" aria-label="파티션 컬럼">
+              {partitionCandidates.map((rule) => {
+                const selected = filteredPartitionColumns.includes(rule.name);
+                const disabled = !rule.use;
+                return (
+                  <button
+                    aria-pressed={selected}
+                    className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
+                    disabled={disabled}
+                    key={rule.name}
+                    type="button"
+                    onClick={() => togglePartitionColumn(rule.name)}
+                  >
+                    <span className="target-chip-check">{selected ? "✓" : ""}</span>
+                    <span className="target-chip-label">{rule.name}</span>
+                    {rule.recommendedPartition ? <span className="target-chip-badge">추천</span> : null}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
-        <div className="target-path-preview">
-          <span>저장 경로 preview</span>
-          <strong>{partitionPathPreview}</strong>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <Table2 size={18} />
-          <h2>컬럼 최소 규칙</h2>
-        </div>
+          <div className="target-option-section">
+            <div className="target-subsection-title">인덱스 후보</div>
+            <p className="target-option-help">자주 조회할 컬럼 후보입니다. S3/Parquet 저장소에서는 실제 DB 인덱스가 아니라 메타데이터 추천값으로 저장됩니다.</p>
+            <div className="target-chip-grid partition" role="group" aria-label="인덱스 컬럼">
+              {indexCandidates.map((rule) => {
+                const selected = filteredIndexColumns.includes(rule.name);
+                const disabled = !rule.use;
+                return (
+                  <button
+                    aria-pressed={selected}
+                    className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
+                    disabled={disabled}
+                    key={rule.name}
+                    type="button"
+                    onClick={() => toggleIndexColumn(rule.name)}
+                  >
+                    <span className="target-chip-check">{selected ? "✓" : ""}</span>
+                    <span className="target-chip-label">{rule.name}</span>
+                    {rule.recommendedIndex ? <span className="target-chip-badge">추천</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="target-path-preview">
+            <span>저장 경로 preview</span>
+            <strong>{partitionPathPreview}</strong>
+          </div>
+        </>
+      ))}
+      {renderToggleSection("schemaRules", "컬럼 최소 규칙", <Table2 size={18} />, (
         <div className="hegun-table-scroll">
           <table className="schema-table target-rule-table">
             <thead>
@@ -4877,13 +4911,9 @@ export function TargetPage({
             </tbody>
           </table>
         </div>
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <Search size={18} />
-          <h2>샘플 프리뷰</h2>
-        </div>
-        {usedSchemaRules.length > 0 && previewRows.length > 0 ? (
+      ))}
+      {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
+        usedSchemaRules.length > 0 && previewRows.length > 0 ? (
           <div className="hegun-table-scroll">
             <table className="schema-table target-preview-table">
               <thead>
@@ -4900,33 +4930,27 @@ export function TargetPage({
           </div>
         ) : (
           <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
-        )}
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <PlayCircle size={18} />
-          <h2>테스트 실행</h2>
-        </div>
-        <div className="target-test-row">
-          <button className="primary-button" type="button" disabled={testRun.status === "pending"} onClick={() => void runTargetTest()}>
-            {testRun.status === "pending" ? "실행 중" : "Test Run"}
-          </button>
-          <div className={testRun.status === "success" ? "target-test-status success" : testRun.status === "failed" ? "target-test-status failed" : "target-test-status"}>
-            <strong>{testRun.status}</strong>
-            <span>{testRun.message || "현재 설정으로 mock write 검증을 실행합니다."}</span>
+        )
+      ))}
+      {renderToggleSection("testRun", "테스트 실행", <PlayCircle size={18} />, (
+        <>
+          <div className="target-test-row">
+            <button className="primary-button" type="button" disabled={testRun.status === "pending"} onClick={() => void runTargetTest()}>
+              {testRun.status === "pending" ? "실행 중" : "Test Run"}
+            </button>
+            <div className={testRun.status === "success" ? "target-test-status success" : testRun.status === "failed" ? "target-test-status failed" : "target-test-status"}>
+              <strong>{testRun.status}</strong>
+              <span>{testRun.message || "현재 설정으로 mock write 검증을 실행합니다."}</span>
+            </div>
           </div>
-        </div>
-        {testRun.logs.length > 0 ? (
-          <ul className="target-log-list">
-            {testRun.logs.map((log) => <li key={log}>{log}</li>)}
-          </ul>
-        ) : null}
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <Share2 size={18} />
-          <h2>리니지</h2>
-        </div>
+          {testRun.logs.length > 0 ? (
+            <ul className="target-log-list">
+              {testRun.logs.map((log) => <li key={log}>{log}</li>)}
+            </ul>
+          ) : null}
+        </>
+      ))}
+      {renderToggleSection("lineage", "리니지", <Share2 size={18} />, (
         <div className="target-lineage">
           <span>{lineage.sourceName}</span>
           <strong>→</strong>
@@ -4934,20 +4958,16 @@ export function TargetPage({
           <strong>→</strong>
           <span>{lineage.targetDatasetName}<small>{lineage.targetStoragePath}</small></span>
         </div>
-      </section>
-      <section className="panel">
-        <div className="panel-header">
-          <Save size={18} />
-          <h2>저장 설정 JSON</h2>
-          <button className="secondary-button compact" type="button" onClick={handleSave}>설정 저장</button>
-        </div>
-        {saveMessage ? <div className="target-save-message">{saveMessage}</div> : null}
-        <details className="target-debug-panel" open={debugOpen} onToggle={(event) => setDebugOpen(event.currentTarget.open)}>
-          <summary>저장된 config 확인</summary>
-          <pre>{JSON.stringify(savedConfig ?? buildConfig(), null, 2)}</pre>
-        </details>
-      </section>
-    </CreationFlowLayout>
+      ))}
+      {renderToggleSection("debugConfig", "저장 설정 JSON", <Save size={18} />, (
+        <>
+          {saveMessage ? <div className="target-save-message">{saveMessage}</div> : null}
+          <details className="target-debug-panel" open={debugOpen} onToggle={(event) => setDebugOpen(event.currentTarget.open)}>
+            <summary>저장된 config 확인</summary>
+            <pre>{JSON.stringify(savedConfig ?? buildConfig(), null, 2)}</pre>
+          </details>
+        </>
+      ), <button className="secondary-button compact" type="button" onClick={handleSave}>설정 저장</button>)}    </CreationFlowLayout>
   );
 }
 export function PermissionPage({
