@@ -11,9 +11,8 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "source", label: "소스 연결", stepIndex: 0 },
   { id: "schema", label: "스키마 추론", stepIndex: 1 },
   { id: "rules", label: "룰 적용", stepIndex: 1 },
-  { id: "repeat", label: "반복 스케줄", stepIndex: 2 },
-  { id: "manual", label: "스케줄 없음", stepIndex: 2 },
-  { id: "once", label: "예약 1회 실행", stepIndex: 2 },
+  { id: "repeat", label: "반복 실행", stepIndex: 2 },
+  { id: "manual", label: "스케줄링 건너뛰기", stepIndex: 2 },
   { id: "target", label: "타겟 설정", stepIndex: 4 },
   { id: "permission", label: "권한 설정", stepIndex: 3 },
   { id: "review", label: "검토 및 생성", stepIndex: 5 },
@@ -28,9 +27,9 @@ export const navItems = [
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
-export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "once", "target", "permission", "review"];
+export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "target", "permission", "review"];
 export const jobManagerFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns"];
-export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "once", "permission", "target", "review"];
+export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "permission", "target", "review"];
 
 export const etlJobs: JobRowData[] = [
   {
@@ -451,25 +450,17 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["다음 단계", "스케줄"],
   ],
   repeat: [
-    ["실행 방식", "반복 스케줄"],
-    ["시작 일시", "2026.07.02 10:30"],
-    ["종료 일시", "종료일 없음"],
-    ["다음 실행", "2026.07.09 10:30"],
+    ["실행 일정", "매주 목요일 10:30 · Asia/Seoul"],
+    ["다음 실행", "저장 시점 기준 계산"],
+    ["겹침 처리", "이전 Run 실행 중이면 다음 예약 건너뜀"],
+    ["실패 재시도", "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리"],
     ["상태", "생성 대기"],
   ],
   manual: [
-    ["실행 방식", "스케줄 없음"],
-    ["시작 조건", "사용자 직접 실행"],
-    ["재시도", "3회"],
-    ["제한 시간", "60분"],
+    ["시작 조건", "필요할 때 즉시 실행"],
+    ["다음 실행", "없음"],
+    ["실패 재시도", "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리"],
     ["상태", "저장 대기"],
-  ],
-  once: [
-    ["실행 방식", "예약 1회 실행"],
-    ["실행 일시", "2026.07.03 10:30"],
-    ["시간대", "Asia/Seoul"],
-    ["재시도", "3회"],
-    ["상태", "예약 대기"],
   ],
   target: [
     ["저장소", "S3 Gold"],

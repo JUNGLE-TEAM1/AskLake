@@ -10,7 +10,7 @@
 - 초기 ETL job과 Catalog dataset은 backend hydrate 결과를 따른다. 둘 다 비어 있을 수 있다.
 - 파이프라인 생성은 Job과 pending `catalogTarget`을 만들고, Catalog dataset은 실행 성공 후 생성 또는 갱신한다.
 - Run state는 `runId` 기준으로 관리한다.
-- `jobExecutionEvidence`는 기존 화면 호환용 adapter이며 장기 source of truth가 아니다.
+- 실행 흐름/DAG는 별도 top-level 화면이 아니라 Run History에서 선택한 `runId`의 단계 흐름으로 표시한다.
 - Dashboard card/list와 draft/published runtime API는 FastAPI에 등록되어 있다. 프론트는 이전 backend 호환을 위해 404 local fallback을 유지한다.
 
 ## 2) Repository Structure
@@ -72,6 +72,7 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 - layout: `frontend/src/components/layout/`
 - ingest/job 화면: `frontend/src/pages/ingest/`
 - ETL creation flow: `frontend/src/pages/etl/`
+- ETL Schedule step은 `스케줄링 건너뛰기`와 `반복 실행` 두 선택지만 노출한다. 스케줄링을 건너뛰면 저장 후 사용자가 Job 목록/상세에서 `즉시 실행`으로 1회 Run을 만든다. 따라서 `수동/자동/1회 실행` 표현은 스케줄 옵션으로 노출하지 않는다. 반복 실행은 IANA timezone, 겹침 처리(`skip_if_running` 기본값), watermark 수집 기준, 지수 백오프 재시도 정책을 생성 계약에 포함하지만, 실제 production-grade scheduler 엔진은 MVP 후속 범위다.
 - catalog 화면과 lineage graph modal: `frontend/src/pages/catalog/`
 - SQL 화면: `frontend/src/pages/sql/`
 - dashboard 화면: `frontend/src/pages/dashboard/`
@@ -95,7 +96,7 @@ live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하�
 
 ## 6) Job Run State Contract
 
-Job command, History, DAG 화면은 세 개의 map을 공유한다.
+Job command와 Run History의 실행 흐름 카드는 세 개의 map을 공유한다.
 
 ```ts
 type RunsByJobId = Record<string, JobRunSummary[]>;
@@ -109,7 +110,7 @@ Ownership rules:
 - `run.runId`는 `selectedRunIdByJobId[job.id]`에 저장되는 값이다.
 - `run.runId`는 `dagStepsByRunId`의 key다.
 - History는 `selectedRunIdByJobId[job.id]`만 바꿔 선택 Run을 변경한다.
-- DAG는 `dagStepsByRunId[selectedRunIdByJobId[job.id]]`만 렌더링한다.
+- Run History 안의 실행 흐름 카드는 `dagStepsByRunId[selectedRunIdByJobId[job.id]]`만 렌더링한다.
 - 초기 hydrate는 `job.runHistory`를 `runsByJobId`로 옮기고, 가능한 경우 최신 run id에 `job.dagSteps`를 연결한다.
 - optimistic command UX는 `client:<jobId>:<timestamp>` 형태의 임시 run id를 만들고, 서버 응답의 `run.runId`로 reconcile한다.
 - `commandPendingByJobId[job.id]`는 중복 클릭 방지용 in-flight 상태다.

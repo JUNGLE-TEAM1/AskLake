@@ -134,7 +134,7 @@
 
 .option-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
   gap: 16px;
 }
 
@@ -341,15 +341,42 @@ select.control-input {
   line-height: 1.55;
 }
 
+.schedule-config-section {
+  display: grid;
+  gap: 16px;
+}
+
+.schedule-config-section h3 {
+  color: #171a1f;
+  font-size: 15px;
+  margin: 0;
+}
+
+.schedule-config-section + .retry-policy {
+  margin-top: 28px;
+}
+
 .retry-policy {
+  display: grid;
+  gap: 28px;
   border-top: 1px solid #dee1e6;
-  margin-top: 24px;
+  margin-top: 28px;
+  padding-top: 28px;
+}
+
+.retry-policy-group {
+  display: grid;
+  gap: 16px;
+}
+
+.retry-policy-group + .retry-policy-group {
+  border-top: 1px solid #eef2f7;
   padding-top: 24px;
 }
 
 .retry-policy h3 {
   font-size: 15px;
-  margin-bottom: 16px;
+  margin: 0;
 }
 
 .retry-policy-note {
@@ -490,15 +517,13 @@ select.control-input {
   color: #fff;
 }
 
-.policy-section,
-.retry-policy {
+.policy-section {
   border-top: 1px solid #eef2f7;
   margin-top: 22px;
   padding-top: 22px;
 }
 
-.policy-section h3,
-.retry-policy h3 {
+.policy-section h3 {
   color: #171a1f;
   font-size: 16px;
   margin-bottom: 14px;

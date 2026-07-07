@@ -37,7 +37,9 @@ Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode
 - Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
 - Transform: `transformSteps`, `transformOutputColumns`
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
-- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
+- Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
+
+Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 Run 취소는 `cancelRun`, 다음 반복 예약 제거는 `stopSchedule`로 분리한다.
 
 Backend create response:
 
@@ -60,8 +62,8 @@ type JobCommandResponse = {
   action: string;
   apiPath: string;
   job: JobRowData;
-  run: JobRunSummary;
-  dagSteps: JobDagStep[];
+  run?: JobRunSummary;
+  dagSteps?: JobDagStep[];
 };
 ```
 
@@ -144,7 +146,7 @@ Browser smoke:
 - frontend dev server를 켠다.
 - 수집/처리 목록이 처음에는 비어 있는지 확인한다.
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
-- 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
+- 생성된 Job을 실행하고 Run history 안의 선택 Run 실행 흐름이 Spark 결과를 반영하는지 확인한다.
 
 ## 7. 완료 기준
 
@@ -152,8 +154,8 @@ Browser smoke:
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
 - Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
 - Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
-- Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
-- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
+- Spark run 후 선택 Run 실행 흐름은 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed flow를 보여주지 않는다.
 
 ## 8. Catalog/SQL 연결 범위
 
@@ -309,7 +311,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 
 - `.env`에서 `VITE_USE_MOCK_API=false`로 실행해도 앱이 정상 로딩됩니다.
 - 새 수집/처리 생성 후 목록과 카탈로그에 서버 응답 데이터가 표시됩니다.
-- 즉시 실행/재실행/일시정지/취소 버튼이 서버 상태 전이를 반영합니다.
+- 즉시 실행/재실행/일시정지/현재 Run 취소/스케줄 중지 버튼이 서버 상태 전이를 반영합니다.
 - SQL 실행 결과가 서버 응답 columns/rows 그대로 표시됩니다.
 - SQL 결과에서 대시보드 생성 시 같은 `runId`가 dashboard request에 포함됩니다.
 - 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.

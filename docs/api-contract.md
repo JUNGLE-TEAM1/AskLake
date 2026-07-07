@@ -8,7 +8,7 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
-| 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 취소 |
+| 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
 | 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
@@ -189,7 +189,7 @@ API와 frontend internal state의 상태값은 영어 canonical value를 사용�
 ### JobRowData
 
 ```ts
-type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
+type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 
 type JobRowData = {
   id: string;
@@ -200,15 +200,29 @@ type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  schedulePolicy?: {
+    endDate?: string;
+    nextRunUtc?: string;
+    overlapPolicy?: "skip_if_running" | "queue_after_current" | "allow_parallel";
+    startDate?: string;
+    timezone?: string;
+    watermarkPolicy?: WatermarkPolicyDraft;
+  };
+  scheduleSummary?: string;
   lastRun: string;
   lastState: string;
   nextRun: string;
+  retryPolicy?: RetryPolicyDraft;
+  retryPolicySummary?: string;
+  runLimitSummary?: string;
   progress?: {
     label: string;
     value: number;
   };
 };
 ```
+
+`schedule`/`scheduleSummary`의 화면 문구는 `수동/자동/1회 실행`이 아니라 `스케줄링 건너뛰기`와 `반복 실행` 두 기준으로 표현한다. 스케줄링을 건너뛰면 즉시 실행 command `run`으로 1회 Run을 만들며, `1회 실행`은 schedule 값으로 저장하지 않는다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 실패 재시도만 노출한다. ISO date `startDate`, optional `endDate`, 겹침 처리, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
 
 ### JobRunSummary and JobDagStep
 
@@ -332,6 +346,24 @@ type SqlResultDraft = {
 Request:
 
 ```ts
+type RetryPolicyDraft = {
+  backoffMultiplier: number;
+  backoffStrategy: "fixed" | "exponential";
+  failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  initialRetryDelayMinutes: number;
+  maxRetries: number;
+  maxRetryDelayMinutes: number;
+  retryIntervalMinutes: number;
+  timeoutMinutes: number;
+};
+
+type WatermarkPolicyDraft = {
+  column: string;
+  enabled: boolean;
+  lookbackMinutes: number;
+  mode: "last_success_to_scheduled_at" | "last_success_to_run_started_at" | "full_refresh";
+};
+
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
@@ -366,9 +398,15 @@ type CreatePipelineRequest = {
   qualityStatus: "idle" | "pass" | "warn" | "fail";
   scheduleLabel: string;
   scheduleSummary: string;
+  retryPolicy: RetryPolicyDraft;
+  retryPolicySummary: string;
+  runLimitSummary: string;
   startDate: string;
   endDate?: string;
+  nextRunUtc?: string;
+  overlapPolicy?: "skip_if_running" | "queue_after_current" | "allow_parallel";
   timezone: string;
+  watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   storageType: "S3" | "Local" | "HDFS";
   partition: string;
@@ -398,9 +436,29 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
-  "scheduleSummary": "매일 09:00 · 시작 2026.07.02 · 종료일 없음 · (GMT+09:00) Seoul, Tokyo",
-  "startDate": "2026-07-02",
-  "timezone": "(GMT+09:00) Seoul, Tokyo",
+  "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
+  "retryPolicy": {
+    "backoffMultiplier": 2,
+    "backoffStrategy": "exponential",
+    "failureAction": "retry_then_fail",
+    "initialRetryDelayMinutes": 1,
+    "maxRetries": 3,
+    "maxRetryDelayMinutes": 30,
+    "retryIntervalMinutes": 1,
+    "timeoutMinutes": 60
+  },
+  "retryPolicySummary": "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리",
+  "runLimitSummary": "60분 초과 시 Run 실패 처리",
+  "startDate": "2026-07-07",
+  "nextRunUtc": "",
+  "overlapPolicy": "skip_if_running",
+  "timezone": "Asia/Seoul",
+  "watermarkPolicy": {
+    "column": "updated_at",
+    "enabled": true,
+    "lookbackMinutes": 5,
+    "mode": "last_success_to_scheduled_at"
+  },
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "storageType": "S3",
   "partition": "year/month/region",
@@ -441,6 +499,21 @@ Response 예시:
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
     "schedule": "매일 09:00",
+    "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
+    "schedulePolicy": {
+      "nextRunUtc": "",
+      "overlapPolicy": "skip_if_running",
+      "startDate": "2026-07-07",
+      "timezone": "Asia/Seoul",
+      "watermarkPolicy": {
+        "column": "updated_at",
+        "enabled": true,
+        "lookbackMinutes": 5,
+        "mode": "last_success_to_scheduled_at"
+      }
+    },
+    "retryPolicySummary": "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리",
+    "runLimitSummary": "60분 초과 시 Run 실패 처리",
     "lastRun": "생성됨",
     "lastState": "대기 중",
     "nextRun": "다음 예약 대기"
@@ -483,7 +556,7 @@ Request:
 
 ```ts
 type JobCommandRequest = {
-  command: "run" | "retry" | "pause" | "cancel";
+  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule";
 };
 ```
 
@@ -523,9 +596,9 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 - `dagSteps`는 같은 응답의 `run.runId`에 묶어 `dagStepsByRunId[run.runId]`에 저장합니다.
 - `dagSteps`에 별도 `runId` 필드를 요구하지 않습니다.
 - History row 선택은 `selectRunForJob(jobId, runId)` action으로 `selectedRunIdByJobId[job.id]`만 갱신합니다.
+- DAG/실행 흐름은 별도 top-level tab이 아니라 History 화면 내부의 선택 Run 상세 카드로 렌더링합니다.
 - 초기 `/api/etl/jobs` hydrate에서는 `job.runHistory`를 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`를 최신 Run의 `runId`에 연결합니다.
 - PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않습니다. 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만들고, 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체합니다.
-- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아닙니다.
 
 Response 예시:
 
@@ -560,7 +633,8 @@ Response 예시:
 | `run` | `etl.run.requested` | `running` |
 | `retry` | `etl.run.retry_requested` | `running` |
 | `pause` | `etl.job.pause_requested` | `paused` |
-| `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
+| `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
+| `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
 
 `run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
 
@@ -568,7 +642,9 @@ Validation:
 
 - 존재하지 않는 job은 `404 NOT_FOUND`.
 - 이미 실행 중인데 다시 `run`하면 `409 CONFLICT`.
-- 완료/취소 불가 상태에서 `cancel`하면 `422 INVALID_JOB_STATE`.
+- 실행 중이 아닌 job에 `pause`하면 `422 INVALID_JOB_STATE`.
+- 실행 중이 아닌 job에 `cancelRun`하면 `422 INVALID_JOB_STATE`.
+- 스케줄이 없는 job에 `stopSchedule`하면 `422 INVALID_JOB_STATE`.
 
 ### 7.2.1 작업 단건 조회
 
@@ -1766,7 +1842,7 @@ Response `201 Created`:
 4. 프론트 dev 서버를 재시작합니다.
 5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
 6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark 실행 흐름 갱신을 확인합니다.
 8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
 9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
