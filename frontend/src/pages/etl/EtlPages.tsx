@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import {
   BarChart3,
   BookOpen,
   Bot,
@@ -687,6 +693,13 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
+type ReviewSchemaRow = {
+  columnName: string;
+  nullable: string;
+  transform: string;
+  type: string;
+};
+
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
   owner?: string;
@@ -891,16 +904,6 @@ function formatPartitionColumnType(rule: TargetSchemaRule) {
   if (displayType) return displayType;
   if (rule.type === "datetime") return rule.name.toLowerCase().endsWith("_date") ? "date" : "timestamp";
   return rule.type;
-}
-
-function describeTargetSampleValue(rule: TargetSchemaRule, value: string | undefined) {
-  const sampleValue = value?.trim();
-  if (!sampleValue) return "샘플 값 없음";
-  if (rule.type === "datetime") return `날짜/시간 값: ${sampleValue}`;
-  if (rule.type === "number") return `숫자 값: ${sampleValue}`;
-  if (rule.type === "boolean") return `참/거짓 값: ${sampleValue}`;
-  if (rule.type === "json") return "JSON 객체/배열 값";
-  return `문자 값: ${sampleValue}`;
 }
 
 function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
@@ -4671,40 +4674,6 @@ export function TargetPage({
             </label>
           </div>
         </section>
-
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon schema"><Database size={17} /></span>
-            <div>
-              <h2>Output Schema</h2>
-              <p>{usedSchemaRules.length}개 타겟 컬럼 · Preview {previewRows.length} rows</p>
-            </div>
-          </div>
-          <div className="xflow-review-schema target-xflow-schema">
-            <div className="xflow-review-schema-head">
-              <span>TARGET COLUMNS</span>
-              <em>{usedSchemaRules.length} fields</em>
-            </div>
-            <div className="xflow-review-schema-list">
-              {usedSchemaRules.map((rule, index) => {
-                const sampleValue = previewRows[0]?.[rule.name];
-                return (
-                  <div className="xflow-review-schema-row" key={rule.name}>
-                    <span className="xflow-review-schema-index">{index + 1}</span>
-                    <div className="xflow-review-schema-column">
-                      <strong>{rule.name}</strong>
-                      <small>{rule.sourceName} · {describeTargetSampleValue(rule, sampleValue)}</small>
-                    </div>
-                    <span className="xflow-review-schema-null">{rule.validationStatus}</span>
-                    <span className="xflow-review-schema-type">{formatPartitionColumnType(rule)}</span>
-                  </div>
-                );
-              })}
-              {usedSchemaRules.length === 0 && <span className="xflow-review-empty">사용 컬럼이 없어 스키마 프리뷰를 표시할 수 없습니다.</span>}
-            </div>
-          </div>
-        </section>
-
         <section className="xflow-review-card target-xflow-card">
           <div className="xflow-review-card-header">
             <span className="xflow-review-icon permission"><SlidersHorizontal size={17} /></span>
@@ -4943,24 +4912,23 @@ export function ReviewPage({
 }) {
   const request = toCreatePipelineRequest(draft);
   const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
-  const schemaRows = draft.transform.outputColumns.length > 0
+  const schemaRows: ReviewSchemaRow[] = draft.transform.outputColumns.length > 0
     ? draft.transform.outputColumns.map(([name, type]) => {
         const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return [
-          name,
+        return {
+          columnName: name,
+          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
+          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
           type,
-          sourceColumn ? (sourceColumn.nullable ? "예" : "아니오") : "생성",
-          sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
-        ];
+        };
       })
-    : includedReviewColumns.map((column) => [
-        column.targetName,
-        column.type,
-        column.nullable ? "예" : "아니오",
-        column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
-      ]);
+    : includedReviewColumns.map((column) => ({
+        columnName: column.targetName,
+        nullable: column.nullable ? "예" : "아니요",
+        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+        type: column.type,
+      }));
   const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const reviewSchemaSummary = publicSchemaSummary(request.schemaSummary);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
   const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
@@ -5029,30 +4997,10 @@ export function ReviewPage({
               <span className="xflow-review-icon schema"><Database size={17} /></span>
               <div>
                 <h2>Output Schema</h2>
-                <p>{reviewSchemaSummary}</p>
               </div>
               <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
             </div>
-            <div className="xflow-review-schema">
-              <div className="xflow-review-schema-head">
-                <span>TARGET COLUMNS</span>
-                <em>{schemaRows.length} fields</em>
-              </div>
-              <div className="xflow-review-schema-list">
-                {schemaRows.map(([name, type, nullable, expression], rowIndex) => (
-                  <div className="xflow-review-schema-row" key={`${name}-${rowIndex}`}>
-                    <span className="xflow-review-schema-index">{rowIndex + 1}</span>
-                    <div className="xflow-review-schema-column">
-                      <strong>{name}</strong>
-                      <small>{expression}</small>
-                    </div>
-                    <span className="xflow-review-schema-null">{nullable === "예" ? "NULL" : "NOT NULL"}</span>
-                    <span className="xflow-review-schema-type">{type}</span>
-                  </div>
-                ))}
-                {schemaRows.length === 0 && <span className="xflow-review-empty">소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</span>}
-              </div>
-            </div>
+            <ReviewSchemaTable rows={schemaRows} />
           </section>
 
           <section className="xflow-review-card">
@@ -5104,6 +5052,53 @@ export function ReviewPage({
           </section>
         </div>
     </CreationFlowLayout>
+  );
+}
+
+function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
+  const columns = useMemo<ColumnDef<ReviewSchemaRow>[]>(
+    () => [
+      { accessorKey: "columnName", cell: (info) => info.getValue<string>(), header: "컬럼명" },
+      { accessorKey: "type", cell: (info) => info.getValue<string>(), header: "타입" },
+      { accessorKey: "nullable", cell: (info) => info.getValue<string>(), header: "Null 허용" },
+      { accessorKey: "transform", cell: (info) => info.getValue<string>(), header: "변환식" },
+    ],
+    [],
+  );
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <table className="schema-table review-schema-table">
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th key={header.id}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 
