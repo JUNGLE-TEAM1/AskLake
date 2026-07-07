@@ -1,6 +1,7 @@
 # AskLake Backend Integration Readiness
 
 이 문서는 AskLake 프론트엔드와 백엔드 연결 상태, 남은 API 범위, 검증 기준을 정리한다. Pair A Source/Schema/Create/Run 흐름은 mock mode에서는 frontend fallback으로, live API mode에서는 backend를 기준으로 검증한다.
+FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
 
 상세 request/response shape는 `docs/api-contract.md`를 기준으로 한다.
 
@@ -14,10 +15,15 @@
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `running` job/run을 저장하고 즉시 응답 | pause/cancel의 실제 Spark job interrupt |
 | Run/DAG | 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인 | run detail table과 Spark log object storage 분리 |
-| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
-| SQL 분석 | `POST /api/query/runs` 호출 결과를 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
-| Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
+| SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
+| Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
+
+FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
+현재 브랜치는 ETL/Catalog/SQL live endpoint와 Dashboard card/runtime FastAPI endpoint를 함께 포함한다.
+FastAPI 공통 schema 기준은 `backend/app/schemas/common.py`에 두며, 각 Pair는 도메인별 schema 파일에서 `CamelModel`, `ErrorResponse`, pagination 관련 schema를 재사용한다.
+Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/etl/jobs`, `/api/demo/catalog/datasets`에 둔다.
 
 ## 2. Pair A Live Contract
 
@@ -38,7 +44,12 @@ Backend create response:
 ```ts
 type CreateJobResponse = {
   job: JobRowData;
-  dataset: CatalogDataset;
+  catalogTarget: {
+    id: string;
+    name: string;
+    layer: string;
+    status: "pending_run";
+  };
 };
 ```
 
@@ -86,7 +97,7 @@ Spark runner 입력:
 
 - File / S3, Data Lake: object path를 Spark source로 직접 사용
 - REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
-- Connector source JSONL은 backend `tmp/spark-runs`에 쓰고 Spark master/worker의 `/work/reports`에 같은 host directory를 mount해야 한다. `npm run spark:start`는 report mount가 현재 backend path와 다르면 Spark containers를 재생성한다.
+- connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 
@@ -140,7 +151,7 @@ Browser smoke:
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
-| 목록 | mock datasets 표시 | `GET /api/catalog/datasets` |
+| 목록 | live mode에서는 `GET /api/catalog/datasets`, mock mode에서는 fixture 표시 | `GET /api/catalog/datasets` |
 | 검색/태그/필터 | 프론트 이벤트 로그 중심 | `GET /api/catalog/datasets?q=&tag=&layer=` |
 | 상세 | selectedDataset 표시 | `GET /api/catalog/datasets/{datasetId}` |
 | 스키마 | dataset.schema 표시 | 상세 포함 또는 `/schema` |
@@ -153,12 +164,12 @@ Browser smoke:
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
-| Preview 실행 | 자동 SQL 점검 통과 후에만 mock result 생성, preview는 최대 100 rows 제한 안내 | `POST /api/query/runs` preview mode 또는 `POST /api/query/previews` |
+| Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
-| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 mock Catalog Dataset을 생성하고 mock mode에서는 localStorage fallback으로 유지 | `POST /api/catalog/derived-datasets` |
+| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 Catalog Dataset 생성. mock mode에서는 localStorage fallback 유지 | `POST /api/catalog/derived-datasets` |
 | CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 datasets state에 prepend하고 mock mode에서는 `asklake.catalogDatasets`에서 재hydrate하며 SQL 화면 context는 유지 | `POST /api/catalog/derived-datasets` 또는 `POST /api/etl/jobs` |
@@ -173,7 +184,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | --- | --- | --- |
 | 목록 조회 | DB-backed dashboard card 목록 조회, 검색/소유자/태그/정렬/pagination 서버 처리 | `GET /api/dashboards`, `POST /api/dashboards/query` |
 | 새 대시보드 생성 | `draft` 상태 dashboard card를 DB에 먼저 저장하고 조회 화면으로 이동 | `POST /api/dashboards` |
-| 목록 삭제 | 확인 후 dashboard 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
+| 목록 삭제 | 확인 후 dashboard와 runtime snapshot 삭제 API 호출 | `DELETE /api/dashboards/{id}` |
 | Dashboard title 수정 | dashboard card title 수정 | `PATCH /api/dashboards/{id}` |
 | Published 조회 | published revision snapshot을 조회. 없으면 빈 runtime 응답 표시 | `GET /api/dashboards/{id}/published` |
 | Draft 조회/생성 | 편집 진입 시 draft revision/page 준비 | `POST /api/dashboards/{id}/draft/ensure` |
@@ -189,7 +200,28 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 | 내보내기 | local snapshot JSON 다운로드와 감사 로그 기록 | `GET /api/dashboards/{id}/export` |
 | 전체화면/차트 확대 | 프론트 모달 표시 | 백엔드 불필요 |
 
+프론트 dashboard adapter는 FastAPI가 404를 반환하는 이전 backend에서도 화면을 깨지 않도록 local/mock fallback을 유지한다. 현재 병합 기준에서는 FastAPI dashboard endpoint가 우선 source of truth다.
+
 Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
+
+현재 FastAPI live smoke에서는 실제 Catalog persistence가 아직 완성되지 않았기 때문에 `backend/app/services/demo_catalog.py`가 임시 dataset 공급처 역할을 한다. Dashboard runtime service는 `datasetId -> widget.data snapshot` 흐름만 소유하고, demo catalog의 구체 데이터 구조는 해당 파일 안에 가둔다. 이후 실제 Catalog/SQL Result API가 준비되면 `get_demo_dataset()` 호출부를 실제 dataset/query result service 호출로 교체하고, `dataset_rows_to_widget_data()`와 같은 row snapshot 변환 경계는 유지한다.
+
+Runtime table 보강 코드는 Alembic migration 도입 전까지 로컬 PostgreSQL smoke를 막지 않기 위한 임시 안전장치다. `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`에 `created_at`, `updated_at`, JSON snapshot 컬럼이 빠져 있으면 repository에서 `ADD COLUMN IF NOT EXISTS`로 보강하지만, 장기 운영 기준의 source of truth는 후속 Alembic migration으로 옮겨야 한다.
+
+Dashboard FastAPI 구현은 아래 순서와 파일 경계로 유지한다.
+
+1. Dashboard 계약/schema skeleton 정리: `backend/app/schemas/dashboard.py`
+2. Card/List API: 목록, 검색/필터/정렬, 생성, 제목 수정, 삭제
+3. Runtime 조회 API: published 조회, draft ensure
+4. Draft page API: page 추가/이름 수정/삭제
+5. Draft widget/layout/publish API: widget 생성/수정/삭제, layout 저장, publish
+6. Frontend adapter E2E: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
+
+Card/List API는 `dashboards`, `dashboard_tags`를 우선 소유한다.
+Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 우선 소유한다.
+두 흐름은 `dashboardId`와 `publishedRevisionId`만 공유하고, published 화면은 draft revision을 직접 읽지 않는다.
+Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
+구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
 ## 10. 아직 실제 저장되지 않는 기능
 
@@ -199,9 +231,9 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | --- | --- |
 | 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
 | 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
-| 카탈로그 | 상세/lineage 전용 API, 태그/필터 서버 검색 |
-| SQL | saved query, Lake 저장, CSV 다운로드 |
-| 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
+| 카탈로그 | 상세/lineage 고도화, 저장소 보관 기준 확정, 태그/필터 서버 검색 |
+| SQL | 쿼리 저장, CSV 다운로드 |
+| 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
 ## 11. 백엔드 팀에 넘길 최소 구현 범위
@@ -215,7 +247,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 5. `GET /api/catalog/datasets`
 6. `POST /api/query/runs`
 
-대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
+대시보드 실제 저장 API는 현재 병합 기준에서 추가되어 있으며 아래 endpoint를 유지합니다.
 
 1. `GET /api/dashboards`
 2. `POST /api/dashboards/query`
@@ -241,7 +273,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | --- | --- | --- |
 | 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
-| 3 | dashboard list/runtime adapter와 conflict-safe API shape 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
+| 3 | dashboard list/runtime adapter와 FastAPI fallback 경로 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
@@ -265,5 +297,5 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 - Run detail table, DAG step table, Spark log object storage 분리
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
-- Dashboard save/publish persistence
+- Dashboard 권한/공유/export API
 - Audit log server persistence

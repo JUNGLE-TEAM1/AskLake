@@ -78,7 +78,35 @@ try {
     validationType: "Not Null",
   }];
 
-  const created = await post("/api/etl/jobs", {
+  await assertPostFails("/api/etl/jobs", {
+    id: "pair_a_verify_all_excluded",
+    jobName: "pair_a_verify_all_excluded_pipeline",
+    owner: "data-team-01",
+    permissionSummary: "verify",
+    rag: false,
+    retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 10, timeoutMinutes: 60 },
+    retryPolicySummary: "no retry",
+    ruleSummary: "schema rejected",
+    transformOutputColumns: [],
+    transformSteps: [],
+    qualityInvalidRows: [],
+    qualityRules: [],
+    qualityScore: 100,
+    qualityStatus: "pass",
+    scheduleLabel: "manual",
+    schemaColumns: minio.draftPatch.schema.columns.map((column) => ({ ...column, included: false })),
+    schemaFingerprint: "all-excluded",
+    schemaSampleRows: minio.draftPatch.schema.sampleRows,
+    schemaSummary: "all excluded schema should fail",
+    sourceConfig: minio.draftPatch.source.sourceConfig,
+    sourceLabel: minio.draftPatch.source.sourceLabel,
+    sourceType: minio.draftPatch.source.sourceType,
+    targetDataset: "pair_a_verify_all_excluded_gold",
+    targetFormat: "Parquet",
+    targetLayer: "GOLD",
+  }, 400, "All-excluded schema should be rejected.");
+
+  const createRequest = {
     id: "pair_a_verify",
     jobName: "pair_a_verify_pipeline",
     owner: "data-team-01",
@@ -104,16 +132,17 @@ try {
     targetDataset: "pair_a_verify_gold",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
-  });
-  assert(created.job && created.dataset, "Create job should return { job, dataset }.");
+  };
+  const created = await post("/api/etl/jobs", createRequest);
+  assert(created.job && created.catalogTarget, "Create job should return { job, catalogTarget }.");
   assert(created.job.transformSteps?.length === 1, "Created job should preserve transform steps.");
   assert(created.job.qualityRules?.length === 1, "Created job should preserve quality rules.");
-  assert(created.dataset.schema.length === transformOutputColumns.length, "Dataset schema should map transform output schema.");
+  await assertPostFails("/api/etl/jobs", createRequest, 409, "Duplicate pending target dataset should be rejected.");
 
   const jobs = await get("/api/etl/jobs");
   const datasets = await get("/api/catalog/datasets");
   assert(jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
-  assert(datasets.length === 1, "Backend hydrate datasets should contain the created dataset only.");
+  assert(datasets.length === 0, "Catalog should stay empty until a job run succeeds.");
 
   console.log("verify-backend: ok");
 } finally {
@@ -149,6 +178,18 @@ async function post(path, body) {
     method: "POST",
   });
   return readResponse(response);
+}
+
+async function assertPostFails(path, body, status, message) {
+  const response = await fetch(`${baseUrl}${path}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.status !== status) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(`${message} Expected ${status}, got ${response.status}: ${JSON.stringify(payload)}`);
+  }
 }
 
 async function readResponse(response) {

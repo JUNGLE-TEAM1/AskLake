@@ -5,7 +5,7 @@ import path from "node:path";
 const port = Number(process.env.ASKLAKE_VERIFY_SPARK_PORT || 18088);
 const sourceBucket = process.env.ASKLAKE_VERIFY_SPARK_BUCKET || "m3-raw";
 const sourceKey = process.env.ASKLAKE_VERIFY_SPARK_KEY || "nyc_taxi/csv/2019-Nov.csv";
-const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "1000";
+const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "3";
 
 const env = {
   ...process.env,
@@ -38,28 +38,29 @@ try {
     jobName: `Spark 실제 실행 검증 ${suffix}`,
     owner: "admin",
     permissionSummary: "admin",
+    permissionRoles: [{ access: ["조회", "쿼리 실행"], checked: true, name: "Data Engineer Group" }],
     rag: false,
     retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 5, timeoutMinutes: 60 },
     retryPolicySummary: "수동 재시도",
     ruleSummary: "Spark run smoke",
     transformOutputColumns: [
-      ["vendorid", "integer"],
-      ["tpep_pickup_datetime", "timestamp"],
-      ["tpep_dropoff_datetime", "timestamp"],
-      ["passenger_count", "integer"],
-      ["trip_distance", "double"],
-      ["total_amount", "double"],
+      ["event_time", "timestamp"],
+      ["event_type", "string"],
+      ["product_id", "integer"],
+      ["category_id", "integer"],
+      ["item_price", "double"],
+      ["user_id", "integer"],
     ],
     transformSteps: [
       {
         enabled: true,
-        id: "spark-transform-distance",
-        input: "trip_distance",
+        id: "spark-transform-price",
+        input: "item_price",
         kind: "cast",
-        label: "Cast Decimal: trip_distance -> trip_distance",
+        label: "Cast Decimal: item_price -> item_price",
         onError: "Set Null",
         operation: "Cast Decimal",
-        output: "trip_distance",
+        output: "item_price",
         params: "double",
       },
     ],
@@ -68,10 +69,10 @@ try {
       {
         enabled: true,
         failureAction: "Warn",
-        id: "spark-quality-total-amount",
+        id: "spark-quality-price",
         kind: "range",
         severity: "Warning",
-        targetColumn: "total_amount",
+        targetColumn: "item_price",
         validationType: "Range Check",
       },
     ],
@@ -79,15 +80,16 @@ try {
     qualityStatus: "pass",
     scheduleLabel: "manual",
     schemaColumns: [
-      { nullable: true, sourceName: "VendorID", targetName: "vendorid", type: "Integer" },
-      { nullable: true, sourceName: "tpep_pickup_datetime", targetName: "tpep_pickup_datetime", type: "Timestamp" },
-      { nullable: true, sourceName: "tpep_dropoff_datetime", targetName: "tpep_dropoff_datetime", type: "Timestamp" },
-      { nullable: true, sourceName: "passenger_count", targetName: "passenger_count", type: "Integer" },
-      { nullable: true, sourceName: "trip_distance", targetName: "trip_distance", type: "Float" },
-      { nullable: true, sourceName: "total_amount", targetName: "total_amount", type: "Float" },
+      { included: true, nullable: false, sourceName: "event_time", targetName: "event_time", type: "Timestamp" },
+      { included: true, nullable: false, sourceName: "event_type", targetName: "event_type", type: "String" },
+      { included: true, nullable: false, sourceName: "product_id", targetName: "product_id", type: "Integer" },
+      { included: true, nullable: false, sourceName: "category_id", targetName: "category_id", type: "Integer" },
+      { included: false, nullable: true, sourceName: "brand", targetName: "brand", type: "String" },
+      { included: true, nullable: false, sourceName: "price", targetName: "item_price", type: "Float" },
+      { included: true, nullable: false, sourceName: "user_id", targetName: "user_id", type: "Integer" },
     ],
-    schemaSampleRows: [["1", "2019-11-01 00:00:00", "2019-11-01 00:03:00", "1", "0.7", "8.3"]],
-    schemaSummary: "Spark 실제 실행 검증용 CSV schema",
+    schemaSampleRows: [["2019-11-01 00:00:00 UTC", "view", "1003461", "2053013555631882655", "xiaomi", "489.07", "520088904"]],
+    schemaSummary: "Spark 실제 실행 검증용 ecommerce CSV schema",
     sourceConfig: [
       ["Endpoint", env.MINIO_ENDPOINT],
       ["Bucket / Stage Name", sourceBucket],
@@ -102,9 +104,16 @@ try {
     sourceLabel: `${sourceBucket}/${sourceKey}`,
     sourceType: "File / S3",
     targetDataset: `spark_actual_verify_${suffix}`,
+    compression: "Snappy",
+    partition: "year/month/region",
+    storagePath: `s3a://asklake-output/spark_actual_verify_${suffix}/gold/`,
+    storageType: "S3",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
   });
+
+  const datasetsAfterCreate = await getJson("/api/catalog/datasets");
+  assert(datasetsAfterCreate.length === 0, "Catalog should stay empty before the Spark run succeeds.");
 
   const command = await postJson(`/api/etl/jobs/${encodeURIComponent(create.job.id)}/commands`, { command: "run" });
   assert(command.job.status === "running", `Job command should return running status: ${command.job.status}`);
@@ -112,18 +121,25 @@ try {
 
   const completedJob = await waitForJobCompletion(create.job.id, command.run.runId);
   const run = completedJob.runHistory?.find((item) => item.runId === command.run.runId);
+  const datasetsAfterRun = await getJson("/api/catalog/datasets");
   const parquetFiles = listParquetFiles(run?.outputPath);
+  const datasetSchema = datasetsAfterRun[0]?.schema ?? [];
+  const schemaTypes = new Map(datasetSchema.map(([name, type]) => [name, type]));
+  const schemaNames = datasetSchema.map(([name]) => name);
   const result = {
+    catalogDatasets: datasetsAfterRun.length,
     dagSteps: completedJob.dagSteps?.map((step) => `${step.title}:${step.status}`),
     errorSummary: run?.errorSummary,
     inputRows: run?.inputRows,
     jobId: create.job.id,
     jobStatus: completedJob.status,
+    runDagSteps: completedJob.dagStepsByRunId?.[run?.runId]?.length ?? 0,
     outputExists: Boolean(run?.outputPath && existsSync(run.outputPath)),
     outputPath: run?.outputPath,
     outputRows: run?.outputRows,
     parquetFiles: parquetFiles.length,
     runStatus: run?.status,
+    schemaNames,
   };
 
   console.log(JSON.stringify(result, null, 2));
@@ -131,7 +147,15 @@ try {
   assert(result.outputExists, `Spark output path was not copied to host: ${run?.outputPath}`);
   assert(parquetFiles.length > 0, `Spark output path has no parquet files: ${run?.outputPath}`);
   assert(completedJob.status === "scheduled", `Job did not return to scheduled status: ${completedJob.status}`);
+  assert(datasetsAfterRun.length === 1, "Catalog should contain the dataset after the Spark run succeeds.");
+  assert(schemaNames.includes("item_price"), `Approved target column was not written to catalog schema: ${schemaNames.join(", ")}`);
+  assert(!schemaNames.includes("price"), `Original source column should have been aliased away: ${schemaNames.join(", ")}`);
+  assert(!schemaNames.includes("brand"), `Excluded schema column should not be in output schema: ${schemaNames.join(", ")}`);
+  assert(String(schemaTypes.get("item_price") || "").includes("double"), `item_price should be cast to double: ${schemaTypes.get("item_price")}`);
   assert(completedJob.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
+  assert(completedJob.dagStepsByRunId?.[run.runId]?.length === completedJob.dagSteps.length, "Job should preserve DAG steps under the server runId.");
+  assert(completedJob.permissionRoles?.length === 1, "Job should preserve permissionRoles from the create request.");
+  assert(completedJob.storagePath?.includes(`spark_actual_verify_${suffix}`), "Job should preserve target storagePath from the create request.");
   assert(completedJob.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
   assert(completedJob.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
 } finally {

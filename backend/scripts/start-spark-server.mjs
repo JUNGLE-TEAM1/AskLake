@@ -12,10 +12,10 @@ const workerName = process.env.ASKLAKE_SPARK_WORKER_CONTAINER || "asklake-spark-
 const publishUi = process.env.ASKLAKE_SPARK_PUBLISH_UI !== "false";
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
+const reportHostDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
+const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
-const reportHostDir = path.join(backendDir, "tmp", "spark-runs");
-const reportContainerDir = "/work/reports";
 mkdirSync(sampleHostDir, { recursive: true });
 mkdirSync(reportHostDir, { recursive: true });
 
@@ -55,8 +55,8 @@ function createMasterArgs() {
       "--label",
       "asklake.role=spark-master",
       ...sampleMountArgs(),
-      ...outputMountArgs(),
       ...reportMountArgs(),
+      ...outputMountArgs(),
       ...uiPortArgs("18080", "8080"),
       image,
       "/opt/spark/bin/spark-class",
@@ -81,8 +81,8 @@ function createWorkerArgs() {
       "--label",
       "asklake.role=spark-worker",
       ...sampleMountArgs(),
-      ...outputMountArgs(),
       ...reportMountArgs(),
+      ...outputMountArgs(),
       ...uiPortArgs("18081", "8081"),
       image,
       "/opt/spark/bin/spark-class",
@@ -98,11 +98,11 @@ function containerNeedsCreate(name) {
   if (inspect.status !== 0) return true;
   const [metadata] = JSON.parse(inspect.stdout || "[]");
   const expectedSource = normalizePath(sampleHostDir);
-  const expectedReport = normalizePath(reportHostDir);
+  const expectedReportSource = normalizePath(reportHostDir);
   const sampleMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
+  const reportMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedReportSource && mount.Destination === reportContainerDir);
   const outputMounted = metadata?.Mounts?.some((mount) => mount.Name === outputVolumeName && mount.Destination === outputContainerDir);
-  const reportMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedReport && mount.Destination === reportContainerDir);
-  if (sampleMounted && outputMounted && reportMounted) return false;
+  if (sampleMounted && reportMounted && outputMounted) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
 }
@@ -115,12 +115,12 @@ function sampleMountArgs() {
   return ["-v", `${sampleHostDir}:${sampleContainerDir}:ro`];
 }
 
-function outputMountArgs() {
-  return ["-v", `${outputVolumeName}:${outputContainerDir}`];
-}
-
 function reportMountArgs() {
   return ["-v", `${reportHostDir}:${reportContainerDir}`];
+}
+
+function outputMountArgs() {
+  return ["-v", `${outputVolumeName}:${outputContainerDir}`];
 }
 
 function ensureOutputVolumeWritable() {

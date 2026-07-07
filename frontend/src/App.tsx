@@ -44,6 +44,9 @@ const placeholderAuditConfig: Record<PlaceholderFlow, { targetType: AuditTargetT
   },
 };
 
+const emptyDatasetId = "dataset_not_selected";
+const emptyJobId = "JOB-NONE";
+
 type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
@@ -71,6 +74,14 @@ function dashboardEntryFromRoute(route: DashboardRouteState, version: number): D
 function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
   const encodedId = encodeURIComponent(dashboardId);
   return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
+}
+
+function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[]) {
+  return dataset.id !== emptyDatasetId && datasets.some((item) => item.id === dataset.id);
+}
+
+function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
+  return jobId !== emptyJobId && jobs.some((job) => job.id === jobId);
 }
 
 export function App() {
@@ -117,8 +128,13 @@ export function App() {
   const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
   const shouldBlockForInitialError = !dataLoading && Boolean(dataError) && !hasShellRows && !isIngestShellFlow;
-  const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && Boolean(selectedDataset && selectedJob);
   const pendingMessage = dataLoading ? "DB 데이터 동기화 중..." : "API 요청 처리 중...";
+  const selectedDatasetAvailable = hasSelectedDataset(selectedDataset, datasets);
+  const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
+  const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns";
+  const requiresSelectedDataset = activeFlow === "catalogDetail" || activeFlow === "sql" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
+  const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow;
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -189,7 +205,7 @@ export function App() {
 
   const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
     const targetDataset = dataset ?? selectedDataset;
-    if (!targetDataset) {
+    if (!targetDataset || !hasSelectedDataset(targetDataset, datasets)) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -201,7 +217,7 @@ export function App() {
   };
 
   const openDashboardFromSql = (result: SqlResultDraft) => {
-    if (!selectedDataset) {
+    if (!selectedDatasetAvailable) {
       showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
       return;
     }
@@ -248,12 +264,12 @@ export function App() {
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onNavigate={navigateSidebar} />
-      <main className="main-shell">
+      <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : "page-body"}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : "page-body"}>
           {shouldBlockForInitialData && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
@@ -268,11 +284,11 @@ export function App() {
               <p>{dataError}</p>
             </div>
           )}
-          {!dataLoading && !dataError && (!selectedDataset || !selectedJob) && (
+          {!dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
-              <span>POSTGRES EMPTY</span>
-              <h1>표시할 seed 데이터가 없습니다</h1>
-              <p>Postgres seed를 다시 실행한 뒤 새로고침해주세요.</p>
+              <span>EMPTY STATE</span>
+              <h1>먼저 실제 데이터를 선택해주세요</h1>
+              <p>목록에서 Job 또는 Dataset을 선택하거나, 새 파이프라인을 생성하고 실행해 주세요.</p>
             </div>
           )}
           {shouldRenderAppContent && (

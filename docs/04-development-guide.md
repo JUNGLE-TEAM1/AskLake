@@ -54,6 +54,22 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
+### FastAPI scaffold
+
+FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
+기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+```
+
+로컬 환경 변수는 `backend/.env.example`을 기준으로 둔다.
+FastAPI 폴더 구조와 설계 결정은 `docs/backend-fastapi-transition-plan.md`를 기준으로 한다.
+
 ## 4) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.
@@ -105,7 +121,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 | Pair | Primary Area | Deliverables | Handoff |
 | --- | --- | --- | --- |
-| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, 실행 상세 DAG 모달 | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
+| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | create `{ job, catalogTarget }`, run 성공 `dataset`, `RunSummary`, `JobCommandResponse` | Pair B에는 성공 run 이후 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
 | Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 
@@ -146,6 +162,7 @@ Day 4에는 신규 기능을 멈추고 Source -> ETL -> Catalog -> Lineage -> SQ
 - API contract tests
 - adapter unit tests
 - backend endpoint tests
+- FastAPI `/api/health` smoke test
 - live backend browser smoke tests
 - Spark run regression tests
 - dashboard persistence regression tests

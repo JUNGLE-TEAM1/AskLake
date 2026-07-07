@@ -9,7 +9,6 @@ import {
   listJobs as listStoredJobs,
   saveDataset,
   saveJob,
-  savePipelineCreation,
   saveSqlRun,
 } from "./metadataStore.mjs";
 
@@ -39,21 +38,30 @@ export async function createPipeline(request) {
   const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
   const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobCount + 1).padStart(3, "0")}`;
   const datasetId = `ds_${normalizeColumnName(request.targetDataset)}`;
+  await assertTargetDatasetAvailable(datasetId, request.targetDataset);
 
   const job = {
     dagSteps: initialDagSteps(request, sourceMetrics),
+    dagStepsByRunId: {},
     id: jobId,
+    datasetId,
     lastRun: "생성 후 미실행",
     lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
     nextRun: isManualScheduleLabel(request.scheduleLabel) ? "-" : request.scheduleLabel,
     owner: request.owner,
+    permissionRoles: request.permissionRoles,
+    rag: Boolean(request.rag),
     runHistory: [],
     schedule: request.scheduleLabel,
     source: `${request.sourceType} / ${request.sourceLabel}`,
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    compression: request.compression,
+    partition: request.partition,
+    storagePath: request.storagePath,
+    storageType: request.storageType,
     schemaColumns: request.schemaColumns,
     schemaSampleRows: request.schemaSampleRows,
     stats: initialJobStats(sourceMetrics),
@@ -70,29 +78,30 @@ export async function createPipeline(request) {
     qualityStatus: request.qualityStatus,
   };
 
-  const dataset = {
-    description: `${request.sourceType} 소스 ${request.sourceLabel}에서 생성된 데이터셋`,
-    downstream: request.rag ? ["SQL 분석", "RAG 인덱싱"] : ["SQL 분석"],
-    freshness: "latest",
-    id: datasetId,
-    lastUpdated: new Date().toISOString(),
-    layer: request.targetLayer,
-    name: request.targetDataset,
-    nextRefresh: request.scheduleLabel,
-    owner: request.owner,
-    quality: qualitySummaryFromRequest(request),
-    rag: Boolean(request.rag),
-    rows: sourceMetrics.datasetRows,
-    sampleRows: datasetSampleRows,
-    schema: datasetSchema,
-    size: sourceMetrics.datasetSize,
-    source: request.jobName,
-    status: "available",
-    tags: ["#생성", `#${String(request.targetLayer).toLowerCase()}`],
-    upstream: [request.sourceLabel, request.jobName],
-  };
+  await saveJob(job);
 
-  return savePipelineCreation(job, dataset);
+  return {
+    catalogTarget: {
+      id: datasetId,
+      layer: request.targetLayer,
+      name: request.targetDataset,
+      status: "pending_run",
+    },
+    job,
+  };
+}
+
+async function assertTargetDatasetAvailable(datasetId, targetDataset) {
+  const normalizedTarget = normalizeColumnName(targetDataset);
+  const [datasets, jobs] = await Promise.all([listStoredDatasets(), listStoredJobs()]);
+  const datasetExists = datasets.some((dataset) => dataset.id === datasetId || normalizeColumnName(dataset.name) === normalizedTarget);
+  const pendingJobExists = jobs.some((job) => job.datasetId === datasetId || normalizeColumnName(job.target) === normalizedTarget);
+  if (datasetExists || pendingJobExists) {
+    const error = new Error(`타깃 데이터셋이 이미 생성되었거나 실행 대기 중입니다: ${targetDataset}`);
+    error.status = 409;
+    error.code = "CREATE_PIPELINE_CONFLICT";
+    throw error;
+  }
 }
 
 export async function commandJob(jobId, command) {
@@ -117,6 +126,10 @@ export async function commandJob(jobId, command) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
     job.dagSteps = dagStepsFromCommand(job, command, run);
+    job.dagStepsByRunId = {
+      ...(job.dagStepsByRunId ?? {}),
+      [run.runId]: job.dagSteps,
+    };
   }
   await saveJob(job);
   if (run && (command === "run" || command === "retry")) {
@@ -165,10 +178,15 @@ async function finalizeSparkJobRun(jobId, command, runId) {
   const finalJob = finalizeJobFromSparkResult(latestJob, command, sparkResult);
   finalJob.runHistory = [finalRun, ...(latestJob.runHistory ?? []).filter((item) => item.runId !== runId)];
   finalJob.stats = statsFromRuns(finalJob, finalJob.runHistory);
-  finalJob.dagSteps = dagStepsFromCommand(finalJob, command, finalRun);
+  finalJob.dagSteps = dagStepsFromCommand(finalJob, command, finalRun, sparkResult);
+  finalJob.dagStepsByRunId = {
+    ...(latestJob.dagStepsByRunId ?? {}),
+    [runId]: finalJob.dagSteps,
+  };
 
+  const dataset = await updateDatasetFromSparkResult(finalJob, sparkResult);
   await saveJob(finalJob);
-  await updateDatasetFromSparkResult(finalJob, sparkResult);
+  return dataset;
 }
 
 export async function executeQuery(request) {
@@ -202,6 +220,9 @@ function validateCreatePipelineRequest(request) {
   if (!request.targetLayer) missing.push("targetLayer");
   if (!request.owner) missing.push("owner");
   if (!Array.isArray(request.schemaColumns) || request.schemaColumns.length === 0) missing.push("schemaColumns");
+  if (Array.isArray(request.schemaColumns) && request.schemaColumns.length > 0 && validRequestSchemaColumns(request).length === 0) {
+    missing.push("schemaColumns[included]");
+  }
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
 }
 
@@ -375,12 +396,27 @@ function initialDagSteps(request, metrics) {
   const transformCount = Array.isArray(request.transformSteps) ? request.transformSteps.length : 0;
   const qualityCount = Array.isArray(request.qualityRules) ? request.qualityRules.length : 0;
   return [
-    { id: "source", meta: `${request.sourceType} / ${request.sourceLabel}`, status: "success", title: "1. 소스 연결" },
-    { id: "schema", meta: `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, status: metrics.schemaColumns > 0 ? "success" : "pending", title: "2. 스키마 추론" },
-    { id: "create", meta: request.targetDataset, status: "success", title: "3. Job 생성" },
-    { id: "transform", meta: `${transformCount}개 규칙`, status: "pending", title: "4. 처리 규칙 대기" },
-    { id: "quality", meta: `${qualityCount}개 검사`, status: "pending", title: "5. 품질 검증 대기" },
-    { id: "run", meta: "아직 실행되지 않음", status: "pending", title: "6. 실행 대기" },
+    dagStep("source", "1. 소스 연결", `${request.sourceType} / ${request.sourceLabel}`, "success", [
+      ["커넥터", request.sourceType],
+      ["소스", request.sourceLabel],
+    ], [`${request.sourceType} 연결 테스트 결과로 Job이 생성되었습니다.`]),
+    dagStep("schema", "2. 스키마 추론", `${metrics.schemaColumns.toLocaleString()}개 컬럼 · ${metrics.sampleScope}`, metrics.schemaColumns > 0 ? "success" : "pending", [
+      ["컬럼 수", `${metrics.schemaColumns.toLocaleString()}개`],
+      ["샘플 범위", metrics.sampleScope],
+    ], [`스키마 ${metrics.schemaColumns.toLocaleString()}개 컬럼을 생성 요청에 포함했습니다.`]),
+    dagStep("create", "3. Job 생성", request.targetDataset, "success", [
+      ["타겟 데이터셋", request.targetDataset],
+      ["타겟 레이어", request.targetLayer],
+    ], ["아직 실행 전이므로 카탈로그 데이터셋은 생성하지 않습니다."]),
+    dagStep("transform", "4. 처리 규칙 대기", `${transformCount}개 규칙`, "pending", [
+      ["처리 규칙", `${transformCount}개`],
+    ], ["실행 시 Spark 변환 단계에서 적용됩니다."]),
+    dagStep("quality", "5. 품질 검증 대기", `${qualityCount}개 검사`, "pending", [
+      ["품질 검사", `${qualityCount}개`],
+    ], ["실행 시 품질 규칙 평가 결과가 기록됩니다."]),
+    dagStep("run", "6. 실행 대기", "아직 실행되지 않음", "pending", [
+      ["Run ID", "-"],
+    ], ["즉시 실행 또는 예약 실행 후 Run 로그가 연결됩니다."]),
   ];
 }
 
@@ -448,9 +484,9 @@ function finalizeJobFromSparkResult(job, command, result) {
 }
 
 async function updateDatasetFromSparkResult(job, result) {
-  const dataset = await findDatasetForJob(job);
-  if (!dataset || result.status !== "success") return;
-  const nextDataset = { ...dataset };
+  if (result.status !== "success") return undefined;
+  const existingDataset = await findDatasetForJob(job);
+  const nextDataset = existingDataset ? { ...existingDataset } : datasetFromSuccessfulRun(job, result);
   nextDataset.lastUpdated = result.endedAt ?? new Date().toISOString();
   if (Array.isArray(result.schema) && result.schema.length > 0) {
     nextDataset.schema = result.schema.map((field) => [field.name, field.type]);
@@ -464,6 +500,47 @@ async function updateDatasetFromSparkResult(job, result) {
   nextDataset.status = "available";
   nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
   await saveDataset(nextDataset);
+  return nextDataset;
+}
+
+function datasetFromSuccessfulRun(job, result) {
+  const layer = job.targetLayer ?? "GOLD";
+  const schema = Array.isArray(result.schema) && result.schema.length > 0
+    ? result.schema.map((field) => [field.name, field.type])
+    : schemaFromJob(job);
+  return {
+    description: `${job.sourceType ?? "소스"} 소스 ${job.sourceLabel ?? job.source} 실행 결과 데이터셋`,
+    downstream: job.rag ? ["SQL 분석", "RAG 인덱싱"] : ["SQL 분석"],
+    freshness: "latest",
+    id: `ds_${normalizeColumnName(job.target)}`,
+    lastUpdated: result.endedAt ?? new Date().toISOString(),
+    layer,
+    name: job.target,
+    nextRefresh: job.schedule,
+    owner: job.owner,
+    quality: result.quality?.summary || `품질 점수 ${result.quality?.score ?? job.qualityScore ?? "-"}% · 상태 ${qualityStatusLabel(result.quality?.status ?? job.qualityStatus)}`,
+    rag: Boolean(job.rag),
+    rows: formatRows(result.outputRows),
+    sampleRows: Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [],
+    schema,
+    size: result.outputPath ?? "-",
+    source: job.name,
+    status: "available",
+    tags: ["#실행완료", `#${String(layer).toLowerCase()}`],
+    upstream: Array.from(new Set([job.sourceLabel, job.name, result.sourcePath ?? job.source].filter(Boolean))),
+  };
+}
+
+function schemaFromJob(job) {
+  if (Array.isArray(job.transformOutputColumns) && job.transformOutputColumns.length > 0) {
+    return job.transformOutputColumns;
+  }
+  if (Array.isArray(job.schemaColumns) && job.schemaColumns.length > 0) {
+    return job.schemaColumns
+      .filter(isSchemaColumnIncluded)
+      .map((column) => [column.targetName ?? column.sourceName, column.type ?? "string"]);
+  }
+  return [];
 }
 
 function statsFromRuns(job, runs) {
@@ -483,10 +560,14 @@ function statsFromRuns(job, runs) {
   };
 }
 
-function dagStepsFromCommand(job, command, run) {
+function dagStepsFromCommand(job, command, run, sparkResult) {
   const canceled = command === "cancel";
   const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
+  const sourcePath = sparkResult?.sourcePath ?? job.source;
+  const outputPath = run.outputPath ?? sparkResult?.outputPath ?? "-";
+  const sparkLogs = compactSparkLogs(sparkResult);
+  const qualitySummary = sparkResult?.quality?.summary ?? "-";
   if (!canceled) {
     const failed = run.status === "failed";
     const failedStage = String(run.failedStage ?? "").toLowerCase();
@@ -494,23 +575,63 @@ function dagStepsFromCommand(job, command, run) {
     const transformFailed = failed && failedStage.includes("transform");
     const qualityFailed = failed && failedStage.includes("quality");
     return [
-      { id: "source", meta: job.source, status: "success", title: "1. 소스 연결" },
-      { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: "success", title: "2. 스키마 확인" },
-      { id: "read", meta: run.inputRows, status: readFailed ? "failed" : "success", title: "3. Spark 소스 읽기" },
-      { id: "transform", meta: transformMeta, status: transformFailed ? "failed" : readFailed ? "blocked" : "success", title: "4. 처리 규칙 적용" },
-      { id: "quality", meta: qualityMeta, status: qualityFailed ? "failed" : readFailed || transformFailed ? "blocked" : "success", title: "5. 품질 검증" },
-      { id: "write", meta: run.outputPath ?? "-", status: failed ? "blocked" : "success", title: "6. Parquet 적재" },
-      { id: "catalog", meta: job.target, status: failed ? "blocked" : "success", title: "7. 카탈로그 데이터셋 갱신" },
+      dagStep("source", "1. 소스 연결", job.source, "success", [
+        ["소스", job.source],
+        ["소스 경로", sourcePath],
+      ], [`${job.sourceType ?? "소스"} 커넥터 설정 확인 완료.`]),
+      dagStep("schema", "2. 스키마 확인", job.stats?.schemaColumns ?? "-", "success", [
+        ["스키마", job.stats?.schemaColumns ?? "-"],
+        ["샘플 범위", job.stats?.sampleScope ?? "-"],
+      ], ["생성 시 확정된 스키마를 Spark 실행 계약에 사용했습니다."]),
+      dagStep("read", "3. Spark 소스 읽기", run.inputRows, readFailed ? "failed" : "success", [
+        ["입력 행", run.inputRows],
+        ["Spark source", sourcePath],
+      ], readFailed ? [`Spark 소스 읽기 실패: ${run.errorSummary}`, ...sparkLogs] : [`Spark가 ${run.inputRows}을 읽었습니다.`, ...sparkLogs]),
+      dagStep("transform", "4. 처리 규칙 적용", transformMeta, transformFailed ? "failed" : readFailed ? "blocked" : "success", [
+        ["처리 규칙", transformMeta],
+      ], transformFailed ? [`처리 규칙 적용 실패: ${run.errorSummary}`] : readFailed ? ["소스 읽기 실패로 처리 규칙 적용이 중단되었습니다."] : ["처리 규칙 적용 완료."]),
+      dagStep("quality", "5. 품질 검증", qualityMeta, qualityFailed ? "failed" : readFailed || transformFailed ? "blocked" : "success", [
+        ["품질 검사", qualityMeta],
+        ["품질 결과", qualitySummary],
+      ], qualityFailed ? [`품질 검증 실패: ${run.errorSummary}`] : readFailed || transformFailed ? ["이전 단계 실패로 품질 검증이 실행되지 않았습니다."] : [qualitySummary !== "-" ? qualitySummary : "품질 검증 완료."]),
+      dagStep("write", "6. Parquet 적재", outputPath, failed ? "blocked" : "success", [
+        ["출력 경로", outputPath],
+        ["출력 행", run.outputRows],
+      ], failed ? ["이전 단계 실패로 Parquet 적재가 수행되지 않았습니다."] : [`Parquet 출력 완료: ${outputPath}`]),
+      dagStep("catalog", "7. 카탈로그 데이터셋 갱신", job.target, failed ? "blocked" : "success", [
+        ["데이터셋", job.target],
+        ["레이어", job.targetLayer ?? "-"],
+      ], failed ? ["실행 실패로 카탈로그 데이터셋을 갱신하지 않았습니다."] : ["실행 성공 후 카탈로그 데이터셋을 갱신했습니다."]),
     ];
   }
   return [
-    { id: "source", meta: job.source, status: canceled ? "blocked" : "success", title: "1. 소스 연결" },
-    { id: "schema", meta: job.stats?.schemaColumns ?? "-", status: canceled ? "blocked" : "success", title: "2. 스키마 확인" },
-    { id: "read", meta: run.inputRows, status: canceled ? "blocked" : "running", title: "3. 소스 읽기" },
-    { id: "transform", meta: transformMeta, status: canceled ? "blocked" : "pending", title: "4. 처리 규칙" },
-    { id: "quality", meta: qualityMeta, status: "pending", title: "5. 품질 검증" },
-    { id: "target", meta: job.target, status: "pending", title: "6. Lake 적재" },
+    dagStep("source", "1. 소스 연결", job.source, canceled ? "blocked" : "success", [["소스", job.source]], ["사용자가 실행을 취소했습니다."]),
+    dagStep("schema", "2. 스키마 확인", job.stats?.schemaColumns ?? "-", canceled ? "blocked" : "success", [["스키마", job.stats?.schemaColumns ?? "-"]], ["취소로 스키마 확인 이후 단계가 중단되었습니다."]),
+    dagStep("read", "3. 소스 읽기", run.inputRows, canceled ? "blocked" : "running", [["입력 행", run.inputRows]], ["실행 취소 명령으로 소스 읽기를 중단했습니다."]),
+    dagStep("transform", "4. 처리 규칙", transformMeta, canceled ? "blocked" : "pending", [["처리 규칙", transformMeta]], ["취소 상태입니다."]),
+    dagStep("quality", "5. 품질 검증", qualityMeta, "pending", [["품질 검사", qualityMeta]], ["취소 상태입니다."]),
+    dagStep("target", "6. Lake 적재", job.target, "pending", [["타겟", job.target]], ["취소 상태입니다."]),
   ];
+}
+
+function dagStep(id, title, meta, status, details = [], logs = [], note) {
+  return {
+    details,
+    id,
+    logs: logs.filter(Boolean).map((line) => String(line)),
+    meta: String(meta ?? "-"),
+    ...(note ? { note } : {}),
+    status,
+    title,
+  };
+}
+
+function compactSparkLogs(result) {
+  const lines = [result?.error, result?.stderr, result?.stdout]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/\r?\n/))
+    .filter((line) => line.trim());
+  return lines.slice(-80);
 }
 
 function sourceUnitLabel(sourceType) {
@@ -543,7 +664,15 @@ function parsePositiveInteger(value) {
 function validRequestSchemaColumns(request) {
   return request.schemaColumns
     .map((column, sourceIndex) => ({ column, sourceIndex }))
-    .filter(({ column }) => String(column?.targetName ?? "").trim());
+    .filter(({ column }) => isSchemaColumnIncluded(column) && String(column?.targetName ?? "").trim());
+}
+
+function isSchemaColumnIncluded(column) {
+  const value = column?.included ?? true;
+  if (typeof value === "string") {
+    return !["false", "0", "no", "off"].includes(value.trim().toLowerCase());
+  }
+  return value !== false;
 }
 
 function datasetSchemaFromRequest(request) {

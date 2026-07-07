@@ -1,6 +1,7 @@
 node_modules/
 .venv/
 dist/
+.venv/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

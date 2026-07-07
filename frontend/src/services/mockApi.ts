@@ -13,6 +13,7 @@ export type JobCommandResult = {
   action: string;
   apiPath: string;
   dagSteps?: JobDagStep[];
+  dataset?: CatalogDataset;
   job?: JobRowData;
   run?: JobRunSummary;
 };
