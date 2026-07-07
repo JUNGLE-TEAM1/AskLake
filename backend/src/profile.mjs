@@ -92,22 +92,88 @@ function parseTextSample(text, maxRows) {
 
 function parseJsonSample(text, format, maxRows) {
   const values = [];
+  if (format === "jsonl") {
+    values.push(...parseJsonLines(text, maxRows));
+    return jsonValuesToSample(values, format);
+  }
+
   try {
     const parsed = JSON.parse(text);
     if (Array.isArray(parsed)) values.push(...parsed.slice(0, maxRows));
     else values.push(parsed);
   } catch {
-    for (const line of text.split(/\r?\n/).slice(0, maxRows)) {
-      if (!line.trim()) continue;
-      try {
-        values.push(JSON.parse(line));
-      } catch {
-        break;
-      }
+    values.push(...parseJsonLines(text, maxRows));
+    if (values.length === 0) {
+      values.push(...parseJsonArrayPrefix(text, maxRows));
     }
     format = "jsonl";
   }
 
+  return jsonValuesToSample(values, format);
+}
+
+function parseJsonLines(text, maxRows) {
+  const values = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (values.length >= maxRows) break;
+    const trimmed = line.trim().replace(/,$/, "");
+    if (!trimmed || trimmed === "[" || trimmed === "]") continue;
+    try {
+      values.push(JSON.parse(trimmed));
+    } catch {
+      continue;
+    }
+  }
+  return values;
+}
+
+function parseJsonArrayPrefix(text, maxRows) {
+  const values = [];
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let objectStart = -1;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) objectStart = index;
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") continue;
+
+    depth -= 1;
+    if (depth === 0 && objectStart >= 0) {
+      const candidate = text.slice(objectStart, index + 1);
+      try {
+        values.push(JSON.parse(candidate));
+      } catch {
+        // Ignore incomplete object fragments from bounded reads.
+      }
+      objectStart = -1;
+      if (values.length >= maxRows) break;
+    }
+  }
+  return values;
+}
+
+function jsonValuesToSample(values, format) {
   const flattened = values.map((value) => flattenRecord(value));
   const columns = Array.from(new Set(flattened.flatMap((record) => Object.keys(record))));
   return {

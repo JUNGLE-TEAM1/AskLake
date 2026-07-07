@@ -13,6 +13,12 @@ type SqlPreviewRow = {
   cells: string[];
 };
 
+function getCellKind(value: string) {
+  if (/^-?\d+(?:\.\d+)?$/.test(value.replace(/,/g, ""))) return "number";
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return "date";
+  return "text";
+}
+
 export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
   useEffect(() => {
@@ -46,14 +52,14 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
   const pageCount = Math.max(table.getPageCount(), 1);
 
   return (
-    <div className="sql-preview-table-wrap">
-      <table className="schema-table">
+    <div className="sql-preview-table-wrap" data-column-count={resultDraft.columns.length}>
+      <table className="schema-table sql-preview-table">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
-                <th key={header.id}>
-                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                <th key={header.id} title={String(header.column.columnDef.header ?? "")}>
+                  <span>{header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}</span>
                 </th>
               ))}
             </tr>
@@ -63,7 +69,9 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
           {pageRows.map((row) => (
             <tr key={row.id}>
               {row.getVisibleCells().map((cell) => (
-                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+                <td data-value-kind={getCellKind(String(cell.getValue() ?? ""))} key={cell.id} title={String(cell.getValue() ?? "")}>
+                  <span>{flexRender(cell.column.columnDef.cell, cell.getContext())}</span>
+                </td>
               ))}
             </tr>
           ))}
