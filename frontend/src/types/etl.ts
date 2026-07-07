@@ -181,13 +181,42 @@ export type PermissionDraft = {
 
 export type TargetDraft = {
   compression?: "Snappy" | "Gzip" | "None";
+  databaseName?: string;
   datasetName: string;
+  description?: string;
   format: string;
+  indexColumns?: string[];
   layer: TargetLayer;
+  lastTestRun?: {
+    finishedAt?: string;
+    logs: string[];
+    message?: string;
+    status: "idle" | "pending" | "success" | "failed";
+  };
+  manager?: string;
+  owner?: string;
   partition?: string;
+  partitionColumns?: string[];
   rag: boolean;
+  schemaRules?: Array<{
+    indexed: boolean;
+    name: string;
+    nullable: boolean;
+    partitionable: boolean;
+    raw?: boolean;
+    recommendedIndex: boolean;
+    recommendedPartition: boolean;
+    sourceName: string;
+    type: "string" | "number" | "boolean" | "datetime" | "json";
+    use: boolean;
+    validationStatus: "valid" | "warning" | "error";
+  }>;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tableName?: string;
+  targetTableName?: string;
+  tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
 };
 
 export type DraftPipeline = {

@@ -23,8 +23,35 @@
   max-width: var(--layout-wide-width);
 }
 
+.content-grid.creation-flow-grid.creation-flow-grid-no-side,
+.content-grid.creation-flow-grid.creation-flow-grid-no-side.permission-grid,
+.content-grid.creation-flow-grid.creation-flow-grid-no-side.review-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .creation-flow-grid .content-main {
   width: 100%;
+}
+
+.creation-flow-topbar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 44px;
+}
+
+.creation-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.creation-top-actions .primary-button,
+.creation-top-actions .secondary-button {
+  width: auto;
+  min-width: 96px;
+  height: 40px;
+  padding: 0 18px;
 }
 
 .creation-flow-grid .summary-panel,
@@ -63,6 +90,49 @@
 
 .creation-flow-grid.review-grid .validation-panel .summary-actions button {
   height: 40px;
+}
+
+.creation-inline-validation-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.creation-inline-validation-panel .panel-header {
+  margin-bottom: 0;
+}
+
+.creation-validation-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.creation-validation-list .validation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fbfc;
+  color: #565d6d;
+  padding: 12px;
+}
+
+.creation-validation-list .validation-row svg {
+  color: #2563eb;
+}
+
+.creation-validation-list .validation-row span {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.creation-validation-list .validation-row strong {
+  color: #171a1f;
+  font-size: 12px;
+  text-align: right;
 }
 
 .content-main {

@@ -351,7 +351,7 @@ export function DashboardPage({
     () => selectedDraftWidgets.map((widget) => widget.id).sort().join("|"),
     [selectedDraftWidgets],
   );
-  const editorDatasetId = selectedDraftWidget?.datasetId ?? selectedDatasetId;
+  const editorDatasetId = selectedDatasetId ?? selectedDraftWidget?.datasetId ?? null;
   const editorDataset = useMemo(
     () => availableDashboardDatasets.find((datasetOption) => datasetOption.id === editorDatasetId) ?? null,
     [availableDashboardDatasets, editorDatasetId],
@@ -800,6 +800,11 @@ export function DashboardPage({
     setSelectedWidgetId(null);
   };
 
+  const selectRuntimeWidgetDataset = (datasetId: string) => {
+    setPreviewDraftWidget(null);
+    setSelectedDatasetId(datasetId);
+  };
+
   const updateRuntimeWidget = async (widgetId: string, input: UpdateDraftWidgetFormInput) => {
     if (runtimeSelection.mode !== "draft" || updatingRuntimeWidgetId) return;
 
@@ -1155,6 +1160,7 @@ export function DashboardPage({
       retryDraft: () => void loadDraftRuntime(runtimeSelection.dashboardId),
       retryPublished: () => void loadPublishedRuntime(runtimeSelection.dashboardId),
       selectDataset: selectRuntimeDataset,
+      selectWidgetDataset: selectRuntimeWidgetDataset,
       selectPage: setSelectedRuntimePageId,
       selectWidget: selectRuntimeWidget,
       share: shareRuntimeDashboard,
