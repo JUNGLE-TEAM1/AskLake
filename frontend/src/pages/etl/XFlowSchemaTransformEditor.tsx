@@ -40,6 +40,73 @@ const TRANSFORM_MODULE_SLOTS = [
   { key: "cast_schema", label: "cast_schema", desc: "target type 기준 cast/validation" },
 ] as const;
 
+type RowTransformRule = {
+  desc: string;
+  kind: TransformStepDraft["kind"];
+  label: string;
+  operation: string;
+  params: string;
+};
+
+type RowTransformRuleGroup = {
+  label: string;
+  rules: readonly RowTransformRule[];
+};
+
+const ROW_TRANSFORM_RULE_GROUPS: readonly RowTransformRuleGroup[] = [
+  {
+    label: "Basic",
+    rules: [
+      { desc: "원본 값을 그대로 target column에 매핑합니다.", kind: "derive", label: "Original map", operation: "", params: "" },
+      { desc: "빈 값일 때 기본값을 채웁니다.", kind: "derive", label: "Default value", operation: "Default Value", params: "" },
+      { desc: "필수 값 누락을 표시하고 downstream 검증 대상으로 넘깁니다.", kind: "derive", label: "Null guard", operation: "Null Guard", params: "required" },
+    ],
+  },
+  {
+    label: "Type",
+    rules: [
+      { desc: "문자열로 변환합니다.", kind: "cast", label: "To string", operation: "Cast String", params: "string" },
+      { desc: "정수로 변환합니다.", kind: "cast", label: "To integer", operation: "Cast Integer", params: "integer" },
+      { desc: "실수/decimal 값으로 변환합니다.", kind: "cast", label: "To number", operation: "Cast Number", params: "number" },
+      { desc: "true/false boolean으로 변환합니다.", kind: "cast", label: "To boolean", operation: "Cast Boolean", params: "boolean" },
+      { desc: "timestamp 포맷을 파싱합니다.", kind: "cast", label: "Parse time", operation: "Parse Timestamp", params: "yyyy-MM-dd HH:mm:ss" },
+      { desc: "숫자를 지정 자릿수로 반올림합니다.", kind: "derive", label: "Round", operation: "Round Number", params: "2" },
+    ],
+  },
+  {
+    label: "Text",
+    rules: [
+      { desc: "앞뒤 공백을 제거합니다.", kind: "trim", label: "Trim", operation: "Trim Text", params: "" },
+      { desc: "소문자로 정규화합니다.", kind: "derive", label: "Lowercase", operation: "Lowercase Text", params: "" },
+      { desc: "대문자로 정규화합니다.", kind: "derive", label: "Uppercase", operation: "Uppercase Text", params: "" },
+      { desc: "문자열 일부를 치환합니다. 예: old=>new", kind: "derive", label: "Replace", operation: "Replace Text", params: "from=>to" },
+      { desc: "정규식 첫 번째 그룹을 추출합니다.", kind: "derive", label: "Regex extract", operation: "Regex Extract", params: "(.*)" },
+      { desc: "구분자로 나눈 뒤 지정 index를 가져옵니다. 예: ,:0", kind: "derive", label: "Split", operation: "Split Text", params: ",:0" },
+      { desc: "start:end 범위의 문자열을 추출합니다.", kind: "derive", label: "Substring", operation: "Substring Text", params: "0:10" },
+    ],
+  },
+  {
+    label: "JSON / Array",
+    rules: [
+      { desc: "JSONPath로 scalar 값을 추출합니다.", kind: "jsonPath", label: "JSONPath", operation: "Extract JSONPath", params: "$" },
+      { desc: "객체/배열 JSON 구조를 보존합니다.", kind: "derive", label: "Preserve JSON", operation: "Preserve JSON", params: "$" },
+      { desc: "JSON 문자열을 구조화 대상으로 표시합니다.", kind: "derive", label: "Parse JSON", operation: "Parse JSON", params: "$" },
+      { desc: "중첩 object를 flat column 후보로 펼칩니다.", kind: "derive", label: "Flatten object", operation: "Flatten Object", params: "$" },
+      { desc: "array를 row explode 후보로 표시합니다.", kind: "derive", label: "Explode array", operation: "Explode Array", params: "$" },
+      { desc: "array 길이를 추출합니다.", kind: "derive", label: "Array length", operation: "Array Length", params: "$" },
+    ],
+  },
+  {
+    label: "Privacy / Code",
+    rules: [
+      { desc: "값을 해시 처리합니다.", kind: "mask", label: "Hash", operation: "Hash Value", params: "sha256" },
+      { desc: "민감 값 일부를 마스킹합니다.", kind: "mask", label: "Mask", operation: "Mask Value", params: "partial" },
+      { desc: "이 column에만 적용할 SQL 표현식을 저장합니다.", kind: "derive", label: "SQL code", operation: "SQL Expression", params: "" },
+      { desc: "이 column에만 적용할 Python 표현식을 저장합니다.", kind: "derive", label: "Python code", operation: "Python Expression", params: "" },
+    ],
+  },
+] as const;
+
 type TransformAuthoringMode = "sql" | "python" | "module";
 type OutputPreviewRow = Record<string, string>;
 type TransformModuleKey = typeof TRANSFORM_MODULE_SLOTS[number]["key"];
@@ -223,7 +290,7 @@ export function XFlowSchemaTransformEditor({
       return;
     }
 
-    const option = TRANSFORM_OPTIONS.find((item) => item.operation === operation) ?? TRANSFORM_OPTIONS[0];
+    const option = transformRuleOption(operation);
     const existingStep = transformByOutput.get(output);
     onTransformStepsChange?.([
       ...remainingSteps,
@@ -607,6 +674,36 @@ export function XFlowSchemaTransformEditor({
                         >
                           {TRANSFORM_OPTIONS.map((option) => <option key={option.operation || "none"} value={option.operation}>{option.label}</option>)}
                         </select>
+                        <div className="xflow-transform-rule-catalog" aria-label={`${column.sourceName} transform rule catalog`}>
+                          {ROW_TRANSFORM_RULE_GROUPS.map((group) => {
+                            const currentOperation = transformStep?.operation ?? "";
+                            const activeRule = group.rules.find((rule) => rule.operation === currentOperation);
+                            const groupValue = activeRule ? activeRule.operation : "__catalog_placeholder__";
+                            return (
+                              <section className={activeRule ? "xflow-transform-rule-group active" : "xflow-transform-rule-group"} key={group.label}>
+                                <div className="xflow-transform-rule-group-label">
+                                  <strong>{group.label}</strong>
+                                  <small>{group.rules.length} rules</small>
+                                </div>
+                                <select
+                                  aria-label={`${column.sourceName} ${group.label} transform rules`}
+                                  value={groupValue}
+                                  onChange={(event) => {
+                                    if (event.currentTarget.value === "__catalog_placeholder__") return;
+                                    updateTransform(index, event.currentTarget.value);
+                                  }}
+                                >
+                                  <option value="__catalog_placeholder__" disabled>{group.label} rules</option>
+                                  {group.rules.map((rule) => (
+                                    <option key={`${group.label}-${rule.operation || "original"}`} value={rule.operation}>
+                                      {rule.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </section>
+                            );
+                          })}
+                        </div>
                         <small className="xflow-transform-note">{transformDetailText(column, transformStep)}</small>
                         <div className="xflow-row-code-tools" aria-label={`${column.sourceName} row code mode`}>
                           <button
@@ -635,13 +732,13 @@ export function XFlowSchemaTransformEditor({
                           />
                         ) : null}
                       </label>
-                      {transformStep?.operation === "Parse Timestamp" || transformStep?.operation === "Extract JSONPath" ? (
+                      {transformStep && transformNeedsParams(transformStep.operation) ? (
                         <label>
-                          <span>{transformStep.operation === "Extract JSONPath" ? "JSONPath" : "형식"}</span>
+                          <span>{transformParamLabel(transformStep.operation)}</span>
                           <input
                             aria-label={`${column.sourceName} transform parameter`}
                             className="xflow-transform-param"
-                            placeholder={transformStep.operation === "Extract JSONPath" ? "$.field" : "timestamp format"}
+                            placeholder={transformParamPlaceholder(transformStep.operation)}
                             value={transformStep.params}
                             onChange={(event) => updateTransformParams(index, event.currentTarget.value)}
                           />
@@ -923,9 +1020,67 @@ function rowCodePlaceholder(operation: string, column: SchemaColumnDraft) {
   return `${sqlIdentifier(column.sourceName)} AS ${sqlIdentifier(getOutputName(column))}`;
 }
 
+function transformRuleOption(operation: string) {
+  return ROW_TRANSFORM_RULE_GROUPS
+    .flatMap((group) => group.rules)
+    .find((rule) => rule.operation === operation)
+    ?? TRANSFORM_OPTIONS.find((option) => option.operation === operation)
+    ?? TRANSFORM_OPTIONS[0];
+}
+
+function transformNeedsParams(operation?: string) {
+  return Boolean(operation && [
+    "Parse Timestamp",
+    "Extract JSONPath",
+    "Replace Text",
+    "Regex Extract",
+    "Split Text",
+    "Substring Text",
+    "Default Value",
+    "Round Number",
+    "Parse JSON",
+    "Flatten Object",
+    "Explode Array",
+    "Array Length",
+    "Hash Value",
+    "Mask Value",
+    "Null Guard",
+  ].includes(operation));
+}
+
+function transformParamLabel(operation: string) {
+  if (operation === "Extract JSONPath" || operation === "Parse JSON" || operation === "Flatten Object" || operation === "Explode Array" || operation === "Array Length") return "Path";
+  if (operation === "Parse Timestamp") return "Format";
+  if (operation === "Replace Text") return "Replace";
+  if (operation === "Regex Extract") return "Regex";
+  if (operation === "Split Text") return "Split";
+  if (operation === "Substring Text") return "Range";
+  if (operation === "Default Value") return "Default";
+  if (operation === "Round Number") return "Scale";
+  if (operation === "Hash Value") return "Algorithm";
+  if (operation === "Mask Value") return "Mask";
+  if (operation === "Null Guard") return "Rule";
+  return "Param";
+}
+
+function transformParamPlaceholder(operation: string) {
+  if (operation === "Extract JSONPath" || operation === "Parse JSON" || operation === "Flatten Object" || operation === "Explode Array" || operation === "Array Length") return "$.field";
+  if (operation === "Parse Timestamp") return "yyyy-MM-dd HH:mm:ss";
+  if (operation === "Replace Text") return "from=>to";
+  if (operation === "Regex Extract") return "(.*)";
+  if (operation === "Split Text") return ",:0";
+  if (operation === "Substring Text") return "0:10";
+  if (operation === "Default Value") return "fallback value";
+  if (operation === "Round Number") return "2";
+  if (operation === "Hash Value") return "sha256";
+  if (operation === "Mask Value") return "partial";
+  if (operation === "Null Guard") return "required";
+  return "parameter";
+}
+
 function transformSummaryLabel(step?: TransformStepDraft) {
   if (!step || step.enabled === false || !step.operation) return "원본 값 매핑";
-  return TRANSFORM_OPTIONS.find((option) => option.operation === step.operation)?.label ?? step.operation;
+  return transformRuleOption(step.operation)?.label ?? step.operation;
 }
 
 function defaultTransformLabel(column: SchemaColumnDraft) {
@@ -1350,6 +1505,18 @@ function applyPreviewTransform(value: string, step?: TransformStepDraft) {
   if (isRowCodeOperation(step.operation)) return value;
   const operation = step.operation.toLowerCase();
   if (operation.includes("jsonpath")) return extractJsonPathPreview(value, step.params);
+  if (operation.includes("trim")) return String(value ?? "").trim();
+  if (operation.includes("lowercase")) return String(value ?? "").toLowerCase();
+  if (operation.includes("uppercase")) return String(value ?? "").toUpperCase();
+  if (operation.includes("replace")) return replacePreviewValue(value, step.params);
+  if (operation.includes("regex")) return regexExtractPreview(value, step.params);
+  if (operation.includes("split")) return splitPreviewValue(value, step.params);
+  if (operation.includes("substring")) return substringPreviewValue(value, step.params);
+  if (operation.includes("default")) return String(value ?? "").trim() ? value : step.params;
+  if (operation.includes("round")) return roundPreviewValue(value, step.params);
+  if (operation.includes("hash")) return maskHashPreview(value, step.params);
+  if (operation.includes("mask")) return maskPreviewValue(value);
+  if (operation.includes("array length")) return arrayLengthPreview(value, step.params);
   if (operation.includes("number")) return castPreviewValue(value, "Double");
   if (operation.includes("integer")) return castPreviewValue(value, "Integer");
   if (operation.includes("string")) return String(value ?? "");
@@ -1381,6 +1548,63 @@ function extractJsonPathPreview(value: string, path: string) {
   }
   if (current === undefined) return "";
   return typeof current === "string" ? current : JSON.stringify(current);
+}
+
+function replacePreviewValue(value: string, params: string) {
+  const [from = "", to = ""] = params.split("=>");
+  if (!from) return value;
+  return String(value ?? "").replaceAll(from, to);
+}
+
+function regexExtractPreview(value: string, params: string) {
+  try {
+    const match = String(value ?? "").match(new RegExp(params || "(.*)"));
+    return match?.[1] ?? match?.[0] ?? "";
+  } catch {
+    return value;
+  }
+}
+
+function splitPreviewValue(value: string, params: string) {
+  const [delimiter = ",", indexText = "0"] = params.split(":");
+  const index = Number(indexText);
+  return String(value ?? "").split(delimiter)[Number.isFinite(index) ? index : 0] ?? "";
+}
+
+function substringPreviewValue(value: string, params: string) {
+  const [startText = "0", endText = ""] = params.split(":");
+  const start = Number(startText);
+  const end = endText === "" ? undefined : Number(endText);
+  return String(value ?? "").slice(Number.isFinite(start) ? start : 0, Number.isFinite(end) ? end : undefined);
+}
+
+function roundPreviewValue(value: string, params: string) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  const scale = Math.max(0, Number(params || "0"));
+  return numeric.toFixed(Number.isFinite(scale) ? scale : 0);
+}
+
+function maskHashPreview(value: string, params: string) {
+  const normalized = String(value ?? "");
+  if (!normalized) return "";
+  let hash = 0;
+  for (let index = 0; index < normalized.length; index += 1) {
+    hash = ((hash << 5) - hash + normalized.charCodeAt(index)) | 0;
+  }
+  return `${params || "hash"}:${Math.abs(hash).toString(16)}`;
+}
+
+function maskPreviewValue(value: string) {
+  const normalized = String(value ?? "");
+  if (normalized.length <= 4) return "*".repeat(normalized.length);
+  return `${normalized.slice(0, 2)}${"*".repeat(Math.max(3, normalized.length - 4))}${normalized.slice(-2)}`;
+}
+
+function arrayLengthPreview(value: string, path: string) {
+  const extracted = extractJsonPathPreview(value, path);
+  const parsed = parseJsonSample(extracted || value);
+  return Array.isArray(parsed) ? String(parsed.length) : "";
 }
 
 function castPreviewValue(value: string, type: string) {
