@@ -78,35 +78,18 @@ p {
 
 .etl-builder-brand {
   gap: 10px;
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
-.etl-builder-brand-mark {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  background: #636ae8;
-}
-
-.etl-builder-brand-mark::after {
-  content: "";
-  position: absolute;
-  top: 8px;
-  left: 10px;
-  width: 10px;
-  height: 14px;
-  border-right: 2px solid #fff;
-  border-left: 2px solid #fff;
-  transform: skew(-8deg);
-}
-
-.etl-builder-brand strong {
+.etl-builder-brand img {
+  display: block;
+  width: 184px;
+  max-width: 100%;
+  height: auto;
   min-width: 0;
-  color: #636ae8;
-  font-size: 20px;
-  line-height: 1.2;
-  overflow-wrap: anywhere;
 }
 
 .etl-builder-stepper {
@@ -272,33 +255,18 @@ p {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
   min-height: 64px;
+  border: 0;
+  background: transparent;
   padding: 0 28px;
+  text-align: left;
 }
 
-.brand-mark {
-  position: relative;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  background: #636ae8;
-}
-
-.brand-mark::after {
-  content: "";
-  position: absolute;
-  left: 9px;
-  top: 9px;
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
-  transform: rotate(45deg);
-}
-
-.brand strong {
-  font-size: 16px;
-  font-weight: 750;
+.brand img {
+  display: block;
+  width: 148px;
+  max-width: 100%;
+  height: auto;
 }
 
 .nav-eyebrow {
