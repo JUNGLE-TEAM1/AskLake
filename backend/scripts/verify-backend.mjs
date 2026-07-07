@@ -4,6 +4,7 @@ const port = Number(process.env.ASKLAKE_VERIFY_PORT || 18083);
 const baseUrl = `http://127.0.0.1:${port}`;
 const env = {
   ...process.env,
+  ASKLAKE_RESET_METADATA_ON_START: "true",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
   MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
@@ -149,12 +150,12 @@ try {
 }
 
 async function waitForHealth() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const health = await get("/api/health");
       if (health.ok) return;
     } catch {
-      await sleep(250);
+      await sleep(500);
     }
   }
   throw new Error("Backend did not become healthy.");

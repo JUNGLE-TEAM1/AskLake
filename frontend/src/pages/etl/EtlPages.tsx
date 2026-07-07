@@ -80,7 +80,7 @@ export function SchedulePage({
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
   const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
-  const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
+  const selected = mode === "repeat" ? "반복 스케줄" : mode === "manual" ? "스케줄 없음" : "예약 1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
   const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
@@ -120,9 +120,9 @@ export function SchedulePage({
             <h2>실행 방식 설정</h2>
           </div>
           <div className="option-grid">
-            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => selectMode("manual")} />
-            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => selectMode("once")} />
-            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
+            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="스케줄 없음" desc="저장 후 필요할 때 직접 실행합니다." onClick={() => selectMode("manual")} />
+            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="예약 1회 실행" desc="지정된 시간에 한 번만 실행합니다." onClick={() => selectMode("once")} />
+            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 스케줄" desc="정해진 주기로 반복 실행합니다." onClick={() => selectMode("repeat")} />
           </div>
         </section>
         {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
@@ -215,7 +215,7 @@ function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, cur
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / MinIO(S3)",
+  "File / S3": "파일 / S3",
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
@@ -325,7 +325,7 @@ const sourceActionLabels: Record<string, string> = {
   "Download CSV": "CSV 다운로드",
   "Fetch Metadata": "메타데이터 조회",
   "Full Screen": "전체 화면",
-  "Refresh Preview": "미리보기 새로고침",
+  "Refresh Preview": "샘플 다시 가져오기",
   "Show Advanced Configuration": "고급 설정 보기",
 };
 
@@ -366,9 +366,9 @@ function shouldPreserveCredentialValue(value: string) {
 
 function publicSourceLog(value: string) {
   return value
-    .replace(/^MinIO\/S3 reachable:\s*(\d+)\s*objects?$/i, "MinIO/S3 연결 성공: 오브젝트 $1개")
-    .replace(/^MinIO\/S3 reachable:\s*(.+?)\s*\((\d+)\s*objects?\)$/i, "MinIO/S3 연결 성공: $1 (오브젝트 $2개)")
-    .replace(/^MinIO reachable:\s*(\d+)\s*objects?$/i, "MinIO 연결 성공: 오브젝트 $1개")
+    .replace(/^MinIO\/S3 reachable:\s*(\d+)\s*objects?$/i, "S3 호환 스토리지 연결 성공: 오브젝트 $1개")
+    .replace(/^MinIO\/S3 reachable:\s*(.+?)\s*\((\d+)\s*objects?\)$/i, "S3 호환 스토리지 연결 성공: $1 (오브젝트 $2개)")
+    .replace(/^MinIO reachable:\s*(\d+)\s*objects?$/i, "S3 호환 스토리지 연결 성공: 오브젝트 $1개")
     .replace(/^REST API reachable$/i, "REST API 연결 성공")
     .replace(/^REST API reachable:\s*(.+)$/i, "REST API 연결 성공: $1")
     .replace(/^PostgreSQL reachable:\s*(.+)$/i, "PostgreSQL 연결 성공: $1")
@@ -378,7 +378,7 @@ function publicSourceLog(value: string) {
     .replace(/^Source connection test is required before review\.$/i, "검토 전에 소스 연결 테스트가 필요합니다.")
     .replace(/^Connection test is required before review\.$/i, "검토 전에 연결 테스트가 필요합니다.")
     .replace(/^Bounded sample from\s+(.+)$/i, "$1에서 가져온 제한 샘플")
-    .replace(/^Listed\s+(\d+)\s+objects?\s+from\s+MinIO\/S3$/i, "MinIO/S3 오브젝트 $1개 목록 조회")
+    .replace(/^Listed\s+(\d+)\s+objects?\s+from\s+MinIO\/S3$/i, "S3 오브젝트 $1개 목록 조회")
     .replace(/^source units detected:\s*(\d+)$/i, "소스 단위 감지: $1개")
     .replace(/^bounded sample fetched:\s*(.+)$/i, "제한 샘플 조회: $1")
     .replace(/^profile snapshot inferred:\s*(\d+)\s*fields?,\s*(\d+)\s*sample rows?$/i, "프로파일 스냅샷 추론: $1개 필드, 샘플 행 $2개")
@@ -389,7 +389,7 @@ function publicSourceLog(value: string) {
 
 function publicSchemaSummary(value: string) {
   return value
-    .replace(/^MinIO\/S3 reachable\s*-\s*schema inference pending\s*\((\d+)\s*objects?\)$/i, "MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 $1개)")
+    .replace(/^MinIO\/S3 reachable\s*-\s*schema inference pending\s*\((\d+)\s*objects?\)$/i, "S3 호환 스토리지 연결 성공 · 스키마 추론 대기 (오브젝트 $1개)")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -431,8 +431,8 @@ const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
 
 function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, onceDateTime: string) {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
-  if (mode === "manual") return "수동 실행";
-  if (mode === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 1회 실행`;
+  if (mode === "manual") return "스케줄 없음";
+  if (mode === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 예약 1회 실행`;
   if (normalizedRepeat.frequency === "hourly") return `매시간 ${normalizedRepeat.minute}분`;
   if (normalizedRepeat.frequency === "daily") return `매일 ${normalizedRepeat.time}`;
   if (normalizedRepeat.frequency === "custom") return `커스텀: ${normalizedRepeat.cron}`;
@@ -440,14 +440,14 @@ function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, 
 }
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
-  if (label.includes("수동")) return "manual";
+  if (label.includes("수동") || label.includes("스케줄 없음")) return "manual";
   if (label.includes("1회")) return "once";
   return "repeat";
 }
 
 function parseOnceScheduleLabel(label: string) {
   if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
-  return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
+  return normalizeDateTimeLocal(label.replace(/\s*(예약\s*)?1회 실행\s*$/, "").trim());
 }
 
 function parseRepeatScheduleLabel(label: string) {
@@ -523,12 +523,13 @@ const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
   SILVER: "분석 표준",
 };
 
-const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
+const PERMISSION_ACCESS_ITEMS = ["조회", "수정", "실행", "관리"] as const;
+type PermissionAccessItem = (typeof PERMISSION_ACCESS_ITEMS)[number];
 
-const PERMISSION_ROLES = [
+const PERMISSION_ROLES: Array<{ access: readonly PermissionAccessItem[]; checked: boolean; name: string; note: string }> = [
   { name: "Data Engineer Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "파이프라인 운영 및 장애 대응 권한" },
-  { name: "Data Analyst Group", access: PERMISSION_ACCESS_ITEMS, checked: true, note: "분석 업무용 표준 접근 권한" },
-  { name: "ML Team", access: PERMISSION_ACCESS_ITEMS, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
+  { name: "Data Analyst Group", access: ["조회", "실행"] as const, checked: true, note: "분석 업무용 표준 접근 권한" },
+  { name: "ML Team", access: ["조회", "실행"] as const, checked: false, note: "RAG 인덱스 검증 후 확장 예정" },
 ];
 
 type PermissionDraftSlice = {
@@ -728,10 +729,10 @@ export function SourceConnectionPage({
       info: "MongoDB 연결과 샘플 조회는 백엔드 커넥터에서 실행합니다.",
     },
     "File / S3": {
-      title: "MinIO 소스 설정",
-      description: "MinIO/S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
+      title: "S3 소스 설정",
+      description: "S3 또는 S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 조회합니다.",
       fields: [
-        ["Storage Provider", "MinIO"],
+        ["Storage Provider", "S3 Compatible"],
         ["Endpoint URL", "http://127.0.0.1:9000"],
         ["Region", "us-east-1"],
         ["Bucket / Stage Name", "m3-raw"],
@@ -745,11 +746,11 @@ export function SourceConnectionPage({
         ["Header", "Treat first row as header"],
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
-      logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
-      assetsTitle: "감지된 MinIO 오브젝트",
+      logs: ["S3 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
+      assetsTitle: "감지된 S3 오브젝트",
       assets: [],
       previewTitle: "제한 샘플 미리보기",
-      previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
+      previewNote: "미리보기 데이터 없음 · S3 연결 테스트를 실행하세요.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
       actions: ["Refresh Preview"],
@@ -857,7 +858,7 @@ export function SourceConnectionPage({
     ["선택 커넥터", sourceTypeLabel(activeSourceType)],
     ["연결 상태", connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", `${displayAssets.length}개`],
-    ["인증 방식", activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", activeSourceType === "File / S3" ? "S3 호환 액세스 키" : "백엔드 커넥터"],
     ["다음 단계", "스키마 추론"],
   ];
 
@@ -943,6 +944,17 @@ export function SourceConnectionPage({
   const fetchMetadata = () => {
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
+  const sourceFlowSteps = activeSourceType === "MongoDB"
+    ? ["연결 정보 입력", "데이터베이스 선택", "컬렉션 선택", "문서/필드 확인"]
+    : ["연결 정보 입력", "연결 검증", "샘플/필드 확인"];
+  const completeSourceSelection = () => {
+    if (connectionStatus !== "success") {
+      onNotify("연결 검증을 먼저 성공시켜야 데이터 선택을 완료할 수 있습니다.");
+      return;
+    }
+    applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
+    onNext();
+  };
 
   return (
     <CreationFlowLayout
@@ -979,6 +991,11 @@ export function SourceConnectionPage({
                 <Settings size={18} />
                 <strong>{current.title}</strong>
                 <span>{current.description}</span>
+              </div>
+              <div className="source-flow-steps" aria-label="소스 연결 단계">
+                {sourceFlowSteps.map((step, index) => (
+                  <span className={index === 0 || connectionStatus === "success" ? "active" : ""} key={step}>{index + 1}. {step}</span>
+                ))}
               </div>
               <div className="hegun-field-grid">
                 {visibleEditableFields.map(([label, value]) => (
@@ -1251,6 +1268,15 @@ function upsertConfigValue(config: Array<[string, string]>, label: string, value
   return [...config, [label, value]] as Array<[string, string]>;
 }
 
+function getFlattenDepthOptions(columns: SchemaColumnDraft[]) {
+  const maxDepth = Math.max(
+    1,
+    ...columns.map((column) => column.sourceName.split(".").filter(Boolean).length),
+  );
+  const cappedDepth = Math.min(maxDepth, 5);
+  return Array.from({ length: cappedDepth }, (_, index) => index + 1);
+}
+
 function compactSchemaByPathDepth(columns: SchemaColumnDraft[], sampleRows: string[][], maxPathSegments: number) {
   const safeDepth = Math.max(1, Math.trunc(maxPathSegments));
   const groups = new Map<string, {
@@ -1465,6 +1491,7 @@ export function SchemaInferencePage({
   const sourceFormat = detectSchemaSourceFormat(draft);
   const isFlattenedJson = schemaColumns.some((column) => column.sourceName.includes(".")) || ["JSON", "JSONL"].includes(sourceFormat);
   const nestedFieldCount = schemaColumns.filter((column) => column.sourceName.includes(".")).length;
+  const flattenDepthOptions = getFlattenDepthOptions(schemaColumns);
   const mappingModeText = hasInferredSchema
     ? isFlattenedJson
       ? flattenObjects
@@ -1542,11 +1569,14 @@ export function SchemaInferencePage({
       onNotify("변경할 스키마가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
       return;
     }
+    const allowedDepths = getFlattenDepthOptions(schemaColumns);
+    const maxAllowedDepth = allowedDepths.at(-1) ?? 1;
+    const normalizedDepth = Math.min(Math.max(nextDepth, 1), maxAllowedDepth);
     const base = getFlattenBaseSchema();
-    const maxPathSegments = nextFlattenObjects ? nextDepth : 1;
+    const maxPathSegments = nextFlattenObjects ? normalizedDepth : 1;
     const nextSchema = compactSchemaByPathDepth(base.columns, base.sampleRows, maxPathSegments);
     setFlattenObjects(nextFlattenObjects);
-    setFlattenDepth(nextDepth);
+    setFlattenDepth(normalizedDepth);
     patchSchemaColumns(nextSchema.columns, nextSchema.sampleRows);
     setSelectedSchemaIndex(0);
     onAction(
@@ -1555,7 +1585,7 @@ export function SchemaInferencePage({
       draft.source.sourceLabel || "schema",
     );
     onNotify(nextFlattenObjects
-      ? `중첩 객체를 최대 ${nextDepth}단계까지 출력 컬럼으로 펼쳤습니다.`
+      ? `중첩 객체를 최대 ${normalizedDepth}단계까지 출력 컬럼으로 펼쳤습니다.`
       : "중첩 객체를 JSON 컬럼으로 유지합니다.");
   };
 
@@ -1778,12 +1808,12 @@ export function SchemaInferencePage({
               <div className="schema-segment-field">
                 <span>평탄화 깊이</span>
                 <div>
-                  {["1", "2", "3"].map((depth) => (
+                  {flattenDepthOptions.map((depth) => (
                     <button
-                      className={Number(depth) === flattenDepth ? "active" : ""}
+                      className={depth === Math.min(flattenDepth, flattenDepthOptions.at(-1) ?? flattenDepth) ? "active" : ""}
                       disabled={!hasInferredSchema || !flattenObjects}
                       key={depth}
-                      onClick={() => applyFlattenSettings(true, Number(depth))}
+                      onClick={() => applyFlattenSettings(true, depth)}
                       type="button"
                     >
                       {depth}
@@ -1800,7 +1830,7 @@ export function SchemaInferencePage({
             </>
           )}
           <button className="secondary-button schema-wide-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
-            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "선택 범위 다시 확인"}
+            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "이 샘플 범위로 스키마 다시 추론"}
           </button>
         </aside>
 
@@ -2087,9 +2117,18 @@ const QUALITY_FAILURE_REASON_LABELS: Record<string, string> = {
   "Numeric range check failed": "숫자 범위 검사 실패",
   "Value is outside accepted set": "허용값 목록 밖의 값",
 };
+const DEFAULT_PYTHON_TRANSFORM_CODE = `def transform(row):
+    row["normalized_value"] = str(row.get("value", "")).strip().lower()
+    return row`;
 
 function transformOperationLabel(operation: string) {
+  if (operation === "Python Code") return "Python 코드";
   return TRANSFORM_OPERATION_LABELS[operation as TransformOperation] ?? operation;
+}
+
+function ruleParamLabel(value: string) {
+  if (value.includes("\n")) return `${value.split("\n").length}줄 코드`;
+  return value;
 }
 
 function failureActionLabel(action: string) {
@@ -2501,6 +2540,8 @@ export function RuleApplicationPage({
   const [editingTransformStepId, setEditingTransformStepId] = useState<string | null>(null);
   const [editingQualityRuleId, setEditingQualityRuleId] = useState<string | null>(null);
   const [showInvalidRows, setShowInvalidRows] = useState(false);
+  const [pythonTransformCode, setPythonTransformCode] = useState(DEFAULT_PYTHON_TRANSFORM_CODE);
+  const [pythonPreviewOpen, setPythonPreviewOpen] = useState(false);
   const workingColumns = useMemo(() => getWorkingColumns(recipeSteps, sourceColumns), [recipeSteps, sourceColumns]);
   const derivedColumns = useMemo(() => getDerivedColumns(recipeSteps, sourceColumnSet), [recipeSteps, sourceColumnSet]);
   const runnerResult = useMemo(() => runTransformQualitySamplePreview(recipeSteps, qualityRules, ruleSampleRows), [qualityRules, recipeSteps, ruleSampleRows]);
@@ -2789,6 +2830,35 @@ export function RuleApplicationPage({
     setShowInvalidRows((visible) => !visible);
     ruleAction("etl.rules.invalid_rows_toggled", "/api/etl/rules/invalid-rows");
   };
+  const previewPythonTransform = () => {
+    setPythonPreviewOpen(true);
+    ruleAction("etl.rules.python_previewed", "/api/etl/rules/python/preview");
+    onNotify("Python 코드 샘플 결과를 표시했습니다.");
+  };
+  const applyPythonTransform = () => {
+    const code = pythonTransformCode.trim();
+    if (!code) {
+      onNotify("적용할 Python 코드를 입력하세요.");
+      return;
+    }
+    const nextStepNumber = String(Math.max(...recipeSteps.map((step) => Number(step.id)), 0) + 1);
+    const nextStep: RecipeStep = {
+      id: nextStepNumber,
+      input: sourceColumns[0] ?? "row",
+      onError: "Fail Run",
+      operation: "Python Code",
+      output: "python_output",
+      params: code,
+    };
+    const nextSteps = [...recipeSteps, nextStep];
+    setRecipeSteps(nextSteps);
+    setSelectedPreviewStepId(nextStep.id);
+    setDraftPreviewStep(null);
+    setDraftPreviewQualityRule(null);
+    applyRuleDraft(nextSteps);
+    ruleAction("etl.rules.python_applied", "/api/etl/rules/python");
+    onNotify("Python 코드 변환 단계를 추가했습니다.");
+  };
 
   return (
     <div className="hegun-rule-page">
@@ -2818,6 +2888,20 @@ export function RuleApplicationPage({
             onPreviewStep={previewDraftStep}
             onUpdateStep={selectedRuleCategory === "quality" ? updateQualityRule : updateRecipeStep}
           />
+          {selectedRuleCategory === "transform" && (
+            <PythonTransformPanel
+              code={pythonTransformCode}
+              previewOpen={pythonPreviewOpen}
+              sampleColumns={workingColumns}
+              sampleRows={runnerResult.transformedRows}
+              onApply={applyPythonTransform}
+              onCodeChange={(code) => {
+                setPythonTransformCode(code);
+                setPythonPreviewOpen(false);
+              }}
+              onPreview={previewPythonTransform}
+            />
+          )}
           {selectedRuleCategory === "quality" ? (
             <QualityPreviewAnalysis invalidRows={selectedQualityInvalidRows} rule={selectedQualityRule} sampleRows={qualityPreviewRunnerResult.validation.sampleRows} onAction={ruleAction} />
           ) : (
@@ -2947,7 +3031,7 @@ function RecipeStepsTable({
                 <td><span className="hegun-data-chip">{row.input}</span></td>
                 <td>{transformOperationLabel(row.operation)}</td>
                 <td><span className="hegun-data-chip muted">{row.output}</span></td>
-                <td>{row.params}</td>
+                <td>{ruleParamLabel(row.params)}</td>
                 <td><span className={`hegun-error-pill ${row.onError.toLowerCase().replace(/\s/g, "-")}`}>{failureActionLabel(row.onError)}</span></td>
                 <td>
                   <div className="hegun-row-actions">
@@ -3526,6 +3610,81 @@ function TransformParameterControl({
   );
 }
 
+function PythonTransformPanel({
+  code,
+  onApply,
+  onCodeChange,
+  onPreview,
+  previewOpen,
+  sampleColumns,
+  sampleRows,
+}: {
+  code: string;
+  onApply: () => void;
+  onCodeChange: (code: string) => void;
+  onPreview: () => void;
+  previewOpen: boolean;
+  sampleColumns: string[];
+  sampleRows: TransformQualitySampleRow[];
+}) {
+  const previewColumns = sampleColumns.slice(0, 4);
+  const previewRows = sampleRows.slice(0, 3);
+  const primaryColumn = previewColumns[0] ?? "value";
+
+  return (
+    <section className="panel hegun-console-panel python-transform-panel">
+      <div className="hegun-section-title compact">
+        <h2>Python 코드 변환</h2>
+        <p>입력 row를 받아 출력 row를 반환하는 코드 기반 변환 단계를 추가합니다.</p>
+      </div>
+      <textarea
+        className="python-code-editor"
+        spellCheck={false}
+        value={code}
+        onChange={(event) => onCodeChange(event.currentTarget.value)}
+      />
+      <div className="hegun-rule-form-actions">
+        <button className="secondary-button" type="button" disabled={code.trim().length === 0} onClick={onPreview}>샘플 결과 보기</button>
+        <button className="primary-button" type="button" disabled={code.trim().length === 0} onClick={onApply}>Python 코드 변환 적용</button>
+      </div>
+      {previewOpen && (
+        <div className="python-preview-table-wrap">
+          <table className="schema-table python-preview-table">
+            <thead>
+              <tr>
+                <th>행</th>
+                <th>입력 예시</th>
+                <th>출력 예시</th>
+                <th>상태</th>
+              </tr>
+            </thead>
+            <tbody>
+              {previewRows.map((row, index) => {
+                const inputValue = String(row[primaryColumn] ?? "");
+                return (
+                  <tr key={`${row.row_id ?? index}-${inputValue}`}>
+                    <td>{row.row_id ?? index + 1}</td>
+                    <td><code className="hegun-impact-value">{inputValue || "(비어 있음)"}</code></td>
+                    <td><code className="hegun-impact-value output">{inputValue.trim().toLowerCase() || "(비어 있음)"}</code></td>
+                    <td><span className="hegun-impact-status changed">미리보기</span></td>
+                  </tr>
+                );
+              })}
+              {previewRows.length === 0 && (
+                <tr>
+                  <td colSpan={4}>
+                    <span className="hegun-empty-table-state">샘플 행이 없습니다.</span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function RuleBottomBar({
   invalidRowCount,
   invalidRowsVisible,
@@ -3984,7 +4143,7 @@ function RepeatSettings({
     <section className="panel">
       <div className="panel-header">
         <Repeat2 size={18} />
-        <h2>반복 실행 상세 설정</h2>
+        <h2>반복 스케줄 상세 설정</h2>
       </div>
       <div className="form-grid">
         <label className="field">
@@ -4058,7 +4217,7 @@ function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyCha
     <section className="panel">
       <div className="panel-header">
         <PlayCircle size={18} />
-        <h2>수동 실행 상세 설정</h2>
+        <h2>스케줄 없음 상세 설정</h2>
       </div>
       <InfoBox title="자동 스케줄 없음" body="이 파이프라인은 저장 후 사용자가 직접 실행할 때만 동작합니다. 테스트 실행이나 필요할 때만 데이터를 적재하는 작업에 적합합니다." />
       <div className="policy-section">
@@ -4067,7 +4226,7 @@ function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyCha
           <input type="checkbox" defaultChecked />
           <span>
             <strong>실패 시 재시도 활성화</strong>
-            <small>수동 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
+            <small>직접 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
           </span>
         </label>
       </div>
@@ -4094,7 +4253,7 @@ function OnceSettings({
     <section className="panel">
       <div className="panel-header">
         <Clock3 size={18} />
-        <h2>1회 실행 상세 설정</h2>
+        <h2>예약 1회 실행 상세 설정</h2>
       </div>
       <div className="form-grid">
         <label className="field">
@@ -4300,6 +4459,8 @@ export function PermissionPage({
     ...Object.fromEntries(PERMISSION_ROLES.map((role) => [role.name, role.checked])),
     [initialPermission.permissionTemplate]: true,
   }));
+  const targetObjectName = draft.target.datasetName || getTargetDraftValues(draft).targetDataset;
+  const activePermissionRows = PERMISSION_ROLES.filter((role) => roleChecks[role.name]);
 
   const applyPermissionDraft = (patch: Partial<{
     approvalStatus: string;
@@ -4330,6 +4491,10 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
+  const applySelectedTemplate = () => {
+    setRoleChecks((checks) => ({ ...checks, [permissionTemplate]: true }));
+    applyPermissionDraft({ permissionTemplate });
+  };
 
   return (
     <CreationFlowLayout
@@ -4349,25 +4514,27 @@ export function PermissionPage({
         </CreationValidationPanel>
       )}
     >
-        <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
+        <PageTitle title="권한 설정" description="생성할 데이터셋 기준으로 사용자/그룹별 조회, 수정, 실행 권한을 지정하세요." icon={<ShieldCheck size={24} />} />
         <section className="panel permission-share-panel">
           <div className="panel-header">
             <ShieldCheck size={18} />
             <h2>공유 대상</h2>
           </div>
-          <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
+          <InfoBox title="추천 권한 템플릿" body="템플릿을 선택한 뒤 적용하면 아래 권한 목록에 사용자/그룹과 권한 종류가 반영됩니다." />
           <div className="form-grid">
             <label className="field">
               <span>권한 템플릿</span>
               <select className="input control-input" value={permissionTemplate} onChange={(event) => {
                 const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
                 setPermissionTemplate(nextPermissionTemplate);
-                setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
-                applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
               }}>
                 {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
               </select>
             </label>
+            <div className="field permission-template-actions">
+              <span>템플릿 적용</span>
+              <button className="secondary-button" type="button" onClick={applySelectedTemplate}>선택 템플릿 적용</button>
+            </div>
             <label className="field">
               <span>공개 범위</span>
               <select className="input control-input" value={visibility} onChange={(event) => {
@@ -4415,6 +4582,39 @@ export function PermissionPage({
                 </div>
               </label>
             ))}
+          </div>
+          <div className="permission-matrix">
+            <div className="hegun-section-title compact">
+              <h2>권한 목록</h2>
+              <p>대상 객체, 사용자/그룹, 권한 종류를 한 행으로 확인합니다.</p>
+            </div>
+            <div className="hegun-table-scroll">
+              <table className="schema-table permission-matrix-table">
+                <thead>
+                  <tr>
+                    <th>대상 객체</th>
+                    <th>사용자/그룹</th>
+                    <th>권한 종류</th>
+                    <th>상태</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activePermissionRows.map((role) => (
+                    <tr key={role.name}>
+                      <td>{targetObjectName}</td>
+                      <td>{role.name}</td>
+                      <td>{role.access.join(" · ")}</td>
+                      <td>{role.name === permissionTemplate ? "템플릿 적용" : "직접 선택"}</td>
+                    </tr>
+                  ))}
+                  {activePermissionRows.length === 0 && (
+                    <tr>
+                      <td colSpan={4}>적용된 권한이 없습니다. 템플릿을 적용하거나 사용자/그룹을 선택하세요.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
           <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>

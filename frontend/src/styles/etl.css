@@ -70,6 +70,31 @@
   justify-content: flex-start;
 }
 
+.source-flow-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.source-flow-steps span {
+  min-height: 28px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 28px;
+  padding: 0 10px;
+}
+
+.source-flow-steps span.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .hegun-connector-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1994,6 +2019,10 @@
   margin-bottom: 28px;
 }
 
+.hegun-section-title.compact {
+  margin-bottom: 14px;
+}
+
 .hegun-section-title h2 {
   color: #171a1f;
   font-size: 22px;
@@ -2250,11 +2279,40 @@
 
 .hegun-rule-form-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 10px;
   border-top: 1px solid #eef2f7;
   margin-top: 20px;
   padding-top: 18px;
+}
+
+.python-transform-panel {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.python-code-editor {
+  width: 100%;
+  min-height: 168px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #dbeafe;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 14px;
+  resize: vertical;
+}
+
+.python-preview-table-wrap {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.python-preview-table {
+  min-width: 620px;
 }
 
 .hegun-data-chip {
@@ -2826,6 +2884,10 @@
   gap: 22px 28px;
 }
 
+.permission-template-actions .secondary-button {
+  width: 100%;
+}
+
 .permission-row {
   display: flex;
   align-items: flex-start;
@@ -2882,6 +2944,18 @@
   border-color: #c7d2fe;
   background: #eef2ff;
   color: #4f46e5;
+}
+
+.permission-matrix {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #eef2f7;
+  margin-top: 18px;
+  padding-top: 18px;
+}
+
+.permission-matrix-table {
+  min-width: 720px;
 }
 
 .permission-aside {

@@ -325,6 +325,14 @@ select.control-input {
   margin-bottom: 16px;
 }
 
+.retry-policy-note {
+  color: #565d6d;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.55;
+  margin: -6px 0 16px;
+}
+
 .summary-panel,
 .validation-panel {
   padding: 24px;

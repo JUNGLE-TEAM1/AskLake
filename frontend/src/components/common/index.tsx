@@ -85,6 +85,7 @@ export function RetryPolicy({ onChange, value }: { onChange?: (policy: RetryPoli
   return (
     <div className="retry-policy">
       <h3>실패 처리 정책</h3>
+      <p className="retry-policy-note">실행 제한 시간을 넘기면 실패로 기록하고, 재시도 횟수가 남아 있으면 재시도합니다. 재시도가 끝나면 선택한 최종 실패 처리 정책을 적용합니다.</p>
       <div className="form-grid compact">
         <label className="field">
           <span>최대 재시도</span>

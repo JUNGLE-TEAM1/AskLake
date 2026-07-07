@@ -98,7 +98,7 @@ Master UI: http://127.0.0.1:18080
 Worker UI: http://127.0.0.1:18081
 ```
 
-The script recreates master and worker containers with the local sample directory mounted at `/opt/asklake-samples`.
+The script recreates master and worker containers with the local sample directory mounted at `/opt/asklake-samples`, local Spark output mounted at `/work/output`, and the backend run report directory mounted at `/work/reports`. Connector-backed runs write bounded sample rows to `backend/tmp/spark-runs/*-source.jsonl`, so stale Spark containers are recreated when `/work/reports` points at an older backend path.
 
 ## 6. Spark Validation
 
@@ -125,7 +125,7 @@ cd backend
 npm run verify:spark-run
 ```
 
-This verifier starts from an empty in-memory ETL/Catalog state, creates one live job from a MinIO sample, submits a run command, and verifies that Spark writes Parquet output. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark writes Parquet output and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
