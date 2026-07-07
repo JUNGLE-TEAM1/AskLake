@@ -4775,31 +4775,50 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
+  const selectedRoleCount = PERMISSION_ROLES.filter((role) => Boolean(roleChecks[role.name])).length;
+  const governanceChecks = [
+    ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
+    ["민감 데이터", "review_text 포함", "검토 필요"],
+    ["승인자", dataOwner, approvalStatus === "승인 완료" ? "준비됨" : "대기"],
+  ];
 
   return (
     <CreationFlowLayout
       variant="permission"
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
-        <section className="panel creation-inline-validation-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>거버넌스 체크</h2>
+      <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." />
+      <div className="xflow-review-stack permission-xflow-stack">
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+            <div>
+              <h2>Governance Check</h2>
+              <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
+            </div>
           </div>
-          <div className="target-status-grid">
-            <StatusTile label="공유 범위" value={visibility} status={visibility === "외부 공유" ? "검토 필요" : "안전" } />
-            <StatusTile label="민감 데이터" value="review_text 포함" status="검토 필요" />
-            <StatusTile label="승인자" value={dataOwner} status={approvalStatus === "승인 완료" ? "준비됨" : "대기"} />
+          <div className="xflow-review-validation permission-xflow-validation">
+            {governanceChecks.map(([label, value, status]) => (
+              <div className={status === "안전" || status === "준비됨" ? "ready" : "needs-review"} key={label}>
+                <Check size={15} />
+                <span>{label}</span>
+                <strong>{value} · {status}</strong>
+              </div>
+            ))}
           </div>
+          <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>
-        <section className="panel permission-share-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>공유 대상</h2>
+
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon"><SlidersHorizontal size={17} /></span>
+            <div>
+              <h2>Access Policy</h2>
+              <p>조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다.</p>
+            </div>
           </div>
           <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="form-grid">
+          <div className="target-xflow-form-grid permission-xflow-form-grid">
             <label className="field">
               <span>권한 템플릿</span>
               <select className="input control-input" value={permissionTemplate} onChange={(event) => {
@@ -4841,26 +4860,40 @@ export function PermissionPage({
             </label>
           </div>
         </section>
-        <section className="panel">
-          <h2 className="panel-title">세부 권한</h2>
-          <div className="permission-list">
-            {PERMISSION_ROLES.map((role) => (
-              <label className={role.name === permissionTemplate ? "permission-row detailed active" : "permission-row detailed"} key={role.name}>
-                <input type="checkbox" checked={roleChecks[role.name]} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
-                <span>
-                  <strong>{role.name}</strong>
-                  <small>{role.note}</small>
-                </span>
-                <div className="permission-chip-row">
-                  {PERMISSION_ACCESS_ITEMS.map((item) => (
-                    <em className={roleChecks[role.name] && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
-                  ))}
-                </div>
-              </label>
-            ))}
+
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon schema"><CircleUser size={17} /></span>
+            <div>
+              <h2>Role Grants</h2>
+              <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
+            </div>
           </div>
-          <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
+          <div className="permission-xflow-role-list">
+            {PERMISSION_ROLES.map((role) => {
+              const selected = Boolean(roleChecks[role.name]);
+              const recommended = role.name === permissionTemplate;
+              return (
+                <label className={["permission-xflow-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
+                  <input type="checkbox" checked={selected} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
+                  <span className="permission-xflow-role-body">
+                    <span className="permission-xflow-role-title">
+                      <strong>{role.name}</strong>
+                      {recommended ? <em>Template</em> : null}
+                    </span>
+                    <small>{role.note}</small>
+                  </span>
+                  <div className="permission-chip-row permission-xflow-access-row">
+                    {PERMISSION_ACCESS_ITEMS.map((item) => (
+                      <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
+                    ))}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
         </section>
+      </div>
     </CreationFlowLayout>
   );
 }
