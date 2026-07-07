@@ -193,9 +193,9 @@ Definition of Done:
 
 현재 구현 경계:
 
-- FastAPI SQL preview는 아직 실제 PostgreSQL source table을 직접 실행하지 않고 `catalog_datasets.payload.sampleRows`를 preview row로 사용한다.
+- FastAPI SQL preview는 DuckDB in-memory query runtime으로 실행한다. 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 파일을 읽을 수 없으면 `catalog_datasets.payload.schema`와 `sampleRows`를 임시 table로 등록한다.
 - 따라서 배포 fixture는 `catalog_datasets.payload.schema`, `catalog_datasets.payload.sampleRows`, 물리 source fixture row가 서로 달라지지 않게 같은 원본 seed에서 만들어야 한다.
-- 실제 SQL engine이 source DB를 직접 조회하도록 확장되더라도 demo query와 결과가 유지되도록 PostgreSQL fixture table을 먼저 설계한다.
+- 이후 실제 source DB 직접 조회로 확장하더라도 demo query는 결과가 유지되도록 PostgreSQL fixture table과 DuckDB preview fixture를 같은 계약으로 설계한다.
 - MongoDB fixture는 메인 발표 흐름이 아니라 source type 확장성과 schema inference 확인용 보조 시나리오로 둔다.
 
 PostgreSQL 역할:

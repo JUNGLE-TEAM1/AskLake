@@ -19,6 +19,8 @@ def ensure_schema(db: Session) -> None:
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
         existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+        if "payload" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
             "dag_steps": "JSON",

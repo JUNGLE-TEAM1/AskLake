@@ -1,4 +1,7 @@
+from pathlib import Path
 from typing import Any
+
+import duckdb
 
 from app.services.pair2_demo_data import PAIR2_COMMERCE_DATASETS
 
@@ -138,6 +141,10 @@ def dataset_rows_to_widget_data(dataset: dict[str, Any] | None, limit: int = 100
     if dataset is None:
         return []
 
+    storage_rows = _storage_rows_to_widget_data(dataset, limit)
+    if storage_rows:
+        return storage_rows
+
     rows = dataset.get("dataRows")
     if not isinstance(rows, list):
         rows = dataset.get("sampleRows")
@@ -157,6 +164,56 @@ def dataset_rows_to_widget_data(dataset: dict[str, Any] | None, limit: int = 100
             widget_rows.append(record)
 
     return widget_rows[:limit]
+
+
+def _storage_rows_to_widget_data(dataset: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    storage_format = str(dataset.get("storageFormat") or dataset.get("storage_format") or "").lower()
+    storage_location = dataset.get("storageLocation") or dataset.get("storage_location")
+    if storage_format != "parquet" or not storage_location:
+        return []
+
+    storage_path = Path(str(storage_location))
+    if not storage_path.exists():
+        return []
+
+    parquet_path = _parquet_scan_path(storage_path)
+    if not parquet_path:
+        return []
+
+    connection = duckdb.connect(database=":memory:")
+    try:
+        cursor = connection.execute(
+            "SELECT * FROM read_parquet(?) LIMIT ?",
+            [parquet_path, limit],
+        )
+        columns = [str(description[0]) for description in (cursor.description or [])]
+        return [
+            {
+                column_name: _format_storage_cell(row[column_index])
+                for column_index, column_name in enumerate(columns)
+            }
+            for row in cursor.fetchall()
+        ]
+    except duckdb.Error:
+        return []
+    finally:
+        connection.close()
+
+
+def _parquet_scan_path(storage_path: Path) -> str:
+    if storage_path.is_file() and storage_path.suffix.lower() == ".parquet":
+        return str(storage_path)
+    if storage_path.is_dir() and list(storage_path.rglob("*.parquet")):
+        return str(storage_path / "**" / "*.parquet")
+    return ""
+
+
+def _format_storage_cell(value: Any) -> Any:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
 
 
 def _is_record(value: Any) -> bool:

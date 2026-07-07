@@ -47,6 +47,8 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 - `POST /api/catalog/derived-datasets`
 - 생성된 derived dataset의 catalog 재조회와 lineage 조회
 
+`POST /api/query/runs` live mode는 DuckDB in-memory query runtime을 사용한다. Catalog dataset의 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 없으면 catalog `schema`/`sampleRows`를 DuckDB 임시 table로 등록해 preview SQL을 실행한다.
+
 Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
 
 ```bash
