@@ -220,6 +220,7 @@ Catalog에 `orders_clean`이 없거나 Preview가 비어 있으면 배포 성공
 
 ```bash
 docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config
+docker build -t asklake-backend-deploy-check:local backend
 
 cd frontend
 npm run build

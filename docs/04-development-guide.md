@@ -90,7 +90,7 @@ Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터�
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
 기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
-FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우 `psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
+FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도 `python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
 
 ```bash
 cd backend
