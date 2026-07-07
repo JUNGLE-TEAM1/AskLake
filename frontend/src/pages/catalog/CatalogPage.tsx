@@ -385,7 +385,7 @@ export function CatalogPage({
 
   return (
     <div className="catalog-page">
-      <PageTitle title="검색/카탈로그" />
+      <PageTitle title="검색/카탈로그" description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다." />
       <div className="catalog-content-grid">
         <div className="catalog-main">
           <section className="catalog-search-panel">

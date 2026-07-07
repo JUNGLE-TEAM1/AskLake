@@ -9,23 +9,25 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  padding-top: 2px;
+  gap: 20px;
+  min-height: var(--page-masthead-height);
 }
 
 .jobs-page-header .page-title {
+  min-height: var(--page-masthead-height);
   padding-bottom: 0;
 }
 
 .jobs-page-header .page-title h1 {
-  font-size: 28px;
-  font-weight: 760;
+  font-size: var(--page-title-font-size);
+  font-weight: var(--page-title-font-weight);
+  line-height: var(--page-title-line-height);
 }
 
 .jobs-page-header .page-title p {
-  max-width: 640px;
-  font-size: 14px;
-  line-height: 1.55;
+  max-width: 720px;
+  font-size: var(--page-title-description-size);
+  line-height: var(--page-title-description-line-height);
 }
 
 .jobs-header-actions {
@@ -34,7 +36,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 4px;
+  padding-top: 2px;
 }
 
 .create-job-button {

@@ -283,6 +283,10 @@
     padding: 20px;
   }
 
+  .page-body.sql-body {
+    padding: 20px;
+  }
+
   .creation-flow-topbar {
     justify-content: stretch;
   }
