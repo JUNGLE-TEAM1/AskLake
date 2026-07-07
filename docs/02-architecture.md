@@ -98,6 +98,7 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 - optimistic update 또는 rollback UX
 - mock/live 전환 adapter
 - live mode에서 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
+- live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
 
 ## 6) 데이터 모델 초안
 
@@ -134,7 +135,7 @@ P0 API:
 P1 hydrate API:
 
 - `GET /api/etl/jobs`
-- `GET /api/etl/jobs/{jobId}`
+- `GET /api/etl/jobs/{jobId}`: 수집/처리 상세 hydrate와 실행 중 job 최종 상태 polling에 사용한다.
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
 - `GET /api/catalog/datasets/{datasetId}/lineage`

@@ -50,7 +50,8 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
 ## 4) 브랜치 전략

@@ -10,10 +10,10 @@
 | --- | --- | --- |
 | 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Postgres `etl_jobs.payload`가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 API |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인 | Kafka message payload sampling, Parquet physical schema inference |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB local connector는 `mongosh` CLI로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | Spark 결과로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 | run detail table과 Spark log object storage 분리 |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `running` job/run을 저장하고 즉시 응답 | pause/cancel의 실제 Spark job interrupt |
+| Run/DAG | 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인 | run detail table과 Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs` 호출 결과를 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
@@ -80,12 +80,13 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 ## 5. Spark Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 Spark runner를 호출한다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 `running` 상태로 먼저 저장하고 응답한 뒤 Spark runner를 백그라운드로 호출한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다.
 
 Spark runner 입력:
 
 - File / S3, Data Lake: object path를 Spark source로 직접 사용
 - REST/PostgreSQL/MongoDB 등 connector source: bounded schema sample rows를 JSONL로 기록한 뒤 Spark source로 사용
+- Connector source JSONL은 backend `tmp/spark-runs`에 쓰고 Spark master/worker의 `/work/reports`에 같은 host directory를 mount해야 한다. `npm run spark:start`는 report mount가 현재 backend path와 다르면 Spark containers를 재생성한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
 
@@ -210,8 +211,9 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 1. `POST /api/etl/jobs`
 2. `POST /api/etl/jobs/{jobId}/commands`
 3. `GET /api/etl/jobs`
-4. `GET /api/catalog/datasets`
-5. `POST /api/query/runs`
+4. `GET /api/etl/jobs/{jobId}`
+5. `GET /api/catalog/datasets`
+6. `POST /api/query/runs`
 
 대시보드까지 실제 저장하려면 아래 API를 추가 또는 유지합니다.
 
