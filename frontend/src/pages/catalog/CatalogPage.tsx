@@ -398,49 +398,67 @@ export function CatalogPage({
       <PageTitle title="검색/카탈로그" description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다." />
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <section className="catalog-search-panel">
-            <div className="catalog-search-box">
-              <Search size={18} />
-              <input
-                aria-label="카탈로그 검색"
-                onChange={(event) => setSearchText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    handleSearchSubmit();
-                  }
-                }}
-                placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
-                type="search"
-                value={searchText}
-              />
+          <section className="catalog-search-panel catalog-xflow-card">
+            <div className="catalog-xflow-card-header">
+              <span className="catalog-xflow-icon">
+                <Search size={16} />
+              </span>
+              <div className="catalog-xflow-heading">
+                <h2>검색 조건</h2>
+                <p>테이블명, 컬럼명, 태그, 업무 키워드로 데이터셋을 찾습니다.</p>
+              </div>
+              <span className="catalog-xflow-state">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</span>
             </div>
-            <div className="catalog-tag-row">
-              <span>태그</span>
-              <div>
-                {topTags.map((tag) => {
-                  const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+            <div className="catalog-search-body">
+              <div className="catalog-search-box">
+                <Search size={18} />
+                <input
+                  aria-label="카탈로그 검색"
+                  onChange={(event) => setSearchText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      handleSearchSubmit();
+                    }
+                  }}
+                  placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
+                  type="search"
+                  value={searchText}
+                />
+              </div>
+              <div className="catalog-tag-row">
+                <span>태그</span>
+                <div>
+                  {topTags.map((tag) => {
+                    const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
 
-                  return (
-                    <button
-                      aria-pressed={isTagInSearch}
-                      className="catalog-tag"
-                      key={tag}
-                      type="button"
-                      onClick={() => addTagToSearch(tag)}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        aria-pressed={isTagInSearch}
+                        className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                        key={tag}
+                        type="button"
+                        onClick={() => addTagToSearch(tag)}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </section>
 
-          <section className="catalog-results-section">
+          <section className="catalog-results-section catalog-xflow-card">
             <div className="catalog-results-header">
-              <div>
-                <h2>검색 결과</h2>
-                <span>{filteredDatasets.length}건</span>
+              <div className="catalog-xflow-card-header">
+                <span className="catalog-xflow-icon">
+                  <LayoutGrid size={16} />
+                </span>
+                <div className="catalog-xflow-heading">
+                  <h2>검색 결과</h2>
+                  <p>조건에 맞는 데이터셋을 선택하면 우측에서 상세 정보를 확인합니다.</p>
+                </div>
+                <span className="catalog-xflow-state">{filteredDatasets.length}건</span>
               </div>
               <div className="catalog-filter-row">
                 <label>
@@ -558,11 +576,14 @@ export function CatalogPage({
         </div>
 
         {hasCatalogResults ? (
-          <aside className="catalog-preview-panel">
-          <div className="catalog-preview-title">
-            <LayoutGrid size={20} />
-            <div>
+          <aside className="catalog-preview-panel catalog-xflow-card">
+          <div className="catalog-preview-title catalog-xflow-card-header">
+            <span className="catalog-xflow-icon catalog-xflow-icon-dataset">
+              <LayoutGrid size={16} />
+            </span>
+            <div className="catalog-xflow-heading">
               <h2>{previewDataset.name}</h2>
+              <p>{previewDataset.layer} 데이터셋 · {previewDataset.owner}</p>
             </div>
             <button
               aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}

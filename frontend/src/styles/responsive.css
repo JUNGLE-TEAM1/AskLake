@@ -65,6 +65,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .main-shell {
+    grid-column: 1;
+  }
+
   .content-grid,
   .content-grid.creation-flow-grid,
   .content-grid.creation-flow-grid.permission-grid,
@@ -125,13 +129,15 @@
   }
 
   .dashboard-filter-bar,
+  .dashboard-overview-metrics,
   .dashboard-metric-grid,
   .hegun-connector-grid,
   .hegun-field-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dashboard-list-toolbar {
+  .dashboard-list-toolbar,
+  .dashboard-list-toolbar-body {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -160,6 +166,8 @@
   }
 
   .xflow-review-kv,
+  .schedule-xflow-mode-grid,
+  .schedule-xflow-form-grid,
   .target-xflow-form-grid,
   .target-xflow-split,
   .xflow-review-validation {
@@ -223,7 +231,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .jobs-toolbar {
+  .jobs-toolbar-body {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -266,6 +274,10 @@
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .main-shell {
+    grid-column: 1;
   }
 
   .sidebar {
@@ -318,9 +330,11 @@
   .connector-row,
   .compact-cards,
   .metric-grid,
-  .jobs-toolbar,
+  .jobs-toolbar-body,
   .job-row-details,
   .dashboard-filter-bar,
+  .dashboard-overview-metrics,
+  .dashboard-list-toolbar-body,
   .dashboard-metric-grid,
   .dashboard-canvas,
   .dashboard-donut-area,
@@ -549,13 +563,31 @@
     grid-template-columns: 1fr;
   }
 
+  .dashboard-xflow-card-header {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .dashboard-xflow-state {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .dashboard-toolbar-actions {
     flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .dashboard-toolbar-menu {
+    width: 100%;
   }
 
   .dashboard-list-toolbar .dashboard-filter-button {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .dashboard-list-toolbar .dashboard-sort-button {
+    width: 100%;
   }
 
   .dashboard-axis-labels {

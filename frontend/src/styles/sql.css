@@ -402,9 +402,10 @@
 }
 
 .sql-sidebar-tab-panel.ai {
+  align-items: start;
   align-content: start;
   overflow-y: auto;
-  padding-right: 2px;
+  padding: 0 2px 2px 0;
 }
 
 .sql-context-search {
@@ -1198,7 +1199,7 @@
   display: grid;
   min-width: 0;
   min-height: var(--sql-masthead-height);
-  align-content: center;
+  align-content: start;
 }
 
 .sql-page-header > div {
@@ -1437,9 +1438,13 @@
 }
 
 .sql-ai-assistant.sidebar {
-  gap: 14px;
-  border: 0;
-  background: transparent;
+  align-self: start;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid #dee4ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
   padding: 0;
 }
 
@@ -1451,11 +1456,38 @@
   gap: 14px;
 }
 
+.sql-ai-assistant.sidebar .sql-ai-heading {
+  min-height: 64px;
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 12px 16px;
+}
+
+.sql-ai-title-block {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
 .sql-ai-title {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: 8px;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-title {
+  gap: 10px;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-title svg {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: #2563eb;
+  padding: 8px;
 }
 
 .sql-ai-title svg {
@@ -1488,6 +1520,15 @@
   text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-context {
+  max-width: 100%;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .sql-ai-assistant.compact .sql-ai-title span {
@@ -1529,7 +1570,9 @@
 }
 
 .sql-ai-assistant.sidebar .sql-ai-content {
-  gap: 14px;
+  align-content: start;
+  gap: 10px;
+  padding: 12px 16px 14px;
 }
 
 .sql-ai-assistant.compact .sql-ai-input-row {
@@ -1539,7 +1582,7 @@
 
 .sql-ai-assistant.sidebar .sql-ai-input-row {
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sql-ai-prompt {
@@ -1563,7 +1606,7 @@
 }
 
 .sql-ai-assistant.sidebar .sql-ai-prompt {
-  gap: 8px;
+  gap: 7px;
 }
 
 .sql-ai-prompt textarea {
@@ -1591,12 +1634,12 @@
 }
 
 .sql-ai-assistant.sidebar .sql-ai-prompt textarea {
-  min-height: 132px;
-  max-height: 220px;
-  resize: vertical;
+  min-height: 86px;
+  max-height: 112px;
+  resize: none;
   font-size: 13px;
   line-height: 1.5;
-  padding: 11px 12px;
+  padding: 12px;
 }
 
 .sql-ai-prompt textarea:focus {
@@ -1678,13 +1721,13 @@
 }
 
 .sql-ai-assistant.sidebar .sql-ai-suggestion {
-  min-height: 128px;
-  max-height: min(320px, 42vh);
+  min-height: 68px;
+  max-height: min(220px, 30vh);
   overflow: auto;
   align-content: start;
   border: 1px dashed #cbd5e1;
   border-radius: 8px;
-  background: #fff;
+  background: #f8fafc;
   padding: 12px;
 }
 
@@ -1697,6 +1740,10 @@
 .sql-ai-assistant.sidebar .sql-ai-suggestion.result {
   grid-template-columns: 1fr;
   overflow: auto;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-suggestion.empty {
+  align-items: center;
 }
 
 .sql-ai-assistant.compact .sql-ai-suggestion.empty {

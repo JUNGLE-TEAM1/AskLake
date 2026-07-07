@@ -3,6 +3,7 @@ import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
 import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, wizardFlows } from "./data/appShellData";
+import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
 import { Footer } from "./components/layout/Footer";
@@ -14,7 +15,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavItem, ScheduleFlowId } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -118,6 +119,14 @@ export function App() {
     updateDraftPipeline,
   } = useAskLakeData({ onFlowChange: setActiveFlow, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
+  const activeNavId = useMemo<NavId>(() => {
+    if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
+    if (activeFlow === "sql") return "sql";
+    if (activeFlow === "dashboard") return "dashboard";
+    if (activeFlow === "ai") return "ai";
+    if (activeFlow === "admin") return "admin";
+    return "ingest";
+  }, [activeFlow]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
   const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
@@ -271,6 +280,12 @@ export function App() {
 
   return (
     <div className="app-shell" data-last-action={auditSignal}>
+      <Sidebar
+        activeNavId={activeNavId}
+        onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })}
+        onBrandClick={navigateIngestLanding}
+        onNavigate={navigateSidebar}
+      />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}

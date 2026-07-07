@@ -778,9 +778,12 @@ export function SqlAnalysisPage({
             <section className="sql-sidebar-tab-panel ai" aria-label="Query AI 생성">
               <div className="sql-ai-assistant sidebar">
                 <div className="sql-ai-heading">
-                  <div className="sql-ai-title">
-                    <Sparkles size={16} />
-                    <strong>Query AI 생성</strong>
+                  <div className="sql-ai-title-block">
+                    <div className="sql-ai-title">
+                      <Sparkles size={16} />
+                      <strong>Query AI 생성</strong>
+                    </div>
+                    <span className="sql-ai-context">{baseDataset ? baseDataset.name : "테이블 선택 필요"}</span>
                   </div>
                 </div>
                 <div className="sql-ai-content">
@@ -800,7 +803,7 @@ export function SqlAnalysisPage({
                             void requestQueryAiSuggestion();
                           }}
                           placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
-                          rows={5}
+                          rows={3}
                           value={queryAiPrompt}
                         />
                       </label>
