@@ -7380,6 +7380,35 @@ input.xflow-checkbox:checked {
 }
 
 @media (max-width: 720px) {
+  .schema-workbench.schema-workbench-focused {
+    padding-bottom: 142px;
+  }
+
+  .schema-bottom-bar {
+    right: 20px;
+    bottom: 18px;
+    left: 20px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .schema-bottom-bar .secondary-button,
+  .schema-bottom-bar .primary-button {
+    width: 100%;
+    min-width: 0;
+    justify-content: center;
+    padding: 0 10px;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+
+  .schema-bottom-bar .primary-button {
+    grid-column: 1 / -1;
+    margin-left: 0;
+  }
+
   .xflow-transfer-stage {
     padding: 12px;
   }
@@ -7391,6 +7420,29 @@ input.xflow-checkbox:checked {
 
   .xflow-module-slots {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .xflow-flow-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .xflow-flow-toolbar > div {
+    justify-content: space-between;
+  }
+
+  .xflow-flow-toolbar > div:last-child {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .xflow-flow-toolbar .compact {
+    width: 100%;
+    min-width: 0;
+    padding-inline: 8px;
   }
 
   .xflow-panel-head.target {
