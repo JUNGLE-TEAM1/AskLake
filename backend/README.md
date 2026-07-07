@@ -5,8 +5,8 @@ Node demo API는 아직 제거하지 않으며, FastAPI 전환 작업은 `app/` 
 
 ## FastAPI 실행
 
-FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우
-`psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
+FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도
+`python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
 
 ```bash
 cd backend

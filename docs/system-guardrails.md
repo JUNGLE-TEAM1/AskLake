@@ -28,6 +28,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
 | Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
+| Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain | repo admin | `main <- dev`; `dev <- pair1, pair2, pair3` |
@@ -100,6 +101,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | --- | --- | --- | --- |
 | Frontend build | no, local/manual until CI exists | `frontend` | TypeScript and Vite build pass |
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
+| Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |
