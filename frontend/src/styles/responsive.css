@@ -129,7 +129,6 @@
   }
 
   .dashboard-filter-bar,
-  .dashboard-overview-metrics,
   .dashboard-metric-grid,
   .hegun-connector-grid,
   .hegun-field-grid {
@@ -333,7 +332,6 @@
   .jobs-toolbar-body,
   .job-row-details,
   .dashboard-filter-bar,
-  .dashboard-overview-metrics,
   .dashboard-list-toolbar-body,
   .dashboard-metric-grid,
   .dashboard-canvas,
