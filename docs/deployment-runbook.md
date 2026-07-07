@@ -9,6 +9,7 @@
 - 실제 AWS 계정 값, EC2 id, IP, domain, SSH key, secret은 repo에 커밋하지 않는다.
 - 로컬 실행자는 AWS CLI와 SSH 접근 권한을 가지고 있어야 한다.
 - 서버 repo는 기본적으로 `/opt/asklake`에 clone되어 있다고 가정한다.
+- 서버 `deploy/.env`에는 Postgres/Mongo/OpenAI 값과 함께 MinIO access key/secret을 보존한다.
 
 ## 1. 로컬 환경 파일 준비
 
@@ -70,6 +71,20 @@ EC2 start
   -> docker compose up -d
   -> frontend/API health check
   -> docker compose ps
+```
+
+Prod compose에는 MinIO가 포함된다. 최초 bootstrap 또는 MinIO 설정 추가 배포 전에는 서버 `/opt/asklake/deploy/.env`에 아래 값을 채운다.
+
+```bash
+MINIO_ENDPOINT=http://minio:9000
+MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
+MINIO_ACCESS_KEY=replace-with-minio-access-key
+MINIO_SECRET_KEY=replace-with-strong-minio-secret-key
+MINIO_BUCKET=m3-raw
+MINIO_REGION=us-east-1
+S3_ENDPOINT=http://minio:9000
+S3_FORCE_PATH_STYLE=true
+S3_ALLOWED_BUCKETS=m3-raw,asklake-output
 ```
 
 ## 4. 재배포
@@ -157,6 +172,12 @@ scripts/seed-demo-data.sh
 - PostgreSQL source fixture: `orders_clean`, `customers_clean`, `order_items_clean`, `products_clean`, `payments_clean`, `user_activity`
 - MongoDB document fixture: `customer_reviews`, `app_events`
 - MongoDB catalog metadata: `ds_customer_reviews_source`, `ds_app_events_source`
+
+MinIO object sample은 backend script로 따로 준비한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec backend npm run minio:seed-verify
+```
 
 발표 중 생성된 SQL preview, SQL derived dataset, SQL Result 처리 Job만 정리하려면 먼저 dry-run으로 삭제 범위를 확인한다.
 
