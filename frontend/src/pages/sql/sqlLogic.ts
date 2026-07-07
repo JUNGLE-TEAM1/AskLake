@@ -33,7 +33,6 @@ export type SqlPreflightResult = {
 
 export const PREVIEW_ROW_LIMIT = 100;
 export const SQL_RESULT_PAGE_SIZE = 25;
-export const SQL_CONTEXT_PAGE_SIZE = 15;
 
 const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
@@ -114,7 +113,7 @@ export function runSqlPreflight(query: string, baseDataset: CatalogDataset, refe
     return {
       key,
       canExecute: false,
-      messages: [{ tone: "error", text: "Preview는 단일 SELECT 문만 실행할 수 있습니다." }],
+      messages: [{ tone: "error", text: "실행은 단일 SELECT 문만 허용합니다." }],
     };
   }
 
@@ -148,15 +147,15 @@ export function runSqlPreflight(query: string, baseDataset: CatalogDataset, refe
     return {
       key,
       canExecute: false,
-      messages: [{ tone: "error", text: `Query context에 없는 테이블이 있습니다: ${unknownTableNames.join(", ")}` }],
+      messages: [{ tone: "error", text: `선택 테이블에 없는 테이블이 있습니다: ${unknownTableNames.join(", ")}` }],
     };
   }
 
-  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. 선택 테이블 ${referenceDatasets.length + 1}개 기준으로 Preview할 수 있습니다.` });
-  messages.push({ tone: "info", text: `Preview는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT} rows로 제한해 실행합니다.` });
+  messages.push({ tone: "success", text: `읽기 전용 SQL 확인 완료. 선택 테이블 ${referenceDatasets.length + 1}개 기준으로 실행할 수 있습니다.` });
+  messages.push({ tone: "info", text: `실행 결과는 원본 SQL을 바꾸지 않고 최대 ${PREVIEW_ROW_LIMIT}행으로 제한해 표시합니다.` });
   const tableAliases = extractTableAliases(statement);
   if (tableAliases.length > 0) {
-    messages.push({ tone: "warning", text: `테이블 alias ${tableAliases.map((alias) => `"${alias}"`).join(", ")}가 감지되었습니다. 의도한 별칭이면 Preview할 수 있고, LIMIT 오타라면 수정해 주세요.` });
+    messages.push({ tone: "warning", text: `테이블 별칭 ${tableAliases.map((alias) => `"${alias}"`).join(", ")}이 감지되었습니다. 의도한 별칭이면 실행할 수 있고, LIMIT 오타라면 수정해 주세요.` });
   }
   if (referencedTableNames.length === 0) {
     messages.push({ tone: "warning", text: "FROM/JOIN 테이블이 없습니다. 상수 조회 또는 CTE-only 쿼리인지 확인해 주세요." });

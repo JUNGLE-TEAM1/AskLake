@@ -33,7 +33,7 @@ export function SqlDatasetRow({
           </span>
         </button>
         <button className="sql-table-select-button" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)}>
-          <Plus size={13} /> 선택
+          <Plus size={14} /> 추가
         </button>
       </div>
       {expanded && <SqlDatasetSchemaPreview dataset={dataset} />}

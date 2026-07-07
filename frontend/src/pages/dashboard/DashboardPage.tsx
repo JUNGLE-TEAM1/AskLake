@@ -45,7 +45,7 @@ import { saveDashboardCard } from "../../services/mockApi";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, DashboardEntry, DashboardRuntimeMode, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetType, DashboardView, DashboardWidgetLayout, DashboardWidgetType, SavedDashboardCard, SqlResultDraft } from "../../types";
 import { dashboardStatusMeta } from "../../utils/statusMeta";
-import type { UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
+import type { DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./runtime/dashboardRuntimeTypes";
 
 const defaultRuntimePages = [
   { id: "page-1", title: "Untitled page" },
@@ -69,6 +69,36 @@ const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidg
   metric: { h: 3, minH: 2, minW: 2, w: 3, x: 0, y: 0 },
   table: { h: 5, minH: 3, minW: 4, w: 9, x: 0, y: 0 },
 };
+
+function buildSqlDashboardDataset(sqlResult: SqlResultDraft): DashboardDatasetOption {
+  const columns = sqlResult.columns.map((name, columnIndex) => {
+    const normalizedColumn = name.toLowerCase();
+    const values = sqlResult.rows
+      .map((row) => row[columnIndex])
+      .filter((value): value is string => Boolean(value));
+    const inferredType = (() => {
+      if (/(^|_)(date|time|at|day|month|year)($|_)/.test(normalizedColumn)) return "date" as const;
+      if (/(amount|count|score|total|value|price|qty|quantity|rate|risk|cost|sales|revenue|rows?)/.test(normalizedColumn)) return "number" as const;
+      if (values.length > 0 && values.every((value) => Number.isFinite(Number(value)))) return "number" as const;
+      if (values.length > 0 && values.every((value) => Number.isFinite(Date.parse(value)))) return "date" as const;
+      return "string" as const;
+    })();
+    return { name, type: inferredType };
+  });
+  const rows = sqlResult.rows.map((row) => Object.fromEntries(columns.map((column, index) => {
+    const value = row[index] ?? "";
+    return [column.name, column.type === "number" ? Number(value) || 0 : value];
+  })));
+
+  return {
+    columns,
+    description: `SQL 실행 ${sqlResult.runId} 결과`,
+    id: `sql-result-${sqlResult.runId}`,
+    layer: "gold",
+    name: sqlResult.datasetName,
+    rows,
+  };
+}
 
 export function DashboardPage({
   dataset,
@@ -133,6 +163,10 @@ export function DashboardPage({
   });
   const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
   const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
+  const sqlDashboardDataset = useMemo(
+    () => activeSqlResult ? buildSqlDashboardDataset(activeSqlResult) : null,
+    [activeSqlResult],
+  );
   const dashboardTitle = activeSqlResult ? `${activeSqlResult.datasetName} SQL Result Dashboard` : "Sales Analytics Demo 2026-06-26 22:04:05";
   const dashboardId = `dash_${dataset.id}_${activeSqlResult?.runId ?? "draft"}`;
   const sourceRunId = activeSqlResult?.runId;
@@ -190,6 +224,12 @@ export function DashboardPage({
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
   } = useDashboardDatasets();
+  const availableDashboardDatasets = useMemo(
+    () => sqlDashboardDataset
+      ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
+      : dashboardDatasets,
+    [dashboardDatasets, sqlDashboardDataset],
+  );
   const runtimeDashboards = [...dashboardList.visibleDashboards, ...savedDashboards];
   const runtimeDashboard = runtimeDashboards.find((dashboard) => dashboard.id === runtimeSelection.dashboardId);
   const runtimeTitle = runtimeSelection.mode === "published"
@@ -213,8 +253,8 @@ export function DashboardPage({
   );
   const editorDatasetId = selectedDraftWidget?.datasetId ?? selectedDatasetId;
   const editorDataset = useMemo(
-    () => dashboardDatasets.find((datasetOption) => datasetOption.id === editorDatasetId) ?? null,
-    [dashboardDatasets, editorDatasetId],
+    () => availableDashboardDatasets.find((datasetOption) => datasetOption.id === editorDatasetId) ?? null,
+    [availableDashboardDatasets, editorDatasetId],
   );
   const selectedPublishedWidgets = useMemo(
     () => runtimeSelection.mode === "published" && selectedRuntimePageId && publishedRuntime?.revision
@@ -225,9 +265,14 @@ export function DashboardPage({
 
   useEffect(() => {
     if (!selectedDatasetId) return;
-    if (dashboardDatasets.some((datasetOption) => datasetOption.id === selectedDatasetId)) return;
+    if (availableDashboardDatasets.some((datasetOption) => datasetOption.id === selectedDatasetId)) return;
     setSelectedDatasetId(null);
-  }, [dashboardDatasets, selectedDatasetId]);
+  }, [availableDashboardDatasets, selectedDatasetId]);
+
+  useEffect(() => {
+    if (!sqlDashboardDataset || selectedDatasetId === sqlDashboardDataset.id) return;
+    setSelectedDatasetId(sqlDashboardDataset.id);
+  }, [selectedDatasetId, sqlDashboardDataset]);
 
   const selectRuntimePageFromResponse = (runtime: DashboardRuntimeResponse) => {
     const requestedPageId = new URLSearchParams(window.location.search).get("page");
@@ -929,7 +974,7 @@ export function DashboardPage({
       updateWidget: updateRuntimeWidget,
     };
     const runtimeDatasetState = {
-      datasets: dashboardDatasets,
+      datasets: availableDashboardDatasets,
       error: dashboardDatasetsError,
       isCreatingWidget: isCreatingDatasetWidget,
       isLoading: dashboardDatasetsLoading,

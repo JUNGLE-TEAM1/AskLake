@@ -69,8 +69,8 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
           ))}
         </tbody>
       </table>
-      <div className="sql-result-pagination" aria-label="SQL preview result pagination">
-        <span>{pageStart}-{pageEnd} / {data.length} preview rows · page {pagination.pageIndex + 1} / {pageCount}</span>
+      <div className="sql-result-pagination" aria-label="SQL 실행 결과 페이지">
+        <span>{pageStart}-{pageEnd} / {data.length}행 · {pagination.pageIndex + 1} / {pageCount}쪽</span>
         <div>
           <button type="button" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>이전</button>
           <button type="button" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>다음</button>

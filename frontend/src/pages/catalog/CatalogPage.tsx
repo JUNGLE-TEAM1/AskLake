@@ -365,7 +365,7 @@ export function CatalogPage({
 
   return (
     <div className="catalog-page">
-      <PageTitle title="검색/카탈로그" description="테이블명, 컬럼명, 태그 또는 업무 키워드로 데이터셋을 검색합니다." />
+      <PageTitle title="검색/카탈로그" />
       <div className="catalog-content-grid">
         <div className="catalog-main">
           <section className="catalog-search-panel">
@@ -489,8 +489,7 @@ export function CatalogPage({
                       <DatasetStatusBadge dataset={dataset} />
                     </div>
                     <div className="catalog-result-tags">
-                      {dataset.tags.slice(0, 2).map((tag) => <span key={tag}>{tag}</span>)}
-                      {dataset.tags.length > 2 && <span>+{dataset.tags.length - 2} {dataset.tags.slice(2).join(" ")}</span>}
+                      {dataset.tags.map((tag) => <span key={tag}>{tag}</span>)}
                     </div>
                   </article>
                 );
@@ -546,6 +545,14 @@ export function CatalogPage({
               <Star size={18} />
             </button>
           </div>
+          <div className="catalog-overview-metrics catalog-preview-metrics">
+            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
+          </div>
 
           <article className="catalog-preview-card">
             <div className="catalog-preview-card-header">
@@ -555,7 +562,7 @@ export function CatalogPage({
             </div>
             <table className="catalog-schema-preview">
               <thead>
-                <tr><th>Column Name</th><th>Type</th></tr>
+                <tr><th>컬럼명</th><th>타입</th></tr>
               </thead>
               <tbody>
                 {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
@@ -579,7 +586,7 @@ export function CatalogPage({
           }}>
             <Share2 size={16} />
             <div>
-              <strong>Lineage 보기</strong>
+              <strong>리니지 보기</strong>
             </div>
             <span>›</span>
           </article>
@@ -587,13 +594,12 @@ export function CatalogPage({
           <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
             <ExternalLink size={16} /> SQL 분석에서 열기
           </button>
-          <p className="catalog-help-text">문제가 있나요? 데이터 카탈로그 가이드를 확인하세요.</p>
           </aside>
         ) : (
           <aside className="catalog-preview-panel catalog-preview-panel-empty">
             <LayoutGrid size={22} />
             <strong>선택할 데이터셋이 없습니다.</strong>
-            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, Lineage, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
+            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
           </aside>
         )}
       </div>
@@ -601,7 +607,7 @@ export function CatalogPage({
         <CatalogModal
           dataset={previewDataset}
           onClose={() => setActiveModal(null)}
-          title={activeModal === "schema" ? "전체 스키마" : "Lineage"}
+          title={activeModal === "schema" ? "전체 스키마" : "리니지"}
           variant={activeModal}
         >
           {activeModal === "schema" ? <CatalogSchema dataset={previewDataset} /> : <CatalogLineage dataset={previewDataset} compact />}
@@ -629,7 +635,7 @@ function CatalogModal({
       <section className={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`} role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
         <header className="catalog-modal-header">
           <div>
-            <span>{dataset.layer} Dataset</span>
+            <span>{dataset.layer} 데이터셋</span>
             <h2>{dataset.name}</h2>
             <p>{title}</p>
           </div>
@@ -673,13 +679,13 @@ export function CatalogDetailPage({
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
               <span className="owner-chip">{dataset.owner}</span>
-              <span className="tag-chip">{dataset.layer} LAYER</span>
-              {dataset.tags.slice(0, 2).map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
+              <span className="tag-chip">{dataset.layer} 레이어</span>
+              {dataset.tags.map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
             </div>
           </div>
           <div className="job-detail-actions">
             <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
-            <button className="job-action-button" type="button" onClick={openLineage}>Lineage 보기</button>
+            <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
         </div>
@@ -688,7 +694,7 @@ export function CatalogDetailPage({
             ["overview", "개요"],
             ["schema", "스키마"],
             ["sample", "샘플 데이터"],
-            ["lineage", "Lineage"],
+            ["lineage", "리니지"],
           ].map(([id, label]) => (
             <button className={activeTab === id ? "active" : ""} key={id} type="button" onClick={() => {
               if (id === "lineage") onLineage();
@@ -728,23 +734,11 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
 
 function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLineage: () => void }) {
   return (
-    <div className="catalog-detail-grid">
+    <div className="catalog-detail-grid catalog-detail-grid-single">
       <section className="catalog-overview-card">
-        <h2>데이터셋 개요</h2>
-        <p>{dataset.description}</p>
-        <div className="catalog-overview-metrics">
-          <CatalogMiniMetric label="품질 지표" value={dataset.quality} />
-          <CatalogMiniMetric label="최근 갱신" value={dataset.lastUpdated} />
-          <CatalogMiniMetric label="행 수" value={dataset.rows} />
-          <CatalogMiniMetric label="크기" value={dataset.size} />
-          <CatalogMiniMetric label="Source" value={dataset.source} />
-          <CatalogMiniMetric label="다음 갱신" value={dataset.nextRefresh} />
-        </div>
-      </section>
-      <section className="catalog-overview-card">
-        <h2>연결된 흐름</h2>
+        <h2>리니지</h2>
         <CatalogLineageMini dataset={dataset} />
-        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 Lineage 보기</button>
+        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 리니지 보기</button>
       </section>
     </div>
   );
@@ -758,7 +752,7 @@ function CatalogSchema({ dataset }: { dataset: CatalogDataset }) {
         <span>{dataset.schema.length} 컬럼</span>
       </div>
       <table className="schema-table">
-        <thead><tr><th>Column Name</th><th>Type</th><th>Nullable</th><th>설명</th></tr></thead>
+        <thead><tr><th>컬럼명</th><th>타입</th><th>NULL 허용</th><th>설명</th></tr></thead>
         <tbody>
           {dataset.schema.map(([name, type], index) => (
             <tr key={`${name}-${index}`}><td>{name}</td><td>{type}</td><td>{index % 2 === 0 ? "NO" : "YES"}</td><td>{dataset.name}의 {name} 필드</td></tr>
@@ -775,7 +769,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     <section className="catalog-table-card">
       <div className="catalog-section-header">
         <h2>샘플 데이터</h2>
-        <span>read only preview</span>
+        <span>읽기 전용 미리보기</span>
       </div>
       <div className="catalog-sample-scroll">
         <table className="schema-table">
@@ -850,7 +844,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
           <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
           <div>
             <h2>{dataset.name}</h2>
-            <span>DATA LINEAGE</span>
+            <span>리니지</span>
           </div>
         </div>
       )}
@@ -876,14 +870,14 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       ) : (
         <div className="catalog-lineage-empty">
-          <strong>Lineage graph unavailable</strong>
-          <span>백엔드 lineage contract 또는 mock fallback을 확인해 주세요.</span>
+          <strong>리니지를 불러오지 못했습니다.</strong>
+          <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
         </div>
       )}
       <div className="catalog-lineage-footer">
-        <span>Upstream <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)} Datasets</strong></span>
-        <span>Layer <strong>{dataset.layer}</strong></span>
-        <span>Status <strong>{statusMeta.label}</strong></span>
+        <span>상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></span>
+        <span>레이어 <strong>{dataset.layer}</strong></span>
+        <span>상태 <strong>{statusMeta.label}</strong></span>
       </div>
     </section>
   );
@@ -994,8 +988,8 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
         </div>
       </header>
       <div className="xflow-column-head">
-        <span>Column</span>
-        <span>Type</span>
+        <span>컬럼</span>
+        <span>타입</span>
       </div>
       <div className="xflow-schema-columns">
         {data.columns.map((column) => (
