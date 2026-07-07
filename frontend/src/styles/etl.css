@@ -6588,25 +6588,6 @@
   background: #fef2f2;
 }
 
-.creation-flow-grid .target-action-panel {
-  align-content: start;
-  gap: 0;
-  align-self: start;
-  justify-self: stretch;
-  min-height: 0;
-  position: sticky;
-  top: clamp(96px, calc(50vh - 90px), 360px);
-  width: auto;
-  max-height: none;
-  margin-top: 0;
-  overflow: visible;
-  transform: none;
-}
-
-.creation-flow-grid .target-action-panel .summary-actions {
-  margin-top: 0;
-}
-
 .target-toggle-panel {
   gap: 14px;
 }
@@ -6826,12 +6807,6 @@
     text-align: center;
   }
 
-  .creation-flow-grid .target-action-panel {
-    position: static;
-    left: auto;
-    width: auto;
-    transform: none;
-  }
 }
 
 .validation-panel {
