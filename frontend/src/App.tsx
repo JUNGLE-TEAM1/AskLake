@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
+import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
@@ -14,7 +15,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -96,7 +97,6 @@ export function App() {
   const {
     apiPending,
     createPipeline,
-    createSqlDerivedDataset,
     dataError,
     dataLoading,
     datasets,
@@ -104,13 +104,15 @@ export function App() {
     handleJobCommand,
     jobExecutionEvidence,
     jobs,
-    openDataset,
     openDatasetInSql,
     openJobDetail,
     openJobRuns,
+    prepareSqlDatasetJobDraft,
+    runsByJobId,
     selectedDataset,
     selectedJob,
-    setSelectedDataset,
+    selectedRunIdByJobId,
+    selectRunForJob,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
@@ -190,6 +192,13 @@ export function App() {
     moveToFlow("jobs");
   };
 
+  const navigateIngestLanding = () => {
+    writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
+    if (window.location.pathname !== "/") window.history.pushState(null, "", "/");
+    setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
+    moveToFlow("jobs");
+  };
+
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
     const path = getDashboardPath(dashboardId, mode);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
@@ -201,29 +210,6 @@ export function App() {
       version: entry.version + 1,
     }));
     moveToFlow("dashboard");
-  };
-
-  const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
-    const targetDataset = dataset ?? selectedDataset;
-    if (!targetDataset || !hasSelectedDataset(targetDataset, datasets)) {
-      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
-      return;
-    }
-
-    setSelectedDataset(targetDataset);
-    writeAuditLog(action, apiPath, targetDataset.id);
-    setDashboardEntry((entry) => ({ source, view: "builder", version: entry.version + 1 }));
-    moveToFlow("dashboard");
-  };
-
-  const openDashboardFromSql = (result: SqlResultDraft) => {
-    if (!selectedDatasetAvailable) {
-      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
-      return;
-    }
-
-    setSqlResultDraft(result);
-    openDashboardBuilder("sql", "analysis.dashboard.create_requested", "/api/dashboards", selectedDataset);
   };
 
   const recordPlaceholderAction = (flow: PlaceholderFlow, actionType: PlaceholderAction) => {
@@ -248,6 +234,7 @@ export function App() {
           writeAuditLog("ui.logout_requested", "/app/logout", "demo.user@asklake.local", "success", { targetType: "ui" });
           showToast("데모 환경에서는 로그아웃 요청만 기록됩니다.", "info");
         }}
+        onBrandClick={navigateIngestLanding}
         onNavigate={(flow, label) => {
           writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
           moveToFlow(flow);
@@ -263,13 +250,13 @@ export function App() {
 
   return (
     <div className="app-shell" data-last-action={auditSignal}>
-      <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onNavigate={navigateSidebar} />
+      <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onBrandClick={navigateIngestLanding} onNavigate={navigateSidebar} />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : "page-body"}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
           {shouldBlockForInitialData && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
@@ -303,9 +290,9 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onDatasetOpen={openDataset} onOpenSql={openDatasetInSql} />}
-          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onCreateDashboard={() => openDashboardBuilder("catalog", "catalog.dashboard.create_requested", `/api/catalog/datasets/${selectedDataset.id}/dashboards`)} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onCreateDerivedDataset={createSqlDerivedDataset} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSql} />}
+          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
+          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
@@ -325,6 +312,7 @@ function RuleBuilderShell({
   children,
   onAccount,
   onAuditToggle,
+  onBrandClick,
   onDocs,
   onLogout,
   onNavigate,
@@ -336,6 +324,7 @@ function RuleBuilderShell({
   children: React.ReactNode;
   onAccount: () => void;
   onAuditToggle: () => void;
+  onBrandClick: () => void;
   onDocs: () => void;
   onLogout: () => void;
   onNavigate: (flow: FlowId, label: string) => void;
@@ -359,10 +348,9 @@ function RuleBuilderShell({
   return (
     <div className="etl-builder-shell" data-audit-open={auditOpen}>
       <header className="etl-builder-header">
-        <div className="etl-builder-brand">
-          <span className="etl-builder-brand-mark" aria-hidden="true" />
-          <strong>AskLake - 데이터셋 생성 ETL 빌더</strong>
-        </div>
+        <button className="etl-builder-brand" type="button" aria-label="수집/처리 랜딩 페이지로 이동" onClick={onBrandClick}>
+          <img src={asklakeLogo} alt="AskLake" />
+        </button>
         <nav className="etl-builder-stepper" aria-label="데이터셋 생성 단계">
           {stepItems.map(([index, label], itemIndex) => (
             <span className={index === "3" ? "etl-builder-step active" : "etl-builder-step"} key={index}>

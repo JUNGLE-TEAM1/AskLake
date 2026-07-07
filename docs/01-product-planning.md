@@ -39,7 +39,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL preview
-- SQL preview 결과 기반 Lake Dataset 생성
+- SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
 - Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
 - 감사 로그와 toast feedback
 
@@ -55,7 +55,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | Catalog hydrate | 데이터셋 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
 | SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
-| SQL derived dataset | SQL preview 결과를 Catalog dataset으로 저장 | Medium | `docs/api-contract.md` |
+| SQL derived dataset | SQL preview 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
 
 FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 
@@ -82,8 +82,9 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
-4. Preview 결과는 Lake Dataset으로 저장할 수 있다.
-5. Dashboard builder 진입은 실제 dataset이 있을 때만 허용한다.
+4. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
+5. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
+6. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
 
 ### Flow C. FastAPI live backend 연결
 
