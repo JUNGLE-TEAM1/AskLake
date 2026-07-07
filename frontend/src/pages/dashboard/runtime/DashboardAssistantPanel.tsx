@@ -11,6 +11,7 @@ import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
+  onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
@@ -28,6 +29,7 @@ function AskLakeAssistantMark() {
 
 export function DashboardAssistantPanel({
   dashboardId,
+  onWorkingWidgetChange,
   pageId,
   selectedWidget,
   widgets,
@@ -66,6 +68,8 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
+    const workingWidgetId = selectedWidget?.id ?? targetWidgets[0]?.id ?? null;
+    onWorkingWidgetChange?.(workingWidgetId);
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
@@ -92,6 +96,7 @@ export function DashboardAssistantPanel({
       ]);
     } finally {
       setIsSubmitting(false);
+      onWorkingWidgetChange?.(null);
     }
   };
 
