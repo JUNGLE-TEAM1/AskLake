@@ -129,7 +129,7 @@ p {
 
 .etl-builder-step.active {
   border-radius: 8px;
-  background: #636ae8;
+  background: #2563eb;
   color: #fff;
   padding: 8px 13px;
 }
@@ -197,7 +197,7 @@ p {
 }
 
 .etl-builder-nav button:hover {
-  color: #636ae8;
+  color: #2563eb;
 }
 
 .etl-builder-sidebar-foot {
@@ -297,8 +297,8 @@ p {
 }
 
 .nav-item.active {
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
   font-weight: 700;
 }
 
@@ -371,8 +371,8 @@ p {
 
 .icon-button.active,
 .icon-button:hover {
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .audit-menu {
@@ -419,7 +419,7 @@ p {
 }
 
 .audit-popover-header span {
-  color: #636ae8;
+  color: #2563eb;
   font-size: 12px;
   font-weight: 700;
 }
@@ -484,7 +484,7 @@ p {
   right: 28px;
   z-index: 40;
   max-width: min(420px, calc(100vw - 48px));
-  border: 1px solid #c7d2fe;
+  border: 1px solid #bfdbfe;
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 18px 48px rgba(23, 26, 31, 0.16);
@@ -569,8 +569,8 @@ p {
 }
 
 .step-dot.active {
-  border-color: #636ae8;
-  background: #636ae8;
+  border-color: #2563eb;
+  background: #2563eb;
   color: #fff;
 }
 
@@ -592,7 +592,7 @@ p {
 }
 
 .step-line.active {
-  background: #636ae8;
+  background: #2563eb;
 }
 
 .page-body {
@@ -651,9 +651,9 @@ p {
 }
 
 .flow-tab.active {
-  border-color: #636ae8;
-  background: #f2f2fd;
-  color: #636ae8;
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .filter-chip {
