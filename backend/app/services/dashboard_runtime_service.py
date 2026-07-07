@@ -62,8 +62,9 @@ class DashboardRuntimeService:
         "yellow": "#f59e0b",
     }
 
-    def __init__(self, repository: DashboardRuntimeRepository) -> None:
+    def __init__(self, repository: DashboardRuntimeRepository, catalog_repository: CatalogRepository) -> None:
         self.repository = repository
+        self.catalog_repository = catalog_repository
 
     def get_published_runtime(self, dashboard_id: str) -> DashboardRuntimeResponse:
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
@@ -417,9 +418,7 @@ class DashboardRuntimeService:
     ) -> list[dict[str, Any]]:
         if explicit_data is not None:
             return explicit_data
-        if not dataset_id:
-            return []
-        dataset_payload = CatalogRepository(self.repository.db).get_dataset_payload(dataset_id)
+        dataset_payload = self.catalog_repository.get_dataset_payload(dataset_id) if dataset_id else None
         return dataset_rows_to_widget_data(dataset_payload or get_demo_dataset(dataset_id))
 
     @staticmethod

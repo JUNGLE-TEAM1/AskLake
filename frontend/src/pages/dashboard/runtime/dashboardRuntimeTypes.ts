@@ -13,12 +13,14 @@ export type DashboardDatasetOption = {
   id: string;
   layer: CatalogDataset["layer"];
   name: string;
+  rows?: Array<Record<string, unknown>>;
   status: CatalogDataset["status"];
   updatedAt?: string;
 };
 
 export type CreateDraftWidgetFormInput = {
   config: DashboardRuntimeWidgetConfig;
+  data?: Array<Record<string, unknown>>;
   datasetId: string;
   title: string;
   type: DashboardRuntimeWidgetType;

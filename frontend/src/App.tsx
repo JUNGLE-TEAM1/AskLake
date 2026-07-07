@@ -15,7 +15,7 @@ import { JobDagPage, JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId, SqlResultDraft } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -97,7 +97,6 @@ export function App() {
     apiPending,
     commandPendingByJobId,
     createPipeline,
-    createSqlDerivedDataset,
     dataError,
     dataLoading,
     datasets,
@@ -105,16 +104,15 @@ export function App() {
     handleJobCommand,
     jobExecutionEvidence,
     jobs,
-    openDataset,
     openDatasetInSql,
     openJobDag,
     openJobDetail,
+    prepareSqlDatasetJobDraft,
     runsByJobId,
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
-    setSelectedDataset,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
@@ -198,29 +196,6 @@ export function App() {
     moveToFlow("dashboard");
   };
 
-  const openDashboardBuilder = (source: DashboardEntry["source"], action: string, apiPath: string, dataset?: CatalogDataset | null) => {
-    const targetDataset = dataset ?? selectedDataset;
-    if (!targetDataset || !hasSelectedDataset(targetDataset, datasets)) {
-      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
-      return;
-    }
-
-    setSelectedDataset(targetDataset);
-    writeAuditLog(action, apiPath, targetDataset.id);
-    setDashboardEntry((entry) => ({ source, view: "builder", version: entry.version + 1 }));
-    moveToFlow("dashboard");
-  };
-
-  const openDashboardFromSql = (result: SqlResultDraft) => {
-    if (!selectedDatasetAvailable) {
-      showToast("DB 데이터 로딩 후 다시 시도해주세요.", "info");
-      return;
-    }
-
-    setSqlResultDraft(result);
-    openDashboardBuilder("sql", "analysis.dashboard.create_requested", "/api/dashboards", selectedDataset);
-  };
-
   const recordPlaceholderAction = (flow: PlaceholderFlow, actionType: PlaceholderAction) => {
     const config = placeholderAuditConfig[flow];
     const { action, apiPath } = config.actions[actionType];
@@ -265,7 +240,7 @@ export function App() {
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
-        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : "page-body"}>
+        <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
           {dataLoading && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
@@ -299,9 +274,9 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onDatasetOpen={openDataset} onOpenSql={openDatasetInSql} />}
-          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onCreateDashboard={() => openDashboardBuilder("catalog", "catalog.dashboard.create_requested", `/api/catalog/datasets/${selectedDataset.id}/dashboards`)} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onCreateDerivedDataset={createSqlDerivedDataset} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSql} />}
+          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
+          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}

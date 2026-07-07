@@ -38,6 +38,33 @@
   padding: 20px;
 }
 
+.creation-flow-grid.review-grid .validation-panel {
+  top: 24px;
+  display: flex;
+  max-height: calc(100vh - 272px);
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 0;
+  padding: 18px;
+}
+
+.creation-flow-grid.review-grid .validation-panel .validation-row {
+  padding: 10px 12px;
+}
+
+.creation-flow-grid.review-grid .validation-panel .summary-actions {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 12px;
+}
+
+.creation-flow-grid.review-grid .validation-panel .summary-actions button {
+  height: 40px;
+}
+
 .content-main {
   display: grid;
   gap: 18px;

@@ -19,6 +19,11 @@ export type SourceConnectorAnalysis = {
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
 
 export async function testSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<SourceConnectorAnalysis> {
+  const normalizedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
+  if (normalizedSourceType === "SQL Result") {
+    return buildSqlResultConnectorAnalysis(fields);
+  }
+
   if (apiConfig.useMock) {
     return resolveMock(buildMockSourceConnectorAnalysis(sourceType, fields));
   }
@@ -27,6 +32,43 @@ export async function testSourceConnector(sourceType: string, fields: SourceFiel
     sourceConfig: fields,
     sourceType,
   });
+}
+
+function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnectorAnalysis {
+  const sourceDataset = fieldValue(fields, "Source Dataset");
+  const runId = fieldValue(fields, "SQL Run ID");
+  const rowCount = fieldValue(fields, "Preview Row Count");
+  const sourceLabel = [sourceDataset, runId].filter(Boolean).join(" / ") || "SQL Result";
+  const previewRows = [
+    ["Source Dataset", sourceDataset || "-"],
+    ["SQL Run ID", runId || "-"],
+    ["Preview Row Count", rowCount || "-"],
+    ["Backend connector", "Skipped"],
+  ];
+
+  return {
+    actionPath: "/api/query/runs",
+    assets: sourceDataset ? [[sourceDataset, runId || "SQL Preview", "verified"]] : [],
+    draftPatch: {
+      source: {
+        connectionMessage: "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다.",
+        connectionStatus: "success",
+        sourceConfig: fields,
+        sourceLabel,
+        sourceType: "SQL Result",
+      },
+    },
+    logs: [
+      "SQL Preview 결과를 처리 Job 입력으로 사용합니다.",
+      "외부 커넥터 연결 테스트와 schema 재추론은 생략합니다.",
+    ],
+    message: "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다.",
+    previewColumns: ["항목", "값"],
+    previewNote: "SQL 분석 화면에서 전달된 Preview 결과를 보존합니다.",
+    previewRows,
+    status: "success",
+    testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
+  };
 }
 
 function buildMockSourceConnectorAnalysis(sourceType: string, fields: SourceFieldRows): SourceConnectorAnalysis {
@@ -153,6 +195,7 @@ function getSourceLabel(sourceType: string, fields: SourceFieldRows) {
     MongoDB: ["Database Name", "Collection"],
     PostgreSQL: ["Endpoint / Host", "Database Name", "DATASET OR TABLE SELECTOR"],
     "REST API": ["Endpoint URL"],
+    "SQL Result": ["Source Dataset", "SQL Run ID"],
     "Stream / Kafka": ["TOPIC / QUEUE NAME", "Broker / Endpoint"],
   };
   const labels = labelBySourceType[sourceType] ?? [];
@@ -167,6 +210,7 @@ function getSourceTypeLabel(sourceType: string) {
     MongoDB: "MongoDB",
     PostgreSQL: "PostgreSQL",
     "REST API": "REST API",
+    "SQL Result": "SQL Result",
     "Stream / Kafka": "Kafka",
   };
   return labels[sourceType] ?? sourceType;

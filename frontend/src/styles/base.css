@@ -624,6 +624,14 @@ p {
   max-width: none;
 }
 
+.page-body.sql-body {
+  padding: 16px 24px 24px;
+}
+
+.page-body.sql-body > * {
+  max-width: none;
+}
+
 .schema-body > * {
   max-width: none;
 }

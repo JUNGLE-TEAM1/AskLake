@@ -30,6 +30,8 @@ def ensure_schema(db: Session) -> None:
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+        if "schema_fingerprint" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -208,7 +210,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
 
 
 def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
-    if dataset.payload and dataset.name is None:
+    if dataset.payload:
         payload = dataset.payload
         return CatalogDataset(
             id=str(payload.get("id") or dataset.id),

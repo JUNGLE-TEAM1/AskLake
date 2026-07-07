@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, String
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -19,7 +19,7 @@ class ETLJobModel(TimestampMixin, Base):
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
     schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
-    schema_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schema_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     permission_roles: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     storage_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
