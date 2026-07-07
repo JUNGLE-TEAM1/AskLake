@@ -1,4 +1,4 @@
-import { BarChart3, Plus, Table2 } from "lucide-react";
+import { Plus, Table2 } from "lucide-react";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
@@ -75,15 +75,6 @@ export function DashboardLandingPage({
   tags: string[];
   totalPages: number;
 }) {
-  const publishedCount = dashboards.filter((dashboard) => dashboard.status === "published").length;
-  const draftCount = dashboards.filter((dashboard) => dashboard.status === "draft").length;
-  const dashboardMetrics = [
-    { label: "전체 결과", meta: "검색/필터 적용", value: dashboardCount },
-    { label: "현재 표시", meta: `${pageStart}-${pageEnd}`, value: dashboards.length },
-    { label: "Published", meta: "현재 페이지", value: publishedCount },
-    { label: "Draft", meta: "현재 페이지", value: draftCount },
-  ];
-
   return (
     <div className="dashboard-page dashboard-list-page">
       <header className="dashboard-header">
@@ -104,28 +95,6 @@ export function DashboardLandingPage({
       </header>
 
       <div className="dashboard-xflow-stack">
-        <section className="dashboard-overview-card dashboard-xflow-card">
-          <div className="dashboard-xflow-card-header">
-            <span className="dashboard-xflow-icon">
-              <BarChart3 size={16} />
-            </span>
-            <div className="dashboard-xflow-heading">
-              <h2>대시보드 현황</h2>
-              <p>게시된 대시보드와 초안 상태를 빠르게 확인합니다.</p>
-            </div>
-            <span className="dashboard-xflow-state">{dashboardCount} dashboards</span>
-          </div>
-          <div className="dashboard-overview-metrics">
-            {dashboardMetrics.map((metric, index) => (
-              <article className={index === 0 ? "dashboard-overview-metric active" : "dashboard-overview-metric"} key={metric.label}>
-                <span>{metric.value}</span>
-                <strong>{metric.label}</strong>
-                <small>{metric.meta}</small>
-              </article>
-            ))}
-          </div>
-        </section>
-
         <DashboardListToolbar
           onClearTags={onClearTags}
           onSearchQueryChange={onSearchQueryChange}
