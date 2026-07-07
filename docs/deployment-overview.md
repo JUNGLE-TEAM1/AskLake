@@ -30,6 +30,7 @@ AWS EC2
   - backend
   - postgres
   - mongo
+  - minio
 ```
 
 외부 요청은 Caddy가 받는다.
@@ -72,7 +73,8 @@ mongo
 
 PostgreSQL fixture는 메인 데모 시나리오에 사용한다.
 MongoDB fixture는 다른 source type도 처리할 수 있다는 보조 시나리오에 사용한다.
-MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
+MinIO는 EC2 prod compose의 S3-compatible data lake로 둔다.
+File / S3, Data Lake source, Target S3 picker, Spark S3A demo는 서버 `deploy/.env`의 MinIO credential과 bucket allowlist를 사용한다.
 
 기본 fixture는 다음처럼 고정한다.
 
@@ -82,6 +84,7 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | PostgreSQL `asklake_sources` | `orders_clean` | Catalog -> SQL Preview -> Job 생성 메인 demo |
 | PostgreSQL `asklake_sources` | `customers`, `user_activity` | 추후 join/event demo 후보 |
 | MongoDB `asklake_sources` | `customer_reviews`, `app_events` | document source와 nested schema 보조 demo |
+| MinIO `m3-raw` | `nyc_taxi/csv/2019-Nov.csv` 등 seeded object | File / S3와 Data Lake Spark S3A demo |
 
 현재 FastAPI SQL Preview는 물리 DB를 직접 조회하지 않고 Catalog payload의 `sampleRows`를 사용한다.
 따라서 `orders_clean`의 catalog `schema`/`sampleRows`와 PostgreSQL fixture row는 같은 seed 기준으로 맞춘다.
@@ -95,7 +98,7 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | Priority P0 | `orders_clean` Catalog, SQL Preview, 처리 Job 생성, Catalog 재확인 | 발표 메인 흐름이므로 반드시 통과해야 한다. |
 | Priority P1 | `customers`, `user_activity`, MongoDB `customer_reviews`, `app_events`, dashboard preview | 보조 시연과 회귀 테스트에 넣는다. |
 | Priority P2 | 기존 mock catalog 후보 전체 | seed 후보 registry에 남기고 시간이 될 때 확장한다. |
-| Priority P3 | MinIO/S3, auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
+| Priority P3 | auth, backup, monitoring, production scheduler | 데모 배포 안정화 뒤 별도 작업으로 분리한다. |
 
 ## 처음 한 번 할 일
 
@@ -110,7 +113,7 @@ MinIO나 S3는 이번 기본 배포에서는 optional로 둔다.
 | Docker 설치 | EC2에 Docker와 Docker Compose를 설치한다. |
 | 배포 디렉터리 생성 | 예: `/opt/asklake` |
 | 서버 `.env` 작성 | 실제 secret과 connection string은 서버에만 둔다. |
-| 최초 compose up | Caddy, frontend, backend, DB 컨테이너를 띄운다. |
+| 최초 compose up | Caddy, frontend, backend, DB, MinIO 컨테이너를 띄운다. |
 
 도메인과 서버는 매번 새로 만들지 않는다.
 한 번 고정한 뒤, 이후 배포는 코드만 갱신한다.
@@ -246,14 +249,13 @@ docker compose logs backend
 - GitHub Actions 전에는 `scripts/deploy.sh`로 start/stop/deploy/status를 반복한다.
 - demo data는 seeded fixture로 고정한다.
 - PostgreSQL과 MongoDB를 fixture source로 둔다.
-- MinIO/S3는 기본 배포에서는 후순위로 둔다.
+- MinIO는 기본 EC2 compose에 포함하고 S3-compatible data lake demo source로 사용한다.
 - secret은 repo에 넣지 않는다.
 
 ## 아직 하지 않는 일
 
 - ECS/Fargate 전환.
 - RDS/DocumentDB 같은 managed DB 전환.
-- MinIO/S3 production storage 구성.
 - production-grade scheduler.
 - 실제 인증/인가.
 - 운영용 backup/monitoring 체계.

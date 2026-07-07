@@ -33,6 +33,25 @@ npm run dev
 docker compose up -d minio
 ```
 
+EC2 prod deploy에서는 MinIO가 `deploy/docker-compose.prod.yml`의 `minio` service로 실행된다. 서버 `deploy/.env`에는 최소 아래 값이 필요하다.
+
+```text
+MINIO_ENDPOINT=http://minio:9000
+MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
+MINIO_ACCESS_KEY=<server-only value>
+MINIO_SECRET_KEY=<server-only value>
+MINIO_BUCKET=m3-raw
+S3_ENDPOINT=http://minio:9000
+S3_FORCE_PATH_STYLE=true
+S3_ALLOWED_BUCKETS=m3-raw,asklake-output
+```
+
+초기 object sample은 EC2 backend container에서 준비한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec backend npm run minio:seed-verify
+```
+
 Initial endpoints:
 
 ```text
