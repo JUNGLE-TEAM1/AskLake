@@ -11,10 +11,12 @@ export type DashboardDatasetOption = {
   id: string;
   layer: "gold";
   name: string;
+  rows?: Array<Record<string, unknown>>;
 };
 
 export type CreateDraftWidgetFormInput = {
   config: DashboardRuntimeWidgetConfig;
+  data?: Array<Record<string, unknown>>;
   datasetId: string;
   title: string;
   type: DashboardRuntimeWidgetType;

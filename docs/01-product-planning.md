@@ -83,7 +83,8 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 2. 시스템은 schema, sample rows, lineage를 보여준다.
 3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
 4. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-5. Dashboard builder 진입은 실제 dataset이 있을 때만 허용한다.
+5. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
+6. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
 
 ### Flow C. FastAPI live backend 연결
 
