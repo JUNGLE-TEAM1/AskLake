@@ -40,6 +40,14 @@ const TRANSFORM_MODULE_SLOTS = [
 
 type TransformAuthoringMode = "sql" | "python" | "module";
 type OutputPreviewRow = Record<string, string>;
+type TransformModuleKey = typeof TRANSFORM_MODULE_SLOTS[number]["key"];
+type TransformProjection = {
+  input: string;
+  operation?: string;
+  output: string;
+  params?: string;
+  type?: string;
+};
 
 type XFlowSchemaTransformEditorProps = {
   columns: SchemaColumnDraft[];
@@ -66,8 +74,10 @@ export function XFlowSchemaTransformEditor({
   const [selectedAfter, setSelectedAfter] = useState<Set<number>>(new Set());
   const [expandedSourceIndex, setExpandedSourceIndex] = useState<number | null>(null);
   const [expandedTargetIndex, setExpandedTargetIndex] = useState<number | null>(null);
+  const [showCodeWorkbench, setShowCodeWorkbench] = useState(false);
   const [transformMode, setTransformMode] = useState<TransformAuthoringMode>("sql");
   const [showOutputPreview, setShowOutputPreview] = useState(false);
+  const [authoringStatus, setAuthoringStatus] = useState("스키마 매핑을 먼저 조정한 뒤 필요한 경우 고급 변환을 적용합니다.");
   const [transformCodeByMode, setTransformCodeByMode] = useState<Record<TransformAuthoringMode, string>>({
     module: "",
     python: "",
@@ -92,8 +102,6 @@ export function XFlowSchemaTransformEditor({
   const selectedBeforeCount = selectedBefore.size;
   const selectedAfterCount = selectedAfter.size;
   const selectedColumn = columns[selectedIndex];
-  const selectedTransform = selectedColumn ? transformByOutput.get(getOutputName(selectedColumn)) : undefined;
-  const selectedPreview = selectedColumn ? previewColumnSample(selectedColumn, sampleRows[0]?.[selectedIndex] ?? "", selectedTransform) : undefined;
   const generatedTransformCode = useMemo(
     () => buildTransformAuthoringTemplate(transformMode, includedIndexes),
     [includedIndexes, transformMode],
@@ -348,56 +356,67 @@ export function XFlowSchemaTransformEditor({
 
   const resetTransformCode = () => {
     setTransformCodeByMode((current) => ({ ...current, [transformMode]: "" }));
+    setAuthoringStatus("현재 target schema 기준 템플릿을 다시 생성했습니다.");
+  };
+
+  const applyCodeTransform = () => {
+    const projections = parseTransformProjections(transformMode, activeTransformCode, columns);
+    if (projections.length === 0) {
+      setAuthoringStatus("적용 가능한 SELECT/dict/module mapping을 찾지 못했습니다.");
+      return;
+    }
+    const next = buildProjectedSchema(columns, sampleRows, projections);
+    if (next.columns.length === 0) {
+      setAuthoringStatus("현재 sample에서 적용 가능한 output column이 없습니다.");
+      return;
+    }
+    updateColumns(next.columns, next.rows);
+    onTransformStepsChange?.(next.steps);
+    setSelectedBefore(new Set());
+    setSelectedAfter(new Set());
+    setExpandedTargetIndex(null);
+    onSelectedIndexChange(0);
+    setShowOutputPreview(true);
+    setAuthoringStatus(`${next.columns.length}개 output column에 코드 변환을 적용했습니다.`);
+  };
+
+  const applyModuleSlot = (moduleKey: TransformModuleKey) => {
+    if (moduleKey === "cast_schema") {
+      const castSteps = includedIndexes
+        .filter(({ column }) => column.type.toLowerCase() !== "json")
+        .map(({ column }) => buildCastTransformStep(column))
+        .filter(Boolean) as TransformStepDraft[];
+      const replacedOutputs = new Set(castSteps.map((step) => step.output));
+      onTransformStepsChange?.([
+        ...transformSteps.filter((step) => !replacedOutputs.has(step.output)),
+        ...castSteps,
+      ]);
+      setShowOutputPreview(true);
+      setAuthoringStatus(`target type 기준 cast step ${castSteps.length}개를 적용했습니다.`);
+      return;
+    }
+
+    const sourceIndex = columns[selectedIndex] ? selectedIndex : includedIndexes[0]?.index;
+    const sourceColumn = typeof sourceIndex === "number" ? columns[sourceIndex] : undefined;
+    if (!sourceColumn) {
+      setAuthoringStatus("모듈을 적용할 source/target row를 먼저 선택하세요.");
+      return;
+    }
+    const projections = buildModuleProjections(moduleKey, sourceColumn, sampleRows[0]?.[sourceIndex] ?? "");
+    if (projections.length === 0) {
+      setAuthoringStatus(`${sourceColumn.sourceName} 샘플에서 ${moduleKey} 적용 대상을 찾지 못했습니다.`);
+      return;
+    }
+    const next = appendProjectedColumns(columns, sampleRows, transformSteps, projections);
+    updateColumns(next.columns, next.rows);
+    onTransformStepsChange?.(next.steps);
+    onSelectedIndexChange(Math.max(0, next.columns.length - projections.length));
+    setShowOutputPreview(true);
+    setAuthoringStatus(`${moduleKey} 모듈이 ${projections.length}개 output column을 추가했습니다.`);
   };
 
   return (
     <div className="xflow-transform-editor">
-      <section className="xflow-code-workbench" aria-label="structured transform authoring">
-        <header>
-          <div>
-            <strong>정형 변환 작업대</strong>
-            <span>SQL, Python, 모듈 훅으로 source sample을 target table 구조로 변환합니다.</span>
-          </div>
-          <div className="xflow-code-modes" role="tablist" aria-label="transform authoring mode">
-            {(["sql", "python", "module"] as TransformAuthoringMode[]).map((mode) => (
-              <button
-                aria-pressed={transformMode === mode}
-                className={transformMode === mode ? "active" : ""}
-                key={mode}
-                type="button"
-                onClick={() => setTransformMode(mode)}
-              >
-                {mode === "sql" ? "SQL" : mode === "python" ? "Python" : "Modules"}
-              </button>
-            ))}
-          </div>
-        </header>
-        <div className="xflow-code-body">
-          <label className="xflow-code-editor">
-            <span>{transformMode === "sql" ? "SQL transform" : transformMode === "python" ? "Python transform" : "Module pipeline"}</span>
-            <textarea
-              spellCheck={false}
-              value={activeTransformCode}
-              onChange={(event) => updateTransformCode(event.currentTarget.value)}
-            />
-          </label>
-          <aside className="xflow-module-slots">
-            <span>Plug-in slots</span>
-            {TRANSFORM_MODULE_SLOTS.map((slot) => (
-              <button key={slot.key} type="button" title={slot.desc}>
-                <strong>{slot.label}</strong>
-                <em>{slot.desc}</em>
-              </button>
-            ))}
-          </aside>
-        </div>
-        <footer>
-          <button className="secondary-button" type="button" onClick={resetTransformCode}>템플릿 재생성</button>
-          <button className="primary-button" type="button" onClick={() => setShowOutputPreview((current) => !current)}>
-            {showOutputPreview ? "최종 샘플 닫기" : "최종 샘플 미리보기"}
-          </button>
-        </footer>
-      </section>
       <div className="xflow-transfer-stage">
         <section className="xflow-transfer-panel">
           <header className="xflow-panel-header source">
@@ -435,8 +454,8 @@ export function XFlowSchemaTransformEditor({
                         <strong>{sourceLeafName(column.sourceName)}</strong>
                       </span>
                     </span>
-                    <ChevronDown className="xflow-source-chevron" size={14} />
                     <em title={sampleValue}>{formatSampleValue(sampleValue)}</em>
+                    <ChevronDown className="xflow-source-chevron" size={14} />
                   </button>
                   {expanded ? (
                     <div className="xflow-source-detail">
@@ -534,45 +553,21 @@ export function XFlowSchemaTransformEditor({
                       <button type="button" onClick={(event) => toggleTargetDetailFromEvent(event, index)} title={expanded ? "Hide details" : "Show details"}>
                         {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                       </button>
-                      <button type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        excludeTargetColumn(index);
-                      }} title="Exclude column">
-                        <Trash2 size={14} />
-                      </button>
-                      <button type="button" onClick={(event) => {
-                        event.stopPropagation();
-                        duplicateTargetColumn(index);
-                      }} title="Duplicate column">
-                        <Copy size={14} />
-                      </button>
-                      <button type="button" disabled={orderIndex === 0} onClick={(event) => {
-                        event.stopPropagation();
-                        moveTarget(index, -1);
-                      }} title="Move up">
-                        <ChevronUp size={14} />
-                      </button>
-                      <button type="button" disabled={orderIndex === includedIndexes.length - 1} onClick={(event) => {
-                        event.stopPropagation();
-                        moveTarget(index, 1);
-                      }} title="Move down">
-                        <ChevronDown size={14} />
-                      </button>
                     </div>
                   </div>
                   {expanded ? (
                     <div className="xflow-target-detail" onClick={(event) => event.stopPropagation()}>
                       <label>
-                        <span>MAPPING</span>
+                        <span>매핑</span>
                         {sourceParentPath(column.sourceName) ? (
                           <small className="xflow-mapping-parent" title={displaySourcePath(column.sourceName)}>
-                            child of {sourceParentPath(column.sourceName)}
+                            {sourceParentPath(column.sourceName)}
                           </small>
                         ) : null}
                         <strong title={`${column.sourceName} -> ${getOutputName(column)}`}>{displaySourcePath(column.sourceName)} {"->"} {getOutputName(column)}</strong>
                       </label>
                       <label>
-                        <span>TRANSFORM</span>
+                        <span>변환</span>
                         <select
                           aria-label={`${column.sourceName} transform`}
                           className="xflow-transform-select"
@@ -585,7 +580,7 @@ export function XFlowSchemaTransformEditor({
                       </label>
                       {transformStep?.operation === "Parse Timestamp" || transformStep?.operation === "Extract JSONPath" ? (
                         <label>
-                          <span>{transformStep.operation === "Extract JSONPath" ? "JSONPATH" : "FORMAT"}</span>
+                          <span>{transformStep.operation === "Extract JSONPath" ? "JSONPath" : "형식"}</span>
                           <input
                             aria-label={`${column.sourceName} transform parameter`}
                             className="xflow-transform-param"
@@ -596,7 +591,7 @@ export function XFlowSchemaTransformEditor({
                         </label>
                       ) : null}
                       <div className="xflow-target-sample-detail">
-                        <span>BEFORE / AFTER SAMPLE</span>
+                        <span>샘플 비교</span>
                         <small className="xflow-sample-reason">{samplePreviewReason(column, transformStep, preview)}</small>
                         <div className={sampleComparisonClass} title={`${preview.before} -> ${preview.after}`}>
                           <section className="xflow-sample-panel">
@@ -618,10 +613,24 @@ export function XFlowSchemaTransformEditor({
                       </div>
                       {duplicateOrigin(column) ? (
                         <div className="xflow-duplicate-origin">
-                          <span>DUPLICATE OF</span>
+                          <span>복제 원본</span>
                           <strong>{duplicateOrigin(column)}</strong>
                         </div>
                       ) : null}
+                      <div className="xflow-detail-actions">
+                        <button type="button" onClick={() => duplicateTargetColumn(index)}>
+                          <Copy size={14} /> 복제
+                        </button>
+                        <button type="button" disabled={orderIndex === 0} onClick={() => moveTarget(index, -1)}>
+                          <ChevronUp size={14} /> 위로
+                        </button>
+                        <button type="button" disabled={orderIndex === includedIndexes.length - 1} onClick={() => moveTarget(index, 1)}>
+                          <ChevronDown size={14} /> 아래로
+                        </button>
+                        <button className="danger" type="button" onClick={() => excludeTargetColumn(index)}>
+                          <Trash2 size={14} /> 제외
+                        </button>
+                      </div>
                     </div>
                   ) : null}
                 </div>
@@ -631,6 +640,70 @@ export function XFlowSchemaTransformEditor({
           </div>
         </section>
       </div>
+      <section className="xflow-flow-toolbar" aria-label="schema transform actions">
+        <div>
+          <strong>{includedIndexes.length} output</strong>
+          <span>{transformSteps.filter((step) => step.enabled !== false).length} transform</span>
+        </div>
+        <div>
+          <button className="secondary-button compact" type="button" onClick={() => setShowCodeWorkbench((current) => !current)}>
+            {showCodeWorkbench ? "고급 닫기" : "고급"}
+          </button>
+          <button className="primary-button compact" type="button" onClick={() => setShowOutputPreview((current) => !current)}>
+            {showOutputPreview ? "샘플 닫기" : "최종 샘플"}
+          </button>
+        </div>
+      </section>
+      {showCodeWorkbench ? (
+        <section className="xflow-code-workbench fullscreen" aria-label="structured transform authoring">
+          <header>
+            <div>
+              <strong>정형 변환 작업대</strong>
+              <span>SQL, Python, 모듈 훅을 target schema에 적용합니다.</span>
+            </div>
+            <div className="xflow-code-modes" role="tablist" aria-label="transform authoring mode">
+              {(["sql", "python", "module"] as TransformAuthoringMode[]).map((mode) => (
+                <button
+                  aria-pressed={transformMode === mode}
+                  className={transformMode === mode ? "active" : ""}
+                  key={mode}
+                  type="button"
+                  onClick={() => setTransformMode(mode)}
+                >
+                  {mode === "sql" ? "SQL" : mode === "python" ? "Python" : "Modules"}
+                </button>
+              ))}
+            </div>
+          </header>
+          <div className="xflow-code-body">
+            <label className="xflow-code-editor">
+              <span>{transformMode === "sql" ? "SQL transform" : transformMode === "python" ? "Python transform" : "Module pipeline"}</span>
+              <textarea
+                spellCheck={false}
+                value={activeTransformCode}
+                onChange={(event) => updateTransformCode(event.currentTarget.value)}
+              />
+            </label>
+            <aside className="xflow-module-slots">
+              <span>Plug-in slots</span>
+              {TRANSFORM_MODULE_SLOTS.map((slot) => (
+                <button key={slot.key} type="button" title={slot.desc} onClick={() => applyModuleSlot(slot.key)}>
+                  <strong>{slot.label}</strong>
+                  <em>{slot.desc}</em>
+                </button>
+              ))}
+            </aside>
+          </div>
+          <footer>
+            <span>{authoringStatus}</span>
+            <div>
+              <button className="secondary-button" type="button" onClick={() => setShowCodeWorkbench(false)}>닫기</button>
+              <button className="secondary-button" type="button" onClick={resetTransformCode}>템플릿 재생성</button>
+              <button className="primary-button" type="button" onClick={applyCodeTransform}>변환 적용</button>
+            </div>
+          </footer>
+        </section>
+      ) : null}
       {showOutputPreview ? (
       <section className="xflow-output-preview" aria-label="final output preview">
         <header>
@@ -646,13 +719,6 @@ export function XFlowSchemaTransformEditor({
           <p className="source-empty-note">target에 포함된 컬럼과 샘플 row가 있으면 최종 output 구조가 표시됩니다.</p>
         )}
       </section>
-      ) : null}
-      {expandedTargetIndex !== null && selectedColumn && selectedPreview ? (
-        <aside className="xflow-selected-preview" aria-label="selected transform sample">
-          <span>{displaySourcePath(selectedColumn.sourceName)}</span>
-          <strong>{selectedColumn.targetName || selectedColumn.sourceName}</strong>
-          <em>{formatSampleValue(selectedPreview.before)} {"->"} {formatSampleValue(selectedPreview.after)}</em>
-        </aside>
       ) : null}
     </div>
   );
@@ -873,6 +939,255 @@ function buildTransformAuthoringTemplate(mode: TransformAuthoringMode, includedI
     selectLines.join(",\n"),
     "FROM source_sample;",
   ].join("\n");
+}
+
+function parseTransformProjections(mode: TransformAuthoringMode, code: string, columns: SchemaColumnDraft[]): TransformProjection[] {
+  if (mode === "module") return parseModuleProjections(code, columns);
+  if (mode === "python") return parsePythonDictProjections(code, columns);
+  return parseSqlSelectProjections(code, columns);
+}
+
+function parseSqlSelectProjections(code: string, columns: SchemaColumnDraft[]): TransformProjection[] {
+  const selectMatch = code.match(/select\s+([\s\S]*?)\s+from\s+/i);
+  if (!selectMatch) return [];
+  return selectMatch[1]
+    .split(/,\s*\n|,\s*(?=(?:(?:[^"]*"){2})*[^"]*$)/)
+    .map((line) => line.trim().replace(/,$/, ""))
+    .filter(Boolean)
+    .map((line) => {
+      const aliasMatch = line.match(/(.+?)\s+as\s+("?[\w.[\]\s-]+"?)$/i);
+      const inputExpression = (aliasMatch?.[1] ?? line).trim();
+      const output = unquoteSqlIdentifier(aliasMatch?.[2] ?? inputExpression);
+      const matchedColumn = findProjectionColumn(columns, inputExpression, output);
+      return {
+        input: matchedColumn?.sourceName ?? unquoteSqlIdentifier(inputExpression),
+        operation: inferProjectionOperation(inputExpression, matchedColumn),
+        output,
+        params: inputExpression.includes("JSON_VALUE") ? jsonPathFromSqlExpression(inputExpression) : undefined,
+        type: matchedColumn?.type,
+      };
+    });
+}
+
+function parsePythonDictProjections(code: string, columns: SchemaColumnDraft[]): TransformProjection[] {
+  const projections: TransformProjection[] = [];
+  const entryPattern = /["']([^"']+)["']\s*:\s*([\s\S]*?)(?:,\s*\n|\n\s*})/g;
+  let match: RegExpExecArray | null;
+  while ((match = entryPattern.exec(code)) !== null) {
+    const output = match[1];
+    const expression = match[2].trim();
+    const inputMatch = expression.match(/row\.get\(["']([^"']+)["']\)/);
+    const typeMatch = expression.match(/,\s*["']([^"']+)["']\s*\)/);
+    const matchedColumn = findProjectionColumn(columns, inputMatch?.[1] ?? output, output);
+    projections.push({
+      input: inputMatch?.[1] ?? matchedColumn?.sourceName ?? output,
+      operation: typeMatch ? "Cast String" : undefined,
+      output,
+      params: typeMatch?.[1],
+      type: typeMatch?.[1] ?? matchedColumn?.type,
+    });
+  }
+  return projections;
+}
+
+function parseModuleProjections(code: string, columns: SchemaColumnDraft[]): TransformProjection[] {
+  if (/cast_schema/i.test(code)) {
+    return columns
+      .filter((column) => column.included !== false)
+      .map((column) => ({
+        input: column.sourceName,
+        operation: castOperationForType(column.type),
+        output: getOutputName(column),
+        params: column.type,
+        type: column.type,
+      }));
+  }
+  return [];
+}
+
+function buildProjectedSchema(columns: SchemaColumnDraft[], sampleRows: string[][], projections: TransformProjection[]) {
+  const sourceIndexes = new Map(columns.map((column, index) => [column.sourceName, index]));
+  const nextColumns = projections.map((projection): SchemaColumnDraft => {
+    const sourceColumn = columns[sourceIndexes.get(projection.input) ?? -1];
+    return {
+      confidence: sourceColumn?.confidence,
+      included: true,
+      nullable: sourceColumn?.nullable ?? true,
+      role: projection.operation ? "transformed" : sourceColumn?.role,
+      sourceName: projection.input,
+      targetName: projection.output,
+      type: projection.type ?? sourceColumn?.type ?? "String",
+    };
+  });
+  const nextRows = sampleRows.map((row) => (
+    projections.map((projection) => {
+      const sourceIndex = sourceIndexes.get(projection.input);
+      const rawValue = typeof sourceIndex === "number" ? row[sourceIndex] ?? "" : "";
+      return previewOutputValue({ sourceName: projection.input, targetName: projection.output, type: projection.type ?? "String", included: true, nullable: true }, rawValue, projectionToStep(projection));
+    })
+  ));
+  const steps = projections.map(projectionToStep).filter(Boolean) as TransformStepDraft[];
+  return { columns: nextColumns, rows: nextRows, steps };
+}
+
+function appendProjectedColumns(
+  columns: SchemaColumnDraft[],
+  sampleRows: string[][],
+  transformSteps: TransformStepDraft[],
+  projections: TransformProjection[],
+) {
+  const sourceIndexes = new Map(columns.map((column, index) => [column.sourceName, index]));
+  const appendedColumns = projections.map((projection): SchemaColumnDraft => {
+    const sourceColumn = columns[sourceIndexes.get(projection.input) ?? -1];
+    return {
+      confidence: sourceColumn?.confidence,
+      included: true,
+      nullable: sourceColumn?.nullable ?? true,
+      role: "derived",
+      sourceName: projection.input,
+      targetName: uniqueTargetName(columns, projection.output),
+      type: projection.type ?? sourceColumn?.type ?? "String",
+    };
+  });
+  const nextRows = sampleRows.map((row) => [
+    ...row,
+    ...projections.map((projection) => {
+      const sourceIndex = sourceIndexes.get(projection.input);
+      const rawValue = typeof sourceIndex === "number" ? row[sourceIndex] ?? "" : "";
+      return previewOutputValue({ sourceName: projection.input, targetName: projection.output, type: projection.type ?? "String", included: true, nullable: true }, rawValue, projectionToStep(projection));
+    }),
+  ]);
+  const appendedSteps = appendedColumns.map((column, index) => projectionToStep({ ...projections[index], output: getOutputName(column) })).filter(Boolean) as TransformStepDraft[];
+  return { columns: [...columns, ...appendedColumns], rows: nextRows, steps: [...transformSteps, ...appendedSteps] };
+}
+
+function buildCastTransformStep(column: SchemaColumnDraft): TransformStepDraft | undefined {
+  const operation = castOperationForType(column.type);
+  if (!operation) return undefined;
+  const output = getOutputName(column);
+  return {
+    enabled: true,
+    id: `schema-${output}`,
+    input: column.sourceName,
+    kind: "cast",
+    label: `${operation}: ${output}`,
+    onError: "Warn",
+    operation,
+    output,
+    params: column.type,
+  };
+}
+
+function buildModuleProjections(moduleKey: TransformModuleKey, sourceColumn: SchemaColumnDraft, sampleValue: string): TransformProjection[] {
+  if (moduleKey === "jsonpath_extract") {
+    return [{
+      input: sourceColumn.sourceName,
+      operation: "Extract JSONPath",
+      output: uniqueProjectionOutput(sourceColumn, "json_value"),
+      params: "$",
+      type: "String",
+    }];
+  }
+  if (moduleKey === "array_explode") {
+    return [{
+      input: sourceColumn.sourceName,
+      operation: "Extract JSONPath",
+      output: uniqueProjectionOutput(sourceColumn, "first_item"),
+      params: "$[0]",
+      type: "String",
+    }];
+  }
+  if (moduleKey === "flatten_object") {
+    const parsed = parseJsonSample(sampleValue);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Object.keys(parsed as Record<string, unknown>).slice(0, 12).map((key) => ({
+      input: sourceColumn.sourceName,
+      operation: "Extract JSONPath",
+      output: `${getOutputName(sourceColumn)}_${safeColumnName(key)}`,
+      params: `$.${key}`,
+      type: inferScalarType((parsed as Record<string, unknown>)[key]),
+    }));
+  }
+  return [];
+}
+
+function unquoteSqlIdentifier(value: string) {
+  return String(value)
+    .trim()
+    .replace(/,$/, "")
+    .replace(/^"|"$/g, "")
+    .replace(/""/g, "\"");
+}
+
+function findProjectionColumn(columns: SchemaColumnDraft[], inputExpression: string, output: string) {
+  const normalizedInput = unquoteSqlIdentifier(inputExpression);
+  return columns.find((column) => (
+    column.sourceName === normalizedInput
+    || getOutputName(column) === output
+    || inputExpression.includes(column.sourceName)
+    || inputExpression.includes(getOutputName(column))
+  ));
+}
+
+function inferProjectionOperation(inputExpression: string, column?: SchemaColumnDraft) {
+  if (/JSON_VALUE/i.test(inputExpression)) return "Extract JSONPath";
+  if (!column) return undefined;
+  return castOperationForType(column.type);
+}
+
+function jsonPathFromSqlExpression(inputExpression: string) {
+  const match = inputExpression.match(/JSON_VALUE\([^,]+,\s*'([^']+)'\)/i);
+  return match?.[1] ?? "$";
+}
+
+function castOperationForType(type: string) {
+  const normalized = type.toLowerCase();
+  if (["integer", "long"].includes(normalized)) return "Cast Integer";
+  if (["float", "double"].includes(normalized)) return "Cast Number";
+  if (normalized === "boolean") return "Cast Boolean";
+  if (normalized === "timestamp" || normalized === "date") return "Parse Timestamp";
+  if (normalized === "string") return "Cast String";
+  if (normalized === "json") return "Preserve JSON";
+  return undefined;
+}
+
+function projectionToStep(projection: TransformProjection): TransformStepDraft | undefined {
+  if (!projection.operation) return undefined;
+  return {
+    enabled: true,
+    id: `schema-${projection.output}`,
+    input: projection.input,
+    kind: projection.operation === "Extract JSONPath" ? "jsonPath" : projection.operation === "Preserve JSON" ? "derive" : "cast",
+    label: `${projection.operation}: ${projection.output}`,
+    onError: "Warn",
+    operation: projection.operation,
+    output: projection.output,
+    params: projection.params ?? projection.type ?? "",
+  };
+}
+
+function uniqueProjectionOutput(column: SchemaColumnDraft, suffix: string) {
+  return `${getOutputName(column)}_${suffix}`;
+}
+
+function safeColumnName(value: string) {
+  return String(value)
+    .trim()
+    .replace(/[^\w]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase() || "field";
+}
+
+function inferScalarType(value: unknown) {
+  if (typeof value === "number") return Number.isInteger(value) ? "Integer" : "Float";
+  if (typeof value === "boolean") return "Boolean";
+  if (value && typeof value === "object") return "JSON";
+  if (typeof value === "string") {
+    if (!Number.isNaN(Date.parse(value))) return "Timestamp";
+    if (/^-?\d+$/.test(value)) return "Integer";
+    if (/^-?\d+\.\d+$/.test(value)) return "Float";
+  }
+  return "String";
 }
 
 function sqlSourceExpression(column: SchemaColumnDraft) {
