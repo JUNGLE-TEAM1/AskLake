@@ -717,6 +717,7 @@ Validation:
 - backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 JOIN 또는 multi-table SQL 초안은 반환하지 않거나 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
 - AI 응답이 `LIMIT`을 생략하면 backend가 preview 기준 `LIMIT 100`을 붙인 뒤 검증합니다.

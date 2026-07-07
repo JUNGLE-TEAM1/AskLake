@@ -175,7 +175,7 @@ Mock mode에서는 수집/처리 pipeline 생성 dataset과 backend direct SQL d
 
 FastAPI Catalog persistence는 `catalog_datasets.payload`를 canonical dataset 계약으로 사용합니다. Spark run 성공으로 생성된 ETL dataset과 SQL derived dataset은 같은 payload shape로 저장하며, payload가 없는 기존 컬럼 기반 row는 목록/상세 조회에서 payload shape로 변환해 읽기 호환만 유지합니다. 두 생성 경로 모두 `size`는 표시용 저장 크기 문자열로 사용하고, 물리 저장 정보는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 둡니다. ETL dataset은 source -> Spark job -> target 기본 `lineageGraph`를 저장하고, SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 
-SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 Query AI와 frontend preflight는 JOIN 또는 multi-table SQL을 실행 가능 상태로 취급하지 않습니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
 Pair2 FastAPI 5단계 완료 기준:
 
