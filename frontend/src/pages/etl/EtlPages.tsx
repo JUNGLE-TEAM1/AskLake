@@ -904,7 +904,10 @@ export function SourceConnectionPage({
   const displayAssets = sourceRuntime?.assets ?? current.assets;
   const hasDetectedAssets = displayAssets.length > 0;
   const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
-  const selectedAssetHasSample = Boolean(selectedAsset && sourceRuntime?.draftPatch.schema?.columns?.length);
+  const requiresAssetSelectionForPreview = activeSourceType === "File / S3" || activeSourceType === "Data Lake";
+  const selectedAssetHasSample = Boolean(
+    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.draftPatch.schema?.columns?.length,
+  );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;

@@ -21,6 +21,7 @@ type BackendSourceConnectorResponse = SourceConnectorAnalysis;
 export type SourceAssetsResponse = {
   assets: Array<[string, string, string]>;
   count?: number;
+  limit?: number;
   prefix: string;
 };
 
@@ -55,7 +56,7 @@ async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
     try {
       return await postBackendDirect<T>(path, body);
     } catch (error) {
-      if (!isNetworkError(error)) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) {
         throw error;
       }
     }

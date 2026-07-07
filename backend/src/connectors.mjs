@@ -24,7 +24,7 @@ export async function testSourceConnector(sourceType, fields) {
   throw apiError("UNSUPPORTED_SOURCE", `${sourceType}는 지원하지 않는 소스 커넥터입니다.`, 400);
 }
 
-export async function listSourceAssets(sourceType, fields, requestedPrefix = "") {
+export async function listSourceAssets(sourceType, fields, requestedPrefix) {
   if (!objectStorageSourceTypes.has(sourceType) && !dataLakeSourceTypes.has(sourceType)) {
     throw apiError("UNSUPPORTED_SOURCE_ASSETS", `${sourceType} source asset listing is not supported.`, 400);
   }
@@ -33,18 +33,20 @@ export async function listSourceAssets(sourceType, fields, requestedPrefix = "")
   const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
   const bucket = fieldValue(fields, "Bucket / Stage Name") || parsedLakePath?.bucket;
   if (!bucket) throw apiError("SOURCE_FIELD_REQUIRED", "MinIO/S3 bucket name is required.", 400);
-  const prefix = normalizePrefix(requestedPrefix || fieldValue(fields, "Path / Prefix") || parsedLakePath?.prefix || fieldValue(fields, "Path"));
+  const prefix = sourceAssetPrefix(sourceType, fields, requestedPrefix);
+  const limit = sourceAssetListLimit();
   const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
   const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
-  let items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
+  let items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
   if (!items) {
     const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
-    items = await listDirectObjects(client, bucket, prefix);
+    items = await listDirectObjects(client, bucket, prefix, limit);
   }
   return {
-    assets: toSourceAssets(items),
+    assets: toSourceAssets(items, limit),
     count: items.length,
+    limit,
     prefix,
   };
 }
@@ -76,7 +78,7 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     if (!prefix && objects.length === 0) {
       objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) ?? objects;
     }
-    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : null;
+    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
     return buildObjectStorageAnalysis({
       bucket,
       client,
@@ -745,7 +747,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     : listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
   if (!objects) return null;
 
-  const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : null;
+  const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
   let parsedSample = { columns: [], format: "unknown", rows: [] };
   let sampleKey = "";
   let requestedBytes = 0;
@@ -875,9 +877,55 @@ async function listSelectedObject(client, bucket, key) {
   return [{ ...exact, __folder: false }];
 }
 
+function sourceAssetPrefix(sourceType, fields, requestedPrefix) {
+  if (typeof requestedPrefix === "string") return normalizeAssetPrefix(requestedPrefix);
+  const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
+  const selectedObject = selectedObjectKey(fields);
+  return safeAssetConfigPrefix(fieldValue(fields, "Path / Prefix") || parsedLakePath?.prefix || fieldValue(fields, "Path"), selectedObject);
+}
+
+function normalizeAssetPrefix(value) {
+  const parsed = parseS3Path(value);
+  return normalizePrefix(parsed?.prefix ?? value);
+}
+
+function safeAssetConfigPrefix(value, selectedObject) {
+  const normalized = normalizeAssetPrefix(value);
+  if (!normalized) return "";
+  const normalizedSelectedObject = normalizePrefix(selectedObject);
+  if ((normalizedSelectedObject && normalized === normalizedSelectedObject) || looksLikeObjectKey(normalized)) {
+    return parentPrefix(normalized);
+  }
+  return normalized;
+}
+
+function parentPrefix(value) {
+  const parts = normalizePrefix(value).split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function looksLikeObjectKey(value) {
+  return /\.(csv|json|jsonl|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
+}
+
 function sourceListLimit() {
-  const configured = Number(process.env.ASKLAKE_SOURCE_LIST_LIMIT ?? 5000);
-  if (!Number.isFinite(configured) || configured <= 0) return 5000;
+  return configuredListLimit("ASKLAKE_SOURCE_LIST_LIMIT", 5000);
+}
+
+function sourceAssetListLimit() {
+  return Math.min(configuredListLimit("ASKLAKE_SOURCE_ASSET_LIST_LIMIT", 200), 1000);
+}
+
+function configuredListLimit(envName, defaultLimit) {
+  const configured = Number(process.env[envName] ?? defaultLimit);
+  if (!Number.isFinite(configured) || configured <= 0) return defaultLimit;
+  return Math.trunc(configured);
+}
+
+function configuredInlineLimit(value, defaultLimit) {
+  const configured = Number(value ?? defaultLimit);
+  if (!Number.isFinite(configured) || configured <= 0) return defaultLimit;
   return Math.trunc(configured);
 }
 
@@ -927,13 +975,14 @@ function browsableObjectStorageItems(objects, prefix) {
   return [...folders.values(), ...files].sort((left, right) => String(left.Key ?? "").localeCompare(String(right.Key ?? "")));
 }
 
-function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
+function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
   const normalizedPrefix = normalizePrefix(prefix);
+  const maxItems = configuredInlineLimit(limit, sourceListLimit());
   const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
   const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   const result = runMinioClientCommand({
     accessKeyId,
-    command: `mc ls --json ${shellQuote(target)} | head -${sourceListLimit()}`,
+    command: `mc ls --json ${shellQuote(target)} | head -n ${maxItems}`,
     endpoint,
     secretAccessKey,
   });
@@ -967,8 +1016,8 @@ function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, s
     });
 }
 
-function listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
-  return listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
+function listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
+  return listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
 }
 
 function listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, key, secretAccessKey }) {
@@ -996,13 +1045,14 @@ function listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, ke
   }
 }
 
-async function listDirectObjects(client, bucket, prefix) {
+async function listDirectObjects(client, bucket, prefix, limit = sourceListLimit()) {
   const normalizedPrefix = normalizePrefix(prefix);
   const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  const maxItems = configuredInlineLimit(limit, sourceListLimit());
   const result = await client.send(new ListObjectsV2Command({
     Bucket: bucket,
     Delimiter: "/",
-    MaxKeys: Math.min(1000, sourceListLimit()),
+    MaxKeys: Math.min(1000, maxItems),
     Prefix: normalizedPrefixWithSlash || normalizedPrefix,
   }));
   const folders = (result.CommonPrefixes ?? []).map((item) => ({
@@ -1017,8 +1067,8 @@ async function listDirectObjects(client, bucket, prefix) {
   return [...folders, ...files].sort((left, right) => String(left.Key ?? "").localeCompare(String(right.Key ?? "")));
 }
 
-function toSourceAssets(items) {
-  return items.slice(0, sourceListLimit()).map((item, index) => [
+function toSourceAssets(items, limit = sourceListLimit()) {
+  return items.slice(0, configuredInlineLimit(limit, sourceListLimit())).map((item, index) => [
     item.Key ?? `object-${index + 1}`,
     item.__folder ? "folder" : formatBytes(item.Size ?? 0),
     item.LastModified ? item.LastModified.toISOString() : "listed",

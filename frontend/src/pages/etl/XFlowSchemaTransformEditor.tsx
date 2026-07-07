@@ -655,7 +655,7 @@ export function XFlowSchemaTransformEditor({
         </div>
       </section>
       {showCodeWorkbench ? (
-        <section className="xflow-code-workbench fullscreen" aria-label="structured transform authoring">
+        <section className="xflow-code-workbench" aria-label="structured transform authoring">
           <header>
             <div>
               <strong>정형 변환 작업대</strong>
