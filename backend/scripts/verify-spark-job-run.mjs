@@ -9,6 +9,7 @@ const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "1000";
 
 const env = {
   ...process.env,
+  ASKLAKE_RESET_METADATA_ON_START: "true",
   ASKLAKE_SPARK_OUTPUT_MODE: process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local",
   ASKLAKE_SPARK_RUN_ROW_LIMIT: process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || rowLimit,
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin",
@@ -171,7 +172,7 @@ async function postJson(pathname, body) {
 }
 
 async function waitForHealth() {
-  const deadline = Date.now() + 20000;
+  const deadline = Date.now() + 60000;
   let lastError;
   while (Date.now() < deadline) {
     try {

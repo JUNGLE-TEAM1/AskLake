@@ -1,19 +1,29 @@
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
 import { runSparkPipeline } from "./sparkRunner.mjs";
-
-const jobs = [];
-const datasets = [];
+import {
+  countJobs,
+  findDatasetForJob,
+  getDataset,
+  getJob,
+  listDatasets as listStoredDatasets,
+  listJobs as listStoredJobs,
+  saveDataset,
+  saveJob,
+  savePipelineCreation,
+  saveSqlRun,
+} from "./metadataStore.mjs";
 
 export function listJobs() {
-  return jobs;
+  return listStoredJobs();
 }
 
 export function listDatasets() {
-  return datasets;
+  return listStoredDatasets();
 }
 
-export function createPipeline(request) {
+export async function createPipeline(request) {
   validateCreatePipelineRequest(request);
+  const jobCount = await countJobs();
   const transformSteps = normalizeTransformSteps(request.transformSteps);
   const transformOutputColumns = normalizeTransformOutputColumns(request.transformOutputColumns);
   const qualityRules = normalizeQualityRules(request.qualityRules);
@@ -21,7 +31,7 @@ export function createPipeline(request) {
   const datasetSchema = datasetSchemaFromRequest(request);
   const datasetSampleRows = datasetSampleRowsFromRequest(request, datasetSchema);
   const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
-  const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobs.length + 1).padStart(3, "0")}`;
+  const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobCount + 1).padStart(3, "0")}`;
   const datasetId = `ds_${normalizeColumnName(request.targetDataset)}`;
 
   const job = {
@@ -76,14 +86,11 @@ export function createPipeline(request) {
     upstream: [request.sourceLabel, request.jobName],
   };
 
-  jobs.unshift(job);
-  datasets.unshift(dataset);
-
-  return { dataset, job };
+  return savePipelineCreation(job, dataset);
 }
 
-export function commandJob(jobId, command) {
-  const job = jobs.find((item) => item.id === jobId);
+export async function commandJob(jobId, command) {
+  const job = await getJob(jobId);
   if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
 
   const actionByCommand = {
@@ -116,13 +123,14 @@ export function commandJob(jobId, command) {
     }
     Object.assign(run, runFromSparkResult(run, sparkResult));
     Object.assign(job, finalizeJobFromSparkResult(job, command, sparkResult));
-    updateDatasetFromSparkResult(job, sparkResult);
+    await updateDatasetFromSparkResult(job, sparkResult);
   }
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
     job.dagSteps = dagStepsFromCommand(job, command, run);
   }
+  await saveJob(job);
   return {
     action: actionByCommand[command],
     apiPath: `/api/etl/jobs/${jobId}/commands`,
@@ -132,14 +140,14 @@ export function commandJob(jobId, command) {
   };
 }
 
-export function executeQuery(request) {
+export async function executeQuery(request) {
   const datasetId = request?.datasetId;
-  const dataset = datasets.find((item) => item.id === datasetId);
+  const dataset = await getDataset(datasetId);
   if (!dataset) throw notFoundError(`데이터셋을 찾지 못했습니다: ${datasetId}`);
 
   const columns = dataset.schema.slice(0, 6).map(([name]) => name);
   const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
-  return {
+  const result = {
     columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
@@ -149,6 +157,8 @@ export function executeQuery(request) {
     rows,
     runId: sourceId("sql", `${dataset.id}:${Date.now()}`),
   };
+  await saveSqlRun(result);
+  return result;
 }
 
 function validateCreatePipelineRequest(request) {
@@ -394,21 +404,23 @@ function finalizeJobFromSparkResult(job, command, result) {
   };
 }
 
-function updateDatasetFromSparkResult(job, result) {
-  const dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
+async function updateDatasetFromSparkResult(job, result) {
+  const dataset = await findDatasetForJob(job);
   if (!dataset || result.status !== "success") return;
-  dataset.lastUpdated = result.endedAt ?? new Date().toISOString();
+  const nextDataset = { ...dataset };
+  nextDataset.lastUpdated = result.endedAt ?? new Date().toISOString();
   if (Array.isArray(result.schema) && result.schema.length > 0) {
-    dataset.schema = result.schema.map((field) => [field.name, field.type]);
+    nextDataset.schema = result.schema.map((field) => [field.name, field.type]);
   }
   if (result.quality) {
-    dataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
+    nextDataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
   }
-  dataset.rows = formatRows(result.outputRows);
-  dataset.size = result.outputPath ?? dataset.size;
-  dataset.source = job.name;
-  dataset.status = "available";
-  dataset.upstream = Array.from(new Set([...(dataset.upstream ?? []), result.sourcePath ?? job.source]));
+  nextDataset.rows = formatRows(result.outputRows);
+  nextDataset.size = result.outputPath ?? nextDataset.size;
+  nextDataset.source = job.name;
+  nextDataset.status = "available";
+  nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
+  await saveDataset(nextDataset);
 }
 
 function statsFromRuns(job, runs) {
