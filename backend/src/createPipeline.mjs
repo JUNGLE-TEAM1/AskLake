@@ -17,6 +17,12 @@ export function listJobs() {
   return listStoredJobs();
 }
 
+export async function getPipelineJob(jobId) {
+  const job = await getJob(jobId);
+  if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
+  return job;
+}
+
 export function listDatasets() {
   return listStoredDatasets();
 }
@@ -100,37 +106,26 @@ export async function commandJob(jobId, command) {
     run: "etl.run.requested",
   };
   if (!actionByCommand[command]) throw validationError(`지원하지 않는 작업 명령입니다: ${command}`);
+  if ((command === "run" || command === "retry") && job.status === "running") {
+    throw conflictError(`이미 실행 중인 작업입니다: ${jobId}`);
+  }
 
   const startedJob = applyJobCommand(job, command);
   Object.assign(job, startedJob);
   const run = runFromCommand(job, command);
-  if (run && (command === "run" || command === "retry")) {
-    let sparkResult;
-    try {
-      sparkResult = runSparkPipeline(job, command, run.runId);
-    } catch (error) {
-      sparkResult = {
-        endedAt: new Date().toISOString(),
-        error: error.message || "Spark job failed.",
-        inputRows: 0,
-        outputPath: "-",
-        outputRows: 0,
-        runId: run.runId,
-        sourcePath: job.source,
-        startedAt: run.startedAt,
-        status: "failed",
-      };
-    }
-    Object.assign(run, runFromSparkResult(run, sparkResult));
-    Object.assign(job, finalizeJobFromSparkResult(job, command, sparkResult));
-    await updateDatasetFromSparkResult(job, sparkResult);
-  }
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
     job.dagSteps = dagStepsFromCommand(job, command, run);
   }
   await saveJob(job);
+  if (run && (command === "run" || command === "retry")) {
+    setImmediate(() => {
+      void finalizeSparkJobRun(jobId, command, run.runId).catch((error) => {
+        console.error(`Spark job finalization failed for ${jobId}/${run.runId}`, error);
+      });
+    });
+  }
   return {
     action: actionByCommand[command],
     apiPath: `/api/etl/jobs/${jobId}/commands`,
@@ -138,6 +133,42 @@ export async function commandJob(jobId, command) {
     run,
     dagSteps: job.dagSteps ?? [],
   };
+}
+
+async function finalizeSparkJobRun(jobId, command, runId) {
+  const startedJob = await getJob(jobId);
+  const startedRun = startedJob?.runHistory?.find((item) => item.runId === runId);
+  if (!startedJob || !startedRun || startedRun.status !== "running") return;
+
+  let sparkResult;
+  try {
+    sparkResult = runSparkPipeline(startedJob, command, runId);
+  } catch (error) {
+    sparkResult = {
+      endedAt: new Date().toISOString(),
+      error: error.message || "Spark job failed.",
+      inputRows: 0,
+      outputPath: "-",
+      outputRows: 0,
+      runId,
+      sourcePath: startedJob.source,
+      startedAt: startedRun.startedAt,
+      status: "failed",
+    };
+  }
+
+  const latestJob = await getJob(jobId);
+  const latestRun = latestJob?.runHistory?.find((item) => item.runId === runId);
+  if (!latestJob || !latestRun || latestRun.status !== "running") return;
+
+  const finalRun = runFromSparkResult(latestRun, sparkResult);
+  const finalJob = finalizeJobFromSparkResult(latestJob, command, sparkResult);
+  finalJob.runHistory = [finalRun, ...(latestJob.runHistory ?? []).filter((item) => item.runId !== runId)];
+  finalJob.stats = statsFromRuns(finalJob, finalJob.runHistory);
+  finalJob.dagSteps = dagStepsFromCommand(finalJob, command, finalRun);
+
+  await saveJob(finalJob);
+  await updateDatasetFromSparkResult(finalJob, sparkResult);
 }
 
 export async function executeQuery(request) {
@@ -247,6 +278,13 @@ function notFoundError(message) {
   const error = new Error(message);
   error.status = 404;
   error.code = "NOT_FOUND";
+  return error;
+}
+
+function conflictError(message) {
+  const error = new Error(message);
+  error.status = 409;
+  error.code = "CONFLICT";
   return error;
 }
 

@@ -11,6 +11,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -23,8 +24,10 @@ import type {
   DraftPipelinePatch,
   FlowId,
   JobCommand,
+  JobDagStep,
   JobExecutionEvidence,
   JobRowData,
+  JobRunSummary,
   SqlResultDraft,
 } from "../types";
 
@@ -36,6 +39,8 @@ const liveJobsStorageKey = "asklake.liveJobs";
 const liveDatasetsStorageKey = "asklake.liveDatasets";
 const maxStoredCatalogDatasets = 30;
 const maxStoredLiveRows = 50;
+const liveJobPollIntervalMs = 1500;
+const liveJobPollMaxAttempts = 120;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
@@ -264,6 +269,10 @@ function nextSelectedJob(currentJob: JobRowData | null, jobs: JobRowData[]) {
   return jobs[0] ?? emptySelectedJob;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function nextSelectedDataset(currentDataset: CatalogDataset | null, datasets: CatalogDataset[]) {
   if (currentDataset && datasets.some((dataset) => dataset.id === currentDataset.id)) return currentDataset;
   return datasets[0] ?? emptySelectedDataset;
@@ -289,6 +298,11 @@ export function useAskLakeData({
   const [dataLoading, setDataLoading] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
+  const liveJobPollTokensRef = useRef<Record<string, number>>({});
+
+  useEffect(() => () => {
+    liveJobPollTokensRef.current = {};
+  }, []);
 
   useEffect(() => {
     if (apiConfig.useMock) {
@@ -411,6 +425,59 @@ export function useAskLakeData({
     }
   };
 
+  const syncJobExecutionEvidence = (jobId: string, dagSteps?: JobDagStep[], run?: JobRunSummary) => {
+    if (!run && !dagSteps) return;
+    setJobExecutionEvidence((evidence) => {
+      const previous = evidence[jobId] ?? { dagSteps: [], runs: [] };
+      return {
+        ...evidence,
+        [jobId]: {
+          dagSteps: dagSteps ?? previous.dagSteps,
+          runs: run ? [run, ...previous.runs.filter((item) => item.runId !== run.runId)] : previous.runs,
+        },
+      };
+    });
+  };
+
+  const applyJobUpdate = (updatedJob: JobRowData) => {
+    const normalizedJob = normalizeJobRow(updatedJob);
+    setJobs((items) => {
+      const nextJobs = items.map((item) => (item.id === normalizedJob.id ? normalizedJob : item));
+      saveStoredLiveJobs(nextJobs);
+      return nextJobs;
+    });
+    setSelectedJob((item) => (item?.id === normalizedJob.id ? normalizedJob : item));
+    syncJobExecutionEvidence(normalizedJob.id, normalizedJob.dagSteps, normalizedJob.runHistory?.[0]);
+    return normalizedJob;
+  };
+
+  const pollLiveJobUntilStable = async (jobId: string) => {
+    const token = Date.now();
+    liveJobPollTokensRef.current[jobId] = token;
+
+    for (let attempt = 0; attempt < liveJobPollMaxAttempts; attempt += 1) {
+      await wait(liveJobPollIntervalMs);
+      if (liveJobPollTokensRef.current[jobId] !== token) return;
+
+      try {
+        const normalizedJob = applyJobUpdate(await getLiveJob(jobId));
+        if (normalizedJob.status !== "running") {
+          delete liveJobPollTokensRef.current[jobId];
+          return;
+        }
+      } catch {
+        delete liveJobPollTokensRef.current[jobId];
+        showToast("작업 최종 상태를 다시 불러오지 못했습니다.", "info");
+        return;
+      }
+    }
+
+    if (liveJobPollTokensRef.current[jobId] === token) {
+      delete liveJobPollTokensRef.current[jobId];
+      showToast("작업이 아직 실행 중입니다. 잠시 뒤 새로고침해 주세요.", "info");
+    }
+  };
+
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
@@ -436,26 +503,12 @@ export function useAskLakeData({
         : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
       if (updatedJob) {
-        const normalizedJob = normalizeJobRow(updatedJob);
-        setJobs((items) => {
-          const nextJobs = items.map((item) => (item.id === job.id ? normalizedJob : item));
-          saveStoredLiveJobs(nextJobs);
-          return nextJobs;
-        });
-        setSelectedJob((item) => (item?.id === job.id ? normalizedJob : item));
+        const normalizedJob = applyJobUpdate(updatedJob);
+        if (!apiConfig.useMock && (command === "run" || command === "retry") && normalizedJob.status === "running") {
+          void pollLiveJobUntilStable(normalizedJob.id);
+        }
       }
-      if (run || dagSteps) {
-        setJobExecutionEvidence((evidence) => {
-          const previous = evidence[job.id] ?? { dagSteps: [], runs: [] };
-          return {
-            ...evidence,
-            [job.id]: {
-              dagSteps: dagSteps ?? previous.dagSteps,
-              runs: run ? [run, ...previous.runs.filter((item) => item.runId !== run.runId)] : previous.runs,
-            },
-          };
-        });
-      }
+      syncJobExecutionEvidence(job.id, dagSteps, run);
     } catch {
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");

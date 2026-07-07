@@ -107,14 +107,18 @@ try {
   });
 
   const command = await postJson(`/api/etl/jobs/${encodeURIComponent(create.job.id)}/commands`, { command: "run" });
-  const run = command.run;
+  assert(command.job.status === "running", `Job command should return running status: ${command.job.status}`);
+  assert(command.run?.status === "running", `Run command should return running run: ${command.run?.status}`);
+
+  const completedJob = await waitForJobCompletion(create.job.id, command.run.runId);
+  const run = completedJob.runHistory?.find((item) => item.runId === command.run.runId);
   const parquetFiles = listParquetFiles(run?.outputPath);
   const result = {
-    dagSteps: command.dagSteps?.map((step) => `${step.title}:${step.status}`),
+    dagSteps: completedJob.dagSteps?.map((step) => `${step.title}:${step.status}`),
     errorSummary: run?.errorSummary,
     inputRows: run?.inputRows,
     jobId: create.job.id,
-    jobStatus: command.job.status,
+    jobStatus: completedJob.status,
     outputExists: Boolean(run?.outputPath && existsSync(run.outputPath)),
     outputPath: run?.outputPath,
     outputRows: run?.outputRows,
@@ -126,10 +130,10 @@ try {
   assert(run?.status === "success", `Spark run did not succeed: ${run?.errorSummary}`);
   assert(result.outputExists, `Spark output path was not copied to host: ${run?.outputPath}`);
   assert(parquetFiles.length > 0, `Spark output path has no parquet files: ${run?.outputPath}`);
-  assert(command.job.status === "scheduled", `Job did not return to scheduled status: ${command.job.status}`);
-  assert(command.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
-  assert(command.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
-  assert(command.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
+  assert(completedJob.status === "scheduled", `Job did not return to scheduled status: ${completedJob.status}`);
+  assert(completedJob.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
+  assert(completedJob.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
+  assert(completedJob.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");
 } finally {
   server.kill();
   setTimeout(() => server.kill("SIGKILL"), 2000).unref();
@@ -160,6 +164,13 @@ function listParquetFiles(dir) {
   return found;
 }
 
+async function getJson(pathname) {
+  const response = await fetch(apiUrl(pathname));
+  const payload = await response.json();
+  if (!response.ok) throw new Error(`${pathname} failed ${response.status}: ${JSON.stringify(payload)}`);
+  return payload;
+}
+
 async function postJson(pathname, body) {
   const response = await fetch(apiUrl(pathname), {
     body: JSON.stringify(body),
@@ -169,6 +180,21 @@ async function postJson(pathname, body) {
   const payload = await response.json();
   if (!response.ok) throw new Error(`${pathname} failed ${response.status}: ${JSON.stringify(payload)}`);
   return payload;
+}
+
+async function waitForJobCompletion(jobId, runId) {
+  const deadline = Date.now() + 180000;
+  let latestJob;
+  while (Date.now() < deadline) {
+    latestJob = await getJson(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+    const run = latestJob.runHistory?.find((item) => item.runId === runId);
+    if (latestJob.status !== "running" && run?.status !== "running") return latestJob;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error(`Spark run did not finish before timeout: ${JSON.stringify({
+    jobStatus: latestJob?.status,
+    runStatus: latestJob?.runHistory?.find((item) => item.runId === runId)?.status,
+  })}`);
 }
 
 async function waitForHealth() {

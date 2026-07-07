@@ -1,5 +1,5 @@
 import http from "node:http";
-import { commandJob, createPipeline, executeQuery, listDatasets, listJobs } from "./createPipeline.mjs";
+import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
 import { testSourceConnector } from "./connectors.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 
@@ -25,6 +25,12 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/etl/jobs") {
       sendJson(response, 200, await listJobs());
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+$/.test(url.pathname)) {
+      const jobId = decodeURIComponent(url.pathname.split("/")[4]);
+      sendJson(response, 200, await getPipelineJob(jobId));
       return;
     }
 
