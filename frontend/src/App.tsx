@@ -10,7 +10,7 @@ import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
-import { JobDagPage, JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
+import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "./pages/ingest/JobsPages";
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
@@ -75,7 +75,8 @@ function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
 
 export function App() {
   const initialDashboardRoute = parseDashboardRoute(window.location.pathname);
-  const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : "jobs");
+  const initialJobsTableDemoRoute = window.location.pathname === "/jobs-table-demo";
+  const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : initialJobsTableDemoRoute ? "jobsTableDemo" : "jobs");
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>("repeat");
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
@@ -95,6 +96,7 @@ export function App() {
     openDataset,
     openDatasetInSql,
     openJobDetail,
+    openJobRuns,
     selectedDataset,
     selectedJob,
     setSelectedDataset,
@@ -119,9 +121,12 @@ export function App() {
   useEffect(() => {
     const handlePopState = () => {
       const route = parseDashboardRoute(window.location.pathname);
-      if (!route) return;
-      setDashboardEntry((entry) => dashboardEntryFromRoute(route, entry.version + 1));
-      setActiveFlow("dashboard");
+      if (route) {
+        setDashboardEntry((entry) => dashboardEntryFromRoute(route, entry.version + 1));
+        setActiveFlow("dashboard");
+        return;
+      }
+      setActiveFlow(window.location.pathname === "/jobs-table-demo" ? "jobsTableDemo" : "jobs");
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -145,10 +150,22 @@ export function App() {
     if (item.id === "dashboard") {
       if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
       setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
-    } else if (window.location.pathname.startsWith("/dashboards")) {
+    } else if (window.location.pathname.startsWith("/dashboards") || window.location.pathname === "/jobs-table-demo") {
       window.history.pushState(null, "", "/");
     }
     moveToFlow(item.flow);
+  };
+
+  const openJobsTableDemo = () => {
+    writeAuditLog("etl.jobs.table_demo_opened", "/jobs-table-demo", "jobs-table-demo", "success", { targetType: "ui" });
+    if (window.location.pathname !== "/jobs-table-demo") window.history.pushState(null, "", "/jobs-table-demo");
+    moveToFlow("jobsTableDemo");
+  };
+
+  const closeJobsTableDemo = () => {
+    writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
+    if (window.location.pathname === "/jobs-table-demo") window.history.pushState(null, "", "/");
+    moveToFlow("jobs");
   };
 
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
@@ -254,10 +271,10 @@ export function App() {
           )}
           {!dataLoading && !dataError && selectedDataset && selectedJob && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => moveToFlow("jobRuns")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onDag={() => moveToFlow("jobDag")} onAction={writeAuditLog} />}
-          {activeFlow === "jobDag" && <JobDagPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onEdit={() => moveToFlow("rules")} onRuns={() => moveToFlow("jobRuns")} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
+          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRuns(selectedJob)} onAction={writeAuditLog} />}
+          {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow("rules")} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftRetryPolicy={draftPipeline.schedule.retryPolicy} draftScheduleLabel={draftPipeline.schedule.label} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("rules")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}

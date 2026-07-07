@@ -67,7 +67,7 @@ const initialDraftPipeline: DraftPipeline = {
     connectionMessage: "검토 전에 소스 연결 테스트가 필요합니다.",
     connectionStatus: "idle",
     sourceConfig: [
-      ["Storage Provider", "MinIO"],
+      ["Storage Provider", "S3 Compatible"],
       ["Endpoint URL", "http://127.0.0.1:9000"],
       ["Region", "us-east-1"],
       ["Bucket / Stage Name", "m3-raw"],
@@ -204,6 +204,16 @@ function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   };
 }
 
+function nextSelectedJob(currentJob: JobRowData | null, jobs: JobRowData[]) {
+  if (currentJob && jobs.some((job) => job.id === currentJob.id)) return currentJob;
+  return jobs[0] ?? emptySelectedJob;
+}
+
+function nextSelectedDataset(currentDataset: CatalogDataset | null, datasets: CatalogDataset[]) {
+  if (currentDataset && datasets.some((dataset) => dataset.id === currentDataset.id)) return currentDataset;
+  return datasets[0] ?? emptySelectedDataset;
+}
+
 export function useAskLakeData({
   onFlowChange,
   showToast,
@@ -216,8 +226,8 @@ export function useAskLakeData({
   const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
-  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset | null>(() => getInitialDatasets()[0] ?? null);
-  const [selectedJob, setSelectedJob] = useState<JobRowData | null>(() => getInitialJobs()[0] ?? null);
+  const [selectedDataset, setSelectedDataset] = useState<CatalogDataset | null>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
+  const [selectedJob, setSelectedJob] = useState<JobRowData | null>(() => getInitialJobs()[0] ?? emptySelectedJob);
   const [jobExecutionEvidence, setJobExecutionEvidence] = useState<Record<string, JobExecutionEvidence>>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
@@ -244,8 +254,8 @@ export function useAskLakeData({
         const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
         setJobs(normalizedJobs);
         setDatasets(normalizedDatasets);
-        setSelectedJob((job) => job ?? normalizedJobs[0] ?? null);
-        setSelectedDataset((dataset) => dataset ?? normalizedDatasets[0] ?? null);
+        setSelectedJob((job) => nextSelectedJob(job, normalizedJobs));
+        setSelectedDataset((dataset) => nextSelectedDataset(dataset, normalizedDatasets));
       } catch (error) {
         if (cancelled) return;
         setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
@@ -354,7 +364,7 @@ export function useAskLakeData({
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
       setJobs(remaining);
-      setSelectedJob(remaining[0] ?? null);
+      setSelectedJob(remaining[0] ?? emptySelectedJob);
       onFlowChange("jobs");
       return;
     }
@@ -392,6 +402,12 @@ export function useAskLakeData({
     onFlowChange("jobDetail");
   };
 
+  const openJobRuns = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+    onFlowChange("jobRuns");
+  };
+
   const openDataset = (dataset: CatalogDataset) => {
     setSelectedDataset(dataset);
     writeAuditLog("catalog.dataset.opened", `/api/catalog/datasets/${dataset.id}`, dataset.id);
@@ -418,6 +434,7 @@ export function useAskLakeData({
     openDataset,
     openDatasetInSql,
     openJobDetail,
+    openJobRuns,
     selectedDataset,
     selectedJob,
     setSelectedDataset,

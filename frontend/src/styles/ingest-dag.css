@@ -54,6 +54,80 @@
   gap: 24px;
 }
 
+.run-dag-modal {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.48);
+  padding: 24px;
+}
+
+.run-dag-modal > section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1180px, 100%);
+  max-height: min(780px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.24);
+}
+
+.run-dag-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 18px 20px;
+}
+
+.run-dag-modal-header div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.run-dag-modal-header span,
+.run-dag-modal-header p {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.run-dag-modal-header h2 {
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.run-dag-modal-header button {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 0 12px;
+}
+
+.run-dag-modal-body {
+  min-height: 0;
+  overflow: auto;
+  background: #f8fafc;
+  padding: 20px;
+}
+
 .dag-body-content {
   display: grid;
   gap: 24px;
