@@ -3283,7 +3283,8 @@
   min-height: 0;
   position: fixed;
   top: 50%;
-  right: 24px;
+  right: auto;
+  left: min(calc(100vw - 244px), calc(50vw + 150px));
   z-index: 30;
   width: 220px;
   max-height: none;
@@ -3350,6 +3351,105 @@
   color: #374151;
   font-size: 12px;
   font-weight: 750;
+}
+
+.target-output-schema {
+  border: 1px solid #dee1e6;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.target-output-schema-head {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #eef0f4;
+  color: #565d6d;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0 14px;
+  text-transform: uppercase;
+}
+
+.target-output-schema-head em {
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-style: normal;
+  padding: 4px 8px;
+  text-transform: none;
+}
+
+.target-output-schema-list {
+  display: grid;
+}
+
+.target-output-schema-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 72px;
+  border-bottom: 1px solid #eef0f4;
+  padding: 10px 14px;
+}
+
+.target-output-schema-row:last-child {
+  border-bottom: 0;
+}
+
+.target-output-index {
+  color: #8b93a5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.target-output-column {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.target-output-column strong {
+  color: #171a1f;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.target-output-column small {
+  color: #8b93a5;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.target-output-column p {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 0;
+  color: #565d6d;
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.target-output-column b {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.target-output-type {
+  border: 1px solid #dee1e6;
+  border-radius: 6px;
+  background: #f9fbfc;
+  color: #374151;
+  font-size: 10px;
+  font-weight: 900;
+  padding: 5px 8px;
+  text-transform: uppercase;
 }
 
 .target-lineage {
@@ -3450,6 +3550,7 @@
 
   .creation-flow-grid .target-action-panel {
     position: static;
+    left: auto;
     width: auto;
     transform: none;
   }

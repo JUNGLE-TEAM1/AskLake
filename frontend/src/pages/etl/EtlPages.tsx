@@ -630,7 +630,7 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
-type TargetToggleSectionKey = "tags" | "partition" | "preview" | "testRun";
+type TargetToggleSectionKey = "tags" | "partition" | "preview";
 
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
@@ -826,6 +826,16 @@ function buildPartitionPathPreview(storagePath: string, partitionColumns: string
     .map((column) => `${column}=${isRecommendedPartitionColumn(column) ? "2026-07-04" : "sample"}`)
     .join("/");
   return `${normalizedBase}${partitionPath}/`;
+}
+
+function describeTargetSampleValue(rule: TargetSchemaRule, value: string | undefined) {
+  const sampleValue = value?.trim();
+  if (!sampleValue) return "샘플 값 없음";
+  if (rule.type === "datetime") return `날짜/시간 값: ${sampleValue}`;
+  if (rule.type === "number") return `숫자 값: ${sampleValue}`;
+  if (rule.type === "boolean") return `참/거짓 값: ${sampleValue}`;
+  if (rule.type === "json") return "JSON 객체/배열 값";
+  return `문자 값: ${sampleValue}`;
 }
 
 function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
@@ -4478,14 +4488,13 @@ export function TargetPage({
   const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
   const [indexColumns, setIndexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
-  const [testRun, setTestRun] = useState<TargetTestRun>(draftTarget?.lastTestRun ?? { status: "idle", logs: [] });
+  const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
   const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
     partition: false,
     preview: false,
     tags: false,
-    testRun: false,
   });
 
   const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);
@@ -4508,7 +4517,7 @@ export function TargetPage({
     targetStoragePath,
     transformStepCount: draft.transform.steps.length,
   };
-  const buildConfig = (lastTestRun: TargetTestRun = testRun): TargetSavedConfig => ({
+  const buildConfig = (testRun: TargetTestRun = lastTestRun): TargetSavedConfig => ({
     metadata: {
       databaseName,
       datasetName: targetDataset,
@@ -4525,7 +4534,7 @@ export function TargetPage({
     schemaRules,
     previewRows,
     lineage,
-    lastTestRun,
+    lastTestRun: testRun,
   });
 
   const persistDraft = (config: TargetSavedConfig) => {
@@ -4615,67 +4624,6 @@ export function TargetPage({
     return true;
   };
 
-  const runTargetTest = async () => {
-    const pendingRun: TargetTestRun = { status: "pending", logs: ["Target config validation started"] };
-    setTestRun(pendingRun);
-    setValidationErrors([]);
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-
-    const config = buildConfig(pendingRun);
-    const metadataErrors = validateTargetConfig({ ...config, schemaRules: config.schemaRules.length > 0 ? config.schemaRules : [] }, false)
-      .filter((error) => error.includes("데이터셋명") || error.includes("테이블명") || error.includes("저장경로") || error.includes("포맷"));
-    if (metadataErrors.length > 0) {
-      const failedRun: TargetTestRun = { status: "failed", logs: [...pendingRun.logs, "Target metadata validation failed"], message: metadataErrors.join(" "), finishedAt: new Date().toISOString() };
-      setTestRun(failedRun);
-      setValidationErrors(metadataErrors);
-      persistDraft(buildConfig(failedRun));
-      return;
-    }
-
-    const logs = [...pendingRun.logs, "Target metadata validation passed"];
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    if (inferredTarget.jsonParseFailed) {
-      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "JSON schema inference failed"], message: "JSON 파싱에 실패했습니다.", finishedAt: new Date().toISOString() };
-      setTestRun(failedRun);
-      setValidationErrors([failedRun.message ?? "JSON 파싱 실패"]);
-      persistDraft(buildConfig(failedRun));
-      return;
-    }
-
-    logs.push("JSON schema inference completed");
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    const fullErrors = validateTargetConfig(config, inferredTarget.jsonParseFailed);
-    const columnErrors = fullErrors.filter((error) => error.includes("컬럼"));
-    if (columnErrors.length > 0) {
-      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "Column rules validation failed"], message: columnErrors.join(" "), finishedAt: new Date().toISOString() };
-      setTestRun(failedRun);
-      setValidationErrors(columnErrors);
-      persistDraft(buildConfig(failedRun));
-      return;
-    }
-
-    logs.push("Column rules validation passed");
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-    const partitionErrors = fullErrors.filter((error) => error.includes("partition"));
-    if (partitionErrors.length > 0) {
-      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "Partition rule validation failed"], message: partitionErrors.join(" "), finishedAt: new Date().toISOString() };
-      setTestRun(failedRun);
-      setValidationErrors(partitionErrors);
-      persistDraft(buildConfig(failedRun));
-      return;
-    }
-
-    const successRun: TargetTestRun = {
-      status: "success",
-      logs: [...logs, "Partition rule validation passed", "Sample write test completed"],
-      message: "샘플 저장 테스트가 완료되었습니다.",
-      finishedAt: new Date().toISOString(),
-    };
-    setTestRun(successRun);
-    setValidationErrors([]);
-    persistDraft(buildConfig(successRun));
-  };
-
   const handleSave = () => {
     if (saveTargetConfig()) onSave();
   };
@@ -4731,7 +4679,7 @@ export function TargetPage({
         </aside>
       )}
     >
-      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션, 테스트 실행 상태를 설정합니다." />
+      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
@@ -4885,41 +4833,31 @@ export function TargetPage({
       ))}
       {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
         usedSchemaRules.length > 0 && previewRows.length > 0 ? (
-          <div className="hegun-table-scroll">
-            <table className="schema-table target-preview-table">
-              <thead>
-                <tr>{usedSchemaRules.map((rule) => <th key={rule.name}>{rule.name}</th>)}</tr>
-              </thead>
-              <tbody>
-                {previewRows.map((row, rowIndex) => (
-                  <tr key={`target-preview-${rowIndex}`}>
-                    {usedSchemaRules.map((rule) => <td key={`${rowIndex}-${rule.name}`}>{row[rule.name] || "-"}</td>)}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="target-output-schema">
+            <div className="target-output-schema-head">
+              <span>Target Columns</span>
+              <em>{usedSchemaRules.length} fields</em>
+            </div>
+            <div className="target-output-schema-list">
+              {usedSchemaRules.map((rule, index) => {
+                const sampleValue = previewRows[0]?.[rule.name];
+                return (
+                  <div className="target-output-schema-row" key={rule.name}>
+                    <span className="target-output-index">{index + 1}</span>
+                    <div className="target-output-column">
+                      <strong>{rule.name}</strong>
+                      <small>{rule.sourceName}</small>
+                      <p><b>속성</b>{describeTargetSampleValue(rule, sampleValue)}</p>
+                    </div>
+                    <span className="target-output-type">{rule.type}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         ) : (
           <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
         )
-      ))}
-      {renderToggleSection("testRun", "테스트 실행", <PlayCircle size={18} />, (
-        <>
-          <div className="target-test-row">
-            <button className="primary-button" type="button" disabled={testRun.status === "pending"} onClick={() => void runTargetTest()}>
-              {testRun.status === "pending" ? "실행 중" : "Test Run"}
-            </button>
-            <div className={testRun.status === "success" ? "target-test-status success" : testRun.status === "failed" ? "target-test-status failed" : "target-test-status"}>
-              <strong>{testRun.status}</strong>
-              <span>{testRun.message || "현재 설정으로 mock write 검증을 실행합니다."}</span>
-            </div>
-          </div>
-          {testRun.logs.length > 0 ? (
-            <ul className="target-log-list">
-              {testRun.logs.map((log) => <li key={log}>{log}</li>)}
-            </ul>
-          ) : null}
-        </>
       ))}
     </CreationFlowLayout>
   );
