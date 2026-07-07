@@ -29,6 +29,8 @@ const TRANSFORM_OPTIONS = [
   { label: "시간으로 변환", operation: "Parse Timestamp", params: "yyyy-MM-dd HH:mm:ss", kind: "cast" },
   { label: "JSONPath 추출", operation: "Extract JSONPath", params: "$", kind: "jsonPath" },
   { label: "JSON 구조 유지", operation: "Preserve JSON", params: "$", kind: "derive" },
+  { label: "SQL 코드", operation: "SQL Expression", params: "", kind: "derive" },
+  { label: "Python 코드", operation: "Python Expression", params: "", kind: "derive" },
 ] as const;
 
 const TRANSFORM_MODULE_SLOTS = [
@@ -222,6 +224,7 @@ export function XFlowSchemaTransformEditor({
     }
 
     const option = TRANSFORM_OPTIONS.find((item) => item.operation === operation) ?? TRANSFORM_OPTIONS[0];
+    const existingStep = transformByOutput.get(output);
     onTransformStepsChange?.([
       ...remainingSteps,
       {
@@ -233,7 +236,7 @@ export function XFlowSchemaTransformEditor({
         onError: "Warn",
         operation: option.operation,
         output,
-        params: option.params,
+        params: isRowCodeOperation(option.operation) ? existingStep?.params || rowCodeTemplate(option.operation, column) : option.params,
       },
     ]);
     onSelectedIndexChange(index);
@@ -246,6 +249,33 @@ export function XFlowSchemaTransformEditor({
     onTransformStepsChange?.(transformSteps.map((step) => (
       step.output === output ? { ...step, params, label: `${step.operation}: ${output}` } : step
     )));
+    onSelectedIndexChange(index);
+  };
+
+  const updateRowCodeTransform = (index: number, operation: "SQL Expression" | "Python Expression") => {
+    const column = columns[index];
+    if (!column) return;
+    const output = getOutputName(column);
+    const existingStep = transformByOutput.get(output);
+    const remainingSteps = transformSteps.filter((step) => step.output !== output);
+    const params = isRowCodeOperation(existingStep?.operation) && existingStep?.params
+      ? existingStep.params
+      : rowCodeTemplate(operation, column);
+
+    onTransformStepsChange?.([
+      ...remainingSteps,
+      {
+        enabled: true,
+        id: `schema-${output}`,
+        input: column.sourceName,
+        kind: "derive",
+        label: `${operation}: ${output}`,
+        onError: "Warn",
+        operation,
+        output,
+        params,
+      },
+    ]);
     onSelectedIndexChange(index);
   };
 
@@ -578,6 +608,32 @@ export function XFlowSchemaTransformEditor({
                           {TRANSFORM_OPTIONS.map((option) => <option key={option.operation || "none"} value={option.operation}>{option.label}</option>)}
                         </select>
                         <small className="xflow-transform-note">{transformDetailText(column, transformStep)}</small>
+                        <div className="xflow-row-code-tools" aria-label={`${column.sourceName} row code mode`}>
+                          <button
+                            className={transformStep?.operation === "SQL Expression" ? "active" : ""}
+                            type="button"
+                            onClick={() => updateRowCodeTransform(index, "SQL Expression")}
+                          >
+                            SQL
+                          </button>
+                          <button
+                            className={transformStep?.operation === "Python Expression" ? "active" : ""}
+                            type="button"
+                            onClick={() => updateRowCodeTransform(index, "Python Expression")}
+                          >
+                            Python
+                          </button>
+                        </div>
+                        {isRowCodeOperation(transformStep?.operation) ? (
+                          <textarea
+                            aria-label={`${column.sourceName} row transform code`}
+                            className="xflow-row-code-input"
+                            placeholder={rowCodePlaceholder(transformStep.operation, column)}
+                            spellCheck={false}
+                            value={transformStep.params}
+                            onChange={(event) => updateTransformParams(index, event.currentTarget.value)}
+                          />
+                        ) : null}
                       </label>
                       {transformStep?.operation === "Parse Timestamp" || transformStep?.operation === "Extract JSONPath" ? (
                         <label>
@@ -849,6 +905,24 @@ function getOutputName(column: SchemaColumnDraft) {
   return column.targetName || column.sourceName;
 }
 
+function isRowCodeOperation(operation?: string): operation is "SQL Expression" | "Python Expression" {
+  return operation === "SQL Expression" || operation === "Python Expression";
+}
+
+function rowCodeTemplate(operation: string, column: SchemaColumnDraft) {
+  if (operation === "Python Expression") {
+    return "value";
+  }
+  return sqlIdentifier(getOutputName(column));
+}
+
+function rowCodePlaceholder(operation: string, column: SchemaColumnDraft) {
+  if (operation === "Python Expression") {
+    return `value  # ${getOutputName(column)} row value`;
+  }
+  return `${sqlIdentifier(column.sourceName)} AS ${sqlIdentifier(getOutputName(column))}`;
+}
+
 function transformSummaryLabel(step?: TransformStepDraft) {
   if (!step || step.enabled === false || !step.operation) return "원본 값 매핑";
   return TRANSFORM_OPTIONS.find((option) => option.operation === step.operation)?.label ?? step.operation;
@@ -867,6 +941,12 @@ function defaultTransformLabel(column: SchemaColumnDraft) {
 
 function transformDetailText(column: SchemaColumnDraft, step?: TransformStepDraft) {
   if (step?.enabled !== false && step?.operation) {
+    if (step.operation === "SQL Expression") {
+      return "이 컬럼에 적용할 행 단위 SQL 표현식을 입력합니다.";
+    }
+    if (step.operation === "Python Expression") {
+      return "이 컬럼에 적용할 행 단위 Python 표현식을 입력합니다.";
+    }
     if (step.operation === "Extract JSONPath") {
       return `${step.params || "$"} 경로를 추출할 때만 값이 달라집니다.`;
     }
@@ -1267,6 +1347,7 @@ function previewColumnSample(column: SchemaColumnDraft, rawValue: string, step?:
 
 function applyPreviewTransform(value: string, step?: TransformStepDraft) {
   if (!step || step.enabled === false || !step.operation) return value;
+  if (isRowCodeOperation(step.operation)) return value;
   const operation = step.operation.toLowerCase();
   if (operation.includes("jsonpath")) return extractJsonPathPreview(value, step.params);
   if (operation.includes("number")) return castPreviewValue(value, "Double");

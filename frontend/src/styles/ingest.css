@@ -1515,6 +1515,7 @@
 }
 
 .runs-table-card,
+.runs-dag-card,
 .runs-stats-summary {
   overflow: hidden;
   border: 1px solid #e2e8f0;
@@ -1691,6 +1692,39 @@
   color: #475569;
   font-size: 20px;
   line-height: 1;
+}
+
+.runs-dag-card {
+  display: grid;
+  gap: 18px;
+  padding: 18px 20px;
+}
+
+.runs-dag-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runs-dag-card-header h2 {
+  color: #0f172a;
+  font-size: 16px;
+  line-height: 1.3;
+  margin-bottom: 4px;
+}
+
+.runs-dag-card-header span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.runs-dag-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 .runs-stats-summary {

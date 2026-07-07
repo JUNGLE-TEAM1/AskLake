@@ -661,21 +661,29 @@ Definition of Done:
 
 ```text
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh
+backend/app/seed/demo_mongo_fixture.json
+backend/app/seed/seed_mongo_demo.py
+backend/app/seed/reset_demo_data.py
+backend/scripts/seed-demo-postgres.mjs
+backend/scripts/seed-demo-mongo.mjs
 ```
 
 체크리스트:
 
-- [ ] metadata seed 범위를 정한다.
-- [ ] PostgreSQL source fixture seed를 만든다.
-- [ ] MongoDB source fixture seed를 만든다.
-- [ ] reset과 seed를 분리할지 결정한다.
-- [ ] reset은 production data를 지우지 않도록 demo namespace만 대상으로 한다.
-- [ ] demo 전 수동 실행 명령을 문서화한다.
+- [x] metadata seed 범위를 정한다.
+- [x] PostgreSQL source fixture seed를 만든다.
+- [x] MongoDB source fixture seed를 만든다.
+- [x] reset과 seed를 분리할지 결정한다.
+- [x] reset은 production data를 지우지 않도록 demo namespace만 대상으로 한다.
+- [x] demo 전 수동 실행 명령을 문서화한다.
 
 명령 예시:
 
 ```bash
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh --dry-run
+scripts/reset-demo-data.sh
 ```
 
 주의:
@@ -686,9 +694,9 @@ scripts/seed-demo-data.sh
 
 Definition of Done:
 
-- [ ] seed를 여러 번 실행해도 demo data가 중복되지 않는다.
-- [ ] seed 후 Catalog/SQL demo가 가능하다.
-- [ ] reset 범위가 명확하다.
+- [x] seed를 여러 번 실행해도 demo data가 중복되지 않는다.
+- [x] seed 후 Catalog/SQL demo가 가능하다.
+- [x] reset 범위가 명확하다.
 
 ## Phase 8. QA / Health Check
 

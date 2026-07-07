@@ -6,6 +6,7 @@ export const jobStatusMeta: Record<JobStatus, { className: string; label: string
   running: { className: "running", label: "실행 중", summaryLabel: "RUNNING" },
   paused: { className: "paused", label: "일시정지", summaryLabel: "PAUSED" },
   canceled: { className: "canceled", label: "취소됨", summaryLabel: "CANCELED" },
+  stopped: { className: "paused", label: "스케줄 중지", summaryLabel: "STOPPED" },
 };
 
 export const datasetStatusMeta: Record<CatalogDataset["status"], { className: string; label: string }> = {
@@ -31,6 +32,9 @@ export function normalizeJobStatus(status: string): JobStatus {
     "일시정지": "paused",
     canceled: "canceled",
     "취소됨": "canceled",
+    stopped: "stopped",
+    "스케줄 중지": "stopped",
+    "스케줄 중지됨": "stopped",
   };
 
   const normalizedStatus = statusMap[status];

@@ -1,7 +1,9 @@
 import http from "node:http";
 import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
 import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
+import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
+import { listTargetDatabases } from "./targetDatabase.service.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -36,6 +38,35 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
       sendJson(response, 200, await listDatasets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/s3/buckets") {
+      sendJson(response, 200, listS3Buckets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/s3/prefixes") {
+      sendJson(response, 200, await listS3Prefixes({
+        bucket: url.searchParams.get("bucket") ?? "",
+        continuationToken: url.searchParams.get("continuationToken"),
+        prefix: url.searchParams.get("prefix") ?? "",
+      }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/target/databases") {
+      sendJson(response, 200, listTargetDatabases());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/harness/rest-sample") {
+      sendJson(response, 200, {
+        data: [
+          { active: true, amount: 42.7, event_time: "2026-07-04T10:00:00Z", id: 1, payload: { region: "KR" }, user_id: "u_001" },
+          { active: false, amount: 19.25, event_time: "2026-07-04T10:01:00Z", id: 2, payload: { region: "US" }, user_id: "u_002" },
+        ],
+      });
       return;
     }
 

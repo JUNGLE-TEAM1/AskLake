@@ -20,9 +20,12 @@ export type {
   PermissionDraft,
   QualityDraft,
   QualityRuleDraft,
+  RetryBackoffStrategy,
   RetryFailureAction,
   RetryPolicyDraft,
   ScheduleDraft,
+  ScheduleOverlapPolicy,
+  SchedulePolicyDraft,
   SchemaColumnDraft,
   SchemaDraft,
   RunsByJobId,
@@ -32,6 +35,8 @@ export type {
   TargetLayer,
   TransformDraft,
   TransformStepDraft,
+  WatermarkPolicyDraft,
+  WatermarkWindowMode,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

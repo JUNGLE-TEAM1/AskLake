@@ -23,8 +23,35 @@
   max-width: var(--layout-wide-width);
 }
 
+.content-grid.creation-flow-grid.creation-flow-grid-no-side,
+.content-grid.creation-flow-grid.creation-flow-grid-no-side.permission-grid,
+.content-grid.creation-flow-grid.creation-flow-grid-no-side.review-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .creation-flow-grid .content-main {
   width: 100%;
+}
+
+.creation-flow-topbar {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 44px;
+}
+
+.creation-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.creation-top-actions .primary-button,
+.creation-top-actions .secondary-button {
+  width: auto;
+  min-width: 96px;
+  height: 40px;
+  padding: 0 18px;
 }
 
 .creation-flow-grid .summary-panel,
@@ -63,6 +90,49 @@
 
 .creation-flow-grid.review-grid .validation-panel .summary-actions button {
   height: 40px;
+}
+
+.creation-inline-validation-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.creation-inline-validation-panel .panel-header {
+  margin-bottom: 0;
+}
+
+.creation-validation-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.creation-validation-list .validation-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fbfc;
+  color: #565d6d;
+  padding: 12px;
+}
+
+.creation-validation-list .validation-row svg {
+  color: #2563eb;
+}
+
+.creation-validation-list .validation-row span {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.creation-validation-list .validation-row strong {
+  color: #171a1f;
+  font-size: 12px;
+  text-align: right;
 }
 
 .content-main {
@@ -134,7 +204,7 @@
 
 .option-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(136px, 1fr));
   gap: 16px;
 }
 
@@ -341,15 +411,42 @@ select.control-input {
   line-height: 1.55;
 }
 
+.schedule-config-section {
+  display: grid;
+  gap: 16px;
+}
+
+.schedule-config-section h3 {
+  color: #171a1f;
+  font-size: 15px;
+  margin: 0;
+}
+
+.schedule-config-section + .retry-policy {
+  margin-top: 28px;
+}
+
 .retry-policy {
+  display: grid;
+  gap: 28px;
   border-top: 1px solid #dee1e6;
-  margin-top: 24px;
+  margin-top: 28px;
+  padding-top: 28px;
+}
+
+.retry-policy-group {
+  display: grid;
+  gap: 16px;
+}
+
+.retry-policy-group + .retry-policy-group {
+  border-top: 1px solid #eef2f7;
   padding-top: 24px;
 }
 
 .retry-policy h3 {
   font-size: 15px;
-  margin-bottom: 16px;
+  margin: 0;
 }
 
 .retry-policy-note {
@@ -490,15 +587,13 @@ select.control-input {
   color: #fff;
 }
 
-.policy-section,
-.retry-policy {
+.policy-section {
   border-top: 1px solid #eef2f7;
   margin-top: 22px;
   padding-top: 22px;
 }
 
-.policy-section h3,
-.retry-policy h3 {
+.policy-section h3 {
   color: #171a1f;
   font-size: 16px;
   margin-bottom: 14px;

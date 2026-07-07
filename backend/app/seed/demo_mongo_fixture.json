@@ -1,0 +1,184 @@
+{
+  "collections": [
+    {
+      "collection": "customer_reviews",
+      "datasetId": "ds_customer_reviews_source",
+      "description": "MongoDB에 저장된 고객 리뷰 원문과 감정/주제 태그를 포함한 비정형 문서형 데이터셋입니다.",
+      "layer": "BRONZE",
+      "name": "customer_reviews",
+      "sourceId": "source-mongo-customer-reviews",
+      "sourceName": "asklake_sources.customer_reviews",
+      "tags": ["#mongo", "#review", "#unstructured", "#customer"],
+      "uniqueKey": "reviewId",
+      "upstream": ["MongoDB asklake_sources.customer_reviews", "review_stream_seed"],
+      "schema": [
+        ["reviewId", "string"],
+        ["customerId", "string"],
+        ["orderId", "string"],
+        ["sku", "string"],
+        ["rating", "integer"],
+        ["comment", "text"],
+        ["sentiment", "string"],
+        ["topics", "array<string>"],
+        ["metadata.channel", "string"],
+        ["metadata.device", "string"],
+        ["metadata.region", "string"],
+        ["createdAt", "timestamp"]
+      ],
+      "documents": [
+        {
+          "reviewId": "rev-202607-001",
+          "customerId": "CUS-204",
+          "orderId": "ORD-1001",
+          "sku": "SKU-8842",
+          "rating": 2,
+          "comment": "배송은 빨랐지만 포장 상태가 찌그러져 있었고 고객센터 답변이 늦었습니다.",
+          "sentiment": "negative",
+          "topics": ["delivery", "packaging", "support"],
+          "language": "ko",
+          "createdAt": "2026-07-01T10:15:00.000Z",
+          "metadata": {
+            "appVersion": "1.8.2",
+            "channel": "mobile_app",
+            "device": "ios",
+            "region": "KR-11"
+          }
+        },
+        {
+          "reviewId": "rev-202607-002",
+          "customerId": "CUS-118",
+          "orderId": "ORD-1002",
+          "sku": "SKU-200",
+          "rating": 5,
+          "comment": "재구매 중인 상품입니다. 할인 쿠폰이 적용되어 가격도 만족스럽고 배송 추적도 정확했습니다.",
+          "sentiment": "positive",
+          "topics": ["price", "delivery", "loyalty"],
+          "language": "ko",
+          "createdAt": "2026-07-02T03:21:00.000Z",
+          "metadata": {
+            "campaign": "summer_coupon",
+            "channel": "web",
+            "device": "desktop",
+            "region": "KR-41"
+          }
+        },
+        {
+          "reviewId": "rev-202607-003",
+          "customerId": "CUS-331",
+          "orderId": "ORD-1004",
+          "sku": "SKU-8842",
+          "rating": 3,
+          "comment": "Product quality is fine, but the manual was hard to understand and setup took longer than expected.",
+          "sentiment": "neutral",
+          "topics": ["product_quality", "manual", "setup"],
+          "language": "en",
+          "createdAt": "2026-07-03T07:42:00.000Z",
+          "metadata": {
+            "channel": "marketplace",
+            "device": "android",
+            "region": "JP-13"
+          }
+        },
+        {
+          "reviewId": "rev-202607-004",
+          "customerId": "CUS-508",
+          "orderId": "ORD-1006",
+          "sku": "SKU-5501",
+          "rating": 1,
+          "comment": "앱에서 반품 신청이 계속 실패했고 상담 연결까지 오래 걸렸습니다. 환불 상태도 알기 어렵습니다.",
+          "sentiment": "negative",
+          "topics": ["return", "refund", "support", "app_error"],
+          "language": "ko",
+          "createdAt": "2026-07-04T12:35:00.000Z",
+          "metadata": {
+            "appVersion": "1.8.3",
+            "channel": "mobile_app",
+            "device": "android",
+            "region": "SG-01"
+          }
+        }
+      ]
+    },
+    {
+      "collection": "app_events",
+      "datasetId": "ds_app_events_source",
+      "description": "앱 사용자 행동 이벤트와 nested payload를 포함한 MongoDB 문서형 이벤트 데이터셋입니다.",
+      "layer": "BRONZE",
+      "name": "app_events",
+      "sourceId": "source-mongo-app-events",
+      "sourceName": "asklake_sources.app_events",
+      "tags": ["#mongo", "#event", "#nested-json", "#behavior"],
+      "uniqueKey": "eventId",
+      "upstream": ["MongoDB asklake_sources.app_events", "app_event_seed"],
+      "schema": [
+        ["eventId", "string"],
+        ["customerId", "string"],
+        ["sessionId", "string"],
+        ["eventTime", "timestamp"],
+        ["eventType", "string"],
+        ["properties.pagePath", "string"],
+        ["properties.experiment.key", "string"],
+        ["properties.errorCode", "string"],
+        ["device.os", "string"],
+        ["device.appVersion", "string"],
+        ["device.locale", "string"]
+      ],
+      "documents": [
+        {
+          "eventId": "evt-202607-001",
+          "customerId": "CUS-204",
+          "sessionId": "ses-7711",
+          "eventTime": "2026-07-01T10:12:31.000Z",
+          "eventType": "product_view",
+          "properties": {
+            "experiment": {
+              "key": "review_summary",
+              "variant": "B"
+            },
+            "pagePath": "/products/SKU-8842",
+            "referrer": "search"
+          },
+          "device": {
+            "appVersion": "1.8.2",
+            "locale": "ko-KR",
+            "os": "iOS"
+          }
+        },
+        {
+          "eventId": "evt-202607-002",
+          "customerId": "CUS-118",
+          "sessionId": "ses-8812",
+          "eventTime": "2026-07-02T03:18:44.000Z",
+          "eventType": "coupon_apply",
+          "properties": {
+            "cartValue": 56000,
+            "couponCode": "SUMMER10",
+            "discountAmount": 5600
+          },
+          "device": {
+            "browser": "Chrome",
+            "locale": "ko-KR",
+            "os": "Web"
+          }
+        },
+        {
+          "eventId": "evt-202607-003",
+          "customerId": "CUS-508",
+          "sessionId": "ses-9915",
+          "eventTime": "2026-07-04T12:30:03.000Z",
+          "eventType": "return_request_failed",
+          "properties": {
+            "errorCode": "RETURN_POLICY_TIMEOUT",
+            "orderId": "ORD-1006",
+            "retryCount": 3
+          },
+          "device": {
+            "appVersion": "1.8.3",
+            "locale": "en-SG",
+            "os": "Android"
+          }
+        }
+      ]
+    }
+  ]
+}

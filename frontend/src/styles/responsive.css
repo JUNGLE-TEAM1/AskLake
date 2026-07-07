@@ -147,11 +147,31 @@
   }
 
   .catalog-preview-panel {
+    height: auto;
     width: 100%;
   }
 
   .dag-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .creation-validation-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .xflow-review-kv,
+  .target-xflow-form-grid,
+  .target-xflow-split,
+  .xflow-review-validation {
+    grid-template-columns: 1fr;
+  }
+
+  .xflow-review-schema-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .xflow-review-schema-null {
+    display: none;
   }
 
   .summary-panel,
@@ -164,10 +184,6 @@
     position: static;
     max-height: none;
     margin-top: 0;
-  }
-
-  .review-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .connector-row,
@@ -266,6 +282,20 @@
     padding: 20px;
   }
 
+  .creation-flow-topbar {
+    justify-content: stretch;
+  }
+
+  .creation-top-actions {
+    width: 100%;
+  }
+
+  .creation-top-actions .primary-button,
+  .creation-top-actions .secondary-button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   .sql-dataset-panel {
     position: static;
     height: auto;
@@ -276,7 +306,9 @@
   .option-grid,
   .form-grid,
   .form-grid.compact,
+  .creation-validation-list,
   .creation-flow-grid .summary-panel dl,
+  .source-choice-grid,
   .format-grid,
   .connector-row,
   .compact-cards,
@@ -302,6 +334,15 @@
 
   .hegun-rule-footer .primary-button {
     width: 100%;
+  }
+
+  .source-choice-screen {
+    padding-top: 20px;
+  }
+
+  .source-choice-card {
+    min-height: 168px;
+    padding: 24px;
   }
 
   .jobs-header-actions {

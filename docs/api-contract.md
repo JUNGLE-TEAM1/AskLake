@@ -8,12 +8,15 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
-| 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 취소 |
+| 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
-| 4 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
-| 5 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
-| 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
-| 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
+| 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
+| 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
+| 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
+| 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
+| 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
+| 10 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -22,6 +25,7 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 
 - 공통 fetch client: `frontend/src/services/apiClient.ts`
 - Pipeline create/run/query client: `frontend/src/services/pipelineApi.ts`
+- Query AI client: `frontend/src/services/queryAiService.ts`
 - Source connector client: `frontend/src/services/sourceConnectorService.ts`
 - 프론트 데이터 상태: `frontend/src/hooks/useAskLakeData.ts`
 - 감사 로그/토스트 상태: `frontend/src/hooks/useAuditLogs.ts`
@@ -42,6 +46,10 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+S3_ALLOWED_BUCKETS=asklake-output
+S3_ENDPOINT=http://localhost:9000
+S3_FORCE_PATH_STYLE=true
+TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
@@ -49,6 +57,8 @@ DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
+- Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
+- Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -187,7 +197,7 @@ API와 frontend internal state의 상태값은 영어 canonical value를 사용�
 ### JobRowData
 
 ```ts
-type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
+type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 
 type JobRowData = {
   id: string;
@@ -198,15 +208,29 @@ type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  schedulePolicy?: {
+    endDate?: string;
+    nextRunUtc?: string;
+    overlapPolicy?: "skip_if_running" | "queue_after_current" | "allow_parallel";
+    startDate?: string;
+    timezone?: string;
+    watermarkPolicy?: WatermarkPolicyDraft;
+  };
+  scheduleSummary?: string;
   lastRun: string;
   lastState: string;
   nextRun: string;
+  retryPolicy?: RetryPolicyDraft;
+  retryPolicySummary?: string;
+  runLimitSummary?: string;
   progress?: {
     label: string;
     value: number;
   };
 };
 ```
+
+`schedule`/`scheduleSummary`의 화면 문구는 `수동/자동/1회 실행`이 아니라 `스케줄링 건너뛰기`와 `반복 실행` 두 기준으로 표현한다. 스케줄링을 건너뛰면 즉시 실행 command `run`으로 1회 Run을 만들며, `1회 실행`은 schedule 값으로 저장하지 않는다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 실패 재시도만 노출한다. ISO date `startDate`, optional `endDate`, 겹침 처리, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
 
 ### JobRunSummary and JobDagStep
 
@@ -319,7 +343,123 @@ type SqlResultDraft = {
 
 ## 7. P0 API
 
-### 7.1 파이프라인 생성
+### 7.1 Target S3 Path Picker
+
+Target 저장경로 UI는 긴 text input 대신 서버 API로 bucket/prefix를 조회하는 선택 UI를 사용합니다. 선택 결과는 기존 `storagePath` string에 그대로 저장합니다.
+
+`GET /api/s3/buckets`
+
+Response `200 OK`:
+
+```ts
+type S3BucketsResponse = {
+  buckets: string[];
+};
+```
+
+Response 예시:
+
+```json
+{
+  "buckets": ["asklake-output"]
+}
+```
+
+규칙:
+
+- 서버는 `S3_ALLOWED_BUCKETS` allowlist를 우선 사용합니다.
+- allowlist가 없으면 local demo 기본값으로 `asklake-output`을 반환할 수 있습니다.
+- 프론트는 bucket 목록을 표시만 하며 AWS credential을 보관하지 않습니다.
+
+`GET /api/s3/prefixes?bucket=asklake-output&prefix=pair_a/`
+
+Response `200 OK`:
+
+```ts
+type S3PrefixesResponse = {
+  bucket: string;
+  files: Array<{
+    key: string;
+    name: string;
+    type: "file";
+  }>;
+  folders: Array<{
+    name: string;
+    prefix: string;
+    type: "folder";
+  }>;
+  nextContinuationToken: string | null;
+  prefix: string;
+};
+```
+
+Response 예시:
+
+```json
+{
+  "bucket": "asklake-output",
+  "prefix": "pair_a/",
+  "folders": [
+    {
+      "name": "customer_review_gold",
+      "prefix": "pair_a/customer_review_gold/",
+      "type": "folder"
+    }
+  ],
+  "files": [],
+  "nextContinuationToken": null
+}
+```
+
+보안/검증:
+
+- `bucket`은 allowlist에 있는 값만 허용합니다.
+- `prefix`는 leading slash, backslash, 중복 slash를 정규화하고 `..`, control character, 과도한 길이를 거부합니다.
+- 서버는 AWS SDK v3 `ListObjectsV2`에 `Delimiter="/"`를 넣어 folder prefix를 lazy loading합니다.
+- AWS access key/secret은 서버 환경변수, profile, IAM role, 또는 MinIO endpoint 설정만 사용하며 브라우저 번들에 포함하지 않습니다.
+- 로컬 개발에서 S3 연결이 없으면 서버 내부 fixture fallback을 사용할 수 있고, 운영에서는 `S3_DISABLE_FIXTURE_FALLBACK=true`로 끌 수 있습니다.
+
+선택 결과:
+
+- prefix 선택 시 `s3a://asklake-output/pair_a_customer_review_gold/gold/`처럼 trailing slash를 유지합니다.
+- 기존 값이 `s3://...`이면 같은 scheme을 유지하고, scheme이 없으면 frontend 상수 `S3_SCHEME = "s3a"`를 사용합니다.
+- 최종 create payload의 `storagePath` 필드 shape는 변경하지 않습니다.
+
+### 7.1.1 Target DB Picker
+
+Target 기본정보 UI는 `테이블명` 입력을 노출하지 않습니다. create payload 호환을 위해 `target.tableName`과 `target.targetTableName`에는 현재 `targetDataset` 값을 사용합니다.
+
+`GET /api/target/databases`
+
+Response:
+
+```ts
+type TargetDatabasesResponse = {
+  databases: Array<{
+    name: string;
+    description: string;
+  }>;
+};
+```
+
+Example:
+
+```json
+{
+  "databases": [
+    { "name": "asklake", "description": "기본 AskLake 카탈로그 DB" },
+    { "name": "asklake_gold", "description": "정제 Gold 데이터셋 저장 DB" }
+  ]
+}
+```
+
+Rules:
+
+- frontend는 DB 이름을 직접 입력하지 않고 선택 UI로 `target.databaseName` string을 갱신합니다.
+- 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
+- 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
+
+### 7.2 파이프라인 생성
 
 `POST /api/etl/jobs`
 
@@ -330,6 +470,24 @@ type SqlResultDraft = {
 Request:
 
 ```ts
+type RetryPolicyDraft = {
+  backoffMultiplier: number;
+  backoffStrategy: "fixed" | "exponential";
+  failureAction: "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+  initialRetryDelayMinutes: number;
+  maxRetries: number;
+  maxRetryDelayMinutes: number;
+  retryIntervalMinutes: number;
+  timeoutMinutes: number;
+};
+
+type WatermarkPolicyDraft = {
+  column: string;
+  enabled: boolean;
+  lookbackMinutes: number;
+  mode: "last_success_to_scheduled_at" | "last_success_to_run_started_at" | "full_refresh";
+};
+
 type CreatePipelineRequest = {
   id: string;
   jobName: string;
@@ -364,9 +522,15 @@ type CreatePipelineRequest = {
   qualityStatus: "idle" | "pass" | "warn" | "fail";
   scheduleLabel: string;
   scheduleSummary: string;
+  retryPolicy: RetryPolicyDraft;
+  retryPolicySummary: string;
+  runLimitSummary: string;
   startDate: string;
   endDate?: string;
+  nextRunUtc?: string;
+  overlapPolicy?: "skip_if_running" | "queue_after_current" | "allow_parallel";
   timezone: string;
+  watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   storageType: "S3" | "Local" | "HDFS";
   partition: string;
@@ -396,19 +560,39 @@ Request 예시:
   "schemaSummary": "5 columns inferred, review_id bigint primary key candidate",
   "ruleSummary": "3 quality rules enabled",
   "scheduleLabel": "매일 09:00",
-  "scheduleSummary": "매일 09:00 · 시작 2026.07.02 · 종료일 없음 · (GMT+09:00) Seoul, Tokyo",
-  "startDate": "2026-07-02",
-  "timezone": "(GMT+09:00) Seoul, Tokyo",
+  "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
+  "retryPolicy": {
+    "backoffMultiplier": 2,
+    "backoffStrategy": "exponential",
+    "failureAction": "retry_then_fail",
+    "initialRetryDelayMinutes": 1,
+    "maxRetries": 3,
+    "maxRetryDelayMinutes": 30,
+    "retryIntervalMinutes": 1,
+    "timeoutMinutes": 60
+  },
+  "retryPolicySummary": "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리",
+  "runLimitSummary": "60분 초과 시 Run 실패 처리",
+  "startDate": "2026-07-07",
+  "nextRunUtc": "",
+  "overlapPolicy": "skip_if_running",
+  "timezone": "Asia/Seoul",
+  "watermarkPolicy": {
+    "column": "updated_at",
+    "enabled": true,
+    "lookbackMinutes": 5,
+    "mode": "last_success_to_scheduled_at"
+  },
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "storageType": "S3",
-  "partition": "year/month/region",
+  "partition": "date/category",
   "compression": "Snappy",
   "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
   "owner": "Data Engineer Group",
-  "rag": true
+  "rag": false
 }
 ```
 
@@ -439,6 +623,21 @@ Response 예시:
     "source": "Object Storage / Amazon S3",
     "target": "customer_review_silver",
     "schedule": "매일 09:00",
+    "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 저장 후 다음 예약부터 시작",
+    "schedulePolicy": {
+      "nextRunUtc": "",
+      "overlapPolicy": "skip_if_running",
+      "startDate": "2026-07-07",
+      "timezone": "Asia/Seoul",
+      "watermarkPolicy": {
+        "column": "updated_at",
+        "enabled": true,
+        "lookbackMinutes": 5,
+        "mode": "last_success_to_scheduled_at"
+      }
+    },
+    "retryPolicySummary": "3회 재시도 · 1분부터 2배 지수 백오프 · 최대 30분 · 재시도 후 실패 처리",
+    "runLimitSummary": "60분 초과 시 Run 실패 처리",
     "lastRun": "생성됨",
     "lastState": "대기 중",
     "nextRun": "다음 예약 대기"
@@ -467,9 +666,14 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
+- `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
+- 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
+- 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼만 선택하며, 선택값을 `/`로 연결해 create request의 `partition`에 반영합니다.
+- backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
-### 7.2 작업 명령
+### 7.3 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 
@@ -481,7 +685,7 @@ Request:
 
 ```ts
 type JobCommandRequest = {
-  command: "run" | "retry" | "pause" | "cancel";
+  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule";
 };
 ```
 
@@ -521,9 +725,9 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 - `dagSteps`는 같은 응답의 `run.runId`에 묶어 `dagStepsByRunId[run.runId]`에 저장합니다.
 - `dagSteps`에 별도 `runId` 필드를 요구하지 않습니다.
 - History row 선택은 `selectRunForJob(jobId, runId)` action으로 `selectedRunIdByJobId[job.id]`만 갱신합니다.
+- DAG/실행 흐름은 별도 top-level tab이 아니라 History 화면 내부의 선택 Run 상세 카드로 렌더링합니다.
 - 초기 `/api/etl/jobs` hydrate에서는 `job.runHistory`를 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`를 최신 Run의 `runId`에 연결합니다.
 - PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않습니다. 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만들고, 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체합니다.
-- `jobExecutionEvidence`는 기존 화면 호환 adapter이며 정식 source of truth가 아닙니다.
 
 Response 예시:
 
@@ -558,7 +762,8 @@ Response 예시:
 | `run` | `etl.run.requested` | `running` |
 | `retry` | `etl.run.retry_requested` | `running` |
 | `pause` | `etl.job.pause_requested` | `paused` |
-| `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
+| `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
+| `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
 
 `run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
 
@@ -566,7 +771,9 @@ Validation:
 
 - 존재하지 않는 job은 `404 NOT_FOUND`.
 - 이미 실행 중인데 다시 `run`하면 `409 CONFLICT`.
-- 완료/취소 불가 상태에서 `cancel`하면 `422 INVALID_JOB_STATE`.
+- 실행 중이 아닌 job에 `pause`하면 `422 INVALID_JOB_STATE`.
+- 실행 중이 아닌 job에 `cancelRun`하면 `422 INVALID_JOB_STATE`.
+- 스케줄이 없는 job에 `stopSchedule`하면 `422 INVALID_JOB_STATE`.
 
 ### 7.2.1 작업 단건 조회
 
@@ -665,7 +872,85 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
-### 7.4 SQL 결과 기반 Lake Dataset 생성
+### 7.4 Query AI SQL 초안 생성
+
+`POST /api/query/ai-suggestions`
+
+프론트 함수:
+
+- `generateQueryAiSuggestion({ baseDataset, selectedDatasets, prompt, query })`
+
+Request:
+
+```ts
+type QueryAiSuggestionRequest = {
+  baseDatasetId?: string;
+  currentQuery?: string;
+  mode?: "draft_sql";
+  prompt: string;
+  selectedDatasetIds: string[];
+};
+```
+
+Request 예시:
+
+```json
+{
+  "baseDatasetId": "ds_orders_clean",
+  "currentQuery": "SELECT order_id, customer_id FROM orders_clean LIMIT 100;",
+  "mode": "draft_sql",
+  "prompt": "고객별 주문 금액 합계를 보고 싶다",
+  "selectedDatasetIds": ["ds_orders_clean"]
+}
+```
+
+Response `200 OK`:
+
+```ts
+type QueryAiSuggestionResponse = {
+  body: string;
+  mode: "draft_sql";
+  model?: string | null;
+  notices: string[];
+  sql: string;
+  title: string;
+};
+```
+
+Response 예시:
+
+```json
+{
+  "body": "orders_clean에서 customer_id별 total_amount 합계를 조회하는 읽기 전용 SQL 초안입니다.",
+  "mode": "draft_sql",
+  "model": "gpt-4.1-mini",
+  "notices": [
+    "AI가 생성한 초안입니다. 실행 전 기존 점검 결과를 확인해 주세요."
+  ],
+  "sql": "SELECT customer_id, SUM(total_amount) AS total_amount_sum\nFROM orders_clean\nGROUP BY customer_id\nORDER BY total_amount_sum DESC\nLIMIT 100;",
+  "title": "고객별 주문 금액 SQL 초안"
+}
+```
+
+Validation:
+
+- `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
+- backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
+- AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
+- AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 JOIN 또는 multi-table SQL 초안은 반환하지 않거나 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
+- `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
+- AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.
+- OpenAI 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
+
+프론트 기대 동작:
+
+- Query AI 제안은 자동 실행하지 않고 SQL editor 적용 버튼을 통해서만 반영합니다.
+- editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
+- mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
+
+### 7.5 SQL 결과 기반 Lake Dataset 생성
 
 `POST /api/catalog/derived-datasets`
 
@@ -1686,7 +1971,7 @@ Response `201 Created`:
 4. 프론트 dev 서버를 재시작합니다.
 5. `POST /api/etl/sources/test` Source/Schema live 연결 흐름을 확인합니다.
 6. `POST /api/etl/jobs` 생성 플로우를 확인합니다.
-7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark DAG 갱신을 확인합니다.
+7. `POST /api/etl/jobs/{jobId}/commands` 버튼 흐름과 Spark 실행 흐름 갱신을 확인합니다.
 8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
 9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 

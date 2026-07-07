@@ -317,7 +317,8 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     run: { action: "etl.run.requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     retry: { action: "etl.run.retry_requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
-    cancel: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
   };
   const audit = actionByCommand[command];
   const runId = `run_${Date.now()}`;

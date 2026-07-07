@@ -69,8 +69,12 @@ const initialDraftPipeline: DraftPipeline = {
     mode: "repeat",
     nextRun: "다음 예약 대기",
     retryPolicy: {
+      backoffMultiplier: 2,
+      backoffStrategy: "exponential",
       failureAction: "retry_then_fail",
+      initialRetryDelayMinutes: 1,
       maxRetries: 3,
+      maxRetryDelayMinutes: 30,
       retryIntervalMinutes: 10,
       timeoutMinutes: 60,
     },
@@ -93,12 +97,17 @@ const initialDraftPipeline: DraftPipeline = {
   target: {
     compression: "Snappy",
     datasetName: "pair_a_customer_review_gold",
+    description: "고객 리뷰 분석용 정제 데이터셋",
     format: "Parquet",
     layer: "GOLD",
-    partition: "year/month/region",
-    rag: true,
+    partition: "date/category",
+    partitionColumns: ["date", "category"],
+    rag: false,
     storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
     storageType: "S3",
+    tableName: "pair_a_customer_review_gold",
+    tags: ["고객데이터", "분석용", "가공됨"],
+    testStatus: "idle",
   },
   transform: {
     outputColumns: [],
@@ -460,6 +469,7 @@ function commandSuccessMessage(command: ServerJobCommand): string {
   if (command === "run") return "작업 실행 요청을 접수했습니다.";
   if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
   if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  if (command === "stopSchedule") return "다음 반복 예약을 중지했습니다.";
   return "작업 취소 요청을 접수했습니다.";
 }
 

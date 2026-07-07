@@ -1,10 +1,10 @@
 # Source Connector Developer Test Guide
 
-Pair A Source/Schema 화면은 mock 값이나 데모 seed를 기본 입력으로 넣지 않는다. 새 수집/처리 생성 화면의 소스 연결 폼은 빈 값으로 시작하며, 개발자는 아래 값을 직접 입력해서 로컬 fixture를 검증한다.
+Pair A Source/Schema 화면은 일반 connector에 mock 값이나 로컬 endpoint를 기본 입력으로 넣지 않는다. 단, MongoDB demo connector는 비정형 데이터 시연을 위해 backend 환경변수의 기본 연결값을 사용하고 화면에는 `Database Name`과 collection selector만 노출한다.
 
 ## 원칙
 
-- UI 기본값에는 로컬 endpoint, bucket, database, table, topic, token, fixture path를 넣지 않는다.
+- UI 기본값에는 로컬 endpoint, bucket, table, topic, token, fixture path를 넣지 않는다. MongoDB의 host/port/credential은 backend 환경변수에서 가져온다.
 - 파일 형식은 소스 선택 카드에서 미리 고르지 않는다. `MinIO/S3`에 연결한 뒤 데이터 탐색 단계에서 실제 오브젝트를 선택한다.
 - 이 문서의 값은 로컬 개발자 테스트 전용이다. 운영/팀 환경 값은 각자 환경 변수나 별도 secret 관리에서 가져온다.
 
@@ -84,13 +84,18 @@ npm run dev -- --host 127.0.0.1 --port 5173
 
 | Field | Value |
 | --- | --- |
-| Endpoint / Host | `127.0.0.1` |
-| Port | `27018` |
 | Database Name | `asklake_sources` |
-| Username | empty |
-| Password / Auth Token | empty |
+| DATASET OR TABLE SELECTOR | `customer_reviews` 또는 `app_events` |
 
-연결 테스트 후 컬렉션 목록에서 `app_events`를 선택한다. 컬렉션 선택 뒤 문서 샘플과 Field Tree를 확인한다.
+로컬 backend를 compose 밖에서 직접 실행한다면 아래 환경변수를 설정한다. 배포 compose에서는 `deploy/docker-compose.prod.yml`이 같은 값을 backend container에 자동 주입한다.
+
+```powershell
+$env:ASKLAKE_MONGO_HOST = "127.0.0.1"
+$env:ASKLAKE_MONGO_PORT = "27018"
+$env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
+```
+
+연결 테스트 후 컬렉션 목록에서 `customer_reviews` 또는 `app_events`를 선택한다. 컬렉션 선택 뒤 문서 샘플과 Field Tree를 확인한다.
 
 ### REST API
 

@@ -445,23 +445,31 @@ function preserveRuntimeOnlyConfig(
   } as DashboardRuntimeWidgetConfig;
 }
 
+function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null | undefined) {
+  return widget ? configRecord(widget.config).placeholderKind === "visualization_request" : false;
+}
+
 export function WidgetConfigPanel({
+  datasets = [],
   editingWidget = null,
   focusedColorSlot = null,
   isCreating = false,
   isUpdating = false,
   onCreateWidget,
   onPreviewWidgetChange,
+  onSelectDataset,
   onUpdateWidget,
   selectedDataset,
   selectedDatasetId,
 }: {
+  datasets?: DashboardDatasetOption[];
   editingWidget?: DashboardRuntimeWidget | null;
   focusedColorSlot?: DashboardWidgetColorSlotFocus | null;
   isCreating?: boolean;
   isUpdating?: boolean;
   onCreateWidget: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onPreviewWidgetChange?: (widget: DashboardRuntimeWidget | null) => void;
+  onSelectDataset?: (datasetId: string) => void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
@@ -476,7 +484,9 @@ export function WidgetConfigPanel({
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
   const [widgetTypeTooltip, setWidgetTypeTooltip] = useState<WidgetTypeTooltip | null>(null);
   const previousEditingWidgetIdRef = useRef<string | null>(null);
+  const previousSelectedDatasetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
+  const isVisualizationRequestEdit = isVisualizationRequestWidget(editingWidget);
 
   const columnGroups = useMemo(() => {
     const allColumns = selectedDataset?.columns ?? [];
@@ -496,8 +506,11 @@ export function WidgetConfigPanel({
 
   useEffect(() => {
     const nextEditingWidgetId = editingWidget?.id ?? null;
+    const nextSelectedDatasetId = selectedDataset?.id ?? null;
     const shouldResetColorIndex = previousEditingWidgetIdRef.current !== nextEditingWidgetId;
+    const shouldResetDatasetConfig = previousSelectedDatasetIdRef.current !== nextSelectedDatasetId;
     previousEditingWidgetIdRef.current = nextEditingWidgetId;
+    previousSelectedDatasetIdRef.current = nextSelectedDatasetId;
 
     setFormError(null);
     if (shouldResetColorIndex) {
@@ -505,15 +518,20 @@ export function WidgetConfigPanel({
       setCustomColorIndex(0);
     }
     if (editingWidget) {
-      if (!shouldResetColorIndex) return;
+      if (!shouldResetColorIndex && !shouldResetDatasetConfig) return;
 
       setType(editingWidget.type);
       setTitle(editingWidget.title ?? "");
       setDescription(configString(editingWidget.config, "description") ?? "");
       setColor(configColor(editingWidget.config));
+      const defaultConfigs: Partial<Record<DashboardRuntimeWidgetType, WidgetConfigDraft>> = selectedDataset
+        ? createDefaultConfigs(selectedDataset)
+        : {};
       setConfigsByType({
-        ...(selectedDataset ? createDefaultConfigs(selectedDataset) : {}),
-        [editingWidget.type]: configDraftFromWidget(editingWidget),
+        ...defaultConfigs,
+        [editingWidget.type]: isVisualizationRequestWidget(editingWidget)
+          ? defaultConfigs[editingWidget.type] ?? {}
+          : configDraftFromWidget(editingWidget),
       });
       return;
     }
@@ -569,10 +587,16 @@ export function WidgetConfigPanel({
     setCustomColorIndex(nextIndex);
   }, [colorSlotLabels.length, editingWidget?.id, focusedColorSlot]);
 
+  const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
+  const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
     ? validateConfig(type, currentConfig)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
-  const canSubmit = Boolean((isEditMode || (selectedDatasetId && selectedDataset)) && !validationMessage);
+  const canSubmit = Boolean(
+    (isEditMode || (selectedDatasetId && selectedDataset))
+    && !validationMessage
+    && (!requiresDatasetSelection || (selectedDatasetId && selectedDataset))
+  );
 
   const patchCurrentConfig = (patch: WidgetConfigDraft) => {
     setConfigsByType((current) => ({
@@ -637,7 +661,7 @@ export function WidgetConfigPanel({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!isEditMode && (!selectedDataset || !selectedDatasetId)) {
+    if (requiresDatasetSelection && (!selectedDataset || !selectedDatasetId)) {
       setFormError("왼쪽에서 데이터셋을 먼저 선택해 주세요.");
       return;
     }
@@ -703,6 +727,25 @@ export function WidgetConfigPanel({
       </div>
 
       <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
+        {shouldShowDatasetSelect ? (
+          <label className="asklake-widget-dataset-field">
+            <span>데이터셋</span>
+            <select
+              disabled={!datasets.length || !onSelectDataset}
+              value={selectedDatasetId ?? ""}
+              onChange={(event) => {
+                if (event.target.value) onSelectDataset?.(event.target.value);
+              }}
+            >
+              <option value="">데이터셋 선택</option>
+              {datasets.map((dataset) => (
+                <option key={dataset.id} value={dataset.id}>
+                  {dataset.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <label>
           <span>위젯 제목</span>
           <input

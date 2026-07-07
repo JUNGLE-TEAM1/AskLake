@@ -496,7 +496,7 @@ function getJobListActions(job: JobRowData): JobListAction[] {
     return [
       ...actions,
       { className: "job-action-button primary soft", kind: "runs", label: "실행 단계" },
-      { className: "job-action-button danger", kind: "cancel", label: "취소" },
+      { className: "job-action-button danger", kind: "cancelRun", label: "취소" },
     ];
   }
 
@@ -533,7 +533,7 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   if (job.status === "running") {
     return [
       { className: "job-action-button", kind: "pause", label: "일시정지" },
-      { className: "job-action-button danger", kind: "cancel", label: "실행 취소" },
+      { className: "job-action-button danger", kind: "cancelRun", label: "실행 취소" },
     ];
   }
 
@@ -644,7 +644,7 @@ function JobListActionIcon({ action }: { action: JobListAction }) {
   if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
   if (action.kind === "runs") return <TerminalSquare aria-hidden="true" size={15} />;
   if (action.kind === "edit") return <Pencil aria-hidden="true" size={15} />;
-  if (action.kind === "cancel") return <X aria-hidden="true" size={15} />;
+  if (action.kind === "cancelRun") return <X aria-hidden="true" size={15} />;
   if (action.kind === "retry") return <RefreshCw aria-hidden="true" size={15} />;
 
   return <PlayCircle aria-hidden="true" size={15} />;
