@@ -56,13 +56,15 @@ flowchart LR
     U[User] --> FE[React/Vite Frontend]
     FE --> API[FastAPI Backend API]
     API --> DB[(Metadata DB)]
-    API --> JOB[Job Runtime / Spark Bridge]
+    API --> ORCH[Airflow Orchestrator]
+    ORCH --> JOB[Job Runtime / Spark Bridge]
     API --> SQL[Query Runtime]
     API --> AUDIT[(Audit Log)]
 ```
 
 현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL preview, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다.
 Node demo API는 기존 동작 비교용 reference로 남긴다.
+Airflow orchestration 도입 후에도 AskLake API와 metadata DB가 사용자-facing Job/Run/Dataset의 source of truth이며, Airflow는 실행 중 DAG Run과 Task Instance 상태의 source of truth로만 사용한다. v1은 고정 DAG `asklake_etl_job`에 `dag_run.conf`로 job/run payload를 넘기고 기존 Spark 실행 경로를 task 내부에서 재사용한다.
 
 ## 5) Frontend Layer
 
@@ -89,7 +91,7 @@ Dashboard redesign부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards
 수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
 수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
 live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
-live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
+live mode에서 run/retry 명령 응답의 `queued` 또는 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 orchestration 완료 후 최종 상태를 반영한다. 현재 구현은 백그라운드 Spark 실행을 polling하며, Airflow 전환 후 같은 public API로 Airflow DAG Run/Task Instance 상태를 반영한다.
 
 ## 6) Job Run State Contract
 
@@ -112,6 +114,31 @@ Ownership rules:
 - optimistic command UX는 `client:<jobId>:<timestamp>` 형태의 임시 run id를 만들고, 서버 응답의 `run.runId`로 reconcile한다.
 - `commandPendingByJobId[job.id]`는 중복 클릭 방지용 in-flight 상태다.
 
+## 6.1) Airflow Orchestration Target Contract
+
+Airflow v1은 `docs/airflow-orchestration-sot.md`를 source of truth로 삼는다.
+
+목표 계약:
+
+- `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 Airflow DAG Run을 submit하고 빠르게 응답한다.
+- frontend는 기존 `JobCommandResponse`를 먼저 반영한 뒤 `GET /api/etl/jobs/{jobId}`를 polling한다.
+- backend는 Airflow DAG Run state를 `JobRunSummary.status`로, Task Instance state를 `JobDagStep.status`로 변환한다.
+- terminal run status는 `success`, `failed`, `canceled`이며, terminal 상태가 되면 frontend polling을 멈춘다.
+- Airflow raw state와 DAG Run id는 optional metadata로 저장하며, 기존 response 필드는 깨지지 않는다.
+
+Airflow state mapping:
+
+| Airflow state | AskLake run status | AskLake DAG step status |
+| --- | --- | --- |
+| `queued`, `scheduled`, `deferred`, `up_for_retry` | `queued` | `pending` |
+| `running` | `running` | `running` |
+| `success` | `success` | `success` |
+| `failed`, `upstream_failed` | `failed` | `failed` |
+| `skipped`, `removed` | `failed` | `blocked` |
+| AskLake cancel request accepted | `canceled` | `blocked` |
+
+Airflow가 알 수 없는 state를 반환하면 backend는 raw state를 sync metadata에 보존하고, 명확한 terminal state가 확인될 때까지 run은 `running`으로 유지한다.
+
 ## 7) Backend Target Boundary
 
 FastAPI가 현재 소유하는 책임:
@@ -119,6 +146,7 @@ FastAPI가 현재 소유하는 책임:
 - ETL job 생성과 상태 전이
 - Source test와 schema inference bridge
 - Job hydrate와 Run hydrate
+- Airflow orchestration adapter와 Airflow state sync (Airflow phase work)
 - Catalog dataset hydrate
 - Catalog lineage fallback
 - SQL preview 실행

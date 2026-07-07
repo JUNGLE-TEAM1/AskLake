@@ -13,8 +13,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB local connector는 `mongosh` CLI로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `running` job/run을 저장하고 즉시 응답 | pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인 | run detail table과 Spark log object storage 분리 |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `queued` 또는 `running` job/run을 저장하고 즉시 응답 | Airflow DAG Run submit adapter, pause/cancel의 실제 Spark job interrupt |
+| Run/DAG | 현재는 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인. Airflow 전환 후 같은 public API로 DAG Run/Task Instance state를 반영 | run detail table, Airflow sync metadata, Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
@@ -77,7 +77,7 @@ Local backend metadata source of truth는 `DATABASE_URL`이 가리키는 Postgre
 
 `npm run verify`와 `npm run verify:spark-run`은 격리된 검증을 위해 spawned backend에 `ASKLAKE_RESET_METADATA_ON_START=true`를 주고 ETL/Catalog/SQL metadata를 비운 뒤 시작한다. 일반 `npm run dev`는 이 값을 주지 않으므로 생성한 Job과 Dataset이 서버 재시작 후에도 유지된다.
 
-현재 demo에서는 Spark 재실행을 위해 job payload에 `sourceConfig`를 함께 저장한다. 실제 credential 저장 정책은 아직 별도 secret manager로 분리되지 않았으므로, 운영 전에는 credential redaction/secret reference 모델을 확정해야 한다.
+현재 demo에서는 Spark 재실행과 Airflow DAG Run submit payload 구성을 위해 job payload에 `sourceConfig`를 함께 저장한다. 실제 credential 저장 정책은 아직 별도 secret manager로 분리되지 않았으므로, 운영 전에는 credential redaction/secret reference 모델을 확정해야 한다.
 
 ## 4. Source Credential Handling
 
@@ -89,7 +89,37 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
 - PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-## 5. Spark Run Path
+## 5. Airflow Orchestration Target
+
+Airflow 작업의 source of truth는 `docs/airflow-orchestration-sot.md`다.
+
+v1 목표:
+
+- AskLake API는 기존 `POST /api/etl/jobs/{jobId}/commands`와 `GET /api/etl/jobs/{jobId}` 계약을 유지한다.
+- `run`/`retry`는 Airflow DAG Run을 submit하고 `queued` 또는 `running` Run을 빠르게 반환한다.
+- backend는 Airflow DAG Run state를 `JobRunSummary.status`로, Task Instance state를 `JobDagStep.status`로 변환한다.
+- frontend는 `queued`/`running` Run만 polling하고, `success`/`failed`/`canceled` terminal 상태에서 멈춘다.
+- Airflow raw state, DAG id, DAG Run id, Airflow UI URL, sync error는 optional metadata로 저장하며 기존 response 필드를 깨지 않는다.
+
+Status mapping:
+
+| Airflow state | AskLake Run status | AskLake DAG step status |
+| --- | --- | --- |
+| `queued`, `scheduled`, `deferred`, `up_for_retry` | `queued` | `pending` |
+| `running` | `running` | `running` |
+| `success` | `success` | `success` |
+| `failed`, `upstream_failed` | `failed` | `failed` |
+| `skipped`, `removed` | `failed` | `blocked` |
+| AskLake cancel request accepted | `canceled` | `blocked` |
+
+Deferred:
+
+- Fully dynamic DAG generation per job.
+- Airflow permission model and production executor hardening.
+- Long-term object storage for full logs.
+- Real Spark interruption for every pause/cancel path.
+
+## 6. Current Spark Run Path
 
 `POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 `running` 상태로 먼저 저장하고 응답한 뒤 Spark runner를 백그라운드로 호출한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다.
 
@@ -110,7 +140,7 @@ Spark runner 결과:
 - run status
 - DAG step status
 
-## 6. 검증 명령
+## 7. 검증 명령
 
 Backend:
 
@@ -146,16 +176,16 @@ Browser smoke:
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
 - 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
 
-## 7. 완료 기준
+## 8. 완료 기준
 
 - ETL/Catalog 초기 목록은 서버가 비어 있으면 빈 상태로 표시된다.
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
 - Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
 - Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
-- Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- 현재 Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다. Airflow 전환 후 DAG는 같은 사용자-facing 단계명을 유지하되 Airflow Task Instance 상태를 반영한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
 
-## 8. Catalog/SQL 연결 범위
+## 9. Catalog/SQL 연결 범위
 
 ### Catalog
 
@@ -200,7 +230,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
 
-## 9. 대시보드
+## 10. 대시보드
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -246,7 +276,7 @@ Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 
 Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
 구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
-## 10. 아직 실제 저장되지 않는 기능
+## 11. 아직 실제 저장되지 않는 기능
 
 아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
 
@@ -259,7 +289,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-## 11. 백엔드 팀에 넘길 최소 구현 범위
+## 12. 백엔드 팀에 넘길 최소 구현 범위
 
 최소 데모 연동만 목표라면 아래 5개면 충분합니다.
 
@@ -289,7 +319,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 15. `POST /api/dashboards/{dashboardId}/publish`
 16. `POST /api/dashboards/assistant`
 
-## 12. 프론트에서 다음에 할 작업
+## 13. 프론트에서 다음에 할 작업
 
 백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
 
@@ -301,7 +331,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
-## 13. 인수 기준
+## 14. 인수 기준
 
 백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
@@ -314,11 +344,11 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
 
-## 14. 남은 작업
+## 15. 남은 작업
 
 - Kafka message payload schema sampling
 - Parquet physical schema inference endpoint
-- Run detail table, DAG step table, Spark log object storage 분리
+- Airflow adapter, Run detail table, DAG step table, Spark/Airflow log object storage 분리
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API

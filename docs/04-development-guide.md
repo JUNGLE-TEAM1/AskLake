@@ -82,7 +82,7 @@ OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `queued` 또는 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 최종 상태를 반영한다. 현재 구현은 백그라운드 Spark 완료 상태를 polling하며, Airflow orchestration 전환 후에도 같은 public API로 DAG Run/Task Instance 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 

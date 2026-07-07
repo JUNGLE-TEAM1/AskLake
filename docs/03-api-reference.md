@@ -20,12 +20,15 @@
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+AIRFLOW_API_BASE_URL=http://localhost:8081
+AIRFLOW_DAG_ID=asklake_etl_job
 ```
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
+- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration 설정이다. Phase 3 adapter 구현 전까지는 문서화된 목표 계약이며 frontend env에 노출하지 않는다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 
 ## 3) 공통 규칙
@@ -57,6 +60,17 @@ Canonical status values:
 | Dataset | `freshness` | `latest`, `stale`, `approval` |
 | Dashboard | `status` | `draft`, `published` |
 
+Airflow orchestration target status mapping:
+
+| Airflow state | AskLake Run `status` | AskLake DAG step `status` |
+| --- | --- | --- |
+| `queued`, `scheduled`, `deferred`, `up_for_retry` | `queued` | `pending` |
+| `running` | `running` | `running` |
+| `success` | `success` | `success` |
+| `failed`, `upstream_failed` | `failed` | `failed` |
+| `skipped`, `removed` | `failed` | `blocked` |
+| AskLake cancel request accepted | `canceled` | `blocked` |
+
 ## 4) P0 API
 
 | Method | Endpoint | Auth | 설명 | 상세 문서 |
@@ -68,7 +82,7 @@ Canonical status values:
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
-`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `queued` 또는 `running` 상태를 응답하고, 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다. 현재 구현은 백그라운드 Spark runner를 polling하고, Airflow 전환 후에는 같은 public API가 Airflow DAG Run과 Task Instance 상태를 반영한다.
 
 ## 5) P1 API
 
@@ -120,7 +134,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 화면 | 현재 데이터 | Future API |
 | --- | --- | --- |
 | 수집/처리 목록 | Postgres JSONB-backed live backend hydrate | `GET /api/etl/jobs` |
-| 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
+| 수집/처리 상세 | selected job state, running job polling | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |

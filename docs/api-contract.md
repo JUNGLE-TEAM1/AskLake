@@ -42,11 +42,14 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+AIRFLOW_API_BASE_URL=http://localhost:8081
+AIRFLOW_DAG_ID=asklake_etl_job
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
 - `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
+- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration 설정입니다. Phase 3 adapter 구현 전까지는 목표 계약으로만 둡니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
@@ -224,6 +227,12 @@ type JobRunSummary = {
   outputRows: string;
   failedStage: string;
   errorSummary: string;
+  airflowDagId?: string;
+  airflowDagRunId?: string;
+  airflowRunUrl?: string;
+  airflowState?: string;
+  lastSyncedAt?: string;
+  syncError?: string;
 };
 
 type JobDagStep = {
@@ -460,7 +469,7 @@ Response 예시:
 - Catalog Dataset은 Spark run 성공 후 command 응답의 `dataset`으로 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
-- Spark run 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
+- run 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
 
 Validation:
 
@@ -472,6 +481,8 @@ Validation:
 ### 7.2 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
+
+이 endpoint는 AskLake의 public command contract다. 현재 구현은 백그라운드 Spark runner를 시작하고 polling으로 완료 상태를 반영한다. Airflow orchestration 전환 후에도 endpoint와 response shape는 유지하며, backend가 Airflow DAG Run을 submit하고 Airflow state를 AskLake Job/Run/DAG 상태로 변환한다.
 
 프론트 함수:
 
@@ -502,6 +513,7 @@ type JobCommandResponse = {
   job?: JobRowData;
   run?: JobRunSummary;
   dagSteps?: JobDagStep[];
+  processingResult?: DataProcessingResult;
 };
 ```
 
@@ -555,12 +567,31 @@ Response 예시:
 
 | command | action | 상태 변경 |
 | --- | --- | --- |
-| `run` | `etl.run.requested` | `running` |
-| `retry` | `etl.run.retry_requested` | `running` |
+| `run` | `etl.run.requested` | `queued` 또는 `running` |
+| `retry` | `etl.run.retry_requested` | `queued` 또는 `running` |
 | `pause` | `etl.job.pause_requested` | `paused` |
 | `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
 
-`run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 orchestration backend에 실행을 접수한 뒤 `job.status: "running"`과 `run.status: "queued" | "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 저장된 최종 상태와 `runHistory`, `dagSteps`를 다시 반영한다. 현재 구현의 orchestration backend는 백그라운드 Spark runner이고, Airflow 전환 후에는 Airflow DAG Run/Task Instance state가 같은 계약으로 변환된다.
+
+Airflow state mapping:
+
+| Airflow state | Run `status` | DAG step `status` | 비고 |
+| --- | --- | --- | --- |
+| `queued`, `scheduled`, `deferred`, `up_for_retry` | `queued` | `pending` | 아직 worker 실행 전이거나 재시도 대기 |
+| `running` | `running` | `running` | 실행 중 |
+| `success` | `success` | `success` | terminal |
+| `failed`, `upstream_failed` | `failed` | `failed` | terminal 또는 실패 전파 |
+| `skipped`, `removed` | `failed` | `blocked` | v1에서는 성공으로 과장하지 않음 |
+| AskLake cancel request accepted | `canceled` | `blocked` | 실제 Spark interrupt는 후속 범위 |
+
+Polling rules:
+
+- frontend는 `run.status`가 `queued` 또는 `running`이면 `GET /api/etl/jobs/{jobId}`를 polling한다.
+- terminal run status는 `success`, `failed`, `canceled`다.
+- terminal 상태가 확인되면 해당 run polling을 멈춘다.
+- 같은 `runId`가 다시 hydrate되면 기존 run row와 `dagStepsByRunId[runId]`를 교체한다.
+- backend가 알 수 없는 Airflow state를 받으면 raw state를 optional metadata에 보관하고, 명확한 terminal state가 확인될 때까지 run은 `running`으로 유지한다.
 
 Validation:
 
@@ -578,7 +609,7 @@ Response `200 OK`:
 type GetJobResponse = JobRowData;
 ```
 
-실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
+실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`, optional orchestration metadata를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다. Airflow 전환 후에도 이 endpoint는 AskLake-normalized status만 public contract로 보장하고, Airflow raw payload는 optional metadata로만 노출한다.
 
 ### 7.3 읽기 전용 SQL 실행
 

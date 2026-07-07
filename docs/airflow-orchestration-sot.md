@@ -34,6 +34,8 @@ Acceptance criteria:
 
 ### Phase 2. Contract And Documentation
 
+Status: complete.
+
 Scope:
 
 - Define the Airflow v1 execution boundary.
@@ -49,6 +51,11 @@ Acceptance criteria:
   submission endpoint for `run` and `retry`.
 - The status mapping table is documented.
 - Deferred scope is explicit.
+
+Phase 2 output:
+
+- Architecture, public API, detailed API contract, backend readiness, and
+  development guide documents now describe the same Airflow v1 target contract.
 
 ### Phase 3. Backend Airflow Adapter
 
