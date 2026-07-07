@@ -296,6 +296,7 @@
   .form-grid.compact,
   .creation-validation-list,
   .creation-flow-grid .summary-panel dl,
+  .source-choice-grid,
   .format-grid,
   .connector-row,
   .compact-cards,
@@ -321,6 +322,15 @@
 
   .hegun-rule-footer .primary-button {
     width: 100%;
+  }
+
+  .source-choice-screen {
+    padding-top: 20px;
+  }
+
+  .source-choice-card {
+    min-height: 168px;
+    padding: 24px;
   }
 
   .jobs-header-actions {

@@ -949,13 +949,13 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(draft.source.sourceType ? "connect" : "choose");
   const [selectedAssetIndex, setSelectedAssetIndex] = useState(-1);
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "S3 호환 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "S3", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "File / S3": { desc: "S3 버킷과 오브젝트를 연결합니다.", icon: <SourceBrandIcon kind="s3" />, label: "Amazon S3", status: "실제 연결" },
+    PostgreSQL: { desc: "PostgreSQL 데이터베이스를 연결합니다.", icon: <SourceBrandIcon kind="postgres" />, label: "PostgreSQL", status: "실제 연결" },
+    MongoDB: { desc: "MongoDB 데이터베이스를 연결합니다.", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { desc: "RESTful API 응답을 수집합니다.", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { desc: "Lake 경로의 Parquet 오브젝트를 연결합니다.", icon: <SourceBrandIcon kind="lake" />, label: "Data Lake", status: "목록 조회" },
     "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
+    "Stream / Kafka": { desc: "Apache Kafka 스트림 데이터를 연결합니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1378,13 +1378,7 @@ export function SourceConnectionPage({
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
-  const sourceGroups = [
-    { title: "파일 / 오브젝트", connectors: ["File / S3"] },
-    { title: "문서형 / API", connectors: ["MongoDB", "REST API"] },
-    { title: "레이크", connectors: ["Data Lake"] },
-    { title: "관계형 DB", connectors: ["PostgreSQL"] },
-    { title: "스트림", connectors: ["Stream / Kafka"] },
-  ];
+  const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
   return (
     <CreationFlowLayout
@@ -1401,28 +1395,21 @@ export function SourceConnectionPage({
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
               <div className="xflow-source-select-heading">
-                <h2>원천 소스 선택</h2>
+                <h2>Select a data source</h2>
+                <p>Choose the type of data source you want to connect</p>
               </div>
-              <div className="source-category-board">
-                {sourceGroups.map((group) => (
-                  <section className="source-category-column" key={group.title}>
-                    <h3>{group.title}</h3>
-                    <div>
-                      {group.connectors.map((connector) => {
-                        const meta = connectorMeta[connector];
-                        return (
-                          <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
-                            <span className="hegun-connector-icon">{meta.icon}</span>
-                            <strong>{meta.label}</strong>
-                            <span>{meta.desc}</span>
-                            <em>{meta.status}</em>
-                            {sourceType === connector && <span className="hegun-connector-check"><Check size={18} /></span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                ))}
+              <div className="source-choice-grid">
+                {sourceChoiceConnectors.map((connector) => {
+                  const meta = connectorMeta[connector];
+                  return (
+                    <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "source-choice-card active" : "source-choice-card"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                      <span className="source-choice-icon">{meta.icon}</span>
+                      <strong>{meta.label}</strong>
+                      <span>{meta.desc}</span>
+                      {sourceType === connector && <span className="source-choice-check"><Check size={18} /></span>}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
