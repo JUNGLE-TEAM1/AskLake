@@ -525,24 +525,21 @@ function getJobListActions(job: JobRowData): JobListAction[] {
 
 type JobDetailAction = {
   className: string;
-  kind: JobCommand | "runs";
+  kind: JobCommand;
   label: string;
 };
 
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   if (job.status === "running") {
     return [
-      { className: "job-action-button primary", kind: "runs", label: "실행 이력" },
       { className: "job-action-button", kind: "pause", label: "일시정지" },
-      { className: "job-action-button danger", kind: "cancel", label: "취소" },
-      { className: "job-action-button", kind: "delete", label: "삭제" },
+      { className: "job-action-button danger", kind: "cancel", label: "실행 취소" },
     ];
   }
 
   if (job.status === "failed" || job.status === "canceled") {
     return [
       { className: "job-action-button primary", kind: "retry", label: "재실행" },
-      { className: "job-action-button", kind: "runs", label: "실행 이력" },
       { className: "job-action-button", kind: "edit", label: "수정" },
       { className: "job-action-button danger", kind: "delete", label: "삭제" },
     ];
@@ -551,7 +548,6 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   if (job.status === "paused") {
     return [
       { className: "job-action-button primary", kind: "run", label: "재개 실행" },
-      { className: "job-action-button", kind: "runs", label: "실행 이력" },
       { className: "job-action-button", kind: "edit", label: "수정" },
       { className: "job-action-button danger", kind: "delete", label: "삭제" },
     ];
@@ -559,7 +555,6 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
 
   return [
     { className: "job-action-button primary", kind: "run", label: "즉시 실행" },
-    { className: "job-action-button", kind: "runs", label: "실행 이력" },
     { className: "job-action-button", kind: "edit", label: "수정" },
     { className: "job-action-button danger", kind: "delete", label: "삭제" },
   ];
@@ -861,12 +856,11 @@ function DetailSummaryStat({ label, tone, value }: { label: string; tone?: "dang
 }
 
 type JobNextAction = {
-  kind: "run" | "retry" | "runs";
+  kind: "run" | "retry";
   label: string;
 };
 
 function getJobNextAction(job: JobRowData): JobNextAction {
-  if (job.status === "running") return { kind: "runs", label: "실행 이력 보기" };
   if (job.status === "failed" || job.status === "canceled") return { kind: "retry", label: "재실행 요청" };
   if (job.status === "paused") return { kind: "run", label: "재개 실행" };
   return { kind: "run", label: "즉시 실행" };
@@ -889,11 +883,7 @@ function JobDetailHeader({
   onEdit: () => void;
   onRuns: () => void;
 }) {
-  const runAction = (action: JobCommand | "runs") => {
-    if (action === "runs") {
-      onRuns();
-      return;
-    }
+  const runAction = (action: JobCommand) => {
     onCommand(job, action);
   };
 
@@ -945,6 +935,7 @@ export function JobDetailPage({
   const executionDisplay = getJobExecutionDisplay(job);
   const latestRunId = job.runHistory?.[0]?.runId ?? "-";
   const primaryAction = getJobNextAction(job);
+  const showPrimaryAction = job.status !== "running";
   const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
   const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
   const schemaRows = schemaRowsForJob(job, stats);
@@ -964,10 +955,11 @@ export function JobDetailPage({
               <span className="job-ops-kicker">{stripTitle}</span>
               <h3>{executionDisplay.summary}</h3>
             </div>
-            <div className="job-next-actions">
-              <button className="job-action-button primary" type="button" onClick={() => (primaryAction.kind === "runs" ? onRuns() : onCommand(job, primaryAction.kind))}>{primaryAction.label}</button>
-              {primaryAction.kind !== "runs" && <button className="job-action-button" type="button" onClick={onRuns}>실행 이력 보기</button>}
-            </div>
+            {showPrimaryAction && (
+              <div className="job-next-actions">
+                <button className="job-action-button primary" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</button>
+              </div>
+            )}
             <div className="job-summary-stat-grid">
               <DetailSummaryStat label="최근 Run" value={latestRunId} />
               <DetailSummaryStat label="마지막 실행" value={formatCompactDateTime(job.lastRun)} />
