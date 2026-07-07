@@ -154,6 +154,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .creation-validation-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .summary-panel,
   .validation-panel {
     max-width: 744px;
@@ -266,6 +270,20 @@
     padding: 20px;
   }
 
+  .creation-flow-topbar {
+    justify-content: stretch;
+  }
+
+  .creation-top-actions {
+    width: 100%;
+  }
+
+  .creation-top-actions .primary-button,
+  .creation-top-actions .secondary-button {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   .sql-dataset-panel {
     position: static;
     height: auto;
@@ -276,6 +294,7 @@
   .option-grid,
   .form-grid,
   .form-grid.compact,
+  .creation-validation-list,
   .creation-flow-grid .summary-panel dl,
   .format-grid,
   .connector-row,

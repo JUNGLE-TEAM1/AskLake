@@ -36,7 +36,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
-import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
@@ -63,7 +63,6 @@ export function SchedulePage({
   onModeChange,
   onPrev,
   onNext,
-  onSave,
 }: {
   draftRetryPolicy: RetryPolicyDraft;
   draftScheduleLabel: string;
@@ -106,14 +105,10 @@ export function SchedulePage({
     applyScheduleDraft();
     onNext();
   };
-  const saveSchedule = () => {
-    applyScheduleDraft();
-    onSave();
-  };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
         <section className="panel">
@@ -663,7 +658,6 @@ export function SourceConnectionPage({
   onNotify,
   onPrev,
   onNext,
-  onSave,
 }: {
   draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -904,14 +898,6 @@ export function SourceConnectionPage({
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
-  const sourceSummaryRows: Array<[string, string]> = [
-    ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
-    ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
-    ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
-    ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
-  ];
-
   const applySourceDraft = (
     nextType = activeSourceType,
     nextFields = verifiedSourceFields,
@@ -1101,6 +1087,19 @@ export function SourceConnectionPage({
     }
   };
 
+  const goNext = () => {
+    if (!hasSelectedSource) {
+      onNotify("먼저 소스를 선택하세요.");
+      return;
+    }
+    if (connectionStatus !== "success") {
+      onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+      return;
+    }
+    applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
+    onNext();
+  };
+
   const fetchMetadata = () => {
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
@@ -1115,21 +1114,7 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
-        if (!hasSelectedSource) {
-          onNotify("먼저 소스를 선택하세요.");
-          return;
-        }
-        if (connectionStatus !== "success") {
-          onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
-          return;
-        }
-        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
-        onNext();
-      }} onSave={() => {
-        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
-        onSave();
-      }} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
@@ -4153,7 +4138,6 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4211,10 +4195,7 @@ export function TargetPage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="target" title="생성 요약" onPrev={onPrev} onNext={goNext} onSave={() => {
-        applyTargetDraft();
-        onSave();
-      }} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷, RAG 인덱싱 여부를 설정합니다." />
         <section className="panel">
@@ -4312,7 +4293,6 @@ export function PermissionPage({
   onDraftChange,
   onNext,
   onPrev,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4363,22 +4343,20 @@ export function PermissionPage({
   return (
     <CreationFlowLayout
       variant="permission"
-      side={(
-        <CreationValidationPanel
-          className="permission-aside"
-          title="거버넌스 체크"
-          actions={<CreationPanelActions withDivider onPrev={onPrev} onSave={() => {
-            applyPermissionDraft();
-            onSave();
-          }} onNext={goNext} />}
-        >
-          <StatusTile label="공유 범위" value={visibility} status={visibility === "외부 공유" ? "검토 필요" : "안전" } />
-          <StatusTile label="민감 데이터" value="review_text 포함" status="검토 필요" />
-          <StatusTile label="승인자" value={dataOwner} status={approvalStatus === "승인 완료" ? "준비됨" : "대기"} />
-        </CreationValidationPanel>
-      )}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
+        <section className="panel creation-inline-validation-panel">
+          <div className="panel-header">
+            <ShieldCheck size={18} />
+            <h2>거버넌스 체크</h2>
+          </div>
+          <div className="target-status-grid">
+            <StatusTile label="공유 범위" value={visibility} status={visibility === "외부 공유" ? "검토 필요" : "안전" } />
+            <StatusTile label="민감 데이터" value="review_text 포함" status="검토 필요" />
+            <StatusTile label="승인자" value={dataOwner} status={approvalStatus === "승인 완료" ? "준비됨" : "대기"} />
+          </div>
+        </section>
         <section className="panel permission-share-panel">
           <div className="panel-header">
             <ShieldCheck size={18} />
@@ -4456,7 +4434,6 @@ export function ReviewPage({
   draft,
   onCreate,
   onEdit,
-  onSave,
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
@@ -4503,23 +4480,25 @@ export function ReviewPage({
   return (
     <CreationFlowLayout
       variant="review"
-      side={(
-        <CreationValidationPanel
-          title="최종 유효성 검사"
-          actions={<CreationPanelActions withDivider nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
-        >
-          {validationRows.map(([item, status]) => (
-            <div className="validation-row" key={item}>
-              <Check size={16} />
-              <span>{item}</span>
-              <strong>{status}</strong>
-            </div>
-          ))}
-          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
-        </CreationValidationPanel>
-      )}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
         <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
+        <section className="panel creation-inline-validation-panel">
+          <div className="panel-header">
+            <Check size={18} />
+            <h2>최종 유효성 검사</h2>
+          </div>
+          <div className="creation-validation-list">
+            {validationRows.map(([item, status]) => (
+              <div className="validation-row" key={item}>
+                <Check size={16} />
+                <span>{item}</span>
+                <strong>{status}</strong>
+              </div>
+            ))}
+          </div>
+          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
+        </section>
         <div className="review-card-grid">
           {[
             ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
