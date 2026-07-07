@@ -24,11 +24,9 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
-  Save,
   Star,
   Search,
   Settings,
-  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Table2,
@@ -632,7 +630,7 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
-type TargetToggleSectionKey = "tags" | "partition" | "schemaRules" | "preview" | "testRun" | "lineage" | "debugConfig";
+type TargetToggleSectionKey = "tags" | "partition" | "preview" | "testRun";
 
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
@@ -4482,26 +4480,12 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const [testRun, setTestRun] = useState<TargetTestRun>(draftTarget?.lastTestRun ?? { status: "idle", logs: [] });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [saveMessage, setSaveMessage] = useState("");
-  const [debugOpen, setDebugOpen] = useState(false);
+  const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
   const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
-    debugConfig: true,
-    lineage: true,
     partition: true,
     preview: true,
-    schemaRules: true,
     tags: true,
     testRun: true,
-  });
-  const [savedConfig, setSavedConfig] = useState<TargetSavedConfig | null>(() => {
-    if (typeof window === "undefined") return null;
-    const saved = window.localStorage.getItem(TARGET_CONFIG_STORAGE_KEY);
-    if (!saved) return null;
-    try {
-      return JSON.parse(saved) as TargetSavedConfig;
-    } catch {
-      return null;
-    }
   });
 
   const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);
@@ -4621,16 +4605,12 @@ export function TargetPage({
     setValidationErrors(errors);
 
     if (errors.length > 0) {
-      setSaveMessage("필수값과 컬럼 규칙을 먼저 확인하세요.");
       return false;
     }
 
     if (typeof window !== "undefined") {
       window.localStorage.setItem(TARGET_CONFIG_STORAGE_KEY, JSON.stringify(config, null, 2));
     }
-    setSavedConfig(config);
-    setDebugOpen(true);
-    setSaveMessage("타겟 설정이 저장되었습니다.");
     persistDraft(config);
     return true;
   };
@@ -4639,7 +4619,6 @@ export function TargetPage({
     const pendingRun: TargetTestRun = { status: "pending", logs: ["Target config validation started"] };
     setTestRun(pendingRun);
     setValidationErrors([]);
-    setSaveMessage("");
     await new Promise((resolve) => window.setTimeout(resolve, 250));
 
     const config = buildConfig(pendingRun);
@@ -4779,17 +4758,33 @@ export function TargetPage({
           <label className="field">
             <span>포맷</span>
             <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
-              {TARGET_FORMAT_OPTIONS.map((format) => (
-                <button
-                  aria-pressed={targetFormat === format}
-                  className={targetFormat === format ? "target-format-option active" : "target-format-option"}
-                  key={format}
-                  type="button"
-                  onClick={() => setTargetFormat(format)}
-                >
-                  {format}
-                </button>
-              ))}
+              <button
+                aria-expanded={formatOptionsOpen}
+                className="target-format-trigger"
+                type="button"
+                onClick={() => setFormatOptionsOpen((open) => !open)}
+              >
+                <span>{targetFormat}</span>
+                {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </button>
+              {formatOptionsOpen ? (
+                <div className="target-format-menu">
+                  {TARGET_FORMAT_OPTIONS.map((format) => (
+                    <button
+                      aria-pressed={targetFormat === format}
+                      className={targetFormat === format ? "target-format-option active" : "target-format-option"}
+                      key={format}
+                      type="button"
+                      onClick={() => {
+                        setTargetFormat(format);
+                        setFormatOptionsOpen(false);
+                      }}
+                    >
+                      {format}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </label>
           <label className="field wide">
@@ -4888,40 +4883,6 @@ export function TargetPage({
           </div>
         </>
       ))}
-      {renderToggleSection("schemaRules", "컬럼 최소 규칙", <Table2 size={18} />, (
-        <div className="hegun-table-scroll">
-          <table className="schema-table target-rule-table">
-            <thead>
-              <tr>
-                <th>사용</th>
-                <th>컬럼명</th>
-                <th>타입</th>
-                <th>nullable</th>
-                <th>파티션</th>
-                <th>인덱스</th>
-                <th>검증</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedSchemaRules.map((rule) => (
-                <tr className={rule.use ? undefined : "excluded"} key={rule.sourceName}>
-                  <td><input checked={rule.use} type="checkbox" onChange={(event) => updateSchemaRule(rule.sourceName, { use: event.target.checked })} /></td>
-                  <td title={rule.name}><strong>{rule.name}</strong>{rule.raw ? <span className="target-rule-note">raw optional</span> : null}</td>
-                  <td>
-                    <select className="target-schema-select" value={rule.type} onChange={(event) => updateSchemaRule(rule.sourceName, { type: event.target.value as TargetColumnType })}>
-                      {(["string", "number", "boolean", "datetime", "json"] as TargetColumnType[]).map((type) => <option key={type} value={type}>{type}</option>)}
-                    </select>
-                  </td>
-                  <td><input checked={rule.nullable} type="checkbox" onChange={(event) => updateSchemaRule(rule.sourceName, { nullable: event.target.checked })} /></td>
-                  <td>{rule.partitionable ? rule.recommendedPartition ? "추천" : "가능" : "제외"}</td>
-                  <td>{rule.recommendedIndex ? "추천" : rule.indexed ? "선택" : "-"}</td>
-                  <td><span className={rule.validationStatus === "valid" ? "target-validation-pill success" : "target-validation-pill"}>{rule.validationStatus === "valid" ? "통과" : "확인"}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
       {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
         usedSchemaRules.length > 0 && previewRows.length > 0 ? (
           <div className="hegun-table-scroll">
@@ -4960,24 +4921,7 @@ export function TargetPage({
           ) : null}
         </>
       ))}
-      {renderToggleSection("lineage", "리니지", <Share2 size={18} />, (
-        <div className="target-lineage">
-          <span>{lineage.sourceName}</span>
-          <strong>→</strong>
-          <span>Transform {lineage.transformStepCount}</span>
-          <strong>→</strong>
-          <span>{lineage.targetDatasetName}<small>{lineage.targetStoragePath}</small></span>
-        </div>
-      ))}
-      {renderToggleSection("debugConfig", "저장 설정 JSON", <Save size={18} />, (
-        <>
-          {saveMessage ? <div className="target-save-message">{saveMessage}</div> : null}
-          <details className="target-debug-panel" open={debugOpen} onToggle={(event) => setDebugOpen(event.currentTarget.open)}>
-            <summary>저장된 config 확인</summary>
-            <pre>{JSON.stringify(savedConfig ?? buildConfig(), null, 2)}</pre>
-          </details>
-        </>
-      ), <button className="secondary-button compact" type="button" onClick={handleSave}>설정 저장</button>)}    </CreationFlowLayout>
+    </CreationFlowLayout>
   );
 }
 export function PermissionPage({
