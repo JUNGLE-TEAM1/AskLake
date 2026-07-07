@@ -11,3 +11,5 @@ backend/tmp/
 __pycache__/
 *.pyc
 .playwright-cli/
+deploy/.env
+deploy/ec2.env

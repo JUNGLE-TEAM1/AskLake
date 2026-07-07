@@ -243,8 +243,30 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     transformSteps: draftPipeline.transform.steps,
   };
 
+  const sourceConfig = new Map(draftPipeline.source.sourceConfig);
+  const isSqlResultSource = draftPipeline.source.sourceType === "SQL Result";
+  const sourceRunId = sourceConfig.get("SQL Run ID") ?? "";
+  const referenceDatasetIds = sourceConfig.get("Reference Dataset IDs") ?? "";
+  const previewRowCount = sourceConfig.get("Preview Row Count") ?? "";
+  const querySummary = sourceConfig.get("Query")?.replace(/\s+/g, " ").trim() ?? "";
+  const schema = draftPipeline.transform.outputColumns.length > 0
+    ? draftPipeline.transform.outputColumns
+    : draftPipeline.schema.columns
+      .filter((column) => column.included !== false)
+      .map((column) => [column.targetName, column.type] as [string, string]);
+  const sampleRows = draftPipeline.schema.sampleRows.length > 0
+    ? draftPipeline.schema.sampleRows.map((row) => row.slice(0, Math.max(schema.length, 1)))
+    : [["-", "-", "-", "-", "Pipeline queued"]];
+  const normalizedTags = normalizeDerivedDatasetTags(
+    isSqlResultSource
+      ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
+      : ["#customer", "#RAG", "#리뷰"],
+  );
+
   const dataset: CatalogDataset = {
-    description: "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+    description: isSqlResultSource
+      ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -253,18 +275,24 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
-    quality: "95% (Draft verified)",
+    quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
-    rows: "0 rows",
-    sampleRows: [["-", "-", "-", "-", "Pipeline queued"]],
-    schema: draftPipeline.transform.outputColumns.length > 0
-      ? draftPipeline.transform.outputColumns
+    rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
+    sampleRows,
+    schema: schema.length > 0
+      ? schema
       : [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
-    size: "Pending",
+    size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
-    tags: ["#customer", "#RAG", "#리뷰"],
-    upstream: [draftPipeline.source.sourceLabel, job.name],
+    tags: normalizedTags,
+    upstream: [
+      draftPipeline.source.sourceLabel,
+      ...(isSqlResultSource && sourceRunId ? [sourceRunId] : []),
+      ...(isSqlResultSource && referenceDatasetIds && referenceDatasetIds !== "-" ? referenceDatasetIds.split(",").map((item) => item.trim()).filter(Boolean) : []),
+      ...(isSqlResultSource && querySummary ? [`SQL: ${querySummary.slice(0, 96)}`] : []),
+      job.name,
+    ],
   };
   dataset.lineageGraph = buildPipelineDatasetLineageGraph(draftPipeline, dataset);
 

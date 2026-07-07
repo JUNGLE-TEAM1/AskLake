@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -25,6 +26,7 @@ from app.services.dashboard_assistant_guard import (
 )
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
 
 
 class DashboardAssistantService:
@@ -45,6 +47,9 @@ class DashboardAssistantService:
             self.catalog_repository,
             max_sample_rows=self.settings.openai_assistant_max_sample_rows,
         )
+
+        if _is_low_signal_prompt(request.prompt):
+            return _build_low_signal_prompt_response()
 
         if not self.settings.openai_assistant_enabled:
             return self._mock_fallback_response(request, context, "mock fallback: OpenAI Assistant가 비활성화되어 있습니다.")
@@ -146,6 +151,7 @@ def _assistant_instructions() -> str:
         "Use only widgets listed in context.widgets for update_widget actions. "
         "Use only widget types and config fields listed in context.widgetOptions. "
         "Do not invent datasetIds, widgetIds, column names, or chart types. "
+        "If the user prompt is only a casual reaction, laughter, acknowledgement, greeting, or otherwise lacks an analysis or widget-change request, return a short Korean clarification message with no actions. "
         "For dashboard_question, prefer a report action. "
         "For visualization_request, use update_widget when widgetId or selectedWidgetId targets an existing widget; otherwise use create_widget. "
         "For update_widget actions, put changed title, type, datasetId, and config under patch, not widget. "
@@ -154,6 +160,27 @@ def _assistant_instructions() -> str:
         "Translate English dataset and column names into natural Korean business terms when the meaning is clear, and do not keep placeholder titles such as '시각화 요청', 'AI 추천 위젯', or '제목 없는 위젯'. "
         "If the user asks for a column or dimension that is not available in context.availableDatasets, explain that limitation instead of inventing a column. "
         "Write user-facing message and report markdown in Korean."
+    )
+
+
+def _is_low_signal_prompt(prompt: str) -> bool:
+    compact = re.sub(r"\s+", "", prompt.strip().lower())
+    if not compact:
+        return True
+    if compact in LOW_SIGNAL_PROMPTS:
+        return True
+    if re.fullmatch(r"[ㅋㅎㅠㅜ]+", compact):
+        return True
+    if re.fullmatch(r"(ha|haha|lol|lmao|rofl)+", compact):
+        return True
+    return False
+
+
+def _build_low_signal_prompt_response() -> DashboardAssistantResponse:
+    return DashboardAssistantResponse(
+        message="Nessie가 분석하거나 수정할 요청을 찾지 못했습니다. 어떤 위젯을 어떻게 바꿀지 조금 더 구체적으로 입력해 주세요.",
+        actions=[],
+        warnings=["의미가 부족한 짧은 입력이라 대시보드 변경을 적용하지 않았습니다."],
     )
 
 

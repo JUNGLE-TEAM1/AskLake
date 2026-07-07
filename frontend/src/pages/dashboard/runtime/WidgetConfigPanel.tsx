@@ -677,6 +677,7 @@ export function WidgetConfigPanel({
 
     await onCreateWidget({
       ...nextInput,
+      data: selectedDataset?.rows,
       datasetId: selectedDatasetId,
     });
     setTitle("");

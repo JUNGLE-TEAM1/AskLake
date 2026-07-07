@@ -15,7 +15,6 @@ from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CatalogDataset,
-    CreateDerivedDatasetRequest,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
@@ -131,53 +130,10 @@ def get_dataset_lineage(db: Session, dataset_id: str) -> dict[str, Any]:
     dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     if dataset is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    payload_lineage = dataset.payload.get("lineageGraph") if dataset.payload else None
+    if isinstance(payload_lineage, dict):
+        return payload_lineage
     return dataset.lineage_graph or fallback_lineage_graph(dataset)
-
-
-def create_derived_dataset(db: Session, request: CreateDerivedDatasetRequest) -> CatalogDataset:
-    source = etl_repository.get_dataset_by_id(db, request.source_dataset_id)
-    if source is None:
-        raise ApiError(
-            ErrorCode.NOT_FOUND,
-            f"Source dataset not found: {request.source_dataset_id}",
-            status.HTTP_404_NOT_FOUND,
-        )
-
-    dataset_name = request.dataset.name.strip()
-    if not dataset_name:
-        raise ApiError(ErrorCode.VALIDATION_ERROR, "Derived dataset name is required.", status.HTTP_400_BAD_REQUEST)
-
-    dataset_id = f"ds_{normalize_column_name(dataset_name)}"
-    if etl_repository.get_dataset_by_id(db, dataset_id) or etl_repository.get_dataset_by_name(db, dataset_name):
-        raise ApiError(ErrorCode.CONFLICT, f"Dataset already exists: {dataset_name}", status.HTTP_409_CONFLICT)
-
-    preview_limit = request.preview_limit or 100
-    source_schema = source.schema_json or []
-    sample_rows = [list(map(str, row[:len(source_schema) or None])) for row in (source.sample_rows or [])[:preview_limit]]
-    source_lineage = source.lineage_graph or fallback_lineage_graph(source)
-    derived = CatalogDatasetModel(
-        id=dataset_id,
-        name=dataset_name,
-        description=request.dataset.description.strip() or f"{source.name} SQL Preview 결과 데이터셋",
-        owner=source.owner,
-        layer=request.dataset.layer,
-        status="available",
-        freshness="latest",
-        source=f"SQL Preview · {request.source_run_id}",
-        rows=f"{len(sample_rows):,} preview rows",
-        size="Preview result",
-        quality="Preview verified",
-        last_updated=iso_now(),
-        next_refresh="수동 갱신",
-        rag=request.dataset.rag,
-        tags=normalize_tags(request.dataset.tags, "#sql-derived"),
-        schema_json=source_schema,
-        sample_rows=sample_rows,
-        upstream=[source.name, *request.reference_dataset_ids, request.source_run_id],
-        downstream=["SQL 분석", "대시보드"],
-        lineage_graph=derived_lineage_graph(source, dataset_id, dataset_name, request.dataset.layer, source_schema, source_lineage),
-    )
-    return etl_repository.save_dataset(db, derived)
 
 
 def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
@@ -363,8 +319,13 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
+    dataset_id = f"ds_{normalize_column_name(job.target)}"
+    dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now)
+    storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     return CatalogDatasetModel(
-        id=f"ds_{normalize_column_name(job.target)}",
+        id=dataset_id,
+        payload=dataset_payload,
         name=job.target,
         description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         owner=job.owner,
@@ -373,7 +334,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         freshness="latest",
         source=job.name,
         rows=format_rows(result.get("outputRows")),
-        size=str(result.get("outputPath") or "-"),
+        size=display_size,
         quality=quality_summary_from_spark_result(job, result),
         last_updated=now,
         next_refresh=job.schedule,
@@ -384,6 +345,106 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         upstream=[job.source_label, job.name],
         downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
     )
+
+
+def dataset_payload_from_spark_result(
+    job: ETLJobModel,
+    result: dict[str, Any],
+    dataset_id: str,
+    schema_json: list[list[str]],
+    last_updated: str,
+) -> dict[str, Any]:
+    output_path = str(result.get("outputPath") or "-")
+    storage_size_bytes = dataset_storage_size_bytes(output_path)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    return {
+        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        "freshness": "latest",
+        "id": dataset_id,
+        "layer": job.target_layer,
+        "lastUpdated": last_updated,
+        "lineageGraph": lineage_graph,
+        "name": job.target,
+        "nextRefresh": job.schedule,
+        "owner": job.owner,
+        "quality": quality_summary_from_spark_result(job, result),
+        "rag": job.rag,
+        "rows": format_rows(result.get("outputRows")),
+        "sampleRows": job.schema_sample_rows or [],
+        "schema": schema_json,
+        "size": display_size,
+        "source": job.name,
+        "sourceRunId": result.get("runId"),
+        "status": "available",
+        "storageFormat": "parquet",
+        "storageLocation": output_path,
+        "storageSizeBytes": storage_size_bytes,
+        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "upstream": [job.source_label, job.name],
+    }
+
+
+def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: list[list[str]]) -> dict[str, Any]:
+    source_node_id = normalize_lineage_id(f"{dataset_id}-{job.source_label or job.source_type or 'source'}")
+    source_node = lineage_node(
+        source_node_id,
+        job.source_label or job.source_type or "Source",
+        "SOURCE",
+        schema_json,
+        "SOURCE",
+    )
+    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "BRONZE", schema_json, "SPARK")
+    target_node = lineage_node(dataset_id, job.target, job.target_layer or "RAW", schema_json, "ICEBERG")
+    return {
+        "datasetId": dataset_id,
+        "datasets": [source_node, job_node, target_node],
+        "edges": [
+            *lineage_edges_between(source_node, job_node),
+            *lineage_edges_between(job_node, target_node),
+        ],
+    }
+
+
+def lineage_edges_between(source_node: dict[str, Any], target_node: dict[str, Any]) -> list[dict[str, str]]:
+    source_columns = source_node.get("columns") if isinstance(source_node.get("columns"), list) else []
+    target_columns = target_node.get("columns") if isinstance(target_node.get("columns"), list) else []
+    edges = []
+    for index, target_column in enumerate(target_columns):
+        source_column = source_columns[index] if index < len(source_columns) else target_column
+        edges.append({
+            "fromColumnId": str(source_column.get("id") or target_column.get("id")),
+            "fromDatasetId": str(source_node.get("id")),
+            "toColumnId": str(target_column.get("id")),
+            "toDatasetId": str(target_node.get("id")),
+        })
+    return edges
+
+
+def dataset_storage_size_bytes(output_path: str) -> int:
+    path = Path(output_path)
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def format_storage_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    units = ["KB", "MB", "GB", "TB"]
+    size = float(size_bytes)
+    for unit in units:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+    return f"{size:.1f}PB"
 
 
 def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -770,16 +831,6 @@ def normalize_column_name(value: str) -> str:
     return normalized or "dataset"
 
 
-def normalize_tags(tags: list[str], fallback: str) -> list[str]:
-    normalized = []
-    for tag in tags:
-        value = str(tag).strip()
-        if not value:
-            continue
-        normalized.append(value if value.startswith("#") else f"#{value}")
-    return list(dict.fromkeys(normalized or [fallback]))
-
-
 def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
     current_node = lineage_node(dataset.id, dataset.name, dataset.layer, dataset.schema_json or [], "ICEBERG")
     upstream_nodes = [
@@ -805,45 +856,6 @@ def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
         "datasetId": dataset.id,
         "datasets": [*upstream_nodes, current_node],
         "edges": edges,
-    }
-
-
-def derived_lineage_graph(
-    source: CatalogDatasetModel,
-    dataset_id: str,
-    dataset_name: str,
-    layer: str,
-    schema: list[list[str]],
-    source_lineage: dict[str, Any],
-) -> dict[str, Any]:
-    source_node = lineage_node(source.id, source.name, source.layer, source.schema_json or [], "ICEBERG")
-    derived_node = lineage_node(dataset_id, dataset_name, layer, schema, "ICEBERG")
-    base_nodes = [
-        node for node in source_lineage.get("datasets", [])
-        if isinstance(node, dict) and node.get("id") != dataset_id
-    ]
-    if not any(node.get("id") == source.id for node in base_nodes):
-        base_nodes.append(source_node)
-    base_edges = [
-        edge for edge in source_lineage.get("edges", [])
-        if isinstance(edge, dict)
-        and edge.get("fromDatasetId") != dataset_id
-        and edge.get("toDatasetId") != dataset_id
-    ]
-    derived_edges = []
-    for index, target_column in enumerate(derived_node["columns"]):
-        source_columns = source_node["columns"]
-        source_column = source_columns[index] if index < len(source_columns) else target_column
-        derived_edges.append({
-            "fromColumnId": source_column["id"],
-            "fromDatasetId": source_node["id"],
-            "toColumnId": target_column["id"],
-            "toDatasetId": derived_node["id"],
-        })
-    return {
-        "datasetId": dataset_id,
-        "datasets": [*base_nodes, derived_node],
-        "edges": [*base_edges, *derived_edges],
     }
 
 
