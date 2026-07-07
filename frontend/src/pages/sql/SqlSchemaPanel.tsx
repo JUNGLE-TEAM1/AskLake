@@ -14,8 +14,6 @@ export function SchemaDetailsPanel({
   onSelectedDatasetRemove: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
-  const canRemoveDataset = selectedDatasets.length > 1;
-
   if (!dataset) {
     return (
       <aside className="sql-schema-panel empty">
@@ -56,9 +54,8 @@ export function SchemaDetailsPanel({
                 <button
                   aria-label={`${item.name} 선택 해제`}
                   className="sql-selected-dataset-remove"
-                  disabled={!canRemoveDataset}
                   onClick={() => onSelectedDatasetRemove(item)}
-                  title={canRemoveDataset ? "선택 해제" : "최소 1개 테이블은 필요합니다"}
+                  title="선택 해제"
                   type="button"
                 >
                   <X size={12} />
