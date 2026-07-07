@@ -8,6 +8,7 @@ vite.config.d.ts
 AGENTS.local.md
 backend/.env
 backend/.env.local
+*.env.local.save
 backend/tmp/
 __pycache__/
 *.pyc
