@@ -466,7 +466,7 @@ export async function createDerivedDatasetFromSql({
   }
 
   const normalizedName = request.dataset.name.trim() || `${sourceDataset.name}_analysis`;
-  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL 쿼리 결과로 생성한 분석 데이터셋`;
   const normalizedTags = normalizeDerivedDatasetTags(request.dataset.tags);
   const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
   const dataset: CatalogDataset = {

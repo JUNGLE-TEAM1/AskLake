@@ -1,5 +1,6 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  BarChart3,
   Database,
   Download,
   PlayCircle,
@@ -98,6 +99,7 @@ export function SqlAnalysisPage({
   const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
   const [derivedDatasetDraft, setDerivedDatasetDraft] = useState<DerivedDatasetDraft | null>(null);
   const [derivedDatasetPending, setDerivedDatasetPending] = useState(false);
+  const [materializeOpen, setMaterializeOpen] = useState(false);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
   const [dismissedAutocompleteKey, setDismissedAutocompleteKey] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -171,6 +173,7 @@ export function SqlAnalysisPage({
     setDerivedDatasetTags(buildDefaultDerivedDatasetTags(baseDataset));
     setDerivedDatasetRag(baseDataset.rag);
     setDerivedDatasetDraft(null);
+    setMaterializeOpen(false);
     setOpenSchemaDatasetId(null);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
@@ -214,6 +217,7 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetDraft(null);
+    setMaterializeOpen(false);
     onResultChange(null);
   };
 
@@ -293,7 +297,7 @@ export function SqlAnalysisPage({
       setPreflightResult({
         key: queryValidationKey,
         canExecute: false,
-        messages: [{ tone: "error", text: "Preview 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+        messages: [{ tone: "error", text: "쿼리 실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
       });
       onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
@@ -433,6 +437,7 @@ export function SqlAnalysisPage({
     try {
       const dataset = await onCreateDerivedDataset(request);
       if (!dataset) return;
+      setMaterializeOpen(true);
       setDerivedDatasetDraft({
         columnCount: resultDraft.columns.length,
         datasetId: dataset.id,
@@ -450,19 +455,27 @@ export function SqlAnalysisPage({
       setDerivedDatasetPending(false);
     }
   };
+  const requestVisualization = () => {
+    if (!resultDraft) return;
+    onAction("analysis.result.visualization_requested", `/api/query/runs/${resultDraft.runId}/visualization`, resultDraft.datasetId);
+  };
+  const requestDashboard = () => {
+    if (!resultDraft) return;
+    onAction("analysis.result.dashboard_requested", `/api/dashboards?sourceRunId=${resultDraft.runId}`, resultDraft.datasetId);
+  };
 
   return (
     <div className={contextCollapsed ? "sql-page context-collapsed" : "sql-page"}>
       <aside className="sql-dataset-panel" aria-hidden={contextCollapsed}>
         <div className="sql-panel-header">
-          <span>TABLE SEARCH</span>
+          <span>DATASET CONTEXT</span>
           <div>
-            <strong>분석 테이블</strong>
+            <strong>쿼리 데이터셋</strong>
             <em>{datasets.length} tables</em>
           </div>
         </div>
         <section className="sql-base-table">
-          <h2>BASE DATASET</h2>
+          <h2>현재 쿼리에 사용 중인 데이터셋</h2>
           <SqlDatasetRow
             dataset={baseDataset}
             expanded={openSchemaDatasetId === baseDataset.id}
@@ -482,7 +495,7 @@ export function SqlAnalysisPage({
         </label>
         <section className="sql-dataset-search-results">
           <div className="sql-section-heading">
-            <h2>table search</h2>
+            <h2>검색해서 추가할 데이터셋</h2>
             <button type="button" onClick={toggleReferencedOnly} disabled={referenceDatasetIds.length === 0 && !showReferencedOnly}>
               {showReferencedOnly ? "All tables" : `${referenceDatasetIds.length} referenced`}
             </button>
@@ -549,7 +562,7 @@ export function SqlAnalysisPage({
             </div>
             <div className="sql-editor-actions">
               <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
-                <PlayCircle size={16} /> {queryPending ? "Preview 중" : "Preview 실행"}
+                <PlayCircle size={16} /> {queryPending ? "쿼리 실행 중" : "쿼리 실행"}
               </button>
             </div>
           </div>
@@ -596,7 +609,7 @@ export function SqlAnalysisPage({
           </div>
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              <span>Context: base + {referenceDatasetIds.length} referenced tables</span>
+              <span>Context: 현재 데이터셋 + 참조 데이터셋 {referenceDatasetIds.length}개</span>
               {preflightSummary && (
                 <span className={`sql-check-pill ${preflightSummary.tone}`}>
                   {preflightSummary.label}
@@ -604,18 +617,18 @@ export function SqlAnalysisPage({
               )}
               {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
-            <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> Reset SQL</button>
+            <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> SQL 초기화</button>
           </div>
         </section>
 
         <section className="sql-result-card">
           <div className="sql-result-header">
             <div>
-              <span>PREVIEW RESULT</span>
-              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "Preview 실행 후 결과가 표시됩니다"}</h2>
+              <span>QUERY RESULT</span>
+              <h2>{resultDraft ? `${resultDraft.rowCount} rows returned` : "쿼리 실행 후 결과가 표시됩니다"}</h2>
             </div>
             <div className="sql-result-status">
-              <span>{queryPending ? "running" : executed ? "테스트 완료" : "ready"}</span>
+              <span>{queryPending ? "running" : executed ? "실행 완료" : "ready"}</span>
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
@@ -626,7 +639,12 @@ export function SqlAnalysisPage({
                   Run ID {resultDraft.runId}
                   {resultDraft.previewLimit ? ` · Preview ${resultDraft.previewLimit} rows` : ""}
                 </span>
-                <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+                <div className="sql-result-action-group">
+                  <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
+                  <button type="button" onClick={() => setMaterializeOpen((open) => !open)}><Database size={14} /> 새 데이터셋 만들기</button>
+                  <button type="button" onClick={requestVisualization}><BarChart3 size={14} /> 시각화 만들기</button>
+                  <button type="button" onClick={requestDashboard}><BarChart3 size={14} /> 대시보드에 추가</button>
+                </div>
               </div>
               <div className="sql-result-scroll">
                 <table className="schema-table">
@@ -637,14 +655,15 @@ export function SqlAnalysisPage({
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>아직 Preview 결과가 없습니다.</strong>
-              <span>SQL 점검을 통과한 뒤 Preview를 실행하면 결과 테이블이 표시됩니다.</span>
+              <strong>아직 쿼리 결과가 없습니다.</strong>
+              <span>SQL 점검을 통과한 뒤 쿼리를 실행하면 결과 테이블이 표시됩니다.</span>
             </div>
           )}
-          <section className={resultDraft ? "sql-materialize-card" : "sql-materialize-card disabled"}>
+          {resultDraft && (materializeOpen || derivedDatasetDraft) && (
+          <section className="sql-materialize-card">
             <div>
               <span>LAKE DATASET</span>
-              <h3>Preview 결과 저장</h3>
+              <h3>쿼리 결과로 새 데이터셋 만들기</h3>
             </div>
             <div className="sql-materialize-form">
               <label>
@@ -727,6 +746,7 @@ export function SqlAnalysisPage({
               )}
             </div>
           </section>
+          )}
         </section>
       </main>
     </div>
@@ -743,7 +763,7 @@ function SchemaColumnList({
   return (
     <div className="sql-card-schema">
       {dataset.schema.map(([name, type], index) => (
-        <button key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
+        <button aria-label={`${name} 필드명 삽입`} title="클릭하면 SQL 에디터에 필드명이 삽입됩니다." key={`${dataset.id}-${name}-${index}`} type="button" onClick={() => onColumnClick(dataset, name)}>
           <span>{name}</span>
           <em>{type}</em>
         </button>
@@ -764,7 +784,7 @@ function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
 }
 
 function buildDefaultDerivedDatasetDescription(dataset: CatalogDataset) {
-  return `${dataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  return `${dataset.name} SQL 쿼리 결과로 생성한 분석 데이터셋`;
 }
 
 function buildDefaultDerivedDatasetTags(dataset: CatalogDataset) {
@@ -826,13 +846,13 @@ function SqlDatasetRow({
       {expanded && (
         <div className="sql-table-expanded">
           <div className="sql-table-card-actions">
-            {!isBase && <button type="button" onClick={() => onBaseChange?.(dataset)}>Base로 설정</button>}
+            {!isBase && <button type="button" onClick={() => onBaseChange?.(dataset)}>현재 쿼리 데이터셋으로 설정</button>}
             {!isBase && (
               <button type="button" onClick={() => onReferenceToggle?.(dataset)}>
-                {isReferenced ? "참조 해제" : "참조 추가"}
+                {isReferenced ? "참조 해제" : "쿼리에 참조 추가"}
               </button>
             )}
-            <button type="button" onClick={() => onInsert(dataset)}>SQL에 삽입</button>
+            <button type="button" onClick={() => onInsert(dataset)}>테이블명 삽입</button>
           </div>
           <SchemaColumnList dataset={dataset} onColumnClick={onColumnClick} />
         </div>

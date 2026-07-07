@@ -327,7 +327,7 @@ export function useAskLakeData({
 
       if (!sourceDataset || !currentSqlResult) {
         writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
-        showToast("Lake Dataset 생성에 필요한 Preview 결과를 찾지 못했습니다.", "info");
+        showToast("Lake Dataset 생성에 필요한 쿼리 결과를 찾지 못했습니다.", "info");
         return null;
       }
 
