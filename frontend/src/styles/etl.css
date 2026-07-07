@@ -248,28 +248,123 @@
   align-content: start;
   max-height: none;
   overflow: visible;
-  max-width: 896px;
+  max-width: 860px;
   margin: 0 auto;
   width: 100%;
-  padding-top: 32px;
+  padding: 32px 0 56px;
 }
 
 .xflow-source-select-heading {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
 .xflow-source-select-heading h2 {
   margin: 0;
   color: #111827;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 800;
   line-height: 1.35;
 }
 
 .xflow-source-select-heading p {
-  display: none;
+  display: block;
+  margin: 0;
+  color: #64748b;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.source-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  align-items: stretch;
+}
+
+.source-choice-card {
+  position: relative;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 14px;
+  min-width: 0;
+  min-height: 204px;
+  border: 1px solid #dfe3ea;
+  border-radius: 12px;
+  background: #fff;
+  padding: 30px 32px;
+  text-align: left;
+  transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.source-choice-card:hover {
+  border-color: #cbd5e1;
+  background: #fbfdff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  transform: translateY(-1px);
+}
+
+.source-choice-card:focus {
+  outline: none;
+}
+
+.source-choice-card:focus-visible {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.source-choice-card.active {
+  border-color: #2563eb;
+  background: #f8fbff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.16);
+}
+
+.source-choice-card strong {
+  color: #111827;
+  font-size: 20px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.source-choice-card > span:not(.source-choice-icon):not(.source-choice-check) {
+  color: #64748b;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.source-choice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+}
+
+.source-choice-icon .source-brand-icon {
+  width: 56px;
+  height: 56px;
+}
+
+.source-choice-check {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+}
+
+.source-choice-check svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
 }
 
 .source-category-board {
