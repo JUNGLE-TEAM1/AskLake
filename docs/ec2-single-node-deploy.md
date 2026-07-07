@@ -110,7 +110,6 @@ sudo nano /etc/asklake/backend.env
 
 cd /opt/asklake/backend
 npm ci
-npm run verify
 
 sudo cp /opt/asklake/ops/ec2/asklake-backend.service /etc/systemd/system/asklake-backend.service
 sudo systemctl daemon-reload
@@ -128,6 +127,10 @@ CORS_ORIGIN=http://YOUR_DOMAIN_OR_IP
 ```
 
 If Nginx and the frontend use HTTPS, set `CORS_ORIGIN` to the HTTPS origin.
+
+`npm run verify` also exercises the MinIO-backed source connector path. Run it
+only after MinIO fixtures are available; for this minimal single-node path,
+`curl -s http://127.0.0.1:8080/api/health` is the backend startup smoke test.
 
 ## 8) Build Frontend
 

@@ -40,7 +40,7 @@ export async function createPipeline(request) {
     lastRun: "생성 후 미실행",
     lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
-    nextRun: request.scheduleLabel === "manual" ? "-" : request.scheduleLabel,
+    nextRun: isManualScheduleLabel(request.scheduleLabel) ? "-" : request.scheduleLabel,
     owner: request.owner,
     runHistory: [],
     schedule: request.scheduleLabel,
@@ -238,6 +238,11 @@ function validationError(message) {
   return error;
 }
 
+function isManualScheduleLabel(value) {
+  const label = String(value || "");
+  return label === "manual" || label.includes("수동") || label.includes("스케줄 없음");
+}
+
 function notFoundError(message) {
   const error = new Error(message);
   error.status = 404;
@@ -272,7 +277,7 @@ function applyJobCommand(job, command) {
     ...job,
     lastRun: "방금 취소",
     lastState: "취소됨",
-    nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+    nextRun: isManualScheduleLabel(job.schedule) ? "-" : job.schedule,
     progress: undefined,
     status: "canceled",
   };
@@ -397,7 +402,7 @@ function finalizeJobFromSparkResult(job, command, result) {
     lastState: success
       ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark Parquet 적재`
       : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
-    nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+    nextRun: isManualScheduleLabel(job.schedule) ? "-" : job.schedule,
     progress: undefined,
     status: success ? "scheduled" : "failed",
     targetPath: result.outputPath ?? job.targetPath,
