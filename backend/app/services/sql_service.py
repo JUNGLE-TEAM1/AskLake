@@ -1,8 +1,10 @@
-import json
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from decimal import Decimal
+import json
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import duckdb
@@ -16,7 +18,6 @@ from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryRunRequest, QueryRunResponse
 
 DEFAULT_PREVIEW_LIMIT = 100
-MAX_RESULT_COLUMNS = 100
 MUTATION_KEYWORDS = (
     "insert",
     "update",
@@ -59,12 +60,6 @@ SQL_CTE_NAME_RE = re.compile(
 )
 
 
-class SqlPreviewExecutionResult:
-    def __init__(self, *, columns: list[str], rows: list[list[str]]) -> None:
-        self.columns = columns
-        self.rows = rows
-
-
 class SqlService:
     def __init__(
         self,
@@ -89,30 +84,31 @@ class SqlService:
             self.get_catalog_dataset(reference_dataset_id, label="Reference dataset")
             for reference_dataset_id in reference_dataset_ids
         ]
-        execution_datasets = resolve_execution_datasets(
-            statement,
-            base_dataset,
-            reference_datasets,
+        context_datasets = [base_dataset, *reference_datasets]
+        referenced_datasets = resolve_referenced_datasets(
+            mask_sql_comments_and_literals(statement),
+            context_datasets,
         )
+        result_dataset = resolve_result_dataset(base_dataset, referenced_datasets)
         preview_limit = request.limit or DEFAULT_PREVIEW_LIMIT
-        result = execute_preview_query(
-            statement=statement,
-            datasets=execution_datasets,
+        query_result = execute_duckdb_preview(
+            statement,
+            context_datasets=context_datasets,
             preview_limit=preview_limit,
         )
 
         response = QueryRunResponse(
             base_dataset_id=base_dataset_id,
-            columns=result.columns,
-            dataset_id=base_dataset.id,
-            dataset_name=base_dataset.name,
+            columns=query_result["columns"],
+            dataset_id=result_dataset.id,
+            dataset_name=result_dataset.name,
             executed_at=current_utc_timestamp(),
             mode=request.mode,
             preview_limit=preview_limit,
             query=query,
             reference_dataset_ids=reference_dataset_ids,
-            row_count=len(result.rows),
-            rows=result.rows,
+            row_count=query_result["row_count"],
+            rows=query_result["rows"],
             run_id=f"sql_{uuid4().hex[:12]}",
             validation_key=request.validation_key,
         )
@@ -148,8 +144,9 @@ def validate_read_only_query(query: str) -> str:
         )
 
     masked_query = mask_sql_comments_and_literals(query)
-    statement = get_single_statement(masked_query, query)
-    lowered_statement = mask_sql_comments_and_literals(statement).strip().lower()
+    statement = get_single_statement(masked_query)
+    original_statement = get_original_single_statement(query, masked_query)
+    lowered_statement = statement.strip().lower()
 
     mutation_match = MUTATION_KEYWORD_RE.search(lowered_statement)
     if mutation_match:
@@ -160,14 +157,16 @@ def validate_read_only_query(query: str) -> str:
             {"keyword": mutation_match.group(1).upper()},
         )
 
+    reject_single_quoted_relation_sources(original_statement)
+
     if lowered_statement.startswith("select"):
-        return statement
+        return original_statement
 
     if lowered_statement.startswith("with") and re.search(
         r"\bselect\b",
         lowered_statement,
     ):
-        return statement
+        return original_statement
 
     raise ApiError(
         ErrorCode.SQL_SYNTAX_ERROR,
@@ -176,12 +175,46 @@ def validate_read_only_query(query: str) -> str:
     )
 
 
-def resolve_execution_datasets(
+def reject_single_quoted_relation_sources(query: str) -> None:
+    index = 0
+    query_length = len(query)
+    while index < query_length:
+        char = query[index]
+        next_char = query[index + 1] if index + 1 < query_length else ""
+
+        if char == "-" and next_char == "-":
+            index = skip_line_comment(query, index)
+            continue
+        if char == "/" and next_char == "*":
+            index = skip_block_comment(query, index)
+            continue
+        if char in {"'", '"', "`"}:
+            index = skip_quoted_sql_token(query, index, char)
+            continue
+        if char == "[":
+            index = skip_bracket_identifier(query, index)
+            continue
+
+        keyword = relation_keyword_at(query, index)
+        if keyword:
+            relation_start = skip_sql_whitespace_and_comments(query, index + len(keyword))
+            if relation_start < query_length and query[relation_start] == "'":
+                raise ApiError(
+                    ErrorCode.VALIDATION_ERROR,
+                    "SQL relation sources must use selected catalog tables, not file path literals",
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    {"keyword": keyword.upper()},
+                )
+            index = relation_start
+            continue
+
+        index += 1
+
+
+def resolve_referenced_datasets(
     statement: str,
-    base_dataset: CatalogDatasetResponse,
-    reference_datasets: list[CatalogDatasetResponse],
+    context_datasets: list[CatalogDatasetResponse],
 ) -> list[CatalogDatasetResponse]:
-    context_datasets = [base_dataset, *reference_datasets]
     dataset_by_table_name = build_dataset_context_map(context_datasets)
     referenced_table_names = extract_referenced_table_names(statement)
     cte_names = extract_cte_names(statement)
@@ -204,161 +237,308 @@ def resolve_execution_datasets(
             {"tables": unknown_table_names},
         )
 
-    execution_datasets = unique_datasets_by_id(
+    preview_datasets = unique_datasets_by_id(
         dataset_by_table_name[table_name]
         for table_name in physical_table_names
         if table_name in dataset_by_table_name
     )
-
-    if execution_datasets:
-        return execution_datasets
-    return [base_dataset]
+    return preview_datasets
 
 
-def execute_preview_query(
-    *,
+def resolve_result_dataset(
+    base_dataset: CatalogDatasetResponse,
+    referenced_datasets: list[CatalogDatasetResponse],
+) -> CatalogDatasetResponse:
+    if len(referenced_datasets) == 1:
+        return referenced_datasets[0]
+    return base_dataset
+
+
+def execute_duckdb_preview(
     statement: str,
-    datasets: list[CatalogDatasetResponse],
+    *,
+    context_datasets: list[CatalogDatasetResponse],
     preview_limit: int,
-) -> SqlPreviewExecutionResult:
+) -> dict[str, Any]:
     connection = duckdb.connect(database=":memory:")
     try:
-        for dataset in datasets:
-            register_dataset_table(connection, dataset)
+        for dataset in unique_datasets_by_id(context_datasets):
+            register_duckdb_dataset(connection, dataset)
 
         cursor = connection.execute(
-            f"SELECT * FROM ({statement}) AS asklake_preview_result LIMIT ?",
+            f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
             [preview_limit],
         )
-        columns = [
-            str(description[0] or f"column_{index + 1}")
-            for index, description in enumerate(cursor.description or [])
-        ][:MAX_RESULT_COLUMNS]
+        raw_rows = cursor.fetchall()
+        columns = [str(description[0]) for description in (cursor.description or [])]
         rows = [
-            [stringify_result_value(cell) for cell in row[:MAX_RESULT_COLUMNS]]
-            for row in cursor.fetchall()
+            [format_sql_cell(cell) for cell in row]
+            for row in raw_rows
         ]
-        return SqlPreviewExecutionResult(columns=columns, rows=rows)
+        return {
+            "columns": columns,
+            "row_count": len(rows),
+            "rows": rows,
+        }
     except duckdb.Error as error:
         raise ApiError(
             ErrorCode.SQL_SYNTAX_ERROR,
-            "SQL preview execution failed",
+            "DuckDB SQL execution failed",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"detail": str(error)},
+            {"message": str(error)},
         ) from error
     finally:
         connection.close()
 
 
-def register_dataset_table(
+def register_duckdb_dataset(
     connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
 ) -> None:
-    columns = dataset.schema_ or [("value", "string")]
-    column_names = unique_column_names([column_name for column_name, _ in columns])
-    quoted_columns = ", ".join(
-        f"{quote_sql_identifier(column_name)} TEXT"
-        for column_name in column_names
-    )
-    primary_table_name = dataset.name
-    connection.execute(
-        f"CREATE TABLE {quote_sql_identifier(primary_table_name)} ({quoted_columns})"
-    )
+    table_name = dataset.name
+    registered = register_duckdb_storage_location(connection, dataset, table_name)
+    if not registered:
+        register_duckdb_sample_rows(connection, dataset, table_name)
 
-    dataset_rows = load_dataset_rows(dataset, len(column_names))
-    if dataset_rows:
-        placeholders = ", ".join("?" for _ in column_names)
-        connection.executemany(
-            f"INSERT INTO {quote_sql_identifier(primary_table_name)} VALUES ({placeholders})",
-            dataset_rows,
-        )
-
-    if normalize_sql_identifier(dataset.id) != normalize_sql_identifier(primary_table_name):
+    if dataset.id != dataset.name:
         connection.execute(
-            f"CREATE VIEW {quote_sql_identifier(dataset.id)} AS SELECT * FROM {quote_sql_identifier(primary_table_name)}"
+            f"CREATE TEMP VIEW {quote_duckdb_identifier(dataset.id)} AS SELECT * FROM {quote_duckdb_identifier(table_name)}"
         )
 
 
-def load_dataset_rows(
+def register_duckdb_storage_location(
+    connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
-    column_count: int,
-) -> list[list[str | None]]:
-    storage_rows = load_jsonl_storage_rows(dataset, column_count)
-    if storage_rows is not None:
-        return storage_rows
-    return normalize_dataset_rows(dataset.sample_rows, column_count)
+    table_name: str,
+) -> bool:
+    storage_location = dataset.storage_location
+    if not storage_location:
+        return False
+
+    storage_path = Path(storage_location)
+    if not storage_path.exists():
+        return False
+
+    storage_format = str(dataset.storage_format or "").lower()
+    try:
+        if storage_format == "jsonl" and storage_path.is_file():
+            records = read_jsonl_records(storage_path)
+            if not records:
+                return False
+            register_duckdb_records(connection, table_name, records)
+            return True
+
+        if storage_format == "parquet":
+            parquet_path = parquet_scan_path(storage_path)
+            if not parquet_path:
+                return False
+            connection.execute(
+                f"CREATE TEMP VIEW {quote_duckdb_identifier(table_name)} AS "
+                f"SELECT * FROM read_parquet({quote_duckdb_string_literal(parquet_path)})"
+            )
+            return True
+    except (OSError, duckdb.Error, json.JSONDecodeError):
+        return False
+
+    return False
 
 
-def load_jsonl_storage_rows(
+def register_duckdb_sample_rows(
+    connection: duckdb.DuckDBPyConnection,
     dataset: CatalogDatasetResponse,
-    column_count: int,
-) -> list[list[str | None]] | None:
-    if dataset.storage_format != "jsonl" or not dataset.storage_location:
-        return None
+    table_name: str,
+) -> None:
+    columns = dataset_columns(dataset)
+    if not columns:
+        max_width = max((len(row) for row in dataset.sample_rows), default=0)
+        columns = [(f"column_{index + 1}", "string") for index in range(max_width)]
 
-    storage_path = Path(dataset.storage_location)
-    if not storage_path.exists() or not storage_path.is_file():
-        return None
+    column_defs = ", ".join(
+        f"{quote_duckdb_identifier(column_name)} {duckdb_column_type(column_type)}"
+        for column_name, column_type in columns
+    )
+    if not column_defs:
+        column_defs = "empty_row VARCHAR"
+        columns = [("empty_row", "string")]
 
-    column_names = [column_name for column_name, _ in dataset.schema_]
-    rows: list[list[str | None]] = []
-    with storage_path.open("r", encoding="utf-8") as data_file:
-        for line in data_file:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            if isinstance(record, dict):
-                rows.append([
-                    stringify_sql_value(record.get(column_names[index]))
-                    if index < len(column_names)
-                    else None
-                    for index in range(column_count)
-                ])
-            elif isinstance(record, list):
-                rows.append(normalize_dataset_row(record, column_count))
-    return rows
+    connection.execute(
+        f"CREATE TEMP TABLE {quote_duckdb_identifier(table_name)} ({column_defs})"
+    )
 
+    if not dataset.sample_rows:
+        return
 
-def normalize_dataset_rows(
-    rows: list[list[str]],
-    column_count: int,
-) -> list[list[str | None]]:
-    return [normalize_dataset_row(row, column_count) for row in rows]
-
-
-def normalize_dataset_row(row: list[object], column_count: int) -> list[str | None]:
-    return [
-        stringify_sql_value(row[index]) if index < len(row) else None
-        for index in range(column_count)
+    placeholders = ", ".join("?" for _ in columns)
+    rows = [
+        [
+            coerce_duckdb_cell(row[index] if index < len(row) else None, column_type)
+            for index, (_, column_type) in enumerate(columns)
+        ]
+        for row in dataset.sample_rows
     ]
+    connection.executemany(
+        f"INSERT INTO {quote_duckdb_identifier(table_name)} VALUES ({placeholders})",
+        rows,
+    )
 
 
-def unique_column_names(column_names: list[str]) -> list[str]:
-    unique_names: list[str] = []
-    seen_names: dict[str, int] = {}
-    for index, column_name in enumerate(column_names):
-        base_name = column_name.strip() or f"column_{index + 1}"
-        normalized_name = base_name.lower()
-        seen_count = seen_names.get(normalized_name, 0)
-        seen_names[normalized_name] = seen_count + 1
-        unique_names.append(base_name if seen_count == 0 else f"{base_name}_{seen_count + 1}")
-    return unique_names
+def register_duckdb_records(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    records: list[dict[str, Any]],
+) -> None:
+    columns = record_columns(records)
+    column_defs = ", ".join(
+        f"{quote_duckdb_identifier(column_name)} VARCHAR"
+        for column_name, _ in columns
+    )
+    connection.execute(
+        f"CREATE TEMP TABLE {quote_duckdb_identifier(table_name)} ({column_defs})"
+    )
+    placeholders = ", ".join("?" for _ in columns)
+    rows = [
+        [format_record_cell(record.get(source_name)) for _, source_name in columns]
+        for record in records
+    ]
+    connection.executemany(
+        f"INSERT INTO {quote_duckdb_identifier(table_name)} VALUES ({placeholders})",
+        rows,
+    )
 
 
-def quote_sql_identifier(identifier: str) -> str:
-    return f'"{identifier.replace("\"", "\"\"")}"'
+def record_columns(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    source_names: list[str] = []
+    seen_source_names: set[str] = set()
+    for record in records:
+        for raw_name in record:
+            name = str(raw_name)
+            if name in seen_source_names:
+                continue
+            source_names.append(name)
+            seen_source_names.add(name)
+
+    used_names: set[str] = set()
+    return [
+        (unique_column_name(name, used_names), name)
+        for name in source_names
+    ] or [("value", "value")]
 
 
-def stringify_sql_value(value: object) -> str | None:
+def format_record_cell(value: Any) -> str | None:
     if value is None:
         return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
     return str(value)
 
 
-def stringify_result_value(value: object) -> str:
+def dataset_columns(dataset: CatalogDatasetResponse) -> list[tuple[str, str]]:
+    used_names: set[str] = set()
+    columns: list[tuple[str, str]] = []
+    for index, (raw_name, raw_type) in enumerate(dataset.schema_):
+        column_name = unique_column_name(str(raw_name or f"column_{index + 1}"), used_names)
+        columns.append((column_name, str(raw_type or "string")))
+    return columns
+
+
+def unique_column_name(column_name: str, used_names: set[str]) -> str:
+    base_name = column_name.strip() or "column"
+    candidate = base_name
+    suffix = 2
+    while candidate.lower() in used_names:
+        candidate = f"{base_name}_{suffix}"
+        suffix += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
+def duckdb_column_type(column_type: str) -> str:
+    normalized = column_type.lower()
+    if "bool" in normalized:
+        return "BOOLEAN"
+    if any(token in normalized for token in ("int", "long", "bigint")):
+        return "BIGINT"
+    if any(token in normalized for token in ("decimal", "double", "float", "number", "numeric")):
+        return "DOUBLE"
+    return "VARCHAR"
+
+
+def coerce_duckdb_cell(value: Any, column_type: str) -> Any:
+    if value is None:
+        return None
+    text = str(value)
+    if text == "":
+        return None
+
+    target_type = duckdb_column_type(column_type)
+    if target_type == "BIGINT":
+        try:
+            return int(float(text))
+        except ValueError:
+            return None
+    if target_type == "DOUBLE":
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    if target_type == "BOOLEAN":
+        normalized = text.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+        return None
+    return text
+
+
+def format_sql_cell(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if value.is_integer() else str(value)
+    if isinstance(value, Decimal):
+        normalized = value.normalize()
+        return format(normalized, "f")
+    if isinstance(value, (datetime,)):
+        return value.isoformat()
     return str(value)
+
+
+def parquet_scan_path(storage_path: Path) -> str:
+    if storage_path.is_file() and storage_path.suffix.lower() == ".parquet":
+        return str(storage_path)
+    if storage_path.is_dir():
+        parquet_files = list(storage_path.rglob("*.parquet"))
+        if parquet_files:
+            return str(storage_path / "**" / "*.parquet")
+    return ""
+
+
+def read_jsonl_records(storage_path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with storage_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            text = line.strip()
+            if not text:
+                continue
+            value = json.loads(text)
+            if isinstance(value, dict):
+                records.append(value)
+    return records
+
+
+def quote_duckdb_identifier(identifier: str) -> str:
+    escaped = str(identifier).replace('"', '""')
+    return f'"{escaped}"'
+
+
+def quote_duckdb_string_literal(value: str) -> str:
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
 
 
 def build_dataset_context_map(
@@ -448,20 +628,27 @@ def unique_datasets_by_id(
     return unique_datasets
 
 
-def get_single_statement(masked_query: str, original_query: str) -> str:
-    masked_statement = masked_query.strip()
-    original_statement = original_query.strip()
-    semicolon_count = masked_statement.count(";")
+def get_single_statement(masked_query: str) -> str:
+    statement = masked_query.strip()
+    semicolon_count = statement.count(";")
     if semicolon_count == 0:
-        return original_statement
-    if semicolon_count == 1 and masked_statement.endswith(";"):
-        return original_statement[:-1].strip()
+        return statement
+    if semicolon_count == 1 and statement.endswith(";"):
+        return statement[:-1].strip()
 
     raise ApiError(
         ErrorCode.SQL_SYNTAX_ERROR,
         "Only a single SQL statement is allowed",
         status.HTTP_422_UNPROCESSABLE_ENTITY,
     )
+
+
+def get_original_single_statement(query: str, masked_query: str) -> str:
+    masked_statement = masked_query.strip()
+    if masked_statement.count(";") == 1 and masked_statement.endswith(";"):
+        semicolon_index = masked_query.find(";")
+        return query[:semicolon_index].strip()
+    return query.strip()
 
 
 def mask_sql_comments_and_literals(query: str) -> str:
@@ -528,6 +715,73 @@ def mask_quoted_value(
                 masked_chars.append(" ")
                 index += 2
                 continue
+            return index + 1
+        index += 1
+    return index
+
+
+def relation_keyword_at(query: str, index: int) -> str:
+    for keyword in ("from", "join"):
+        if not query[index:index + len(keyword)].lower() == keyword:
+            continue
+        before = query[index - 1] if index > 0 else ""
+        after_index = index + len(keyword)
+        after = query[after_index] if after_index < len(query) else ""
+        if is_sql_identifier_char(before) or is_sql_identifier_char(after):
+            continue
+        return keyword
+    return ""
+
+
+def is_sql_identifier_char(char: str) -> bool:
+    return char.isalnum() or char in {"_", "$"}
+
+
+def skip_sql_whitespace_and_comments(query: str, index: int) -> int:
+    while index < len(query):
+        while index < len(query) and query[index].isspace():
+            index += 1
+        next_char = query[index + 1] if index + 1 < len(query) else ""
+        if index < len(query) and query[index] == "-" and next_char == "-":
+            index = skip_line_comment(query, index)
+            continue
+        if index < len(query) and query[index] == "/" and next_char == "*":
+            index = skip_block_comment(query, index)
+            continue
+        return index
+    return index
+
+
+def skip_line_comment(query: str, index: int) -> int:
+    while index < len(query) and query[index] != "\n":
+        index += 1
+    return index + 1 if index < len(query) else index
+
+
+def skip_block_comment(query: str, index: int) -> int:
+    index += 2
+    while index < len(query):
+        if query[index] == "*" and index + 1 < len(query) and query[index + 1] == "/":
+            return index + 2
+        index += 1
+    return index
+
+
+def skip_quoted_sql_token(query: str, index: int, quote_char: str) -> int:
+    index += 1
+    while index < len(query):
+        if query[index] == quote_char:
+            if index + 1 < len(query) and query[index + 1] == quote_char:
+                index += 2
+                continue
+            return index + 1
+        index += 1
+    return index
+
+
+def skip_bracket_identifier(query: str, index: int) -> int:
+    while index < len(query):
+        if query[index] == "]":
             return index + 1
         index += 1
     return index

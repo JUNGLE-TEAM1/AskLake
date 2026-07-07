@@ -3,12 +3,6 @@
   --layout-main-width: 1240px;
   --layout-wide-width: 1360px;
   --layout-page-padding: 40px;
-  --page-masthead-height: 74px;
-  --page-title-font-size: 30px;
-  --page-title-font-weight: 850;
-  --page-title-line-height: 1.18;
-  --page-title-description-size: 14px;
-  --page-title-description-line-height: 1.55;
   --sql-context-width: 380px;
   color: #171a1f;
   background: #f9fbfc;
@@ -316,7 +310,7 @@ p {
 }
 
 .main-shell {
-  grid-column: 2;
+  grid-column: 2 / -1;
   display: flex;
   height: 100vh;
   min-height: 100vh;
@@ -672,7 +666,7 @@ p {
 }
 
 .page-body.sql-body {
-  padding: 24px var(--layout-page-padding) 40px;
+  padding: 16px 24px 24px;
 }
 
 .page-body.sql-body > * {

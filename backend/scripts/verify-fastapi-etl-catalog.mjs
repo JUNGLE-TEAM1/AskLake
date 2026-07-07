@@ -93,6 +93,19 @@ async function runSmoke() {
     assert(existsSync(catalogDataset.storageLocation), `ETL storage path should exist: ${catalogDataset.storageLocation}`);
   }
 
+  const sqlPreview = await post("/api/query/runs", {
+    baseDatasetId: datasetId,
+    datasetId,
+    limit: 10,
+    mode: "preview",
+    query: `SELECT customer_id, amount FROM ${targetDataset} WHERE amount > 20 ORDER BY customer_id`,
+    referenceDatasetIds: [],
+    validationKey: `${datasetId}:duckdb-parquet`,
+  });
+  assert(JSON.stringify(sqlPreview.columns) === JSON.stringify(["customer_id", "amount"]), "DuckDB SQL preview should project ETL parquet columns.");
+  assert(sqlPreview.rowCount === 1, "DuckDB SQL preview should execute filters against ETL parquet storage.");
+  assert(JSON.stringify(sqlPreview.rows[0]) === JSON.stringify(["C-001", "42.5"]), "DuckDB SQL preview should read the ETL storageLocation parquet data.");
+
   const lineage = await get(`/api/catalog/datasets/${encodeURIComponent(datasetId)}/lineage`);
   const engines = lineage.datasets.map((dataset) => dataset.engine);
   assert(lineage.datasetId === datasetId, "Lineage response should be scoped to the ETL dataset.");
@@ -140,7 +153,7 @@ async function runSmoke() {
 function ensureFastApiPythonDependencies() {
   const result = spawnSync(pythonBin, [
     "-c",
-    "import fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn",
+    "import duckdb, fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn",
   ], {
     cwd: backendDir,
     env,

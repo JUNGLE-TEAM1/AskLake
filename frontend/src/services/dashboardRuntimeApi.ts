@@ -16,7 +16,8 @@ type RuntimeStoreEntry = {
 const runtimeStore = new Map<string, RuntimeStoreEntry>();
 
 function shouldUseRuntimeFallback(error: unknown) {
-  return error instanceof ApiError && error.status === 404;
+  if (error instanceof ApiError) return error.status === 404 || error.status >= 500;
+  return error instanceof TypeError;
 }
 
 async function withRuntimeFallback<T>(request: () => Promise<T>, fallback: () => T): Promise<T> {

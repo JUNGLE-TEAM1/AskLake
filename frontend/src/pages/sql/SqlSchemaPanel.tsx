@@ -5,12 +5,14 @@ export function SchemaDetailsPanel({
   dataset,
   selectedDatasets,
   onColumnClick,
+  onJoinDataset,
   onSelectedDatasetRemove,
   onSchemaSelect,
 }: {
   dataset: CatalogDataset | null;
   selectedDatasets: CatalogDataset[];
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
+  onJoinDataset: (dataset: CatalogDataset) => void;
   onSelectedDatasetRemove: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
@@ -39,6 +41,7 @@ export function SchemaDetailsPanel({
         <div className="sql-selected-dataset-list">
           {selectedDatasets.map((item, index) => {
             const active = item.id === dataset.id;
+            const isBaseDataset = index === 0;
             return (
               <div className={active ? "sql-selected-dataset-item active" : "sql-selected-dataset-item"} key={item.id}>
                 <button
@@ -50,6 +53,16 @@ export function SchemaDetailsPanel({
                   <span>{index + 1}</span>
                   <strong title={item.name}>{item.name}</strong>
                   <em>{item.schema.length}컬럼</em>
+                </button>
+                <button
+                  aria-label={`${item.name} JOIN SQL 생성`}
+                  className="sql-selected-dataset-join"
+                  disabled={isBaseDataset}
+                  onClick={() => onJoinDataset(item)}
+                  title={isBaseDataset ? "기준 테이블입니다" : "이 테이블을 SQL에 JOIN"}
+                  type="button"
+                >
+                  JOIN
                 </button>
                 <button
                   aria-label={`${item.name} 선택 해제`}

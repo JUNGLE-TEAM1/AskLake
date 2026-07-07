@@ -67,7 +67,8 @@ function normalizeDashboardCard(card: SavedDashboardCard): SavedDashboardCard {
 }
 
 function shouldUseLocalDashboardFallback(error: unknown) {
-  return error instanceof ApiError && error.status === 404;
+  if (error instanceof ApiError) return error.status === 404 || error.status >= 500;
+  return error instanceof TypeError;
 }
 
 function sortDashboards(dashboards: SavedDashboardCard[], sort: DashboardSortOption) {

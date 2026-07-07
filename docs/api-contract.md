@@ -862,6 +862,8 @@ Validation:
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
+- live backend는 DuckDB in-memory connection을 query runtime으로 사용합니다. 선택된 Catalog dataset과 `referenceDatasetIds` dataset을 DuckDB table/view로 등록한 뒤 projection, filter, order, limit, selected-context JOIN을 실행합니다.
+- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
 - 읽기 전용 SQL만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
 - SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.

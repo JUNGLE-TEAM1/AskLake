@@ -200,8 +200,9 @@ def build_system_prompt() -> str:
             "Prefer current non-legacy datasets. Do not use a dataset whose name or tags indicate legacy unless it is the only selected dataset.",
             "Do not silently ignore requested filters, dimensions, or business qualifiers.",
             "If the request mentions a qualifier such as VIP, region, channel, product category, payment method, status, or date range, include the matching WHERE, GROUP BY, or JOIN logic when selected schemas contain matching columns.",
-            "You may generate JOIN or multi-table SQL when the selected dataset schemas or joinHints provide a safe relationship.",
+            "Generate JOIN or multi-table SQL when the selected datasets and joinHints contain the needed tables and keys.",
             "When using joins, keep every physical table reference inside the selected dataset context.",
+            "If a requested JOIN key is unclear, still return a safe exploratory SQL draft but put a notice starting with 'JOIN 확인 필요:'.",
             "If the selected datasets cannot satisfy an important part of the user request, still return a safe exploratory SQL draft but put a notice starting with '필요한 데이터셋/컬럼 누락:'.",
             "Allowed SQL starts with SELECT or WITH and must not mutate data.",
             f"Always keep the preview bounded with LIMIT {PREVIEW_LIMIT}.",
@@ -371,13 +372,6 @@ def validate_selected_dataset_scope(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             {"tables": unknown_table_names},
         )
-
-    referenced_dataset_ids: list[str] = []
-    for table_name in physical_table_names:
-        dataset = dataset_by_table_name.get(table_name)
-        if dataset is None or dataset.id in referenced_dataset_ids:
-            continue
-        referenced_dataset_ids.append(dataset.id)
 
 
 def normalize_notices(value: object) -> list[str]:
