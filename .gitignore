@@ -6,7 +6,11 @@ dist/
 vite.config.js
 vite.config.d.ts
 AGENTS.local.md
+backend/.env
+backend/.env.local
 backend/tmp/
 __pycache__/
 *.pyc
 .playwright-cli/
+deploy/.env
+deploy/ec2.env

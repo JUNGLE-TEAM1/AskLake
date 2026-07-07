@@ -90,6 +90,40 @@
     grid-template-columns: 1fr;
   }
 
+  .sql-schema-panel {
+    order: 2;
+    position: static;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sql-dataset-panel {
+    order: 1;
+  }
+
+  .sql-workspace {
+    order: 3;
+  }
+
+  .sql-page.context-collapsed .sql-workspace {
+    order: 2;
+  }
+
+  .sql-page.context-collapsed .sql-schema-panel {
+    order: 3;
+  }
+
+  .sql-schema-panel .sql-card-schema {
+    max-height: 360px;
+    overflow-y: auto;
+  }
+
+  .sql-dashboard-preview-hero,
+  .sql-dashboard-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .hegun-connector-grid,
@@ -233,20 +267,10 @@
   }
 
   .sql-dataset-panel {
-    top: 76px;
-    left: 16px;
-    width: min(320px, calc(100vw - 32px));
+    position: static;
     height: auto;
-    max-height: calc(100vh - 96px);
-  }
-
-  .sql-collapse-button {
-    top: 390px;
-    left: min(calc(320px + 15px), calc(100vw - 17px));
-  }
-
-  .sql-page.context-collapsed .sql-collapse-button {
-    left: 16px;
+    max-height: none;
+    overflow: visible;
   }
 
   .option-grid,
@@ -387,6 +411,7 @@
   .dag-flow-topbar,
   .dag-output-strip,
   .panel-header,
+  .sql-page-header,
   .sql-editor-header,
   .sql-result-header,
   .sql-editor-footer,

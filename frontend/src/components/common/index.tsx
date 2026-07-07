@@ -4,13 +4,13 @@ import { Info } from "lucide-react";
 import { retryFailureActionLabels } from "../../services/draftPipelineContract";
 import type { RetryPolicyDraft } from "../../types";
 
-export function PageTitle({ title, description, icon }: { title: string; description: string; icon?: React.ReactNode }) {
+export function PageTitle({ title, description, icon }: { title: string; description?: string; icon?: React.ReactNode }) {
   return (
     <header className="page-title">
       {icon}
       <div>
         <h1>{title}</h1>
-        <p>{description}</p>
+        {description && <p>{description}</p>}
       </div>
     </header>
   );

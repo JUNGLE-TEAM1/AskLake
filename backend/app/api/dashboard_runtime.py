@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeRepository
 from app.schemas.dashboard import (
     CreateDraftPageRequest,
@@ -25,14 +26,14 @@ router = APIRouter(prefix="/dashboards", tags=["dashboard-runtime"])
 @router.get("/{dashboard_id}/published", response_model=DashboardRuntimeResponse)
 def get_published_dashboard_runtime(dashboard_id: str, db: Session = Depends(get_db)) -> DashboardRuntimeResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.get_published_runtime(dashboard_id)
 
 
 @router.post("/{dashboard_id}/draft/ensure", response_model=DashboardRuntimeResponse)
 def ensure_draft_dashboard_runtime(dashboard_id: str, db: Session = Depends(get_db)) -> DashboardRuntimeResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.ensure_draft_runtime(dashboard_id)
 
 
@@ -43,7 +44,7 @@ def create_draft_page(
     db: Session = Depends(get_db),
 ) -> DashboardPageResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.create_draft_page(dashboard_id, request)
 
 
@@ -55,7 +56,7 @@ def update_draft_page(
     db: Session = Depends(get_db),
 ) -> DashboardPageResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.update_draft_page(dashboard_id, page_id, request)
 
 
@@ -66,7 +67,7 @@ def delete_draft_page(
     db: Session = Depends(get_db),
 ) -> DeleteDraftPageResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.delete_draft_page(dashboard_id, page_id)
 
 
@@ -78,7 +79,7 @@ def create_draft_widget(
     db: Session = Depends(get_db),
 ) -> DashboardWidgetMutationResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.create_draft_widget(dashboard_id, page_id, request)
 
 
@@ -90,7 +91,7 @@ def update_draft_widget(
     db: Session = Depends(get_db),
 ) -> DashboardWidgetMutationResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.update_draft_widget(dashboard_id, widget_id, request)
 
 
@@ -101,7 +102,7 @@ def delete_draft_widget(
     db: Session = Depends(get_db),
 ) -> DeleteDraftWidgetResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.delete_draft_widget(dashboard_id, widget_id)
 
 
@@ -112,7 +113,7 @@ def save_draft_layouts(
     db: Session = Depends(get_db),
 ) -> OkResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.save_draft_layouts(dashboard_id, request)
 
 
@@ -122,5 +123,5 @@ def publish_dashboard(
     db: Session = Depends(get_db),
 ) -> PublishDashboardResponse:
     repository = DashboardRuntimeRepository(db)
-    service = DashboardRuntimeService(repository)
+    service = DashboardRuntimeService(repository, CatalogRepository(db))
     return service.publish_dashboard(dashboard_id)
