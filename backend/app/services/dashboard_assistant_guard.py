@@ -54,6 +54,52 @@ NUMERIC_TYPE_HINTS = {
     "real",
 }
 
+PLACEHOLDER_TITLES = {
+    "ai 추천 위젯",
+    "logistics cost overview",
+    "shipment performance",
+    "inventory status",
+    "시각화 요청",
+    "제목 없는 위젯",
+}
+
+COLUMN_TITLE_TERMS = {
+    "avg_lead_time_days": "평균 리드타임",
+    "carrier": "운송사",
+    "customer_id": "고객",
+    "destination_region": "도착 지역",
+    "inventory_value": "재고 금액",
+    "month": "월",
+    "on_time_rate": "정시 배송률",
+    "order_date": "주문일",
+    "region": "지역",
+    "service_level": "서비스 등급",
+    "ship_date": "배송일",
+    "shipment_count": "배송 건수",
+    "sku_category": "상품군",
+    "snapshot_date": "스냅샷 일자",
+    "status": "상태",
+    "stock_quantity": "재고 수량",
+    "stockout_risk_count": "품절 위험 수량",
+    "total_amount": "총 주문 금액",
+    "total_cost": "총 물류비",
+    "transport_cost": "운송비",
+    "warehouse": "창고",
+    "warehouse_cost": "창고비",
+}
+
+DATASET_TITLE_TERMS = {
+    "gold_inventory_status": "재고 현황",
+    "gold_logistics_cost_overview": "물류비",
+    "gold_shipment_performance": "배송 성과",
+}
+
+DATASET_NAME_TITLE_TERMS = {
+    "inventory status": "재고 현황",
+    "logistics cost overview": "물류비",
+    "shipment performance": "배송 성과",
+}
+
 
 def coerce_assistant_response(payload: dict[str, Any]) -> DashboardAssistantResponse:
     warnings = _string_list(payload.get("warnings"))
@@ -173,7 +219,9 @@ def _guard_create_widget_action(
     config, warnings = _validate_config(widget_type, action.widget.config, dataset)
     if config is None:
         return None, warnings
-    action.widget.config = config.model_dump(by_alias=True, exclude_none=True, mode="json")
+    config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
+    action.widget.config = config_payload
+    action.widget.title = _ensure_korean_widget_title(action.widget.title, widget_type, config_payload, dataset)
     return action, warnings
 
 
@@ -204,14 +252,148 @@ def _guard_update_widget_action(
         config, warnings = _validate_config(target_type, patch.config, dataset)
         if config is None:
             return None, warnings
+        config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
+        next_title = patch.title
+        if patch.title is not None or widget.config.get("placeholderKind") == "visualization_request":
+            next_title = _ensure_korean_widget_title(patch.title or widget.title, target_type, config_payload, dataset)
         action.patch = DashboardAssistantWidgetPatch(
-            title=patch.title,
+            title=next_title,
             type=patch.type,
             dataset_id=patch.dataset_id,
-            config=config.model_dump(by_alias=True, exclude_none=True, mode="json"),
+            config=config_payload,
         )
 
     return action, []
+
+
+def _ensure_korean_widget_title(
+    title: str | None,
+    widget_type: DashboardRuntimeWidgetType,
+    config: dict[str, Any],
+    dataset: AssistantDatasetContext,
+) -> str:
+    next_title = (title or "").strip()
+    if next_title and not _title_needs_korean_normalization(next_title, dataset):
+        return next_title
+    return _build_korean_widget_title(widget_type, config, dataset)
+
+
+def _title_needs_korean_normalization(title: str, dataset: AssistantDatasetContext) -> bool:
+    normalized_title = _normalize_title_text(title)
+    if not normalized_title or normalized_title in PLACEHOLDER_TITLES:
+        return True
+    dataset_name = _normalize_title_text(dataset.name)
+    if dataset_name and dataset_name in normalized_title:
+        return True
+    if not _contains_hangul(title):
+        return True
+    return _contains_known_english_data_term(normalized_title)
+
+
+def _normalize_title_text(value: str) -> str:
+    return " ".join(value.replace("_", " ").replace("-", " ").split()).lower()
+
+
+def _contains_hangul(value: str) -> bool:
+    return any("가" <= character <= "힣" for character in value)
+
+
+def _contains_known_english_data_term(normalized_title: str) -> bool:
+    for column_name in COLUMN_TITLE_TERMS:
+        column_phrase = _normalize_title_text(column_name)
+        if column_phrase and column_phrase in normalized_title:
+            return True
+    for dataset_name in DATASET_NAME_TITLE_TERMS:
+        if dataset_name in normalized_title:
+            return True
+    return False
+
+
+def _build_korean_widget_title(
+    widget_type: DashboardRuntimeWidgetType,
+    config: dict[str, Any],
+    dataset: AssistantDatasetContext,
+) -> str:
+    dataset_term = _dataset_title_term(dataset)
+    value_term = _column_title_term(_first_config_key(config, ["yKey", "valueKey"])) or dataset_term
+    x_key = _config_string(config, "xKey")
+    x_term = _column_title_term(x_key)
+    label_term = _column_title_term(_config_string(config, "labelKey"))
+    group_term = _column_title_term(_config_string(config, "groupKey"))
+
+    if widget_type == DashboardRuntimeWidgetType.TABLE:
+        return f"{dataset_term} 상세 테이블"
+    if widget_type == DashboardRuntimeWidgetType.METRIC:
+        return value_term
+    if widget_type in {DashboardRuntimeWidgetType.PIE_CHART, DashboardRuntimeWidgetType.DONUT_CHART}:
+        return _dimension_title(label_term or group_term, value_term, "비중")
+    if widget_type == DashboardRuntimeWidgetType.TREEMAP_CHART:
+        return _dimension_title(label_term or group_term, value_term, "규모")
+    if widget_type == DashboardRuntimeWidgetType.RADIAL_BAR_CHART:
+        return f"{value_term} 현황"
+    if widget_type == DashboardRuntimeWidgetType.HEATMAP_CHART:
+        y_axis_term = _column_title_term(_config_string(config, "yKey"))
+        if x_term and y_axis_term:
+            return f"{x_term}·{y_axis_term}별 {value_term} 분포"
+        return _dimension_title(x_term or y_axis_term or group_term, value_term, "분포")
+    if widget_type in {DashboardRuntimeWidgetType.LINE_CHART, DashboardRuntimeWidgetType.AREA_CHART}:
+        suffix = "추이" if _is_temporal_dimension(x_key) else "비교"
+        return _dimension_title(x_term or group_term, value_term, suffix)
+    if widget_type == DashboardRuntimeWidgetType.BAR_CHART:
+        return _dimension_title(x_term or group_term, value_term, "비교")
+    return f"{dataset_term} 시각화"
+
+
+def _dimension_title(dimension_term: str | None, value_term: str, suffix: str) -> str:
+    if not dimension_term:
+        return f"{value_term} {suffix}"
+    return f"{dimension_term}별 {value_term} {suffix}"
+
+
+def _dataset_title_term(dataset: AssistantDatasetContext) -> str:
+    if dataset.id in DATASET_TITLE_TERMS:
+        return DATASET_TITLE_TERMS[dataset.id]
+    normalized_name = _normalize_title_text(dataset.name)
+    if normalized_name in DATASET_NAME_TITLE_TERMS:
+        return DATASET_NAME_TITLE_TERMS[normalized_name]
+    description = dataset.description or ""
+    if "물류비" in description:
+        return "물류비"
+    if "배송" in description:
+        return "배송 성과"
+    if "재고" in description:
+        return "재고 현황"
+    if "주문" in description:
+        return "주문"
+    return dataset.name if _contains_hangul(dataset.name) else "데이터셋"
+
+
+def _column_title_term(column_name: str | None) -> str | None:
+    if not column_name:
+        return None
+    if column_name in COLUMN_TITLE_TERMS:
+        return COLUMN_TITLE_TERMS[column_name]
+    return column_name if _contains_hangul(column_name) else None
+
+
+def _is_temporal_dimension(column_name: str | None) -> bool:
+    if not column_name:
+        return False
+    normalized = column_name.lower()
+    return any(token in normalized for token in ["date", "day", "month", "year", "time"])
+
+
+def _config_string(config: dict[str, Any], key: str) -> str | None:
+    value = config.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _first_config_key(config: dict[str, Any], keys: list[str]) -> str | None:
+    for key in keys:
+        value = _config_string(config, key)
+        if value:
+            return value
+    return None
 
 
 def _validate_config(
