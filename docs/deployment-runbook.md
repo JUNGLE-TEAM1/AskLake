@@ -143,7 +143,42 @@ ASKLAKE_LOG_SERVICE=backend scripts/deploy.sh logs
 ASKLAKE_LOG_SERVICE=caddy ASKLAKE_LOG_LINES=200 scripts/deploy.sh logs
 ```
 
-## 8. 끄기
+## 8. 데모 데이터 Seed / Reset
+
+배포 직후 또는 리허설 전에 base fixture를 같은 상태로 맞춘다.
+
+```bash
+scripts/seed-demo-data.sh
+```
+
+이 명령은 다음 데이터를 idempotent하게 upsert한다.
+
+- Pair2 catalog metadata: `orders_clean`, `customers_clean`, `order_items_clean`, `products_clean`, `payments_clean`
+- PostgreSQL source fixture: `orders_clean`, `customers_clean`, `order_items_clean`, `products_clean`, `payments_clean`, `user_activity`
+- MongoDB document fixture: `customer_reviews`, `app_events`
+- MongoDB catalog metadata: `ds_customer_reviews_source`, `ds_app_events_source`
+
+발표 중 생성된 SQL preview, SQL derived dataset, SQL Result 처리 Job만 정리하려면 먼저 dry-run으로 삭제 범위를 확인한다.
+
+```bash
+scripts/reset-demo-data.sh --dry-run
+```
+
+문제가 없으면 실제 reset을 실행한다.
+
+```bash
+scripts/reset-demo-data.sh
+scripts/seed-demo-data.sh
+```
+
+기본 reset은 base fixture dataset과 MongoDB fixture 문서를 삭제하지 않는다.
+MongoDB fixture 문서까지 지워야 하는 특수 상황에서만 아래처럼 실행한다.
+
+```bash
+ASKLAKE_RESET_MONGO_FIXTURES=true scripts/reset-demo-data.sh
+```
+
+## 9. 끄기
 
 ```bash
 scripts/deploy.sh stop
@@ -152,22 +187,24 @@ scripts/deploy.sh stop
 이 명령은 가능한 경우 Compose service를 먼저 stop한 뒤 EC2를 stop한다.
 EC2를 stop하면 instance compute 비용은 줄지만, EBS volume과 Elastic IP 같은 리소스 비용은 남을 수 있다.
 
-## 9. 권장 개발 루프
+## 10. 권장 개발 루프
 
 ```text
 작업 시작
   -> source deploy/ec2.env
   -> scripts/deploy.sh start
   -> scripts/deploy.sh deploy
+  -> scripts/seed-demo-data.sh
   -> 브라우저에서 demo flow 확인
   -> 필요 시 scripts/deploy.sh logs
   -> 작업 종료 후 scripts/deploy.sh stop
 ```
 
-## 10. 운영 원칙
+## 11. 운영 원칙
 
 - 서버 `deploy/.env`는 repo에서 관리하지 않는다.
 - 배포 script는 서버 `.env`를 생성하거나 secret을 출력하지 않는다.
+- OpenAI/API/domain 같은 서버 전용 env 값은 최초 bootstrap 뒤 서버 `deploy/.env`에 보존하며, 재배포는 이 파일을 덮어쓰지 않는다.
 - 배포 실패 시 DB volume을 자동 reset하지 않는다.
 - demo data reset은 별도 seed/reset 절차로만 실행한다.
 - 정식 자동 배포는 이 runbook이 안정화된 뒤 GitHub Actions에서 같은 명령을 호출하도록 연결한다.

@@ -451,17 +451,19 @@ export async function testPostgresSource(fields) {
 }
 
 export async function testMongoSource(fields) {
-  const endpoint = fieldValue(fields, "Endpoint / Host") || process.env.ASKLAKE_MONGO_HOST || "127.0.0.1";
-  const port = Number(fieldValue(fields, "Port") || process.env.ASKLAKE_MONGO_PORT || 27018);
+  const endpoint = process.env.ASKLAKE_MONGO_HOST || fieldValue(fields, "Endpoint / Host") || "127.0.0.1";
+  const port = Number(process.env.ASKLAKE_MONGO_PORT || fieldValue(fields, "Port") || 27018);
   const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_MONGO_DATABASE || "asklake_sources";
-  const username = fieldValue(fields, "Username") || process.env.ASKLAKE_MONGO_USER || "";
-  const password = fieldValue(fields, "Password / Auth Token") || process.env.ASKLAKE_MONGO_PASSWORD || "";
+  const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
+  const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
   const collectionSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR") || fieldValue(fields, "Collection");
   const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
-  const uri = fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
+  const uri = process.env.ASKLAKE_MONGO_HOST
+    ? `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`
+    : fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
 
-  const { collection, collections, docs } = runMongoshSample({ collectionSelector, database, rowLimit: samplePolicy.rowLimit, uri });
+  const { collection, collections, docs } = await runMongoDriverSample({ collectionSelector, database, rowLimit: samplePolicy.rowLimit, uri });
   if (!collection) throw apiError("MONGO_NO_COLLECTIONS", `${database} 데이터베이스에서 컬렉션을 찾지 못했습니다.`, 404);
   if (collectionSelector && !collections.includes(collectionSelector)) {
     throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
@@ -1272,47 +1274,25 @@ function quoteIdent(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
 
-function runMongoshSample({ collectionSelector, database, rowLimit, uri }) {
-  const script = `
-const databaseName = ${JSON.stringify(database)};
-const collectionSelector = ${JSON.stringify(collectionSelector || "")};
-const rowLimit = ${Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 10};
-const dbh = db.getSiblingDB(databaseName);
-const collections = dbh.getCollectionNames().filter(Boolean).sort();
-const collection = collectionSelector || collections[0] || "";
-const docs = collection ? dbh.getCollection(collection).find({}).limit(rowLimit).toArray() : [];
-print(JSON.stringify({ collection, collections, docs }));
-`;
-  const result = spawnSync("mongosh", [uri, "--quiet", "--eval", script], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      MONGOSH_DISABLE_TELEMETRY: "1",
-    },
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) {
-    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(result.stderr || result.stdout || result.error?.message)}`, 502);
-  }
-
-  const payloadLine = String(result.stdout)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("{") && line.endsWith("}"))
-    .at(-1);
-  if (!payloadLine) {
-    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 응답을 파싱하지 못했습니다: ${tailText(result.stdout || result.stderr)}`, 502);
-  }
+async function runMongoDriverSample({ collectionSelector, database, rowLimit, uri }) {
+  const { MongoClient } = await import("mongodb");
+  const limit = Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 10;
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
 
   try {
-    const payload = JSON.parse(payloadLine);
-    return {
-      collection: String(payload.collection ?? ""),
-      collections: Array.isArray(payload.collections) ? payload.collections.map(String) : [],
-      docs: Array.isArray(payload.docs) ? payload.docs : [],
-    };
+    await client.connect();
+    const dbh = client.db(database);
+    const collections = (await dbh.listCollections({}, { nameOnly: true }).toArray())
+      .map((collectionInfo) => String(collectionInfo.name ?? ""))
+      .filter(Boolean)
+      .sort();
+    const collection = collectionSelector || collections[0] || "";
+    const docs = collection ? await dbh.collection(collection).find({}).limit(limit).toArray() : [];
+    return { collection, collections, docs };
   } catch (error) {
-    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 응답 JSON 파싱 실패: ${error.message}`, 502);
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(error?.message || error)}`, 502);
+  } finally {
+    await client.close().catch(() => undefined);
   }
 }
 
