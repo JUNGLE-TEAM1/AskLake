@@ -900,6 +900,11 @@ export async function updateDraftDashboardWidget(dashboardId, widgetId, input = 
   const nextDatasetId = Object.hasOwn(input, "datasetId") ? input.datasetId ?? null : existingWidget.dataset_id;
   const nextTitle = typeof input.title === "string" ? input.title.trim() || null : existingWidget.title;
   const nextType = normalizeRuntimeWidgetType(input.type ?? existingWidget.type);
+  const shouldResolveData = Array.isArray(input.data)
+    || Boolean(Object.hasOwn(input, "datasetId") && typeof nextDatasetId === "string" && nextDatasetId.trim());
+  const nextData = shouldResolveData
+    ? await resolveWidgetData({ ...input, config: nextConfig, datasetId: nextDatasetId, type: nextType })
+    : existingWidget.data_json ?? [];
 
   const updateResult = await pool.query(
     `
@@ -908,11 +913,12 @@ export async function updateDraftDashboardWidget(dashboardId, widgetId, input = 
           title = $2,
           dataset_id = $3,
           config_json = $4::jsonb,
+          data_json = $5::jsonb,
           updated_at = now()
-      WHERE id = $5
+      WHERE id = $6
       RETURNING id
     `,
-    [nextType, nextTitle, nextDatasetId, JSON.stringify(nextConfig), widgetId],
+    [nextType, nextTitle, nextDatasetId, JSON.stringify(nextConfig), JSON.stringify(nextData), widgetId],
   );
 
   await saveDashboardPatch(dashboardId, {

@@ -2,10 +2,13 @@ import { spawn } from "node:child_process";
 
 const port = Number(process.env.ASKLAKE_VERIFY_PORT || 18083);
 const baseUrl = `http://127.0.0.1:${port}`;
+const restFixturePort = Number(process.env.ASKLAKE_SOURCE_REST_PORT || 19083);
+const restFixtureUrl = `http://127.0.0.1:${restFixturePort}`;
 const env = {
   ...process.env,
+  ASKLAKE_RESET_METADATA_ON_START: "true",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
-  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
   PORT: String(port),
 };
@@ -15,12 +18,18 @@ const child = spawn(process.execPath, ["src/server.mjs"], {
   env,
   stdio: ["ignore", "pipe", "pipe"],
 });
+const restFixture = spawn(process.execPath, ["scripts/source-rest-fixture-server.mjs"], {
+  cwd: new URL("..", import.meta.url),
+  env: { ...process.env, ASKLAKE_SOURCE_REST_PORT: String(restFixturePort) },
+  stdio: ["ignore", "pipe", "pipe"],
+});
 
 child.stdout.on("data", (chunk) => process.stdout.write(`[backend] ${chunk}`));
 child.stderr.on("data", (chunk) => process.stderr.write(`[backend] ${chunk}`));
 
 try {
   await waitForHealth();
+  await waitForRestFixture();
   await assertGet("/api/etl/jobs", []);
   await assertGet("/api/catalog/datasets", []);
 
@@ -31,7 +40,7 @@ try {
       ["Endpoint URL", env.MINIO_ENDPOINT],
       ["Region", "us-east-1"],
       ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", process.env.ASKLAKE_VERIFY_MINIO_PREFIX || "nyc_taxi/csv/"],
+      ["Path / Prefix", process.env.ASKLAKE_VERIFY_MINIO_PREFIX || "asklake-fixtures/csv/"],
       ["Access Key", env.MINIO_ACCESS_KEY],
       ["Secret Key", env.MINIO_SECRET_KEY],
       ["Use Path Style", "true"],
@@ -44,7 +53,7 @@ try {
     sourceType: "REST API",
     sourceConfig: [
       ["Method", "GET"],
-      ["Endpoint URL", `${baseUrl}/api/harness/rest-sample`],
+      ["Endpoint URL", `${restFixtureUrl}/events`],
       ["Accept", "application/json"],
     ],
   });
@@ -146,15 +155,16 @@ try {
   console.log("verify-backend: ok");
 } finally {
   child.kill("SIGTERM");
+  restFixture.kill("SIGTERM");
 }
 
 async function waitForHealth() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const health = await get("/api/health");
       if (health.ok) return;
     } catch {
-      await sleep(250);
+      await sleep(500);
     }
   }
   throw new Error("Backend did not become healthy.");
@@ -177,6 +187,18 @@ async function post(path, body) {
     method: "POST",
   });
   return readResponse(response);
+}
+
+async function waitForRestFixture() {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      const response = await fetch(`${restFixtureUrl}/health`);
+      if (response.ok) return;
+    } catch {
+      await sleep(250);
+    }
+  }
+  throw new Error(`REST source fixture did not become healthy at ${restFixtureUrl}/health.`);
 }
 
 async function assertPostFails(path, body, status, message) {

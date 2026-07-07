@@ -11,17 +11,21 @@
 - live API mode(`VITE_USE_MOCK_API=false`)에서만 Source/Schema/Create/Run이 live backend API를 호출한다.
 - `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
-- ETL/Catalog 초기 hydrate 결과가 비어 있으면 UI도 빈 목록으로 시작한다.
+- live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
+- ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
 
 ## 2) 환경 변수
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
+DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 ```
 
+- 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
+- `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 
@@ -66,6 +70,8 @@ Canonical status values:
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
+`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+
 ## 5) P1 API
 
 | Method | Endpoint | Auth | 설명 | 상세 문서 |
@@ -98,7 +104,7 @@ Canonical status values:
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
-Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart`로 고정한다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
+Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 
@@ -115,11 +121,11 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 
 | 화면 | 현재 데이터 | Future API |
 | --- | --- | --- |
-| 수집/처리 목록 | live backend hydrate | `GET /api/etl/jobs` |
+| 수집/처리 목록 | Postgres JSONB-backed live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
-| 카탈로그 | live backend hydrate | `GET /api/catalog/datasets` |
+| 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
@@ -140,22 +146,37 @@ ID field는 camelCase로 고정하고, 화면 표시용 한국어 상태값을 �
 Dashboard 상세/편집 runtime은 dashboard card metadata와 revision snapshot을 분리한다.
 
 ```ts
-type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardRuntimeWidgetType =
+  | "metric"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "area_chart"
+  | "donut_chart"
+  | "pie_chart"
+  | "radial_bar_chart"
+  | "heatmap_chart"
+  | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 
+type DashboardWidgetColorConfig = {
+  colors: string[];
+};
+
 type DashboardWidgetConfigBase = {
-  color?: string;
+  body?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: "visualization_request" | "text";
+  prompt?: string;
 };
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -169,24 +190,69 @@ type TableWidgetConfig = DashboardWidgetConfigBase & {
 
 type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   groupKey?: string;
+  orientation?: "vertical" | "horizontal";
   xKey: string;
   yKey: string;
 };
 
 type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  curve?: "smooth" | "straight" | "stepline";
   dateUnit?: DashboardWidgetDateUnit;
   seriesKey?: string;
   xKey: string;
   yKey: string;
 };
 
+type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  stacked?: boolean;
+  xKey: string;
+  yKey: string;
+};
+
 type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  centerLabel?: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type PieChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  labelKey: string;
+  valueKey: string;
+};
+
+type RadialBarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  format?: DashboardWidgetFormat;
+  labelKey?: string;
+  max?: number;
+  min?: number;
+  valueKey: string;
+};
+
+type HeatmapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  valueKey: string;
+  xKey: string;
+  yKey: string;
+};
+
+type TreemapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
   labelKey: string;
   valueKey: string;
 };
@@ -197,7 +263,17 @@ type DashboardRuntimeWidget = {
   type: DashboardRuntimeWidgetType;
   title: string | null;
   layout: { x: number; y: number; w: number; h: number; minW?: number; minH?: number };
-  config: MetricWidgetConfig | TableWidgetConfig | BarChartWidgetConfig | LineChartWidgetConfig | DonutChartWidgetConfig;
+  config:
+    | MetricWidgetConfig
+    | TableWidgetConfig
+    | BarChartWidgetConfig
+    | LineChartWidgetConfig
+    | AreaChartWidgetConfig
+    | DonutChartWidgetConfig
+    | PieChartWidgetConfig
+    | RadialBarChartWidgetConfig
+    | HeatmapChartWidgetConfig
+    | TreemapChartWidgetConfig;
   data: Array<Record<string, unknown>>;
   queryId?: string | null;
   datasetId?: string | null;
@@ -232,7 +308,7 @@ type DashboardRuntimeResponse = {
 
 `GET /api/dashboards/{dashboardId}/published`는 published revision이 없으면 `revision: null`, `pages: []`, `widgetsByPageId: {}`를 반환한다. `POST /api/dashboards/{dashboardId}/draft/ensure`는 idempotent이며 draft가 없으면 published snapshot 또는 새 revision과 기본 page를 만든다.
 
-Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` 표시값을 계산한다.
+Widget 생성 API는 `datasetId`가 있고 명시적 `data`가 없을 때 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다. Runtime widget renderer는 `widget.data`와 type별 `config`를 기준으로 `metric`, `table`, ApexCharts 차트 8종 표시값을 계산한다.
 
 `DELETE /api/dashboards/{dashboardId}`는 dashboard card/list row와 runtime revision/page/widget snapshot을 함께 삭제한다.
 
@@ -363,6 +439,88 @@ type DataProcessingResult = {
 
 `DataProcessingResult`는 대용량 처리 증거가 필요할 때만 쓰는 optional demo evidence 확장 객체다.
 정식 persistence API가 생기기 전에는 `JobCommandResponse.processingResult` 또는 fixture로 전달한다.
+
+### Dashboard Assistant UI Hook
+
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint에 연결할 수 있다.
+이 endpoint는 `OPENAI_API_KEY`가 설정되어 있고 `OPENAI_ASSISTANT_ENABLED=true`이면 OpenAI Responses API를 호출한다.
+서버는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
+대시보드에서 사용할 수 있는 available catalog dataset, 현재 page widget, 지원 가능한 widget type/config option만 OpenAI 컨텍스트에 넣는다.
+단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
+OpenAI 응답은 backend guard가 한 번 더 검증하며, 없는 dataset/widget/column 또는 지원하지 않는 widget type/config는 action에서 제외하고 `warnings`에 이유를 담는다.
+OpenAI 설정이 없거나 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 설정된 경우에만 해당 경로로 `POST` 요청을 보낸다.
+
+프론트 요청 payload:
+
+```ts
+type DashboardAssistantRequest = {
+  dashboardId?: string;
+  mode: "dashboard_question" | "visualization_request";
+  pageId?: string | null;
+  prompt: string;
+  selectedWidgetId?: string | null;
+  widgetId?: string | null;
+  widgets: Array<{
+    id: string;
+    title: string;
+    type: DashboardRuntimeWidgetType;
+    datasetId: string | null;
+    layout: DashboardWidgetLayout;
+    config: Record<string, unknown>;
+    dataSample: Array<Record<string, unknown>>;
+  }>;
+};
+```
+
+권장 응답 payload:
+
+```ts
+type DashboardAssistantResponse = {
+  message: string;
+  actions: Array<
+    | {
+        type: "create_widget";
+        widget: {
+          title: string;
+          type: DashboardRuntimeWidgetType;
+          datasetId: string;
+          config: DashboardRuntimeWidgetConfig;
+        };
+      }
+    | {
+        type: "update_widget";
+        widgetId: string;
+        patch: {
+          title?: string | null;
+          type?: DashboardRuntimeWidgetType;
+          datasetId?: string | null;
+          config?: Record<string, unknown>;
+        };
+      }
+    | {
+        type: "report";
+        markdown: string;
+      }
+  >;
+  warnings: string[];
+  // 현재 visualization request 위젯 호환용 임시 필드.
+  configPatch?: Record<string, unknown>;
+  widgetPatch?: {
+    title?: string | null;
+    type?: DashboardRuntimeWidgetType;
+    datasetId?: string | null;
+    config?: Record<string, unknown>;
+  };
+};
+```
+
+`dashboard_question` 모드는 리포트/분석 결과를 `actions: [{ type: "report", markdown }]` 형태로 받을 수 있다.
+`visualization_request` 모드는 장기적으로 `actions`의 `create_widget` 또는 `update_widget`을 적용한다.
+현재 시각화 요청 위젯은 기존 구현과의 호환을 위해 `configPatch` 또는 `widgetPatch.config`가 내려오면 현재 위젯 config에 병합한다.
+`VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 UI는 미설정 안내만 표시하고 요청을 보내지 않는다.
+`widgets`는 구버전/테스트 호환 fallback payload로 유지하지만, `dashboardId`가 있으면 서버 DB runtime 컨텍스트가 우선이다.
+`selectedWidgetId` 또는 `widgetId`가 있으면 서버는 해당 위젯만 `update_widget` 대상에 포함한다.
 
 ## 9) 변경 규칙
 

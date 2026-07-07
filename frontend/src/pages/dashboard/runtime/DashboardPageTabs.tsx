@@ -117,7 +117,7 @@ export function DashboardPageTabs({
                 <Pencil size={13} />
               </button>
             )}
-            {mode === "draft" && (
+            {mode === "draft" && !isEditing && (
               <button
                 className="asklake-dashboard-tab-delete"
                 type="button"

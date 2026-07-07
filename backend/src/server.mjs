@@ -1,6 +1,7 @@
 import http from "node:http";
-import { commandJob, createPipeline, executeQuery, listDatasets, listJobs } from "./createPipeline.mjs";
+import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
 import { testSourceConnector } from "./connectors.mjs";
+import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -23,22 +24,18 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/etl/jobs") {
-      sendJson(response, 200, listJobs());
+      sendJson(response, 200, await listJobs());
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/etl\/jobs\/[^/]+$/.test(url.pathname)) {
+      const jobId = decodeURIComponent(url.pathname.split("/")[4]);
+      sendJson(response, 200, await getPipelineJob(jobId));
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
-      sendJson(response, 200, listDatasets());
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/harness/rest-sample") {
-      sendJson(response, 200, {
-        data: [
-          { active: true, amount: 42.7, event_time: "2026-07-04T10:00:00Z", id: 1, payload: { region: "KR" }, user_id: "u_001" },
-          { active: false, amount: 19.25, event_time: "2026-07-04T10:01:00Z", id: 2, payload: { region: "US" }, user_id: "u_002" },
-        ],
-      });
+      sendJson(response, 200, await listDatasets());
       return;
     }
 
@@ -61,20 +58,20 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/etl/jobs") {
       const body = await readJson(request);
-      sendJson(response, 201, createPipeline(body));
+      sendJson(response, 201, await createPipeline(body));
       return;
     }
 
     if (request.method === "POST" && /^\/api\/etl\/jobs\/[^/]+\/commands$/.test(url.pathname)) {
       const body = await readJson(request);
       const jobId = decodeURIComponent(url.pathname.split("/")[4]);
-      sendJson(response, 200, commandJob(jobId, body.command));
+      sendJson(response, 200, await commandJob(jobId, body.command));
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/query/runs") {
       const body = await readJson(request);
-      sendJson(response, 200, executeQuery(body));
+      sendJson(response, 200, await executeQuery(body));
       return;
     }
 
@@ -91,8 +88,20 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`AskLake backend listening on http://localhost:${port}`);
+async function startServer() {
+  await ensureMetadataSchema();
+  if (process.env.ASKLAKE_RESET_METADATA_ON_START === "true") {
+    await resetMetadata();
+  }
+  server.listen(port, () => {
+    console.log(`AskLake backend listening on http://localhost:${port}`);
+    console.log("AskLake metadata DB ready.");
+  });
+}
+
+startServer().catch((error) => {
+  console.error("AskLake backend failed to start.", error);
+  process.exit(1);
 });
 
 function sendJson(response, status, payload) {

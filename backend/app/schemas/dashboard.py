@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -22,6 +22,11 @@ class DashboardRuntimeMode(str, Enum):
     DRAFT = "draft"
 
 
+class DashboardAssistantMode(str, Enum):
+    DASHBOARD_QUESTION = "dashboard_question"
+    VISUALIZATION_REQUEST = "visualization_request"
+
+
 class DashboardCardWidgetType(str, Enum):
     KPI = "kpi"
     BAR = "bar"
@@ -32,10 +37,15 @@ class DashboardCardWidgetType(str, Enum):
 
 class DashboardRuntimeWidgetType(str, Enum):
     METRIC = "metric"
+    TABLE = "table"
     BAR_CHART = "bar_chart"
     LINE_CHART = "line_chart"
+    AREA_CHART = "area_chart"
     DONUT_CHART = "donut_chart"
-    TABLE = "table"
+    PIE_CHART = "pie_chart"
+    RADIAL_BAR_CHART = "radial_bar_chart"
+    HEATMAP_CHART = "heatmap_chart"
+    TREEMAP_CHART = "treemap_chart"
 
 
 class DashboardWidgetAggregation(str, Enum):
@@ -56,6 +66,25 @@ class DashboardWidgetFormat(str, Enum):
     NUMBER = "number"
     CURRENCY = "currency"
     PERCENT = "percent"
+
+
+class DashboardWidgetLineCurve(str, Enum):
+    SMOOTH = "smooth"
+    STRAIGHT = "straight"
+    STEPLINE = "stepline"
+
+
+class DashboardWidgetOrientation(str, Enum):
+    VERTICAL = "vertical"
+    HORIZONTAL = "horizontal"
+
+
+class DashboardWidgetPaletteId(str, Enum):
+    ASKLAKE_DEFAULT = "asklake-default"
+    AURORA = "aurora"
+    SPECTRUM = "spectrum"
+    SIGNAL = "signal"
+    CUSTOM = "custom"
 
 
 class DashboardSortOption(str, Enum):
@@ -134,15 +163,23 @@ class DeleteDashboardResponse(CamelModel):
 
 
 class DashboardWidgetConfigBase(CamelModel):
-    color: str | None = None
+    body: str | None = None
     description: str | None = None
     error: str | None = None
     error_message: str | None = None
+    placeholder_kind: str | None = None
+    prompt: str | None = None
+
+
+class DashboardWidgetColorConfig(CamelModel):
+    colors: list[str] = Field(default_factory=list)
+    # Legacy fields kept only so older local mock rows do not fail validation.
+    palette_id: DashboardWidgetPaletteId | None = None
+    custom_colors: list[str] | None = None
 
 
 class MetricWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
     value_key: str
     format: DashboardWidgetFormat | None = None
 
@@ -156,24 +193,69 @@ class TableWidgetConfig(DashboardWidgetConfigBase):
 
 class BarChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
     x_key: str
     y_key: str
     group_key: str | None = None
+    orientation: DashboardWidgetOrientation | None = None
 
 
 class LineChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
     x_key: str
     y_key: str
+    curve: DashboardWidgetLineCurve | None = None
     date_unit: DashboardWidgetDateUnit | None = None
     series_key: str | None = None
 
 
+class AreaChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    x_key: str
+    y_key: str
+    date_unit: DashboardWidgetDateUnit | None = None
+    series_key: str | None = None
+    stacked: bool | None = None
+
+
 class DonutChartWidgetConfig(DashboardWidgetConfigBase):
     aggregation: DashboardWidgetAggregation
-    color: str
+    color: DashboardWidgetColorConfig
+    center_label: str | None = None
+    label_key: str
+    value_key: str
+
+
+class PieChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    label_key: str
+    value_key: str
+
+
+class RadialBarChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    value_key: str
+    format: DashboardWidgetFormat | None = None
+    label_key: str | None = None
+    max: float | None = None
+    min: float | None = None
+
+
+class HeatmapChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
+    x_key: str
+    y_key: str
+    value_key: str
+
+
+class TreemapChartWidgetConfig(DashboardWidgetConfigBase):
+    aggregation: DashboardWidgetAggregation
+    color: DashboardWidgetColorConfig
     label_key: str
     value_key: str
 
@@ -183,7 +265,12 @@ DashboardRuntimeWidgetConfig = (
     | TableWidgetConfig
     | BarChartWidgetConfig
     | LineChartWidgetConfig
+    | AreaChartWidgetConfig
     | DonutChartWidgetConfig
+    | PieChartWidgetConfig
+    | RadialBarChartWidgetConfig
+    | HeatmapChartWidgetConfig
+    | TreemapChartWidgetConfig
 )
 
 
@@ -304,3 +391,69 @@ class PublishDashboardResponse(CamelModel):
     dashboard_id: str
     published_revision_id: str
     published_at: str
+
+
+class DashboardAssistantWidgetContext(CamelModel):
+    id: str
+    title: str
+    type: DashboardRuntimeWidgetType
+    dataset_id: str | None = None
+    layout: DashboardWidgetLayout
+    config: dict[str, Any] = Field(default_factory=dict)
+    data_sample: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DashboardAssistantRequest(CamelModel):
+    dashboard_id: str | None = None
+    mode: DashboardAssistantMode
+    page_id: str | None = None
+    prompt: str = Field(min_length=1)
+    selected_widget_id: str | None = None
+    widget_id: str | None = None
+    widgets: list[DashboardAssistantWidgetContext] = Field(default_factory=list)
+
+
+class DashboardAssistantWidgetPatch(CamelModel):
+    title: str | None = None
+    type: DashboardRuntimeWidgetType | None = None
+    dataset_id: str | None = None
+    config: dict[str, Any] | None = None
+
+
+class DashboardAssistantCreateWidgetInput(CamelModel):
+    title: str
+    type: DashboardRuntimeWidgetType
+    dataset_id: str
+    config: dict[str, Any]
+
+
+class DashboardAssistantCreateWidgetAction(CamelModel):
+    type: Literal["create_widget"] = "create_widget"
+    widget: DashboardAssistantCreateWidgetInput
+
+
+class DashboardAssistantUpdateWidgetAction(CamelModel):
+    type: Literal["update_widget"] = "update_widget"
+    widget_id: str
+    patch: DashboardAssistantWidgetPatch
+
+
+class DashboardAssistantReportAction(CamelModel):
+    type: Literal["report"] = "report"
+    markdown: str
+
+
+DashboardAssistantAction = (
+    DashboardAssistantCreateWidgetAction
+    | DashboardAssistantUpdateWidgetAction
+    | DashboardAssistantReportAction
+)
+
+
+class DashboardAssistantResponse(CamelModel):
+    message: str
+    actions: list[DashboardAssistantAction] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    # Backward-compatible fields used by the current visualization request widget.
+    config_patch: dict[str, Any] | None = None
+    widget_patch: DashboardAssistantWidgetPatch | None = None
