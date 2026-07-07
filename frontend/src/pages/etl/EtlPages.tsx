@@ -525,7 +525,8 @@ const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
-const DEFAULT_TARGET_TAGS = ["고객 데이터", "분석용", "가공 데이터"];
+const DEFAULT_TARGET_TAGS: string[] = [];
+const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
@@ -663,7 +664,6 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
 const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
-const TARGET_DATA_TAG_OPTIONS = ["마케팅용", "고객 데이터", "분석용", "서비스 제공용", "원본 데이터", "가공 데이터", "운영 데이터", "개인정보 포함"] as const;
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
   { included: true, nullable: false, sourceName: "id", targetName: "id", type: "number" },
   { included: true, nullable: false, sourceName: "user_id", targetName: "user_id", type: "string" },
@@ -681,6 +681,10 @@ const SAMPLE_TARGET_ROWS = [
 function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
   const normalized = value?.trim().toLowerCase();
   return TARGET_FILE_FORMAT_VALUES.find((format) => format === normalized) ?? "parquet";
+}
+
+function filterVisibleTargetTags(tags: string[] | undefined) {
+  return (tags ?? []).filter((tag) => !LEGACY_TARGET_TAG_OPTIONS.includes(tag));
 }
 
 function isRecommendedPartitionColumn(columnName: string) {
@@ -891,7 +895,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
     storagePath,
     tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS,
+    tags: filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
@@ -4466,7 +4470,7 @@ export function TargetPage({
   const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
   const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
   const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
-  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags.length > 0 ? initialTarget.tags : [...DEFAULT_TARGET_TAGS]);
+  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
   const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
   const [indexColumns, setIndexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
@@ -4752,15 +4756,16 @@ export function TargetPage({
         <div className="panel-header">
           <BookOpen size={18} />
           <h2>태그</h2>
-          <span className="panel-note">다중 선택 / 직접 추가</span>
         </div>
+        {targetTags.length > 0 ? (
         <div className="target-chip-grid" role="group" aria-label="타겟 태그">
-          {Array.from(new Set([...TARGET_DATA_TAG_OPTIONS, ...targetTags])).map((tag) => (
+          {targetTags.map((tag) => (
             <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
               {tag}
             </button>
           ))}
         </div>
+        ) : null}
         <div className="target-inline-controls">
           <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
             if (event.key === "Enter") {
