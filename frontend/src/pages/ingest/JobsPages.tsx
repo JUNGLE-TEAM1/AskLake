@@ -226,7 +226,7 @@ function JobsCardSection({
                 <div><dt>스케줄</dt><dd>{job.schedule}</dd></div>
                 <div>
                   <dt>마지막 실행</dt>
-                  <dd>{job.lastRun}</dd>
+                  <dd>{formatCompactDateTime(job.lastRun)}</dd>
                   <dd className={executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary"} title={executionDisplay.raw}>
                     {executionDisplay.summary}
                   </dd>
@@ -380,7 +380,7 @@ function JobsTableSection({
 
         return (
           <div className="jobs-table-next-cell">
-            <strong>{job.lastRun}</strong>
+            <strong>{formatCompactDateTime(job.lastRun)}</strong>
             <span>다음: {job.nextRun}</span>
           </div>
         );
@@ -720,10 +720,28 @@ function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function formatRunErrorSummary(value: string) {
+function formatCompactDateTime(value: string) {
   const normalized = normalizeWhitespace(value);
-  if (!normalized || normalized === "-") return "-";
-  return isVerboseLogText(normalized) ? compactLogSummary(normalized) : truncateText(normalized, 72);
+  if (!normalized || normalized === "-") return value;
+
+  const dateCandidate = normalized.includes("T")
+    ? normalized
+    : /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(normalized)
+      ? normalized.replace(" ", "T")
+      : "";
+  if (!dateCandidate) return value;
+
+  const safeCandidate = dateCandidate.replace(/\.(\d{3})\d+(?=Z|[+-]\d{2}:?\d{2}|$)/, ".$1");
+  const date = new Date(safeCandidate);
+  if (Number.isNaN(date.getTime())) return value;
+
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+
+  return `${year}.${month}.${day} ${hours}:${minutes}`;
 }
 
 function isVerboseLogText(value: string) {
@@ -965,7 +983,7 @@ export function JobDetailPage({
             </div>
             <div className="job-summary-stat-grid">
               <DetailSummaryStat label="최근 Run" value={latestRunId} />
-              <DetailSummaryStat label="마지막 실행" value={job.lastRun} />
+              <DetailSummaryStat label="마지막 실행" value={formatCompactDateTime(job.lastRun)} />
               <DetailSummaryStat label="다음 실행" value={job.nextRun} />
             </div>
           </article>
@@ -1123,10 +1141,15 @@ export function JobRunsPage({
   onCommand: (job: JobRowData, command: JobCommand) => void;
 }) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
+  const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
   const openRunDetail = (run: JobRunSummary) => {
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}`, run.runId);
     setActiveRun(run);
+  };
+  const openRunLog = (run: JobRunSummary) => {
+    onAction("etl.run.log_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}/logs`, run.runId);
+    setActiveLogRun(run);
   };
 
   return (
@@ -1134,6 +1157,15 @@ export function JobRunsPage({
       <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
 
       <section className="runs-body-content">
+        <article className="runs-stats-summary">
+          <h2>실행 통계 요약</h2>
+          <div>
+            <RunSummaryMetric label="성공률" value={job.stats?.successRate ?? "-"} />
+            <RunSummaryMetric label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
+            <RunSummaryMetric label="총 실행" value={job.stats?.totalRuns ?? `${runs.length}회`} />
+          </div>
+        </article>
+
         <div className="runs-filter-bar">
           <div className="runs-filters-left">
             <button className="runs-filter-button" type="button" onClick={() => onAction("etl.runs.status_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/status`, job.id)}>상태: 전체 <span>▾</span></button>
@@ -1158,7 +1190,7 @@ export function JobRunsPage({
                 <th>입력 행</th>
                 <th>출력 행</th>
                 <th>실패 단계</th>
-                <th>에러 요약</th>
+                <th>로그</th>
                 <th>액션</th>
               </tr>
             </thead>
@@ -1172,13 +1204,15 @@ export function JobRunsPage({
                 <tr className={row.status === "failed" || row.status === "canceled" ? "run-row failed" : "run-row"} key={row.runId}>
                   <td>{row.runId}</td>
                   <td><RunStatusPill status={row.status} /></td>
-                  <td>{row.startedAt}</td>
-                  <td>{row.endedAt}</td>
+                  <td>{formatCompactDateTime(row.startedAt)}</td>
+                  <td>{formatCompactDateTime(row.endedAt)}</td>
                   <td>{row.duration}</td>
                   <td>{row.inputRows}</td>
                   <td>{row.outputRows}</td>
                   <td>{row.failedStage}</td>
-                  <td><span className="run-error-summary" title={row.errorSummary}>{formatRunErrorSummary(row.errorSummary)}</span></td>
+                  <td>
+                    <button className="runs-log-button" type="button" onClick={() => openRunLog(row)}>로그 보기</button>
+                  </td>
                   <td>
                     <button className="runs-detail-button" type="button" onClick={() => openRunDetail(row)}>실행 단계 보기</button>
                   </td>
@@ -1195,17 +1229,9 @@ export function JobRunsPage({
             </div>
           </div>
         </article>
-
-        <article className="runs-stats-summary">
-          <h2>실행 통계 요약</h2>
-          <div>
-            <RunSummaryMetric label="성공률" value={job.stats?.successRate ?? "-"} />
-            <RunSummaryMetric label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
-            <RunSummaryMetric label="총 실행" value={job.stats?.totalRuns ?? `${runs.length}회`} />
-          </div>
-        </article>
       </section>
       {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
+      {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
     </div>
   );
 }
@@ -1226,6 +1252,26 @@ function RunSummaryMetric({ label, value }: { label: string; value: string }) {
     <div className="run-summary-metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => void; run: JobRunSummary }) {
+  const logBody = normalizeWhitespace(run.errorSummary) || "표시할 로그가 없습니다.";
+
+  return (
+    <div className="job-log-modal" role="dialog" aria-modal="true" aria-label={`${run.runId} 로그`} onClick={onClose}>
+      <section onClick={(event) => event.stopPropagation()}>
+        <header className="job-log-modal-header">
+          <div>
+            <span>{run.runId} · {runStatusMeta[run.status].label}</span>
+            <h2>{job.name}</h2>
+            <p>{run.failedStage} · {formatCompactDateTime(run.startedAt)} - {formatCompactDateTime(run.endedAt)}</p>
+          </div>
+          <button type="button" aria-label="닫기" onClick={onClose}><X size={16} />닫기</button>
+        </header>
+        <pre>{logBody}</pre>
+      </section>
     </div>
   );
 }

@@ -1588,22 +1588,12 @@
 
 .runs-table th:nth-child(9),
 .runs-table td:nth-child(9) {
-  width: 150px;
+  width: 92px;
 }
 
 .runs-table th:nth-child(10),
 .runs-table td:nth-child(10) {
-  width: 90px;
-}
-
-.run-error-summary {
-  display: -webkit-box;
-  max-height: 38px;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  width: 110px;
 }
 
 .run-row.failed {
@@ -1661,6 +1651,18 @@
   font-size: 12px;
   font-weight: 800;
   padding: 0;
+}
+
+.runs-log-button {
+  min-height: 30px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .runs-pagination {
