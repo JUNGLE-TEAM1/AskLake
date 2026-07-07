@@ -126,7 +126,7 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   ],
   review: [
     ["파이프라인", "pair_a_customer_review_gold"],
-    ["소스", "MinIO / m3-raw"],
+    ["소스", "연결 후 선택"],
     ["스케줄", "매주 목요일 10:30"],
     ["권한", "분석가 외 2건"],
     ["타겟", "S3 Gold / Parquet"],

@@ -35,6 +35,8 @@ import {
   TerminalSquare,
   Trash2,
 } from "lucide-react";
+import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
+import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -215,7 +217,7 @@ function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, cur
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / MinIO(S3)",
+  "File / S3": "파일 / S3",
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
@@ -656,13 +658,15 @@ export function SourceConnectionPage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [sourceType, setSourceType] = useState(draft.source.sourceType || "File / S3");
+  const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(draft.source.sourceType ? "connect" : "choose");
+  const [selectedAssetIndex, setSelectedAssetIndex] = useState(-1);
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <SourceBrandIcon kind="s3" />, label: "MinIO/S3", status: "실제 연결" },
+    "File / S3": { desc: "S3 호환 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "S3", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
     MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
     "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
@@ -728,18 +732,18 @@ export function SourceConnectionPage({
       info: "MongoDB 연결과 샘플 조회는 백엔드 커넥터에서 실행합니다.",
     },
     "File / S3": {
-      title: "MinIO 소스 설정",
-      description: "MinIO/S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
+      title: "S3 소스 설정",
+      description: "S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "MinIO"],
-        ["Endpoint URL", "http://127.0.0.1:9000"],
-        ["Region", "us-east-1"],
-        ["Bucket / Stage Name", "m3-raw"],
-        ["Path / Prefix", "nyc_taxi/csv/"],
+        ["Storage Provider", "S3"],
+        ["Endpoint URL", ""],
+        ["Region", ""],
+        ["Bucket / Stage Name", ""],
+        ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
-        ["Use Path Style", "true"],
-        ["File Type", "CSV (Comma Separated)"],
+        ["Use Path Style", "false"],
+        ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
@@ -828,14 +832,18 @@ export function SourceConnectionPage({
       actions: ["Show Advanced Configuration"],
     },
   };
-  const activeSourceType = sourceType === "Database" ? "PostgreSQL" : sourceConfigs[sourceType] ? sourceType : "File / S3";
-  const current = sourceConfigs[activeSourceType];
+  const selectedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
+  const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
+  const hasSelectedSource = activeSourceType.length > 0;
+  const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
   const editableFields = sourceFields[activeSourceType] ?? (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
   );
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const sourceLabel = hasSelectedSource
+    ? editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType
+    : "미선택";
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 테스트 대기" },
@@ -845,6 +853,8 @@ export function SourceConnectionPage({
   const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
   const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
   const displayAssets = sourceRuntime?.assets ?? current.assets;
+  const hasDetectedAssets = displayAssets.length > 0;
+  const selectedAsset = selectedAssetIndex >= 0 ? displayAssets[selectedAssetIndex] : null;
   const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
   const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
@@ -854,10 +864,10 @@ export function SourceConnectionPage({
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
   const sourceSummaryRows: Array<[string, string]> = [
-    ["선택 커넥터", sourceTypeLabel(activeSourceType)],
+    ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", `${displayAssets.length}개`],
-    ["인증 방식", activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", activeSourceType === "File / S3" ? "S3 액세스 키" : "백엔드 커넥터"],
     ["다음 단계", "스키마 추론"],
   ];
 
@@ -867,6 +877,18 @@ export function SourceConnectionPage({
     nextStatus = connectionStatus,
     nextMessage = connectionMessage,
   ) => {
+    if (!nextType) {
+      onDraftChange({
+        source: {
+          connectionMessage: nextMessage,
+          connectionStatus: nextStatus,
+          sourceConfig: [],
+          sourceLabel: "",
+          sourceType: "",
+        },
+      });
+      return;
+    }
     const label = sourceLabelFromFields(nextType, nextFields);
     onDraftChange({
       source: {
@@ -883,6 +905,8 @@ export function SourceConnectionPage({
     const nextMessage = `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
     setSourceRuntime(null);
+    setSelectedAssetIndex(-1);
+    setSourceStage("connect");
     setConnectionStatus("idle");
     setConnectionMessage(nextMessage);
     applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields, "idle", nextMessage);
@@ -899,7 +923,77 @@ export function SourceConnectionPage({
     applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
   };
 
+  const fillMinioDemoFields = () => {
+    const demoFields: Array<[string, string]> = [
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://127.0.0.1:19000"],
+      ["Region", "us-east-1"],
+      ["Bucket / Stage Name", "m3-raw"],
+      ["Path / Prefix", ""],
+      ["Access Key", "m3admin"],
+      ["Secret Key", "wishuponastar"],
+      ["Use Path Style", "true"],
+      ["File Type", "auto"],
+      ["Delimiter", ","],
+      ["Encoding", "UTF-8"],
+      ["Header", "Treat first row as header"],
+    ];
+    const nextFields = mergeFieldRows(editableFields, demoFields);
+    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime(null);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
+  };
+
+  const selectSourceAsset = async (assetIndex: number) => {
+    const asset = displayAssets[assetIndex];
+    if (!asset) return;
+    const [assetPath, assetMeta] = asset;
+    const nextFields = editableFields.map(([fieldLabel, fieldValue]) => (
+      fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
+        ? [fieldLabel, assetPath] as [string, string]
+        : [fieldLabel, fieldValue] as [string, string]
+    ));
+    const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
+    setSelectedAssetIndex(assetIndex);
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(nextMessage);
+    setConnectionStatus("testing");
+    applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
+    onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
+    try {
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+        nextFields,
+      );
+      const successMessage = `${assetPath} 기준 샘플을 가져왔습니다.`;
+      if (result.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? nextFields }));
+      }
+      setSourceRuntime({ ...result, assets: mergeSourceAssets(displayAssets, result.assets ?? []), message: successMessage });
+      setConnectionStatus(result.status);
+      setConnectionMessage(successMessage);
+      onDraftChange(result.draftPatch);
+      onAction("etl.source.asset_sampled", result.actionPath, assetPath);
+      onNotify(successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "선택한 오브젝트의 샘플을 가져오지 못했습니다.";
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
+      onNotify(message);
+    }
+  };
+
   const testConnection = async () => {
+    if (!hasSelectedSource) {
+      onNotify("먼저 소스를 선택하세요.");
+      return;
+    }
     const testingMessage = `${sourceTypeLabel(activeSourceType)} 커넥터 테스트 실행 중입니다.`;
     setConnectionStatus("testing");
     setConnectionMessage(testingMessage);
@@ -913,6 +1007,7 @@ export function SourceConnectionPage({
         setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
       }
       setSourceRuntime(result);
+      setSelectedAssetIndex(-1);
       setConnectionStatus(result.status);
       setConnectionMessage(result.message);
       onDraftChange(result.draftPatch);
@@ -944,9 +1039,21 @@ export function SourceConnectionPage({
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
+  const sourceGroups = [
+    { title: "파일 / 오브젝트", connectors: ["File / S3"] },
+    { title: "문서형 / API", connectors: ["MongoDB", "REST API"] },
+    { title: "레이크", connectors: ["Data Lake"] },
+    { title: "관계형 DB", connectors: ["PostgreSQL"] },
+    { title: "스트림", connectors: ["Stream / Kafka"] },
+  ];
+
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceTypeLabel(activeSourceType)} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
+      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
+        if (!hasSelectedSource) {
+          onNotify("먼저 소스를 선택하세요.");
+          return;
+        }
         if (connectionStatus !== "success") {
           onNotify("먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
           return;
@@ -960,35 +1067,76 @@ export function SourceConnectionPage({
     >
         <PageTitle title="소스 연결" description="소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다." />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>소스 선택 및 연결</h2>
-            <span className="panel-note">소스를 선택하면 연결 설정과 테스트가 바로 이어집니다</span>
+          <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
+            <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
+            <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
+            <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
           </div>
-          <div className="source-connect-stack">
-            <div className="source-picker-strip" role="group" aria-label="소스 선택">
-              {Object.entries(connectorMeta).map(([connector, meta]) => (
-                <button aria-label={`${meta.label} ${meta.desc} ${meta.status}`} className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} title={`${meta.desc} · ${meta.status}`} type="button" onClick={() => selectSource(connector)}>
-                  <span className="hegun-connector-icon">{meta.icon}</span>
-                  <strong>{meta.label}</strong>
-                </button>
-              ))}
-            </div>
-            <div className="source-active-config">
-              <div className="source-active-heading">
-                <Settings size={18} />
-                <strong>{current.title}</strong>
-                <span>{current.description}</span>
+
+          {sourceStage === "choose" && (
+            <div className="source-stage-screen source-choice-screen">
+              <div className="xflow-source-select-heading">
+                <h2>원천 소스 선택</h2>
               </div>
-              <div className="hegun-field-grid">
-                {visibleEditableFields.map(([label, value]) => (
-                  <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
-                    <span>{sourceFieldLabel(label)}</span>
-                    <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
-                  </label>
+              <div className="source-category-board">
+                {sourceGroups.map((group) => (
+                  <section className="source-category-column" key={group.title}>
+                    <h3>{group.title}</h3>
+                    <div>
+                      {group.connectors.map((connector) => {
+                        const meta = connectorMeta[connector];
+                        return (
+                          <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                            <span className="hegun-connector-icon">{meta.icon}</span>
+                            <strong>{meta.label}</strong>
+                            <span>{meta.desc}</span>
+                            <em>{meta.status}</em>
+                            {sourceType === connector && <span className="hegun-connector-check"><Check size={18} /></span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
                 ))}
               </div>
-              {current.info && <InfoBox title="보안 연결" body={current.info} />}
+            </div>
+          )}
+
+          {sourceStage === "connect" && hasSelectedSource && (
+            <div className="source-stage-screen">
+              <section className="source-step-section active">
+                <div className="source-step-header">
+                  <em>1</em>
+                  <div>
+                    <strong>{current.title}</strong>
+                  </div>
+                  <div className="hegun-status-actions">
+                    {activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
+                    {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                    {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+                  </div>
+                </div>
+                <div className="hegun-field-grid source-flow-fields">
+                  {visibleEditableFields.map(([label, value]) => (
+                    <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
+                      <span>{sourceFieldLabel(label)}</span>
+                      <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                    </label>
+                  ))}
+                </div>
+                {activeSourceType === "File / S3" && (
+                  <div className="source-path-tree-hint">
+                    <LayoutGrid size={18} />
+                    <div>
+                      <strong>경로/프리픽스는 직접 입력하지 않습니다.</strong>
+                      <span>연결 테스트 후 데이터 탐색에서 실제 버킷 폴더 구조를 열고 파일이나 프리픽스를 선택하세요.</span>
+                      {sourceLabel !== "미선택" && <em>{sourceLabel}</em>}
+                    </div>
+                  </div>
+                )}
+              </section>
+
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
                   <div className="hegun-status-copy">
@@ -996,11 +1144,7 @@ export function SourceConnectionPage({
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
                     <span className="panel-note">{publicConnectionMessage}</span>
                   </div>
-                  <div className="hegun-status-actions">
-                    {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                    {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
-                  </div>
+                  {connectionStatus === "success" && hasDetectedAssets && <button className="secondary-button" type="button" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</button>}
                 </div>
                 <div className="hegun-test-strip">
                   {displayTestItems.map(([label, value], index) => (
@@ -1013,44 +1157,220 @@ export function SourceConnectionPage({
                 </div>
               </section>
             </div>
-          </div>
+          )}
+
+          {sourceStage === "browse" && hasSelectedSource && (
+            <div className="source-stage-screen source-xflow-layout">
+              <section className="source-from-panel">
+                <div className="source-xflow-heading">
+                  <LayoutGrid size={18} />
+                  <div><h2>{current.assetsTitle}</h2></div>
+                </div>
+                {hasDetectedAssets ? (
+                  <SourceAssetTree assets={displayAssets} selectedIndex={selectedAssetIndex} onSelect={selectSourceAsset} />
+                ) : (
+                  <p className="source-empty-note">연결 테스트 후 실제 폴더와 파일이 표시됩니다.</p>
+                )}
+              </section>
+              <section className="source-flow-panel">
+                <section className="source-step-section active">
+                  <div className="source-step-header">
+                    <em>2</em>
+                    <div>
+                      <strong>제한 샘플 미리보기</strong>
+                    </div>
+                    <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : "선택 대기"}</span>
+                  </div>
+                  <div className="source-preview-format-strip">
+                    <strong>{activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType)}</strong>
+                    <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                  </div>
+                  {displayPreviewRows.length > 0 ? (
+                    <div className="hegun-table-scroll source-preview-scroll">
+                      <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+                        <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+                        <tbody>
+                          {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
+                  )}
+                </section>
+              </section>
+            </div>
+          )}
         </section>
-        {displayAssets.length > 0 && (
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <LayoutGrid size={18} />
-              <h2>{current.assetsTitle}</h2>
-              <span className="panel-note">총 {displayAssets.length}개</span>
-            </div>
-            <div className="hegun-asset-list">
-              {displayAssets.map(([name, meta, status], index) => (
-                <article key={`${activeSourceType}-${name}-${index}`}>
-                  <strong>{name}</strong>
-                  <span>{meta}</span>
-                  <em>{sourceValueLabel(status)}</em>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {displayPreviewRows.length > 0 && (
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <FileText size={18} />
-              <h2>{current.previewTitle}</h2>
-              <span className="panel-note">{publicDisplayPreviewNote}</span>
-            </div>
-            <div className="hegun-table-scroll">
-              <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
-                <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
-                <tbody>
-                  {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
     </CreationFlowLayout>
+  );
+}
+
+type SourceAssetTreeProps = {
+  assets: Array<[string, string, string]>;
+  selectedIndex: number;
+  onSelect: (assetIndex: number) => void | Promise<void>;
+};
+
+type SourceAssetTreeNode = {
+  id: string;
+  name: string;
+  path: string;
+  meta: string;
+  status: string;
+  assetIndex?: number;
+  isFolder: boolean;
+  children: SourceAssetTreeNode[];
+  childMap: Map<string, SourceAssetTreeNode>;
+};
+
+function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
+  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
+  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
+  const selectedPath = [
+    fieldMap.get("Path / Prefix"),
+    fieldMap.get("Path"),
+    fieldMap.get("DATASET OR TABLE SELECTOR"),
+  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
+  const rawFormat = declaredFormat && declaredFormat !== "auto"
+    ? declaredFormat
+    : selectedPath.replace(/^.*\./, "");
+  if (rawFormat.includes("jsonl")) return "JSONL";
+  if (rawFormat.includes("json")) return "JSON";
+  if (rawFormat.includes("csv")) return "CSV";
+  if (rawFormat.includes("tsv")) return "TSV";
+  if (rawFormat.includes("txt")) return "TXT";
+  if (rawFormat.includes("parquet")) return "PARQUET";
+  return "AUTO";
+}
+
+function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
+  const merged = new Map<string, [string, string, string]>();
+  [...currentAssets, ...nextAssets].forEach(([path, meta, status]) => {
+    merged.set(path, [path, meta, status]);
+  });
+  return Array.from(merged.values());
+}
+
+function SourceAssetTree({ assets, selectedIndex, onSelect }: SourceAssetTreeProps) {
+  const { nodes, expandedItems } = useMemo(() => {
+    const root: SourceAssetTreeNode = {
+      id: "root",
+      name: "root",
+      path: "",
+      meta: "folder",
+      status: "",
+      isFolder: true,
+      children: [],
+      childMap: new Map(),
+    };
+
+    const ensureChild = (parent: SourceAssetTreeNode, name: string, path: string, isFolder: boolean) => {
+      const id = path || name;
+      const existing = parent.childMap.get(id);
+      if (existing) {
+        if (isFolder) existing.isFolder = true;
+        return existing;
+      }
+      const node: SourceAssetTreeNode = {
+        id,
+        name,
+        path,
+        meta: isFolder ? "folder" : "file",
+        status: "",
+        isFolder,
+        children: [],
+        childMap: new Map(),
+      };
+      parent.childMap.set(id, node);
+      parent.children.push(node);
+      return node;
+    };
+
+    assets.forEach(([rawPath, meta, status], assetIndex) => {
+      const normalizedPath = rawPath.replace(/^\/+/, "").replace(/\/+$/, meta === "folder" ? "/" : "");
+      const cleanPath = normalizedPath.replace(/\/+$/, "");
+      const segments = cleanPath.split("/").filter(Boolean);
+      if (segments.length === 0) return;
+      const isFolderAsset = meta === "folder" || rawPath.endsWith("/");
+      let current = root;
+      segments.forEach((segment, segmentIndex) => {
+        const isLast = segmentIndex === segments.length - 1;
+        const segmentPath = segments.slice(0, segmentIndex + 1).join("/") + (!isLast || isFolderAsset ? "/" : "");
+        current = ensureChild(current, segment, segmentPath, !isLast || isFolderAsset);
+        if (isLast) {
+          current.meta = meta;
+          current.status = status;
+          current.assetIndex = assetIndex;
+          current.isFolder = isFolderAsset || current.children.length > 0;
+        }
+      });
+    });
+
+    const sortTree = (node: SourceAssetTreeNode) => {
+      node.children.sort((a, b) => {
+        if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      node.children.forEach(sortTree);
+    };
+    sortTree(root);
+
+    const expanded: string[] = [];
+    const collectExpanded = (node: SourceAssetTreeNode) => {
+      if (node.isFolder && node.children.length > 0) expanded.push(node.id);
+      node.children.forEach(collectExpanded);
+    };
+    root.children.forEach(collectExpanded);
+    return { nodes: root.children, expandedItems: expanded };
+  }, [assets]);
+
+  const renderNode = (node: SourceAssetTreeNode): React.ReactNode => {
+    const canSelect = typeof node.assetIndex === "number";
+    const isSelected = node.assetIndex === selectedIndex;
+    const label = (
+      <div
+        className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
+        role={canSelect ? "button" : undefined}
+        tabIndex={canSelect ? 0 : -1}
+        title={node.path}
+        onClick={(event) => {
+          if (!canSelect || node.assetIndex === undefined) return;
+          event.stopPropagation();
+          void onSelect(node.assetIndex);
+        }}
+        onKeyDown={(event) => {
+          if (!canSelect || node.assetIndex === undefined) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            void onSelect(node.assetIndex);
+          }
+        }}
+      >
+        <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
+          {node.isFolder ? "폴더" : "파일"}
+        </span>
+        <strong>{node.name}</strong>
+        <em>{node.meta === "folder" ? `${node.children.length}개` : node.meta}</em>
+      </div>
+    );
+
+    return (
+      <TreeItem key={node.id} itemId={node.id} label={label}>
+        {node.children.map(renderNode)}
+      </TreeItem>
+    );
+  };
+
+  if (nodes.length === 0) {
+    return <p className="source-empty-note">표시할 오브젝트가 없습니다.</p>;
+  }
+
+  return (
+    <SimpleTreeView className="source-asset-tree" expandedItems={expandedItems}>
+      {nodes.map(renderNode)}
+    </SimpleTreeView>
   );
 }
 
@@ -1064,7 +1384,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header"].includes(label);
+    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix"].includes(label);
   }
   return true;
 }
@@ -1720,250 +2040,142 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <section className="schema-designer">
-        <aside className="schema-settings-panel">
-          <div className="schema-panel-title">
-            <SlidersHorizontal size={17} />
-            <h2>{isFlattenedJson ? "문서 샘플링" : "파서 설정"}</h2>
+      <section className="schema-xflow-workspace">
+        <div className="schema-xflow-toolbar">
+          <label className="schema-search-box">
+            <Search size={16} />
+            <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.currentTarget.value)} placeholder="필드 검색" />
+          </label>
+          <div className="schema-xflow-scope">
+            {sampleScopeOptions.map((option) => (
+              <button
+                className={option.value === schemaSampleScope ? "active" : ""}
+                disabled={isRecheckingSchema}
+                aria-label={option.label}
+                key={option.value}
+                onClick={() => selectSampleScope(option.value)}
+                title={option.label}
+                type="button"
+              >
+                {option.shortLabel}
+              </button>
+            ))}
           </div>
-          <label className="schema-setting-field">
-            <span>소스 형식</span>
-            <select className="input control-input" value={sourceFormat} disabled>
-              <option>{sourceFormat}</option>
-            </select>
-          </label>
-          <label className="schema-setting-field">
-            <span>{isFlattenedJson ? "루트 경로" : "헤더 처리"}</span>
-            <input className="input control-input" value={isFlattenedJson ? "$" : "첫 행을 컬럼명으로 사용"} readOnly />
-          </label>
-          <label className="schema-setting-field">
-            <span>인코딩</span>
-            <select className="input control-input" value="UTF-8" disabled>
-              <option>UTF-8</option>
-            </select>
-          </label>
-          <div className="schema-segment-field">
-            <span>샘플 범위</span>
-            <div>
-              {sampleScopeOptions.map((option) => (
-                <button
-                  className={option.value === schemaSampleScope ? "active" : ""}
-                  disabled={isRecheckingSchema}
-                  aria-label={option.label}
-                  key={option.value}
-                  onClick={() => selectSampleScope(option.value)}
-                  title={option.label}
-                  type="button"
-                >
-                  {option.shortLabel}
+          {isFlattenedJson && (
+            <div className="schema-xflow-scope">
+              <button className={flattenObjects ? "active" : ""} disabled={!hasInferredSchema} onClick={() => applyFlattenSettings(!flattenObjects)} type="button">
+                평탄화 {flattenObjects ? "켜짐" : "꺼짐"}
+              </button>
+              {[1, 2, 3].map((depth) => (
+                <button className={flattenObjects && depth === flattenDepth ? "active" : ""} disabled={!hasInferredSchema || !flattenObjects} key={depth} onClick={() => applyFlattenSettings(true, depth)} type="button">
+                  {depth}단계
                 </button>
               ))}
             </div>
-          </div>
-          {isFlattenedJson && (
-            <>
-              <label className="schema-check-row">
-                <span>
-                  <strong>중첩 객체 평탄화</strong>
-                  <small>{flattenObjects ? `${nestedFieldCount}개 중첩 필드를 출력 컬럼으로 펼침` : "중첩 객체를 JSON 컬럼으로 유지"}</small>
-                </span>
-                <input
-                  aria-label="중첩 객체 평탄화"
-                  checked={flattenObjects}
-                  disabled={!hasInferredSchema}
-                  onChange={(event) => applyFlattenSettings(event.currentTarget.checked)}
-                  type="checkbox"
-                />
-              </label>
-              <div className="schema-segment-field">
-                <span>평탄화 깊이</span>
-                <div>
-                  {["1", "2", "3"].map((depth) => (
-                    <button
-                      className={Number(depth) === flattenDepth ? "active" : ""}
-                      disabled={!hasInferredSchema || !flattenObjects}
-                      key={depth}
-                      onClick={() => applyFlattenSettings(true, Number(depth))}
-                      type="button"
-                    >
-                      {depth}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <label className="schema-setting-field">
-                <span>배열 처리</span>
-                <select className="input control-input" value="JSON 유지" disabled>
-                  <option>JSON 유지</option>
-                </select>
-              </label>
-            </>
           )}
-          <button className="secondary-button schema-wide-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
-            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "선택 범위 다시 확인"}
+          <button className="secondary-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
+            <RefreshCw size={15} /> {isRecheckingSchema ? "확인 중" : "다시 확인"}
           </button>
-        </aside>
-
-        <main className="schema-field-panel">
-          <div className="schema-field-toolbar">
-            <label className="schema-search-box">
-              <Search size={16} />
-              <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.currentTarget.value)} placeholder="필드 검색..." />
-            </label>
-            <button className="schema-toolbar-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>매핑 초기화</button>
-            <span>{visibleSchemaColumns.length} / {schemaColumns.length}개 표시</span>
-          </div>
-          <div className="schema-field-table-wrap">
-            <table className="schema-field-table">
-              <thead>
-                <tr>
-                  <th>포함</th>
-                  <th>순서</th>
-                  <th>{isFlattenedJson ? "필드 경로" : "원본 필드"}</th>
-                  <th>출력 필드</th>
-                  <th>타입</th>
-                  <th>Null</th>
-                  <th>역할</th>
-                  <th>삭제</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleSchemaColumns.map(({ column, index }) => {
-                  const confidence = column.confidence ?? 70;
-                  return (
-                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""} ${isSchemaColumnIncluded(column) ? "" : "excluded"}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
-                      <td>
-                        <input aria-label={`${column.targetName} 포함`} checked={isSchemaColumnIncluded(column)} type="checkbox" onChange={(event) => {
-                          event.stopPropagation();
-                          updateSchemaColumn(index, { included: event.currentTarget.checked });
-                        }} onClick={(event) => event.stopPropagation()} />
-                      </td>
-                      <td>#{index + 1}</td>
-                      <td><strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong></td>
-                      <td>
-                        <button type="button" onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedSchemaIndex(index);
-                        }}>{column.targetName || `column_${index + 1}`}</button>
-                      </td>
-                      <td><span className="schema-type-pill">{column.type}</span></td>
-                      <td>{column.nullable ? "허용" : "필수"}</td>
-                      <td>{schemaRoleLabel(column.role)}</td>
-                      <td>
-                        <button className="schema-table-delete" type="button" title="컬럼 삭제" onClick={(event) => {
-                          event.stopPropagation();
-                          deleteSchemaColumn(index);
-                        }}>
-                          <Trash2 size={15} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visibleSchemaColumns.length === 0 && <tr><td colSpan={8}>표시할 스키마 필드가 없습니다. 소스 연결 테스트를 먼저 실행하거나 검색어를 지우세요.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </main>
-
-        <aside className="schema-inspector-panel">
-          {selectedColumn ? (
-            <>
-              <div className="schema-inspector-scroll">
-                <div className="schema-inspector-heading">
-                  <div>
-                    <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
-                    <span>필드 ID: {selectedIndex + 1}</span>
-                  </div>
-                  <em>{selectedColumn.confidence ?? 70}% 확신</em>
-                </div>
-                <div className="schema-flow-detail">
-                  <span>원본 → 출력</span>
-                  <strong>{selectedColumn.sourceName} → {selectedColumn.targetName || `column_${selectedIndex + 1}`}</strong>
-                  <small>{selectedFlowItem?.action ?? mappingModeText}</small>
-                </div>
-                <label className="schema-setting-field">
-                  <span>출력 필드명</span>
-                  <input className="input control-input" value={selectedColumn.targetName} onBlur={(event) => {
-                    if (event.currentTarget.value.trim()) return;
-                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
-                  }} onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })} />
-                </label>
-                <label className="schema-setting-field">
-                  <span>타입 재정의</span>
-                  <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
-                    {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                  </select>
-                </label>
-                <label className="schema-setting-field">
-                  <span>Null 정책</span>
-                  <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
-                    <option value="false">필수</option>
-                    <option value="true">허용</option>
-                  </select>
-                </label>
-                <label className="schema-setting-field">
-                  <span>역할</span>
-                  <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
-                    {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
-                  </select>
-                </label>
-                <div className="schema-inspector-metrics">
-                  <div><span>Null 비율</span><strong>{selectedNullRatio}%</strong></div>
-                  <div><span>샘플 값 수</span><strong>{selectedSampleValues.length}</strong></div>
-                </div>
-                <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
-                <div className="schema-distribution">
-                  <span>값 분포</span>
-                  {selectedDistribution.map((item) => (
-                    <div key={item.label}>
-                      <strong title={item.label}>{item.label}</strong>
-                      <span><i style={{ width: `${item.percent}%` }} /></span>
-                      <em>{item.count}</em>
-                    </div>
-                  ))}
-                  {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
-                </div>
-                <div className="schema-sample-chips">
-                  <span>샘플 값</span>
-                  <div>
-                    {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
-                    {selectedSampleValues.length === 0 && <em>값 없음</em>}
-                  </div>
-                </div>
-              </div>
-              <div className="schema-inspector-actions">
-                <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>{isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}</button>
-              </div>
-            </>
-          ) : <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>}
-        </aside>
-      </section>
-
-      <section className="schema-preview-panel">
-        <div className="schema-preview-tabs">
-          <strong>원본 → 출력 미리보기</strong>
-          <span>{mappingModeText}</span>
         </div>
-        <div className="schema-preview-comparison-grid">
-          <div className="schema-preview-card raw">
-            <div className="schema-preview-card-title"><FileText size={15} /><span>원본 구조</span></div>
-            <pre className="schema-raw-preview">{sourcePreviewText}</pre>
-          </div>
-          <div className="schema-preview-card output">
-            <div className="schema-preview-card-title"><Table2 size={15} /><span>출력 테이블</span>{hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}</div>
-            <div className="hegun-table-scroll">
-              <table className="schema-table schema-output-preview-table" style={{ minWidth: Math.max(680, previewOutputItems.length * 132) }}>
-                <thead><tr>{previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}</tr></thead>
-                <tbody>
-                  {previewOutputRows.map((row, rowIndex) => <tr key={`schema-preview-${rowIndex}`}>{previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}</tr>)}
-                  {previewOutputItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
-                </tbody>
-              </table>
+
+        <div className="schema-xflow-canvas">
+          <section className="schema-xflow-card source-card">
+            <header>
+              <FileText size={24} />
+              <div>
+                <strong>원본 필드</strong>
+                <span>{sourceFormat} · {schemaColumns.length}개 필드</span>
+              </div>
+            </header>
+            <div className="schema-xflow-column-head">
+              <span>FIELD</span>
+              <span>SAMPLE</span>
             </div>
+            <div className="schema-xflow-list">
+              {visibleSchemaColumns.map(({ column, index }) => {
+                const sampleValue = schemaSampleRows[0]?.[index] ?? "";
+                return (
+                  <button className={index === selectedIndex ? "schema-xflow-row active" : "schema-xflow-row"} key={`source-${column.sourceName}-${index}`} type="button" onClick={() => setSelectedSchemaIndex(index)}>
+                    <strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong>
+                    <em title={sampleValue}>{sampleValue || "null"}</em>
+                  </button>
+                );
+              })}
+              {visibleSchemaColumns.length === 0 && <div className="schema-xflow-empty">표시할 원본 필드가 없습니다.</div>}
+            </div>
+          </section>
+
+          <div className="schema-xflow-edge-column" aria-hidden="true">
+            {visibleSchemaColumns.map(({ column, index }) => (
+              <button className={index === selectedIndex ? "active" : ""} key={`edge-${column.sourceName}-${index}`} type="button" onClick={() => setSelectedSchemaIndex(index)}>
+                →
+              </button>
+            ))}
           </div>
+
+          <section className="schema-xflow-card output-card">
+            <header>
+              <Table2 size={24} />
+              <div>
+                <strong>출력 컬럼</strong>
+                <span>{includedSchemaColumns.length}개 출력 · {schemaColumns.length - includedSchemaColumns.length}개 제외</span>
+              </div>
+            </header>
+            <div className="schema-xflow-column-head">
+              <span>COLUMN</span>
+              <span>TYPE</span>
+            </div>
+            <div className="schema-xflow-list">
+              {visibleSchemaColumns.map(({ column, index }) => {
+                const included = isSchemaColumnIncluded(column);
+                return (
+                  <div className={`${index === selectedIndex ? "schema-xflow-row output active" : "schema-xflow-row output"} ${included ? "" : "excluded"}`} key={`output-${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)} role="button" tabIndex={0}>
+                    <input
+                      aria-label={`${column.sourceName} 출력 컬럼명`}
+                      value={column.targetName}
+                      onBlur={(event) => {
+                        if (event.currentTarget.value.trim()) return;
+                        updateSchemaColumn(index, { targetName: normalizeTargetColumnName(column.sourceName) });
+                      }}
+                      onChange={(event) => updateSchemaColumn(index, { targetName: event.currentTarget.value })}
+                    />
+                    <select aria-label={`${column.sourceName} 타입`} value={column.type} onChange={(event) => updateSchemaColumn(index, { type: event.currentTarget.value })}>
+                      {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+              {visibleSchemaColumns.length === 0 && <div className="schema-xflow-empty">표시할 출력 컬럼이 없습니다.</div>}
+            </div>
+          </section>
         </div>
+
+        {selectedColumn && (
+          <div className="schema-xflow-detail">
+            <div>
+              <span>선택 필드</span>
+              <strong>{selectedColumn.sourceName} → {selectedColumn.targetName || `column_${selectedIndex + 1}`}</strong>
+            </div>
+            <label>
+              <span>Null</span>
+              <select value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
+                <option value="false">필수</option>
+                <option value="true">허용</option>
+              </select>
+            </label>
+            <label>
+              <span>역할</span>
+              <select value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
+                {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
+              </select>
+            </label>
+            <span className="schema-xflow-metric">Null {selectedNullRatio}%</span>
+            <span className="schema-xflow-metric">샘플 {selectedSampleValues.length}개</span>
+            <button className="secondary-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>
+              {isSchemaColumnIncluded(selectedColumn) ? "출력 제외" : "출력 포함"}
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="schema-bottom-bar">

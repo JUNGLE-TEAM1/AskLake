@@ -581,7 +581,7 @@ function compactSparkLogs(result) {
 function sourceUnitLabel(sourceType) {
   if (sourceType === "MongoDB") return "컬렉션";
   if (sourceType === "PostgreSQL") return "테이블";
-  if (sourceType === "Stream / Kafka") return "파티션";
+  if (sourceType === "Stream / Kafka" || sourceType === "Kafka JSON") return "파티션";
   return "오브젝트";
 }
 

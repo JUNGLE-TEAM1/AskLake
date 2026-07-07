@@ -184,7 +184,7 @@ function writeSampleRowsSource(job, runId) {
 
 function writeConnectorSampleRowsSource(job, runId) {
   const sourceType = job.sourceType || "";
-  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka"].includes(sourceType)) return "";
+  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka", "Kafka JSON"].includes(sourceType)) return "";
 
   const result = spawnSync(process.execPath, [path.join(scriptsDir, "export-connector-sample.mjs")], {
     cwd: backendDir,

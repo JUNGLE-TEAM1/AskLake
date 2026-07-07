@@ -750,7 +750,7 @@ def source_unit_label(source_type: str) -> str:
         return "컬렉션"
     if source_type == "PostgreSQL":
         return "테이블"
-    if source_type == "Stream / Kafka":
+    if source_type in ("Stream / Kafka", "Kafka JSON"):
         return "파티션"
     return "오브젝트"
 
