@@ -19,8 +19,14 @@ type DashboardAssistantPanelProps = {
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   pageId: string | null;
+  promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
+};
+
+export type DashboardAssistantPromptInsertion = {
+  id: number;
+  text: string;
 };
 
 type AssistantMessage = {
@@ -33,11 +39,20 @@ function AskLakeAssistantMark() {
   return <img alt="" aria-hidden="true" className="asklake-assistant-mark" src={askLakeNessiIconUrl} />;
 }
 
+function appendPromptText(currentPrompt: string, nextText: string) {
+  const current = currentPrompt.trim();
+  const next = nextText.trim();
+  if (!next) return currentPrompt;
+  if (!current) return next;
+  return `${current} ${next}`;
+}
+
 export function DashboardAssistantPanel({
   dashboardId,
   onCreateWidget,
   onUpdateWidget,
   pageId,
+  promptInsertion,
   selectedWidget,
   widgets,
 }: DashboardAssistantPanelProps) {
@@ -46,6 +61,7 @@ export function DashboardAssistantPanel({
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
@@ -127,6 +143,12 @@ export function DashboardAssistantPanel({
     messagesEndRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length]);
 
+  useEffect(() => {
+    if (!promptInsertion) return;
+    setPrompt((current) => appendPromptText(current, promptInsertion.text));
+    promptInputRef.current?.focus();
+  }, [promptInsertion]);
+
   return (
     <section className="asklake-assistant-panel" aria-label="AskLake Assistant">
       <div className={hasMessages ? "asklake-assistant-chat has-messages" : "asklake-assistant-chat"}>
@@ -152,6 +174,7 @@ export function DashboardAssistantPanel({
         <textarea
           aria-label="AskLake 질문"
           placeholder="AskLake에게 질문하세요."
+          ref={promptInputRef}
           rows={3}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}

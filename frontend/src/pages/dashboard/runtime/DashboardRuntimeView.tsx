@@ -1,6 +1,6 @@
 import type { LayoutItem } from "react-grid-layout";
 import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
@@ -16,8 +16,10 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
+import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
 import type {
   CreateDraftWidgetFormInput,
+  DashboardDatasetColumn,
   DashboardDatasetOption,
   DashboardWidgetColorSlotFocus,
   ToolbarDraftWidgetKind,
@@ -178,6 +180,8 @@ export function DashboardRuntimeView({
   datasets,
   runtime,
 }: DashboardRuntimeViewProps) {
+  const assistantPromptInsertionIdRef = useRef(0);
+  const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const {
@@ -298,12 +302,24 @@ export function DashboardRuntimeView({
     selectedWidgetId,
     widgets: selectedDraftWidgets,
   };
+  const queueAssistantPromptText = (text: string) => {
+    if (inspectorMode !== "assistant") return;
+    assistantPromptInsertionIdRef.current += 1;
+    setAssistantPromptInsertion({
+      id: assistantPromptInsertionIdRef.current,
+      text,
+    });
+  };
   const handleCursorMode = () => {
     setInspectorMode("widget");
     setFocusedColorSlot(null);
     onClearWidgetSelection();
   };
   const handleSelectWidget = (widgetId: string) => {
+    if (inspectorMode === "assistant") {
+      const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
+      if (widget) queueAssistantPromptText(`선택한 위젯 "${widget.title || "제목 없는 위젯"}"에 대해`);
+    }
     if (inspectorMode !== "assistant") setInspectorMode("widget");
     onSelectWidget(widgetId);
   };
@@ -321,6 +337,16 @@ export function DashboardRuntimeView({
   const handleCreateToolbarWidget = async (kind: ToolbarDraftWidgetKind) => {
     setInspectorMode("widget");
     await onCreateToolbarWidget(kind);
+  };
+  const handleSelectDataset = (datasetId: string) => {
+    onSelectDataset(datasetId);
+    if (inspectorMode !== "assistant") return;
+    const dataset = dashboardDatasets.find((item) => item.id === datasetId);
+    if (dataset) queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+  };
+  const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
+    if (inspectorMode !== "assistant") return;
+    queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
@@ -422,7 +448,8 @@ export function DashboardRuntimeView({
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
             selectedDatasetId={selectedDatasetId}
-            onSelectDataset={onSelectDataset}
+            onSelectColumn={handleSelectDatasetColumn}
+            onSelectDataset={handleSelectDataset}
           />
         ) : undefined}
         datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
@@ -436,6 +463,7 @@ export function DashboardRuntimeView({
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
               pageId={selectedPageId}
+              promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
               onCreateWidget={onCreateDatasetWidget}
