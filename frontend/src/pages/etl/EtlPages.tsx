@@ -583,6 +583,7 @@ type TargetTestStatus = "idle" | "pending" | "success" | "failed";
 type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
 
 type TargetSchemaRule = {
+  displayType?: string;
   indexed: boolean;
   name: string;
   nullable: boolean;
@@ -665,17 +666,15 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
 const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
-  { included: true, nullable: false, sourceName: "id", targetName: "id", type: "number" },
-  { included: true, nullable: false, sourceName: "user_id", targetName: "user_id", type: "string" },
-  { included: true, nullable: true, sourceName: "amount", targetName: "amount", type: "number" },
-  { included: true, nullable: false, sourceName: "event_time", targetName: "event_time", type: "datetime" },
-  { included: true, nullable: true, sourceName: "active", targetName: "active", type: "boolean" },
-  { included: true, nullable: true, sourceName: "payload.region", targetName: "payload.region", type: "string" },
+  { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
+  { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
+  { included: true, nullable: false, sourceName: "gross_sales", targetName: "gross_sales", type: "decimal" },
+  { included: true, nullable: false, sourceName: "updated_at", targetName: "updated_at", type: "timestamp" },
 ];
 const SAMPLE_TARGET_ROWS = [
-  ["1", "u_001", "42.7", "2026-07-04T10:00:00Z", "true", "KR"],
-  ["2", "u_002", "81.2", "2026-07-04T10:05:00Z", "false", "US"],
-  ["3", "u_003", "15.4", "2026-07-04T10:10:00Z", "true", "JP"],
+  ["2026-07-07", "128", "10200.50", "2026-07-07T09:30:00Z"],
+  ["2026-07-08", "96", "15700.00", "2026-07-08T09:30:00Z"],
+  ["2026-07-09", "141", "99900.25", "2026-07-09T09:30:00Z"],
 ];
 
 function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
@@ -687,8 +686,16 @@ function filterVisibleTargetTags(tags: string[] | undefined) {
   return (tags ?? []).filter((tag) => !LEGACY_TARGET_TAG_OPTIONS.includes(tag));
 }
 
-function isRecommendedPartitionColumn(columnName: string) {
-  return /^(date|event_time|created_at|updated_at|partition_date|event_date)$/i.test(columnName);
+function isRecommendedPartitionColumn(columnName: string, columnType = "") {
+  const normalizedName = columnName.trim().toLowerCase();
+  const normalizedType = columnType.trim().toLowerCase();
+  return (
+    normalizedName === "date"
+    || normalizedName.endsWith("_date")
+    || ["event_time", "created_at", "updated_at", "partition_date", "event_date", "region", "category"].includes(normalizedName)
+    || normalizedType.includes("date")
+    || normalizedType.includes("time")
+  );
 }
 
 function isRecommendedIndexColumn(columnName: string) {
@@ -748,6 +755,7 @@ function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], exist
   const existingByName = new Map(existingRules?.map((rule) => [rule.name, rule]));
   const previewRows: Array<Record<string, string>> = [];
   const typeByName = new Map<string, TargetColumnType>();
+  const displayTypeByName = new Map<string, string>();
   const nullableByName = new Map<string, boolean>();
   let jsonParseFailed = false;
   let jsonInferred = false;
@@ -763,12 +771,15 @@ function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], exist
 
         Object.entries(flattened).forEach(([name, value]) => {
           previewRow[name] = stringifyPreviewValue(value);
-          typeByName.set(name, mergeTargetColumnType(typeByName.get(name), inferJsonValueType(value)));
+          const inferredType = inferJsonValueType(value);
+          typeByName.set(name, mergeTargetColumnType(typeByName.get(name), inferredType));
+          displayTypeByName.set(name, inferredType === "datetime" ? "timestamp" : inferredType);
           nullableByName.set(name, (nullableByName.get(name) ?? false) || value === null || typeof value === "undefined");
         });
 
         previewRow.raw_data = rawValue;
         typeByName.set("raw_data", "json");
+        displayTypeByName.set("raw_data", "json");
         nullableByName.set("raw_data", false);
         previewRows.push(previewRow);
         jsonInferred = true;
@@ -786,6 +797,7 @@ function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], exist
         const value = row[index] ?? "";
         previewRow[name] = value;
         typeByName.set(name, mergeTargetColumnType(typeByName.get(name), normalizeTargetColumnType(column.type)));
+        displayTypeByName.set(name, column.type.trim().toLowerCase());
         nullableByName.set(name, (nullableByName.get(name) ?? false) || value === "");
       });
       previewRows.push(previewRow);
@@ -794,13 +806,15 @@ function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], exist
 
   const schemaRules = Array.from(typeByName.keys()).map((name) => {
     const existing = existingByName.get(name);
-    const recommendedPartition = isRecommendedPartitionColumn(name);
+    const displayType = existing?.displayType ?? displayTypeByName.get(name);
+    const recommendedPartition = isRecommendedPartitionColumn(name, displayType);
     const recommendedIndex = isRecommendedIndexColumn(name);
     const raw = name === "raw_data";
     const type = existing?.type ?? typeByName.get(name) ?? "string";
     const validationStatus: TargetSchemaRule["validationStatus"] = raw ? "warning" : "valid";
 
     return {
+      displayType,
       indexed: existing?.indexed ?? recommendedIndex,
       name,
       nullable: existing?.nullable ?? Boolean(nullableByName.get(name)),
@@ -823,9 +837,16 @@ function buildPartitionPathPreview(storagePath: string, partitionColumns: string
   const normalizedBase = base.endsWith("/") ? base : `${base}/`;
   if (partitionColumns.length === 0) return normalizedBase;
   const partitionPath = partitionColumns
-    .map((column) => `${column}=${isRecommendedPartitionColumn(column) ? "2026-07-04" : "sample"}`)
+    .map((column) => `${column}=${isRecommendedPartitionColumn(column) ? "2026-07-07" : "sample"}`)
     .join("/");
   return `${normalizedBase}${partitionPath}/`;
+}
+
+function formatPartitionColumnType(rule: TargetSchemaRule) {
+  const displayType = rule.displayType?.trim().toLowerCase();
+  if (displayType) return displayType;
+  if (rule.type === "datetime") return rule.name.toLowerCase().endsWith("_date") ? "date" : "timestamp";
+  return rule.type;
 }
 
 function describeTargetSampleValue(rule: TargetSchemaRule, value: string | undefined) {
@@ -4497,10 +4518,12 @@ export function TargetPage({
     tags: false,
   });
 
-  const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);
-  const usedSchemaRules = useMemo(() => sortedSchemaRules.filter((rule) => rule.use), [sortedSchemaRules]);
-  const partitionCandidates = useMemo(() => sortedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [sortedSchemaRules]);
-  const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column));
+  const orderedSchemaRules = useMemo(() => [...schemaRules], [schemaRules]);
+  const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
+  const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
+  const recommendedPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => rule.recommendedPartition), [partitionCandidates]);
+  const otherPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => !rule.recommendedPartition), [partitionCandidates]);
+  const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use));
   const previewRows = useMemo(() => inferredTarget.previewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
@@ -4508,7 +4531,7 @@ export function TargetPage({
     });
     return previewRow;
   }), [inferredTarget.previewRows, usedSchemaRules]);
-  const partitionPathPreview = buildPartitionPathPreview(targetStoragePath, partitionColumns);
+  const partitionPathPreview = buildPartitionPathPreview(targetStoragePath, filteredPartitionColumns);
   const lineage = {
     sourceName: draft.source.sourceLabel || "Source",
     targetDatasetName: targetDataset || "Target",
@@ -4527,7 +4550,7 @@ export function TargetPage({
       targetTableName,
     },
     tags: targetTags,
-    partitionColumns,
+    partitionColumns: filteredPartitionColumns,
     indexColumns,
     schemaRules,
     previewRows,
@@ -4656,6 +4679,22 @@ export function TargetPage({
     );
   };
 
+  const renderPartitionOption = (rule: TargetSchemaRule) => {
+    const selected = filteredPartitionColumns.includes(rule.name);
+    const disabled = !rule.use;
+    const recommended = rule.recommendedPartition;
+    return (
+      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : "", recommended ? "recommended" : "not-recommended"].filter(Boolean).join(" ")} key={rule.name}>
+        <input checked={selected} disabled={disabled} type="checkbox" onChange={() => togglePartitionColumn(rule.name)} />
+        <span className={recommended ? "target-partition-badge recommended" : "target-partition-badge muted"}>
+          {recommended ? "추천" : "비추천"}
+        </span>
+        <span className="target-partition-name">{rule.name}</span>
+        <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
+      </label>
+    );
+  };
+
   return (
     <CreationFlowLayout
       side={(
@@ -4769,21 +4808,19 @@ export function TargetPage({
       ))}
       {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
         <div className="target-partition-settings">
-          <p className="target-partition-help">출력 데이터를 폴더 단위로 나누는 기준 컬럼을 선택합니다.</p>
+          <p className="target-partition-help">파티션은 조회가 빨라지도록 날짜, 지역, 카테고리 기준으로 폴더를 나누는 설정입니다.</p>
           <div className="target-partition-divider" />
-          <div className="target-partition-title">파티션 컬럼 선택</div>
-          <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 선택">
-            {partitionCandidates.map((rule) => {
-              const selected = filteredPartitionColumns.includes(rule.name);
-              const disabled = !rule.use;
-              return (
-                <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
-                  <input checked={selected} disabled={disabled} type="checkbox" onChange={() => togglePartitionColumn(rule.name)} />
-                  <span className="target-partition-name">{rule.name}</span>
-                  <span className="target-partition-type">{rule.type}</span>
-                </label>
-              );
-            })}
+          <div className="target-partition-group">
+            <div className="target-partition-title">추천 파티션 컬럼</div>
+            <div className="target-partition-grid" role="group" aria-label="추천 파티션 컬럼">
+              {recommendedPartitionCandidates.map(renderPartitionOption)}
+            </div>
+          </div>
+          <div className="target-partition-group">
+            <div className="target-partition-title">기타 컬럼</div>
+            <div className="target-partition-grid" role="group" aria-label="기타 파티션 컬럼">
+              {otherPartitionCandidates.map(renderPartitionOption)}
+            </div>
           </div>
           <div className="target-path-preview">
             <span>저장 경로 미리보기</span>
@@ -4809,7 +4846,7 @@ export function TargetPage({
                       <small>{rule.sourceName}</small>
                       <p><b>속성</b>{describeTargetSampleValue(rule, sampleValue)}</p>
                     </div>
-                    <span className="target-output-type">{rule.type}</span>
+                    <span className="target-output-type">{formatPartitionColumnType(rule)}</span>
                   </div>
                 );
               })}
