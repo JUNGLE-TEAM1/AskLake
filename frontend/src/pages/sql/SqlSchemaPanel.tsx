@@ -20,12 +20,12 @@ export function SchemaDetailsPanel({
     return (
       <aside className="sql-schema-panel empty">
         <header className="sql-schema-panel-header">
-          <span>SCHEMA</span>
+          <span>스키마</span>
           <h2>선택된 테이블 없음</h2>
         </header>
         <div className="sql-schema-panel-empty">
           <strong>선택 없음</strong>
-          <span>Source, owner, columns</span>
+          <span>소스, 담당자, 컬럼 정보</span>
         </div>
       </aside>
     );
@@ -51,7 +51,7 @@ export function SchemaDetailsPanel({
                 >
                   <span>{index + 1}</span>
                   <strong title={item.name}>{item.name}</strong>
-                  <em>{item.schema.length} cols</em>
+                  <em>{item.schema.length}컬럼</em>
                 </button>
                 <button
                   aria-label={`${item.name} 선택 해제`}
@@ -73,7 +73,7 @@ export function SchemaDetailsPanel({
         <h2 title={dataset.name}>{dataset.name}</h2>
         <div className="sql-schema-panel-pills">
           <span className="sql-table-layer">{dataset.layer}</span>
-          <span className="sql-table-layer">{dataset.schema.length} columns</span>
+          <span className="sql-table-layer">{dataset.schema.length} 컬럼</span>
           {dataset.rag && <span className="sql-table-rag-pill">RAG</span>}
         </div>
       </header>
@@ -92,23 +92,26 @@ function SelectedSchemaColumnList({
   return (
     <div className="sql-card-schema">
       {dataset.schema.map(([name, type], index) => (
-        <button
-          aria-label={`${dataset.name}.${name} 컬럼 SQL에 삽입`}
+        <div
+          className="sql-card-schema-row"
           key={`${dataset.id}-${name}-${index}`}
-          title="SQL에 삽입"
-          type="button"
-          onClick={() => onColumnClick(dataset, name)}
         >
           <span className="sql-card-schema-name" title={name}>
             <strong>{name}</strong>
           </span>
           <span className="sql-card-schema-type-group">
             <em title={type}>{type}</em>
-            <span className="sql-card-schema-insert">
-              <Plus size={12} /> 삽입
-            </span>
+            <button
+              aria-label={`${dataset.name}.${name} 컬럼 SQL에 삽입`}
+              className="sql-card-schema-insert"
+              title="SQL에 삽입"
+              type="button"
+              onClick={() => onColumnClick(dataset, name)}
+            >
+              <Plus size={18} strokeWidth={2.8} />
+            </button>
           </span>
-        </button>
+        </div>
       ))}
     </div>
   );

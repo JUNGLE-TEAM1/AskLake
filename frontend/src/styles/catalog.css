@@ -464,9 +464,14 @@
   gap: 14px 20px;
 }
 
+.catalog-preview-metrics {
+  gap: 16px 18px;
+}
+
 .catalog-mini-metric {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .catalog-mini-metric span {
@@ -479,7 +484,7 @@
   color: #0f172a;
   font-size: 13px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .catalog-preview-card {
@@ -714,6 +719,10 @@
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
   gap: 24px;
+}
+
+.catalog-detail-grid-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .catalog-overview-card,

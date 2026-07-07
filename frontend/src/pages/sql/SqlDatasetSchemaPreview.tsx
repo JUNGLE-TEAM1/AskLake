@@ -4,8 +4,8 @@ export function SqlDatasetSchemaPreview({ dataset }: { dataset: CatalogDataset }
   return (
     <div className="sql-table-schema-preview" aria-label={`${dataset.name} 스키마 미리보기`}>
       <div className="sql-table-schema-preview-header">
-        <span>SCHEMA</span>
-        <strong>{dataset.schema.length} columns</strong>
+        <span>스키마</span>
+        <strong>{dataset.schema.length} 컬럼</strong>
       </div>
       <div className="sql-table-schema-preview-list">
         {dataset.schema.map(([name, type], index) => (
