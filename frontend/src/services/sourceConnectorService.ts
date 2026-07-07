@@ -51,23 +51,42 @@ async function postSourceAssets(sourceType: string, fields: SourceFieldRows, pre
 }
 
 async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await postBackendDirect<T>(path, body);
+    } catch (error) {
+      if (!isNetworkError(error)) {
+        throw error;
+      }
+    }
+  }
+
   try {
     return await apiClient.post<T>(path, body);
   } catch (error) {
     if (import.meta.env.DEV && isNotFoundError(error)) {
-      const response = await fetch(`http://127.0.0.1:8080${path}`, {
-        body: JSON.stringify(body),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      });
-      if (response.ok) {
-        return await response.json() as T;
-      }
-      const text = await response.text().catch(() => "");
-      throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+      return postBackendDirect<T>(path, body);
     }
     throw error;
   }
+}
+
+async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`http://127.0.0.1:8080${path}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.ok) {
+    return await response.json() as T;
+  }
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+}
+
+function isNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|networkerror|load failed/i.test(message);
 }
 
 function normalizeSourceType(sourceType: string) {
@@ -75,7 +94,10 @@ function normalizeSourceType(sourceType: string) {
 }
 
 function isNotFoundError(error: unknown) {
-  return error instanceof Error && /not found|404/i.test(error.message);
+  const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) : 0;
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return status === 404 || /404|not found/i.test(`${code} ${message}`);
 }
 
 function normalizeConnectorAnalysis(
@@ -118,7 +140,7 @@ function normalizeConnectorAnalysis(
         schemaFingerprint: inferredColumns
           .map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`)
           .join("|"),
-        summary: `${analysis.previewNote || "샘플"} 기준 ${inferredColumns.length}개 필드 추론`,
+        summary: `${analysis.previewNote || "\uC0D8\uD50C"} \uAE30\uC900 ${inferredColumns.length}\uAC1C \uD544\uB4DC \uCD94\uB860`,
       },
     },
   };
@@ -192,7 +214,7 @@ function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnect
     assets: sourceDataset ? [[sourceDataset, runId || "SQL Preview", "verified"]] : [],
     draftPatch: {
       source: {
-        connectionMessage: "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다.",
+        connectionMessage: "SQL Preview result is already verified; connector test is skipped.",
         connectionStatus: "success",
         sourceConfig: fields,
         sourceLabel,
@@ -200,12 +222,12 @@ function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnect
       },
     },
     logs: [
-      "SQL Preview 결과를 처리 Job 입력으로 사용합니다.",
-      "외부 커넥터 연결 테스트와 schema 재추론을 생략합니다.",
+      "SQL Preview result is used as the processing job input.",
+      "Browser connector test and schema re-inference are skipped.",
     ],
-    message: "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다.",
-    previewColumns: ["항목", "값"],
-    previewNote: "SQL 분석 화면에서 전달된 Preview 결과를 보존합니다.",
+    message: "SQL Preview result is already verified; connector test is skipped.",
+    previewColumns: ["Item", "Value"],
+    previewNote: "SQL Preview result is preserved.",
     previewRows,
     status: "success",
     testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
