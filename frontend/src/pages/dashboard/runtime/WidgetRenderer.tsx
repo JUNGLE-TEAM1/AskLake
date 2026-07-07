@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState } from "@tanstack/react-table";
-import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Loader2, Send } from "lucide-react";
+import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Loader2 } from "lucide-react";
 import Chart from "react-apexcharts";
 import type {
   DashboardRuntimeWidget,
@@ -22,6 +22,7 @@ import {
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
+import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -750,7 +751,7 @@ function VisualizationRequestWidget({
         <input
           aria-label="시각화 요청"
           className={isPromptEditing ? "widget-control" : undefined}
-          placeholder="어시스턴트에게 이 차트의 생성을 요청하세요."
+          placeholder="어시스턴트 Nessie에게 이 차트의 생성을 요청하세요."
           ref={promptInputRef}
           readOnly={!isPromptEditing}
           value={prompt}
@@ -766,7 +767,7 @@ function VisualizationRequestWidget({
           }}
         />
         <button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
-          {isSaving ? <Loader2 className="spin" size={18} /> : <Send size={18} />}
+          {isSaving ? <Loader2 className="spin" size={18} /> : <img alt="" aria-hidden="true" className="asklake-visualization-request-nessi-icon" src={askLakeNessiIconUrl} />}
         </button>
       </form>
       <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>

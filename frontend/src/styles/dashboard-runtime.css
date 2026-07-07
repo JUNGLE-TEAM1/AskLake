@@ -1150,6 +1150,13 @@
   opacity: 0.56;
 }
 
+.asklake-visualization-request-nessi-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
 .asklake-visualization-request-widget p {
   max-width: 520px;
   color: #334155;
@@ -1863,6 +1870,12 @@
   letter-spacing: 0;
   text-align: center;
   backdrop-filter: blur(1.5px);
+}
+
+.asklake-assistant-working-overlay .asklake-assistant-mark {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 0;
 }
 
 .asklake-dashboard-inspector .asklake-assistant-chat {

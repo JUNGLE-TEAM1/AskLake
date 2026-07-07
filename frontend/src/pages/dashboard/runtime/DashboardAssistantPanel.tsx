@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Loader2, Send, Sparkles } from "lucide-react";
+import { Loader2, Send } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -176,10 +176,8 @@ export function DashboardAssistantPanel({
 
       {isSubmitting && (
         <div className="asklake-assistant-working-overlay" role="status" aria-live="polite">
-          <span aria-hidden="true" className="asklake-ai-working-icon">
-            <Sparkles size={16} />
-          </span>
-          <strong>AskLake가 답변을 준비하는 중</strong>
+          <AskLakeAssistantMark />
+          <strong>Nessie가 답변을 준비하는 중</strong>
         </div>
       )}
 
