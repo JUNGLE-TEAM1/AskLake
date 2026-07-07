@@ -35,11 +35,31 @@ VITE_API_BASE_URL=http://localhost:8080
 ```
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
-현재 FastAPI는 `POST /api/dashboards/assistant` mock endpoint를 제공하며, 실제 OpenAI/RAG 호출은 후속 작업에서 붙인다.
+현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
 설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
 
 ```bash
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+```
+
+대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
+로컬 PostgreSQL에 대시보드 demo dataset이 없으면 아래 seed를 먼저 실행한다.
+
+```bash
+cd backend
+.venv/bin/python -m app.seed.seed_dashboard_demo
+```
+
+OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_ASSISTANT_ENABLED=true
+OPENAI_ASSISTANT_MODEL=gpt-4o-mini
+OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
+OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
+OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.

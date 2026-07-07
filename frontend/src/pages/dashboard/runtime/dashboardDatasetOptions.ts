@@ -4,7 +4,8 @@ export const mockDashboardDatasets: DashboardDatasetOption[] = [
   {
     id: "gold_logistics_cost_overview",
     name: "Logistics Cost Overview",
-    layer: "gold",
+    layer: "GOLD",
+    status: "available",
     description: "운송비, 창고비, 총 물류비를 월/지역/운송사 기준으로 집계한 데이터셋",
     updatedAt: "2026-07-04 02:15",
     columns: [
@@ -19,7 +20,8 @@ export const mockDashboardDatasets: DashboardDatasetOption[] = [
   {
     id: "gold_shipment_performance",
     name: "Shipment Performance",
-    layer: "gold",
+    layer: "GOLD",
+    status: "available",
     description: "배송 리드타임, 정시 배송률, 배송 건수를 집계한 데이터셋",
     updatedAt: "2026-07-04 02:20",
     columns: [
@@ -34,7 +36,8 @@ export const mockDashboardDatasets: DashboardDatasetOption[] = [
   {
     id: "gold_inventory_status",
     name: "Inventory Status",
-    layer: "gold",
+    layer: "GOLD",
+    status: "available",
     description: "창고별 재고 수량, 재고 금액, 품절 위험 수량을 집계한 데이터셋",
     updatedAt: "2026-07-04 03:05",
     columns: [

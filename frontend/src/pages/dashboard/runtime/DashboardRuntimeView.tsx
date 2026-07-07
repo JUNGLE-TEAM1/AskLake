@@ -1,6 +1,6 @@
 import type { LayoutItem } from "react-grid-layout";
 import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
@@ -8,6 +8,7 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
+import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
 import { DashboardRuntimeShell } from "./DashboardRuntimeShell";
@@ -15,8 +16,10 @@ import { DatasetSidebar } from "./DatasetSidebar";
 import { EmptyDashboardCanvas } from "./EmptyDashboardCanvas";
 import { WidgetConfigPanel } from "./WidgetConfigPanel";
 import { WidgetFrame } from "./WidgetFrame";
+import type { DashboardAssistantPromptInsertion } from "./DashboardAssistantPanel";
 import type {
   CreateDraftWidgetFormInput,
+  DashboardDatasetColumn,
   DashboardDatasetOption,
   DashboardWidgetColorSlotFocus,
   ToolbarDraftWidgetKind,
@@ -26,6 +29,12 @@ import type {
 type RuntimeNotice = {
   message: string;
   tone: "success" | "info" | "error";
+};
+
+type VisualizationPromptInsertion = {
+  id: number;
+  text: string;
+  widgetId: string;
 };
 
 type DashboardRuntimeState = {
@@ -164,7 +173,11 @@ function DashboardEditToolbar({
 }
 
 function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "text";
+  return widget?.config.placeholderKind === "text" || widget?.config.placeholderKind === "visualization_request";
+}
+
+function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
+  return widget?.config.placeholderKind === "visualization_request";
 }
 
 const emptyDashboardCopy = {
@@ -177,6 +190,10 @@ export function DashboardRuntimeView({
   datasets,
   runtime,
 }: DashboardRuntimeViewProps) {
+  const assistantPromptInsertionIdRef = useRef(0);
+  const visualizationPromptInsertionIdRef = useRef(0);
+  const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
+  const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
@@ -274,13 +291,50 @@ export function DashboardRuntimeView({
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
+  const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const nextConfig = {
+      ...widget.config,
+      ...(patch.config ?? {}),
+    } as Record<string, unknown>;
+
+    if (widget.config.placeholderKind === "visualization_request" && (patch.config || patch.datasetId || patch.type || patch.title)) {
+      delete nextConfig.placeholderKind;
+    }
+
+    return nextConfig as UpdateDraftWidgetFormInput["config"];
+  };
+  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
+    config: mergeAssistantWidgetConfig(widget, patch),
+    datasetId: patch.datasetId ?? widget.datasetId ?? null,
+    title: patch.title ?? widget.title ?? "제목 없는 위젯",
+    type: patch.type ?? widget.type,
+  });
   const assistantContext = {
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
+    promptInsertion: visualizationPromptInsertion,
     selectedWidgetId,
     workingWidgetId: aiWorkingWidgetId,
     widgets: selectedDraftWidgets,
+  };
+  const queueAssistantPromptText = (text: string) => {
+    if (inspectorMode !== "assistant") return;
+    assistantPromptInsertionIdRef.current += 1;
+    setAssistantPromptInsertion({
+      id: assistantPromptInsertionIdRef.current,
+      text,
+    });
+  };
+  const queueVisualizationPromptText = (text: string) => {
+    const targetWidgetId = selectedDraftWidget?.id;
+    if (!targetWidgetId || !isVisualizationRequestWidget(selectedDraftWidget)) return;
+    visualizationPromptInsertionIdRef.current += 1;
+    setVisualizationPromptInsertion({
+      id: visualizationPromptInsertionIdRef.current,
+      text,
+      widgetId: targetWidgetId,
+    });
   };
   const handleCursorMode = () => {
     setInspectorMode("widget");
@@ -288,10 +342,20 @@ export function DashboardRuntimeView({
     onClearWidgetSelection();
   };
   const handleSelectWidget = (widgetId: string) => {
-    setInspectorMode("widget");
+    if (inspectorMode === "assistant") {
+      const widget = selectedDraftWidgets.find((item) => item.id === widgetId);
+      if (widget) queueAssistantPromptText(`선택한 위젯 "${widget.title || "제목 없는 위젯"}"에 대해`);
+    }
+    if (inspectorMode !== "assistant") setInspectorMode("widget");
     onSelectWidget(widgetId);
   };
   const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
+    if (inspectorMode === "assistant") {
+      setFocusedColorSlot(null);
+      if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
+      return;
+    }
+
     setInspectorMode("widget");
     setFocusedColorSlot({ slotIndex, widgetId });
     if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
@@ -300,9 +364,33 @@ export function DashboardRuntimeView({
     setInspectorMode("widget");
     await onCreateToolbarWidget(kind);
   };
+  const handleSelectDataset = (datasetId: string) => {
+    onSelectDataset(datasetId);
+    const dataset = dashboardDatasets.find((item) => item.id === datasetId);
+    if (!dataset) return;
+
+    if (inspectorMode === "assistant") {
+      queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+      return;
+    }
+
+    queueVisualizationPromptText(`${dataset.name} 데이터셋으로`);
+  };
+  const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
+    if (inspectorMode === "assistant") {
+      queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+      return;
+    }
+
+    queueVisualizationPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+  };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
+
+  useEffect(() => {
+    if (selectedWidgetHidesInspector) onPreviewWidget(null);
+  }, [onPreviewWidget, selectedWidgetHidesInspector, selectedWidgetId]);
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
@@ -340,6 +428,7 @@ export function DashboardRuntimeView({
         widgets={selectedDraftWidgets}
         assistantContext={assistantContext}
         onDeleteWidget={onDeleteWidget}
+        onApplyWidgetPatch={applyWidgetPatch}
         onLayoutCommit={onLayoutCommit}
         onLayoutRejected={onLayoutRejected}
         onPatchWidgetConfig={patchWidgetConfig}
@@ -395,7 +484,8 @@ export function DashboardRuntimeView({
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
             selectedDatasetId={selectedDatasetId}
-            onSelectDataset={onSelectDataset}
+            onSelectColumn={handleSelectDatasetColumn}
+            onSelectDataset={handleSelectDataset}
           />
         ) : undefined}
         datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
@@ -405,13 +495,15 @@ export function DashboardRuntimeView({
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
         inspector={isAssistantInspectorOpen ? (
-          <aside className="asklake-dashboard-inspector">
+          <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
-              onWorkingWidgetChange={setAiWorkingWidgetId}
               pageId={selectedPageId}
+              promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
+              onCreateWidget={onCreateDatasetWidget}
+              onUpdateWidget={onUpdateWidget}
             />
           </aside>
         ) : isDraftMode && !selectedWidgetHidesInspector ? (

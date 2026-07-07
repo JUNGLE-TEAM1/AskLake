@@ -118,19 +118,23 @@ FastAPI가 현재 소유하는 책임:
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
-- Dashboard Assistant mock contract endpoint
+- Dashboard Assistant OpenAI-backed response endpoint
 - 공통 error envelope
 
 후속으로 넘길 책임:
 
 - Audit log persistence
 - 인증/권한 판정
-- 실제 OpenAI/RAG 기반 Dashboard Assistant 응답 생성
+- RAG 검색 기반 Dashboard Assistant 고도화
 
-Dashboard Assistant는 현재 `POST /api/dashboards/assistant` mock endpoint까지만 FastAPI가 소유한다.
-이 endpoint는 대시보드/위젯 컨텍스트를 받아 `message`, `actions`, `warnings`를 반환하고,
+Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
+이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
+대시보드에서 사용할 수 있는 available catalog dataset과 현재 page widget, 지원 가능한 widget type/config option을 OpenAI에 전달한다.
+OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
+데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이거나 OpenAI 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
 현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
-실제 OpenAI API 호출, RAG 검색, action 자동 적용은 후속 작업 범위다.
+RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 
 ## 8) 데이터 모델 요약
 

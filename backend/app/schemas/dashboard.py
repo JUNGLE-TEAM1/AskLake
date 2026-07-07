@@ -424,7 +424,7 @@ class DashboardAssistantCreateWidgetInput(CamelModel):
     title: str
     type: DashboardRuntimeWidgetType
     dataset_id: str
-    config: DashboardRuntimeWidgetConfig
+    config: dict[str, Any]
 
 
 class DashboardAssistantCreateWidgetAction(CamelModel):
