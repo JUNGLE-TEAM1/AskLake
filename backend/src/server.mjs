@@ -1,6 +1,6 @@
 import http from "node:http";
 import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
-import { testSourceConnector } from "./connectors.mjs";
+import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 
 const port = Number(process.env.PORT || 8080);
@@ -44,6 +44,15 @@ const server = http.createServer(async (request, response) => {
       const sourceType = body.sourceType;
       const sourceConfig = Array.isArray(body.sourceConfig) ? body.sourceConfig : [];
       sendJson(response, 200, await testSourceConnector(sourceType, sourceConfig));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/etl/sources/assets") {
+      const body = await readJson(request);
+      const sourceType = body.sourceType;
+      const sourceConfig = Array.isArray(body.sourceConfig) ? body.sourceConfig : [];
+      const prefix = typeof body.prefix === "string" ? body.prefix : "";
+      sendJson(response, 200, await listSourceAssets(sourceType, sourceConfig, prefix));
       return;
     }
 

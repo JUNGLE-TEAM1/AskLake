@@ -55,6 +55,7 @@ export function CreationPanelActions({
 export function CreationSummaryPanel({
   flow,
   hint = "저장하면 설정한 구성에 따라 파이프라인이 생성됩니다.",
+  nextDisabled,
   nextLabel = "다음 단계로",
   onNext,
   onPrev,
@@ -67,6 +68,7 @@ export function CreationSummaryPanel({
 }: {
   flow: FlowId;
   hint?: string;
+  nextDisabled?: boolean;
   nextLabel?: string;
   onNext: () => void;
   onPrev: () => void;
@@ -93,7 +95,7 @@ export function CreationSummaryPanel({
         ))}
       </dl>
       <p className="summary-hint">{hint}</p>
-      <CreationPanelActions nextLabel={nextLabel} prevLabel={prevLabel} saveLabel={saveLabel} onNext={onNext} onPrev={onPrev} onSave={onSave} />
+      <CreationPanelActions nextDisabled={nextDisabled} nextLabel={nextLabel} prevLabel={prevLabel} saveLabel={saveLabel} onNext={onNext} onPrev={onPrev} onSave={onSave} />
     </aside>
   );
 }

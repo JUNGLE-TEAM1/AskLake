@@ -7,8 +7,9 @@ export type SourceAsset = [path: string, meta: string, status: string];
 
 type SourceAssetTreeProps = {
   assets: SourceAsset[];
-  selectedIndex: number;
-  onSelect: (assetIndex: number) => void | Promise<void>;
+  selectedPath: string;
+  onOpenFolder?: (folderPath: string) => void | Promise<void>;
+  onSelect: (assetPath: string) => void | Promise<void>;
 };
 
 type SourceAssetTreeNode = {
@@ -23,27 +24,33 @@ type SourceAssetTreeNode = {
   status: string;
 };
 
-export function SourceAssetTree({ assets, selectedIndex, onSelect }: SourceAssetTreeProps) {
-  const { defaultExpandedItems, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
-  const defaultExpandedKey = defaultExpandedItems.join("\0");
-  const [expandedItems, setExpandedItems] = useState<string[]>(defaultExpandedItems);
+export function SourceAssetTree({ assets, selectedPath, onOpenFolder, onSelect }: SourceAssetTreeProps) {
+  const { nodeIds, nodes } = useMemo(() => buildSourceAssetTree(assets), [assets]);
+  const nodeIdsKey = nodeIds.join("\0");
+  const [expandedItems, setExpandedItems] = useState<string[]>([]);
 
   useEffect(() => {
-    setExpandedItems(defaultExpandedItems);
-  }, [defaultExpandedKey]);
+    const availableNodeIds = new Set(nodeIds);
+    setExpandedItems((current) => current.filter((itemId) => availableNodeIds.has(itemId)));
+  }, [nodeIdsKey]);
 
-  const toggleFolder = (nodeId: string) => {
-    setExpandedItems((current) => (
-      current.includes(nodeId)
-        ? current.filter((itemId) => itemId !== nodeId)
-        : [...current, nodeId]
-    ));
+  const toggleFolder = (node: SourceAssetTreeNode) => {
+    const isOpen = expandedItems.includes(node.id);
+    if (!isOpen) {
+      void onOpenFolder?.(node.path);
+    }
+    setExpandedItems((current) => {
+      if (current.includes(node.id)) {
+        return current.filter((itemId) => itemId !== node.id);
+      }
+      return [...current, node.id];
+    });
   };
 
   const renderNode = (node: SourceAssetTreeNode): React.ReactNode => {
-    const canOpenFolder = node.isFolder && node.children.length > 0;
+    const canOpenFolder = node.isFolder;
     const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isSelected = canSelectFile && node.assetIndex === selectedIndex;
+    const isSelected = canSelectFile && node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const label = (
       <div
@@ -54,29 +61,32 @@ export function SourceAssetTree({ assets, selectedIndex, onSelect }: SourceAsset
         onClick={(event) => {
           event.stopPropagation();
           if (canOpenFolder) {
-            toggleFolder(node.id);
+            toggleFolder(node);
             return;
           }
-          if (!canSelectFile || node.assetIndex === undefined) return;
-          void onSelect(node.assetIndex);
+          if (!canSelectFile) return;
+          void onSelect(node.path);
         }}
         onKeyDown={(event) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
           event.stopPropagation();
           if (canOpenFolder) {
-            toggleFolder(node.id);
+            toggleFolder(node);
             return;
           }
-          if (!canSelectFile || node.assetIndex === undefined) return;
-          void onSelect(node.assetIndex);
+          if (!canSelectFile) return;
+          void onSelect(node.path);
         }}
       >
+        <span className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"} aria-hidden="true">
+          {node.isFolder ? (isExpanded ? "v" : ">") : ""}
+        </span>
         <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-          {node.isFolder ? "폴더" : "파일"}
+          {node.isFolder ? "DIR" : "FILE"}
         </span>
         <strong>{node.name}</strong>
-        <em>{node.isFolder ? `${node.children.length}개` : node.meta}</em>
+        <em>{node.isFolder ? `${node.children.length} items` : node.meta}</em>
       </div>
     );
 
@@ -88,7 +98,7 @@ export function SourceAssetTree({ assets, selectedIndex, onSelect }: SourceAsset
   };
 
   if (nodes.length === 0) {
-    return <p className="source-empty-note">표시할 오브젝트가 없습니다.</p>;
+    return <p className="source-empty-note">No source assets to display.</p>;
   }
 
   return (
@@ -142,7 +152,7 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
     const segments = cleanPath.split("/").filter(Boolean);
     if (segments.length === 0) return;
 
-    const isFolderAsset = meta === "folder" || rawPath.endsWith("/");
+    const isFolderAsset = meta.toLowerCase() === "folder" || rawPath.endsWith("/");
     let current = root;
     segments.forEach((segment, segmentIndex) => {
       const isLast = segmentIndex === segments.length - 1;
@@ -166,9 +176,14 @@ function buildSourceAssetTree(assets: SourceAsset[]) {
   };
   sortTree(root);
 
-  const defaultExpandedItems = root.children
-    .filter((node) => node.isFolder && node.children.length > 0)
-    .map((node) => node.id);
+  const nodeIds: string[] = [];
+  const collectNodeIds = (node: SourceAssetTreeNode) => {
+    if (node.id !== "root") {
+      nodeIds.push(node.id);
+    }
+    node.children.forEach(collectNodeIds);
+  };
+  collectNodeIds(root);
 
-  return { defaultExpandedItems, nodes: root.children };
+  return { nodeIds, nodes: root.children };
 }

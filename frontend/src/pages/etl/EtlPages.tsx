@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   BarChart3,
@@ -39,7 +39,7 @@ import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../compon
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -679,7 +679,7 @@ export function SourceConnectionPage({
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(draft.source.sourceType ? "connect" : "choose");
-  const [selectedAssetIndex, setSelectedAssetIndex] = useState(-1);
+  const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { desc: "S3 호환 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "S3", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -895,9 +895,12 @@ export function SourceConnectionPage({
   const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
   const displayAssets = sourceRuntime?.assets ?? current.assets;
   const hasDetectedAssets = displayAssets.length > 0;
-  const selectedAsset = selectedAssetIndex >= 0 ? displayAssets[selectedAssetIndex] : null;
-  const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
-  const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
+  const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
+  const selectedAssetHasSample = Boolean(selectedAsset && sourceRuntime?.draftPatch.schema?.columns?.length);
+  const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
+  const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
+  const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
+  const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
   const previewTableMinWidth = Math.max(880, displayPreviewColumns.length * 148);
   const publicConnectionMessage = publicSourceLog(connectionMessage);
@@ -954,7 +957,7 @@ export function SourceConnectionPage({
       : `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
     setSourceRuntime(null);
-    setSelectedAssetIndex(-1);
+    setSelectedAssetPath("");
     setSourceStage("connect");
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
@@ -998,21 +1001,50 @@ export function SourceConnectionPage({
     onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
   };
 
-  const selectSourceAsset = async (assetIndex: number) => {
-    const asset = displayAssets[assetIndex];
+  const loadSourceAssetChildren = async (folderPath: string) => {
+    if (!hasSelectedSource || !(activeSourceType === "File / S3" || activeSourceType === "Data Lake")) return;
+    const folderPrefix = normalizeFolderPrefix(folderPath);
+    try {
+      const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
+      setSourceRuntime((runtime) => runtime
+        ? { ...runtime, assets: mergeSourceAssets(runtime.assets ?? [], result.assets ?? []) }
+        : {
+          actionPath: "/api/etl/sources/assets",
+          assets: result.assets ?? [],
+          draftPatch: {},
+          logs: [],
+          message: connectionMessage,
+          previewColumns: [],
+          previewNote: "",
+          previewRows: [],
+          status: connectionStatus,
+          testItems: displayTestItems,
+        });
+      onAction("etl.source.folder_opened", "/api/etl/sources/assets", folderPrefix);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "하위 목록을 가져오지 못했습니다.");
+    }
+  };
+
+  const selectSourceAsset = async (assetPath: string) => {
+    const asset = displayAssets.find(([path]) => path === assetPath);
     if (!asset) return;
-    const [assetPath, assetMeta] = asset;
+    const [, assetMeta] = asset;
     if (assetMeta === "folder" || assetPath.endsWith("/")) {
+      await loadSourceAssetChildren(assetPath);
       return;
     }
     const currentAssets = displayAssets;
-    const nextFields = editableFields.map(([fieldLabel, fieldValue]) => (
+    const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
       fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
         ? [fieldLabel, assetPath] as [string, string]
         : [fieldLabel, fieldValue] as [string, string]
-    ));
+    )), [
+      ["__Selected Object", assetPath],
+      ["__Sample Object", assetPath],
+    ]);
     const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
-    setSelectedAssetIndex(assetIndex);
+    setSelectedAssetPath(assetPath);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
@@ -1065,20 +1097,52 @@ export function SourceConnectionPage({
     setConnectionMessage(testingMessage);
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
-      const result = mergeConnectorAnalysisSourceConfig(
-        publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
-        editableFields,
-      );
-      if (result.draftPatch.source?.sourceConfig) {
-        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+      if (activeSourceType !== "File / S3" && activeSourceType !== "Data Lake") {
+        const result = mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
+          editableFields,
+        );
+        if (result.draftPatch.source?.sourceConfig) {
+          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+        }
+        setSourceRuntime(result);
+        setSelectedAssetPath("");
+        setConnectionStatus(result.status);
+        setConnectionMessage(result.message);
+        onDraftChange(result.draftPatch);
+        onAction("etl.source.connection_tested", result.actionPath, activeSourceType);
+        onNotify(result.message);
+        return;
       }
-      setSourceRuntime(result);
-      setSelectedAssetIndex(-1);
-      setConnectionStatus(result.status);
-      setConnectionMessage(result.message);
-      onDraftChange(result.draftPatch);
-      onAction("etl.source.connection_tested", result.actionPath, activeSourceType);
-      onNotify(result.message);
+      const result = await listSourceAssets(activeSourceType, editableFields, "");
+      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 직접 하위 항목 ${result.assets.length}개`;
+      const connectorResult: SourceConnectorAnalysis = {
+        actionPath: "/api/etl/sources/assets",
+        assets: result.assets,
+        draftPatch: {
+          source: {
+            connectionMessage: successMessage,
+            connectionStatus: "success",
+            sourceConfig: editableFields,
+            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
+            sourceType: activeSourceType,
+          },
+        },
+        logs: [successMessage],
+        message: successMessage,
+        previewColumns: [],
+        previewNote: "파일을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.",
+        previewRows: [],
+        status: "success",
+        testItems: [["Connector", activeSourceType], ["Result", "Verified"], ["Objects", `${result.assets.length}`]],
+      };
+      setSourceRuntime(connectorResult);
+      setSelectedAssetPath("");
+      setConnectionStatus("success");
+      setConnectionMessage(successMessage);
+      onDraftChange(connectorResult.draftPatch);
+      onAction("etl.source.connection_tested", connectorResult.actionPath, activeSourceType);
+      onNotify(successMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : "소스 커넥터 테스트에 실패했습니다.";
       setSourceRuntime({
@@ -1122,6 +1186,11 @@ export function SourceConnectionPage({
         }
         if (connectionStatus !== "success") {
           onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+          return;
+        }
+        if (!isSqlResultSource && (!hasSchemaPatch || !hasSamplePreview)) {
+          onNotify("데이터 탐색에서 실제 파일을 선택하고 샘플 추론을 완료해야 스키마 단계로 이동할 수 있습니다.");
+          setSourceStage("browse");
           return;
         }
         applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
@@ -1192,16 +1261,6 @@ export function SourceConnectionPage({
                   ))}
                 </div>
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
-                {activeSourceType === "File / S3" && (
-                  <div className="source-path-tree-hint">
-                    <LayoutGrid size={18} />
-                    <div>
-                      <strong>경로/프리픽스는 직접 입력하지 않습니다.</strong>
-                      <span>연결 테스트 후 데이터 탐색에서 실제 버킷 폴더 구조를 열고 파일이나 프리픽스를 선택하세요.</span>
-                      {sourceLabel !== "미선택" && <em>{sourceLabel}</em>}
-                    </div>
-                  </div>
-                )}
               </section>
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
@@ -1237,7 +1296,12 @@ export function SourceConnectionPage({
                   <div><h2>{current.assetsTitle}</h2></div>
                 </div>
                 {hasDetectedAssets ? (
-                  <SourceAssetTree assets={displayAssets} selectedIndex={selectedAssetIndex} onSelect={selectSourceAsset} />
+                  <SourceAssetTree
+                    assets={displayAssets}
+                    selectedPath={selectedAssetPath}
+                    onOpenFolder={loadSourceAssetChildren}
+                    onSelect={selectSourceAsset}
+                  />
                 ) : (
                   <p className="source-empty-note">연결 테스트 후 실제 폴더와 파일이 표시됩니다.</p>
                 )}
@@ -1302,6 +1366,24 @@ function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextA
     merged.set(path, [path, meta, status]);
   });
   return Array.from(merged.values());
+}
+
+function normalizeFolderPrefix(path: string) {
+  const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
+  return cleanPath ? `${cleanPath}/` : "";
+}
+
+function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {
+  const nextFields = [...fields];
+  patches.forEach(([label, value]) => {
+    const index = nextFields.findIndex(([fieldLabel]) => fieldLabel === label);
+    if (index >= 0) {
+      nextFields[index] = [label, value];
+    } else {
+      nextFields.push([label, value]);
+    }
+  });
+  return nextFields;
 }
 
 function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
