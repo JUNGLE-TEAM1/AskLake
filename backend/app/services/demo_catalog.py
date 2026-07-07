@@ -1,5 +1,7 @@
 from typing import Any
 
+from app.services.pair2_demo_data import PAIR2_COMMERCE_DATASETS
+
 DEMO_JOBS: list[dict[str, Any]] = [
     {
         "id": "job_demo_logistics_gold",
@@ -119,6 +121,11 @@ DEMO_DATASETS: list[dict[str, Any]] = [
         "upstream": ["Lake inventory_snapshot", "inventory_status_gold_pipeline"],
     },
 ]
+
+DEMO_DATASETS.extend(
+    dataset for dataset in PAIR2_COMMERCE_DATASETS
+    if not any(existing["id"] == dataset["id"] for existing in DEMO_DATASETS)
+)
 
 
 def get_demo_dataset(dataset_id: str | None) -> dict[str, Any] | None:

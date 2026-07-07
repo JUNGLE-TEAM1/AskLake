@@ -1016,6 +1016,276 @@
   white-space: nowrap;
 }
 
+.sql-ai-assistant {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 14px;
+}
+
+.sql-ai-assistant.compact {
+  align-self: flex-start;
+  width: clamp(400px, 34vw, 520px);
+  gap: 7px;
+  padding: 10px 12px;
+}
+
+.sql-ai-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.sql-ai-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.sql-ai-title svg {
+  flex: 0 0 auto;
+  color: #4f46e5;
+}
+
+.sql-ai-title strong {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.sql-ai-assistant.compact .sql-ai-title strong {
+  font-size: 13px;
+}
+
+.sql-ai-title span,
+.sql-ai-context {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.sql-ai-context {
+  max-width: min(48%, 520px);
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-ai-assistant.compact .sql-ai-title span {
+  display: block;
+  max-width: 270px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-ai-assistant.compact .sql-ai-context {
+  max-width: 82px;
+  font-size: 11px;
+}
+
+.sql-ai-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.sql-ai-assistant.compact .sql-ai-input-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.sql-ai-prompt {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sql-ai-prompt > span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.sql-ai-assistant.compact .sql-ai-prompt {
+  gap: 4px;
+}
+
+.sql-ai-assistant.compact .sql-ai-prompt > span {
+  display: none;
+}
+
+.sql-ai-prompt textarea {
+  width: 100%;
+  min-height: 66px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+  outline: 0;
+  padding: 10px 12px;
+}
+
+.sql-ai-assistant.compact .sql-ai-prompt textarea {
+  min-height: 42px;
+  max-height: 64px;
+  resize: none;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 10px;
+}
+
+.sql-ai-prompt textarea:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
+}
+
+.sql-ai-actions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+}
+
+.sql-ai-assistant.compact .sql-ai-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+
+.sql-ai-actions .primary-button,
+.sql-ai-actions .secondary-button {
+  display: inline-flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 900;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.sql-ai-assistant.compact .sql-ai-actions .primary-button,
+.sql-ai-assistant.compact .sql-ai-actions .secondary-button {
+  min-height: 30px;
+  justify-content: center;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.sql-ai-actions .primary-button {
+  border-color: transparent;
+  background: #2563eb;
+  color: #fff;
+}
+
+.sql-ai-actions .secondary-button {
+  border-color: #bfdbfe;
+  background: #fff;
+  color: #2563eb;
+}
+
+.sql-ai-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sql-ai-suggestion {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 12px;
+}
+
+.sql-ai-assistant.compact .sql-ai-suggestion {
+  max-height: 148px;
+  overflow: auto;
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.sql-ai-assistant.compact .sql-ai-suggestion.empty {
+  display: none;
+}
+
+.sql-ai-suggestion.empty {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sql-ai-suggestion strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.sql-ai-suggestion p {
+  margin: 4px 0 0;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.sql-ai-assistant.compact .sql-ai-suggestion p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+.sql-ai-suggestion pre {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #1e293b;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 21px;
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
+.sql-ai-assistant.compact .sql-ai-suggestion pre {
+  max-height: 88px;
+  font-size: 11px;
+  line-height: 18px;
+  padding: 8px;
+}
+
+.sql-ai-suggestion ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.sql-ai-suggestion li {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .sql-editor-footer {
   display: flex;
   min-height: 40px;
@@ -1129,25 +1399,82 @@
 .sql-result-scroll {
   min-height: 320px;
   max-height: min(560px, 58vh);
-  overflow-x: auto;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
 .sql-result-scroll .schema-table {
-  min-width: 720px;
+  min-width: 0;
 }
 
 .sql-preview-table-wrap {
   display: grid;
-  min-width: max-content;
+  min-width: 0;
+  width: 100%;
   gap: 10px;
+}
+
+.sql-preview-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sql-preview-table th,
+.sql-preview-table td {
+  min-width: 0;
+  padding: 10px 8px;
+  vertical-align: middle;
+}
+
+.sql-preview-table th {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.sql-preview-table td {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sql-preview-table th span,
+.sql-preview-table td span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-preview-table td[data-value-kind="number"] {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.sql-preview-table td[data-value-kind="date"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.sql-preview-table-wrap[data-column-count="1"] .sql-preview-table,
+.sql-preview-table-wrap[data-column-count="2"] .sql-preview-table,
+.sql-preview-table-wrap[data-column-count="3"] .sql-preview-table {
+  width: min(100%, 860px);
 }
 
 .sql-result-pagination {
   position: sticky;
   bottom: 0;
   display: flex;
-  min-width: 720px;
+  min-width: 0;
   min-height: 38px;
   align-items: center;
   justify-content: space-between;
@@ -1711,6 +2038,14 @@
     grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
   }
 
+  .sql-page-header {
+    flex-wrap: wrap;
+  }
+
+  .sql-ai-assistant.compact {
+    width: min(100%, 560px);
+  }
+
   .sql-page.context-collapsed {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1759,6 +2094,25 @@
 
   .sql-schema-panel .sql-card-schema {
     max-height: 52vh;
+  }
+
+  .sql-ai-heading,
+  .sql-ai-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sql-ai-heading {
+    display: grid;
+  }
+
+  .sql-ai-context {
+    max-width: 100%;
+    text-align: left;
+  }
+
+  .sql-ai-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .sql-materialize-form {
