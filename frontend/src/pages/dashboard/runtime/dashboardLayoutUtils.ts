@@ -29,6 +29,14 @@ export function hasAnyLayoutCollision(layout: readonly CollisionLayoutItem[]) {
   return false;
 }
 
+export function isLayoutWithinBounds(item: CollisionLayoutItem, cols = 12) {
+  return item.x >= 0 && item.y >= 0 && item.w > 0 && item.h > 0 && item.x + item.w <= cols;
+}
+
+export function hasLayoutOutOfBounds(layout: readonly CollisionLayoutItem[], cols = 12) {
+  return layout.some((item) => !isLayoutWithinBounds(item, cols));
+}
+
 export function toCollisionLayout(widgets: readonly DashboardRuntimeWidget[]) {
   return widgets.map((widget) => ({
     h: widget.layout.h,
@@ -39,23 +47,38 @@ export function toCollisionLayout(widgets: readonly DashboardRuntimeWidget[]) {
   }));
 }
 
+function normalizeLayoutSize(size: DashboardWidgetLayout, cols: number) {
+  const minW = Math.min(cols, Math.max(1, Math.round(size.minW ?? 1)));
+  const minH = Math.max(1, Math.round(size.minH ?? 1));
+  const w = Math.min(cols, Math.max(minW, Math.round(size.w)));
+  const h = Math.max(minH, Math.round(size.h));
+  const x = Math.min(Math.max(0, Math.round(size.x)), Math.max(0, cols - w));
+  const y = Math.max(0, Math.round(size.y));
+
+  return { ...size, h, minH, minW, w, x, y };
+}
+
+function isAvailable(candidate: CollisionLayoutItem, existingLayout: readonly CollisionLayoutItem[], cols: number) {
+  return isLayoutWithinBounds(candidate, cols) && !existingLayout.some((item) => isLayoutColliding(candidate, item));
+}
+
 export function findNextAvailableLayout(
   existingLayout: readonly CollisionLayoutItem[],
   size: DashboardWidgetLayout,
   cols = 12,
 ): DashboardWidgetLayout {
-  const w = Math.min(cols, Math.max(1, Math.round(size.w)));
-  const h = Math.max(1, Math.round(size.h));
+  const normalized = normalizeLayoutSize(size, cols);
+  const bottomRow = existingLayout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
+  const lastCandidateRow = bottomRow + normalized.h;
 
-  for (let y = 0; y < 240; y += 1) {
-    for (let x = 0; x <= cols - w; x += 1) {
-      const candidate = { h, i: "__candidate__", w, x, y };
-      if (!existingLayout.some((item) => isLayoutColliding(candidate, item))) {
-        return { ...size, h, w, x, y };
+  for (let y = 0; y <= lastCandidateRow; y += 1) {
+    for (let x = 0; x <= cols - normalized.w; x += 1) {
+      const candidate = { ...normalized, i: "__candidate__", x, y };
+      if (isAvailable(candidate, existingLayout, cols)) {
+        return { ...normalized, x, y };
       }
     }
   }
 
-  const y = existingLayout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
-  return { ...size, h, w, x: 0, y };
+  return { ...normalized, x: 0, y: bottomRow };
 }

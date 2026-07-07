@@ -12,6 +12,9 @@ npm run dev
 
 기본 dev server는 Vite 설정을 따른다.
 Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
+Dashboard chart widget은 ApexCharts(`apexcharts`, `react-apexcharts`)를 사용한다. 현재 사용 목적은 부트캠프 파이널 프로젝트의 비영리 데모이며, 상업 배포나 제품화 단계로 전환될 경우 ApexCharts 공식 라이선스 조건을 다시 확인한다.
+Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종을 기준으로 둔다. 색상은 문자열이나 팔레트 이름이 아니라 차트 config의 `color: { colors: string[] }` 배열을 사용한다. `metric`과 `table`에는 색상 config를 보내지 않으며, 향후 AI widget 생성 기능도 같은 type/config 계약을 사용한다.
+Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며, 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
 ## 2) 빌드
 
@@ -24,10 +27,39 @@ npm run build
 
 ## 3) Backend Live Mode
 
-프론트는 기본적으로 live backend API를 호출한다. `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+프론트 dev server는 기본적으로 같은 출처의 `/api` 요청을 FastAPI `http://127.0.0.1:8080`으로 proxy한다.
+별도 backend URL을 직접 지정해야 하면 `frontend/.env` 또는 로컬 env에 API base URL을 둔다.
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+```
+
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
+현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
+설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
+
+```bash
+VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+```
+
+대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
+로컬 PostgreSQL에 대시보드 demo dataset이 없으면 아래 seed를 먼저 실행한다.
+
+```bash
+cd backend
+.venv/bin/python -m app.seed.seed_dashboard_demo
+```
+
+OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_ASSISTANT_ENABLED=true
+OPENAI_ASSISTANT_MODEL=gpt-4o-mini
+OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
+OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
+OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.

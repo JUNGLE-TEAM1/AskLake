@@ -1091,22 +1091,37 @@ Phase 02 dashboard runtime은 기존 dashboard card 저장과 별도로 draft/pu
 공통 response:
 
 ```ts
-type DashboardRuntimeWidgetType = "metric" | "bar_chart" | "line_chart" | "donut_chart" | "table";
+type DashboardRuntimeWidgetType =
+  | "metric"
+  | "table"
+  | "bar_chart"
+  | "line_chart"
+  | "area_chart"
+  | "donut_chart"
+  | "pie_chart"
+  | "radial_bar_chart"
+  | "heatmap_chart"
+  | "treemap_chart";
 type DashboardWidgetAggregation = "sum" | "avg" | "count" | "min" | "max";
 type DashboardWidgetDateUnit = "day" | "month" | "year";
 type DashboardWidgetFormat = "number" | "currency" | "percent";
 type DashboardWidgetSortDirection = "asc" | "desc";
 
+type DashboardWidgetColorConfig = {
+  colors: string[];
+};
+
 type DashboardWidgetConfigBase = {
-  color?: string;
+  body?: string;
   description?: string;
   error?: string;
   errorMessage?: string;
+  placeholderKind?: "visualization_request" | "text";
+  prompt?: string;
 };
 
 type MetricWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
   format?: DashboardWidgetFormat;
   valueKey: string;
 };
@@ -1120,34 +1135,84 @@ type TableWidgetConfig = DashboardWidgetConfigBase & {
 
 type BarChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
   groupKey?: string;
+  orientation?: "vertical" | "horizontal";
   xKey: string;
   yKey: string;
 };
 
 type LineChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  curve?: "smooth" | "straight" | "stepline";
   dateUnit?: DashboardWidgetDateUnit;
   seriesKey?: string;
   xKey: string;
   yKey: string;
 };
 
+type AreaChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  dateUnit?: DashboardWidgetDateUnit;
+  seriesKey?: string;
+  stacked?: boolean;
+  xKey: string;
+  yKey: string;
+};
+
 type DonutChartWidgetConfig = DashboardWidgetConfigBase & {
   aggregation: DashboardWidgetAggregation;
-  color: string;
+  color: DashboardWidgetColorConfig;
+  centerLabel?: string;
+  labelKey: string;
+  valueKey: string;
+};
+
+type PieChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  labelKey: string;
+  valueKey: string;
+};
+
+type RadialBarChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  format?: DashboardWidgetFormat;
+  labelKey?: string;
+  max?: number;
+  min?: number;
+  valueKey: string;
+};
+
+type HeatmapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
+  valueKey: string;
+  xKey: string;
+  yKey: string;
+};
+
+type TreemapChartWidgetConfig = DashboardWidgetConfigBase & {
+  aggregation: DashboardWidgetAggregation;
+  color: DashboardWidgetColorConfig;
   labelKey: string;
   valueKey: string;
 };
 
 type DashboardRuntimeWidgetConfigByType = {
+  area_chart: AreaChartWidgetConfig;
   metric: MetricWidgetConfig;
   table: TableWidgetConfig;
   bar_chart: BarChartWidgetConfig;
   line_chart: LineChartWidgetConfig;
   donut_chart: DonutChartWidgetConfig;
+  pie_chart: PieChartWidgetConfig;
+  radial_bar_chart: RadialBarChartWidgetConfig;
+  heatmap_chart: HeatmapChartWidgetConfig;
+  treemap_chart: TreemapChartWidgetConfig;
 };
 
 type DashboardRuntimeWidget = {
@@ -1311,7 +1376,7 @@ Request:
     "xKey": "month",
     "yKey": "total_cost",
     "aggregation": "sum",
-    "color": "blue",
+    "color": { "colors": ["#2563eb"] },
     "description": "월 기준 총 물류비 추이"
   }
 }
@@ -1328,7 +1393,7 @@ Response `201 Created`:
 ```
 
 서버는 `type`을 runtime widget enum으로 정규화하고, layout이 없으면 widget type별 기본 layout을 적용합니다.
-기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. `metric`은 `valueKey`, `aggregation`, `color`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`, common `color`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`; `donut_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다.
+기존 기본 위젯 추가 흐름을 위해 `datasetId`와 `config`는 optional이지만, 데이터셋 기반 위젯 생성 UI와 API는 `type`별 config 계약을 사용합니다. 색상 계약은 문자열이나 팔레트 이름이 아니라 `color: { colors: string[] }` 객체입니다. `metric`과 `table`은 색상 설정을 보내지 않습니다. 단일 색상 차트는 `colors`에 1개 색상을 보내고, 도넛/파이/트리맵처럼 여러 요소 색상이 필요한 차트는 요소 순서대로 여러 색상을 보냅니다. `metric`은 `valueKey`, `aggregation`, optional `format`; `table`은 `columns`, optional `limit`, optional `sortKey`, optional `sortDirection`; `bar_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `groupKey`, optional `orientation`; `line_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `curve`; `area_chart`는 `xKey`, `yKey`, `aggregation`, `color`, optional `dateUnit`, optional `seriesKey`, optional `stacked`; `donut_chart`와 `pie_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`; `radial_bar_chart`는 `valueKey`, `aggregation`, `color`, optional `labelKey`, optional `min`, optional `max`, optional `format`; `heatmap_chart`는 `xKey`, `yKey`, `valueKey`, `aggregation`, `color`; `treemap_chart`는 `labelKey`, `valueKey`, `aggregation`, `color`를 보냅니다. 향후 AI widget 생성 기능은 이 type/config 계약을 그대로 재사용합니다.
 생성 후 draft runtime 조회 응답의 widget에는 `datasetId`, `config`, `data`가 유지되어야 합니다.
 dataset을 찾지 못하거나 rows/sample rows가 없으면 서버는 기존 생성 흐름을 깨지 않고 `data: []` fallback을 저장합니다.
 
@@ -1348,7 +1413,7 @@ Request:
     "yKey": "total_cost",
     "aggregation": "sum",
     "dateUnit": "month",
-    "color": "blue",
+    "color": { "colors": ["#2563eb"] },
     "description": "월 기준 총 물류비 추이"
   }
 }
@@ -1440,6 +1505,97 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
+
+### 8.5.11 Dashboard Assistant UI Hook
+
+대시보드 draft editor의 AskLake 보조 패널과 `placeholderKind: "visualization_request"` 위젯은 `POST /api/dashboards/assistant` FastAPI endpoint를 통해 OpenAI 기반 응답을 요청한다.
+이 endpoint는 `OPENAI_API_KEY`가 설정되어 있고 `OPENAI_ASSISTANT_ENABLED=true`이면 OpenAI Responses API를 호출한다.
+서버는 `dashboardId`/`pageId`를 기준으로 DB에서 draft revision을 우선 조회하고, 없으면 published revision을 조회한다.
+그 다음 현재 page widget, 대시보드에서 사용할 수 있는 available catalog dataset, 지원 가능한 widget type/config option을 OpenAI 컨텍스트로 전달한다.
+단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
+OpenAI 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
+OpenAI 설정이 없거나 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 네트워크 요청을 보내지 않고 미설정 안내를 표시한다.
+값이 있으면 해당 경로로 `POST` 요청을 보낸다. 값은 `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
+
+Request:
+
+```ts
+type DashboardAssistantRequest = {
+  dashboardId?: string;
+  mode: "dashboard_question" | "visualization_request";
+  pageId?: string | null;
+  prompt: string;
+  selectedWidgetId?: string | null;
+  widgetId?: string | null;
+  widgets: Array<{
+    id: string;
+    title: string;
+    type: DashboardRuntimeWidgetType;
+    datasetId: string | null;
+    layout: DashboardWidgetLayout;
+    config: Record<string, unknown>;
+    dataSample: Array<Record<string, unknown>>;
+  }>;
+};
+```
+
+`mode: "dashboard_question"`은 오른쪽 AskLake 보조 패널에서 사용한다.
+`mode: "visualization_request"`는 시각화 요청 위젯 내부 입력창에서 사용한다.
+`widgets`는 현재 등록된 위젯의 title/type/datasetId/config/layout 및 최대 5개 샘플 row를 포함한다.
+단, `dashboardId`가 있으면 backend DB runtime 컨텍스트가 우선이며 `widgets`는 구버전/테스트 호환 fallback payload로 사용한다.
+`selectedWidgetId` 또는 `widgetId`가 있으면 서버는 해당 위젯만 `update_widget` 대상에 포함한다.
+
+Response:
+
+```ts
+type DashboardAssistantResponse = {
+  message: string;
+  actions: Array<
+    | {
+        type: "create_widget";
+        widget: {
+          title: string;
+          type: DashboardRuntimeWidgetType;
+          datasetId: string;
+          config: DashboardRuntimeWidgetConfig;
+        };
+      }
+    | {
+        type: "update_widget";
+        widgetId: string;
+        patch: {
+          title?: string | null;
+          type?: DashboardRuntimeWidgetType;
+          datasetId?: string | null;
+          config?: Record<string, unknown>;
+        };
+      }
+    | {
+        type: "report";
+        markdown: string;
+      }
+  >;
+  warnings: string[];
+  // 현재 visualization request 위젯 호환용 임시 필드.
+  configPatch?: Record<string, unknown>;
+  widgetPatch?: {
+    title?: string | null;
+    type?: DashboardRuntimeWidgetType;
+    datasetId?: string | null;
+    config?: Record<string, unknown>;
+  };
+};
+```
+
+현재 프론트 적용 범위:
+
+- `message`는 사용자에게 요청 결과 안내로 표시한다.
+- `actions.type: "report"`는 AskLake 보조 패널의 분석/리포트 응답에 사용한다.
+- `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 후속 작업에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
+- `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
+- `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 응답 shape에는 열어두지만, 자동 적용은 후속 백엔드/UX 결정 후 확장한다.
+- `warnings`에 `mock fallback`이 포함되면 OpenAI 실제 응답이 아니라 서버 fallback 응답으로 봐야 한다.
 
 ## 9. P2 API
 

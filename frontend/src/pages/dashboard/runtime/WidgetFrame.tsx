@@ -1,14 +1,21 @@
-import { Trash2 } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
+import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
+import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
+import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 
-const widgetTypeLabels: Record<DashboardRuntimeWidget["type"], string> = {
-  bar_chart: "막대 차트",
-  donut_chart: "도넛 차트",
-  line_chart: "라인 차트",
-  metric: "지표",
-  table: "테이블",
-};
+function placeholderKind(widget: DashboardRuntimeWidget) {
+  const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
+  return kind === "visualization_request" || kind === "text" ? kind : null;
+}
+
+function widgetTypeLabel(widget: DashboardRuntimeWidget) {
+  const kind = placeholderKind(widget);
+  if (kind === "visualization_request") return "시각화";
+  if (kind === "text") return "텍스트";
+  return dashboardWidgetDefinitions[widget.type]?.label ?? widget.type;
+}
 
 function clampSpan(value: number | undefined, fallback: number) {
   if (!Number.isFinite(value)) return fallback;
@@ -20,26 +27,36 @@ function cx(...classes: Array<string | false | null | undefined>) {
 }
 
 export function WidgetFrame({
+  assistantContext,
   deleteDisabled = false,
   editable = false,
   onDelete,
+  onApplyWidgetPatch,
+  onPatchConfig,
   onSelect,
+  onSelectColorSlot,
   selected = false,
   widget,
 }: {
+  assistantContext?: DashboardAssistantRuntimeContext;
   deleteDisabled?: boolean;
   editable?: boolean;
   onDelete?: (widgetId: string) => void;
+  onApplyWidgetPatch?: (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
+  onPatchConfig?: (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => Promise<void> | void;
   onSelect?: (widgetId: string) => void;
+  onSelectColorSlot?: (widgetId: string, slotIndex: number) => void;
   selected?: boolean;
   widget: DashboardRuntimeWidget;
 }) {
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
+  const isAiWorking = assistantContext?.workingWidgetId === widget.id;
 
   return (
     <article
-      className={cx("asklake-widget-frame", editable && "editable", selected && "selected")}
+      aria-busy={isAiWorking || undefined}
+      className={cx("asklake-widget-frame", editable && "editable", selected && "selected", isAiWorking && "ai-working")}
       style={{
         gridColumn: editable ? undefined : `span ${columnSpan}`,
         minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
@@ -47,12 +64,13 @@ export function WidgetFrame({
       onClick={(event) => {
         if (!editable) return;
         event.stopPropagation();
+        if (selected) return;
         onSelect?.(widget.id);
       }}
     >
       <header>
         <div>
-          <span>{widgetTypeLabels[widget.type]}</span>
+          <span>{widgetTypeLabel(widget)}</span>
           <h2>{widget.title || "제목 없는 위젯"}</h2>
         </div>
         {editable && selected && (
@@ -72,8 +90,22 @@ export function WidgetFrame({
         )}
       </header>
       <div className="asklake-widget-frame-body">
-        <WidgetRenderer widget={widget} />
+        <WidgetRenderer
+          assistantContext={assistantContext}
+          widget={widget}
+          onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
+          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
+        />
       </div>
+      {isAiWorking && (
+        <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
+          <span aria-hidden="true" className="asklake-ai-working-icon">
+            <Sparkles size={16} />
+          </span>
+          <strong>AI 시각화 작업중</strong>
+        </div>
+      )}
     </article>
   );
 }
