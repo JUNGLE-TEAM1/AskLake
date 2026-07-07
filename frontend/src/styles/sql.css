@@ -2594,7 +2594,7 @@
   color: #fff;
 }
 
-@media (max-width: 1160px) {
+@media (max-width: 1320px) {
   .sql-page {
     grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
   }
