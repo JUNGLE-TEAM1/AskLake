@@ -162,11 +162,13 @@ backend/Dockerfile
 frontend/Dockerfile
 scripts/deploy.sh
 scripts/seed-demo-data.sh
+scripts/reset-demo-data.sh
 .github/workflows/deploy-dev.yml
 docs/deployment-runbook.md
 ```
 
-`deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed script와 GitHub Actions workflow는 후속 phase에서 추가한다.
+`deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed/reset script는 demo fixture를 같은 상태로 맞추는 운영 계층이다.
+GitHub Actions workflow는 후속 phase에서 추가한다.
 `scripts/deploy.sh`와 `deploy/ec2.env.example`은 EC2 start/stop/redeploy를 반복하기 위한 로컬 운영 계층이다.
 
 이 문서들은 실제 secret 값을 포함하지 않는다.
