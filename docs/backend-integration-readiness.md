@@ -13,8 +13,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB local connector는 `mongosh` CLI로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `queued` 또는 `running` job/run을 저장하고 즉시 응답. Airflow public API adapter는 `backend/app/services/airflow_client.py`에 격리됨 | Airflow command flow integration, pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | 현재는 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인. `etl_runs`는 Airflow DAG/Task sync metadata를 optional column으로 저장 가능. Airflow 전환 후 같은 public API로 DAG Run/Task Instance state를 반영 | run detail table, Spark/Airflow log object storage 분리 |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 요청을 Airflow DAG Run으로 submit하고 `queued` 또는 `running` job/run을 저장한 뒤 즉시 응답. Airflow public API adapter는 `backend/app/services/airflow_client.py`에 격리됨 | pause/cancel의 실제 Airflow/Spark interrupt |
+| Run/DAG | Airflow submit 직후 `GET /api/etl/jobs/{jobId}` hydrate가 runHistory, Airflow metadata, 초기 dagSteps를 반환. `etl_runs`는 Airflow DAG/Task sync metadata를 optional column으로 저장 가능 | Airflow Task Instance polling, final catalog update, run detail table, Spark/Airflow log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
@@ -107,14 +107,21 @@ Phase 3 구현:
 - `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`는 필수 backend env이며 누락 시 `AIRFLOW_CONFIG_MISSING` backend error를 반환한다.
 - `AIRFLOW_API_TOKEN` bearer auth를 우선 사용하고, 로컬 basic auth가 필요할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 사용한다.
 - `airflow_run_status`, `airflow_step_status`, `airflow_run_is_terminal` helper가 SOT mapping을 코드로 고정한다.
-- 현재 `etl_service.py` command path는 아직 Spark runner를 사용한다. Airflow submit으로 전환하는 작업은 Phase 5 범위다.
 
 Phase 4 구현:
 
 - `etl_runs`는 `airflow_dag_id`, `airflow_dag_run_id`, `airflow_run_url`, `airflow_state`, `task_states`, `last_synced_at`, `sync_error`를 optional column으로 저장한다.
 - `JobRunSummary`는 같은 값을 optional camelCase field로 노출한다.
 - `etl_repository.ensure_schema`는 기존 local metadata DB에 새 run column을 추가한다.
-- 기존 Spark command path는 새 metadata를 비워 둔다. Airflow submit/sync 값 채우기는 Phase 5 범위다.
+- Spark command path에서 저장하지 않던 Airflow metadata를 Phase 5 command flow가 채운다.
+
+Phase 5 구현:
+
+- `etl_service.py`의 `run`/`retry` command path는 `build_airflow_client().trigger_dag_run(...)`으로 Airflow DAG Run을 submit한다.
+- DAG Run `conf`에는 `command`, `jobId`, `runId`, `submittedAt`, Spark task에서 재사용할 `job` payload를 포함한다.
+- command response는 persisted `job`, `run`, initial `dagSteps`를 반환하며, `run`에는 Airflow DAG id, DAG Run id, UI URL, raw state, sync timestamp가 포함된다.
+- job이 이미 `running`이면 `run`과 `retry` 모두 `409 CONFLICT`로 차단한다.
+- `cancel`은 local canceled state와 deferred interrupt message를 남긴다. 실제 Airflow/Spark interrupt는 후속 범위다.
 
 Status mapping:
 
@@ -136,7 +143,7 @@ Deferred:
 
 ## 6. Current Spark Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 `running` 상태로 먼저 저장하고 응답한 뒤 Spark runner를 백그라운드로 호출한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 submit하고 `running` job과 `queued` 또는 `running` run을 저장한 뒤 즉시 응답한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다. Phase 5는 Airflow DAG Run 접수까지만 수행하며, Task Instance polling과 최종 catalog update는 후속 범위다.
 
 Spark runner 입력:
 

@@ -37,7 +37,7 @@ AIRFLOW_UI_BASE_URL=http://localhost:8081
 - `AIRFLOW_API_TOKEN`: Airflow public API bearer token이다. 로컬 basic auth를 써야 할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 대신 사용한다.
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: Airflow public API request timeout이다.
 - `AIRFLOW_UI_BASE_URL`: optional Airflow UI link 생성용 backend 설정이다.
-- Airflow env는 frontend env에 노출하지 않는다. `run`/`retry` command flow 전환은 Phase 5 범위다.
+- Airflow env는 frontend env에 노출하지 않는다. `run`/`retry` command flow는 Airflow DAG Run submit을 사용한다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 
 ## 3) 공통 규칙
@@ -91,7 +91,7 @@ Airflow orchestration target status mapping:
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
-`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `queued` 또는 `running` 상태를 응답하고, 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다. 현재 구현은 백그라운드 Spark runner를 polling하고, Airflow 전환 후에는 같은 public API가 Airflow DAG Run과 Task Instance 상태를 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 Airflow DAG Run submit 직후 `queued` 또는 `running` 상태를 응답하고, 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다. Phase 5 구현은 초기 Airflow DAG Run metadata와 DAG step snapshot을 저장한다. Task Instance 상태 polling은 Phase 6 범위다.
 
 ## 5) P1 API
 

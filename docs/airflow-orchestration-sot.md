@@ -81,8 +81,8 @@ Phase 3 output:
 - The adapter uses Airflow 3 public `/api/v2` DAG Run and Task Instance paths.
 - `airflow_run_status`, `airflow_step_status`, and
   `airflow_run_is_terminal` are covered by backend unit tests.
-- `etl_service.py` still uses the current Spark runner. Command flow switching
-  remains Phase 5 work.
+- At Phase 3, `etl_service.py` still used the current Spark runner. Phase 5
+  later switched `run` and `retry` command flow to Airflow submit.
 
 ### Phase 4. Run Persistence
 
@@ -117,10 +117,12 @@ Phase 4 output:
 - `JobRunSummary` exposes the same metadata as optional camelCase fields.
 - `etl_repository.ensure_schema` adds the new run columns to existing local
   metadata databases.
-- Existing Spark command flow leaves these fields empty until Phase 5 starts
-  writing Airflow submit/sync results.
+- Phase 5 writes Airflow submit metadata into these fields for `run` and
+  `retry` command responses.
 
 ### Phase 5. Async Command Flow
+
+Status: complete.
 
 Scope:
 
@@ -135,6 +137,21 @@ Acceptance criteria:
 - The command response contains `job`, `run`, and initial `dagSteps`.
 - Duplicate run clicks are rejected or guarded.
 - Backend errors use the standard error envelope.
+
+Phase 5 output:
+
+- `run` and `retry` now submit an Airflow DAG Run through
+  `backend/app/services/airflow_client.py` instead of waiting for the local
+  Spark runner to finish.
+- The command response persists and returns a non-terminal `JobRunSummary`
+  with Airflow DAG id, DAG Run id, UI URL, raw Airflow state, and sync
+  timestamp.
+- The response includes initial DAG steps led by `Airflow DAG Run 접수`; Task
+  Instance-level updates remain Phase 6 polling work.
+- Duplicate `run` and `retry` commands are rejected while the job is already
+  `running`.
+- `pause` and `cancel` remain explicit local state transitions; real
+  Airflow/Spark interrupt remains deferred.
 
 ### Phase 6. Frontend Polling
 

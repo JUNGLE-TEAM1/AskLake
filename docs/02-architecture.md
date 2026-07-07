@@ -91,7 +91,7 @@ Dashboard redesign부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards
 수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
 수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
 live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
-live mode에서 run/retry 명령 응답의 `queued` 또는 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 orchestration 완료 후 최종 상태를 반영한다. 현재 구현은 백그라운드 Spark 실행을 polling하며, Airflow 전환 후 같은 public API로 Airflow DAG Run/Task Instance 상태를 반영한다.
+live mode에서 run/retry 명령 응답의 `queued` 또는 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 orchestration 완료 후 최종 상태를 반영한다. 현재 backend command path는 Airflow DAG Run을 submit하고 초기 Run/DAG 상태를 저장한다. Airflow Task Instance polling과 최종 catalog 반영은 후속 Phase 6/7 범위다.
 
 ## 6) Job Run State Contract
 

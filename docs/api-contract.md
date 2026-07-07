@@ -58,7 +58,7 @@ AIRFLOW_UI_BASE_URL=http://localhost:8081
 - `AIRFLOW_API_TOKEN`: Airflow public API bearer token입니다. 로컬 basic auth가 필요할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 대신 사용합니다.
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: Airflow public API request timeout입니다.
 - `AIRFLOW_UI_BASE_URL`: optional Airflow UI link 생성용 backend 설정입니다.
-- Airflow env는 frontend env에 노출하지 않습니다. `run`/`retry` command flow 전환은 Phase 5 범위입니다.
+- Airflow env는 frontend env에 노출하지 않습니다. `run`/`retry` command flow는 Airflow DAG Run submit을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
@@ -493,7 +493,7 @@ Validation:
 
 `POST /api/etl/jobs/{jobId}/commands`
 
-이 endpoint는 AskLake의 public command contract다. 현재 구현은 백그라운드 Spark runner를 시작하고 polling으로 완료 상태를 반영한다. Airflow orchestration 전환 후에도 endpoint와 response shape는 유지하며, backend가 Airflow DAG Run을 submit하고 Airflow state를 AskLake Job/Run/DAG 상태로 변환한다.
+이 endpoint는 AskLake의 public command contract다. 현재 구현은 Airflow DAG Run을 submit하고 같은 response shape로 초기 Job/Run/DAG 상태를 반환한다. backend는 Airflow state를 AskLake Job/Run/DAG 상태로 변환한다.
 
 프론트 함수:
 
@@ -583,7 +583,7 @@ Response 예시:
 | `pause` | `etl.job.pause_requested` | `paused` |
 | `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
 
-`run`과 `retry`는 orchestration backend에 실행을 접수한 뒤 `job.status: "running"`과 `run.status: "queued" | "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 저장된 최종 상태와 `runHistory`, `dagSteps`를 다시 반영한다. 현재 구현의 orchestration backend는 백그라운드 Spark runner이고, Airflow 전환 후에는 Airflow DAG Run/Task Instance state가 같은 계약으로 변환된다.
+`run`과 `retry`는 Airflow DAG Run을 submit한 뒤 `job.status: "running"`과 `run.status: "queued" | "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 저장된 최종 상태와 `runHistory`, `dagSteps`를 다시 반영한다. Phase 5는 Airflow DAG Run 접수와 초기 metadata 저장까지 담당하며, Airflow Task Instance state polling은 Phase 6에서 같은 계약으로 변환된다.
 
 Airflow state mapping:
 

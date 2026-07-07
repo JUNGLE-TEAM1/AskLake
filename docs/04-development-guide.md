@@ -82,7 +82,7 @@ OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
-Airflow API 연결 값도 backend env에만 둔다. Phase 3 adapter는 Airflow public API 호출과 상태 mapping을 제공한다. Phase 4부터 `etl_runs`는 Airflow DAG id, DAG Run id, UI URL, raw state, task state snapshot, sync timestamp, sync error를 optional metadata로 저장할 수 있다. `run`/`retry` command flow 전환은 Phase 5에서 진행한다.
+Airflow API 연결 값도 backend env에만 둔다. Phase 3 adapter는 Airflow public API 호출과 상태 mapping을 제공한다. Phase 4부터 `etl_runs`는 Airflow DAG id, DAG Run id, UI URL, raw state, task state snapshot, sync timestamp, sync error를 optional metadata로 저장할 수 있다. Phase 5부터 `run`/`retry` command flow는 Airflow DAG Run submit을 사용한다.
 
 ```bash
 AIRFLOW_API_BASE_URL=http://localhost:8081
@@ -101,7 +101,7 @@ cd backend
 .venv/bin/python -m unittest discover -s tests
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `queued` 또는 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 최종 상태를 반영한다. 현재 구현은 백그라운드 Spark 완료 상태를 polling하며, Airflow orchestration 전환 후에도 같은 public API로 DAG Run/Task Instance 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow DAG Run을 submit한 뒤 먼저 `queued` 또는 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 최종 상태를 반영한다. Phase 5는 Airflow DAG Run 접수와 초기 Run/DAG 상태 저장까지 포함한다. Airflow Task Instance polling과 최종 catalog update는 후속 범위다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Airflow/Spark run 경로로 재검증한다.
 MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
