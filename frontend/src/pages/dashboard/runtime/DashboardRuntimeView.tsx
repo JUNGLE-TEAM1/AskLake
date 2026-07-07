@@ -100,6 +100,7 @@ type DashboardRuntimeViewActions = {
   retryDraft: () => void;
   retryPublished: () => void;
   selectDataset: (datasetId: string) => void;
+  selectWidgetDataset: (datasetId: string) => void;
   selectPage: (pageId: string) => void;
   selectWidget: (widgetId: string) => void;
   share: () => void;
@@ -173,7 +174,7 @@ function DashboardEditToolbar({
 }
 
 function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "text" || widget?.config.placeholderKind === "visualization_request";
+  return widget?.config.placeholderKind === "text";
 }
 
 function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
@@ -258,6 +259,7 @@ export function DashboardRuntimeView({
     retryDraft: onRetryDraft,
     retryPublished: onRetryPublished,
     selectDataset: onSelectDataset,
+    selectWidgetDataset: onSelectWidgetDataset,
     selectPage: onSelectPage,
     selectWidget: onSelectWidget,
     share: onShare,
@@ -509,6 +511,7 @@ export function DashboardRuntimeView({
         ) : isDraftMode && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
+              datasets={dashboardDatasets}
               editingWidget={configurableDraftWidget}
               focusedColorSlot={focusedColorSlot}
               isCreating={isCreatingDatasetWidget}
@@ -517,6 +520,7 @@ export function DashboardRuntimeView({
               selectedDataset={selectedDataset}
               selectedDatasetId={selectedDatasetId}
               onCreateWidget={onCreateDatasetWidget}
+              onSelectDataset={onSelectWidgetDataset}
               onUpdateWidget={onUpdateWidget}
             />
           </aside>

@@ -4,22 +4,48 @@ import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
 export function CreationFlowLayout({
+  actions,
   children,
   side,
   variant,
 }: {
+  actions?: React.ReactNode;
   children: React.ReactNode;
-  side: React.ReactNode;
+  side?: React.ReactNode;
   variant?: "permission" | "review";
 }) {
-  const className = ["content-grid", "creation-flow-grid", variant === "permission" ? "permission-grid" : "", variant === "review" ? "review-grid" : ""]
+  const className = ["content-grid", "creation-flow-grid", side ? "" : "creation-flow-grid-no-side", variant === "permission" ? "permission-grid" : "", variant === "review" ? "review-grid" : ""]
     .filter(Boolean)
     .join(" ");
 
   return (
     <div className={className}>
-      <div className="content-main">{children}</div>
-      {side}
+      <div className="content-main">
+        {actions && <div className="creation-flow-topbar">{actions}</div>}
+        {children}
+      </div>
+      {side ?? null}
+    </div>
+  );
+}
+
+export function CreationTopActions({
+  nextDisabled,
+  nextLabel = "다음",
+  onNext,
+  onPrev,
+  prevLabel = "이전",
+}: {
+  nextDisabled?: boolean;
+  nextLabel?: string;
+  onNext: () => void;
+  onPrev: () => void;
+  prevLabel?: string;
+}) {
+  return (
+    <div className="creation-top-actions">
+      <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
+      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
     </div>
   );
 }

@@ -17,16 +17,20 @@ class Settings(BaseSettings):
     openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
+    openai_query_ai_model: str = "gpt-4.1-mini"
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ])
 
     model_config = SettingsConfigDict(
         case_sensitive=False,
         enable_decoding=False,
-        env_file=".env",
+        env_file=(".env", ".env.local", "backend/.env", "backend/.env.local"),
         env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     @field_validator("backend_cors_origins", mode="before")

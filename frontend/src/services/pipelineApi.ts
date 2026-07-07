@@ -27,6 +27,10 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline): Promise
   return apiClient.post<PipelineCreationResult>("/api/etl/jobs", request);
 }
 
+export async function getJob(jobId: string): Promise<JobRowData> {
+  return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+}
+
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {
   return apiClient.post<JobCommandResult>(`/api/etl/jobs/${job.id}/commands`, { command });
 }

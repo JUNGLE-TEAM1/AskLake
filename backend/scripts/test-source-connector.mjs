@@ -8,6 +8,7 @@ const sourceConfig = Array.isArray(payload.sourceConfig) ? payload.sourceConfig 
 try {
   const result = await testSourceConnector(sourceType, sourceConfig);
   console.log(`ASKLAKE_SOURCE_CONNECTOR_RESULT=${JSON.stringify(result)}`);
+  process.exit(0);
 } catch (error) {
   console.log(`ASKLAKE_SOURCE_CONNECTOR_ERROR=${JSON.stringify({
     code: error?.code || "SOURCE_CONNECTOR_FAILED",

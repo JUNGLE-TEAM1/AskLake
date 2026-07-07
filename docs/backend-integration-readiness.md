@@ -9,16 +9,16 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. 서버 상태가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 persistence |
-| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결 | 중간 단계별 서버 저장 API는 후속 범위 |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Postgres `etl_jobs.payload`가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 API |
+| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영 | 운영 IAM/MinIO credential, allowlist 관리 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인 | Kafka message payload sampling, Parquet physical schema inference |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과 반영 | search persistence |
-| SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지 | read-only SQL engine 고도화 |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `running` job/run을 저장하고 즉시 응답 | pause/cancel의 실제 Spark job interrupt |
+| Run/DAG | 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인 | run detail table과 Spark log object storage 분리 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
+| SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
@@ -67,7 +67,21 @@ type JobCommandResponse = {
 };
 ```
 
-## 3. Source Credential Handling
+## 3. Metadata Persistence
+
+Local backend metadata source of truth는 `DATABASE_URL`이 가리키는 Postgres다. 기본값은 `docker-compose.yml`의 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`이다.
+
+현재 backend는 API response shape를 유지하기 위해 아래 테이블에 JSONB payload를 저장한다.
+
+- `etl_jobs(id, payload, created_at, updated_at)`
+- `catalog_datasets(id, payload, created_at, updated_at)`
+- `sql_runs(id, dataset_id, query, payload, created_at)`
+
+`npm run verify`와 `npm run verify:spark-run`은 격리된 검증을 위해 spawned backend에 `ASKLAKE_RESET_METADATA_ON_START=true`를 주고 ETL/Catalog/SQL metadata를 비운 뒤 시작한다. 일반 `npm run dev`는 이 값을 주지 않으므로 생성한 Job과 Dataset이 서버 재시작 후에도 유지된다.
+
+현재 demo에서는 Spark 재실행을 위해 job payload에 `sourceConfig`를 함께 저장한다. 실제 credential 저장 정책은 아직 별도 secret manager로 분리되지 않았으므로, 운영 전에는 credential redaction/secret reference 모델을 확정해야 한다.
+
+## 4. Source Credential Handling
 
 Backend connector 응답은 secret field를 redacted value로 내려준다. 프론트는 응답 metadata, schema, sampleRows는 반영하되 브라우저 세션에 사용자가 입력한 credential 값은 다음 connector 호출을 위해 유지해야 한다.
 
@@ -77,9 +91,9 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
 - PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-## 4. Spark Run Path
+## 5. Spark Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 Spark runner를 호출한다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 `running` 상태로 먼저 저장하고 응답한 뒤 Spark runner를 백그라운드로 호출한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다.
 
 Spark runner 입력:
 
@@ -100,7 +114,7 @@ Spark runner 결과:
 - run status
 - DAG step status
 
-## 5. 검증 명령
+## 6. 검증 명령
 
 Backend:
 
@@ -136,7 +150,7 @@ Browser smoke:
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
 - 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
 
-## 6. 완료 기준
+## 7. 완료 기준
 
 - ETL/Catalog 초기 목록은 서버가 비어 있으면 빈 상태로 표시된다.
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
@@ -145,7 +159,7 @@ Browser smoke:
 - Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
 
-## 7. Catalog/SQL 연결 범위
+## 8. Catalog/SQL 연결 범위
 
 ### Catalog
 
@@ -165,6 +179,7 @@ Browser smoke:
 | --- | --- | --- |
 | SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
 | Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
+| Query AI 보조 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, mock mode에서는 프론트 로컬 fallback 사용 | `POST /api/query/ai-suggestions` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
@@ -178,7 +193,7 @@ Mock mode에서는 수집/처리 pipeline 생성 dataset과 backend direct SQL d
 
 FastAPI Catalog persistence는 `catalog_datasets.payload`를 canonical dataset 계약으로 사용합니다. Spark run 성공으로 생성된 ETL dataset과 SQL derived dataset은 같은 payload shape로 저장하며, payload가 없는 기존 컬럼 기반 row는 목록/상세 조회에서 payload shape로 변환해 읽기 호환만 유지합니다. 두 생성 경로 모두 `size`는 표시용 저장 크기 문자열로 사용하고, 물리 저장 정보는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 둡니다. ETL dataset은 source -> Spark job -> target 기본 `lineageGraph`를 저장하고, SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 
-SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 Query AI와 frontend preflight는 JOIN 또는 multi-table SQL을 실행 가능 상태로 취급하지 않습니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
 Pair2 FastAPI 5단계 완료 기준:
 
@@ -186,11 +201,12 @@ Pair2 FastAPI 5단계 완료 기준:
 - live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
+- Query AI 보조는 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
 
-## 8. 대시보드
+## 9. 대시보드
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -236,7 +252,7 @@ Runtime API는 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 
 Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/widget snapshot도 삭제한다.
 구현 기록과 Card/List merge 시 확인할 접점은 `docs/dashboard-runtime-api-implementation.md`를 따른다.
 
-## 9. 아직 실제 저장되지 않는 기능
+## 10. 아직 실제 저장되지 않는 기능
 
 아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
 
@@ -244,20 +260,21 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 | --- | --- |
 | 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
 | 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
-| 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
+| 카탈로그 | 상세/lineage 고도화, 저장소 보관 기준 확정, 태그/필터 서버 검색 |
 | SQL | 쿼리 저장, CSV 다운로드 |
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-## 10. 백엔드 팀에 넘길 최소 구현 범위
+## 11. 백엔드 팀에 넘길 최소 구현 범위
 
 최소 데모 연동만 목표라면 아래 5개면 충분합니다.
 
 1. `POST /api/etl/jobs`
 2. `POST /api/etl/jobs/{jobId}/commands`
 3. `GET /api/etl/jobs`
-4. `GET /api/catalog/datasets`
-5. `POST /api/query/runs`
+4. `GET /api/etl/jobs/{jobId}`
+5. `GET /api/catalog/datasets`
+6. `POST /api/query/runs`
 
 대시보드 실제 저장 API는 현재 병합 기준에서 추가되어 있으며 아래 endpoint를 유지합니다.
 
@@ -278,7 +295,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 15. `POST /api/dashboards/{dashboardId}/publish`
 16. `POST /api/dashboards/assistant`
 
-## 11. 프론트에서 다음에 할 작업
+## 12. 프론트에서 다음에 할 작업
 
 백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
 
@@ -290,7 +307,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
-## 12. 인수 기준
+## 13. 인수 기준
 
 백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
@@ -303,11 +320,11 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
 
-## 13. 남은 작업
+## 14. 남은 작업
 
 - Kafka message payload schema sampling
 - Parquet physical schema inference endpoint
-- ETL job/dataset/run persistence
+- Run detail table, DAG step table, Spark log object storage 분리
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
 - Dashboard 권한/공유/export API

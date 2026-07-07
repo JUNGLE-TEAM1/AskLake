@@ -85,18 +85,9 @@ const initialDraftPipeline: DraftPipeline = {
   source: {
     connectionMessage: "검토 전에 소스 연결 테스트가 필요합니다.",
     connectionStatus: "idle",
-    sourceConfig: [
-      ["Storage Provider", "MinIO"],
-      ["Endpoint URL", "http://127.0.0.1:9000"],
-      ["Region", "us-east-1"],
-      ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", "nyc_taxi/csv/"],
-      ["Access Key", ""],
-      ["Secret Key", ""],
-      ["Use Path Style", "true"],
-    ],
-    sourceLabel: "m3-raw",
-    sourceType: "File / S3",
+    sourceConfig: [],
+    sourceLabel: "",
+    sourceType: "",
   },
   target: {
     compression: "Snappy",
@@ -754,10 +745,10 @@ export function useAskLakeData({
     onFlowChange("jobDetail");
   };
 
-  const openJobDag = (job: JobRowData) => {
+  const openJobRuns = (job: JobRowData) => {
     setSelectedJob(job);
-    writeAuditLog("etl.job.dag_opened", `/api/etl/jobs/${job.id}/dag`, job.id);
-    onFlowChange("jobDag");
+    writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+    onFlowChange("jobRuns");
   };
 
   const openDataset = (dataset: CatalogDataset) => {
@@ -787,8 +778,8 @@ export function useAskLakeData({
     jobs,
     openDataset,
     openDatasetInSql,
-    openJobDag,
     openJobDetail,
+    openJobRuns,
     prepareSqlDatasetJobDraft,
     runsByJobId,
     selectedDataset,

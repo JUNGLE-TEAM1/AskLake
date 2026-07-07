@@ -10,3 +10,11 @@
 @import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
 @import "./styles/responsive.css";
+
+.page-body.jobs-body > .jobs-landing,
+.page-body.jobs-body > .jobs-table-demo-page {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}

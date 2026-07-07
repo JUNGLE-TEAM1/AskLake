@@ -1,4 +1,5 @@
 node_modules/
+.venv/
 dist/
 .venv/
 *.tsbuildinfo
@@ -7,6 +8,9 @@ vite.config.d.ts
 AGENTS.local.md
 backend/.env
 backend/.env.local
+*.env.local.save
+frontend/.env
+frontend/.env.local
 backend/tmp/
 __pycache__/
 *.pyc
