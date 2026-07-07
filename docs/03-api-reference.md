@@ -129,7 +129,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
-| Query AI 보조 | mock mode는 로컬 초안 fallback, live mode는 FastAPI/OpenAI 호출 | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | mock mode는 로컬 초안 fallback, live mode는 FastAPI/OpenAI 호출 | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 `prepareSqlDatasetJobDraft`로 Review에 넘긴 뒤 `POST /api/etl/jobs`; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |

@@ -177,7 +177,7 @@ Browser smoke:
 | --- | --- | --- |
 | SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
 | Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
-| Query AI 보조 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, mock mode에서는 프론트 로컬 fallback 사용 | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, mock mode에서는 프론트 로컬 fallback 사용 | `POST /api/query/ai-suggestions` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
@@ -199,7 +199,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
-- Query AI 보조는 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
+- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
