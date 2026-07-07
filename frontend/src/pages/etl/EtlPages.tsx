@@ -687,8 +687,6 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
-type TargetToggleSectionKey = "tags" | "partition" | "preview";
-
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
   owner?: string;
@@ -4441,11 +4439,6 @@ export function TargetPage({
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
-  const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
-    partition: false,
-    preview: false,
-    tags: false,
-  });
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -4578,37 +4571,6 @@ export function TargetPage({
     onNext();
   };
 
-  const toggleTargetSection = (section: TargetToggleSectionKey) => {
-    setOpenTargetSections((currentSections) => ({
-      ...currentSections,
-      [section]: !currentSections[section],
-    }));
-  };
-
-  const renderToggleSection = (
-    section: TargetToggleSectionKey,
-    title: string,
-    icon: React.ReactNode,
-    children: React.ReactNode,
-    actions?: React.ReactNode,
-  ) => {
-    const open = openTargetSections[section];
-
-    return (
-      <section className="panel target-toggle-panel">
-        <div className="panel-header target-toggle-header">
-          <button aria-expanded={open} className="target-toggle-trigger" type="button" onClick={() => toggleTargetSection(section)}>
-            {icon}
-            <h2>{title}</h2>
-            {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-          </button>
-          {actions ? <div className="target-toggle-actions">{actions}</div> : null}
-        </div>
-        {open ? <div className="target-toggle-body">{children}</div> : null}
-      </section>
-    );
-  };
-
   const renderPartitionOption = (rule: TargetSchemaRule) => {
     const selected = filteredPartitionColumns[0] === rule.name;
     const disabled = !rule.use;
@@ -4629,127 +4591,167 @@ export function TargetPage({
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
         </div>
       ) : null}
-      <section className="panel">
-        <div className="panel-header">
-          <HardDrive size={18} />
-          <h2>타겟 기본정보</h2>
-        </div>
-        <div className="form-grid target-metadata-grid">
-          <label className="field wide">
-            <span>데이터셋명</span>
-            <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
-          </label>
-          <label className="field wide target-db-field">
-            <span>DB 선택</span>
-            <DatabaseField value={databaseName} onChange={setDatabaseName} />
-          </label>
-          <label className="field wide target-format-field">
-            <span>포맷</span>
-            <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
-              <button
-                aria-expanded={formatOptionsOpen}
-                className="target-format-trigger"
-                type="button"
-                onClick={() => setFormatOptionsOpen((open) => !open)}
-              >
-                <span>{targetFormat}</span>
-                {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
-              {formatOptionsOpen ? (
-                <div className="target-format-menu">
-                  {TARGET_FORMAT_OPTIONS.map((format) => (
-                    <button
-                      aria-pressed={targetFormat === format}
-                      className={targetFormat === format ? "target-format-option active" : "target-format-option"}
-                      key={format}
-                      type="button"
-                      onClick={() => {
-                        setTargetFormat(format);
-                        setFormatOptionsOpen(false);
-                      }}
-                    >
-                      {format}
+      <div className="xflow-review-stack target-xflow-stack">
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon"><FileText size={17} /></span>
+            <div>
+              <h2>Basic Information</h2>
+              <p>타겟 데이터셋의 이름과 소유 정보를 설정합니다.</p>
+            </div>
+          </div>
+          <div className="target-xflow-form-grid basic">
+            <label className="field wide">
+              <span>데이터셋명</span>
+              <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>오너</span>
+              <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>담당자</span>
+              <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
+            </label>
+            <label className="field wide">
+              <span>설명</span>
+              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+            </label>
+          </div>
+        </section>
+
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+            <div>
+              <h2>Destination Settings</h2>
+              <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 설정합니다.</p>
+            </div>
+          </div>
+          <div className="target-xflow-form-grid destination">
+            <label className="field target-db-field">
+              <span>DB 선택</span>
+              <DatabaseField value={databaseName} onChange={setDatabaseName} />
+            </label>
+            <label className="field target-format-field">
+              <span>포맷</span>
+              <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
+                <button
+                  aria-expanded={formatOptionsOpen}
+                  className="target-format-trigger"
+                  type="button"
+                  onClick={() => setFormatOptionsOpen((open) => !open)}
+                >
+                  <span>{targetFormat}</span>
+                  {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                {formatOptionsOpen ? (
+                  <div className="target-format-menu">
+                    {TARGET_FORMAT_OPTIONS.map((format) => (
+                      <button
+                        aria-pressed={targetFormat === format}
+                        className={targetFormat === format ? "target-format-option active" : "target-format-option"}
+                        key={format}
+                        type="button"
+                        onClick={() => {
+                          setTargetFormat(format);
+                          setFormatOptionsOpen(false);
+                        }}
+                      >
+                        {format}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </label>
+            <label className="field wide target-storage-field">
+              <span>저장경로</span>
+              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+            </label>
+          </div>
+        </section>
+
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon schema"><Database size={17} /></span>
+            <div>
+              <h2>Output Schema</h2>
+              <p>{usedSchemaRules.length}개 타겟 컬럼 · Preview {previewRows.length} rows</p>
+            </div>
+          </div>
+          <div className="xflow-review-schema target-xflow-schema">
+            <div className="xflow-review-schema-head">
+              <span>TARGET COLUMNS</span>
+              <em>{usedSchemaRules.length} fields</em>
+            </div>
+            <div className="xflow-review-schema-list">
+              {usedSchemaRules.map((rule, index) => {
+                const sampleValue = previewRows[0]?.[rule.name];
+                return (
+                  <div className="xflow-review-schema-row" key={rule.name}>
+                    <span className="xflow-review-schema-index">{index + 1}</span>
+                    <div className="xflow-review-schema-column">
+                      <strong>{rule.name}</strong>
+                      <small>{rule.sourceName} · {describeTargetSampleValue(rule, sampleValue)}</small>
+                    </div>
+                    <span className="xflow-review-schema-null">{rule.validationStatus}</span>
+                    <span className="xflow-review-schema-type">{formatPartitionColumnType(rule)}</span>
+                  </div>
+                );
+              })}
+              {usedSchemaRules.length === 0 && <span className="xflow-review-empty">사용 컬럼이 없어 스키마 프리뷰를 표시할 수 없습니다.</span>}
+            </div>
+          </div>
+        </section>
+
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><SlidersHorizontal size={17} /></span>
+            <div>
+              <h2>Partition & Tags</h2>
+              <p>검색, 저장, 운영 기준으로 사용할 태그와 파티션을 설정합니다.</p>
+            </div>
+          </div>
+          <div className="target-xflow-split">
+            <div className="target-xflow-subsection">
+              <div className="target-xflow-subheader">
+                <BookOpen size={16} />
+                <h3>Tags</h3>
+              </div>
+              {targetTags.length > 0 ? (
+                <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                      {tag}
                     </button>
                   ))}
                 </div>
               ) : null}
+              <div className="target-inline-controls">
+                <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
+              </div>
             </div>
-          </label>
-          <label className="field wide target-storage-field">
-            <span>저장경로</span>
-            <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
-          </label>
-          <label className="field">
-            <span>오너</span>
-            <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>담당자</span>
-            <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
-          </label>
-          <label className="field wide">
-            <span>설명</span>
-            <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
-          </label>
-        </div>
-      </section>
-      {renderToggleSection("tags", "태그", <BookOpen size={18} />, (
-        <>
-          {targetTags.length > 0 ? (
-            <div className="target-chip-grid" role="group" aria-label="타겟 태그">
-              {targetTags.map((tag) => (
-                <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
-                  {tag}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="target-inline-controls">
-            <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                addCustomTag();
-              }
-            }} />
-            <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
-          </div>
-        </>
-      ))}
-      {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
-        <div className="target-partition-settings">
-          <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
-            {partitionCandidates.map(renderPartitionOption)}
-          </div>
-        </div>
-      ))}
-      {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
-        usedSchemaRules.length > 0 && previewRows.length > 0 ? (
-          <div className="target-output-schema">
-            <div className="target-output-schema-head">
-              <span>타겟 컬럼</span>
-              <em>{usedSchemaRules.length}개 컬럼</em>
-            </div>
-            <div className="target-output-schema-list">
-              {usedSchemaRules.map((rule, index) => {
-                const sampleValue = previewRows[0]?.[rule.name];
-                return (
-                  <div className="target-output-schema-row" key={rule.name}>
-                    <span className="target-output-index">{index + 1}</span>
-                    <div className="target-output-column">
-                      <strong>{rule.name}</strong>
-                      <small>{rule.sourceName}</small>
-                      <p><b>속성</b>{describeTargetSampleValue(rule, sampleValue)}</p>
-                    </div>
-                    <span className="target-output-type">{formatPartitionColumnType(rule)}</span>
-                  </div>
-                );
-              })}
+            <div className="target-xflow-subsection">
+              <div className="target-xflow-subheader">
+                <SlidersHorizontal size={16} />
+                <h3>Partition</h3>
+              </div>
+              <div className="target-partition-settings">
+                <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+                  {partitionCandidates.map(renderPartitionOption)}
+                </div>
+              </div>
             </div>
           </div>
-        ) : (
-          <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
-        )
-      ))}
+        </section>
+      </div>
     </CreationFlowLayout>
   );
 }
@@ -4926,9 +4928,31 @@ export function ReviewPage({
       ]);
   const sourceSummary = summarizeSourceConfig(request.sourceConfig);
   const reviewSchemaSummary = publicSchemaSummary(request.schemaSummary);
-  const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
+  const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
+  const basicInformationRows = [
+    ["Job ID", request.id],
+    ["Job Name", targetReview.jobName],
+    ["Source", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`],
+    ["Target Dataset", targetReview.targetDataset],
+    ["Description", targetReview.description],
+  ];
+  const destinationRows = [
+    ["Output Path", targetReview.storagePath],
+    ["Database", targetDatabaseName],
+    ["Table Name", targetReview.tableName],
+    ["Format", targetReview.targetFormat],
+    ["Layer", targetReview.targetLayer],
+    ["Partition", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
+  ];
+  const permissionRows = [
+    ["Permission Template", permissionReview.permissionTemplate],
+    ["Visibility", permissionReview.visibility],
+    ["Approval", permissionReview.approvalStatus],
+    ["Owner", permissionReview.owner],
+    ["Summary", permissionReview.permissionSummary],
+  ];
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
     ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
@@ -4947,93 +4971,105 @@ export function ReviewPage({
       actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
         <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
-        <section className="panel creation-inline-validation-panel">
-          <div className="panel-header">
-            <Check size={18} />
-            <h2>최종 유효성 검사</h2>
-          </div>
-          <div className="creation-validation-list">
-            {validationRows.map(([item, status]) => (
-              <div className="validation-row" key={item}>
-                <Check size={16} />
-                <span>{item}</span>
-                <strong>{status}</strong>
+        <div className="xflow-review-stack">
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><FileText size={17} /></span>
+              <div>
+                <h2>Basic Information</h2>
+                <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
               </div>
-            ))}
-          </div>
-          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
-        </section>
-        <div className="review-card-grid">
-          {[
-            ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
-            ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
-            ["스키마", reviewSchemaSummary, "schema"],
-            ["처리 규칙", request.ruleSummary, "rules"],
-            ["스케줄", request.scheduleLabel, scheduleEditFlow],
-            ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat}`, "target"],
-          ].map(([label, value, flow]) => (
-            <article className="review-mini-card" key={label}>
-              <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" || flow === "manual" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
-              <strong>{label}</strong>
-              <span>{value}</span>
-              <button type="button" onClick={() => onEdit(flow as FlowId)}>수정</button>
-            </article>
-          ))}
-        </div>
-        <section className="panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>권한 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
-          </div>
-          <div className="form-grid">
-            <Field label="권한 템플릿" value={permissionReview.permissionTemplate} />
-            <Field label="공개 범위" value={permissionReview.visibility} />
-            <Field label="승인 상태" value={permissionReview.approvalStatus} />
-            <Field label="데이터 오너" value={permissionReview.owner} />
-            <Field label="권한 요약" value={permissionReview.permissionSummary} wide />
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <HardDrive size={18} />
-            <h2>타겟 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
-          </div>
-          <div className="form-grid">
-            <Field label="생성될 Job 이름" value={buildJobName(targetReview.targetDataset)} />
-            <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
-            <Field label="타겟 Layer" value={targetReview.targetLayer} />
-            <Field label="타겟 Format" value={targetReview.targetFormat} />
-            <Field label="데이터 오너" value={targetReview.owner} />
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{reviewSchemaSummary}</span>
-          </div>
-          <table className="schema-table">
-            <thead>
-              <tr>
-                <th>컬럼명</th>
-                <th>타입</th>
-                <th>Null 허용</th>
-                <th>변환식</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schemaRows.map((row, rowIndex) => (
-                <tr key={`${row[0]}-${rowIndex}`}>
-                  {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
-                </tr>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv">
+              {basicInformationRows.map(([label, value]) => (
+                <div className={label === "Description" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
               ))}
-              {schemaRows.length === 0 && <tr><td colSpan={4}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td></tr>}
-            </tbody>
-          </table>
-        </section>
+            </dl>
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon schema"><Database size={17} /></span>
+              <div>
+                <h2>Output Schema</h2>
+                <p>{reviewSchemaSummary}</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
+            </div>
+            <div className="xflow-review-schema">
+              <div className="xflow-review-schema-head">
+                <span>TARGET COLUMNS</span>
+                <em>{schemaRows.length} fields</em>
+              </div>
+              <div className="xflow-review-schema-list">
+                {schemaRows.map(([name, type, nullable, expression], rowIndex) => (
+                  <div className="xflow-review-schema-row" key={`${name}-${rowIndex}`}>
+                    <span className="xflow-review-schema-index">{rowIndex + 1}</span>
+                    <div className="xflow-review-schema-column">
+                      <strong>{name}</strong>
+                      <small>{expression}</small>
+                    </div>
+                    <span className="xflow-review-schema-null">{nullable === "예" ? "NULL" : "NOT NULL"}</span>
+                    <span className="xflow-review-schema-type">{type}</span>
+                  </div>
+                ))}
+                {schemaRows.length === 0 && <span className="xflow-review-empty">소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</span>}
+              </div>
+            </div>
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+              <div>
+                <h2>Destination Settings</h2>
+                <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv destination">
+              {destinationRows.map(([label, value]) => (
+                <div className={label === "Output Path" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+              <div>
+                <h2>Permission & Validation</h2>
+                <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("permission")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv permission">
+              {permissionRows.map(([label, value]) => (
+                <div className={label === "Summary" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="xflow-review-validation">
+              {validationRows.map(([item, status]) => (
+                <div className={status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "needs-review"} key={item}>
+                  <Check size={15} />
+                  <span>{item}</span>
+                  <strong>{status}</strong>
+                </div>
+              ))}
+            </div>
+            <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
+          </section>
+        </div>
     </CreationFlowLayout>
   );
 }
