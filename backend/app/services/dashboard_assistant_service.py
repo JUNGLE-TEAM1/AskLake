@@ -307,15 +307,31 @@ def _find_target_widget(
         widget.id: widget
         for widget in request.widgets
     }
-    if target_widget_id and target_widget_id in request_widgets:
-        return request_widgets[target_widget_id]
+    if target_widget_id:
+        if target_widget_id in request_widgets:
+            return request_widgets[target_widget_id]
+
+        context_widget = context.widget_by_id().get(target_widget_id)
+        if context_widget is None:
+            return None
+
+        return DashboardAssistantWidgetContext(
+            id=context_widget.id,
+            title=context_widget.title,
+            type=context_widget.type,
+            dataset_id=context_widget.dataset_id,
+            layout={"x": 0, "y": 0, "w": 4, "h": 3},
+            config=context_widget.config,
+            data_sample=context_widget.data_sample,
+        )
+
     if request.widgets:
         return request.widgets[0]
 
     context_widget = (
-        context.widget_by_id().get(target_widget_id)
-        if target_widget_id
-        else (context.widgets[0] if context.widgets else None)
+        context.widgets[0]
+        if context.widgets
+        else None
     )
     if context_widget is None:
         return None

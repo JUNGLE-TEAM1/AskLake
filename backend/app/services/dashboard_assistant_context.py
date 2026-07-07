@@ -128,6 +128,7 @@ def build_assistant_context(
     page_ids = [page.id for page in pages]
     widgets_by_page_id = runtime_repository.list_widgets_by_page_ids(page_ids)
     selected_page_widgets = widgets_by_page_id.get(selected_page.id, []) if selected_page else []
+    target_widgets, target_warnings = _filter_widgets_for_target(selected_page_widgets, request)
 
     return AssistantDashboardContext(
         id=dashboard_id,
@@ -139,9 +140,12 @@ def build_assistant_context(
         datasets=datasets,
         widgets=[
             _widget_model_to_context(widget, max_sample_rows)
-            for widget in selected_page_widgets
+            for widget in target_widgets
         ],
-        warnings=[] if datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."],
+        warnings=[
+            *target_warnings,
+            *([] if datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."]),
+        ],
     )
 
 
@@ -149,6 +153,31 @@ def _select_page(pages: list[Any], page_id: str | None) -> Any | None:
     if page_id:
         return next((page for page in pages if page.id == page_id), None)
     return pages[0] if pages else None
+
+
+def _target_widget_id(request: DashboardAssistantRequest) -> str | None:
+    return request.widget_id or request.selected_widget_id
+
+
+def _filter_widgets_for_target(
+    widgets: list[Any],
+    request: DashboardAssistantRequest,
+) -> tuple[list[Any], list[str]]:
+    target_widget_id = _target_widget_id(request)
+    if not target_widget_id:
+        return widgets, []
+
+    target_widgets = [
+        widget
+        for widget in widgets
+        if getattr(widget, "id", None) == target_widget_id
+    ]
+    if target_widgets:
+        return target_widgets, []
+
+    return [], [
+        f"요청 대상 widgetId {target_widget_id!r}를 현재 page에서 찾지 못해 위젯 컨텍스트를 제한했습니다.",
+    ]
 
 
 def _available_dataset_contexts(
@@ -230,12 +259,16 @@ def _request_fallback_context(
     request: DashboardAssistantRequest,
     datasets: list[AssistantDatasetContext],
 ) -> AssistantDashboardContext:
+    request_widgets, target_warnings = _filter_widgets_for_target(request.widgets, request)
     return AssistantDashboardContext(
         id=request.dashboard_id,
         page=AssistantPageContext(id=request.page_id),
         datasets=datasets,
-        widgets=[_request_widget_to_context(widget) for widget in request.widgets],
-        warnings=["dashboardId가 없어 요청 payload의 widgets만 사용합니다."],
+        widgets=[_request_widget_to_context(widget) for widget in request_widgets],
+        warnings=[
+            "dashboardId가 없어 요청 payload의 widgets만 사용합니다.",
+            *target_warnings,
+        ],
     )
 
 
