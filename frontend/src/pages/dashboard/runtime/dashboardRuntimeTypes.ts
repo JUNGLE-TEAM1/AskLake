@@ -1,4 +1,4 @@
-import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
+import type { CatalogDataset, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
 
 export type ToolbarDraftWidgetKind = "visualization" | "text";
 
@@ -11,8 +11,9 @@ export type DashboardDatasetOption = {
   columns: DashboardDatasetColumn[];
   description?: string;
   id: string;
-  layer: "gold";
+  layer: CatalogDataset["layer"];
   name: string;
+  status: CatalogDataset["status"];
 };
 
 export type CreateDraftWidgetFormInput = {
@@ -33,6 +34,7 @@ export type DashboardAssistantRuntimeContext = {
   dashboardId?: string;
   onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;
+  promptInsertion?: { id: number; text: string; widgetId?: string | null } | null;
   selectedWidgetId?: string | null;
   workingWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];

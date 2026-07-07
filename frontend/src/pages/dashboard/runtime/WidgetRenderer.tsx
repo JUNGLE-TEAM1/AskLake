@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState } from "@tanstack/react-table";
 import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Loader2, Send } from "lucide-react";
@@ -14,6 +14,10 @@ import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetD
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
+  type DashboardAssistantCreateWidgetAction,
+  type DashboardAssistantResponse,
+  type DashboardAssistantUpdateWidgetAction,
+  type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
@@ -59,6 +63,14 @@ function rowsFromWidget(widget: DashboardRuntimeWidget) {
 function configText(widget: DashboardRuntimeWidget, key: string) {
   const value = (widget.config as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
+}
+
+function appendPromptText(currentPrompt: string, nextText: string) {
+  const current = currentPrompt.trim();
+  const next = nextText.trim();
+  if (!next) return currentPrompt;
+  if (!current) return next;
+  return `${current} ${next}`;
 }
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
@@ -284,7 +296,7 @@ function groupedSeriesChartPoints({
   return { categories, series };
 }
 
-function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
+function explicitColorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
   if (typeof color === "object" && color !== null && !Array.isArray(color)) {
     const record = color as Record<string, unknown>;
     if (Array.isArray(record.colors)) {
@@ -302,7 +314,24 @@ function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
     return [color];
   }
 
+  return [];
+}
+
+function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
+  const explicitColors = explicitColorsFromConfig(color);
+  if (explicitColors.length) return explicitColors;
+
   return defaultWidgetColorConfig.colors.length ? defaultWidgetColorConfig.colors : dashboardWidgetColorChoices.slice(0, 6);
+}
+
+function colorsForSlots(color: DashboardWidgetColorConfig | unknown, count: number) {
+  const explicitColors = explicitColorsFromConfig(color);
+  return Array.from({ length: count }, (_, index) => (
+    explicitColors[index]
+    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
+    ?? defaultWidgetColorConfig.colors[0]
+    ?? fallbackChartColors[index % fallbackChartColors.length]
+  ));
 }
 
 function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {
@@ -487,6 +516,70 @@ function buildBaseChartOptions(color: string): ApexOptions {
   };
 }
 
+function buildCircularChartOptions(color: string): ApexOptions {
+  return {
+    chart: {
+      animations: {
+        enabled: true,
+        speed: 450,
+      },
+      fontFamily: "inherit",
+      foreColor: "#64748b",
+      parentHeightOffset: 0,
+      redrawOnParentResize: true,
+      redrawOnWindowResize: true,
+      selection: {
+        enabled: false,
+      },
+      toolbar: {
+        show: false,
+      },
+    },
+    colors: [color],
+    dataLabels: {
+      enabled: false,
+    },
+    legend: {
+      fontSize: "12px",
+      fontWeight: 800,
+      labels: {
+        colors: "#475569",
+      },
+      markers: {
+        size: 6,
+      },
+      onItemClick: {
+        toggleDataSeries: false,
+      },
+      onItemHover: {
+        highlightDataSeries: false,
+      },
+    },
+    states: {
+      active: {
+        allowMultipleDataPointsSelection: false,
+        filter: {
+          type: "none",
+        },
+      },
+      hover: {
+        filter: {
+          type: "none",
+        },
+      },
+    },
+    theme: {
+      mode: "light",
+    },
+    tooltip: {
+      theme: "light",
+      y: {
+        formatter: (value: number) => formatCell(value),
+      },
+    },
+  };
+}
+
 function withColorSlotSelection(
   options: ApexOptions,
   widget: DashboardRuntimeWidget,
@@ -560,10 +653,12 @@ function WidgetDataError() {
 
 function VisualizationRequestWidget({
   assistantContext,
+  onApplyWidgetPatch,
   onPatchConfig,
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   widget: DashboardRuntimeWidget;
 }) {
@@ -572,6 +667,8 @@ function VisualizationRequestWidget({
   const [isPromptEditing, setIsPromptEditing] = useState(false);
   const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
+  const processedPromptInsertionIdRef = useRef<number | null>(null);
+  const promptInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setPrompt(configText(widget, "prompt"));
@@ -583,6 +680,17 @@ function VisualizationRequestWidget({
     setRequestTone(null);
   }, [widget.id]);
 
+  useEffect(() => {
+    const insertion = assistantContext?.promptInsertion;
+    if (!insertion || insertion.id === processedPromptInsertionIdRef.current) return;
+    if (insertion.widgetId && insertion.widgetId !== widget.id) return;
+
+    processedPromptInsertionIdRef.current = insertion.id;
+    setPrompt((current) => appendPromptText(current, insertion.text));
+    setIsPromptEditing(true);
+    requestAnimationFrame(() => promptInputRef.current?.focus());
+  }, [assistantContext?.promptInsertion]);
+
   const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextPrompt = prompt.trim();
@@ -593,8 +701,8 @@ function VisualizationRequestWidget({
     setIsSaving(true);
     assistantContext?.onWorkingWidgetChange?.(widget.id);
     try {
-      await onPatchConfig({ prompt: nextPrompt });
       if (!isDashboardAssistantConfigured()) {
+        await onPatchConfig({ prompt: nextPrompt });
         setRequestTone("info");
         setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
         setIsPromptEditing(false);
@@ -611,8 +719,17 @@ function VisualizationRequestWidget({
         widgetId: widget.id,
         widgets: widgets.map(buildDashboardAssistantWidgetContext),
       });
-      const configPatch = response.widgetPatch?.config ?? response.configPatch;
-      if (configPatch && Object.keys(configPatch).length > 0) {
+      const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
+      const configPatch = widgetPatch?.config ?? response.configPatch;
+      if (widgetPatch && onApplyWidgetPatch) {
+        await onApplyWidgetPatch({
+          ...widgetPatch,
+          config: {
+            prompt: nextPrompt,
+            ...(widgetPatch.config ?? {}),
+          },
+        });
+      } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
       }
       setRequestTone("success");
@@ -634,11 +751,13 @@ function VisualizationRequestWidget({
           aria-label="시각화 요청"
           className={isPromptEditing ? "widget-control" : undefined}
           placeholder="어시스턴트에게 이 차트의 생성을 요청하세요."
+          ref={promptInputRef}
           readOnly={!isPromptEditing}
           value={prompt}
           onBlur={() => setIsPromptEditing(false)}
           onChange={(event) => setPrompt(event.target.value)}
-          onDoubleClick={() => setIsPromptEditing(true)}
+          onClick={() => setIsPromptEditing(true)}
+          onFocus={() => setIsPromptEditing(true)}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             setPrompt(configText(widget, "prompt"));
@@ -659,6 +778,32 @@ function VisualizationRequestWidget({
       )}
     </div>
   );
+}
+
+function visualizationResponseWidgetPatch(
+  response: DashboardAssistantResponse,
+  widgetId: string,
+): DashboardAssistantWidgetPatch | null {
+  const updateAction = response.actions.find(
+    (action): action is DashboardAssistantUpdateWidgetAction => (
+      action.type === "update_widget" && action.widgetId === widgetId
+    ),
+  );
+  if (updateAction) return updateAction.patch;
+
+  if (response.widgetPatch) return response.widgetPatch;
+
+  const createAction = response.actions.find(
+    (action): action is DashboardAssistantCreateWidgetAction => action.type === "create_widget",
+  );
+  if (!createAction) return null;
+
+  return {
+    config: createAction.widget.config as Record<string, unknown>,
+    datasetId: createAction.widget.datasetId,
+    title: createAction.widget.title,
+    type: createAction.widget.type,
+  };
 }
 
 function TextPlaceholderWidget({
@@ -1014,10 +1159,9 @@ function PieLikeChartWidget({
   const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
   if (total <= 0) return <EmptyWidgetData />;
 
-  const primaryColor = primaryChartColor(widget.config.color);
-  const baseOptions = buildBaseChartOptions(primaryColor);
-  const paletteColors = colorsFromConfig(widget.config.color);
-  const colors = points.map((_, index) => paletteColors[index % paletteColors.length] ?? primaryColor);
+  const colors = colorsForSlots(widget.config.color, points.length);
+  const primaryColor = colors[0] ?? primaryChartColor(widget.config.color);
+  const baseOptions = buildCircularChartOptions(primaryColor);
   const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
     ? {
       pie: {
@@ -1053,11 +1197,6 @@ function PieLikeChartWidget({
     labels: points.map((point) => point.label),
     legend: {
       ...baseOptions.legend,
-      fontSize: "12px",
-      fontWeight: 800,
-      markers: {
-        size: 6,
-      },
       position: "right",
     },
     plotOptions: piePlotOptions,
@@ -1065,12 +1204,7 @@ function PieLikeChartWidget({
       colors: ["#ffffff"],
       width: 3,
     },
-    tooltip: {
-      theme: "light",
-      y: {
-        formatter: (value: number) => formatCell(value),
-      },
-    },
+    tooltip: baseOptions.tooltip,
   };
   const series = points.map((point) => Math.max(0, point.value));
 
@@ -1106,7 +1240,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
   const max = widget.config.max ?? 100;
   const range = max > min ? max - min : 100;
   const series = points.map((point) => clampPercent(((point.value - min) / range) * 100));
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsForSlots(widget.config.color, points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
@@ -1214,7 +1348,7 @@ function TreemapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
     .filter((point) => point.value > 0);
   if (!points.length) return <EmptyWidgetData />;
 
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsForSlots(widget.config.color, points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
@@ -1246,17 +1380,28 @@ function TreemapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
 
 export const WidgetRenderer = memo(function WidgetRenderer({
   assistantContext,
+  onApplyWidgetPatch,
   onPatchConfig,
   onSelectColorSlot,
   widget,
 }: {
   assistantContext?: DashboardAssistantRuntimeContext;
+  onApplyWidgetPatch?: (patch: DashboardAssistantWidgetPatch) => Promise<void> | void;
   onPatchConfig?: (patch: WidgetConfigPatch) => Promise<void> | void;
   onSelectColorSlot?: ChartColorSlotSelectHandler;
   widget: DashboardRuntimeWidget;
 }) {
   const kind = placeholderKind(widget);
-  if (kind === "visualization_request") return <VisualizationRequestWidget assistantContext={assistantContext} widget={widget} onPatchConfig={onPatchConfig} />;
+  if (kind === "visualization_request") {
+    return (
+      <VisualizationRequestWidget
+        assistantContext={assistantContext}
+        widget={widget}
+        onApplyWidgetPatch={onApplyWidgetPatch}
+        onPatchConfig={onPatchConfig}
+      />
+    );
+  }
   if (kind === "text") return <TextPlaceholderWidget widget={widget} onPatchConfig={onPatchConfig} />;
 
   const hasError = Boolean(widget.config.error || widget.config.errorMessage);

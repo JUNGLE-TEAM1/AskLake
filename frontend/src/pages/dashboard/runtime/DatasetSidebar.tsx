@@ -10,10 +10,12 @@ type DatasetSidebarProps = {
   error?: Error | null;
   isOpen?: boolean;
   isLoading?: boolean;
+  onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
 };
 
+const COLUMN_ITEM_PREFIX = "column:";
 const DATASET_ITEM_PREFIX = "dataset:";
 const systemItemId = "dataset-tree-system";
 const schemaItemId = "dataset-tree-schema";
@@ -28,7 +30,16 @@ function datasetTreeItemId(datasetId: string) {
 }
 
 function columnTreeItemId(datasetId: string, columnName: string) {
-  return `column:${datasetId}:${columnName}`;
+  return `${COLUMN_ITEM_PREFIX}${datasetId}:${columnName}`;
+}
+
+function parseColumnTreeItemId(itemId: string) {
+  if (!itemId.startsWith(COLUMN_ITEM_PREFIX)) return null;
+  const columnPath = itemId.slice(COLUMN_ITEM_PREFIX.length);
+  const [datasetId, ...columnNameParts] = columnPath.split(":");
+  const columnName = columnNameParts.join(":");
+  if (!datasetId || !columnName) return null;
+  return { columnName, datasetId };
 }
 
 function columnTypeLabel(type: DashboardDatasetColumn["type"]) {
@@ -138,6 +149,7 @@ export function DatasetSidebar({
   error = null,
   isOpen = true,
   isLoading = false,
+  onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
 }: DatasetSidebarProps) {
@@ -195,8 +207,20 @@ export function DatasetSidebar({
             selectedItems={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : null}
             onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => setExpandedItems([...itemIds])}
             onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-              if (typeof itemId !== "string" || !itemId.startsWith(DATASET_ITEM_PREFIX)) return;
-              onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
+              if (typeof itemId !== "string") return;
+
+              if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
+                onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
+                return;
+              }
+
+              const columnItem = parseColumnTreeItemId(itemId);
+              if (!columnItem) return;
+              const dataset = datasets.find((item) => item.id === columnItem.datasetId);
+              const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
+              if (!dataset || !column) return;
+              onSelectDataset(dataset.id);
+              onSelectColumn?.(dataset, column);
             }}
           >
             <TreeItem
