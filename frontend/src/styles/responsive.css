@@ -275,6 +275,7 @@
 
   .stepper-inner {
     height: auto;
+    justify-content: flex-start;
     padding: 18px 20px;
   }
 
@@ -525,6 +526,10 @@
     width: 100%;
     margin-left: 0;
     text-align: left;
+  }
+
+  .permission-xflow-access-row {
+    grid-column: 1 / -1;
   }
 
   .form-actions.inline {

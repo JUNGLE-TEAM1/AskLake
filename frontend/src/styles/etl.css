@@ -6194,6 +6194,101 @@
   margin: 0 20px 20px;
 }
 
+.permission-xflow-card .field {
+  margin: 0;
+}
+
+.permission-xflow-card .info-box {
+  margin-top: 16px;
+}
+
+.permission-xflow-validation {
+  padding-top: 18px;
+}
+
+.permission-xflow-form-grid {
+  padding-top: 0;
+}
+
+.permission-xflow-role-list {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px 20px;
+}
+
+.permission-xflow-role {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 14px;
+  min-width: 0;
+  border: 1px solid #dee1e6;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  padding: 14px 16px;
+}
+
+.permission-xflow-role.active {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.permission-xflow-role.recommended {
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.permission-xflow-role input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: #2563eb;
+}
+
+.permission-xflow-role-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.permission-xflow-role-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.permission-xflow-role-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-xflow-role-title em {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  padding: 4px 8px;
+}
+
+.permission-xflow-role-body small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.permission-xflow-access-row {
+  grid-column: 2;
+}
+
 .target-xflow-stack {
   gap: 18px;
 }
