@@ -637,14 +637,14 @@
 
 .dashboard-list-toolbar .dashboard-menu-option:hover,
 .dashboard-list-toolbar .dashboard-menu-option.active {
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .dashboard-menu-option.checkbox input {
   width: 15px;
   height: 15px;
-  accent-color: #636ae8;
+  accent-color: #2563eb;
 }
 
 .dashboard-table-list {
@@ -701,10 +701,10 @@
   display: inline-flex;
   min-height: 24px;
   align-items: center;
-  border: 1px solid #dddffd;
+  border: 1px solid #bfdbfe;
   border-radius: 999px;
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
   font-size: 12px;
   font-weight: 850;
   padding: 0 9px;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
+import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, navItems, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
@@ -177,6 +178,13 @@ export function App() {
     moveToFlow(item.flow);
   };
 
+  const navigateIngestLanding = () => {
+    writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
+    if (window.location.pathname !== "/") window.history.pushState(null, "", "/");
+    setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
+    moveToFlow("jobs");
+  };
+
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
     const path = getDashboardPath(dashboardId, mode);
     if (window.location.pathname !== path) window.history.pushState(null, "", path);
@@ -235,6 +243,7 @@ export function App() {
           writeAuditLog("ui.logout_requested", "/app/logout", "demo.user@asklake.local", "success", { targetType: "ui" });
           showToast("데모 환경에서는 로그아웃 요청만 기록됩니다.", "info");
         }}
+        onBrandClick={navigateIngestLanding}
         onNavigate={(flow, label) => {
           writeAuditLog("ui.builder_menu.clicked", `/app/${flow}`, label);
           moveToFlow(flow);
@@ -250,7 +259,7 @@ export function App() {
 
   return (
     <div className="app-shell" data-last-action={auditSignal}>
-      <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onNavigate={navigateSidebar} />
+      <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onBrandClick={navigateIngestLanding} onNavigate={navigateSidebar} />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
@@ -312,6 +321,7 @@ function RuleBuilderShell({
   children,
   onAccount,
   onAuditToggle,
+  onBrandClick,
   onDocs,
   onLogout,
   onNavigate,
@@ -323,6 +333,7 @@ function RuleBuilderShell({
   children: React.ReactNode;
   onAccount: () => void;
   onAuditToggle: () => void;
+  onBrandClick: () => void;
   onDocs: () => void;
   onLogout: () => void;
   onNavigate: (flow: FlowId, label: string) => void;
@@ -346,10 +357,9 @@ function RuleBuilderShell({
   return (
     <div className="etl-builder-shell" data-audit-open={auditOpen}>
       <header className="etl-builder-header">
-        <div className="etl-builder-brand">
-          <span className="etl-builder-brand-mark" aria-hidden="true" />
-          <strong>AskLake - 데이터셋 생성 ETL 빌더</strong>
-        </div>
+        <button className="etl-builder-brand" type="button" aria-label="수집/처리 랜딩 페이지로 이동" onClick={onBrandClick}>
+          <img src={asklakeLogo} alt="AskLake" />
+        </button>
         <nav className="etl-builder-stepper" aria-label="데이터셋 생성 단계">
           {stepItems.map(([index, label], itemIndex) => (
             <span className={index === "3" ? "etl-builder-step active" : "etl-builder-step"} key={index}>
