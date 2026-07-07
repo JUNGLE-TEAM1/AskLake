@@ -13,7 +13,8 @@
 | 4 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
 | 5 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
-| 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 7 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
+| 8 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -41,12 +42,16 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
+S3_ALLOWED_BUCKETS=asklake-output
+S3_ENDPOINT=http://localhost:9000
+S3_FORCE_PATH_STYLE=true
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
 - `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
+- Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -317,7 +322,89 @@ type SqlResultDraft = {
 
 ## 7. P0 API
 
-### 7.1 파이프라인 생성
+### 7.1 Target S3 Path Picker
+
+Target 저장경로 UI는 긴 text input 대신 서버 API로 bucket/prefix를 조회하는 선택 UI를 사용합니다. 선택 결과는 기존 `storagePath` string에 그대로 저장합니다.
+
+`GET /api/s3/buckets`
+
+Response `200 OK`:
+
+```ts
+type S3BucketsResponse = {
+  buckets: string[];
+};
+```
+
+Response 예시:
+
+```json
+{
+  "buckets": ["asklake-output"]
+}
+```
+
+규칙:
+
+- 서버는 `S3_ALLOWED_BUCKETS` allowlist를 우선 사용합니다.
+- allowlist가 없으면 local demo 기본값으로 `asklake-output`을 반환할 수 있습니다.
+- 프론트는 bucket 목록을 표시만 하며 AWS credential을 보관하지 않습니다.
+
+`GET /api/s3/prefixes?bucket=asklake-output&prefix=pair_a/`
+
+Response `200 OK`:
+
+```ts
+type S3PrefixesResponse = {
+  bucket: string;
+  files: Array<{
+    key: string;
+    name: string;
+    type: "file";
+  }>;
+  folders: Array<{
+    name: string;
+    prefix: string;
+    type: "folder";
+  }>;
+  nextContinuationToken: string | null;
+  prefix: string;
+};
+```
+
+Response 예시:
+
+```json
+{
+  "bucket": "asklake-output",
+  "prefix": "pair_a/",
+  "folders": [
+    {
+      "name": "customer_review_gold",
+      "prefix": "pair_a/customer_review_gold/",
+      "type": "folder"
+    }
+  ],
+  "files": [],
+  "nextContinuationToken": null
+}
+```
+
+보안/검증:
+
+- `bucket`은 allowlist에 있는 값만 허용합니다.
+- `prefix`는 leading slash, backslash, 중복 slash를 정규화하고 `..`, control character, 과도한 길이를 거부합니다.
+- 서버는 AWS SDK v3 `ListObjectsV2`에 `Delimiter="/"`를 넣어 folder prefix를 lazy loading합니다.
+- AWS access key/secret은 서버 환경변수, profile, IAM role, 또는 MinIO endpoint 설정만 사용하며 브라우저 번들에 포함하지 않습니다.
+- 로컬 개발에서 S3 연결이 없으면 서버 내부 fixture fallback을 사용할 수 있고, 운영에서는 `S3_DISABLE_FIXTURE_FALLBACK=true`로 끌 수 있습니다.
+
+선택 결과:
+
+- prefix 선택 시 `s3a://asklake-output/pair_a_customer_review_gold/gold/`처럼 trailing slash를 유지합니다.
+- 기존 값이 `s3://...`이면 같은 scheme을 유지하고, scheme이 없으면 frontend 상수 `S3_SCHEME = "s3a"`를 사용합니다.
+- 최종 create payload의 `storagePath` 필드 shape는 변경하지 않습니다.
+
+### 7.2 파이프라인 생성
 
 `POST /api/etl/jobs`
 
@@ -472,7 +559,7 @@ Validation:
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
-### 7.2 작업 명령
+### 7.3 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 
@@ -569,7 +656,7 @@ Validation:
 - 이미 실행 중인데 다시 `run`하면 `409 CONFLICT`.
 - 완료/취소 불가 상태에서 `cancel`하면 `422 INVALID_JOB_STATE`.
 
-### 7.3 읽기 전용 SQL 실행
+### 7.4 읽기 전용 SQL 실행
 
 `POST /api/query/runs`
 
@@ -654,7 +741,7 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
-### 7.4 SQL 결과 기반 Lake Dataset 생성
+### 7.5 SQL 결과 기반 Lake Dataset 생성
 
 `POST /api/catalog/derived-datasets`
 

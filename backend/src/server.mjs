@@ -1,6 +1,7 @@
 import http from "node:http";
 import { commandJob, createPipeline, executeQuery, listDatasets, listJobs } from "./createPipeline.mjs";
 import { testSourceConnector } from "./connectors.mjs";
+import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -29,6 +30,20 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
       sendJson(response, 200, listDatasets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/s3/buckets") {
+      sendJson(response, 200, listS3Buckets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/s3/prefixes") {
+      sendJson(response, 200, await listS3Prefixes({
+        bucket: url.searchParams.get("bucket") ?? "",
+        continuationToken: url.searchParams.get("continuationToken"),
+        prefix: url.searchParams.get("prefix") ?? "",
+      }));
       return;
     }
 

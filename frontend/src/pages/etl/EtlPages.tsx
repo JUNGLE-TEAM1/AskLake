@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { S3PathField } from "../../components/s3/S3PathField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
@@ -4759,7 +4760,7 @@ export function TargetPage({
           </label>
           <label className="field wide">
             <span>저장경로</span>
-            <input className="input control-input" value={targetStoragePath} onChange={(event) => setTargetStoragePath(event.target.value)} />
+            <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
           </label>
           <label className="field">
             <span>오너</span>
