@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from "@tanstack/react-table";
+import {
   BarChart3,
   BookOpen,
   Bot,
@@ -451,12 +457,6 @@ function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, 
   return `매주 ${normalizedRepeat.day}요일 ${normalizedRepeat.time}`;
 }
 
-function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
-  if (label.includes("수동")) return "manual";
-  if (label.includes("1회")) return "once";
-  return "repeat";
-}
-
 function parseOnceScheduleLabel(label: string) {
   if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
   return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
@@ -630,7 +630,13 @@ type TargetSavedConfig = {
   tags: string[];
 };
 
-type TargetToggleSectionKey = "tags" | "partition" | "preview";
+type TargetToggleSectionKey = "tags" | "partition";
+type ReviewSchemaRow = {
+  columnName: string;
+  nullable: string;
+  transform: string;
+  type: string;
+};
 
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
@@ -836,16 +842,6 @@ function formatPartitionColumnType(rule: TargetSchemaRule) {
   if (displayType) return displayType;
   if (rule.type === "datetime") return rule.name.toLowerCase().endsWith("_date") ? "date" : "timestamp";
   return rule.type;
-}
-
-function describeTargetSampleValue(rule: TargetSchemaRule, value: string | undefined) {
-  const sampleValue = value?.trim();
-  if (!sampleValue) return "샘플 값 없음";
-  if (rule.type === "datetime") return `날짜/시간 값: ${sampleValue}`;
-  if (rule.type === "number") return `숫자 값: ${sampleValue}`;
-  if (rule.type === "boolean") return `참/거짓 값: ${sampleValue}`;
-  if (rule.type === "json") return "JSON 객체/배열 값";
-  return `문자 값: ${sampleValue}`;
 }
 
 function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
@@ -4444,7 +4440,6 @@ export function TargetPage({
   const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
   const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
     partition: false,
-    preview: false,
     tags: false,
   });
 
@@ -4723,34 +4718,6 @@ export function TargetPage({
           </div>
         </div>
       ))}
-      {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
-        usedSchemaRules.length > 0 && previewRows.length > 0 ? (
-          <div className="target-output-schema">
-            <div className="target-output-schema-head">
-              <span>타겟 컬럼</span>
-              <em>{usedSchemaRules.length}개 컬럼</em>
-            </div>
-            <div className="target-output-schema-list">
-              {usedSchemaRules.map((rule, index) => {
-                const sampleValue = previewRows[0]?.[rule.name];
-                return (
-                  <div className="target-output-schema-row" key={rule.name}>
-                    <span className="target-output-index">{index + 1}</span>
-                    <div className="target-output-column">
-                      <strong>{rule.name}</strong>
-                      <small>{rule.sourceName}</small>
-                      <p><b>속성</b>{describeTargetSampleValue(rule, sampleValue)}</p>
-                    </div>
-                    <span className="target-output-type">{formatPartitionColumnType(rule)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
-        )
-      ))}
     </CreationFlowLayout>
   );
 }
@@ -4912,22 +4879,19 @@ export function ReviewPage({
   const schemaRows = draft.transform.outputColumns.length > 0
     ? draft.transform.outputColumns.map(([name, type]) => {
         const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return [
-          name,
+        return {
+          columnName: name,
+          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니오") : "생성",
+          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
           type,
-          sourceColumn ? (sourceColumn.nullable ? "예" : "아니오") : "생성",
-          sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
-        ];
+        };
       })
-    : includedReviewColumns.map((column) => [
-        column.targetName,
-        column.type,
-        column.nullable ? "예" : "아니오",
-        column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
-      ]);
-  const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const reviewSchemaSummary = publicSchemaSummary(request.schemaSummary);
-  const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
+    : includedReviewColumns.map((column) => ({
+        columnName: column.targetName,
+        nullable: column.nullable ? "예" : "아니오",
+        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+        type: column.type,
+      }));
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
   const validationRows = [
@@ -4964,29 +4928,10 @@ export function ReviewPage({
           </div>
           <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
         </section>
-        <div className="review-card-grid">
-          {[
-            ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
-            ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
-            ["스키마", reviewSchemaSummary, "schema"],
-            ["처리 규칙", request.ruleSummary, "rules"],
-            ["스케줄", request.scheduleLabel, scheduleEditFlow],
-            ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat}`, "target"],
-          ].map(([label, value, flow]) => (
-            <article className="review-mini-card" key={label}>
-              <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
-              <strong>{label}</strong>
-              <span>{value}</span>
-              <button type="button" onClick={() => onEdit(flow as FlowId)}>수정</button>
-            </article>
-          ))}
-        </div>
         <section className="panel">
           <div className="panel-header">
             <ShieldCheck size={18} />
             <h2>권한 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
           </div>
           <div className="form-grid">
             <Field label="권한 템플릿" value={permissionReview.permissionTemplate} />
@@ -5000,7 +4945,6 @@ export function ReviewPage({
           <div className="panel-header">
             <HardDrive size={18} />
             <h2>타겟 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
           </div>
           <div className="form-grid">
             <Field label="생성될 Job 이름" value={buildJobName(targetReview.targetDataset)} />
@@ -5014,41 +4958,54 @@ export function ReviewPage({
           <div className="panel-header">
             <Database size={18} />
             <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{reviewSchemaSummary}</span>
           </div>
-          <table className="schema-table">
-            <thead>
-              <tr>
-                <th>컬럼명</th>
-                <th>타입</th>
-                <th>Null 허용</th>
-                <th>변환식</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schemaRows.map((row, rowIndex) => (
-                <tr key={`${row[0]}-${rowIndex}`}>
-                  {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
-                </tr>
-              ))}
-              {schemaRows.length === 0 && <tr><td colSpan={4}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td></tr>}
-            </tbody>
-          </table>
+          <ReviewSchemaTable rows={schemaRows} />
         </section>
     </CreationFlowLayout>
   );
 }
 
-function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
-  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "Broker / Endpoint"];
-  const valuesByLabel = new Map(sourceConfig);
-  return priorityLabels
-    .map((label) => {
-      const value = valuesByLabel.get(label);
-      return value && !isInternalSourceField(label) ? `${sourceFieldLabel(label)}: ${value}` : "";
-    })
-    .filter(Boolean)
-    .join(" · ");
+function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
+  const columns = useMemo<ColumnDef<ReviewSchemaRow>[]>(
+    () => [
+      { accessorKey: "columnName", cell: (info) => info.getValue<string>(), header: "컬럼명" },
+      { accessorKey: "type", cell: (info) => info.getValue<string>(), header: "타입" },
+      { accessorKey: "nullable", cell: (info) => info.getValue<string>(), header: "Null 허용" },
+      { accessorKey: "transform", cell: (info) => info.getValue<string>(), header: "변환식" },
+    ],
+    [],
+  );
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <table className="schema-table review-schema-table">
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th key={header.id}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+        {rows.length === 0 && <tr><td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td></tr>}
+      </tbody>
+    </table>
+  );
 }
 
 function sourceLabelFromFields(sourceType: string, fields: Array<[string, string]>) {

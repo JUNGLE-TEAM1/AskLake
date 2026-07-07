@@ -344,7 +344,7 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
 - 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
-- Target 화면은 기본정보, 태그, 파티션, 샘플 프리뷰 단위로 구성되며 태그/파티션/프리뷰 섹션은 접고 펼칠 수 있다.
+- Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.
 - Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.
 - Target 화면 저장은 backend API가 없는 현 범위에서 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태로 저장한다.
 
