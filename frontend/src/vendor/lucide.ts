@@ -40,6 +40,7 @@ export { default as CircleHelp } from "lucide-react/dist/esm/icons/circle-help.m
 export { default as CircleUser } from "lucide-react/dist/esm/icons/circle-user.mjs";
 export { default as Clock3 } from "lucide-react/dist/esm/icons/clock-3.mjs";
 export { default as Clipboard } from "lucide-react/dist/esm/icons/clipboard.mjs";
+export { default as Copy } from "lucide-react/dist/esm/icons/copy.mjs";
 export { default as Database } from "lucide-react/dist/esm/icons/database.mjs";
 export { default as Download } from "lucide-react/dist/esm/icons/download.mjs";
 export { default as ExternalLink } from "lucide-react/dist/esm/icons/external-link.mjs";

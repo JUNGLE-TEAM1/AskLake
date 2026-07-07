@@ -289,6 +289,19 @@ class SourceConnectorRequest(CamelModel):
     source_type: str
 
 
+class SourceAssetsRequest(CamelModel):
+    prefix: str = ""
+    source_config: SourceFieldRows = Field(default_factory=list)
+    source_type: str
+
+
+class SourceAssetsResponse(CamelModel):
+    assets: list[tuple[str, str, str]]
+    count: int | None = None
+    limit: int | None = None
+    prefix: str
+
+
 class SourceConnectorAnalysis(CamelModel):
     action_path: str
     assets: list[tuple[str, str, str]]

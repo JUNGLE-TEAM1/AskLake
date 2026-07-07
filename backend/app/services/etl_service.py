@@ -23,6 +23,8 @@ from app.schemas.etl import (
     QueryRunRequest,
     QueryRunResponse,
     SchemaDraft,
+    SourceAssetsRequest,
+    SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
 )
@@ -250,6 +252,21 @@ def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAna
         timeout_seconds=120,
     )
     return SourceConnectorAnalysis.model_validate(result)
+
+
+def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
+    result = run_node_bridge(
+        "list-source-assets.mjs",
+        "ASKLAKE_SOURCE_ASSETS_RESULT",
+        {
+            "prefix": request.prefix,
+            "sourceConfig": request.source_config,
+            "sourceType": request.source_type,
+        },
+        error_marker="ASKLAKE_SOURCE_ASSETS_ERROR",
+        timeout_seconds=120,
+    )
+    return SourceAssetsResponse.model_validate(result)
 
 
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:

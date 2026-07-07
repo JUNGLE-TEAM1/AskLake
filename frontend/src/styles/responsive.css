@@ -62,7 +62,7 @@
   }
 
   .app-shell {
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .content-grid,

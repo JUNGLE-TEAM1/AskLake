@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
@@ -425,6 +426,41 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
   return { dagStepsByRunId, runsByJobId, selectedRunIdByJobId };
 }
 
+function isFetchConnectionError(error: unknown) {
+  return error instanceof TypeError && /fetch|network|load failed|connection/i.test(error.message);
+}
+
+function isRecoverableInitialReadError(error: unknown) {
+  if (error instanceof ApiError) {
+    return error.status === 404 || error.status === 502 || error.status === 503 || error.status === 504;
+  }
+
+  return isFetchConnectionError(error);
+}
+
+function getInitialReadErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Failed to load AskLake data.";
+}
+
+async function readInitialResource<T>(
+  read: () => Promise<T[]>,
+  resourceName: string,
+): Promise<{ data: T[]; error: string | null; fatal: boolean }> {
+  try {
+    return {
+      data: await read(),
+      error: null,
+      fatal: false,
+    };
+  } catch (error) {
+    return {
+      data: [],
+      error: `${resourceName}: ${getInitialReadErrorMessage(error)}`,
+      fatal: !isRecoverableInitialReadError(error),
+    };
+  }
+}
+
 function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry" {
   return command === "run" || command === "retry";
 }
@@ -489,7 +525,7 @@ export function useAskLakeData({
   const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
-  const [dataLoading, setDataLoading] = useState(!apiConfig.useMock);
+  const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
   const commandPendingRef = useRef<Set<string>>(new Set());
@@ -513,28 +549,39 @@ export function useAskLakeData({
     let cancelled = false;
 
     async function hydrateData() {
-      setDataLoading(true);
       setDataError(null);
-      try {
-        const [nextJobs, nextDatasets] = await Promise.all([getJobs(), getDatasets()]);
-        if (cancelled) return;
-        const normalizedJobs = nextJobs.map(normalizeJobRow);
-        const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
-        const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
-        setJobs(normalizedJobs);
-        setDatasets(normalizedDatasets);
-        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
-        setRunsByJobId(hydratedRunState.runsByJobId);
-        setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
-        setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
-      } catch (error) {
-        if (cancelled) return;
-        setDataError(error instanceof Error ? error.message : "Failed to load AskLake data.");
-        showToast("DB API에서 초기 데이터를 불러오지 못했습니다.", "info");
-      } finally {
-        if (!cancelled) setDataLoading(false);
+      const [jobsResult, datasetsResult] = await Promise.all([
+        readInitialResource(getJobs, "jobs"),
+        readInitialResource(getDatasets, "catalog"),
+      ]);
+      if (cancelled) return;
+
+      const normalizedJobs = jobsResult.data.map(normalizeJobRow);
+      const normalizedDatasets = datasetsResult.data.map(normalizeDatasetRow);
+      const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+      setJobs(normalizedJobs);
+      setDatasets(normalizedDatasets);
+      setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
+      setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+      setRunsByJobId(hydratedRunState.runsByJobId);
+      setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
+      setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
+
+      const fatalErrors = [jobsResult, datasetsResult]
+        .filter((result) => result.fatal && result.error)
+        .map((result) => result.error);
+      const recoverableErrors = [jobsResult, datasetsResult]
+        .filter((result) => !result.fatal && result.error)
+        .map((result) => result.error);
+
+      if (fatalErrors.length > 0) {
+        setDataError(fatalErrors.join(" / "));
+      } else if (recoverableErrors.length > 0) {
+        setDataError(null);
+        showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
       }
+
+      setDataLoading(false);
     }
 
     void hydrateData();
