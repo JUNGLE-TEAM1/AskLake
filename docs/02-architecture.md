@@ -4,10 +4,14 @@
 
 ## 1) 현재 구조
 
-현재 repository는 frontend-only app이다.
+현재 repository는 React/Vite frontend와 local Node backend app으로 구성된다.
 
 ```text
 AskLake/
+├─ backend/
+│  ├─ src/
+│  ├─ scripts/
+│  └─ package.json
 ├─ frontend/
 │  ├─ src/
 │  │  ├─ components/
@@ -35,8 +39,8 @@ AskLake/
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | catalog lineage modal renders `LineageGraph` contract data with column-level handles and selected-column emphasis |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
-| Backend | Node HTTP demo API | partial | `frontend/server/`, production backend remains TBD |
-| Database | PostgreSQL demo metadata DB | partial | `docker-compose.yml`, JSONB tables plus dashboard revision tables |
+| Backend | Node HTTP demo API | partial | `backend/src/server.mjs`, source connector and ETL metadata API |
+| Database | PostgreSQL metadata DB | partial | `docker-compose.yml`, backend-owned JSONB tables for ETL jobs/catalog/sql runs plus dashboard revision tables |
 
 ## 3) 목표 시스템 구성
 
@@ -50,7 +54,7 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재는 `FE`만 구현되어 있고, backend/API/DB/runtime은 planned 상태다.
+현재는 `FE`, local `API`, Postgres metadata `DB` 일부가 구현되어 있고, production runtime/scheduler는 planned 상태다.
 
 ## 4) Frontend Layer
 
@@ -73,6 +77,8 @@ flowchart LR
 
 라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
 Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
+수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용하며, 작업명, 타깃 데이터셋, 소유자, 최근 실행 결과, 마지막 실행, 상태별 액션을 같은 ETL job state에서 표시한다. 기존 표형 검토 화면은 `/jobs-table-demo` route에서도 직접 열 수 있다.
+수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다. 화면에서는 `실행 단계`로 표현하고, 내부 데이터는 기존 job/run evidence의 DAG step state를 재사용한다.
 
 ## 5) Backend Target Boundary
 
@@ -106,6 +112,8 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 | SQL Run | `SqlResultDraft` runtime state | query run resource |
 | Dashboard | `DashboardEntry`, list adapter, draft/published runtime response | dashboard resource with revision/page/widget snapshots |
 | Audit Log | `useAuditLogs` local/localStorage state | audit log resource |
+
+현재 local backend는 `etl_jobs`, `catalog_datasets`, `sql_runs` 테이블에 API response payload를 JSONB로 저장한다. 이 방식은 현재 계약 변경 없이 persistence를 제공하기 위한 중간 단계이며, 장기적으로는 run history, DAG step, Spark log, audit log를 별도 테이블과 object storage로 분리한다.
 
 ## 7) API Boundary
 

@@ -32,11 +32,23 @@ npm run build
 
 ## 3) Backend Live Mode
 
-프론트는 기본적으로 live backend API를 호출한다. `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
+
+```bash
+docker compose up -d postgres
+
+cd backend
+npm install
+npm run dev
+```
+
+`frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 ```
+
+Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
@@ -91,7 +103,7 @@ Pair 이름은 작업 경계를 나타내며, 실제 구성원 이름은 sprint 
 
 | Pair | Primary Area | Deliverables | Handoff |
 | --- | --- | --- | --- |
-| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, DAG | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
+| Pair A - ETL Creation & Job Operations | Review 생성, Job 생성/실행, Run 이력, 실행 상세 DAG 모달 | `{ job, dataset }`, `RunSummary`, `JobCommandResponse` | Pair B에는 Dataset/Run, Pair C에는 `datasetId`, `runId`, Job/Run 표시 이름 전달 |
 | Pair B - Catalog, Lineage & SQL Analysis | Dataset 목록/상세, schema, lineage, Catalog -> SQL, read-only SQL 실행 | `SqlResult`, Dataset/Lineage consistency check | Pair C에는 SQL Result, Dataset 이름, SQL query 요약 전달 |
 | Pair C - Dashboard Builder & Publish | Dashboard list/builder, Widget 생성/수정/삭제, save/publish, fallback | Dashboard draft/published snapshot, localStorage fallback, known issues | 전체 팀에 Dashboard 저장/Publish 확인 방법과 fallback 기준 전달 |
 
