@@ -1,8 +1,11 @@
+import json
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
+import duckdb
 from fastapi import status
 
 from app.core.errors import ApiError
@@ -13,7 +16,7 @@ from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryRunRequest, QueryRunResponse
 
 DEFAULT_PREVIEW_LIMIT = 100
-MAX_RESULT_COLUMNS = 6
+MAX_RESULT_COLUMNS = 100
 MUTATION_KEYWORDS = (
     "insert",
     "update",
@@ -56,6 +59,12 @@ SQL_CTE_NAME_RE = re.compile(
 )
 
 
+class SqlPreviewExecutionResult:
+    def __init__(self, *, columns: list[str], rows: list[list[str]]) -> None:
+        self.columns = columns
+        self.rows = rows
+
+
 class SqlService:
     def __init__(
         self,
@@ -80,35 +89,30 @@ class SqlService:
             self.get_catalog_dataset(reference_dataset_id, label="Reference dataset")
             for reference_dataset_id in reference_dataset_ids
         ]
-        preview_dataset = resolve_preview_dataset(
+        execution_datasets = resolve_execution_datasets(
             statement,
             base_dataset,
             reference_datasets,
         )
-
-        columns = [
-            column_name
-            for column_name, _ in preview_dataset.schema_[:MAX_RESULT_COLUMNS]
-        ]
-        row_width = max(len(columns), 1)
         preview_limit = request.limit or DEFAULT_PREVIEW_LIMIT
-        rows = [
-            [str(cell) for cell in row[:row_width]]
-            for row in preview_dataset.sample_rows[:preview_limit]
-        ]
+        result = execute_preview_query(
+            statement=statement,
+            datasets=execution_datasets,
+            preview_limit=preview_limit,
+        )
 
         response = QueryRunResponse(
             base_dataset_id=base_dataset_id,
-            columns=columns,
-            dataset_id=preview_dataset.id,
-            dataset_name=preview_dataset.name,
+            columns=result.columns,
+            dataset_id=base_dataset.id,
+            dataset_name=base_dataset.name,
             executed_at=current_utc_timestamp(),
             mode=request.mode,
             preview_limit=preview_limit,
             query=query,
             reference_dataset_ids=reference_dataset_ids,
-            row_count=len(rows),
-            rows=rows,
+            row_count=len(result.rows),
+            rows=result.rows,
             run_id=f"sql_{uuid4().hex[:12]}",
             validation_key=request.validation_key,
         )
@@ -144,8 +148,8 @@ def validate_read_only_query(query: str) -> str:
         )
 
     masked_query = mask_sql_comments_and_literals(query)
-    statement = get_single_statement(masked_query)
-    lowered_statement = statement.strip().lower()
+    statement = get_single_statement(masked_query, query)
+    lowered_statement = mask_sql_comments_and_literals(statement).strip().lower()
 
     mutation_match = MUTATION_KEYWORD_RE.search(lowered_statement)
     if mutation_match:
@@ -172,11 +176,11 @@ def validate_read_only_query(query: str) -> str:
     )
 
 
-def resolve_preview_dataset(
+def resolve_execution_datasets(
     statement: str,
     base_dataset: CatalogDatasetResponse,
     reference_datasets: list[CatalogDatasetResponse],
-) -> CatalogDatasetResponse:
+) -> list[CatalogDatasetResponse]:
     context_datasets = [base_dataset, *reference_datasets]
     dataset_by_table_name = build_dataset_context_map(context_datasets)
     referenced_table_names = extract_referenced_table_names(statement)
@@ -200,22 +204,161 @@ def resolve_preview_dataset(
             {"tables": unknown_table_names},
         )
 
-    preview_datasets = unique_datasets_by_id(
+    execution_datasets = unique_datasets_by_id(
         dataset_by_table_name[table_name]
         for table_name in physical_table_names
         if table_name in dataset_by_table_name
     )
-    if len(preview_datasets) > 1:
+
+    if execution_datasets:
+        return execution_datasets
+    return [base_dataset]
+
+
+def execute_preview_query(
+    *,
+    statement: str,
+    datasets: list[CatalogDatasetResponse],
+    preview_limit: int,
+) -> SqlPreviewExecutionResult:
+    connection = duckdb.connect(database=":memory:")
+    try:
+        for dataset in datasets:
+            register_dataset_table(connection, dataset)
+
+        cursor = connection.execute(
+            f"SELECT * FROM ({statement}) AS asklake_preview_result LIMIT ?",
+            [preview_limit],
+        )
+        columns = [
+            str(description[0] or f"column_{index + 1}")
+            for index, description in enumerate(cursor.description or [])
+        ][:MAX_RESULT_COLUMNS]
+        rows = [
+            [stringify_result_value(cell) for cell in row[:MAX_RESULT_COLUMNS]]
+            for row in cursor.fetchall()
+        ]
+        return SqlPreviewExecutionResult(columns=columns, rows=rows)
+    except duckdb.Error as error:
         raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "Joined reference queries require a SQL engine and are not supported in preview yet",
+            ErrorCode.SQL_SYNTAX_ERROR,
+            "SQL preview execution failed",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
-            {"tables": physical_table_names},
+            {"detail": str(error)},
+        ) from error
+    finally:
+        connection.close()
+
+
+def register_dataset_table(
+    connection: duckdb.DuckDBPyConnection,
+    dataset: CatalogDatasetResponse,
+) -> None:
+    columns = dataset.schema_ or [("value", "string")]
+    column_names = unique_column_names([column_name for column_name, _ in columns])
+    quoted_columns = ", ".join(
+        f"{quote_sql_identifier(column_name)} TEXT"
+        for column_name in column_names
+    )
+    primary_table_name = dataset.name
+    connection.execute(
+        f"CREATE TABLE {quote_sql_identifier(primary_table_name)} ({quoted_columns})"
+    )
+
+    dataset_rows = load_dataset_rows(dataset, len(column_names))
+    if dataset_rows:
+        placeholders = ", ".join("?" for _ in column_names)
+        connection.executemany(
+            f"INSERT INTO {quote_sql_identifier(primary_table_name)} VALUES ({placeholders})",
+            dataset_rows,
         )
 
-    if preview_datasets:
-        return preview_datasets[0]
-    return base_dataset
+    if normalize_sql_identifier(dataset.id) != normalize_sql_identifier(primary_table_name):
+        connection.execute(
+            f"CREATE VIEW {quote_sql_identifier(dataset.id)} AS SELECT * FROM {quote_sql_identifier(primary_table_name)}"
+        )
+
+
+def load_dataset_rows(
+    dataset: CatalogDatasetResponse,
+    column_count: int,
+) -> list[list[str | None]]:
+    storage_rows = load_jsonl_storage_rows(dataset, column_count)
+    if storage_rows is not None:
+        return storage_rows
+    return normalize_dataset_rows(dataset.sample_rows, column_count)
+
+
+def load_jsonl_storage_rows(
+    dataset: CatalogDatasetResponse,
+    column_count: int,
+) -> list[list[str | None]] | None:
+    if dataset.storage_format != "jsonl" or not dataset.storage_location:
+        return None
+
+    storage_path = Path(dataset.storage_location)
+    if not storage_path.exists() or not storage_path.is_file():
+        return None
+
+    column_names = [column_name for column_name, _ in dataset.schema_]
+    rows: list[list[str | None]] = []
+    with storage_path.open("r", encoding="utf-8") as data_file:
+        for line in data_file:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if isinstance(record, dict):
+                rows.append([
+                    stringify_sql_value(record.get(column_names[index]))
+                    if index < len(column_names)
+                    else None
+                    for index in range(column_count)
+                ])
+            elif isinstance(record, list):
+                rows.append(normalize_dataset_row(record, column_count))
+    return rows
+
+
+def normalize_dataset_rows(
+    rows: list[list[str]],
+    column_count: int,
+) -> list[list[str | None]]:
+    return [normalize_dataset_row(row, column_count) for row in rows]
+
+
+def normalize_dataset_row(row: list[object], column_count: int) -> list[str | None]:
+    return [
+        stringify_sql_value(row[index]) if index < len(row) else None
+        for index in range(column_count)
+    ]
+
+
+def unique_column_names(column_names: list[str]) -> list[str]:
+    unique_names: list[str] = []
+    seen_names: dict[str, int] = {}
+    for index, column_name in enumerate(column_names):
+        base_name = column_name.strip() or f"column_{index + 1}"
+        normalized_name = base_name.lower()
+        seen_count = seen_names.get(normalized_name, 0)
+        seen_names[normalized_name] = seen_count + 1
+        unique_names.append(base_name if seen_count == 0 else f"{base_name}_{seen_count + 1}")
+    return unique_names
+
+
+def quote_sql_identifier(identifier: str) -> str:
+    return f'"{identifier.replace("\"", "\"\"")}"'
+
+
+def stringify_sql_value(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def stringify_result_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value)
 
 
 def build_dataset_context_map(
@@ -305,13 +448,14 @@ def unique_datasets_by_id(
     return unique_datasets
 
 
-def get_single_statement(masked_query: str) -> str:
-    statement = masked_query.strip()
-    semicolon_count = statement.count(";")
+def get_single_statement(masked_query: str, original_query: str) -> str:
+    masked_statement = masked_query.strip()
+    original_statement = original_query.strip()
+    semicolon_count = masked_statement.count(";")
     if semicolon_count == 0:
-        return statement
-    if semicolon_count == 1 and statement.endswith(";"):
-        return statement[:-1].strip()
+        return original_statement
+    if semicolon_count == 1 and masked_statement.endswith(";"):
+        return original_statement[:-1].strip()
 
     raise ApiError(
         ErrorCode.SQL_SYNTAX_ERROR,
