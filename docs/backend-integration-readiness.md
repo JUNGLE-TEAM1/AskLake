@@ -8,14 +8,14 @@
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. 서버 상태가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 persistence |
-| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결 | 중간 단계별 서버 저장 API는 후속 범위 |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Postgres `etl_jobs.payload`가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 API |
+| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`로 Spark run 실행 | pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | Spark 결과로 runHistory, dagSteps, catalog dataset 갱신 | 장기 persistence와 run detail 조회 API |
-| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과 반영 | 상세/lineage/search persistence |
-| SQL 분석 | `POST /api/query/runs` 호출 지점 유지 | read-only SQL engine 고도화 |
+| Run/DAG | Spark 결과로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 | run detail table과 Spark log object storage 분리 |
+| Catalog | `GET /api/catalog/datasets` hydrate, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
+| SQL 분석 | `POST /api/query/runs` 호출 결과를 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | Postgres/API 기반 목록, 생성, 삭제, draft/published runtime, page/widget/layout 저장 일부 연결 | 권한/공유 API, 장기 persistence 검증, cross-pair E2E QA |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
@@ -54,7 +54,21 @@ type JobCommandResponse = {
 };
 ```
 
-## 3. Source Credential Handling
+## 3. Metadata Persistence
+
+Local backend metadata source of truth는 `DATABASE_URL`이 가리키는 Postgres다. 기본값은 `docker-compose.yml`의 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`이다.
+
+현재 backend는 API response shape를 유지하기 위해 아래 테이블에 JSONB payload를 저장한다.
+
+- `etl_jobs(id, payload, created_at, updated_at)`
+- `catalog_datasets(id, payload, created_at, updated_at)`
+- `sql_runs(id, dataset_id, query, payload, created_at)`
+
+`npm run verify`와 `npm run verify:spark-run`은 격리된 검증을 위해 spawned backend에 `ASKLAKE_RESET_METADATA_ON_START=true`를 주고 ETL/Catalog/SQL metadata를 비운 뒤 시작한다. 일반 `npm run dev`는 이 값을 주지 않으므로 생성한 Job과 Dataset이 서버 재시작 후에도 유지된다.
+
+현재 demo에서는 Spark 재실행을 위해 job payload에 `sourceConfig`를 함께 저장한다. 실제 credential 저장 정책은 아직 별도 secret manager로 분리되지 않았으므로, 운영 전에는 credential redaction/secret reference 모델을 확정해야 한다.
+
+## 4. Source Credential Handling
 
 Backend connector 응답은 secret field를 redacted value로 내려준다. 프론트는 응답 metadata, schema, sampleRows는 반영하되 브라우저 세션에 사용자가 입력한 credential 값은 다음 connector 호출을 위해 유지해야 한다.
 
@@ -64,7 +78,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
 - PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-## 4. Spark Run Path
+## 5. Spark Run Path
 
 `POST /api/etl/jobs/{jobId}/commands`는 Spark runner를 호출한다.
 
@@ -84,7 +98,7 @@ Spark runner 결과:
 - run status
 - DAG step status
 
-## 5. 검증 명령
+## 6. 검증 명령
 
 Backend:
 
@@ -110,7 +124,7 @@ Browser smoke:
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
 - 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
 
-## 6. 완료 기준
+## 7. 완료 기준
 
 - ETL/Catalog 초기 목록은 서버가 비어 있으면 빈 상태로 표시된다.
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
@@ -119,7 +133,7 @@ Browser smoke:
 - Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
 
-## 7. Catalog/SQL 연결 범위
+## 8. Catalog/SQL 연결 범위
 
 ### Catalog
 
@@ -152,7 +166,7 @@ Mock mode에서는 수집/처리 pipeline 생성 dataset과 SQL derived dataset�
 
 SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend 전환 시 같은 기준을 서버 validation과 query runtime에서 재검증해야 합니다. Preview 실행은 원본 SQL을 바꾸지 않고 서버 쪽에서 row limit을 적용하는 흐름으로 분리해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. 수집/처리 생성 dataset도 가능하면 source -> target 기본 `lineageGraph`를 포함해야 하며, 없으면 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
 
-## 8. 대시보드
+## 9. 대시보드
 
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
@@ -176,7 +190,7 @@ SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 fr
 
 Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`, `donut_chart` runtime type만 받는다. Backend save/read response는 `frontend/src/types/dashboard.ts`의 type별 config 계약을 보존해야 한다. `datasetId`가 있고 명시적 `data`가 없으면 catalog dataset의 rows 또는 sample rows를 column name 기반 object row로 변환해 widget `data` snapshot에 저장한다.
 
-## 9. 아직 실제 저장되지 않는 기능
+## 10. 아직 실제 저장되지 않는 기능
 
 아래 기능은 현재 UI 반응과 감사 로그만 있고, 서버 저장은 없습니다.
 
@@ -184,12 +198,12 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | --- | --- |
 | 수집/처리 | 삭제, 상세 수정 저장, 필터 조건 저장 |
 | 생성 플로우 | Source 중간 테스트 결과, Schema 승인, Rule 추가/검증 |
-| 카탈로그 | 저장소 보관, 태그/필터 서버 검색 |
-| SQL | 쿼리 저장, Lake 저장, CSV 다운로드 |
+| 카탈로그 | 상세/lineage 전용 API, 태그/필터 서버 검색 |
+| SQL | saved query, Lake 저장, CSV 다운로드 |
 | 대시보드 | 권한 기반 공유, 내보내기, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-## 10. 백엔드 팀에 넘길 최소 구현 범위
+## 11. 백엔드 팀에 넘길 최소 구현 범위
 
 최소 데모 연동만 목표라면 아래 5개면 충분합니다.
 
@@ -217,7 +231,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 14. `PATCH /api/dashboards/{dashboardId}/draft/layouts`
 15. `POST /api/dashboards/{dashboardId}/publish`
 
-## 11. 프론트에서 다음에 할 작업
+## 12. 프론트에서 다음에 할 작업
 
 백엔드 API가 준비되기 전 프론트에서 미리 할 수 있는 작업입니다.
 
@@ -229,7 +243,7 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 | 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
-## 12. 인수 기준
+## 13. 인수 기준
 
 백엔드 연결이 끝났다고 판단하려면 아래를 통과해야 합니다.
 
@@ -242,11 +256,11 @@ Dataset 기반 widget 생성 API는 `metric`, `table`, `bar_chart`, `line_chart`
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
 
-## 13. 남은 작업
+## 14. 남은 작업
 
 - Kafka message payload schema sampling
 - Parquet physical schema inference endpoint
-- ETL job/dataset/run persistence
+- Run detail table, DAG step table, Spark log object storage 분리
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
 - Dashboard save/publish persistence

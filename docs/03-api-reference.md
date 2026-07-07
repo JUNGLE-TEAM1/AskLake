@@ -11,17 +11,20 @@
 - live API mode(`VITE_USE_MOCK_API=false`)에서만 Source/Schema/Create/Run이 live backend API를 호출한다.
 - `frontend/src/services/apiClient.ts`가 API 호출 wrapper다.
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
-- ETL/Catalog 초기 hydrate 결과가 비어 있으면 UI도 빈 목록으로 시작한다.
+- live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
+- ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
 
 ## 2) 환경 변수
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
+DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 ```
 
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
+- `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 
 ## 3) 공통 규칙
 
@@ -89,11 +92,11 @@ Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`�
 
 | 화면 | 현재 데이터 | Future API |
 | --- | --- | --- |
-| 수집/처리 목록 | live backend hydrate | `GET /api/etl/jobs` |
+| 수집/처리 목록 | Postgres JSONB-backed live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
-| 카탈로그 | live backend hydrate | `GET /api/catalog/datasets` |
+| 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |

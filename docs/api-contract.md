@@ -41,10 +41,12 @@ P1/P2 API는 다음 연결 단계에서 저장 흐름을 분리할 때 붙이면
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
+DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
 - `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
