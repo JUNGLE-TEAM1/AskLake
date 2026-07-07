@@ -8052,83 +8052,8 @@ input.xflow-checkbox:checked {
   text-overflow: ellipsis;
 }
 
-.xflow-transform-rule-catalog {
-  display: grid;
-  max-height: 180px;
-  min-width: 0;
-  gap: 6px;
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.xflow-transform-rule-group {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(160px, 240px);
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 44px;
-  border: 1px solid #dbe3ef;
-  border-radius: 8px;
-  background: #fff;
-  padding: 7px 8px 7px 12px;
-}
-
-.xflow-transform-rule-group.active {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  box-shadow: inset 3px 0 0 #2563eb;
-}
-
-.xflow-transform-rule-group-label {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.xflow-transform-rule-group-label strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #1e293b;
-  font-size: 12.5px;
-  font-weight: 950;
-  line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.xflow-transform-rule-group-label small {
-  min-width: 0;
-  overflow: hidden;
-  color: #64748b;
-  font-size: 10.5px;
-  font-weight: 750;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.xflow-transform-rule-group select {
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  border: 1px solid #d7e0ec;
-  border-radius: 7px;
-  background: #fff;
-  color: #334155;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 8px;
-}
-
-.xflow-transform-rule-group select:focus {
-  outline: none;
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
-}
-
 .xflow-row-code-tools {
-  display: none;
+  display: inline-flex;
   width: fit-content;
   overflow: hidden;
   border: 1px solid #dbe3ef;
@@ -8193,10 +8118,6 @@ input.xflow-checkbox:checked {
   font-size: 13px;
   font-weight: 850;
   padding: 0 10px;
-}
-
-.xflow-target-detail select.xflow-transform-select {
-  display: none;
 }
 
 .xflow-target-sample-detail {
@@ -8785,15 +8706,6 @@ input.xflow-checkbox:checked {
   padding-inline: 12px;
 }
 
-.xflow-flow-toolbar button[onclick*="setShowCodeWorkbench"],
-.xflow-flow-toolbar .secondary-button.compact {
-  display: none;
-}
-
-.xflow-transform-editor .xflow-code-workbench {
-  display: none;
-}
-
 @media (max-width: 1100px) {
   .xflow-transfer-stage {
     grid-template-columns: minmax(0, 1fr);
@@ -8876,29 +8788,6 @@ input.xflow-checkbox:checked {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
-  }
-
-  .xflow-transform-rule-catalog {
-    max-height: 220px;
-  }
-
-  .xflow-transform-rule-group {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 6px;
-    align-items: stretch;
-  }
-
-  .xflow-output-preview header {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .xflow-output-stats {
-    justify-content: flex-start;
-  }
-
-  .xflow-output-title strong {
-    line-height: 1.25;
   }
 
   .xflow-flow-toolbar .compact {

@@ -13,6 +13,7 @@ export type LucideIcon = ForwardRefExoticComponent<
 
 export { default as Activity } from "lucide-react/dist/esm/icons/activity.mjs";
 export { default as AlertCircle } from "lucide-react/dist/esm/icons/circle-alert.mjs";
+export { default as AlertTriangle } from "lucide-react/dist/esm/icons/triangle-alert.mjs";
 export { default as ArrowDown } from "lucide-react/dist/esm/icons/arrow-down.mjs";
 export { default as ArrowUp } from "lucide-react/dist/esm/icons/arrow-up.mjs";
 export { default as ArrowUpDown } from "lucide-react/dist/esm/icons/arrow-up-down.mjs";
@@ -20,6 +21,7 @@ export { default as BarChart3 } from "lucide-react/dist/esm/icons/chart-column.m
 export { default as BookOpen } from "lucide-react/dist/esm/icons/book-open.mjs";
 export { default as Bot } from "lucide-react/dist/esm/icons/bot.mjs";
 export { default as Boxes } from "lucide-react/dist/esm/icons/boxes.mjs";
+export { default as Braces } from "lucide-react/dist/esm/icons/braces.mjs";
 export { default as Calendar } from "lucide-react/dist/esm/icons/calendar.mjs";
 export { default as CalendarDays } from "lucide-react/dist/esm/icons/calendar-days.mjs";
 export { default as ChartArea } from "lucide-react/dist/esm/icons/chart-area.mjs";
@@ -66,6 +68,7 @@ export { default as PanelLeftClose } from "lucide-react/dist/esm/icons/panel-lef
 export { default as PanelLeftOpen } from "lucide-react/dist/esm/icons/panel-left-open.mjs";
 export { default as Pencil } from "lucide-react/dist/esm/icons/pencil.mjs";
 export { default as Pin } from "lucide-react/dist/esm/icons/pin.mjs";
+export { default as Play } from "lucide-react/dist/esm/icons/play.mjs";
 export { default as PlayCircle } from "lucide-react/dist/esm/icons/play-circle.mjs";
 export { default as Plus } from "lucide-react/dist/esm/icons/plus.mjs";
 export { default as RefreshCw } from "lucide-react/dist/esm/icons/refresh-cw.mjs";
