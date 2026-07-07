@@ -736,7 +736,7 @@ Validation:
 - 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 JOIN 또는 multi-table SQL 초안은 반환하지 않거나 `422 VALIDATION_ERROR`로 실패해야 합니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
-- AI 응답이 `LIMIT`을 생략하면 backend가 preview 기준 `LIMIT 100`을 붙인 뒤 검증합니다.
+- AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.
 - OpenAI 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
 
 프론트 기대 동작:
