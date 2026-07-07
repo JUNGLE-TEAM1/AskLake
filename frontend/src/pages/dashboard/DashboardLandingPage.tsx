@@ -80,6 +80,7 @@ export function DashboardLandingPage({
       <header className="dashboard-header">
         <div>
           <h1>대시보드</h1>
+          <p>게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다.</p>
         </div>
         <div className="dashboard-header-actions">
           <button

@@ -13,12 +13,14 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 20px;
+  min-height: var(--page-masthead-height);
 }
 
 .dashboard-header > div:first-child {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .dashboard-header span,
@@ -31,36 +33,39 @@
 
 .dashboard-header h1 {
   color: #0f172a;
-  font-size: 28px;
-  line-height: 1.2;
+  font-size: var(--page-title-font-size);
+  font-weight: var(--page-title-font-weight);
+  line-height: var(--page-title-line-height);
 }
 
 .dashboard-header p,
 .dashboard-card-header p {
   max-width: 680px;
   color: #64748b;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--page-title-description-size);
+  line-height: var(--page-title-description-line-height);
 }
 
 .dashboard-header-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .dashboard-header-actions .dashboard-create-button {
   display: inline-flex;
-  height: 56px;
+  height: 44px;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  border-radius: 12px;
-  font-size: 18px;
-  font-weight: 900;
+  gap: 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 800;
   line-height: 1;
-  padding: 0 20px;
+  padding: 0 16px;
 }
 
 .dashboard-header-actions .dashboard-create-button svg {
