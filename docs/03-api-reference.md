@@ -20,6 +20,10 @@
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
+S3_ALLOWED_BUCKETS=asklake-output
+S3_ENDPOINT=http://localhost:9000
+S3_FORCE_PATH_STYLE=true
+TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
@@ -27,6 +31,8 @@ DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
+- Target 저장경로 선택은 frontend가 S3를 직접 호출하지 않고 `GET /api/s3/buckets`, `GET /api/s3/prefixes` 서버 API를 통해 bucket/prefix만 조회한다. `S3_ALLOWED_BUCKETS` allowlist가 없으면 local demo 기본값으로 `asklake-output`을 사용한다.
+- Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 
 ## 3) 공통 규칙
@@ -81,6 +87,9 @@ Canonical status values:
 | `GET` | `/api/catalog/datasets` | TBD | dataset 목록 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}` | TBD | dataset 상세 hydrate | `docs/backend-integration-readiness.md` |
 | `GET` | `/api/catalog/datasets/{datasetId}/lineage` | TBD | column-level lineage graph hydrate 또는 fallback | `docs/api-contract.md` |
+| `GET` | `/api/s3/buckets` | TBD | Target 저장경로 선택용 허용 bucket 목록 | `docs/api-contract.md` |
+| `GET` | `/api/s3/prefixes` | TBD | Target 저장경로 선택용 S3 prefix lazy 조회 | `docs/api-contract.md` |
+| `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
 ## 6) P2 / 확장 API
@@ -124,6 +133,8 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 수집/처리 목록 | Postgres JSONB-backed live backend hydrate | `GET /api/etl/jobs` |
 | 수집/처리 상세 | selected job state | `GET /api/etl/jobs/{jobId}` |
 | 생성 flow | `DraftPipeline` state | `POST /api/etl/jobs` |
+| Target 저장경로 | S3 bucket/prefix picker가 `target.storagePath` string을 갱신 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`, `POST /api/etl/jobs` |
+| Target DB 선택 | DB picker가 `target.databaseName` string을 갱신하고 hidden tableName은 datasetName을 사용 | `GET /api/target/databases`, `POST /api/etl/jobs` |
 | Source/Schema 연결 | `testSourceConnector` mock/live adapter | `POST /api/etl/sources/test` |
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
@@ -331,6 +342,11 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
+- 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
+- `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
+- Target 화면은 기본정보, 태그, 파티션, 샘플 프리뷰 단위로 구성되며 태그/파티션/프리뷰 섹션은 접고 펼칠 수 있다.
+- Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.
+- Target 화면 저장은 backend API가 없는 현 범위에서 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태로 저장한다.
 
 Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived dataset을 모두 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합한다. 현재 SQL 화면의 `처리 Job 생성` UI는 직접 localStorage에 dataset을 쓰지 않고 SQL Result를 ETL Review draft로 변환한 뒤 기존 Job 생성 경로를 사용한다. 기존 `asklake.derivedDatasets` 값은 읽기 호환만 유지한다. Live API mode에서는 localStorage fallback을 사용하지 않고 backend catalog persistence와 `GET /api/catalog/datasets` 응답을 source of truth로 둔다.
 

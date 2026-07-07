@@ -24,11 +24,9 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
-  Save,
   Star,
   Search,
   Settings,
-  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Table2,
@@ -36,7 +34,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
-import { CreationFlowLayout, CreationTopActions } from "../../components/creation/CreationFlow";
+import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { S3PathField } from "../../components/s3/S3PathField";
+import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
@@ -521,19 +521,15 @@ const DEFAULT_APPROVAL_STATUS = "승인 검토";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
-const DEFAULT_TARGET_FORMAT = "Parquet";
+const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
+const DEFAULT_TARGET_TAGS: string[] = [];
+const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
-const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
-  BRONZE: "수집 정제",
-  GOLD: "서비스 제공",
-  RAW: "원본 보관",
-  SILVER: "분석 표준",
-};
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -556,19 +552,85 @@ type PermissionDraftSlice = {
 
 type TargetDraftSlice = {
   compression?: "Snappy" | "Gzip" | "None";
+  databaseName?: string;
   datasetName?: string;
+  description?: string;
   format?: string;
+  indexColumns?: string[];
   jobName?: string;
+  lastTestRun?: TargetTestRun;
   layer?: string;
+  manager?: string;
   owner?: string;
   partition?: string;
+  partitionColumns?: string[];
   rag?: boolean;
+  schemaRules?: TargetSchemaRule[];
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tableName?: string;
+  targetTableName?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
+  tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
 };
+
+type TargetFileFormat = "parquet" | "csv" | "json";
+type TargetTestStatus = "idle" | "pending" | "success" | "failed";
+type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
+
+type TargetSchemaRule = {
+  displayType?: string;
+  indexed: boolean;
+  name: string;
+  nullable: boolean;
+  partitionable: boolean;
+  raw?: boolean;
+  recommendedIndex: boolean;
+  recommendedPartition: boolean;
+  sourceName: string;
+  type: TargetColumnType;
+  use: boolean;
+  validationStatus: "valid" | "warning" | "error";
+};
+
+type TargetTestRun = {
+  finishedAt?: string;
+  logs: string[];
+  message?: string;
+  status: TargetTestStatus;
+};
+
+type TargetMetadata = {
+  databaseName: string;
+  datasetName: string;
+  description: string;
+  fileFormat: TargetFileFormat;
+  manager: string;
+  owner: string;
+  storagePath: string;
+  targetTableName: string;
+};
+
+type TargetSavedConfig = {
+  indexColumns: string[];
+  lastTestRun: TargetTestRun;
+  lineage: {
+    sourceName: string;
+    targetDatasetName: string;
+    targetStoragePath: string;
+    transformStepCount: number;
+  };
+  metadata: TargetMetadata;
+  partitionColumns: string[];
+  previewRows: Array<Record<string, string>>;
+  schemaRules: TargetSchemaRule[];
+  tags: string[];
+};
+
+type TargetToggleSectionKey = "tags" | "partition" | "preview";
 
 type DraftPipelineWithSlices = DraftPipeline & {
   jobName?: string;
@@ -596,10 +658,214 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
-function displayTargetLayer(layer: TargetLayer) {
-  return TARGET_LAYER_LABELS[layer];
+function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
+const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
+const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
+  { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
+  { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
+  { included: true, nullable: false, sourceName: "gross_sales", targetName: "gross_sales", type: "decimal" },
+  { included: true, nullable: false, sourceName: "updated_at", targetName: "updated_at", type: "timestamp" },
+];
+const SAMPLE_TARGET_ROWS = [
+  ["2026-07-07", "128", "10200.50", "2026-07-07T09:30:00Z"],
+  ["2026-07-08", "96", "15700.00", "2026-07-08T09:30:00Z"],
+  ["2026-07-09", "141", "99900.25", "2026-07-09T09:30:00Z"],
+];
+
+function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
+  const normalized = value?.trim().toLowerCase();
+  return TARGET_FILE_FORMAT_VALUES.find((format) => format === normalized) ?? "parquet";
+}
+
+function filterVisibleTargetTags(tags: string[] | undefined) {
+  return (tags ?? []).filter((tag) => !LEGACY_TARGET_TAG_OPTIONS.includes(tag));
+}
+
+function isRecommendedPartitionColumn(columnName: string, columnType = "") {
+  const normalizedName = columnName.trim().toLowerCase();
+  const normalizedType = columnType.trim().toLowerCase();
+  return (
+    normalizedName === "date"
+    || normalizedName.endsWith("_date")
+    || ["event_time", "created_at", "updated_at", "partition_date", "event_date", "region", "category"].includes(normalizedName)
+    || normalizedType.includes("date")
+    || normalizedType.includes("time")
+  );
+}
+
+function isRecommendedIndexColumn(columnName: string) {
+  return /^(id|user_id|customer_id|product_id|order_id|review_id|account_id)$/i.test(columnName);
+}
+
+function normalizeTargetColumnType(value: string): TargetColumnType {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("int") || normalized.includes("float") || normalized.includes("double") || normalized.includes("decimal") || normalized === "number") return "number";
+  if (normalized.includes("bool")) return "boolean";
+  if (normalized.includes("date") || normalized.includes("time")) return "datetime";
+  if (normalized.includes("json") || normalized.includes("object") || normalized.includes("array")) return "json";
+  return "string";
+}
+
+function inferJsonValueType(value: unknown): TargetColumnType {
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (value && typeof value === "object") return "json";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T|\s)?/.test(value)) return "datetime";
+  return "string";
+}
+
+function mergeTargetColumnType(previous: TargetColumnType | undefined, next: TargetColumnType): TargetColumnType {
+  if (!previous || previous === next) return next;
+  if (previous === "json" || next === "json") return "json";
+  return "string";
+}
+
+function flattenJsonObject(value: unknown, prefix: string, output: Record<string, unknown>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    output[prefix] = value;
+    return;
+  }
+
+  Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (child && typeof child === "object" && !Array.isArray(child)) {
+      flattenJsonObject(child, path, output);
+      return;
+    }
+    output[path] = child;
+  });
+}
+
+function stringifyPreviewValue(value: unknown) {
+  if (value === null || typeof value === "undefined") return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], existingRules: TargetSchemaRule[] | undefined) {
+  const sourceColumns = columns.length > 0 ? columns : SAMPLE_TARGET_SCHEMA_COLUMNS;
+  const sourceRows = rows.length > 0 ? rows : SAMPLE_TARGET_ROWS;
+  const dataColumnIndex = sourceColumns.findIndex((column) => (column.targetName || column.sourceName).toLowerCase() === "data");
+  const jsonColumnIndex = dataColumnIndex >= 0 ? dataColumnIndex : sourceColumns.length === 1 ? 0 : -1;
+  const existingByName = new Map(existingRules?.map((rule) => [rule.name, rule]));
+  const previewRows: Array<Record<string, string>> = [];
+  const typeByName = new Map<string, TargetColumnType>();
+  const displayTypeByName = new Map<string, string>();
+  const nullableByName = new Map<string, boolean>();
+  let jsonParseFailed = false;
+  let jsonInferred = false;
+
+  if (jsonColumnIndex >= 0) {
+    sourceRows.forEach((row) => {
+      const rawValue = row[jsonColumnIndex] ?? "";
+      try {
+        const parsed = JSON.parse(rawValue);
+        const flattened: Record<string, unknown> = {};
+        flattenJsonObject(parsed, "", flattened);
+        const previewRow: Record<string, string> = {};
+
+        Object.entries(flattened).forEach(([name, value]) => {
+          previewRow[name] = stringifyPreviewValue(value);
+          const inferredType = inferJsonValueType(value);
+          typeByName.set(name, mergeTargetColumnType(typeByName.get(name), inferredType));
+          displayTypeByName.set(name, inferredType === "datetime" ? "timestamp" : inferredType);
+          nullableByName.set(name, (nullableByName.get(name) ?? false) || value === null || typeof value === "undefined");
+        });
+
+        previewRow.raw_data = rawValue;
+        typeByName.set("raw_data", "json");
+        displayTypeByName.set("raw_data", "json");
+        nullableByName.set("raw_data", false);
+        previewRows.push(previewRow);
+        jsonInferred = true;
+      } catch {
+        jsonParseFailed = true;
+      }
+    });
+  }
+
+  if (!jsonInferred) {
+    sourceRows.forEach((row) => {
+      const previewRow: Record<string, string> = {};
+      sourceColumns.forEach((column, index) => {
+        const name = column.targetName || column.sourceName;
+        const value = row[index] ?? "";
+        previewRow[name] = value;
+        typeByName.set(name, mergeTargetColumnType(typeByName.get(name), normalizeTargetColumnType(column.type)));
+        displayTypeByName.set(name, column.type.trim().toLowerCase());
+        nullableByName.set(name, (nullableByName.get(name) ?? false) || value === "");
+      });
+      previewRows.push(previewRow);
+    });
+  }
+
+  const schemaRules = Array.from(typeByName.keys()).map((name) => {
+    const existing = existingByName.get(name);
+    const displayType = existing?.displayType ?? displayTypeByName.get(name);
+    const recommendedPartition = isRecommendedPartitionColumn(name, displayType);
+    const recommendedIndex = isRecommendedIndexColumn(name);
+    const raw = name === "raw_data";
+    const type = existing?.type ?? typeByName.get(name) ?? "string";
+    const validationStatus: TargetSchemaRule["validationStatus"] = raw ? "warning" : "valid";
+
+    return {
+      displayType,
+      indexed: existing?.indexed ?? recommendedIndex,
+      name,
+      nullable: existing?.nullable ?? Boolean(nullableByName.get(name)),
+      partitionable: !raw && type !== "json",
+      raw,
+      recommendedIndex,
+      recommendedPartition,
+      sourceName: name,
+      type,
+      use: existing?.use ?? !raw,
+      validationStatus,
+    };
+  });
+
+  return { jsonInferred, jsonParseFailed, previewRows, schemaRules };
+}
+
+function formatPartitionColumnType(rule: TargetSchemaRule) {
+  const displayType = rule.displayType?.trim().toLowerCase();
+  if (displayType) return displayType;
+  if (rule.type === "datetime") return rule.name.toLowerCase().endsWith("_date") ? "date" : "timestamp";
+  return rule.type;
+}
+
+function describeTargetSampleValue(rule: TargetSchemaRule, value: string | undefined) {
+  const sampleValue = value?.trim();
+  if (!sampleValue) return "샘플 값 없음";
+  if (rule.type === "datetime") return `날짜/시간 값: ${sampleValue}`;
+  if (rule.type === "number") return `숫자 값: ${sampleValue}`;
+  if (rule.type === "boolean") return `참/거짓 값: ${sampleValue}`;
+  if (rule.type === "json") return "JSON 객체/배열 값";
+  return `문자 값: ${sampleValue}`;
+}
+
+function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
+  const errors: string[] = [];
+
+  if (!config.metadata.datasetName.trim()) errors.push("데이터셋명은 필수입니다.");
+  if (!config.metadata.storagePath.trim()) errors.push("저장경로는 필수입니다.");
+  if (!config.metadata.fileFormat.trim()) errors.push("포맷은 필수입니다.");
+  if (jsonParseFailed) errors.push("JSON 파싱에 실패했습니다.");
+
+  const usedColumnNames = new Set(config.schemaRules.filter((rule) => rule.use).map((rule) => rule.name));
+  if (usedColumnNames.size === 0) errors.push("저장에 사용할 컬럼이 1개 이상 필요합니다.");
+
+  const disabledPartitionColumns = config.partitionColumns.filter((column) => !usedColumnNames.has(column));
+  if (disabledPartitionColumns.length > 0) {
+    errors.push(`partition 컬럼이 사용 제외 상태입니다: ${disabledPartitionColumns.join(", ")}`);
+  }
+
+  return errors;
+}
 function buildJobName(targetDataset: string) {
   return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
 }
@@ -640,14 +906,22 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const target = compatDraft.target;
   const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+  const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
+  const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
 
   return {
+    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
+    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
+    storagePath,
+    tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
+    tags: filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
-    targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
+    targetLayer,
+    testStatus: target?.testStatus ?? draft.target.testStatus ?? "idle",
   };
 }
 
@@ -4138,6 +4412,7 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
+  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4146,148 +4421,357 @@ export function TargetPage({
   onSave: () => void;
 }) {
   const initialTarget = getTargetDraftValues(draft);
-  const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(initialTarget.targetLayer);
+  const draftTarget = (draft as DraftPipelineWithSlices).target;
+  const targetLayer = initialTarget.targetLayer;
+  const inferredTarget = useMemo(
+    () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
+    [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
+  );
+  const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
-  const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
-  const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
-  const [ragEnabled, setRagEnabled] = useState(initialTarget.rag);
-  const applyTargetDraft = (patch: Partial<{
-    owner: string;
-    rag: boolean;
-    targetDataset: string;
-    targetFormat: string;
-    targetLayer: TargetLayer;
-  }> = {}) => {
-    const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
-    const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-    const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
-    const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
-    const nextRag = patch.rag ?? ragEnabled;
-    const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
+  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
+  const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [targetDescription, setTargetDescription] = useState(initialTarget.description);
+  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
+  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
+  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
+  const [customTag, setCustomTag] = useState("");
+  const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
+  const [indexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
+  const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
+  const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
+  const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
+    partition: false,
+    preview: false,
+    tags: false,
+  });
 
+  const shouldUseSampleTargetSchema = useMemo(
+    () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
+    [schemaRules],
+  );
+  const activeSchemaRules = shouldUseSampleTargetSchema ? sampleTargetSchema.schemaRules : schemaRules;
+  const activePreviewRows = shouldUseSampleTargetSchema ? sampleTargetSchema.previewRows : inferredTarget.previewRows;
+  const activeJsonParseFailed = shouldUseSampleTargetSchema ? sampleTargetSchema.jsonParseFailed : inferredTarget.jsonParseFailed;
+  const orderedSchemaRules = useMemo(() => [...activeSchemaRules], [activeSchemaRules]);
+  const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
+  const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
+  const filteredPartitionColumns = partitionColumns
+    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use))
+    .slice(0, 1);
+  const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
+    const previewRow: Record<string, string> = {};
+    usedSchemaRules.forEach((rule) => {
+      previewRow[rule.name] = row[rule.name] ?? "";
+    });
+    return previewRow;
+  }), [activePreviewRows, usedSchemaRules]);
+  const lineage = {
+    sourceName: draft.source.sourceLabel || "Source",
+    targetDatasetName: targetDataset || "Target",
+    targetStoragePath,
+    transformStepCount: draft.transform.steps.length,
+  };
+  const targetTableName = targetDataset.trim();
+  const buildConfig = (testRun: TargetTestRun = lastTestRun): TargetSavedConfig => ({
+    metadata: {
+      databaseName,
+      datasetName: targetDataset,
+      description: targetDescription,
+      fileFormat: targetFormat,
+      manager: targetManager,
+      owner: targetOwner,
+      storagePath: targetStoragePath,
+      targetTableName,
+    },
+    tags: targetTags,
+    partitionColumns: filteredPartitionColumns,
+    indexColumns,
+    schemaRules: activeSchemaRules,
+    previewRows,
+    lineage,
+    lastTestRun: testRun,
+  });
+
+  const persistDraft = (config: TargetSavedConfig) => {
     onDraftChange({
-      jobName: buildJobName(nextTargetDataset),
-      owner: nextOwner,
+      jobName: buildJobName(config.metadata.datasetName),
       compression: "Snappy",
-      partition: "year/month/region",
-      storagePath: nextStoragePath,
+      partition: config.partitionColumns.join("/"),
+      storagePath: config.metadata.storagePath,
       storageType: "S3",
-      targetDataset: nextTargetDataset,
-      targetFormat: nextTargetFormat,
-      targetLayer: nextTargetLayer,
-      rag: nextRag,
+      target: {
+        databaseName: config.metadata.databaseName,
+        datasetName: config.metadata.datasetName,
+        description: config.metadata.description,
+        format: config.metadata.fileFormat,
+        indexColumns: config.indexColumns,
+        lastTestRun: config.lastTestRun,
+        manager: config.metadata.manager,
+        owner: config.metadata.owner,
+        partitionColumns: config.partitionColumns,
+        rag: false,
+        schemaRules: config.schemaRules,
+        storagePath: config.metadata.storagePath,
+        tableName: config.metadata.targetTableName,
+        targetTableName: config.metadata.targetTableName,
+        tags: config.tags,
+        testStatus: config.lastTestRun.status === "success" ? "success" : config.lastTestRun.status === "failed" ? "failed" : "idle",
+      },
+      targetDataset: config.metadata.datasetName,
+      targetFormat: config.metadata.fileFormat,
+      targetLayer,
+      rag: false,
     });
   };
-  const selectLayer = (layer: TargetLayer) => {
-    setSelectedLayer(layer);
-    applyTargetDraft({ targetLayer: layer });
+
+  const updateSchemaRule = (sourceName: string, patch: Partial<TargetSchemaRule>) => {
+    setSchemaRules((currentRules) => {
+      const nextRules = currentRules.map((rule) => {
+        if (rule.sourceName !== sourceName) return rule;
+        const nextRule = { ...rule, ...patch };
+        if (patch.type) {
+          nextRule.partitionable = !nextRule.raw && patch.type !== "json";
+        }
+        return nextRule;
+      });
+      return nextRules;
+    });
   };
-  const toggleRag = () => {
-    const next = !ragEnabled;
-    setRagEnabled(next);
-    applyTargetDraft({ rag: next });
+
+  const toggleTag = (tag: string) => {
+    setTargetTags((currentTags) => currentTags.includes(tag)
+      ? currentTags.filter((currentTag) => currentTag !== tag)
+      : [...currentTags, tag]);
   };
-  const goNext = () => {
-    applyTargetDraft();
+
+  const addCustomTag = () => {
+    const nextTag = customTag.trim();
+    if (!nextTag) return;
+    setTargetTags((currentTags) => currentTags.includes(nextTag) ? currentTags : [...currentTags, nextTag]);
+    setCustomTag("");
+  };
+
+  const togglePartitionColumn = (columnName: string) => {
+    setPartitionColumns([columnName]);
+  };
+
+  const saveTargetConfig = () => {
+    const config = buildConfig();
+    const errors = validateTargetConfig(config, activeJsonParseFailed);
+    setValidationErrors(errors);
+
+    if (errors.length > 0) {
+      return false;
+    }
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TARGET_CONFIG_STORAGE_KEY, JSON.stringify(config, null, 2));
+    }
+    persistDraft(config);
+    return true;
+  };
+
+  const handleSave = () => {
+    if (saveTargetConfig()) onSave();
+  };
+
+  const handleNext = () => {
+    if (!saveTargetConfig()) return;
     onNext();
+  };
+
+  const toggleTargetSection = (section: TargetToggleSectionKey) => {
+    setOpenTargetSections((currentSections) => ({
+      ...currentSections,
+      [section]: !currentSections[section],
+    }));
+  };
+
+  const renderToggleSection = (
+    section: TargetToggleSectionKey,
+    title: string,
+    icon: React.ReactNode,
+    children: React.ReactNode,
+    actions?: React.ReactNode,
+  ) => {
+    const open = openTargetSections[section];
+
+    return (
+      <section className="panel target-toggle-panel">
+        <div className="panel-header target-toggle-header">
+          <button aria-expanded={open} className="target-toggle-trigger" type="button" onClick={() => toggleTargetSection(section)}>
+            {icon}
+            <h2>{title}</h2>
+            {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
+          {actions ? <div className="target-toggle-actions">{actions}</div> : null}
+        </div>
+        {open ? <div className="target-toggle-body">{children}</div> : null}
+      </section>
+    );
+  };
+
+  const renderPartitionOption = (rule: TargetSchemaRule) => {
+    const selected = filteredPartitionColumns[0] === rule.name;
+    const disabled = !rule.use;
+    return (
+      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
+        <input checked={selected} disabled={disabled} name="target-partition-column" type="radio" onChange={() => togglePartitionColumn(rule.name)} />
+        <span className="target-partition-name">{rule.name}</span>
+        <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
+      </label>
+    );
   };
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
+      side={(
+        <aside className="summary-panel target-action-panel">
+          <CreationPanelActions
+            nextLabel="다음 단계로"
+            prevLabel="이전"
+            saveLabel="설정 저장"
+            onNext={handleNext}
+            onPrev={onPrev}
+            onSave={handleSave}
+          />
+        </aside>
+      )}
     >
-        <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷, RAG 인덱싱 여부를 설정합니다." />
-        <section className="panel">
-          <div className="panel-header">
-            <HardDrive size={18} />
-            <h2>기본 저장소 설정</h2>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>타겟 데이터셋 이름</span>
-              <input className="input control-input" value={targetDataset} onChange={(event) => {
-                const nextTargetDataset = event.target.value;
-                setTargetDataset(nextTargetDataset);
-                applyTargetDraft({ targetDataset: nextTargetDataset });
-              }} />
-            </label>
-            <label className="field">
-              <span>소유자</span>
-              <input className="input control-input" value={targetOwner} onChange={(event) => {
-                const nextOwner = event.target.value;
-                setTargetOwner(nextOwner);
-                applyTargetDraft({ owner: nextOwner });
-              }} />
-            </label>
-            <label className="field wide">
-              <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
-            </label>
-          </div>
-          <div className="tag-row">
-            {[targetDataset.replace(/_gold$/, ""), "sentiment_analysis", ragEnabled ? "rag_ready" : "rag_disabled"].map((tag) => (
-              <span className="tag" key={tag}>{tag}</span>
-            ))}
-            <button className="ghost-link" type="button" onClick={() => onDraftChange({ rag: ragEnabled })}>+ 추가</button>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>저장소 및 포맷 설정</h2>
-          </div>
-          <div className="format-grid">
-            {TARGET_LAYER_OPTIONS.map((layer) => (
-              <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
-                {displayTargetLayer(layer)}
+      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
+      {validationErrors.length > 0 ? (
+        <div className="target-validation-summary" role="alert">
+          {validationErrors.map((error) => <span key={error}>{error}</span>)}
+        </div>
+      ) : null}
+      <section className="panel">
+        <div className="panel-header">
+          <HardDrive size={18} />
+          <h2>타겟 기본정보</h2>
+        </div>
+        <div className="form-grid target-metadata-grid">
+          <label className="field">
+            <span>데이터셋명</span>
+            <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>포맷</span>
+            <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
+              <button
+                aria-expanded={formatOptionsOpen}
+                className="target-format-trigger"
+                type="button"
+                onClick={() => setFormatOptionsOpen((open) => !open)}
+              >
+                <span>{targetFormat}</span>
+                {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
-            ))}
+              {formatOptionsOpen ? (
+                <div className="target-format-menu">
+                  {TARGET_FORMAT_OPTIONS.map((format) => (
+                    <button
+                      aria-pressed={targetFormat === format}
+                      className={targetFormat === format ? "target-format-option active" : "target-format-option"}
+                      key={format}
+                      type="button"
+                      onClick={() => {
+                        setTargetFormat(format);
+                        setFormatOptionsOpen(false);
+                      }}
+                    >
+                      {format}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </label>
+          <label className="field">
+            <span>DB 선택</span>
+            <DatabaseField value={databaseName} onChange={setDatabaseName} />
+          </label>
+          <label className="field wide">
+            <span>저장경로</span>
+            <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+          </label>
+          <label className="field">
+            <span>오너</span>
+            <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>담당자</span>
+            <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
+          </label>
+          <label className="field wide">
+            <span>설명</span>
+            <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+          </label>
+        </div>
+      </section>
+      {renderToggleSection("tags", "태그", <BookOpen size={18} />, (
+        <>
+          {targetTags.length > 0 ? (
+            <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+              {targetTags.map((tag) => (
+                <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                  {tag}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="target-inline-controls">
+            <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomTag();
+              }
+            }} />
+            <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
           </div>
-          <div className="form-grid">
-            <Field label="저장소 유형" value="S3" />
-            <label className="field">
-              <span>파일 포맷</span>
-              <select className="input control-input" value={targetFormat} onChange={(event) => {
-                const nextTargetFormat = getKnownOption(event.target.value, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-                setTargetFormat(nextTargetFormat);
-                applyTargetDraft({ targetFormat: nextTargetFormat });
-              }}>
-                {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
-              </select>
-            </label>
-            <Field label="파티션" value="year/month/region" />
-            <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
+        </>
+      ))}
+      {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
+        <div className="target-partition-settings">
+          <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+            {partitionCandidates.map(renderPartitionOption)}
           </div>
-          <div className="target-status-grid">
-            <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
-            <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
+        </div>
+      ))}
+      {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
+        usedSchemaRules.length > 0 && previewRows.length > 0 ? (
+          <div className="target-output-schema">
+            <div className="target-output-schema-head">
+              <span>타겟 컬럼</span>
+              <em>{usedSchemaRules.length}개 컬럼</em>
+            </div>
+            <div className="target-output-schema-list">
+              {usedSchemaRules.map((rule, index) => {
+                const sampleValue = previewRows[0]?.[rule.name];
+                return (
+                  <div className="target-output-schema-row" key={rule.name}>
+                    <span className="target-output-index">{index + 1}</span>
+                    <div className="target-output-column">
+                      <strong>{rule.name}</strong>
+                      <small>{rule.sourceName}</small>
+                      <p><b>속성</b>{describeTargetSampleValue(rule, sampleValue)}</p>
+                    </div>
+                    <span className="target-output-type">{formatPartitionColumnType(rule)}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Search size={18} />
-            <h2>RAG 설정</h2>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>RAG 인덱싱</span>
-              <button className={ragEnabled ? "input control-toggle active" : "input control-toggle"} type="button" onClick={toggleRag}>
-                {ragEnabled ? "활성화" : "비활성화"}
-              </button>
-            </label>
-            <Field label="임베딩 모델" value="text-embedding-3-small" />
-            <Field label="청킹 전략" value="Recursive Character" />
-            <Field label="청크 크기" value="1,000 Tokens" />
-            <Field label="오버랩" value="200 Tokens" />
-            <Field label="인덱스 생성 예정" value="파이프라인 생성 후 자동 큐잉" />
-          </div>
-        </section>
+        ) : (
+          <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
+        )
+      ))}
     </CreationFlowLayout>
   );
 }
-
 export function PermissionPage({
   draft,
   onDraftChange,
@@ -4464,7 +4948,6 @@ export function ReviewPage({
   const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
-  const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
     ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
@@ -4507,7 +4990,7 @@ export function ReviewPage({
             ["처리 규칙", request.ruleSummary, "rules"],
             ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -4542,7 +5025,6 @@ export function ReviewPage({
             <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
             <Field label="타겟 Layer" value={targetReview.targetLayer} />
             <Field label="타겟 Format" value={targetReview.targetFormat} />
-            <Field label="RAG 인덱싱" value={ragReviewLabel} />
             <Field label="데이터 오너" value={targetReview.owner} />
           </div>
         </section>

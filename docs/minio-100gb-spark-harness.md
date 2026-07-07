@@ -6,6 +6,8 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 
 - `backend/src/server.mjs`: local JSON API server
 - `backend/src/connectors.mjs`: source connector runner
+- `backend/src/s3.service.mjs`: Target 저장경로 picker용 S3 bucket/prefix 조회
+- `backend/src/targetDatabase.service.mjs`: Target DB picker용 허용 DB 목록 조회
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
 - `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
@@ -36,7 +38,21 @@ Initial endpoints:
 ```text
 GET /api/etl/jobs -> []
 GET /api/catalog/datasets -> []
+GET /api/s3/buckets -> { "buckets": ["asklake-output"] }
+GET /api/s3/prefixes?bucket=asklake-output&prefix= -> folder prefixes
+GET /api/target/databases -> { "databases": [{ "name": "asklake", "description": "..." }] }
 ```
+
+Target S3 picker 환경변수:
+
+```powershell
+$env:S3_ALLOWED_BUCKETS = "asklake-output"
+$env:S3_ENDPOINT = "http://localhost:9000"
+$env:S3_FORCE_PATH_STYLE = "true"
+$env:TARGET_DATABASES = "asklake,asklake_gold,analytics,marketing"
+```
+
+운영에서는 AWS SDK credential provider chain 또는 IAM role을 사용한다. 브라우저에는 AWS access key / secret key를 넣지 않는다.
 
 ## 3. Source Fixtures
 

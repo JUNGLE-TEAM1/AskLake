@@ -475,7 +475,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["저장소", "S3 Gold"],
     ["포맷", "Parquet"],
     ["파티션", "year/month/region"],
-    ["RAG 색인", "활성화"],
     ["진행률", "85%"],
   ],
   permission: [
