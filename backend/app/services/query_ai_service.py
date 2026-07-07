@@ -149,6 +149,16 @@ class OpenAiResponsesClient:
             ],
             "max_output_tokens": 900,
             "model": self.model,
+            "store": False,
+            "temperature": 0.2,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "query_ai_suggestion",
+                    "description": "A safe read-only SQL suggestion for the selected AskLake datasets.",
+                    "schema": query_ai_response_schema(),
+                },
+            },
         }
         request = urllib.request.Request(
             OPENAI_RESPONSES_URL,
@@ -300,10 +310,34 @@ def ensure_preview_limit(sql: str) -> str:
             status.HTTP_502_BAD_GATEWAY,
         )
 
+    trailing_limit_match = re.search(r"\blimit\s+(\d+)\s*;?\s*$", cleaned_sql, re.IGNORECASE)
+    if trailing_limit_match:
+        limit_value = int(trailing_limit_match.group(1))
+        if limit_value <= PREVIEW_LIMIT:
+            return cleaned_sql
+        return f"{cleaned_sql[:trailing_limit_match.start()].rstrip().rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+
     if re.search(r"\blimit\s+\d+\b", cleaned_sql, re.IGNORECASE):
         return cleaned_sql
 
     return f"{cleaned_sql.rstrip(';')}\nLIMIT {PREVIEW_LIMIT};"
+
+
+def query_ai_response_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "title": {"type": "string"},
+            "body": {"type": "string"},
+            "sql": {"type": "string"},
+            "notices": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["title", "body", "sql", "notices"],
+    }
 
 
 def validate_selected_dataset_scope(
