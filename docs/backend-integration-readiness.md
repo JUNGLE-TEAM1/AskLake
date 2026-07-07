@@ -13,7 +13,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB local connector는 `mongosh` CLI로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `queued` 또는 `running` job/run을 저장하고 즉시 응답 | Airflow DAG Run submit adapter, pause/cancel의 실제 Spark job interrupt |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `queued` 또는 `running` job/run을 저장하고 즉시 응답. Airflow public API adapter는 `backend/app/services/airflow_client.py`에 격리됨 | Airflow command flow integration, pause/cancel의 실제 Spark job interrupt |
 | Run/DAG | 현재는 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인. Airflow 전환 후 같은 public API로 DAG Run/Task Instance state를 반영 | run detail table, Airflow sync metadata, Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
@@ -101,6 +101,14 @@ v1 목표:
 - frontend는 `queued`/`running` Run만 polling하고, `success`/`failed`/`canceled` terminal 상태에서 멈춘다.
 - Airflow raw state, DAG id, DAG Run id, Airflow UI URL, sync error는 optional metadata로 저장하며 기존 response 필드를 깨지 않는다.
 
+Phase 3 구현:
+
+- `backend/app/services/airflow_client.py`가 Airflow 3 public API `/api/v2/dags/{dag_id}/dagRuns`, `/api/v2/dags/{dag_id}/dagRuns/{dag_run_id}`, `/api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances` 호출을 담당한다.
+- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`는 필수 backend env이며 누락 시 `AIRFLOW_CONFIG_MISSING` backend error를 반환한다.
+- `AIRFLOW_API_TOKEN` bearer auth를 우선 사용하고, 로컬 basic auth가 필요할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 사용한다.
+- `airflow_run_status`, `airflow_step_status`, `airflow_run_is_terminal` helper가 SOT mapping을 코드로 고정한다.
+- 현재 `etl_service.py` command path는 아직 Spark runner를 사용한다. Airflow submit으로 전환하는 작업은 Phase 5 범위다.
+
 Status mapping:
 
 | Airflow state | AskLake Run status | AskLake DAG step status |
@@ -151,6 +159,7 @@ npm run verify:fastapi-pair2
 npm run verify:fastapi-etl-catalog
 npm run verify:sources
 npm run verify:spark-run
+.venv/bin/python -m unittest discover -s tests
 ```
 
 FastAPI Pair2 smoke:

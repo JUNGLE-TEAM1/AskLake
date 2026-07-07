@@ -82,6 +82,25 @@ OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
+Airflow API 연결 값도 backend env에만 둔다. Phase 3 adapter는 Airflow public API 호출과 상태 mapping만 제공하며, `run`/`retry` command flow 전환은 Phase 5에서 진행한다.
+
+```bash
+AIRFLOW_API_BASE_URL=http://localhost:8081
+AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_API_TOKEN=
+AIRFLOW_USERNAME=
+AIRFLOW_PASSWORD=
+AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
+AIRFLOW_UI_BASE_URL=http://localhost:8081
+```
+
+Airflow adapter helper 검증:
+
+```bash
+cd backend
+.venv/bin/python -m unittest discover -s tests
+```
+
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `queued` 또는 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 최종 상태를 반영한다. 현재 구현은 백그라운드 Spark 완료 상태를 polling하며, Airflow orchestration 전환 후에도 같은 public API로 DAG Run/Task Instance 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.

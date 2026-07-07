@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     openai_assistant_max_output_tokens: int = Field(default=1200, ge=256, le=4096)
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
+    airflow_api_base_url: str | None = None
+    airflow_dag_id: str | None = None
+    airflow_api_token: str | None = None
+    airflow_username: str | None = None
+    airflow_password: str | None = None
+    airflow_request_timeout_seconds: float = Field(default=10.0, ge=1.0, le=120.0)
+    airflow_ui_base_url: str | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

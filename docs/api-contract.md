@@ -44,12 +44,21 @@ VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 AIRFLOW_API_BASE_URL=http://localhost:8081
 AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_API_TOKEN=
+AIRFLOW_USERNAME=
+AIRFLOW_PASSWORD=
+AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
+AIRFLOW_UI_BASE_URL=http://localhost:8081
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
 - `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
-- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration 설정입니다. Phase 3 adapter 구현 전까지는 목표 계약으로만 둡니다.
+- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration adapter 설정입니다. 누락 시 adapter는 `AIRFLOW_CONFIG_MISSING` backend error를 반환합니다.
+- `AIRFLOW_API_TOKEN`: Airflow public API bearer token입니다. 로컬 basic auth가 필요할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 대신 사용합니다.
+- `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: Airflow public API request timeout입니다.
+- `AIRFLOW_UI_BASE_URL`: optional Airflow UI link 생성용 backend 설정입니다.
+- Airflow env는 frontend env에 노출하지 않습니다. `run`/`retry` command flow 전환은 Phase 5 범위입니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 

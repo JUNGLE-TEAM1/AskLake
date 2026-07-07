@@ -59,6 +59,8 @@ Phase 2 output:
 
 ### Phase 3. Backend Airflow Adapter
 
+Status: complete.
+
 Scope:
 
 - Add a small backend adapter/service for Airflow API calls.
@@ -72,6 +74,15 @@ Acceptance criteria:
 - Airflow API calls are isolated from `etl_service.py`.
 - Missing Airflow configuration fails with a clear backend error.
 - Unit-testable mapping helpers exist for status conversion.
+
+Phase 3 output:
+
+- `backend/app/services/airflow_client.py` isolates Airflow public API calls.
+- The adapter uses Airflow 3 public `/api/v2` DAG Run and Task Instance paths.
+- `airflow_run_status`, `airflow_step_status`, and
+  `airflow_run_is_terminal` are covered by backend unit tests.
+- `etl_service.py` still uses the current Spark runner. Command flow switching
+  remains Phase 5 work.
 
 ### Phase 4. Run Persistence
 

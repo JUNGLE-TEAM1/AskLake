@@ -22,13 +22,22 @@ VITE_USE_MOCK_API=true
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 AIRFLOW_API_BASE_URL=http://localhost:8081
 AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_API_TOKEN=
+AIRFLOW_USERNAME=
+AIRFLOW_PASSWORD=
+AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
+AIRFLOW_UI_BASE_URL=http://localhost:8081
 ```
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
 - `DATABASE_URL`: backend metadata DB. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용한다.
-- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration 설정이다. Phase 3 adapter 구현 전까지는 문서화된 목표 계약이며 frontend env에 노출하지 않는다.
+- `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`: backend-only Airflow orchestration adapter 설정이다. Phase 3 adapter는 이 값이 없으면 `AIRFLOW_CONFIG_MISSING` backend error를 반환한다.
+- `AIRFLOW_API_TOKEN`: Airflow public API bearer token이다. 로컬 basic auth를 써야 할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 대신 사용한다.
+- `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: Airflow public API request timeout이다.
+- `AIRFLOW_UI_BASE_URL`: optional Airflow UI link 생성용 backend 설정이다.
+- Airflow env는 frontend env에 노출하지 않는다. `run`/`retry` command flow 전환은 Phase 5 범위다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지한다.
 
 ## 3) 공통 규칙
