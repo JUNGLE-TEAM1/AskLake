@@ -266,10 +266,10 @@ function S3PathPicker({
             </select>
           </label>
           <label className="field">
-            <span>Prefix 필터</span>
+            <span>주소 필터</span>
             <div className="s3-picker-search">
               <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="prefix 검색" />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
             </div>
           </label>
         </div>
