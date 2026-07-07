@@ -168,6 +168,13 @@ function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSea
   };
 }
 
+function removeCatalogTagFromSearchText(searchText: string, tag: string) {
+  return searchText
+    .replace(new RegExp(`(^|\\s)${escapeRegExp(tag)}(?=\\s|$)`, "gi"), " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function datasetMatchesSearch(dataset: CatalogDataset, searchQuery: CatalogSearchQuery) {
   if (searchQuery.keywords.length === 0 && searchQuery.tags.length === 0) return true;
 
@@ -345,7 +352,10 @@ export function CatalogPage({
     const normalizedTag = normalizeCatalogText(tag);
 
     if (selectedSearchTags.has(normalizedTag)) {
-      onAction("catalog.tag_search_duplicate_ignored", `/api/catalog/datasets?q=${encodeURIComponent(searchText.trim())}`, tag);
+      const nextSearchText = removeCatalogTagFromSearchText(searchText, tag);
+
+      setSearchText(nextSearchText);
+      onAction("catalog.tag_search_removed", `/api/catalog/datasets?q=${encodeURIComponent(nextSearchText)}`, tag);
       return;
     }
 
@@ -413,7 +423,7 @@ export function CatalogPage({
                   return (
                     <button
                       aria-pressed={isTagInSearch}
-                      className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                      className="catalog-tag"
                       key={tag}
                       type="button"
                       onClick={() => addTagToSearch(tag)}
