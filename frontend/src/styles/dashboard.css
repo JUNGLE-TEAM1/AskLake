@@ -478,10 +478,15 @@
 }
 
 .dashboard-source-card span,
+.dashboard-source-card small,
 .dashboard-share-box span {
   color: #64748b;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.dashboard-source-card small {
+  overflow-wrap: anywhere;
 }
 
 .dashboard-side-panel button {
