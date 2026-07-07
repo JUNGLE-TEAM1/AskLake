@@ -63,6 +63,25 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+type JobMetricTone = "total" | "running" | "scheduled" | "failed" | "attention";
+
+type JobMetric = {
+  active?: boolean;
+  label: string;
+  tone: JobMetricTone;
+  value: string;
+};
+
+function getJobMetrics(jobs: JobRowData[]): JobMetric[] {
+  return [
+    { active: true, label: "전체 작업", tone: "total", value: String(jobs.length) },
+    { label: jobStatusMeta.running.label, tone: "running", value: String(jobs.filter((job) => job.status === "running").length) },
+    { label: jobStatusMeta.scheduled.label, tone: "scheduled", value: String(jobs.filter((job) => job.status === "scheduled").length) },
+    { label: jobStatusMeta.failed.label, tone: "failed", value: String(jobs.filter((job) => job.status === "failed").length) },
+    { label: "확인 필요", tone: "attention", value: String(jobs.filter((job) => job.status === "failed" || job.status === "canceled").length) },
+  ];
+}
+
 export function JobsLandingPage({
   jobs,
   onAction,
@@ -79,26 +98,32 @@ export function JobsLandingPage({
   onRuns: (job: JobRowData) => void;
   onTableDemo?: () => void;
 }) {
-  const metrics = [
-    ["전체 작업", String(jobs.length)],
-    ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
-    ["스케줄됨", String(jobs.filter((job) => job.status === "scheduled").length)],
-    ["실패", String(jobs.filter((job) => job.status === "failed").length)],
-    ["확인 필요", String(jobs.filter((job) => job.status === "failed" || job.status === "canceled").length)],
-  ];
+  const metrics = getJobMetrics(jobs);
 
   return (
     <div className="jobs-landing">
       <div className="jobs-page-header">
         <PageTitle title="수집/처리" description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다." />
         <div className="jobs-header-actions">
-          <button className="primary-button create-job-button" type="button" onClick={onCreate}>+ 새 수집/처리 생성</button>
+          <button className="primary-button create-job-button" type="button" onClick={onCreate}><Plus size={16} /> 새 수집/처리 생성</button>
         </div>
       </div>
-      <div className="content-main">
-        <div className="metric-grid">
-          {metrics.map(([label, value], index) => <MetricCard active={index === 0} key={label} label={label} value={value} />)}
-        </div>
+      <div className="content-main jobs-xflow-stack">
+        <section className="jobs-xflow-card jobs-metrics-card">
+          <div className="jobs-xflow-card-header">
+            <span className="jobs-xflow-icon">
+              <BarChart3 size={16} />
+            </span>
+            <div className="jobs-xflow-heading">
+              <h2>작업 현황</h2>
+              <p>수집/처리 Job의 현재 상태와 확인이 필요한 항목을 요약합니다.</p>
+            </div>
+            <span className="jobs-xflow-state">{jobs.length} jobs</span>
+          </div>
+          <div className="metric-grid jobs-xflow-metrics">
+            {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
+          </div>
+        </section>
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
@@ -118,9 +143,11 @@ export function JobsLandingPage({
   );
 }
 
-function MetricCard({ active, label, value }: { active?: boolean; label: string; value: string }) {
+function MetricCard({ active, label, tone, value }: JobMetric) {
+  const className = ["metric-card", `metric-card-${tone}`, active ? "active" : ""].filter(Boolean).join(" ");
+
   return (
-    <article className={active ? "metric-card active" : "metric-card"}>
+    <article className={className}>
       <span>{value}</span>
       <strong>{label}</strong>
     </article>
@@ -129,15 +156,27 @@ function MetricCard({ active, label, value }: { active?: boolean; label: string;
 
 function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void; onReset: () => void }) {
   return (
-    <section className="jobs-toolbar">
-      <div className="jobs-search">
-        <Search size={16} />
-        <span>작업명, 소스명, 타깃 데이터셋명 검색</span>
+    <section className="jobs-toolbar jobs-xflow-card">
+      <div className="jobs-xflow-card-header">
+        <span className="jobs-xflow-icon">
+          <SlidersHorizontal size={16} />
+        </span>
+        <div className="jobs-xflow-heading">
+          <h2>검색 및 필터</h2>
+          <p>작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다.</p>
+        </div>
+        <span className="jobs-xflow-state">필터</span>
       </div>
-      {["상태", "소스", "Owner", "태그"].map((filter) => (
-        <button className="filter-chip jobs-filter" key={filter} type="button" onClick={() => onFilter(filter)}>{filter} ▾</button>
-      ))}
-      <button className="ghost-link reset-filter" type="button" onClick={onReset}>↺ 필터 초기화</button>
+      <div className="jobs-toolbar-body">
+        <div className="jobs-search">
+          <Search size={16} />
+          <span>작업명, 소스명, 타깃 데이터셋명 검색</span>
+        </div>
+        {["상태", "소스", "Owner", "태그"].map((filter) => (
+          <button className="filter-chip jobs-filter" key={filter} type="button" onClick={() => onFilter(filter)}>{filter} ▾</button>
+        ))}
+        <button className="ghost-link reset-filter" type="button" onClick={onReset}>↺ 필터 초기화</button>
+      </div>
     </section>
   );
 }
@@ -425,13 +464,16 @@ function JobsTableSection({
   });
 
   return (
-    <section className="jobs-table-preview-card" aria-label={ariaLabel}>
-      <div className="jobs-table-preview-header">
-        <div>
-          <span><Table2 size={15} /> Table view</span>
+    <section className="jobs-table-preview-card jobs-xflow-card" aria-label={ariaLabel}>
+      <div className="jobs-table-preview-header jobs-xflow-card-header">
+        <span className="jobs-xflow-icon">
+          <Table2 size={16} />
+        </span>
+        <div className="jobs-xflow-heading">
           <h2>{title}</h2>
+          <p>상태, 타깃, 최근 실행 결과를 한 화면에서 확인하고 필요한 작업을 실행합니다.</p>
         </div>
-        <strong>{jobs.length} jobs</strong>
+        <strong className="jobs-xflow-state">{jobs.length} jobs</strong>
       </div>
       <div className="jobs-table-scroll">
         <table className="jobs-table-preview">
@@ -577,13 +619,7 @@ export function JobsTableDemoPage({
   onDetail: (job: JobRowData) => void;
   onRuns: (job: JobRowData) => void;
 }) {
-  const metrics = [
-    ["전체 작업", String(jobs.length)],
-    ["실행 중", String(jobs.filter((job) => job.status === "running").length)],
-    ["스케줄됨", String(jobs.filter((job) => job.status === "scheduled").length)],
-    ["실패", String(jobs.filter((job) => job.status === "failed").length)],
-    ["확인 필요", String(jobs.filter((job) => job.status === "failed" || job.status === "canceled").length)],
-  ];
+  const metrics = getJobMetrics(jobs);
 
   return (
     <div className="jobs-table-demo-page">
@@ -597,7 +633,7 @@ export function JobsTableDemoPage({
 
       <div className="content-main">
         <div className="metric-grid">
-          {metrics.map(([label, value], index) => <MetricCard active={index === 0} key={label} label={label} value={value} />)}
+          {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
         </div>
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.table_demo_filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.table_demo_filter_reset", "/api/etl/jobs", "filters")} />
         <JobsTableSection

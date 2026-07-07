@@ -118,53 +118,61 @@ export function SchedulePage({
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
-        <section className="panel">
-          <div className="section-heading">
-            <PlayCircle size={20} />
-            <h2>실행 방식 설정</h2>
-          </div>
-          <div className="option-grid">
-            <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={24} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
-            <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
-          </div>
-        </section>
-        {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
-          const sanitizedCron = sanitizeCronInput(cron);
-          setCustomCron(sanitizedCron);
-          onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onCronCommit={() => {
-          const normalizedCron = normalizeCronExpression(customCron);
-          setCustomCron(normalizedCron);
-          onDraftChange(buildSchedulePatch("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onDayChange={(day) => {
-          setRepeatDay(day);
-          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onFrequencyChange={(frequency) => {
-          setRepeatFrequency(frequency);
-          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onMinuteChange={(minute) => {
-          setRepeatMinute(minute);
-          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onTimeCommit={() => {
-          const normalizedTime = normalizeTimeValue(repeatTime);
-          setRepeatTime(normalizedTime);
-          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onTimeChange={(time) => {
-          setRepeatTime(time);
-          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
-        }} onRetryPolicyChange={updateRetryPolicy} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
-        {selectedOption === "skip" && <NoScheduleSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        <div className="xflow-review-stack schedule-xflow-stack">
+          <section className="xflow-review-card schedule-xflow-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+              <div>
+                <h2>실행 방식 설정</h2>
+                <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
+              </div>
+              <span className="schedule-xflow-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
+            </div>
+            <div className="schedule-xflow-mode-grid">
+              <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
+              <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={20} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
+            </div>
+          </section>
+          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
+            const sanitizedCron = sanitizeCronInput(cron);
+            setCustomCron(sanitizedCron);
+            onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onCronCommit={() => {
+            const normalizedCron = normalizeCronExpression(customCron);
+            setCustomCron(normalizedCron);
+            onDraftChange(buildSchedulePatch("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onDayChange={(day) => {
+            setRepeatDay(day);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onFrequencyChange={(frequency) => {
+            setRepeatFrequency(frequency);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onMinuteChange={(minute) => {
+            setRepeatMinute(minute);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onTimeCommit={() => {
+            const normalizedTime = normalizeTimeValue(repeatTime);
+            setRepeatTime(normalizedTime);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onTimeChange={(time) => {
+            setRepeatTime(time);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onRetryPolicyChange={updateRetryPolicy} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+          {selectedOption === "skip" && <NoScheduleSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        </div>
     </CreationFlowLayout>
   );
 }
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "run-card active" : "run-card"} type="button" onClick={onClick}>
+    <button className={active ? "schedule-xflow-mode-card active" : "schedule-xflow-mode-card"} type="button" onClick={onClick}>
       {active && <span className="run-selected-dot" />}
-      <span className="run-icon">{icon}</span>
-      <strong>{title}</strong>
-      <span>{desc}</span>
+      <span className="schedule-xflow-mode-icon">{icon}</span>
+      <span>
+        <strong>{title}</strong>
+        <small>{desc}</small>
+      </span>
     </button>
   );
 }
@@ -4433,14 +4441,21 @@ function RepeatSettings({
         : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <Repeat2 size={18} />
-        <h2>반복 실행 상세 설정</h2>
+    <section className="xflow-review-card schedule-xflow-card">
+      <div className="xflow-review-card-header">
+        <span className="xflow-review-icon schema"><Repeat2 size={17} /></span>
+        <div>
+          <h2>반복 실행 상세 설정</h2>
+          <p>실행 주기, 시간대, 재시도 정책을 한 번에 확인하고 조정합니다.</p>
+        </div>
+        <span className="schedule-xflow-state">{repeatFrequencyLabels[frequency]}</span>
       </div>
       <div className="schedule-config-section">
-        <h3>실행 일정</h3>
-        <div className="form-grid">
+        <div className="schedule-xflow-subheader">
+          <Clock3 size={16} />
+          <h3>실행 일정</h3>
+        </div>
+        <div className="schedule-xflow-form-grid">
           <label className="field">
             <span>반복 주기</span>
             <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
@@ -4498,23 +4513,58 @@ function RepeatSettings({
             </select>
           </label>
         </div>
-        <InfoBox title="실행 미리보기" body={preview} />
-        {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
+        <div className="schedule-xflow-preview">
+          <InfoBox title="실행 미리보기" body={preview} />
+          {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
+        </div>
       </div>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+      <div className="schedule-xflow-policy-section">
+        <div className="schedule-xflow-subheader">
+          <ShieldCheck size={16} />
+          <h3>재시도 정책</h3>
+        </div>
+        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+      </div>
     </section>
   );
 }
 
 function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <PlayCircle size={18} />
-        <h2>직접 실행 정책</h2>
+    <section className="xflow-review-card schedule-xflow-card">
+      <div className="xflow-review-card-header">
+        <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+        <div>
+          <h2>직접 실행 정책</h2>
+          <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
+        </div>
+        <span className="schedule-xflow-state muted">스케줄 없음</span>
       </div>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-      <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
+      <div className="xflow-review-validation schedule-xflow-validation">
+        <div className="ready">
+          <Check size={14} />
+          <span>자동 스케줄</span>
+          <strong>없음</strong>
+        </div>
+        <div className="ready">
+          <Check size={14} />
+          <span>실행 방식</span>
+          <strong>수동</strong>
+        </div>
+        <div className="needs-review">
+          <Clock3 size={14} />
+          <span>다음 실행</span>
+          <strong>미생성</strong>
+        </div>
+      </div>
+      <div className="schedule-xflow-policy-section">
+        <div className="schedule-xflow-subheader">
+          <ShieldCheck size={16} />
+          <h3>재시도 정책</h3>
+        </div>
+        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+        <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
+      </div>
     </section>
   );
 }
