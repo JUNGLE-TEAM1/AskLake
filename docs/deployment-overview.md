@@ -119,7 +119,21 @@ frontend build-time API origin은 `VITE_API_BASE_URL=https://도메인`처럼 `/
 
 ## 이후 반복 배포 흐름
 
-반복 배포는 GitHub Actions가 맡는다.
+반복 배포의 최종 형태는 GitHub Actions가 맡는다.
+다만 개발 중에는 서버를 필요할 때 켜고 끄는 운영 흐름이 먼저 필요하므로, 현재는 `scripts/deploy.sh`를 로컬에서 실행해 같은 절차를 반복한다.
+
+개발 중 운영 흐름은 다음과 같다.
+
+```text
+scripts/deploy.sh start
+  -> scripts/deploy.sh deploy
+  -> 브라우저/health check 확인
+  -> scripts/deploy.sh stop
+```
+
+세부 명령은 `docs/deployment-runbook.md`를 기준으로 한다.
+
+GitHub Actions 자동 배포는 이후 아래 흐름으로 연결한다.
 
 ```text
 dev 브랜치 업데이트
@@ -142,15 +156,18 @@ Phase 3에서 추가된 prod-like compose 기준 파일과 이후 자동화 대�
 deploy/docker-compose.prod.yml
 deploy/Caddyfile
 deploy/.env.example
+deploy/ec2.env.example
 deploy/postgres/init/01-create-source-database.sql
 backend/Dockerfile
 frontend/Dockerfile
 scripts/deploy.sh
 scripts/seed-demo-data.sh
 .github/workflows/deploy-dev.yml
+docs/deployment-runbook.md
 ```
 
 `deploy/*`, backend/frontend Dockerfile은 prod-like compose baseline이고, seed script와 GitHub Actions workflow는 후속 phase에서 추가한다.
+`scripts/deploy.sh`와 `deploy/ec2.env.example`은 EC2 start/stop/redeploy를 반복하기 위한 로컬 운영 계층이다.
 
 이 문서들은 실제 secret 값을 포함하지 않는다.
 실제 값은 GitHub Secrets와 서버 `.env`에서 관리한다.
@@ -181,6 +198,7 @@ Catalog 검색
 | 기본 dataset | `orders_clean` |
 | 기본 dataset id | `ds_orders_clean` |
 | source fixture | PostgreSQL |
+| preview seed row | 10 rows |
 | 생성될 dataset | `orders_clean_analysis` 또는 반복 테스트 suffix가 붙은 이름 |
 
 SQL 분석에서는 아래 query를 기본으로 사용한다.
@@ -220,7 +238,9 @@ docker compose logs backend
 
 - AWS EC2 한 대와 Docker Compose를 기본 배포 구조로 사용한다.
 - HTTPS는 Caddy가 처리한다.
+- demo가 급할 때는 Route 53 구매 domain 대신 `sslip.io` 같은 IP 기반 무료 domain을 사용할 수 있다.
 - 배포는 `dev` 브랜치 기준 GitHub Actions로 자동화한다.
+- GitHub Actions 전에는 `scripts/deploy.sh`로 start/stop/deploy/status를 반복한다.
 - demo data는 seeded fixture로 고정한다.
 - PostgreSQL과 MongoDB를 fixture source로 둔다.
 - MinIO/S3는 기본 배포에서는 후순위로 둔다.

@@ -72,15 +72,16 @@ https://APP_DOMAIN/api/*
 deploy/docker-compose.prod.yml
 deploy/Caddyfile
 deploy/.env.example
+deploy/ec2.env.example
 scripts/deploy.sh
 scripts/seed-demo-data.sh
 .github/workflows/deploy-dev.yml
 docs/deployment-overview.md
 docs/deployment-milestones.md
+docs/deployment-runbook.md
 ```
 
-이번 문서 작업에서는 실제 배포 파일을 만들지 않는다.
-이 문서는 이후 phase 작업을 나누기 위한 기준이다.
+초기 문서 작업에서는 phase 작업을 나누는 것이 목적이었고, 이후 Phase 3부터 실제 배포 파일과 운영 script를 추가한다.
 
 ## Phase 1. 데모 시나리오 고정
 
@@ -256,6 +257,12 @@ PostgreSQL source fixture:
 | `ORD-1002` | `CUS-118` | `2026-07-02` | `56000` | `shipped` |
 | `ORD-1003` | `CUS-204` | `2026-07-03` | `91000` | `paid` |
 | `ORD-1004` | `CUS-311` | `2026-07-03` | `43000` | `refunded` |
+| `ORD-1005` | `CUS-407` | `2026-07-04` | `212000` | `paid` |
+| `ORD-1006` | `CUS-118` | `2026-07-04` | `78000` | `paid` |
+| `ORD-1007` | `CUS-522` | `2026-07-05` | `154000` | `processing` |
+| `ORD-1008` | `CUS-204` | `2026-07-05` | `32000` | `canceled` |
+| `ORD-1009` | `CUS-311` | `2026-07-06` | `187000` | `shipped` |
+| `ORD-1010` | `CUS-640` | `2026-07-06` | `99000` | `paid` |
 
 MongoDB source fixture:
 
@@ -496,18 +503,18 @@ Definition of Done:
 
 체크리스트:
 
-- [ ] AWS region 결정.
-- [ ] EC2 instance type 결정.
-- [ ] Elastic IP 생성.
-- [ ] Elastic IP를 EC2에 연결.
-- [ ] Security Group inbound 설정.
-- [ ] DNS A record 설정.
-- [ ] Docker 설치.
-- [ ] Docker Compose 설치 또는 Docker compose plugin 확인.
-- [ ] deploy user와 SSH 접근 방식 결정.
-- [ ] `/opt/asklake` 디렉터리 생성.
-- [ ] repo clone.
-- [ ] 서버 `.env` 작성.
+- [x] AWS region 결정.
+- [x] EC2 instance type 결정.
+- [x] Elastic IP 생성.
+- [x] Elastic IP를 EC2에 연결.
+- [x] Security Group inbound 설정.
+- [x] DNS 방식 결정. 정식 Route 53 domain 전에는 `sslip.io` host를 사용한다.
+- [x] Docker 설치.
+- [x] Docker Compose 설치 또는 Docker compose plugin 확인.
+- [x] deploy user와 SSH 접근 방식 결정.
+- [x] `/opt/asklake` 디렉터리 생성.
+- [x] repo clone.
+- [x] 서버 `.env` 작성.
 
 포트:
 
@@ -525,10 +532,10 @@ Definition of Done:
 
 Definition of Done:
 
-- [ ] EC2에 SSH 접속 가능.
-- [ ] 도메인이 Elastic IP를 가리킨다.
-- [ ] Docker 실행 가능.
-- [ ] `/opt/asklake`에서 repo를 pull할 수 있다.
+- [x] EC2에 SSH 접속 가능.
+- [x] domain host가 Elastic IP를 가리킨다.
+- [x] Docker 실행 가능.
+- [x] `/opt/asklake`에서 repo를 pull할 수 있다.
 
 ## Phase 5. HTTPS / Caddy
 
@@ -561,16 +568,16 @@ deploy/Caddyfile
 체크리스트:
 
 - [x] `APP_DOMAIN` env 치환 방식 결정.
-- [ ] `/api/*`가 backend로 proxy되는지 확인.
+- [x] `/api/*`가 backend로 proxy되는지 확인.
 - [x] frontend route fallback이 필요한지 확인.
-- [ ] Caddy volume으로 인증서가 유지되는지 확인.
-- [ ] 80/443 방화벽 열림 확인.
+- [x] Caddy volume으로 인증서가 유지되는지 확인.
+- [x] 80/443 방화벽 열림 확인.
 
 Definition of Done:
 
-- [ ] `https://APP_DOMAIN/` 접속 가능.
-- [ ] `https://APP_DOMAIN/api/health` 응답 가능.
-- [ ] 인증서가 브라우저에서 valid로 표시된다.
+- [x] `https://APP_DOMAIN/` 접속 가능.
+- [x] `https://APP_DOMAIN/api/health` 응답 가능.
+- [x] 인증서가 valid로 발급된다.
 
 ## Phase 6. GitHub Actions 자동 배포
 
@@ -581,6 +588,21 @@ Definition of Done:
 ```text
 .github/workflows/deploy-dev.yml
 scripts/deploy.sh
+```
+
+GitHub Actions를 붙이기 전에는 `scripts/deploy.sh`를 로컬 운영 파이프라인으로 먼저 사용한다.
+이 script는 EC2 start/stop/status/deploy/health/logs를 제공하며, 실제 instance id와 host는 `deploy/ec2.env` 같은 로컬 전용 파일에서 읽는다.
+`deploy/ec2.env`는 커밋하지 않고, repo에는 `deploy/ec2.env.example`만 둔다.
+
+로컬 운영 명령:
+
+```bash
+source deploy/ec2.env
+scripts/deploy.sh status
+scripts/deploy.sh start
+scripts/deploy.sh deploy
+scripts/deploy.sh health
+scripts/deploy.sh stop
 ```
 
 GitHub Secrets:
@@ -611,6 +633,9 @@ push to dev
 
 체크리스트:
 
+- [x] 로컬에서 쓸 EC2 운영 script를 추가한다.
+- [x] start/stop/deploy/status/health/logs 명령을 분리한다.
+- [x] 실제 AWS 값은 `deploy/ec2.env` 같은 ignored 파일에서만 관리한다.
 - [ ] workflow trigger를 `push` to `dev`로 둔다.
 - [ ] frontend build를 먼저 실행한다.
 - [ ] backend import/compile check를 추가할 수 있는지 확인한다.
@@ -621,6 +646,8 @@ push to dev
 
 Definition of Done:
 
+- [x] 로컬에서 서버를 켜고 끄는 명령이 문서화되어 있다.
+- [x] 로컬에서 같은 명령으로 재배포할 수 있다.
 - [ ] `dev` push 이벤트에서 workflow가 실행된다.
 - [ ] workflow가 EC2에 접속한다.
 - [ ] compose up 후 health check가 통과한다.

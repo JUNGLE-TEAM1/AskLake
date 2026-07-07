@@ -71,6 +71,25 @@ docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml 
 EC2 HTTPS 배포에서는 `deploy/.env`의 `APP_DOMAIN`에 scheme 없는 domain을 넣고, Caddy가 인증서를 받을 수 있도록 `HTTP_PORT=80`, `HTTPS_PORT=443`을 사용한다.
 배포 PR 전에는 최신 `origin/dev`를 fetch한 뒤 compose config와 관련 문서 예시를 다시 확인한다.
 
+### EC2 배포 운영
+
+AWS EC2 demo 서버는 `scripts/deploy.sh`로 켜고, 재배포하고, 끈다.
+실제 EC2 id, host, SSH key path는 `deploy/ec2.env`처럼 git에 올리지 않는 개인 환경 파일에서 관리한다.
+
+```bash
+cp deploy/ec2.env.example deploy/ec2.env
+source deploy/ec2.env
+
+scripts/deploy.sh status
+scripts/deploy.sh start
+scripts/deploy.sh deploy
+scripts/deploy.sh health
+scripts/deploy.sh stop
+```
+
+세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
+서버 `deploy/.env`와 로컬 `deploy/ec2.env`에는 실제 secret이나 AWS resource 값이 들어갈 수 있으므로 커밋하지 않는다.
+
 ## 5) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.
