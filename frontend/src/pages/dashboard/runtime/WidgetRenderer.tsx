@@ -288,7 +288,7 @@ function groupedSeriesChartPoints({
   return { categories, series };
 }
 
-function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
+function explicitColorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
   if (typeof color === "object" && color !== null && !Array.isArray(color)) {
     const record = color as Record<string, unknown>;
     if (Array.isArray(record.colors)) {
@@ -306,7 +306,24 @@ function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
     return [color];
   }
 
+  return [];
+}
+
+function colorsFromConfig(color: DashboardWidgetColorConfig | unknown) {
+  const explicitColors = explicitColorsFromConfig(color);
+  if (explicitColors.length) return explicitColors;
+
   return defaultWidgetColorConfig.colors.length ? defaultWidgetColorConfig.colors : dashboardWidgetColorChoices.slice(0, 6);
+}
+
+function colorsForSlots(color: DashboardWidgetColorConfig | unknown, count: number) {
+  const explicitColors = explicitColorsFromConfig(color);
+  return Array.from({ length: count }, (_, index) => (
+    explicitColors[index]
+    ?? dashboardWidgetColorChoices[index % dashboardWidgetColorChoices.length]
+    ?? defaultWidgetColorConfig.colors[0]
+    ?? fallbackChartColors[index % fallbackChartColors.length]
+  ));
 }
 
 function primaryChartColor(color: DashboardWidgetColorConfig | unknown) {
@@ -486,6 +503,70 @@ function buildBaseChartOptions(color: string): ApexOptions {
           fontSize: "11px",
           fontWeight: 700,
         },
+      },
+    },
+  };
+}
+
+function buildCircularChartOptions(color: string): ApexOptions {
+  return {
+    chart: {
+      animations: {
+        enabled: true,
+        speed: 450,
+      },
+      fontFamily: "inherit",
+      foreColor: "#64748b",
+      parentHeightOffset: 0,
+      redrawOnParentResize: true,
+      redrawOnWindowResize: true,
+      selection: {
+        enabled: false,
+      },
+      toolbar: {
+        show: false,
+      },
+    },
+    colors: [color],
+    dataLabels: {
+      enabled: false,
+    },
+    legend: {
+      fontSize: "12px",
+      fontWeight: 800,
+      labels: {
+        colors: "#475569",
+      },
+      markers: {
+        size: 6,
+      },
+      onItemClick: {
+        toggleDataSeries: false,
+      },
+      onItemHover: {
+        highlightDataSeries: false,
+      },
+    },
+    states: {
+      active: {
+        allowMultipleDataPointsSelection: false,
+        filter: {
+          type: "none",
+        },
+      },
+      hover: {
+        filter: {
+          type: "none",
+        },
+      },
+    },
+    theme: {
+      mode: "light",
+    },
+    tooltip: {
+      theme: "light",
+      y: {
+        formatter: (value: number) => formatCell(value),
       },
     },
   };
@@ -1055,10 +1136,9 @@ function PieLikeChartWidget({
   const total = points.reduce((sum, point) => sum + Math.max(0, point.value), 0);
   if (total <= 0) return <EmptyWidgetData />;
 
-  const primaryColor = primaryChartColor(widget.config.color);
-  const baseOptions = buildBaseChartOptions(primaryColor);
-  const paletteColors = colorsFromConfig(widget.config.color);
-  const colors = points.map((_, index) => paletteColors[index % paletteColors.length] ?? primaryColor);
+  const colors = colorsForSlots(widget.config.color, points.length);
+  const primaryColor = colors[0] ?? primaryChartColor(widget.config.color);
+  const baseOptions = buildCircularChartOptions(primaryColor);
   const piePlotOptions: ApexOptions["plotOptions"] = chartType === "donut"
     ? {
       pie: {
@@ -1094,11 +1174,6 @@ function PieLikeChartWidget({
     labels: points.map((point) => point.label),
     legend: {
       ...baseOptions.legend,
-      fontSize: "12px",
-      fontWeight: 800,
-      markers: {
-        size: 6,
-      },
       position: "right",
     },
     plotOptions: piePlotOptions,
@@ -1106,12 +1181,7 @@ function PieLikeChartWidget({
       colors: ["#ffffff"],
       width: 3,
     },
-    tooltip: {
-      theme: "light",
-      y: {
-        formatter: (value: number) => formatCell(value),
-      },
-    },
+    tooltip: baseOptions.tooltip,
   };
   const series = points.map((point) => Math.max(0, point.value));
 
@@ -1147,7 +1217,7 @@ function RadialBarChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetP
   const max = widget.config.max ?? 100;
   const range = max > min ? max - min : 100;
   const series = points.map((point) => clampPercent(((point.value - min) / range) * 100));
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsForSlots(widget.config.color, points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
@@ -1255,7 +1325,7 @@ function TreemapChartWidget({ onSelectColorSlot, widget }: RuntimeChartWidgetPro
     .filter((point) => point.value > 0);
   if (!points.length) return <EmptyWidgetData />;
 
-  const colors = colorsFromConfig(widget.config.color);
+  const colors = colorsForSlots(widget.config.color, points.length);
   const color = colors[0] ?? fallbackChartColors[0];
   const baseOptions = buildBaseChartOptions(color);
   const options: ApexOptions = {
