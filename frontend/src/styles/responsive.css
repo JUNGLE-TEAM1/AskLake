@@ -147,6 +147,7 @@
   }
 
   .catalog-preview-panel {
+    height: auto;
     width: 100%;
   }
 

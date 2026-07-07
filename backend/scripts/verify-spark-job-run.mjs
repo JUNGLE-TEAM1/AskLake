@@ -40,8 +40,9 @@ try {
     permissionSummary: "admin",
     permissionRoles: [{ access: ["조회", "쿼리 실행"], checked: true, name: "Data Engineer Group" }],
     rag: false,
-    retryPolicy: { failureAction: "retry_then_fail", maxRetries: 0, retryIntervalMinutes: 5, timeoutMinutes: 60 },
-    retryPolicySummary: "수동 재시도",
+    retryPolicy: { backoffMultiplier: 2, backoffStrategy: "exponential", failureAction: "retry_then_fail", initialRetryDelayMinutes: 1, maxRetries: 0, maxRetryDelayMinutes: 30, retryIntervalMinutes: 1, timeoutMinutes: 60 },
+    retryPolicySummary: "재시도 없음 · 재시도 후 실패 처리",
+    runLimitSummary: "60분 초과 시 Run 실패 처리",
     ruleSummary: "Spark run smoke",
     transformOutputColumns: [
       ["event_time", "timestamp"],

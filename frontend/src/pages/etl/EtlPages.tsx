@@ -38,10 +38,10 @@ import { CreationFlowLayout, CreationSummaryPanel, CreationTopActions, CreationV
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
-import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { formatOverlapPolicySummary, formatRetryPolicySummary, toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
-import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
+import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
@@ -54,18 +54,18 @@ type RepeatScheduleDraft = {
   minute: string;
   time: string;
 };
+type ScheduleOptionId = "skip" | "repeat";
 
 export function SchedulePage({
-  draftRetryPolicy,
-  draftScheduleLabel,
+  draftSchedule,
   mode,
   onDraftChange,
   onModeChange,
   onPrev,
   onNext,
+  onSave,
 }: {
-  draftRetryPolicy: RetryPolicyDraft;
-  draftScheduleLabel: string;
+  draftSchedule: ScheduleDraft;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -73,89 +73,86 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
+  const draftRetryPolicy = draftSchedule.retryPolicy;
+  const draftScheduleLabel = draftSchedule.label;
   const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
   const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(initialRepeat.frequency);
   const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
-  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
-  const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
-  const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
+  const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
+  const scheduleTimezone = draftSchedule.timezone || SCHEDULE_TIMEZONE;
+  const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
+  const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
+  const scheduleSummaryRows = buildScheduleSummaryRows(selectedOption, repeatDraft, draftSchedule);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
   const applyScheduleDraft = () => {
     const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
-    const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
     setRepeatDay(normalizedRepeat.day);
     setRepeatTime(normalizedRepeat.time);
     setRepeatMinute(normalizedRepeat.minute);
     setCustomCron(normalizedRepeat.cron);
-    setOnceDateTime(normalizedOnceDateTime);
-    onDraftChange({ scheduleLabel: formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime) });
+    onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
-  const selectMode = (nextMode: ScheduleFlowId) => {
-    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDraft, onceDateTime) });
-    onModeChange(nextMode);
+  const selectOption = (nextOption: ScheduleOptionId) => {
+    onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+    onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
     applyScheduleDraft();
     onNext();
   };
+  const saveSchedule = () => {
+    applyScheduleDraft();
+    onSave();
+  };
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
+      side={<CreationSummaryPanel flow={mode} title="설정 요약" summaryRows={scheduleSummaryRows} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
     >
-        <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
+        <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
         <section className="panel">
           <div className="section-heading">
             <PlayCircle size={20} />
             <h2>실행 방식 설정</h2>
           </div>
           <div className="option-grid">
-            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => selectMode("manual")} />
-            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => selectMode("once")} />
-            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
+            <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={24} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
+            <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
           </div>
         </section>
-        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
+        {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
           const sanitizedCron = sanitizeCronInput(cron);
           setCustomCron(sanitizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onCronCommit={() => {
           const normalizedCron = normalizeCronExpression(customCron);
           setCustomCron(normalizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onDayChange={(day) => {
           setRepeatDay(day);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onFrequencyChange={(frequency) => {
           setRepeatFrequency(frequency);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onMinuteChange={(minute) => {
           setRepeatMinute(minute);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onTimeCommit={() => {
           const normalizedTime = normalizeTimeValue(repeatTime);
           setRepeatTime(normalizedTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime) });
+          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
         }} onTimeChange={(time) => {
           setRepeatTime(time);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
-        }} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onDateTimeChange={(dateTime) => {
-          setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
-        }} onDateTimeCommit={() => {
-          const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
-          setOnceDateTime(normalizedDateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
-        }} onRetryPolicyChange={updateRetryPolicy} />}
+          onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+        }} onRetryPolicyChange={updateRetryPolicy} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+        {selectedOption === "skip" && <NoScheduleSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
     </CreationFlowLayout>
   );
 }
@@ -431,7 +428,21 @@ const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
-const DEFAULT_ONCE_DATE_TIME = "2026-07-05T10:00";
+const SCHEDULE_START_DATE = "2026-07-07";
+const SCHEDULE_TIMEZONE = "Asia/Seoul";
+const DEFAULT_OVERLAP_POLICY: ScheduleOverlapPolicy = "skip_if_running";
+const DEFAULT_WATERMARK_POLICY: WatermarkPolicyDraft = {
+  column: "updated_at",
+  enabled: true,
+  lookbackMinutes: 5,
+  mode: "last_success_to_scheduled_at",
+};
+const timezoneOptions = [
+  { label: "Asia/Seoul (UTC+09:00)", value: "Asia/Seoul" },
+  { label: "UTC", value: "UTC" },
+  { label: "America/New_York (DST 적용)", value: "America/New_York" },
+  { label: "Europe/London (DST 적용)", value: "Europe/London" },
+];
 const validRepeatMinutes = ["00", "15", "30", "45"];
 const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
@@ -440,11 +451,11 @@ const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
   weekly: "매주",
   custom: "커스텀",
 };
+const repeatFrequencyOptions = Object.entries(repeatFrequencyLabels).map(([value, label]) => ({ label, value: value as RepeatFrequency }));
 
-function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, onceDateTime: string) {
+function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDraft) {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
-  if (mode === "manual") return "수동 실행";
-  if (mode === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 1회 실행`;
+  if (option === "skip") return "스케줄링 건너뛰기";
   if (normalizedRepeat.frequency === "hourly") return `매시간 ${normalizedRepeat.minute}분`;
   if (normalizedRepeat.frequency === "daily") return `매일 ${normalizedRepeat.time}`;
   if (normalizedRepeat.frequency === "custom") return `커스텀: ${normalizedRepeat.cron}`;
@@ -452,14 +463,88 @@ function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, 
 }
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
-  if (label.includes("수동")) return "manual";
-  if (label.includes("1회")) return "once";
+  if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
+  if (label.includes("예약") || label.includes("1회")) return "manual";
   return "repeat";
 }
 
-function parseOnceScheduleLabel(label: string) {
-  if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
-  return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
+function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
+  if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
+  if (label.includes("예약") || label.includes("1회")) return "skip";
+  if (label) return "repeat";
+  return fallbackFlow === "manual" ? "skip" : "repeat";
+}
+
+function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
+  if (option === "skip") return "manual";
+  return "repeat";
+}
+
+function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
+  const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
+  const label = formatScheduleLabel(option, normalizedRepeat);
+  const nextRun = option === "skip"
+    ? "-"
+    : "저장 시점 기준 계산";
+  const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
+  const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
+  const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
+  const scheduleTimezone = option === "skip" ? "" : timezone;
+  const summary = formatScheduleSummary(option, label, scheduleTimezone);
+  const nextRunUtc = option === "skip" ? "" : "";
+  const restoreRepeatDefaults = option === "repeat" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
+  const overlapPolicy = option === "skip" ? undefined : restoreRepeatDefaults ? DEFAULT_OVERLAP_POLICY : currentSchedule?.overlapPolicy ?? DEFAULT_OVERLAP_POLICY;
+  const watermarkPolicy = option === "skip"
+    ? { ...DEFAULT_WATERMARK_POLICY, enabled: false, mode: "full_refresh" as WatermarkWindowMode }
+    : restoreRepeatDefaults ? DEFAULT_WATERMARK_POLICY : currentSchedule?.watermarkPolicy ?? DEFAULT_WATERMARK_POLICY;
+
+  return {
+    endDate,
+    nextRunUtc,
+    overlapPolicy,
+    schedule: {
+      endDate,
+      label,
+      nextRun,
+      nextRunUtc,
+      overlapPolicy,
+      startDate,
+      summary,
+      timezone: scheduleTimezone,
+      watermarkPolicy,
+    },
+    scheduleLabel: label,
+    scheduleSummary: summary,
+    startDate,
+    timezone: scheduleTimezone,
+    watermarkPolicy,
+  };
+}
+
+function formatScheduleSummary(option: ScheduleOptionId, label: string, timezone: string) {
+  if (option === "skip") return "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행";
+  return `반복 실행 · ${label} · ${timezone} · 저장 후 다음 예약부터 시작`;
+}
+
+function buildScheduleSummaryRows(option: ScheduleOptionId, repeat: RepeatScheduleDraft, schedule: ScheduleDraft): Array<[string, string]> {
+  const label = formatScheduleLabel(option, repeat);
+  const retryLabel = formatRetryPolicySummary(schedule.retryPolicy);
+
+  if (option === "skip") {
+    return [
+      ["시작 조건", "필요할 때 즉시 실행"],
+      ["다음 실행", "없음"],
+      ["실패 재시도", retryLabel],
+      ["상태", "저장 대기"],
+    ];
+  }
+
+  return [
+    ["실행 일정", `${label} · ${schedule.timezone || SCHEDULE_TIMEZONE}`],
+    ["다음 실행", "저장 시점 기준 계산"],
+    ["겹침 처리", formatOverlapPolicySummary(schedule.overlapPolicy)],
+    ["실패 재시도", retryLabel],
+  ];
 }
 
 function parseRepeatScheduleLabel(label: string) {
@@ -492,13 +577,12 @@ function normalizeTimeValue(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_REPEAT_TIME;
 }
 
-function normalizeDateTimeLocal(value: string) {
-  const normalizedValue = value.replace(".", "-").replace(".", "-").replace(" ", "T");
-  return /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(normalizedValue) ? normalizedValue : DEFAULT_ONCE_DATE_TIME;
+function normalizeDateValue(value: string | undefined, fallback: string) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
 }
 
-function formatDateTimeLocalLabel(value: string) {
-  return normalizeDateTimeLocal(value).replace("T", " ").replaceAll("-", ".");
+function normalizeOptionalDateValue(value: string | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 }
 
 function sanitizeCronInput(value: string) {
@@ -4225,11 +4309,13 @@ function RepeatSettings({
   onFrequencyChange,
   onMinuteChange,
   onRetryPolicyChange,
+  onTimezoneChange,
   onTimeCommit,
   onTimeChange,
   retryPolicy,
   selectedDay,
   time,
+  timezone,
 }: {
   customCron: string;
   frequency: RepeatFrequency;
@@ -4240,20 +4326,25 @@ function RepeatSettings({
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
   onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
+  onTimezoneChange: (timezone: string) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
   retryPolicy: RetryPolicyDraft;
   selectedDay: string;
   time: string;
+  timezone: string;
 }) {
   const cronIsValid = isValidCronExpression(customCron);
+  const visibleRepeatFrequencyOptions = frequency === "custom"
+    ? repeatFrequencyOptions
+    : repeatFrequencyOptions.filter((option) => option.value !== "custom");
   const preview = frequency === "hourly"
-    ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.05 11:${minute}`
+    ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
     : frequency === "daily"
-      ? `매일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.06 ${time}`
+      ? `매일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
       : frequency === "custom"
-        ? `Cron ${customCron || DEFAULT_CUSTOM_CRON} 기준으로 실행됩니다.`
-        : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.09 ${time}`;
+        ? `Cron ${customCron || DEFAULT_CUSTOM_CRON} 기준으로 반복 실행됩니다.`
+        : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
     <section className="panel">
@@ -4261,135 +4352,83 @@ function RepeatSettings({
         <Repeat2 size={18} />
         <h2>반복 실행 상세 설정</h2>
       </div>
-      <div className="form-grid">
-        <label className="field">
-          <span>반복 주기</span>
-          <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
-            {Object.entries(repeatFrequencyLabels).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-        {frequency === "hourly" && (
+      <div className="schedule-config-section">
+        <h3>실행 일정</h3>
+        <div className="form-grid">
           <label className="field">
-            <span>실행 분</span>
-            <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
-              {validRepeatMinutes.map((value) => (
-                <option key={value} value={value}>{value}분</option>
+            <span>반복 주기</span>
+            <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+              {visibleRepeatFrequencyOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
-        )}
-        {frequency === "daily" && (
-          <label className="field">
-            <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-          </label>
-        )}
-        {frequency === "weekly" && (
-          <div className="field wide">
-            <span>실행 요일</span>
-            <div className="weekday-group">
-              {validRepeatDays.map((day) => (
-                <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
-                  {day}
-                </button>
-              ))}
+          {frequency === "hourly" && (
+            <label className="field">
+              <span>실행 분</span>
+              <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+                {validRepeatMinutes.map((value) => (
+                  <option key={value} value={value}>{value}분</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {frequency === "daily" && (
+            <label className="field">
+              <span>실행 시간</span>
+              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </label>
+          )}
+          {frequency === "weekly" && (
+            <div className="field wide">
+              <span>실행 요일</span>
+              <div className="weekday-group">
+                {validRepeatDays.map((day) => (
+                  <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
+                    {day}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        {frequency === "weekly" && (
+          )}
+          {frequency === "weekly" && (
+            <label className="field">
+              <span>실행 시간</span>
+              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </label>
+          )}
+          {frequency === "custom" && (
+            <label className="field wide">
+              <span>Cron 표현식</span>
+              <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+            </label>
+          )}
           <label className="field">
-            <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            <span>시간대</span>
+            <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+              {timezoneOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </label>
-        )}
-        {frequency === "custom" && (
-          <label className="field wide">
-            <span>Cron 표현식</span>
-            <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
-          </label>
-        )}
-        <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
-        <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
-        <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
+        </div>
+        <InfoBox title="실행 미리보기" body={preview} />
+        {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
       </div>
-      <InfoBox title="실행 미리보기" body={preview} />
-      {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
-      <label className="policy-check-row">
-        <input type="checkbox" defaultChecked />
-        <span>
-          <strong>과거 데이터 소급 (Backfill)</strong>
-          <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
-        </span>
-      </label>
       <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
 
-function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
+function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
     <section className="panel">
       <div className="panel-header">
         <PlayCircle size={18} />
-        <h2>수동 실행 상세 설정</h2>
-      </div>
-      <InfoBox title="자동 스케줄 없음" body="이 파이프라인은 저장 후 사용자가 직접 실행할 때만 동작합니다. 테스트 실행이나 필요할 때만 데이터를 적재하는 작업에 적합합니다." />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
-          <span>
-            <strong>실패 시 재시도 활성화</strong>
-            <small>수동 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
-          </span>
-        </label>
+        <h2>직접 실행 정책</h2>
       </div>
       <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-      <InfoBox title="자동 실행 예정 없음" body="저장 후 필요할 때 직접 실행할 수 있으며, 다음 실행 일시는 생성되지 않습니다." />
-    </section>
-  );
-}
-
-function OnceSettings({
-  dateTime,
-  onDateTimeChange,
-  onDateTimeCommit,
-  onRetryPolicyChange,
-  retryPolicy,
-}: {
-  dateTime: string;
-  onDateTimeChange: (dateTime: string) => void;
-  onDateTimeCommit: () => void;
-  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
-  retryPolicy: RetryPolicyDraft;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <Clock3 size={18} />
-        <h2>1회 실행 상세 설정</h2>
-      </div>
-      <div className="form-grid">
-        <label className="field">
-          <span>실행 예정 일시</span>
-          <input className="input control-input" min="2026-07-04T00:00" type="datetime-local" value={normalizeDateTimeLocal(dateTime)} onBlur={onDateTimeCommit} onChange={(event) => onDateTimeChange(event.target.value)} onInput={(event) => onDateTimeChange(event.currentTarget.value)} />
-        </label>
-        <Field label="시간대" value="Asia/Seoul (GMT+09:00)" icon={<Clock3 size={16} />} />
-      </div>
-      <InfoBox title="실행 미리보기" body={`${formatDateTimeLocalLabel(dateTime)}에 한 번 실행됩니다. 실행 완료 후 반복되지 않습니다.`} />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
-          <span>
-            <strong>실패 시 재시도</strong>
-            <small>예약 실행 실패 시 재시도 정책을 적용합니다.</small>
-          </span>
-        </label>
-      </div>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+      <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
     </section>
   );
 }
@@ -4922,7 +4961,7 @@ export function ReviewPage({
     ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
     ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
     ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
-    ["실패 처리 정책", request.retryPolicySummary ? "유효함" : "확인 필요"],
+    ["실패 재시도", request.retryPolicySummary ? "유효함" : "확인 필요"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
   ];
   const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
@@ -4962,7 +5001,7 @@ export function ReviewPage({
             ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
-              <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
+              <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" || flow === "manual" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
               <strong>{label}</strong>
               <span>{value}</span>
               <button type="button" onClick={() => onEdit(flow as FlowId)}>수정</button>
