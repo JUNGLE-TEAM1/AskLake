@@ -79,6 +79,18 @@ const previewDraftWidgetChanged = (
     || JSON.stringify(current.config) !== JSON.stringify(next.config);
 };
 
+function emptyVisualizationRequestWidgetIds(runtime: DashboardRuntimeResponse | null) {
+  if (!runtime) return [];
+  return Object.values(runtime.widgetsByPageId)
+    .flat()
+    .filter((widget) => {
+      const config = widget.config as { placeholderKind?: unknown; prompt?: unknown };
+      return config.placeholderKind === "visualization_request"
+        && (typeof config.prompt !== "string" || !config.prompt.trim());
+    })
+    .map((widget) => widget.id);
+}
+
 const defaultDraftWidgetLayout: Record<DashboardRuntimeWidgetType, DashboardWidgetLayout> = {
   area_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
   bar_chart: { h: 5, minH: 3, minW: 3, w: 6, x: 0, y: 0 },
@@ -870,11 +882,37 @@ export function DashboardPage({
     onAction("dashboard.runtime.shared", path, runtimeSelection.dashboardId);
   };
 
+  const cleanupEmptyVisualizationRequestWidgets = async () => {
+    const widgetIds = emptyVisualizationRequestWidgetIds(draftRuntime);
+    if (!widgetIds.length) return 0;
+
+    await Promise.all(widgetIds.map((widgetId) => deleteDraftWidget(runtimeSelection.dashboardId, widgetId)));
+    const deletedWidgetIds = new Set(widgetIds);
+    setDraftRuntime((runtime) => runtime
+      ? {
+        ...runtime,
+        widgetsByPageId: Object.fromEntries(
+          Object.entries(runtime.widgetsByPageId).map(([pageId, widgets]) => [
+            pageId,
+            widgets.filter((widget) => !deletedWidgetIds.has(widget.id)),
+          ]),
+        ),
+      }
+      : runtime);
+    if (selectedWidgetId && deletedWidgetIds.has(selectedWidgetId)) setSelectedWidgetId(null);
+    if (previewDraftWidget && deletedWidgetIds.has(previewDraftWidget.id)) setPreviewDraftWidget(null);
+    widgetIds.forEach((widgetId) => {
+      onAction("dashboard.widget.empty_visualization_request_deleted", `/api/dashboards/${runtimeSelection.dashboardId}/draft/widgets/${widgetId}`, widgetId);
+    });
+    return widgetIds.length;
+  };
+
   const publishDraftRuntime = async () => {
     if (runtimeSelection.mode !== "draft" || isPublishingRuntime) return;
     setIsPublishingRuntime(true);
     setDraftError(null);
     try {
+      await cleanupEmptyVisualizationRequestWidgets();
       await publishRuntimeDashboard(runtimeSelection.dashboardId);
       updateRuntimeListStatus(runtimeSelection.dashboardId, "published");
       setRuntimeNotice({ message: "대시보드를 게시했습니다.", tone: "success" });
