@@ -2999,6 +2999,9 @@
 }
 
 .target-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
   min-height: 32px;
   border: 1px solid #dee1e6;
   border-radius: 999px;
@@ -3015,10 +3018,32 @@
   color: #2563eb;
 }
 
-.target-chip span {
-  margin-left: 6px;
+.target-chip.disabled {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.target-chip-check {
+  display: inline-grid;
+  width: 14px;
+  min-width: 14px;
+  place-items: center;
+  color: currentColor;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.target-chip-label {
+  color: currentColor;
+}
+
+.target-chip-badge {
+  margin-left: 2px;
   color: #16a34a;
   font-size: 10px;
+  font-weight: 900;
 }
 
 .target-inline-controls {
@@ -3041,16 +3066,33 @@
 }
 
 .target-subsection-title {
-  margin: 14px 0 8px;
+  margin: 0 0 6px;
   color: #374151;
   font-size: 12px;
   font-weight: 900;
 }
 
+.target-option-section {
+  display: grid;
+  gap: 8px;
+}
+
+.target-option-section + .target-option-section {
+  margin-top: 16px;
+}
+
+.target-option-help {
+  margin: 0;
+  color: #565d6d;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+
 .target-path-preview {
   display: grid;
   gap: 5px;
-  margin-top: 12px;
+  margin-top: 16px;
   border: 1px solid #dee1e6;
   border-radius: 8px;
   background: #f9fbfc;
