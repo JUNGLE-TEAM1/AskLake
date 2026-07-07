@@ -4513,14 +4513,6 @@ export function TargetPage({
     targetStoragePath,
     transformStepCount: draft.transform.steps.length,
   };
-  const targetSummaryRows: Array<[string, string]> = [
-    ["데이터셋", targetDataset || "-"],
-    ["테이블", targetTableName || "-"],
-    ["포맷", targetFormat],
-    ["파티션", partitionColumns.length > 0 ? partitionColumns.join("/") : "없음"],
-    ["사용 컬럼", `${usedSchemaRules.length}개`],
-  ];
-
   const buildConfig = (lastTestRun: TargetTestRun = testRun): TargetSavedConfig => ({
     metadata: {
       databaseName,
@@ -4705,7 +4697,18 @@ export function TargetPage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="target" title="생성 요약" summaryRows={targetSummaryRows} onPrev={onPrev} onNext={handleNext} onSave={handleSave} />}
+      side={(
+        <aside className="summary-panel target-action-panel">
+          <CreationPanelActions
+            nextLabel="다음 단계로"
+            prevLabel="이전"
+            saveLabel="설정 저장"
+            onNext={handleNext}
+            onPrev={onPrev}
+            onSave={handleSave}
+          />
+        </aside>
+      )}
     >
       <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션, 테스트 실행 상태를 설정합니다." />
       {validationErrors.length > 0 ? (
@@ -4841,7 +4844,6 @@ export function TargetPage({
         <div className="panel-header">
           <Table2 size={18} />
           <h2>컬럼 최소 규칙</h2>
-          <span className="panel-note">{inferredTarget.jsonInferred ? "JSON 자동 컬럼 추론" : "스키마 컬럼 기준"}</span>
         </div>
         <div className="hegun-table-scroll">
           <table className="schema-table target-rule-table">
@@ -4880,7 +4882,6 @@ export function TargetPage({
         <div className="panel-header">
           <Search size={18} />
           <h2>샘플 프리뷰</h2>
-          <span className="panel-note">사용 컬럼만 표시</span>
         </div>
         {usedSchemaRules.length > 0 && previewRows.length > 0 ? (
           <div className="hegun-table-scroll">
@@ -4905,7 +4906,6 @@ export function TargetPage({
         <div className="panel-header">
           <PlayCircle size={18} />
           <h2>테스트 실행</h2>
-          <span className="panel-note">{testRun.status}</span>
         </div>
         <div className="target-test-row">
           <button className="primary-button" type="button" disabled={testRun.status === "pending"} onClick={() => void runTargetTest()}>
@@ -4925,7 +4925,7 @@ export function TargetPage({
       <section className="panel">
         <div className="panel-header">
           <Share2 size={18} />
-          <h2>라인리지</h2>
+          <h2>리니지</h2>
         </div>
         <div className="target-lineage">
           <span>{lineage.sourceName}</span>

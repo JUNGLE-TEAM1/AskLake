@@ -3211,6 +3211,16 @@
   background: #fef2f2;
 }
 
+.target-action-panel {
+  align-content: start;
+  gap: 0;
+  min-height: 0;
+}
+
+.target-action-panel .summary-actions {
+  margin-top: 0;
+}
+
 .target-log-list {
   display: grid;
   gap: 6px;
@@ -3272,6 +3282,9 @@
 }
 
 .target-debug-panel {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   margin-top: 12px;
   border: 1px solid #dee1e6;
   border-radius: 8px;
@@ -3287,8 +3300,13 @@
 }
 
 .target-debug-panel pre {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   max-height: 360px;
   overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   margin: 10px 0 0;
   border-radius: 6px;
   background: #111827;
