@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
 import asklakeLogo from "./assets/asklake-logo.png";
-import { flowTabs, navItems, wizardFlows } from "./data/appShellData";
-import { Sidebar } from "./components/layout/Sidebar";
+import { flowTabs, wizardFlows } from "./data/appShellData";
 import { Topbar } from "./components/layout/Topbar";
 import { Stepper } from "./components/layout/Stepper";
 import { Footer } from "./components/layout/Footer";
@@ -15,7 +14,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -118,14 +117,6 @@ export function App() {
     updateDraftPipeline,
   } = useAskLakeData({ onFlowChange: setActiveFlow, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
-  const activeNavId = useMemo<NavId>(() => {
-    if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
-    if (activeFlow === "sql") return "sql";
-    if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "ai") return "ai";
-    if (activeFlow === "admin") return "admin";
-    return "ingest";
-  }, [activeFlow]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
   const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
@@ -171,17 +162,6 @@ export function App() {
   const saveDraft = (flow: FlowId) => {
     writeAuditLog("etl.job.draft_saved", "/api/etl/jobs", `draft:${flow}`);
     showToast("설정이 임시 저장되었습니다.");
-  };
-
-  const navigateSidebar = (item: NavItem) => {
-    writeAuditLog("ui.menu.clicked", `/app/${item.id}`, item.label);
-    if (item.id === "dashboard") {
-      if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
-      setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
-    } else if (window.location.pathname.startsWith("/dashboards") || window.location.pathname === "/jobs-table-demo") {
-      window.history.pushState(null, "", "/");
-    }
-    moveToFlow(item.flow);
   };
 
   const openJobsTableDemo = () => {
@@ -254,7 +234,6 @@ export function App() {
 
   return (
     <div className="app-shell" data-last-action={auditSignal}>
-      <Sidebar activeNavId={activeNavId} onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })} onBrandClick={navigateIngestLanding} onNavigate={navigateSidebar} />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
