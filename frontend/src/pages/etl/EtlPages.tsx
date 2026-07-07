@@ -34,7 +34,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
-import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { CreationFlowLayout, CreationSummaryPanel, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -4412,7 +4412,6 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4575,10 +4574,6 @@ export function TargetPage({
     return true;
   };
 
-  const handleSave = () => {
-    if (saveTargetConfig()) onSave();
-  };
-
   const handleNext = () => {
     if (!saveTargetConfig()) return;
     onNext();
@@ -4628,20 +4623,7 @@ export function TargetPage({
   };
 
   return (
-    <CreationFlowLayout
-      side={(
-        <aside className="summary-panel target-action-panel">
-          <CreationPanelActions
-            nextLabel="다음 단계로"
-            prevLabel="이전"
-            saveLabel="설정 저장"
-            onNext={handleNext}
-            onPrev={onPrev}
-            onSave={handleSave}
-          />
-        </aside>
-      )}
-    >
+    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
       <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">

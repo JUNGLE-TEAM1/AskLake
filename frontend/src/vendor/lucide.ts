@@ -39,12 +39,16 @@ export { default as CircleGauge } from "lucide-react/dist/esm/icons/circle-gauge
 export { default as CircleHelp } from "lucide-react/dist/esm/icons/circle-help.mjs";
 export { default as CircleUser } from "lucide-react/dist/esm/icons/circle-user.mjs";
 export { default as Clock3 } from "lucide-react/dist/esm/icons/clock-3.mjs";
+export { default as Clipboard } from "lucide-react/dist/esm/icons/clipboard.mjs";
 export { default as Database } from "lucide-react/dist/esm/icons/database.mjs";
 export { default as Download } from "lucide-react/dist/esm/icons/download.mjs";
 export { default as ExternalLink } from "lucide-react/dist/esm/icons/external-link.mjs";
 export { default as Eye } from "lucide-react/dist/esm/icons/eye.mjs";
 export { default as FileText } from "lucide-react/dist/esm/icons/file-text.mjs";
 export { default as Filter } from "lucide-react/dist/esm/icons/filter.mjs";
+export { default as Folder } from "lucide-react/dist/esm/icons/folder.mjs";
+export { default as FolderOpen } from "lucide-react/dist/esm/icons/folder-open.mjs";
+export { default as FolderSearch } from "lucide-react/dist/esm/icons/folder-search.mjs";
 export { default as Grid3X3 } from "lucide-react/dist/esm/icons/grid-3x3.mjs";
 export { default as HardDrive } from "lucide-react/dist/esm/icons/hard-drive.mjs";
 export { default as Hash } from "lucide-react/dist/esm/icons/hash.mjs";
