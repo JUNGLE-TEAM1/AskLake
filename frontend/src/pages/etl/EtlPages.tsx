@@ -44,6 +44,7 @@ import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFl
 import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
+import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
 import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
@@ -217,7 +218,7 @@ function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, cur
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / S3",
+  "File / S3": "파일 / MinIO",
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
@@ -656,6 +657,12 @@ function getTargetDraftValues(draft: DraftPipeline) {
   };
 }
 
+function getInitialSourceStage(draft: DraftPipeline): "choose" | "connect" | "browse" {
+  if (!draft.source.sourceType) return "choose";
+  if (draft.source.connectionStatus === "success") return "browse";
+  return "connect";
+}
+
 export function SourceConnectionPage({
   draft,
   onAction,
@@ -678,10 +685,11 @@ export function SourceConnectionPage({
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
-  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(draft.source.sourceType ? "connect" : "choose");
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
+  const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "S3 호환 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "S3", status: "실제 연결" },
+    "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
     MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
     "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
@@ -747,7 +755,7 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하면 샘플 행을 가져옵니다.",
       previewColumns: ["Table", "Rows", "Status"],
       previewRows: [],
-      info: "PostgreSQL 자격 증명은 브라우저가 아니라 백엔드 커넥터에서 검증합니다.",
+      info: "",
     },
     MongoDB: {
       title: "MongoDB 연결",
@@ -768,20 +776,20 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · MongoDB 연결 테스트를 실행하세요.",
       previewColumns: ["Collection", "Documents", "Status"],
       previewRows: [],
-      info: "MongoDB 연결과 샘플 조회는 백엔드 커넥터에서 실행합니다.",
+      info: "",
     },
     "File / S3": {
-      title: "S3 소스 설정",
-      description: "S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
+      title: "MinIO 소스 설정",
+      description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
-        ["Storage Provider", "S3"],
+        ["Storage Provider", "MinIO"],
         ["Endpoint URL", ""],
         ["Region", ""],
         ["Bucket / Stage Name", ""],
         ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
-        ["Use Path Style", "false"],
+        ["Use Path Style", "true"],
         ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
@@ -907,11 +915,13 @@ export function SourceConnectionPage({
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
+  const displayPreviewFormat = activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType);
+  const usesJsonSampleTree = displayPreviewFormat === "JSON" || displayPreviewFormat === "JSONL";
   const sourceSummaryRows: Array<[string, string]> = [
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
     ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
-    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
   ];
 
@@ -971,6 +981,7 @@ export function SourceConnectionPage({
     const nextStatus = isSqlResultSource ? connectionStatus : "idle";
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
+    setSelectedAssetPath("");
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
@@ -995,6 +1006,7 @@ export function SourceConnectionPage({
     const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
+    setSelectedAssetPath("");
     setConnectionStatus("idle");
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
@@ -1004,6 +1016,7 @@ export function SourceConnectionPage({
   const loadSourceAssetChildren = async (folderPath: string) => {
     if (!hasSelectedSource || !(activeSourceType === "File / S3" || activeSourceType === "Data Lake")) return;
     const folderPrefix = normalizeFolderPrefix(folderPath);
+    setLoadingAssetPath(folderPrefix);
     try {
       const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
       setSourceRuntime((runtime) => runtime
@@ -1023,6 +1036,8 @@ export function SourceConnectionPage({
       onAction("etl.source.folder_opened", "/api/etl/sources/assets", folderPrefix);
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "하위 목록을 가져오지 못했습니다.");
+    } finally {
+      setLoadingAssetPath("");
     }
   };
 
@@ -1095,6 +1110,8 @@ export function SourceConnectionPage({
     const testingMessage = `${sourceTypeLabel(activeSourceType)} 커넥터 테스트 실행 중입니다.`;
     setConnectionStatus("testing");
     setConnectionMessage(testingMessage);
+    setSourceRuntime(null);
+    setSelectedAssetPath("");
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
       if (activeSourceType !== "File / S3" && activeSourceType !== "Data Lake") {
@@ -1115,7 +1132,7 @@ export function SourceConnectionPage({
         return;
       }
       const result = await listSourceAssets(activeSourceType, editableFields, "");
-      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 직접 하위 항목 ${result.assets.length}개`;
+      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
         assets: result.assets,
@@ -1145,18 +1162,7 @@ export function SourceConnectionPage({
       onNotify(successMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : "소스 커넥터 테스트에 실패했습니다.";
-      setSourceRuntime({
-        actionPath: "/api/etl/sources/test",
-        assets: [],
-        draftPatch: {},
-        logs: [`[ERROR] ${message}`],
-        message,
-        previewColumns: ["Status", "Reason"],
-        previewNote: "연결 테스트에 실패했습니다. 샘플을 가져오지 못했습니다.",
-        previewRows: [["failed", message]],
-        status: "failed",
-        testItems: [["Connector", activeSourceType], ["Result", "Failed"]],
-      });
+      setSourceRuntime(null);
       setConnectionStatus("failed");
       setConnectionMessage(message);
       applySourceDraft(activeSourceType, editableFields, "failed", message);
@@ -1179,7 +1185,7 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
+      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"} · ${sourceLabel}`} summaryRows={sourceSummaryRows} nextDisabled={!hasSelectedSource || connectionStatus !== "success" || (!isSqlResultSource && (!hasSchemaPatch || !hasSamplePreview))} onPrev={onPrev} onNext={() => {
         if (!hasSelectedSource) {
           onNotify("먼저 소스를 선택하세요.");
           return;
@@ -1298,6 +1304,7 @@ export function SourceConnectionPage({
                 {hasDetectedAssets ? (
                   <SourceAssetTree
                     assets={displayAssets}
+                    loadingPath={loadingAssetPath}
                     selectedPath={selectedAssetPath}
                     onOpenFolder={loadSourceAssetChildren}
                     onSelect={selectSourceAsset}
@@ -1316,18 +1323,26 @@ export function SourceConnectionPage({
                     <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : "선택 대기"}</span>
                   </div>
                   <div className="source-preview-format-strip">
-                    <strong>{activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType)}</strong>
+                    <strong>{displayPreviewFormat}</strong>
                     <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
                   </div>
                   {displayPreviewRows.length > 0 ? (
-                    <div className="hegun-table-scroll source-preview-scroll">
-                      <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
-                        <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
-                        <tbody>
-                          {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
-                        </tbody>
-                      </table>
-                    </div>
+                    usesJsonSampleTree ? (
+                      <SourceJsonSampleTree
+                        columns={displayPreviewColumns}
+                        format={displayPreviewFormat}
+                        rows={displayPreviewRows}
+                      />
+                    ) : (
+                      <div className="hegun-table-scroll source-preview-scroll">
+                        <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+                          <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+                          <tbody>
+                            {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
                   ) : (
                     <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
                   )}
@@ -2069,16 +2084,25 @@ export function SchemaInferencePage({
         sampleRows={schemaSampleRows}
         selectedIndex={selectedIndex}
         sourceFormat={sourceFormat}
+        transformSteps={draft.transform.steps}
         onSelectedIndexChange={setSelectedSchemaIndex}
         onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
           patchSchemaColumns(nextColumns, nextSampleRows);
           const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
           setSelectedSchemaIndex(boundedIndex);
         }}
+        onTransformStepsChange={(steps) => {
+          onDraftChange({
+            transform: {
+              steps,
+              summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
+            },
+          });
+        }}
       />
 
       <section className="schema-bottom-bar">
-        <button className="secondary-button" type="button" onClick={onPrev}>이전: 소스 연결</button>
+        <button className="secondary-button" type="button" onClick={onPrev}>이전: 데이터 탐색</button>
         <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
         <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
