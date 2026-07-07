@@ -6091,6 +6091,140 @@
   cursor: not-allowed;
 }
 
+.xflow-code-workbench {
+  display: grid;
+  gap: 10px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 12px 16px;
+}
+
+.xflow-code-workbench header,
+.xflow-code-workbench footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.xflow-code-workbench header div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.xflow-code-workbench strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.xflow-code-workbench span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.xflow-code-modes {
+  display: inline-flex;
+  gap: 4px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 3px;
+}
+
+.xflow-code-modes button {
+  min-height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 0 10px;
+}
+
+.xflow-code-modes button.active {
+  background: #fff;
+  color: #2563eb;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.xflow-code-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.38fr);
+  gap: 12px;
+  min-width: 0;
+}
+
+.xflow-code-editor {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.xflow-code-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  height: 98px;
+  min-height: 88px;
+  max-height: 132px;
+  resize: vertical;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+  padding: 10px 12px;
+}
+
+.xflow-module-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.xflow-module-slots > span {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.xflow-module-slots button {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.xflow-module-slots button strong {
+  font-size: 12px;
+}
+
+.xflow-module-slots button em {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .xflow-transfer-stage {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) 56px minmax(440px, 1.35fr);
@@ -6761,6 +6895,55 @@ input.xflow-checkbox:checked {
 .xflow-output-preview .source-json-sample-tree {
   max-height: 230px;
   min-height: 120px;
+}
+
+.xflow-output-table-shell {
+  max-height: 260px;
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.xflow-output-table-shell table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
+.xflow-output-table-shell th,
+.xflow-output-table-shell td {
+  max-width: 260px;
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.xflow-output-table-shell th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.xflow-output-table-shell td code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #047857;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .xflow-same-output {

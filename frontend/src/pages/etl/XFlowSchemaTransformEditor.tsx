@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type React from "react";
+import { flexRender, getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
 import {
   Check,
   ChevronDown,
@@ -30,6 +31,16 @@ const TRANSFORM_OPTIONS = [
   { label: "JSON 구조 유지", operation: "Preserve JSON", params: "$", kind: "derive" },
 ] as const;
 
+const TRANSFORM_MODULE_SLOTS = [
+  { key: "flatten_object", label: "flatten_object", desc: "nested object를 flat columns로 펼침" },
+  { key: "jsonpath_extract", label: "jsonpath_extract", desc: "JSONPath로 scalar/array 일부 추출" },
+  { key: "array_explode", label: "array_explode", desc: "array를 row explode 또는 first item으로 변환" },
+  { key: "cast_schema", label: "cast_schema", desc: "target type 기준 cast/validation" },
+] as const;
+
+type TransformAuthoringMode = "sql" | "python" | "module";
+type OutputPreviewRow = Record<string, string>;
+
 type XFlowSchemaTransformEditorProps = {
   columns: SchemaColumnDraft[];
   sampleRows: string[][];
@@ -55,6 +66,13 @@ export function XFlowSchemaTransformEditor({
   const [selectedAfter, setSelectedAfter] = useState<Set<number>>(new Set());
   const [expandedSourceIndex, setExpandedSourceIndex] = useState<number | null>(null);
   const [expandedTargetIndex, setExpandedTargetIndex] = useState<number | null>(null);
+  const [transformMode, setTransformMode] = useState<TransformAuthoringMode>("sql");
+  const [showOutputPreview, setShowOutputPreview] = useState(false);
+  const [transformCodeByMode, setTransformCodeByMode] = useState<Record<TransformAuthoringMode, string>>({
+    module: "",
+    python: "",
+    sql: "",
+  });
 
   const includedIndexes = useMemo(
     () => columns.map((column, index) => ({ column, index })).filter(({ column }) => column.included !== false),
@@ -76,13 +94,22 @@ export function XFlowSchemaTransformEditor({
   const selectedColumn = columns[selectedIndex];
   const selectedTransform = selectedColumn ? transformByOutput.get(getOutputName(selectedColumn)) : undefined;
   const selectedPreview = selectedColumn ? previewColumnSample(selectedColumn, sampleRows[0]?.[selectedIndex] ?? "", selectedTransform) : undefined;
+  const generatedTransformCode = useMemo(
+    () => buildTransformAuthoringTemplate(transformMode, includedIndexes),
+    [includedIndexes, transformMode],
+  );
+  const activeTransformCode = transformCodeByMode[transformMode] || generatedTransformCode;
   const outputPreviewColumns = useMemo(
-    () => includedIndexes.map(({ column }) => getOutputName(column)),
-    [includedIndexes],
+    () => showOutputPreview ? includedIndexes.map(({ column }) => getOutputName(column)) : [],
+    [includedIndexes, showOutputPreview],
   );
   const outputPreviewRows = useMemo(
-    () => buildOutputPreviewRows(sampleRows, includedIndexes, transformByOutput),
-    [includedIndexes, sampleRows, transformByOutput],
+    () => showOutputPreview ? buildOutputPreviewRows(sampleRows, includedIndexes, transformByOutput) : [],
+    [includedIndexes, sampleRows, showOutputPreview, transformByOutput],
+  );
+  const outputPreviewTableRows = useMemo(
+    () => buildOutputPreviewTableRows(outputPreviewColumns, outputPreviewRows),
+    [outputPreviewColumns, outputPreviewRows],
   );
 
   const updateColumns = (nextColumns: SchemaColumnDraft[], nextRows = sampleRows) => {
@@ -315,8 +342,62 @@ export function XFlowSchemaTransformEditor({
     });
   };
 
+  const updateTransformCode = (value: string) => {
+    setTransformCodeByMode((current) => ({ ...current, [transformMode]: value }));
+  };
+
+  const resetTransformCode = () => {
+    setTransformCodeByMode((current) => ({ ...current, [transformMode]: "" }));
+  };
+
   return (
     <div className="xflow-transform-editor">
+      <section className="xflow-code-workbench" aria-label="structured transform authoring">
+        <header>
+          <div>
+            <strong>정형 변환 작업대</strong>
+            <span>SQL, Python, 모듈 훅으로 source sample을 target table 구조로 변환합니다.</span>
+          </div>
+          <div className="xflow-code-modes" role="tablist" aria-label="transform authoring mode">
+            {(["sql", "python", "module"] as TransformAuthoringMode[]).map((mode) => (
+              <button
+                aria-pressed={transformMode === mode}
+                className={transformMode === mode ? "active" : ""}
+                key={mode}
+                type="button"
+                onClick={() => setTransformMode(mode)}
+              >
+                {mode === "sql" ? "SQL" : mode === "python" ? "Python" : "Modules"}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div className="xflow-code-body">
+          <label className="xflow-code-editor">
+            <span>{transformMode === "sql" ? "SQL transform" : transformMode === "python" ? "Python transform" : "Module pipeline"}</span>
+            <textarea
+              spellCheck={false}
+              value={activeTransformCode}
+              onChange={(event) => updateTransformCode(event.currentTarget.value)}
+            />
+          </label>
+          <aside className="xflow-module-slots">
+            <span>Plug-in slots</span>
+            {TRANSFORM_MODULE_SLOTS.map((slot) => (
+              <button key={slot.key} type="button" title={slot.desc}>
+                <strong>{slot.label}</strong>
+                <em>{slot.desc}</em>
+              </button>
+            ))}
+          </aside>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={resetTransformCode}>템플릿 재생성</button>
+          <button className="primary-button" type="button" onClick={() => setShowOutputPreview((current) => !current)}>
+            {showOutputPreview ? "최종 샘플 닫기" : "최종 샘플 미리보기"}
+          </button>
+        </footer>
+      </section>
       <div className="xflow-transfer-stage">
         <section className="xflow-transfer-panel">
           <header className="xflow-panel-header source">
@@ -550,6 +631,7 @@ export function XFlowSchemaTransformEditor({
           </div>
         </section>
       </div>
+      {showOutputPreview ? (
       <section className="xflow-output-preview" aria-label="final output preview">
         <header>
           <div>
@@ -558,12 +640,13 @@ export function XFlowSchemaTransformEditor({
           </div>
           <em>{outputPreviewColumns.length} columns</em>
         </header>
-        {outputPreviewRows.length > 0 ? (
-          <SourceJsonSampleTree columns={outputPreviewColumns} format={sourceFormat} rows={outputPreviewRows} />
+        {outputPreviewTableRows.length > 0 ? (
+          <OutputPreviewTable columns={outputPreviewColumns} rows={outputPreviewTableRows} />
         ) : (
           <p className="source-empty-note">target에 포함된 컬럼과 샘플 row가 있으면 최종 output 구조가 표시됩니다.</p>
         )}
       </section>
+      ) : null}
       {expandedTargetIndex !== null && selectedColumn && selectedPreview ? (
         <aside className="xflow-selected-preview" aria-label="selected transform sample">
           <span>{displaySourcePath(selectedColumn.sourceName)}</span>
@@ -571,6 +654,50 @@ export function XFlowSchemaTransformEditor({
           <em>{formatSampleValue(selectedPreview.before)} {"->"} {formatSampleValue(selectedPreview.after)}</em>
         </aside>
       ) : null}
+    </div>
+  );
+}
+
+function OutputPreviewTable({ columns, rows }: { columns: string[]; rows: OutputPreviewRow[] }) {
+  const columnDefs = useMemo<ColumnDef<OutputPreviewRow>[]>(() => (
+    columns.map((column, index) => ({
+      accessorKey: outputPreviewColumnKey(column, index),
+      cell: (info) => <code>{formatOutputTableCell(info.getValue())}</code>,
+      header: column,
+      id: outputPreviewColumnKey(column, index),
+    }))
+  ), [columns]);
+
+  const table = useReactTable({
+    columns: columnDefs,
+    data: rows,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <div className="xflow-output-table-shell">
+      <table>
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -710,6 +837,59 @@ function duplicateOrigin(column: SchemaColumnDraft) {
   return match?.[1] ?? "";
 }
 
+function buildTransformAuthoringTemplate(mode: TransformAuthoringMode, includedIndexes: Array<{ column: SchemaColumnDraft; index: number }>) {
+  const columns = includedIndexes.slice(0, 16).map(({ column }) => column);
+  if (mode === "python") {
+    const lines = columns.map((column) =>
+      `        ${JSON.stringify(getOutputName(column))}: modules.cast(row.get(${JSON.stringify(column.sourceName)}), ${JSON.stringify(column.type)}),`,
+    );
+    return [
+      "def transform(row, modules):",
+      "    return {",
+      ...lines,
+      "    }",
+      "",
+      "# modules: jsonpath_extract, flatten_object, array_explode, cast_schema",
+    ].join("\n");
+  }
+  if (mode === "module") {
+    return [
+      "pipeline:",
+      "  - module: flatten_object",
+      "    input: source",
+      "    prefix_nested_keys: true",
+      "  - module: jsonpath_extract",
+      "    mappings:",
+      ...columns.filter((column) => column.type.toLowerCase() === "json").slice(0, 4).map((column) => `      ${getOutputName(column)}: ${column.sourceName} -> $`),
+      "  - module: cast_schema",
+      "    schema: target",
+    ].join("\n");
+  }
+  const selectLines = columns.map((column) => `  ${sqlSourceExpression(column)} AS ${sqlIdentifier(getOutputName(column))}`);
+  return [
+    "-- source_sample은 현재 제한 샘플 row입니다.",
+    "-- JSON/array는 JSONPath 추출 또는 flatten module로 정형화합니다.",
+    "SELECT",
+    selectLines.join(",\n"),
+    "FROM source_sample;",
+  ].join("\n");
+}
+
+function sqlSourceExpression(column: SchemaColumnDraft) {
+  if (/[.[\]]/.test(column.sourceName)) return `JSON_VALUE(source, '${jsonPathForSource(column.sourceName)}')`;
+  if (column.type.toLowerCase() === "json") return `JSON_QUERY(${sqlIdentifier(column.sourceName)}, '$')`;
+  return sqlIdentifier(column.sourceName);
+}
+
+function sqlIdentifier(value: string) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function jsonPathForSource(value: string) {
+  const parts = displaySourcePath(value).split(" / ").filter(Boolean);
+  return `$.${parts.map((part) => (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(part) ? part : `"${part.replace(/"/g, '\\"')}"`)).join(".")}`;
+}
+
 function buildOutputPreviewRows(
   sampleRows: string[][],
   includedIndexes: Array<{ column: SchemaColumnDraft; index: number }>,
@@ -722,6 +902,27 @@ function buildOutputPreviewRows(
       return previewOutputValue(column, row[index] ?? "", step);
     })
   ));
+}
+
+function buildOutputPreviewTableRows(columns: string[], rows: string[][]): OutputPreviewRow[] {
+  return rows.map((row, rowIndex) => {
+    const record: OutputPreviewRow = { __rowId: String(rowIndex + 1) };
+    columns.forEach((column, columnIndex) => {
+      record[outputPreviewColumnKey(column, columnIndex)] = row[columnIndex] ?? "";
+    });
+    return record;
+  });
+}
+
+function outputPreviewColumnKey(column: string, index: number) {
+  return `${index}-${column}`;
+}
+
+function formatOutputTableCell(value: unknown) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "null";
+  if (normalized.length > 120) return `${normalized.slice(0, 117)}...`;
+  return normalized;
 }
 
 function previewOutputValue(column: SchemaColumnDraft, rawValue: string, step?: TransformStepDraft) {
