@@ -4778,9 +4778,19 @@ export function TargetPage({
           </label>
           <label className="field">
             <span>포맷</span>
-            <select className="input control-input" value={targetFormat} onChange={(event) => setTargetFormat(normalizeTargetFileFormat(event.target.value))}>
-              {TARGET_FORMAT_OPTIONS.map((format) => <option key={format} value={format}>{format}</option>)}
-            </select>
+            <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
+              {TARGET_FORMAT_OPTIONS.map((format) => (
+                <button
+                  aria-pressed={targetFormat === format}
+                  className={targetFormat === format ? "target-format-option active" : "target-format-option"}
+                  key={format}
+                  type="button"
+                  onClick={() => setTargetFormat(format)}
+                >
+                  {format}
+                </button>
+              ))}
+            </div>
           </label>
           <label className="field wide">
             <span>저장경로</span>

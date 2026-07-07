@@ -3053,6 +3053,32 @@
   margin-top: 12px;
 }
 
+.target-format-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-height: 36px;
+}
+
+.target-format-option {
+  min-width: 0;
+  min-height: 36px;
+  border: 1px solid #dee1e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.target-format-option.active {
+  border-color: #2563eb;
+  background: #3865e6;
+  color: #fff;
+}
+
 .target-validation-summary {
   display: grid;
   gap: 6px;
