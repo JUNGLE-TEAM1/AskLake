@@ -113,6 +113,12 @@ export function App() {
     if (activeFlow === "admin") return "admin";
     return "ingest";
   }, [activeFlow]);
+  const hasShellRows = jobs.length > 0 || datasets.length > 0;
+  const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
+  const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
+  const shouldBlockForInitialError = !dataLoading && Boolean(dataError) && !hasShellRows && !isIngestShellFlow;
+  const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && Boolean(selectedDataset && selectedJob);
+  const pendingMessage = dataLoading ? "DB 데이터 동기화 중..." : "API 요청 처리 중...";
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -245,17 +251,17 @@ export function App() {
       <main className="main-shell">
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-        {apiPending && <div className="app-api-pending">API 요청 처리 중...</div>}
+        {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : "page-body"}>
-          {dataLoading && (
+          {shouldBlockForInitialData && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
               <h1>DB 데이터를 불러오는 중입니다</h1>
               <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
             </div>
           )}
-          {!dataLoading && dataError && (
+          {shouldBlockForInitialError && (
             <div className="module-placeholder-page">
               <span>POSTGRES ERROR</span>
               <h1>DB API 연결을 확인해주세요</h1>
@@ -269,7 +275,7 @@ export function App() {
               <p>Postgres seed를 다시 실행한 뒤 새로고침해주세요.</p>
             </div>
           )}
-          {!dataLoading && !dataError && selectedDataset && selectedJob && (
+          {shouldRenderAppContent && (
             <>
           {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
           {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}

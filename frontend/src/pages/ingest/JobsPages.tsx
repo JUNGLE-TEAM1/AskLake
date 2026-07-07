@@ -947,17 +947,6 @@ export function JobDetailPage({
   const primaryAction = getJobNextAction(job);
   const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
   const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
-  const stripBody = job.status === "failed"
-    ? "실행 이력 상세에서 영향 단계와 원문 로그를 확인하세요."
-    : job.status === "running"
-      ? "현재 처리 중이며 실행 단계에서 단계별 로그를 확인할 수 있습니다."
-      : job.status === "paused"
-        ? "사용자 요청으로 실행이 일시정지되었습니다. 즉시 실행 또는 재실행으로 실행을 재개할 수 있습니다."
-        : job.status === "canceled"
-          ? "사용자 요청으로 실행이 취소되었습니다. 다시 실행하면 새 Run으로 처리 흐름을 재개할 수 있습니다."
-          : job.runHistory?.length
-            ? `${stats.currentStage} · 최근 실행 이력을 기준으로 표시합니다.`
-            : "아직 실행 이력이 없습니다. 생성 시 검증된 소스/스키마 메타데이터만 표시합니다.";
   const schemaRows = schemaRowsForJob(job, stats);
   const ruleRows = ruleRowsForJob(job);
 
@@ -968,14 +957,12 @@ export function JobDetailPage({
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
           <h2>작업 핵심 정보</h2>
-          <p>최근 실행 결과와 다음 액션만 먼저 확인합니다.</p>
         </div>
         <div className="job-detail-overview-grid">
           <article className={`job-ops-summary-card ${stripTone}`}>
             <div className="job-ops-main">
               <span className="job-ops-kicker">{stripTitle}</span>
               <h3>{executionDisplay.summary}</h3>
-              <p>{stripBody}</p>
             </div>
             <div className="job-next-actions">
               <button className="job-action-button primary" type="button" onClick={() => (primaryAction.kind === "runs" ? onRuns() : onCommand(job, primaryAction.kind))}>{primaryAction.label}</button>
@@ -1003,7 +990,6 @@ export function JobDetailPage({
         <summary>
           <div>
             <h2>소스 / 타겟 설정</h2>
-            <p>연결 및 저장 설정</p>
           </div>
           <span className="disclosure-indicator">펼치기</span>
         </summary>
@@ -1040,7 +1026,6 @@ export function JobDetailPage({
         <summary>
           <div>
             <h2>스키마 / 변환</h2>
-            <p>{stats.schemaColumns} 컬럼 · 변환 규칙 {ruleRows.length}개</p>
           </div>
           <span className="disclosure-indicator">펼치기</span>
         </summary>
@@ -1096,7 +1081,6 @@ export function JobDetailPage({
         <summary>
           <div>
             <h2>Schedule / Permission</h2>
-            <p>스케줄 및 권한 정책</p>
           </div>
           <span className="disclosure-indicator">펼치기</span>
         </summary>

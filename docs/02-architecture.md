@@ -97,6 +97,7 @@ Dashboard redesign Phase 01부터 `/dashboards`, `/dashboards/:dashboardId`, `/d
 - loading/error 표시
 - optimistic update 또는 rollback UX
 - mock/live 전환 adapter
+- live mode에서 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
 
 ## 6) 데이터 모델 초안
 

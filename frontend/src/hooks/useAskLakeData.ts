@@ -32,7 +32,10 @@ type WriteAuditLog = (action: string, apiPath: string, targetId: string, result?
 
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
+const liveJobsStorageKey = "asklake.liveJobs";
+const liveDatasetsStorageKey = "asklake.liveDatasets";
 const maxStoredCatalogDatasets = 30;
+const maxStoredLiveRows = 50;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
@@ -138,6 +141,15 @@ function isCatalogDataset(value: unknown): value is CatalogDataset {
     && Array.isArray(dataset.tags);
 }
 
+function isJobRowData(value: unknown): value is JobRowData {
+  if (!value || typeof value !== "object") return false;
+  const job = value as Partial<JobRowData>;
+  return typeof job.id === "string"
+    && typeof job.name === "string"
+    && typeof job.owner === "string"
+    && typeof job.status === "string";
+}
+
 function parseStoredCatalogDatasets(storageKey: string) {
   try {
     const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
@@ -145,6 +157,34 @@ function parseStoredCatalogDatasets(storageKey: string) {
   } catch {
     return [];
   }
+}
+
+function parseStoredLiveJobs() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(liveJobsStorageKey) ?? "[]");
+    return Array.isArray(stored) ? stored.filter(isJobRowData).map(normalizeJobRow) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseStoredLiveDatasets() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(liveDatasetsStorageKey) ?? "[]");
+    return Array.isArray(stored) ? stored.filter(isCatalogDataset).map(normalizeDatasetRow) : [];
+  } catch {
+    return [];
+  }
+}
+
+function loadStoredLiveJobs() {
+  if (apiConfig.useMock || typeof window === "undefined") return [];
+  return parseStoredLiveJobs();
+}
+
+function loadStoredLiveDatasets() {
+  if (apiConfig.useMock || typeof window === "undefined") return [];
+  return parseStoredLiveDatasets();
 }
 
 function loadStoredCatalogDatasets() {
@@ -182,12 +222,27 @@ function saveStoredCatalogDataset(dataset: CatalogDataset) {
   window.localStorage.setItem(catalogDatasetStorageKey, JSON.stringify(nextDatasets));
 }
 
+function saveStoredLiveJobs(jobs: JobRowData[]) {
+  if (apiConfig.useMock || typeof window === "undefined") return;
+  window.localStorage.setItem(liveJobsStorageKey, JSON.stringify(jobs.slice(0, maxStoredLiveRows)));
+}
+
+function saveStoredLiveDatasets(datasets: CatalogDataset[]) {
+  if (apiConfig.useMock || typeof window === "undefined") return;
+  window.localStorage.setItem(liveDatasetsStorageKey, JSON.stringify(datasets.slice(0, maxStoredLiveRows)));
+}
+
+function saveStoredLiveData(jobs: JobRowData[], datasets: CatalogDataset[]) {
+  saveStoredLiveJobs(jobs);
+  saveStoredLiveDatasets(datasets);
+}
+
 function getInitialDatasets() {
-  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
+  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : loadStoredLiveDatasets();
 }
 
 function getInitialJobs() {
-  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
+  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : loadStoredLiveJobs();
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
@@ -252,6 +307,7 @@ export function useAskLakeData({
         if (cancelled) return;
         const normalizedJobs = nextJobs.map(normalizeJobRow);
         const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
+        saveStoredLiveData(normalizedJobs, normalizedDatasets);
         setJobs(normalizedJobs);
         setDatasets(normalizedDatasets);
         setSelectedJob((job) => nextSelectedJob(job, normalizedJobs));
@@ -297,8 +353,16 @@ export function useAskLakeData({
       const normalizedJob = normalizeJobRow(job);
       const normalizedDataset = normalizeDatasetRow(dataset);
       saveStoredCatalogDataset(normalizedDataset);
-      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
-      setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
+      setJobs((items) => {
+        const nextJobs = [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)];
+        saveStoredLiveJobs(nextJobs);
+        return nextJobs;
+      });
+      setDatasets((items) => {
+        const nextDatasets = [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)];
+        saveStoredLiveDatasets(nextDatasets);
+        return nextDatasets;
+      });
       setSelectedJob(normalizedJob);
       setSelectedDataset(normalizedDataset);
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
@@ -347,11 +411,6 @@ export function useAskLakeData({
     }
   };
 
-  const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
-    setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
-    setSelectedJob((job) => (job?.id === jobId ? updater(job) : job));
-  };
-
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
@@ -363,6 +422,7 @@ export function useAskLakeData({
     if (command === "delete") {
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
+      saveStoredLiveJobs(remaining);
       setJobs(remaining);
       setSelectedJob(remaining[0] ?? emptySelectedJob);
       onFlowChange("jobs");
@@ -375,7 +435,15 @@ export function useAskLakeData({
         ? await runMockJobCommand(job, command)
         : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
-      if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
+      if (updatedJob) {
+        const normalizedJob = normalizeJobRow(updatedJob);
+        setJobs((items) => {
+          const nextJobs = items.map((item) => (item.id === job.id ? normalizedJob : item));
+          saveStoredLiveJobs(nextJobs);
+          return nextJobs;
+        });
+        setSelectedJob((item) => (item?.id === job.id ? normalizedJob : item));
+      }
       if (run || dagSteps) {
         setJobExecutionEvidence((evidence) => {
           const previous = evidence[job.id] ?? { dagSteps: [], runs: [] };
