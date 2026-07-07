@@ -31,11 +31,6 @@ function itemIdToPrefix(itemId: string) {
   return itemId.startsWith("prefix:") ? itemId.slice("prefix:".length) : "";
 }
 
-function folderNameFromPrefix(prefix: string) {
-  const parts = prefix.split("/").filter(Boolean);
-  return parts.at(-1) ?? "/";
-}
-
 function hasVisibleMatch(folder: S3PrefixFolder, query: string) {
   if (!query) return true;
   const normalizedQuery = query.trim().toLowerCase();
@@ -46,7 +41,7 @@ function S3PathText({ value }: { value: string }) {
   const parsed = useMemo(() => parseS3Path(value), [value]);
 
   if (!parsed.bucket) {
-    return <span className="s3-path-empty">S3 경로를 선택하세요.</span>;
+    return <span className="s3-path-empty">S3 경로를 선택하세요</span>;
   }
 
   return <span className="s3-path-text" title={parsed.path}>{parsed.path}</span>;
@@ -162,7 +157,7 @@ function S3PathPicker({
         ...cache,
         [key]: {
           ...cache[key],
-          error: error instanceof Error ? error.message : "prefix를 불러오지 못했습니다.",
+          error: error instanceof Error ? error.message : "주소를 불러오지 못했습니다.",
           loading: false,
         },
       }));
@@ -248,7 +243,7 @@ function S3PathPicker({
         <header className="s3-picker-header">
           <div>
             <h2>S3 경로 선택</h2>
-            <p>버킷과 prefix를 선택하면 저장경로에 반영됩니다.</p>
+            <p>버킷과 주소를 선택하면 저장경로에 반영됩니다.</p>
           </div>
           <button className="s3-picker-close" type="button" onClick={onCancel} aria-label="S3 경로 선택 닫기">
             <X size={16} />

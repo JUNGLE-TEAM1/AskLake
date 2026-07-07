@@ -36,6 +36,7 @@ import {
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { S3PathField } from "../../components/s3/S3PathField";
+import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
@@ -854,7 +855,6 @@ function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolea
   const errors: string[] = [];
 
   if (!config.metadata.datasetName.trim()) errors.push("데이터셋명은 필수입니다.");
-  if (!config.metadata.targetTableName.trim()) errors.push("테이블명은 필수입니다.");
   if (!config.metadata.storagePath.trim()) errors.push("저장경로는 필수입니다.");
   if (!config.metadata.fileFormat.trim()) errors.push("포맷은 필수입니다.");
   if (jsonParseFailed) errors.push("JSON 파싱에 실패했습니다.");
@@ -4489,7 +4489,6 @@ export function TargetPage({
   );
   const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [targetTableName, setTargetTableName] = useState(draftTarget?.targetTableName ?? initialTarget.tableName);
   const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
   const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
@@ -4536,6 +4535,7 @@ export function TargetPage({
     targetStoragePath,
     transformStepCount: draft.transform.steps.length,
   };
+  const targetTableName = targetDataset.trim();
   const buildConfig = (testRun: TargetTestRun = lastTestRun): TargetSavedConfig => ({
     metadata: {
       databaseName,
@@ -4719,14 +4719,6 @@ export function TargetPage({
             <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
           </label>
           <label className="field">
-            <span>테이블명</span>
-            <input className="input control-input" value={targetTableName} onChange={(event) => setTargetTableName(event.target.value)} />
-          </label>
-          <label className="field">
-            <span>DB 이름</span>
-            <input className="input control-input" value={databaseName} onChange={(event) => setDatabaseName(event.target.value)} />
-          </label>
-          <label className="field">
             <span>포맷</span>
             <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
               <button
@@ -4757,6 +4749,10 @@ export function TargetPage({
                 </div>
               ) : null}
             </div>
+          </label>
+          <label className="field">
+            <span>DB 선택</span>
+            <DatabaseField value={databaseName} onChange={setDatabaseName} />
           </label>
           <label className="field wide">
             <span>저장경로</span>

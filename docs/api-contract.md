@@ -14,7 +14,8 @@
 | 5 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
 | 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 7 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
-| 8 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 8 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
+| 9 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -45,6 +46,7 @@ VITE_USE_MOCK_API=true
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
+TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
@@ -52,6 +54,7 @@ S3_FORCE_PATH_STYLE=true
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 - Target 저장경로 선택은 브라우저가 AWS SDK나 secret을 갖지 않고 `/api/s3/buckets`, `/api/s3/prefixes` 서버 API만 호출합니다. 서버는 `S3_ALLOWED_BUCKETS` allowlist를 검증하고 AWS SDK v3 `ListObjectsV2`로 prefix를 조회합니다.
+- Target DB 선택은 `/api/target/databases` 서버 API만 호출합니다. 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES` allowlist를 사용하고, 값이 없으면 local demo 기본 DB 목록을 반환합니다.
 
 ## 4. 공통 HTTP 규칙
 
@@ -403,6 +406,40 @@ Response 예시:
 - prefix 선택 시 `s3a://asklake-output/pair_a_customer_review_gold/gold/`처럼 trailing slash를 유지합니다.
 - 기존 값이 `s3://...`이면 같은 scheme을 유지하고, scheme이 없으면 frontend 상수 `S3_SCHEME = "s3a"`를 사용합니다.
 - 최종 create payload의 `storagePath` 필드 shape는 변경하지 않습니다.
+
+### 7.1.1 Target DB Picker
+
+Target 기본정보 UI는 `테이블명` 입력을 노출하지 않습니다. create payload 호환을 위해 `target.tableName`과 `target.targetTableName`에는 현재 `targetDataset` 값을 사용합니다.
+
+`GET /api/target/databases`
+
+Response:
+
+```ts
+type TargetDatabasesResponse = {
+  databases: Array<{
+    name: string;
+    description: string;
+  }>;
+};
+```
+
+Example:
+
+```json
+{
+  "databases": [
+    { "name": "asklake", "description": "기본 AskLake 카탈로그 DB" },
+    { "name": "asklake_gold", "description": "정제 Gold 데이터셋 저장 DB" }
+  ]
+}
+```
+
+Rules:
+
+- frontend는 DB 이름을 직접 입력하지 않고 선택 UI로 `target.databaseName` string을 갱신합니다.
+- 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
+- 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
 ### 7.2 파이프라인 생성
 

@@ -3173,6 +3173,47 @@
   white-space: nowrap;
 }
 
+.database-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.database-display {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  border: 1px solid #dee1e6;
+  border-radius: 6px;
+  background: #fff;
+  padding: 0 10px;
+}
+
+.database-display span,
+.database-display em {
+  min-width: 0;
+  color: #171a1f;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-display em {
+  color: #565d6d;
+}
+
+.database-field-action {
+  min-height: 36px;
+  gap: 5px;
+  white-space: nowrap;
+}
+
 .s3-picker-backdrop {
   position: fixed;
   inset: 0;
@@ -3357,6 +3398,91 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.database-picker-dialog {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  width: min(640px, calc(100vw - 56px));
+}
+
+.database-picker-toolbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.database-picker-body {
+  display: grid;
+  min-height: 260px;
+  min-width: 0;
+  overflow: auto;
+  padding: 14px 18px;
+}
+
+.database-picker-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.database-picker-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  border: 1px solid #dee1e6;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.database-picker-option:hover,
+.database-picker-option.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.database-picker-option svg {
+  color: #2563eb;
+}
+
+.database-picker-option span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.database-picker-option strong,
+.database-picker-option em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-picker-option strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.database-picker-option em {
+  color: #565d6d;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.database-picker-state {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: #565d6d;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .target-subsection-title {
@@ -3753,6 +3879,7 @@
     grid-template-columns: 1fr;
   }
 
+  .database-field,
   .s3-path-field,
   .s3-picker-toolbar,
   .s3-picker-body {

@@ -2,6 +2,7 @@ import http from "node:http";
 import { commandJob, createPipeline, executeQuery, listDatasets, listJobs } from "./createPipeline.mjs";
 import { testSourceConnector } from "./connectors.mjs";
 import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
+import { listTargetDatabases } from "./targetDatabase.service.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
@@ -44,6 +45,11 @@ const server = http.createServer(async (request, response) => {
         continuationToken: url.searchParams.get("continuationToken"),
         prefix: url.searchParams.get("prefix") ?? "",
       }));
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/target/databases") {
+      sendJson(response, 200, listTargetDatabases());
       return;
     }
 
