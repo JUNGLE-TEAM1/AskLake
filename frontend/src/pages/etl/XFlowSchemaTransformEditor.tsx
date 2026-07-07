@@ -27,7 +27,7 @@ const TRANSFORM_OPTIONS = [
   { label: "불리언으로 변환", operation: "Cast Boolean", params: "boolean", kind: "cast" },
   { label: "시간으로 변환", operation: "Parse Timestamp", params: "yyyy-MM-dd HH:mm:ss", kind: "cast" },
   { label: "JSONPath 추출", operation: "Extract JSONPath", params: "$", kind: "jsonPath" },
-  { label: "JSON 보존", operation: "Preserve JSON", params: "$", kind: "derive" },
+  { label: "JSON 구조 유지", operation: "Preserve JSON", params: "$", kind: "derive" },
 ] as const;
 
 type XFlowSchemaTransformEditorProps = {
@@ -553,7 +553,7 @@ export function XFlowSchemaTransformEditor({
       <section className="xflow-output-preview" aria-label="final output preview">
         <header>
           <div>
-            <strong>Final Output Preview</strong>
+            <strong>최종 Output 미리보기</strong>
             <span>현재 target schema와 transform을 샘플 {outputPreviewRows.length}행에 적용한 결과입니다.</span>
           </div>
           <em>{outputPreviewColumns.length} columns</em>
@@ -658,7 +658,7 @@ function defaultTransformLabel(column: SchemaColumnDraft) {
   const renamed = output !== column.sourceName;
   const nested = /[.[\]]/.test(column.sourceName);
   const normalizedType = column.type.toLowerCase();
-  if (normalizedType === "json") return nested ? "JSON 경로 컬럼화" : "JSON 보존";
+  if (normalizedType === "json") return nested ? "JSON 경로 컬럼화" : "JSON 구조 유지";
   if (nested) return "중첩 경로 컬럼화";
   if (renamed) return "이름 변경";
   return "원본 값 매핑";
@@ -670,28 +670,28 @@ function transformDetailText(column: SchemaColumnDraft, step?: TransformStepDraf
       return `${step.params || "$"} 경로를 추출할 때만 값이 달라집니다.`;
     }
     if (step.operation === "Preserve JSON") {
-      return "배열/객체 JSON을 펼치지 않고 target 컬럼에 그대로 보존합니다.";
+      return "배열/객체 JSON을 펼치지 않고 target 컬럼에 구조 그대로 유지합니다.";
     }
     return `${transformSummaryLabel(step)}을 적용해 target 값을 생성합니다.`;
   }
   const output = getOutputName(column);
   if (output !== column.sourceName) return "컬럼 이름만 바꾸고 값은 원본 그대로 매핑합니다.";
   if (/[.[\]]/.test(column.sourceName)) return "중첩 source 경로를 flat target 컬럼으로 만들고 값은 그대로 둡니다.";
-  if (column.type.toLowerCase() === "json") return "JSON 값을 target JSON 컬럼에 보존합니다. 값 변환은 선택 시에만 적용됩니다.";
+  if (column.type.toLowerCase() === "json") return "JSON 값을 target JSON 컬럼에 구조 그대로 유지합니다. 값 변환은 선택 시에만 적용됩니다.";
   return "값 변환 없이 source 값을 target schemaColumns에 매핑합니다.";
 }
 
 function samplePreviewReason(column: SchemaColumnDraft, step: TransformStepDraft | undefined, preview: { before: string; after: string; changed: boolean }) {
   if (preview.changed) return `${transformSummaryLabel(step)} 결과로 샘플 값이 변경됩니다.`;
   if (step?.enabled !== false && step?.operation) return `${transformSummaryLabel(step)}을 적용했지만 이 샘플 값은 동일합니다.`;
-  if (column.type.toLowerCase() === "json") return "현재는 JSON 값을 보존하는 스키마 매핑입니다. JSONPath 추출을 선택하면 After 값이 달라집니다.";
+  if (column.type.toLowerCase() === "json") return "현재는 JSON 구조 유지 매핑입니다. JSONPath 추출을 선택하면 After 값이 달라집니다.";
   return "현재는 스키마 매핑 단계라 값은 유지됩니다. 값 변환은 Transform 선택 시에만 적용됩니다.";
 }
 
 function sameValueReason(column: SchemaColumnDraft, step?: TransformStepDraft) {
   if (step?.enabled !== false && step?.operation) return "이 샘플에서는 변환 결과가 원본과 같습니다.";
   if (/[.[\]]/.test(column.sourceName)) return "경로만 target 컬럼으로 정형화했습니다.";
-  if (column.type.toLowerCase() === "json") return "JSON 보존 매핑입니다.";
+  if (column.type.toLowerCase() === "json") return "JSON 구조 유지 매핑입니다.";
   return "원본 값을 그대로 사용합니다.";
 }
 
