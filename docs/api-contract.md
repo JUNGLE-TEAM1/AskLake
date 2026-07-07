@@ -890,6 +890,13 @@ type QueryAiSuggestionRequest = {
   mode?: "draft_sql";
   prompt: string;
   selectedDatasetIds: string[];
+  selectedDatasets?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    layer: string;
+    schema: Array<[name: string, type: string]>;
+  }>;
 };
 ```
 
@@ -900,8 +907,24 @@ Request 예시:
   "baseDatasetId": "ds_orders_clean",
   "currentQuery": "SELECT order_id, customer_id FROM orders_clean LIMIT 100;",
   "mode": "draft_sql",
-  "prompt": "고객별 주문 금액 합계를 보고 싶다",
-  "selectedDatasetIds": ["ds_orders_clean"]
+  "prompt": "고객별 주문과 클릭 이벤트를 조인해서 보고 싶다",
+  "selectedDatasetIds": ["ds_orders_clean", "ds_clickstream_events"],
+  "selectedDatasets": [
+    {
+      "id": "ds_orders_clean",
+      "name": "orders_clean",
+      "description": "전체 채널 통합 고객 주문 정제 데이터",
+      "layer": "GOLD",
+      "schema": [["order_id", "string"], ["customer_id", "string"], ["total_amount", "decimal"]]
+    },
+    {
+      "id": "ds_clickstream_events",
+      "name": "clickstream_events",
+      "description": "웹/모바일 앱 실시간 클릭 스트림 이벤트",
+      "layer": "SILVER",
+      "schema": [["event_id", "string"], ["user_id", "string"], ["event_time", "timestamp"]]
+    }
+  ]
 }
 ```
 
@@ -936,10 +959,12 @@ Response 예시:
 Validation:
 
 - `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
+- frontend는 사용자가 선택한 모든 dataset metadata를 `selectedDatasets`로 함께 전달합니다.
 - backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
-- 현재 Query AI 생성은 안전한 단일 physical dataset SQL 초안을 우선합니다. JOIN SQL 초안 생성은 별도 Query AI 작업에서 prompt/검증 정책을 확장합니다.
+- 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
+- frontend는 live 응답이 선택 reference JOIN을 포함하지 않는 경우 동일한 선택 metadata로 JOIN SQL 초안 fallback을 적용할 수 있습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
 - AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.

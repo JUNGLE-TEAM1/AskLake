@@ -30,21 +30,60 @@ const PREVIEW_LIMIT = 100;
 
 export async function generateQueryAiSuggestion(request: QueryAiRequest): Promise<QueryAiSuggestion> {
   if (!apiConfig.useMock) {
-    return apiClient.post<QueryAiSuggestion>("/api/query/ai-suggestions", {
+    const suggestion = await apiClient.post<QueryAiSuggestion>("/api/query/ai-suggestions", {
       baseDatasetId: request.baseDataset.id,
       currentQuery: request.query,
       mode: request.mode,
       prompt: request.prompt,
       selectedDatasetIds: request.selectedDatasets.map((dataset) => dataset.id),
+      selectedDatasets: request.selectedDatasets.map((dataset) => ({
+        description: dataset.description,
+        id: dataset.id,
+        layer: dataset.layer,
+        name: dataset.name,
+        schema: dataset.schema,
+      })),
     });
+    return ensureSelectedJoinSuggestion(request, suggestion);
   }
 
   await new Promise((resolve) => window.setTimeout(resolve, 180));
   return draftSql(request);
 }
 
-function draftSql({ baseDataset, prompt }: QueryAiRequest): QueryAiSuggestion {
+function ensureSelectedJoinSuggestion(request: QueryAiRequest, suggestion: QueryAiSuggestion) {
+  const referenceDatasets = request.selectedDatasets.filter((dataset) => dataset.id !== request.baseDataset.id);
+
+  if (referenceDatasets.length === 0 || suggestionIncludesSelectedJoin(suggestion.sql, referenceDatasets)) {
+    return suggestion;
+  }
+
+  const fallback = buildJoinSuggestion(request.baseDataset, referenceDatasets);
+  if (!fallback) return suggestion;
+
+  return {
+    ...fallback,
+    notices: [
+      ...fallback.notices,
+      "live AI 응답이 선택 reference JOIN을 포함하지 않아 frontend JOIN 초안 fallback을 적용했습니다.",
+    ],
+  };
+}
+
+function suggestionIncludesSelectedJoin(sql: string | undefined, referenceDatasets: CatalogDataset[]) {
+  if (!sql || !/\bjoin\b/i.test(sql)) return false;
+
+  const normalizedSql = sql.toLowerCase();
+  return referenceDatasets.some((dataset) => normalizedSql.includes(dataset.name.toLowerCase()));
+}
+
+function draftSql({ baseDataset, prompt, selectedDatasets }: QueryAiRequest): QueryAiSuggestion {
   const intent = normalizeText(prompt);
+  const referenceDatasets = selectedDatasets.filter((dataset) => dataset.id !== baseDataset.id);
+  const joinSuggestion = buildJoinSuggestion(baseDataset, referenceDatasets);
+
+  if (joinSuggestion) return joinSuggestion;
+
   const dimensionColumn = pickDimensionColumn(baseDataset, intent);
   const metricColumn = pickMetricColumn(baseDataset, intent);
   const wantsCount = /건수|몇\s*개|count|개수|수량/.test(intent);
@@ -118,6 +157,82 @@ function draftSql({ baseDataset, prompt }: QueryAiRequest): QueryAiSuggestion {
     sql,
     title: "기본 조회 SQL 초안",
   };
+}
+
+function buildJoinSuggestion(baseDataset: CatalogDataset, referenceDatasets: CatalogDataset[]): QueryAiSuggestion | null {
+  if (referenceDatasets.length === 0) return null;
+
+  const selectedDatasets = [baseDataset, ...referenceDatasets].slice(0, 4);
+  const joinTargets = selectedDatasets.slice(1);
+  const joinKeys = joinTargets.flatMap((targetDataset) => {
+    const joinKey = findJoinKey(baseDataset, targetDataset);
+    return joinKey ? [{ ...joinKey, targetDataset }] : [];
+  });
+  const selectColumns = selectedDatasets.flatMap((dataset, datasetIndex) => {
+    const alias = aliasFor(datasetIndex);
+    return dataset.schema
+      .slice(0, datasetIndex === 0 ? 3 : 2)
+      .map(([column]) => `  ${alias}.${column} AS ${alias}_${column}`);
+  }).slice(0, 8);
+  const joins = joinTargets.map((targetDataset, index) => {
+    const joinKey = joinKeys.find((key) => key.targetDataset.id === targetDataset.id);
+    const targetAlias = aliasFor(index + 1);
+
+    if (!joinKey) return `-- ${targetDataset.name}: 조인 키 후보를 찾지 못해 수동 확인 필요`;
+    return `LEFT JOIN ${targetDataset.name} ${targetAlias}\n  ON b.${joinKey.leftColumn} = ${targetAlias}.${joinKey.rightColumn}`;
+  });
+  const sql = [
+    "SELECT",
+    selectColumns.length ? selectColumns.join(",\n") : "  b.*",
+    `FROM ${baseDataset.name} b`,
+    joins.join("\n"),
+    `LIMIT ${PREVIEW_LIMIT};`,
+  ].filter(Boolean).join("\n");
+  const notices = [
+    `${selectedDatasets.length}개 선택 테이블 metadata를 함께 참조했습니다.`,
+    ...joinKeys.map((key) => `${key.leftColumn} = ${key.rightColumn} 조인 후보를 사용했습니다.`),
+    ...joinTargets.filter((targetDataset) => !joinKeys.some((key) => key.targetDataset.id === targetDataset.id)).map((targetDataset) => `${targetDataset.name} 조인 키 후보를 찾지 못했습니다.`),
+    "실행 전 SQL preflight와 read-only guard를 다시 통과해야 합니다.",
+  ];
+
+  return {
+    body: `${baseDataset.name}을 기준으로 ${joinTargets.map((dataset) => dataset.name).join(", ")}를 조인하는 SQL 초안입니다.`,
+    mode: "draft_sql",
+    notices,
+    sql,
+    title: "선택 테이블 JOIN SQL 초안",
+  };
+}
+
+function findJoinKey(leftDataset: CatalogDataset, rightDataset: CatalogDataset) {
+  const leftColumns = leftDataset.schema.map(([name]) => name);
+  const rightColumns = rightDataset.schema.map(([name]) => name);
+  const exactMatch = leftColumns.find((leftColumn) => rightColumns.includes(leftColumn));
+
+  if (exactMatch) return { leftColumn: exactMatch, rightColumn: exactMatch };
+
+  const aliases: Array<[string, string]> = [
+    ["customer_id", "user_id"],
+    ["user_id", "customer_id"],
+    ["product_id", "sku_id"],
+    ["sku_id", "product_id"],
+    ["order_date", "event_time"],
+    ["sales_date", "order_date"],
+  ];
+
+  for (const [leftAlias, rightAlias] of aliases) {
+    if (leftColumns.includes(leftAlias) && rightColumns.includes(rightAlias)) {
+      return { leftColumn: leftAlias, rightColumn: rightAlias };
+    }
+  }
+
+  const leftIdColumn = leftColumns.find((column) => column.endsWith("_id"));
+  const rightIdColumn = rightColumns.find((column) => column.endsWith("_id"));
+  return leftIdColumn && rightIdColumn ? { leftColumn: leftIdColumn, rightColumn: rightIdColumn } : null;
+}
+
+function aliasFor(index: number) {
+  return ["b", "j1", "j2", "j3"][index] ?? `j${index}`;
 }
 
 function pickDimensionColumn(dataset: CatalogDataset, intent: string) {
