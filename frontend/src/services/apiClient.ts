@@ -32,10 +32,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         message: response.statusText || "API request failed",
       },
     };
-    const payload = await response.json().catch(() => fallback) as ApiErrorResponse;
+    const payload = await response.json().catch(() => fallback) as Partial<ApiErrorResponse>;
+    const validationDetail = Array.isArray(payload.detail)
+      ? payload.detail
+        .map((item) => {
+          if (!item || typeof item !== "object") return String(item);
+          const record = item as { loc?: unknown[]; msg?: string };
+          const location = Array.isArray(record.loc) ? record.loc.join(".") : "";
+          return location ? `${location}: ${record.msg ?? "Invalid value"}` : record.msg ?? "Invalid value";
+        })
+        .join(" / ")
+      : typeof payload.detail === "string" ? payload.detail : "";
+    const detailMessage = typeof payload.error?.details?.message === "string" ? payload.error.details.message : "";
     throw new ApiError({
       code: payload.error?.code ?? fallback.error.code,
-      message: payload.error?.message ?? fallback.error.message,
+      message: detailMessage || payload.error?.message || validationDetail || fallback.error.message,
       status: response.status,
     });
   }

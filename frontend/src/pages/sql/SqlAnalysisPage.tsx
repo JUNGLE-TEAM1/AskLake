@@ -26,6 +26,7 @@ import {
   buildDefaultDerivedDatasetDescription,
   buildDefaultDerivedDatasetName,
   buildDefaultDerivedDatasetTags,
+  buildJoinDraftQuery,
   buildDefaultQuery,
   escapeCsvCell,
   formatDuration,
@@ -439,11 +440,12 @@ export function SqlAnalysisPage({
       setResultDraft(resultDraft);
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요.";
       setPreflightResult({
         key: queryValidationKey,
         canExecute: false,
-        messages: [{ tone: "error", text: "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+        messages: [{ tone: "error", text: message }],
       });
       onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
@@ -565,6 +567,41 @@ export function SqlAnalysisPage({
       `/api/query/context/datasets/${targetDataset.id}/select`,
       targetDataset.id,
     );
+  };
+
+  const joinSelectedDataset = (targetDataset: CatalogDataset) => {
+    if (!baseDataset || targetDataset.id === baseDataset.id) {
+      selectSchemaDataset(targetDataset);
+      return;
+    }
+    const joinDraft = buildJoinDraftQuery({
+      allDatasets: sqlCandidateDatasets,
+      query,
+      selectedDatasets: selectedContextDatasets.filter((item) => item.id !== targetDataset.id),
+      targetDataset,
+    });
+    setReferenceDatasetIds((ids) => {
+      const nextIds = new Set(ids);
+      nextIds.add(targetDataset.id);
+      joinDraft.addedDatasetIds.forEach((id) => {
+        if (id !== baseDataset.id) nextIds.add(id);
+      });
+      return Array.from(nextIds);
+    });
+    updateQuery(joinDraft.query);
+    setCursorIndex(joinDraft.query.length);
+    setOpenSchemaDatasetId(targetDataset.id);
+    setExpandedDatasetId(null);
+    onAction(
+      joinDraft.joined ? "analysis.context.dataset_joined" : "analysis.context.dataset_selected",
+      `/api/query/context/datasets/${targetDataset.id}/join`,
+      targetDataset.id,
+    );
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(joinDraft.query.length, joinDraft.query.length);
+      syncLineNumberScroll();
+    });
   };
 
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
@@ -991,6 +1028,7 @@ export function SqlAnalysisPage({
             </button>
             <DashboardPage
               dataset={baseDataset}
+              datasets={selectedContextDatasets}
               entry={dashboardDialogEntry}
               sqlResult={resultDraft}
               onAction={onAction}
@@ -1002,6 +1040,7 @@ export function SqlAnalysisPage({
         dataset={schemaDataset}
         selectedDatasets={selectedContextDatasets}
         onColumnClick={insertColumnName}
+        onJoinDataset={joinSelectedDataset}
         onSelectedDatasetRemove={removeSelectedDataset}
         onSchemaSelect={selectSchemaDataset}
       />

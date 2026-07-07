@@ -24,7 +24,7 @@ export const watermarkWindowModeLabels: Record<WatermarkWindowMode, string> = {
 };
 
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
-  const targetDataset = draft.target.datasetName.trim() || "unnamed_dataset";
+  const targetDataset = draft.target.datasetName.trim();
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   const watermarkPolicy = normalizeWatermarkPolicy(draft.schedule.watermarkPolicy);
   return {

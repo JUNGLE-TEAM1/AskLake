@@ -179,12 +179,14 @@ function buildSqlDashboardDataset(sqlResult: SqlResultDraft): DashboardDatasetOp
 
 export function DashboardPage({
   dataset,
+  datasets: catalogDatasets = [],
   entry,
   sqlResult,
   onAction,
   onRuntimeNavigate,
 }: {
   dataset: CatalogDataset;
+  datasets?: CatalogDataset[];
   entry: DashboardEntry;
   sqlResult: SqlResultDraft | null;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -300,11 +302,19 @@ export function DashboardPage({
   const activeDashboardId = selectedDashboard?.id ?? dashboardId;
   const activeDashboardTitle = selectedDashboard?.name ?? dashboardTitle;
   const activeDashboardWidgets = selectedDashboard?.widgets?.length ? selectedDashboard.widgets : snapshotWidgets;
+  const dashboardDatasetFallbacks = useMemo(() => {
+    const seen = new Set<string>();
+    return [dataset, ...catalogDatasets].filter((catalogDataset) => {
+      if (seen.has(catalogDataset.id)) return false;
+      seen.add(catalogDataset.id);
+      return true;
+    });
+  }, [catalogDatasets, dataset]);
   const {
     datasets: dashboardDatasets,
     error: dashboardDatasetsError,
     isLoading: dashboardDatasetsLoading,
-  } = useDashboardDatasets();
+  } = useDashboardDatasets(dashboardDatasetFallbacks);
   const availableDashboardDatasets = useMemo(
     () => sqlDashboardDataset
       ? [sqlDashboardDataset, ...dashboardDatasets.filter((item) => item.id !== sqlDashboardDataset.id)]
@@ -608,7 +618,7 @@ export function DashboardPage({
       setSelectedWidgetId(null);
       setSelectedRuntimePageId(null);
       onAction("dashboard.created", "/api/dashboards", nextDashboard.id);
-      openRuntimeDashboard(nextDashboard.id, "published");
+      openRuntimeDashboard(nextDashboard.id, "draft");
     } catch (error) {
       const message = error instanceof Error ? error.message : "대시보드 생성에 실패했습니다.";
       setDashboardCreateError(message);

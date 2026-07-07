@@ -5089,7 +5089,12 @@ export function ReviewPage({
     ["실패 재시도", request.retryPolicySummary ? "유효함" : "확인 필요"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
   ];
-  const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
+  const canCreate = draft.source.connectionStatus === "success"
+    && includedReviewColumns.length > 0
+    && Boolean(request.sourceType.trim())
+    && Boolean(request.sourceLabel.trim())
+    && Boolean(request.targetDataset.trim())
+    && Boolean(request.owner.trim());
   const createDisabled = createPending || !canCreate;
   const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
