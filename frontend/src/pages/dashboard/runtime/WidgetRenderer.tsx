@@ -597,6 +597,7 @@ function VisualizationRequestWidget({
     setMessage(null);
     setRequestTone(null);
     setIsSaving(true);
+    assistantContext?.onWorkingWidgetChange?.(widget.id);
     try {
       if (!isDashboardAssistantConfigured()) {
         await onPatchConfig({ prompt: nextPrompt });
@@ -637,6 +638,7 @@ function VisualizationRequestWidget({
       setMessage(error instanceof Error ? error.message : "Assistant 요청에 실패했습니다.");
     } finally {
       setIsSaving(false);
+      assistantContext?.onWorkingWidgetChange?.(null);
     }
   };
 

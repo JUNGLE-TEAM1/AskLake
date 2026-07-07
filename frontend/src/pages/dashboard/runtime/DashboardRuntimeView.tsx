@@ -183,6 +183,7 @@ export function DashboardRuntimeView({
   const assistantPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
+  const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const {
     canRedoLayout,
@@ -298,8 +299,10 @@ export function DashboardRuntimeView({
   });
   const assistantContext = {
     dashboardId: draftRuntime?.dashboard.id ?? title,
+    onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
     selectedWidgetId,
+    workingWidgetId: aiWorkingWidgetId,
     widgets: selectedDraftWidgets,
   };
   const queueAssistantPromptText = (text: string) => {
@@ -462,6 +465,7 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
+              onWorkingWidgetChange={setAiWorkingWidgetId}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}

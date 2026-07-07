@@ -18,6 +18,7 @@ type DashboardAssistantPanelProps = {
   dashboardId?: string;
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
+  onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;
@@ -51,6 +52,7 @@ export function DashboardAssistantPanel({
   dashboardId,
   onCreateWidget,
   onUpdateWidget,
+  onWorkingWidgetChange,
   pageId,
   promptInsertion,
   selectedWidget,
@@ -92,6 +94,7 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
+    onWorkingWidgetChange?.(selectedWidget?.id ?? null);
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
@@ -134,6 +137,7 @@ export function DashboardAssistantPanel({
       ]);
     } finally {
       setIsSubmitting(false);
+      onWorkingWidgetChange?.(null);
     }
   };
 
