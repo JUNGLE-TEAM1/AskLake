@@ -133,7 +133,7 @@ function clampInteger(value: number, fallback: number, min: number, max: number)
 }
 
 function scheduleModeFromLabel(label: string): ScheduleDraft["mode"] {
-  if (label.includes("수동")) return "manual";
+  if (label.includes("수동") || label.includes("스케줄 없음")) return "manual";
   if (label.includes("1회")) return "once";
   return "repeat";
 }
