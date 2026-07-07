@@ -34,11 +34,11 @@ import {
   Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
-import { CreationFlowLayout, CreationSummaryPanel, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
-import { formatOverlapPolicySummary, formatRetryPolicySummary, toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
@@ -63,7 +63,6 @@ export function SchedulePage({
   onModeChange,
   onPrev,
   onNext,
-  onSave,
 }: {
   draftSchedule: ScheduleDraft;
   mode: ScheduleFlowId;
@@ -87,7 +86,6 @@ export function SchedulePage({
   const scheduleTimezone = draftSchedule.timezone || SCHEDULE_TIMEZONE;
   const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
   const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
-  const scheduleSummaryRows = buildScheduleSummaryRows(selectedOption, repeatDraft, draftSchedule);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
@@ -107,14 +105,10 @@ export function SchedulePage({
     applyScheduleDraft();
     onNext();
   };
-  const saveSchedule = () => {
-    applyScheduleDraft();
-    onSave();
-  };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" summaryRows={scheduleSummaryRows} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
         <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
         <section className="panel">
@@ -524,27 +518,6 @@ function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraf
 function formatScheduleSummary(option: ScheduleOptionId, label: string, timezone: string) {
   if (option === "skip") return "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행";
   return `반복 실행 · ${label} · ${timezone} · 저장 후 다음 예약부터 시작`;
-}
-
-function buildScheduleSummaryRows(option: ScheduleOptionId, repeat: RepeatScheduleDraft, schedule: ScheduleDraft): Array<[string, string]> {
-  const label = formatScheduleLabel(option, repeat);
-  const retryLabel = formatRetryPolicySummary(schedule.retryPolicy);
-
-  if (option === "skip") {
-    return [
-      ["시작 조건", "필요할 때 즉시 실행"],
-      ["다음 실행", "없음"],
-      ["실패 재시도", retryLabel],
-      ["상태", "저장 대기"],
-    ];
-  }
-
-  return [
-    ["실행 일정", `${label} · ${schedule.timezone || SCHEDULE_TIMEZONE}`],
-    ["다음 실행", "저장 시점 기준 계산"],
-    ["겹침 처리", formatOverlapPolicySummary(schedule.overlapPolicy)],
-    ["실패 재시도", retryLabel],
-  ];
 }
 
 function parseRepeatScheduleLabel(label: string) {
