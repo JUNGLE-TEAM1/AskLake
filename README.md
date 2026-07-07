@@ -13,6 +13,8 @@ docs/       # Product, architecture, API, validation, and team guardrails
 ## Quick Start
 
 ```powershell
+docker compose up -d postgres
+
 cd backend
 npm install
 npm run verify
@@ -32,6 +34,7 @@ npm run dev
 ```
 
 Initial ETL jobs and catalog datasets are intentionally empty. Create a pipeline from the UI to add them.
+The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
 ## Validation
 

@@ -81,6 +81,10 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
 Dashboard redesign부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
+수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
+수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
+live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
+live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
 
 ## 6) Job Run State Contract
 
@@ -158,7 +162,7 @@ FastAPI 현재 구현 범위:
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/jobs`
 - `GET /api/etl/jobs`
-- `GET /api/etl/jobs/{jobId}`
+- `GET /api/etl/jobs/{jobId}`: 수집/처리 상세 hydrate와 실행 중 job 최종 상태 polling에 사용
 - `POST /api/etl/jobs/{jobId}/commands`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`

@@ -638,10 +638,10 @@ export function useAskLakeData({
     onFlowChange("jobDetail");
   };
 
-  const openJobDag = (job: JobRowData) => {
+  const openJobRuns = (job: JobRowData) => {
     setSelectedJob(job);
-    writeAuditLog("etl.job.dag_opened", `/api/etl/jobs/${job.id}/dag`, job.id);
-    onFlowChange("jobDag");
+    writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+    onFlowChange("jobRuns");
   };
 
   const openDataset = (dataset: CatalogDataset) => {
@@ -672,8 +672,8 @@ export function useAskLakeData({
     jobs,
     openDataset,
     openDatasetInSql,
-    openJobDag,
     openJobDetail,
+    openJobRuns,
     runsByJobId,
     selectedDataset,
     selectedJob,

@@ -6,6 +6,7 @@ const restFixturePort = Number(process.env.ASKLAKE_SOURCE_REST_PORT || 19083);
 const restFixtureUrl = `http://127.0.0.1:${restFixturePort}`;
 const env = {
   ...process.env,
+  ASKLAKE_RESET_METADATA_ON_START: "true",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
   MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
@@ -158,12 +159,12 @@ try {
 }
 
 async function waitForHealth() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const health = await get("/api/health");
       if (health.ok) return;
     } catch {
-      await sleep(250);
+      await sleep(500);
     }
   }
   throw new Error("Backend did not become healthy.");

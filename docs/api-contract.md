@@ -41,10 +41,12 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=true
+DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
 - `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
 
@@ -552,11 +554,25 @@ Response 예시:
 | `pause` | `etl.job.pause_requested` | `paused` |
 | `cancel` | `etl.run.cancel_requested` | `scheduled`, `canceled`, 또는 이전 안정 상태 |
 
+`run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+
 Validation:
 
 - 존재하지 않는 job은 `404 NOT_FOUND`.
 - 이미 실행 중인데 다시 `run`하면 `409 CONFLICT`.
 - 완료/취소 불가 상태에서 `cancel`하면 `422 INVALID_JOB_STATE`.
+
+### 7.2.1 작업 단건 조회
+
+`GET /api/etl/jobs/{jobId}`
+
+Response `200 OK`:
+
+```ts
+type GetJobResponse = JobRowData;
+```
+
+실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
 
 ### 7.3 읽기 전용 SQL 실행
 

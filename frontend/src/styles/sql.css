@@ -695,6 +695,13 @@
   padding: 0 12px;
 }
 
+.sql-result-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .sql-result-toolbar span {
   color: #64748b;
   font-size: 12px;
@@ -713,6 +720,7 @@
   font-size: 12px;
   font-weight: 800;
   padding: 0 9px;
+  white-space: nowrap;
 }
 
 .sql-result-scroll {
