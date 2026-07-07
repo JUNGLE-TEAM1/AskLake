@@ -59,6 +59,57 @@ async function runSmoke() {
   assert(previewRun.runId, "SQL preview should return runId.");
   assert(previewRun.rowCount === 1, "SQL preview should respect the request limit.");
   assert(previewRun.rows.length === 1, "SQL preview should return one preview row.");
+  assert(
+    JSON.stringify(previewRun.columns) === JSON.stringify(["order_id", "customer_id", "order_date", "total_amount", "status"]),
+    `SQL preview should return projected columns, got ${previewRun.columns.join(", ")}.`,
+  );
+
+  const filteredProjectionRun = await post("/api/query/runs", {
+    baseDatasetId: seedDatasetId,
+    datasetId: seedDatasetId,
+    limit: 2,
+    mode: "preview",
+    query: "SELECT customer_id FROM orders_clean WHERE status = 'paid' ORDER BY order_id LIMIT 2",
+    referenceDatasetIds: [],
+    validationKey: `${seedDatasetId}:filtered-projection`,
+  });
+  assert(
+    JSON.stringify(filteredProjectionRun.columns) === JSON.stringify(["customer_id"]),
+    `SQL preview should execute projection, got ${filteredProjectionRun.columns.join(", ")}.`,
+  );
+  assert(
+    JSON.stringify(filteredProjectionRun.rows) === JSON.stringify([["CUS-204"], ["CUS-204"]]),
+    `SQL preview should execute WHERE/ORDER/LIMIT, got ${JSON.stringify(filteredProjectionRun.rows)}.`,
+  );
+
+  const joinRun = await post("/api/query/runs", {
+    baseDatasetId: seedDatasetId,
+    datasetId: seedDatasetId,
+    limit: 3,
+    mode: "preview",
+    query: [
+      "SELECT o.order_id, c.customer_name, c.segment",
+      "FROM orders_clean o",
+      "JOIN customers_clean c ON o.customer_id = c.customer_id",
+      "WHERE c.segment = 'VIP'",
+      "ORDER BY o.order_id",
+      "LIMIT 3",
+    ].join("\n"),
+    referenceDatasetIds: ["ds_customers_clean"],
+    validationKey: `${seedDatasetId}:join-customers`,
+  });
+  assert(
+    JSON.stringify(joinRun.columns) === JSON.stringify(["order_id", "customer_name", "segment"]),
+    `JOIN preview should return joined projected columns, got ${joinRun.columns.join(", ")}.`,
+  );
+  assert(
+    JSON.stringify(joinRun.rows) === JSON.stringify([
+      ["ORD-1001", "김민준", "VIP"],
+      ["ORD-1003", "김민준", "VIP"],
+      ["ORD-1004", "Haruto Sato", "VIP"],
+    ]),
+    `JOIN preview should execute across selected datasets, got ${JSON.stringify(joinRun.rows)}.`,
+  );
 
   const mutationError = await postExpectError("/api/query/runs", {
     datasetId: seedDatasetId,

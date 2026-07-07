@@ -858,6 +858,7 @@ Validation:
 
 - `datasetId`, `query`는 필수입니다.
 - `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
+- Preview runtime은 선택된 catalog dataset을 DuckDB table context로 등록하고 projection/filter/group/order/limit/JOIN을 실제 SQL로 실행합니다.
 - `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
 - frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
 - 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
@@ -938,7 +939,7 @@ Validation:
 - backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
-- 현재 preview runtime은 한 번에 하나의 physical dataset만 실행하므로 JOIN 또는 multi-table SQL 초안은 반환하지 않거나 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 현재 Query AI 생성은 안전한 단일 physical dataset SQL 초안을 우선합니다. JOIN SQL 초안 생성은 별도 Query AI 작업에서 prompt/검증 정책을 확장합니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
 - `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
 - AI 응답이 `LIMIT`을 생략하거나 100을 초과하면 backend가 preview 기준 `LIMIT 100`으로 보정한 뒤 검증합니다.
