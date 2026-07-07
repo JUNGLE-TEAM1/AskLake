@@ -159,6 +159,21 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .xflow-review-kv,
+  .target-xflow-form-grid,
+  .target-xflow-split,
+  .xflow-review-validation {
+    grid-template-columns: 1fr;
+  }
+
+  .xflow-review-schema-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .xflow-review-schema-null {
+    display: none;
+  }
+
   .summary-panel,
   .validation-panel {
     max-width: 744px;
@@ -169,10 +184,6 @@
     position: static;
     max-height: none;
     margin-top: 0;
-  }
-
-  .review-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .connector-row,
