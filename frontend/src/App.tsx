@@ -5,7 +5,6 @@ import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
-import { Sidebar } from "./components/layout/Sidebar";
 import { Stepper } from "./components/layout/Stepper";
 import { Footer } from "./components/layout/Footer";
 import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
@@ -149,14 +148,6 @@ export function App() {
     () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
     [lastScheduleFlow],
   );
-  const activeNavId = useMemo<NavId>(() => {
-    if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
-    if (activeFlow === "sql") return "sql";
-    if (activeFlow === "dashboard") return "dashboard";
-    if (activeFlow === "ai") return "ai";
-    if (activeFlow === "admin") return "admin";
-    return "ingest";
-  }, [activeFlow]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
