@@ -10,10 +10,11 @@
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 취소 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
-| 4 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
-| 5 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
-| 6 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
-| 7 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
+| 5 | P1 | `GET /api/catalog/datasets` | 카탈로그 목록 hydrate |
+| 6 | P1 | `GET /api/catalog/datasets/{datasetId}` | 데이터셋 상세 hydrate |
+| 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
+| 8 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -22,6 +23,7 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 
 - 공통 fetch client: `frontend/src/services/apiClient.ts`
 - Pipeline create/run/query client: `frontend/src/services/pipelineApi.ts`
+- Query AI client: `frontend/src/services/queryAiService.ts`
 - Source connector client: `frontend/src/services/sourceConnectorService.ts`
 - 프론트 데이터 상태: `frontend/src/hooks/useAskLakeData.ts`
 - 감사 로그/토스트 상태: `frontend/src/hooks/useAuditLogs.ts`
@@ -649,7 +651,84 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
-### 7.4 SQL 결과 기반 Lake Dataset 생성
+### 7.4 Query AI SQL 초안 생성
+
+`POST /api/query/ai-suggestions`
+
+프론트 함수:
+
+- `generateQueryAiSuggestion({ baseDataset, selectedDatasets, prompt, query })`
+
+Request:
+
+```ts
+type QueryAiSuggestionRequest = {
+  baseDatasetId?: string;
+  currentQuery?: string;
+  mode?: "draft_sql";
+  prompt: string;
+  selectedDatasetIds: string[];
+};
+```
+
+Request 예시:
+
+```json
+{
+  "baseDatasetId": "ds_orders_clean",
+  "currentQuery": "SELECT order_id, customer_id FROM orders_clean LIMIT 100;",
+  "mode": "draft_sql",
+  "prompt": "고객별 주문 금액 합계를 보고 싶다",
+  "selectedDatasetIds": ["ds_orders_clean"]
+}
+```
+
+Response `200 OK`:
+
+```ts
+type QueryAiSuggestionResponse = {
+  body: string;
+  mode: "draft_sql";
+  model?: string | null;
+  notices: string[];
+  sql: string;
+  title: string;
+};
+```
+
+Response 예시:
+
+```json
+{
+  "body": "orders_clean에서 customer_id별 total_amount 합계를 조회하는 읽기 전용 SQL 초안입니다.",
+  "mode": "draft_sql",
+  "model": "gpt-4.1-mini",
+  "notices": [
+    "AI가 생성한 초안입니다. 실행 전 기존 점검 결과를 확인해 주세요."
+  ],
+  "sql": "SELECT customer_id, SUM(total_amount) AS total_amount_sum\nFROM orders_clean\nGROUP BY customer_id\nORDER BY total_amount_sum DESC\nLIMIT 100;",
+  "title": "고객별 주문 금액 SQL 초안"
+}
+```
+
+Validation:
+
+- `prompt`와 최소 1개 이상의 `selectedDatasetIds`가 필수입니다.
+- backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
+- AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
+- AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
+- `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 허용하지 않습니다.
+- AI 응답이 `LIMIT`을 생략하면 backend가 preview 기준 `LIMIT 100`을 붙인 뒤 검증합니다.
+- OpenAI 호출 실패는 공통 error envelope로 반환하고, 프론트는 기존 Query AI 오류 문구를 표시합니다.
+
+프론트 기대 동작:
+
+- Query AI 제안은 자동 실행하지 않고 SQL editor 적용 버튼을 통해서만 반영합니다.
+- editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
+- mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
+
+### 7.5 SQL 결과 기반 Lake Dataset 생성
 
 `POST /api/catalog/derived-datasets`
 
