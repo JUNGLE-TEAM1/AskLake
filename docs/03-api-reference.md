@@ -52,7 +52,7 @@ Canonical status values:
 
 | Resource | Field | Values |
 | --- | --- | --- |
-| Job | `status` | `scheduled`, `running`, `failed`, `paused`, `canceled` |
+| Job | `status` | `scheduled`, `running`, `failed`, `paused`, `canceled`, `stopped` |
 | Run | `status` | `queued`, `running`, `success`, `failed`, `canceled` |
 | Dataset | `status` | `available`, `approval_required` |
 | Dataset | `freshness` | `latest`, `stale`, `approval` |
@@ -65,7 +65,7 @@ Canonical status values:
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
-| `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 취소 | `docs/api-contract.md` |
+| `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
@@ -129,12 +129,12 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
 | SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
-| Query AI 보조 | mock mode는 로컬 초안 fallback, live mode는 FastAPI/OpenAI 호출 | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | mock mode는 로컬 초안 fallback, live mode는 FastAPI/OpenAI 호출 | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 `prepareSqlDatasetJobDraft`로 Review에 넘긴 뒤 `POST /api/etl/jobs`; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
 | 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
 
-반복 실행 schedule은 `scheduleLabel`에 더해 `scheduleSummary`, `startDate`, `endDate`, `timezone`을 create request에 포함해 Review와 생성 payload가 같은 값을 보게 한다.
+Schedule UI는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`와 `반복 실행` 두 선택지만 사용한다. 스케줄링을 건너뛰면 사용자가 `POST /api/etl/jobs/{jobId}/commands`의 `run` command action으로 필요할 때 1회 Run을 만든다. 반복 실행 화면은 데모 흐름을 위해 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, `endDate`, `nextRunUtc`, `overlapPolicy`, `watermarkPolicy`는 create request에 보존하되 UI에서는 기본값을 사용한다. 기본 `overlapPolicy`는 `skip_if_running`이며, 재시도는 다음 예약 시각 계산을 밀지 않고 현재 Run 안에서 2배 지수 백오프 정책으로 처리한다.
 
 ## 8) Pair Handoff Contracts
 
@@ -338,7 +338,7 @@ Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived 
 
 ```ts
 type JobCommandResponse = {
-  action: "etl.run.requested" | "etl.run.retry_requested" | "etl.job.pause_requested" | "etl.run.cancel_requested";
+  action: "etl.run.requested" | "etl.run.retry_requested" | "etl.job.pause_requested" | "etl.run.cancel_requested" | "etl.schedule.stop_requested";
   apiPath: string;
   job?: JobRowData;
   run?: {
@@ -379,7 +379,7 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 - 같은 `run.runId`가 다시 들어오면 기존 Run을 교체한다.
 - 새 Run이 들어오면 `selectedRunIdByJobId[job.id]`를 그 `run.runId`로 갱신한다.
 - `dagSteps`는 별도 `runId` 필드를 요구하지 않고, 같은 응답의 `run.runId` 기준으로 `dagStepsByRunId`에 저장한다.
-- DAG 화면은 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
+- Run History 안의 실행 흐름 카드는 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
 - History는 `selectRunForJob(jobId, runId)` action으로만 선택 Run을 바꾼다.
 - 초기 hydrate 시 `job.runHistory`는 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`는 최신 Run의 `runId`에 묶는다.
 - PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않고 frontend temp id `client:<jobId>:<timestamp>`를 만든 뒤, 서버 응답의 `run.runId`로 교체한다.

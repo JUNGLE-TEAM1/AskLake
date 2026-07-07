@@ -68,8 +68,12 @@ const initialDraftPipeline: DraftPipeline = {
     mode: "repeat",
     nextRun: "다음 예약 대기",
     retryPolicy: {
+      backoffMultiplier: 2,
+      backoffStrategy: "exponential",
       failureAction: "retry_then_fail",
+      initialRetryDelayMinutes: 1,
       maxRetries: 3,
+      maxRetryDelayMinutes: 30,
       retryIntervalMinutes: 10,
       timeoutMinutes: 60,
     },
@@ -424,6 +428,7 @@ function commandSuccessMessage(command: ServerJobCommand): string {
   if (command === "run") return "작업 실행 요청을 접수했습니다.";
   if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
   if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  if (command === "stopSchedule") return "다음 반복 예약을 중지했습니다.";
   return "작업 취소 요청을 접수했습니다.";
 }
 
