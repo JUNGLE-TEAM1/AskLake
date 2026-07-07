@@ -102,6 +102,7 @@ export function XFlowSchemaTransformEditor({
   const selectedBeforeCount = selectedBefore.size;
   const selectedAfterCount = selectedAfter.size;
   const selectedColumn = columns[selectedIndex];
+  const activeTransformCount = transformSteps.filter((step) => step.enabled !== false).length;
   const generatedTransformCode = useMemo(
     () => buildTransformAuthoringTemplate(transformMode, includedIndexes),
     [includedIndexes, transformMode],
@@ -643,7 +644,7 @@ export function XFlowSchemaTransformEditor({
       <section className="xflow-flow-toolbar" aria-label="schema transform actions">
         <div>
           <strong>{includedIndexes.length} output</strong>
-          <span>{transformSteps.filter((step) => step.enabled !== false).length} transform</span>
+          <span>{activeTransformCount} transform</span>
         </div>
         <div>
           <button className="secondary-button compact" type="button" onClick={() => setShowCodeWorkbench((current) => !current)}>
@@ -707,11 +708,15 @@ export function XFlowSchemaTransformEditor({
       {showOutputPreview ? (
       <section className="xflow-output-preview" aria-label="final output preview">
         <header>
-          <div>
+          <div className="xflow-output-title">
             <strong>최종 Output 미리보기</strong>
             <span>현재 target schema와 transform을 샘플 {outputPreviewRows.length}행에 적용한 결과입니다.</span>
           </div>
-          <em>{outputPreviewColumns.length} columns</em>
+          <div className="xflow-output-stats" aria-label="output preview stats">
+            <em><strong>{outputPreviewRows.length}</strong> rows</em>
+            <em><strong>{outputPreviewColumns.length}</strong> columns</em>
+            <em><strong>{activeTransformCount}</strong> transforms</em>
+          </div>
         </header>
         {outputPreviewTableRows.length > 0 ? (
           <OutputPreviewTable columns={outputPreviewColumns} rows={outputPreviewTableRows} />
@@ -728,7 +733,10 @@ function OutputPreviewTable({ columns, rows }: { columns: string[]; rows: Output
   const columnDefs = useMemo<ColumnDef<OutputPreviewRow>[]>(() => (
     columns.map((column, index) => ({
       accessorKey: outputPreviewColumnKey(column, index),
-      cell: (info) => <code>{formatOutputTableCell(info.getValue())}</code>,
+      cell: (info) => {
+        const value = formatOutputTableCell(info.getValue());
+        return <code title={value}>{value}</code>;
+      },
       header: column,
       id: outputPreviewColumnKey(column, index),
     }))
@@ -747,7 +755,7 @@ function OutputPreviewTable({ columns, rows }: { columns: string[]; rows: Output
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id}>
               {headerGroup.headers.map((header) => (
-                <th key={header.id}>
+                <th key={header.id} title={String(header.column.columnDef.header ?? "")}>
                   {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                 </th>
               ))}

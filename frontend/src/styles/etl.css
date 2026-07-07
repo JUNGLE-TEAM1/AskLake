@@ -6380,6 +6380,32 @@
   padding: 0;
 }
 
+.xflow-panel-header.target > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "title actions"
+    "meta actions";
+  align-items: center;
+  gap: 3px 12px;
+}
+
+.xflow-panel-header.target h3 {
+  grid-area: title;
+  margin-bottom: 0;
+}
+
+.xflow-panel-header.target > div > span {
+  grid-area: meta;
+}
+
+.xflow-panel-header.target .xflow-header-actions {
+  grid-area: actions;
+  align-self: center;
+  justify-content: flex-end;
+  margin-top: 0;
+}
+
 .xflow-header-actions button {
   display: inline-flex;
   align-items: center;
@@ -6413,7 +6439,7 @@
 }
 
 .xflow-panel-head.two {
-  grid-template-columns: 34px minmax(0, 1fr) minmax(132px, 0.36fr) 24px;
+  grid-template-columns: 34px minmax(0, 1fr) 24px;
 }
 
 .xflow-panel-head.two span:first-child {
@@ -6421,9 +6447,7 @@
 }
 
 .xflow-panel-head.two span:last-child {
-  grid-column: 3;
-  display: block;
-  text-align: right;
+  display: none;
 }
 
 .xflow-panel-head.target {
@@ -6463,7 +6487,7 @@
 }
 
 .xflow-column-row {
-  grid-template-columns: 34px minmax(0, 1fr) minmax(132px, 0.36fr) 24px;
+  grid-template-columns: 34px minmax(0, 1fr) 24px;
   padding: 0 18px;
 }
 
@@ -6568,7 +6592,7 @@
 }
 
 .xflow-source-chevron {
-  grid-column: 4;
+  grid-column: 3;
   justify-self: end;
   color: #94a3b8;
   transition: transform 120ms ease;
@@ -6580,7 +6604,7 @@
 
 .xflow-column-row em {
   grid-column: 3;
-  display: inline-flex;
+  display: none;
   justify-self: end;
   max-width: 150px;
   overflow: hidden;
@@ -6976,38 +7000,68 @@ input.xflow-checkbox:checked {
 
 .xflow-output-preview {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   border-top: 1px solid #e2e8f0;
   background: #fff;
-  padding: 12px 16px 14px;
+  padding: 10px 16px 14px;
 }
 
 .xflow-output-preview header {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
 }
 
-.xflow-output-preview header div {
+.xflow-output-title {
   display: grid;
   min-width: 0;
   gap: 2px;
 }
 
-.xflow-output-preview strong {
+.xflow-output-title strong {
   color: #0f172a;
   font-size: 13px;
   font-weight: 950;
 }
 
-.xflow-output-preview span,
-.xflow-output-preview em {
+.xflow-output-title span {
   color: #64748b;
   font-size: 11px;
-  font-style: normal;
   font-weight: 800;
+  line-height: 1.35;
+}
+
+.xflow-output-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.xflow-output-stats em {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+.xflow-output-stats strong {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 950;
 }
 
 .xflow-output-preview .source-json-sample-tree {
@@ -7016,43 +7070,76 @@ input.xflow-checkbox:checked {
 }
 
 .xflow-output-table-shell {
-  max-height: 260px;
+  position: relative;
+  max-height: 252px;
   min-width: 0;
   overflow: auto;
   border: 1px solid #dbe3ef;
   border-radius: 8px;
-  background: #fff;
+  background: linear-gradient(90deg, #fff 0%, #fff 88%, rgba(248, 250, 252, 0.72) 100%);
+  scrollbar-gutter: stable;
 }
 
 .xflow-output-table-shell table {
   width: max-content;
   min-width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 .xflow-output-table-shell th,
 .xflow-output-table-shell td {
+  width: 184px;
+  min-width: 132px;
   max-width: 260px;
   border-bottom: 1px solid #e2e8f0;
   border-right: 1px solid #e2e8f0;
-  padding: 8px 10px;
+  padding: 7px 10px;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
 .xflow-output-table-shell th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: #f8fafc;
   color: #475569;
   font-size: 11px;
   font-weight: 950;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.xflow-output-table-shell th:first-child,
+.xflow-output-table-shell td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  width: 88px;
+  min-width: 88px;
+  max-width: 112px;
+  background: #fff;
+  box-shadow: 1px 0 0 #e2e8f0;
+}
+
+.xflow-output-table-shell th:first-child {
+  z-index: 4;
+  background: #f8fafc;
+}
+
+.xflow-output-table-shell tbody tr:nth-child(even) td {
+  background: #fbfdff;
+}
+
+.xflow-output-table-shell tbody tr:nth-child(even) td:first-child {
+  background: #fbfdff;
+}
+
 .xflow-output-table-shell td code {
-  display: block;
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
   color: #047857;
@@ -7060,8 +7147,10 @@ input.xflow-checkbox:checked {
   font-size: 11px;
   font-weight: 850;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
 }
 
 .xflow-same-output {
