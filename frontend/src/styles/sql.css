@@ -577,8 +577,8 @@
 }
 
 .sql-table-rag-pill {
-  background: #f5f3ff;
-  color: #6d28d9;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .sql-table-name strong {
@@ -907,7 +907,7 @@
 }
 
 .sql-editor-actions .primary-button {
-  box-shadow: 0 8px 18px rgba(99, 106, 232, 0.22);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
 }
 
 .sql-editor-actions .secondary-button {
@@ -1363,6 +1363,13 @@
   padding: 0 12px;
 }
 
+.sql-result-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .sql-result-toolbar span {
   min-width: 0;
   flex: 1 1 auto;
@@ -1394,6 +1401,7 @@
   font-size: 12px;
   font-weight: 800;
   padding: 0 9px;
+  white-space: nowrap;
 }
 
 .sql-result-scroll {

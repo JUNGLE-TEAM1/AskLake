@@ -1,7 +1,7 @@
 import { ApiError } from "../types";
 import type { ApiErrorResponse } from "../types";
 
-const defaultApiBaseUrl = "http://localhost:8080";
+const defaultApiBaseUrl = import.meta.env.DEV ? "" : "http://localhost:8080";
 const useMockApi = String(import.meta.env.VITE_USE_MOCK_API ?? "true").toLowerCase() !== "false";
 
 export const apiConfig = {

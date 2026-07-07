@@ -1,6 +1,8 @@
 # AskLake Frontend
 
-AskLake frontend is a React/Vite app for the data lake workflow. By default it runs in frontend mock mode. Set `VITE_USE_MOCK_API=false` when you want source tests, schema inference, pipeline creation, job commands, and SQL runs to go through the backend at `VITE_API_BASE_URL`.
+AskLake frontend is a React/Vite app for the data lake workflow. By default it runs in frontend mock mode. Set `VITE_USE_MOCK_API=false` when you want source tests, schema inference, pipeline creation, job commands, SQL runs, and dashboard APIs to go through the backend.
+
+In local dev, `/api` is proxied to the FastAPI backend at `http://127.0.0.1:8080`; set `VITE_API_BASE_URL` only when you need to point at a different backend.
 
 ## Run
 
@@ -30,7 +32,7 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_USE_MOCK_API=false
 ```
 
-Restart the dev server after changing environment variables.
+`VITE_API_BASE_URL` is optional in local dev. Restart the dev server after changing environment variables.
 
 ## Main Files
 

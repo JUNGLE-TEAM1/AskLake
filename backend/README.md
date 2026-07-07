@@ -37,6 +37,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
 이 검증은 PostgreSQL이 `localhost:54328`에서 실행 중이어야 한다. `app.seed.seed_pair2_demo`로 commerce demo dataset(`orders_clean`, `customers_clean`, `order_items_clean`, `products_clean`, `payments_clean`)을 넣고, 별도 포트의 FastAPI 서버를 띄운 뒤 아래 흐름을 확인한다.
+대시보드 사이드바와 Assistant demo dataset은 `.venv/bin/python -m app.seed.seed_dashboard_demo`로 `catalog_datasets`에 넣을 수 있다.
 
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`

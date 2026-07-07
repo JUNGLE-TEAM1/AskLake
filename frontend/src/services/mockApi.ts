@@ -427,7 +427,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       status: "canceled",
       lastRun: "방금 취소",
       lastState: "취소됨",
-      nextRun: job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
+      nextRun: job.schedule === "스케줄 없음" || job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
       progress: undefined,
     },
     run,
@@ -495,7 +495,7 @@ export async function createDerivedDatasetFromSql({
   }
 
   const normalizedName = request.dataset.name.trim() || `${sourceDataset.name}_analysis`;
-  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL 쿼리 결과로 생성한 분석 데이터셋`;
   const normalizedTags = normalizeDerivedDatasetTags(request.dataset.tags);
   const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
   const dataset: CatalogDataset = {

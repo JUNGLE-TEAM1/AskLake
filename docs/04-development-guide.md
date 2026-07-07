@@ -11,7 +11,18 @@ npm run dev
 ```
 
 기본 dev server는 Vite 설정을 따른다.
+macOS Homebrew 환경에서는 Vite 5 dev server를 Node 22 LTS로 실행하는 것을 권장한다. Node 26/Homebrew dependency mismatch와 Vite cold start 지연이 겹쳤던 원인 분석은 [frontend-dev-server-incident-analysis.md](./frontend-dev-server-incident-analysis.md)를 참고한다.
+
+```bash
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+cd frontend
+npm run dev
+```
+
 Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
+Dashboard chart widget은 ApexCharts(`apexcharts`, `react-apexcharts`)를 사용한다. 현재 사용 목적은 부트캠프 파이널 프로젝트의 비영리 데모이며, 상업 배포나 제품화 단계로 전환될 경우 ApexCharts 공식 라이선스 조건을 다시 확인한다.
+Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종을 기준으로 둔다. 색상은 문자열이나 팔레트 이름이 아니라 차트 config의 `color: { colors: string[] }` 배열을 사용한다. `metric`과 `table`에는 색상 config를 보내지 않으며, 향후 AI widget 생성 기능도 같은 type/config 계약을 사용한다.
+Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며, 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
 ## 2) 빌드
 
@@ -24,13 +35,56 @@ npm run build
 
 ## 3) Backend Live Mode
 
-프론트는 기본적으로 live backend API를 호출한다. `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
+프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
+프론트 dev server는 같은 출처의 `/api` 요청을 FastAPI `http://127.0.0.1:8080`으로 proxy한다.
+
+```bash
+docker compose up -d postgres
+
+cd backend
+npm install
+npm run dev
+```
+
+`frontend/.env` 또는 로컬 env에는 API base URL만 둔다.
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
+
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
+현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
+설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
+
+```bash
+VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+```
+
+대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
+로컬 PostgreSQL에 대시보드 demo dataset이 없으면 아래 seed를 먼저 실행한다.
+
+```bash
+cd backend
+.venv/bin/python -m app.seed.seed_dashboard_demo
+```
+
+OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_ASSISTANT_ENABLED=true
+OPENAI_ASSISTANT_MODEL=gpt-4o-mini
+OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
+OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
+OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
+```
+
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+MongoDB Source connector는 local validation에서 host `mongosh` CLI로 컬렉션 목록과 제한 문서 샘플을 조회하므로, backend live mode 환경에는 MongoDB Shell이 설치되어 있어야 한다.
+Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
 ### FastAPI scaffold
 

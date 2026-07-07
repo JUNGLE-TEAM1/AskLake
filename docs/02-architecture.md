@@ -42,6 +42,7 @@ AskLake/
 | UI icons | lucide-react | implemented | package dependency |
 | Lineage graph | React Flow (`@xyflow/react`) | implemented | Catalog lineage modal |
 | Dashboard grid | react-grid-layout + react-resizable | implemented | draft editor canvas |
+| Dashboard charts | ApexCharts (`apexcharts`, `react-apexcharts`) | partial | runtime chart renderer and 8-type widget contract |
 | State | React hooks/local state | implemented | `useAskLakeData`, `useAuditLogs` |
 | API client | fetch wrapper | partial | `frontend/src/services/apiClient.ts` |
 | FastAPI backend | FastAPI + SQLAlchemy | partial | `backend/app/` |
@@ -87,6 +88,10 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 라우팅은 아직 React Router가 아니라 `frontend/src/App.tsx`의 상태 기반 navigation이 중심이다.
 Dashboard redesign부터 `/dashboards`, `/dashboards/:dashboardId`, `/dashboards/:dashboardId/edit`는 `App.tsx`의 browser history/path parser가 처리한다.
+수집/처리 목록은 TanStack Table 기반 표형 목록을 기본 화면으로 사용한다. 실행 이력에서는 같은 job의 run 목록, 실패 로그, 실행 단계 보기 모달을 함께 다룬다.
+수집/처리의 작업 진행 순서 시각화는 독립 메뉴가 아니라 실행 이력의 `실행 단계 보기` 모달에서 표시한다.
+live mode에서는 마지막으로 성공한 ETL job/catalog hydrate 결과를 브라우저 localStorage에 보관해, job 실행 중 새로고침해도 수집/처리 shell과 직전 job 목록을 먼저 렌더링한다.
+live mode에서 run/retry 명령 응답의 `running` 상태를 즉시 반영하고, `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 후 최종 상태를 반영한다.
 
 ## 6) Job Run State Contract
 
@@ -124,12 +129,23 @@ FastAPI가 현재 소유하는 책임:
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
+- Dashboard Assistant OpenAI-backed response endpoint
 - 공통 error envelope
 
 후속으로 넘길 책임:
 
 - Audit log persistence
 - 인증/권한 판정
+- RAG 검색 기반 Dashboard Assistant 고도화
+
+Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
+이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
+대시보드에서 사용할 수 있는 available catalog dataset과 현재 page widget, 지원 가능한 widget type/config option을 OpenAI에 전달한다.
+OpenAI 응답은 backend guard를 통과해야 하며, guard는 없는 datasetId, 없는 widgetId, 지원하지 않는 widget type,
+데이터셋 컬럼과 맞지 않는 config를 제외하고 `warnings`로 돌려준다.
+`OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이거나 OpenAI 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+현재 시각화 요청 위젯과의 호환을 위해 `configPatch`, `widgetPatch`도 임시로 유지한다.
+RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 
 ## 8) 데이터 모델 요약
 
@@ -149,6 +165,7 @@ Dashboard backend ownership은 card/list와 runtime snapshot으로 나눈다.
 Card/List는 `dashboards`, `dashboard_tags`를 중심으로 목록, 생성, 제목 수정, 삭제를 담당한다.
 Runtime은 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets`를 중심으로 published 조회, draft 편집, page/widget/layout/publish를 담당한다.
 두 흐름은 `dashboardId`, `publishedRevisionId`, `DashboardCard`, `DashboardRuntimeResponse` 계약만 공유한다.
+Runtime chart widget은 `widget.data`와 type별 `config`를 frontend에서 ApexCharts option/series로 변환해 렌더링한다. Dashboard runtime widget contract는 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)을 기준으로 확장한다. 사람이 설정 패널에서 고르는 옵션과 향후 AI widget 생성기가 만드는 옵션은 같은 widget type/config 계약을 사용한다. `table` 위젯은 후속 작업에서 TanStack Table 기반으로 별도 전환한다.
 
 ## 9) API Boundary
 
@@ -165,7 +182,7 @@ FastAPI 현재 구현 범위:
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/jobs`
 - `GET /api/etl/jobs`
-- `GET /api/etl/jobs/{jobId}`
+- `GET /api/etl/jobs/{jobId}`: 수집/처리 상세 hydrate와 실행 중 job 최종 상태 polling에 사용
 - `POST /api/etl/jobs/{jobId}/commands`
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`

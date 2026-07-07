@@ -13,10 +13,14 @@ docs/       # Product, architecture, API, validation, and team guardrails
 ## Quick Start
 
 ```powershell
+docker compose up -d postgres
+
 cd backend
 npm install
 npm run verify
 npm run sources:fixtures
+$env:ASKLAKE_SOURCE_REST_PORT = "19080"
+npm run sources:rest-fixture
 npm run dev
 ```
 
@@ -31,6 +35,7 @@ npm run dev
 ```
 
 For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Create a pipeline from the UI to add them.
+The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
 ## Validation
 
@@ -47,6 +52,7 @@ npm run spark:validate
 ```
 
 For the MinIO 100GB and 1GB-per-type Spark validation flow, see [docs/minio-100gb-spark-harness.md](docs/minio-100gb-spark-harness.md).
+For source connector setup and per-source input values, see [docs/source-connector-test-guide.md](docs/source-connector-test-guide.md).
 
 ## Docs
 

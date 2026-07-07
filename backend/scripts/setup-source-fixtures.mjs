@@ -1,4 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { CreateBucketCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 const postgresName = process.env.ASKLAKE_POSTGRES_CONTAINER || "asklake-postgres-source";
 const postgresPort = process.env.ASKLAKE_SOURCE_PGPORT || "15432";
@@ -6,8 +10,11 @@ const postgresPassword = process.env.ASKLAKE_SOURCE_PGPASSWORD || "asklake";
 const mongoName = process.env.ASKLAKE_MONGO_CONTAINER || "asklake-mongodb-source";
 const mongoPort = process.env.ASKLAKE_MONGO_PORT || "27018";
 const dockerNetwork = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
+const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 ensureDockerNetwork();
+ensureSourceMinio();
+await seedMinioSourceSamples();
 ensurePostgres();
 loadPostgresSample();
 ensureMongo();
@@ -187,6 +194,45 @@ function ensureDockerNetwork() {
   }
 }
 
+function ensureSourceMinio() {
+  const minioName = process.env.ASKLAKE_SOURCE_MINIO_CONTAINER || "asklake-source-minio";
+  const minioPort = process.env.ASKLAKE_SOURCE_MINIO_PORT || "19000";
+  const consolePort = process.env.ASKLAKE_SOURCE_MINIO_CONSOLE_PORT || "19001";
+  const inspect = run("docker", ["inspect", minioName], { allowFailure: true, quiet: true });
+  if (inspect.status !== 0) {
+    run("docker", [
+      "run",
+      "-d",
+      "--name",
+      minioName,
+      "--network",
+      dockerNetwork,
+      "-p",
+      `${minioPort}:9000`,
+      "-p",
+      `${consolePort}:9001`,
+      "-e",
+      "MINIO_ROOT_USER=m3admin",
+      "-e",
+      "MINIO_ROOT_PASSWORD=wishuponastar",
+      "quay.io/minio/minio:latest",
+      "server",
+      "/data",
+      "--console-address",
+      ":9001",
+    ]);
+  } else {
+    run("docker", ["start", minioName], { allowFailure: true, quiet: true });
+  }
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const ready = run("docker", ["exec", minioName, "mc", "ready", "local"], { allowFailure: true, quiet: true });
+    if (ready.status === 0) return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  throw new Error("Source MinIO fixture did not become ready.");
+}
+
 function waitForRedpanda() {
   const redpandaName = process.env.ASKLAKE_REDPANDA_CONTAINER || "asklake-redpanda-source";
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -200,8 +246,92 @@ function waitForRedpanda() {
 function loadKafkaSample() {
   const redpandaName = process.env.ASKLAKE_REDPANDA_CONTAINER || "asklake-redpanda-source";
   const topic = process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events";
+  run("docker", ["exec", redpandaName, "rpk", "topic", "delete", topic, "--brokers", "127.0.0.1:9092"], { allowFailure: true, quiet: true });
   run("docker", ["exec", redpandaName, "rpk", "topic", "create", topic, "--brokers", "127.0.0.1:9092"], { allowFailure: true, quiet: true });
+  const messages = [
+    { action: "view", amount: 42.7, event_time: "2026-07-04T00:00:00Z", event_id: "evt_001", payload: { device: "android", region: "KR" }, user_id: "u_001" },
+    { action: "purchase", amount: 19.25, event_time: "2026-07-04T00:01:00Z", event_id: "evt_002", payload: { device: "ios", region: "KR" }, user_id: "u_002" },
+    { action: "refund", amount: 7, event_time: "2026-07-04T00:02:00Z", event_id: "evt_003", payload: { device: "web", region: "US" }, user_id: "u_003" },
+  ].map((message) => JSON.stringify(message)).join("\n");
+  run("docker", ["exec", "-i", redpandaName, "rpk", "topic", "produce", topic, "--brokers", "127.0.0.1:9092", "--compression", "none"], { input: messages, quiet: true });
   console.log(`Kafka fixture topic ready: ${topic}`);
+}
+
+async function seedMinioSourceSamples() {
+  const endpoint = process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000";
+  const region = process.env.MINIO_REGION || "us-east-1";
+  const bucket = process.env.MINIO_BUCKET || "m3-raw";
+  const accessKeyId = process.env.MINIO_ACCESS_KEY || "m3admin";
+  const secretAccessKey = process.env.MINIO_SECRET_KEY || "wishuponastar";
+  const client = new S3Client({
+    credentials: { accessKeyId, secretAccessKey },
+    endpoint,
+    forcePathStyle: true,
+    region,
+  });
+  await ensureBucket(client, bucket);
+  const samples = [
+    ["asklake-fixtures/csv/events.csv", "text/csv", "id,event_time,user_id,amount,active\n1,2026-07-04T00:00:00Z,u_001,42.7,true\n2,2026-07-04T00:01:00Z,u_002,19.25,false\n"],
+    ["asklake-fixtures/json/events.json", "application/json", JSON.stringify([
+      { active: true, amount: 42.7, event_time: "2026-07-04T00:00:00Z", id: 1, payload: { region: "KR" }, user_id: "u_001" },
+      { active: false, amount: 19.25, event_time: "2026-07-04T00:01:00Z", id: 2, payload: { region: "US" }, user_id: "u_002" },
+    ], null, 2)],
+    ["asklake-fixtures/jsonl/events.jsonl", "application/x-ndjson", [
+      JSON.stringify({ action: "view", amount: 42.7, event_time: "2026-07-04T00:00:00Z", event_id: "evt_001", user_id: "u_001" }),
+      JSON.stringify({ action: "purchase", amount: 19.25, event_time: "2026-07-04T00:01:00Z", event_id: "evt_002", user_id: "u_002" }),
+    ].join("\n")],
+    ["asklake-fixtures/tsv/events.tsv", "text/tab-separated-values", "id\tevent_time\tuser_id\tamount\tactive\n1\t2026-07-04T00:00:00Z\tu_001\t42.7\ttrue\n2\t2026-07-04T00:01:00Z\tu_002\t19.25\tfalse\n"],
+    ["asklake-fixtures/txt/events.txt", "text/plain", "2026-07-04T00:00:00Z u_001 view 42.7\n2026-07-04T00:01:00Z u_002 purchase 19.25\n"],
+  ];
+
+  for (const [key, contentType, body] of samples) {
+    await client.send(new PutObjectCommand({ Body: body, Bucket: bucket, ContentType: contentType, Key: key }));
+  }
+
+  const parquetFixture = findFirstParquetFixture();
+  if (parquetFixture) {
+    await client.send(new PutObjectCommand({
+      Body: readFileSync(parquetFixture),
+      Bucket: bucket,
+      ContentType: "application/octet-stream",
+      Key: `asklake-fixtures/parquet/${path.basename(parquetFixture)}`,
+    }));
+  }
+  console.log("MinIO source fixtures ready");
+}
+
+async function ensureBucket(client, bucket) {
+  try {
+    await client.send(new HeadBucketCommand({ Bucket: bucket }));
+  } catch {
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+  }
+}
+
+function findFirstParquetFixture() {
+  const roots = [
+    path.join(backendDir, "tmp", "spark-output"),
+    path.join(backendDir, "tmp"),
+  ];
+  for (const root of roots) {
+    const found = findFirstFile(root, (filePath) => filePath.toLowerCase().endsWith(".parquet"));
+    if (found) return found;
+  }
+  return "";
+}
+
+function findFirstFile(root, predicate) {
+  if (!existsSync(root)) return "";
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const nextPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      const found = findFirstFile(nextPath, predicate);
+      if (found) return found;
+    } else if (predicate(nextPath)) {
+      return nextPath;
+    }
+  }
+  return "";
 }
 
 function run(command, args, options = {}) {
