@@ -11,6 +11,14 @@ npm run dev
 ```
 
 기본 dev server는 Vite 설정을 따른다.
+macOS Homebrew 환경에서는 Vite 5 dev server를 Node 22 LTS로 실행하는 것을 권장한다. Node 26/Homebrew dependency mismatch와 Vite cold start 지연이 겹쳤던 원인 분석은 [frontend-dev-server-incident-analysis.md](./frontend-dev-server-incident-analysis.md)를 참고한다.
+
+```bash
+export PATH="/opt/homebrew/opt/node@22/bin:$PATH"
+cd frontend
+npm run dev
+```
+
 Dashboard draft editor는 `react-grid-layout`과 `react-resizable`을 사용하므로 새 checkout에서는 `npm install`을 먼저 실행해야 한다.
 
 ## 2) 빌드
