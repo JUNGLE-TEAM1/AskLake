@@ -4654,11 +4654,15 @@ export function TargetPage({
           <h2>타겟 기본정보</h2>
         </div>
         <div className="form-grid target-metadata-grid">
-          <label className="field">
+          <label className="field wide">
             <span>데이터셋명</span>
             <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
           </label>
-          <label className="field">
+          <label className="field wide target-db-field">
+            <span>DB 선택</span>
+            <DatabaseField value={databaseName} onChange={setDatabaseName} />
+          </label>
+          <label className="field wide target-format-field">
             <span>포맷</span>
             <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
               <button
@@ -4690,11 +4694,7 @@ export function TargetPage({
               ) : null}
             </div>
           </label>
-          <label className="field">
-            <span>DB 선택</span>
-            <DatabaseField value={databaseName} onChange={setDatabaseName} />
-          </label>
-          <label className="field wide">
+          <label className="field wide target-storage-field">
             <span>저장경로</span>
             <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
           </label>

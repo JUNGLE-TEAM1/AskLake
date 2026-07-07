@@ -5959,6 +5959,17 @@
   margin-top: 12px;
 }
 
+.target-metadata-grid .target-db-field,
+.target-metadata-grid .target-format-field {
+  width: 100%;
+  max-width: 520px;
+}
+
+.target-metadata-grid .target-storage-field {
+  width: 100%;
+  max-width: 820px;
+}
+
 .target-format-toggle {
   position: relative;
   display: grid;
