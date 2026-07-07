@@ -10,7 +10,6 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "jobRuns", label: "실행 이력", stepIndex: 0 },
   { id: "source", label: "소스 연결", stepIndex: 0 },
   { id: "schema", label: "스키마 추론", stepIndex: 1 },
-  { id: "rules", label: "룰 적용", stepIndex: 1 },
   { id: "repeat", label: "반복 스케줄", stepIndex: 2 },
   { id: "manual", label: "스케줄 없음", stepIndex: 2 },
   { id: "once", label: "예약 1회 실행", stepIndex: 2 },
@@ -30,7 +29,7 @@ export const navItems = [
 
 export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "once", "target", "permission", "review"];
 export const jobManagerFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns"];
-export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "once", "permission", "target", "review"];
+export const wizardFlows: FlowId[] = ["source", "schema", "repeat", "manual", "once", "permission", "target", "review"];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [
