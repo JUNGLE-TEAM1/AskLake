@@ -150,6 +150,7 @@ class OpenAiResponsesClient:
             "max_output_tokens": 900,
             "model": self.model,
             "store": False,
+            "temperature": 0.2,
             "text": {
                 "format": {
                     "type": "json_schema",
