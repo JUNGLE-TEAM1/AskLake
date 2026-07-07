@@ -465,7 +465,6 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
-              onWorkingWidgetChange={setAiWorkingWidgetId}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}

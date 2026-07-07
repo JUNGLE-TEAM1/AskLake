@@ -1831,6 +1831,7 @@
 }
 
 .asklake-dashboard-inspector .asklake-assistant-panel {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -1840,6 +1841,35 @@
   align-items: stretch;
   color: var(--dash-text);
   text-align: left;
+}
+
+.asklake-dashboard-inspector .asklake-assistant-panel.is-working::before {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: linear-gradient(110deg, transparent 0%, rgba(59, 130, 246, 0.06) 34%, rgba(96, 165, 250, 0.18) 48%, rgba(59, 130, 246, 0.06) 62%, transparent 100%);
+  content: "";
+  transform: translateX(-120%);
+  animation: asklake-ai-widget-shimmer 1.25s ease-in-out infinite;
+}
+
+.asklake-assistant-working-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  background: rgba(248, 250, 252, 0.64);
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+  backdrop-filter: blur(1.5px);
 }
 
 .asklake-dashboard-inspector .asklake-assistant-chat {

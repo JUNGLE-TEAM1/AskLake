@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Loader2, Send } from "lucide-react";
+import { Loader2, Send, Sparkles } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -18,7 +18,6 @@ type DashboardAssistantPanelProps = {
   dashboardId?: string;
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
-  onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;
   promptInsertion?: DashboardAssistantPromptInsertion | null;
   selectedWidget: DashboardRuntimeWidget | null;
@@ -52,7 +51,6 @@ export function DashboardAssistantPanel({
   dashboardId,
   onCreateWidget,
   onUpdateWidget,
-  onWorkingWidgetChange,
   pageId,
   promptInsertion,
   selectedWidget,
@@ -94,7 +92,6 @@ export function DashboardAssistantPanel({
     }
 
     setIsSubmitting(true);
-    onWorkingWidgetChange?.(selectedWidget?.id ?? null);
     try {
       const response = await requestDashboardAssistant({
         dashboardId,
@@ -137,7 +134,6 @@ export function DashboardAssistantPanel({
       ]);
     } finally {
       setIsSubmitting(false);
-      onWorkingWidgetChange?.(null);
     }
   };
 
@@ -154,7 +150,11 @@ export function DashboardAssistantPanel({
   }, [promptInsertion]);
 
   return (
-    <section className="asklake-assistant-panel" aria-label="AskLake Assistant">
+    <section
+      aria-busy={isSubmitting || undefined}
+      aria-label="AskLake Assistant"
+      className={isSubmitting ? "asklake-assistant-panel is-working" : "asklake-assistant-panel"}
+    >
       <div className={hasMessages ? "asklake-assistant-chat has-messages" : "asklake-assistant-chat"}>
         {!hasMessages && (
           <div className="asklake-assistant-hero">
@@ -173,6 +173,15 @@ export function DashboardAssistantPanel({
           </div>
         )}
       </div>
+
+      {isSubmitting && (
+        <div className="asklake-assistant-working-overlay" role="status" aria-live="polite">
+          <span aria-hidden="true" className="asklake-ai-working-icon">
+            <Sparkles size={16} />
+          </span>
+          <strong>AskLake가 답변을 준비하는 중</strong>
+        </div>
+      )}
 
       <form className="asklake-assistant-form" onSubmit={(event) => void submitQuestion(event)}>
         <textarea

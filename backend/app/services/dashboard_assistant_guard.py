@@ -224,9 +224,9 @@ def _validate_config(
         return None, [f"{widget_type!r}는 지원하지 않는 위젯 타입입니다."]
 
     config_payload = _config_to_dict(config)
-    if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE} and config_payload.get("color") is not None:
-        return None, [f"{widget_type.value} config에는 color를 사용할 수 없습니다."]
-    if widget_type not in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE} and config_payload.get("color") is None:
+    if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
+        config_payload.pop("color", None)
+    elif config_payload.get("color") is None:
         config_payload["color"] = {"colors": ["#2563eb"]}
 
     config_model = CONFIG_MODEL_BY_TYPE[widget_type]
