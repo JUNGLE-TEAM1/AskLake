@@ -4,6 +4,7 @@ import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck,
 import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, wizardFlows } from "./data/appShellData";
 import { Topbar } from "./components/layout/Topbar";
+import { Sidebar } from "./components/layout/Sidebar";
 import { Stepper } from "./components/layout/Stepper";
 import { Footer } from "./components/layout/Footer";
 import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
@@ -14,7 +15,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavItem, ScheduleFlowId } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -139,6 +140,14 @@ export function App() {
     () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
     [lastScheduleFlow],
   );
+  const activeNavId = useMemo<NavId>(() => {
+    if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
+    if (activeFlow === "sql") return "sql";
+    if (activeFlow === "dashboard") return "dashboard";
+    if (activeFlow === "ai") return "ai";
+    if (activeFlow === "admin") return "admin";
+    return "ingest";
+  }, [activeFlow]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -271,6 +280,12 @@ export function App() {
 
   return (
     <div className="app-shell" data-last-action={auditSignal}>
+      <Sidebar
+        activeNavId={activeNavId}
+        onAccount={() => writeAuditLog("ui.account_opened", "/app/account", "demo.user@asklake.local", "success", { targetType: "ui" })}
+        onBrandClick={navigateIngestLanding}
+        onNavigate={navigateSidebar}
+      />
       <main className={activeFlow === "schema" ? "main-shell schema-shell" : "main-shell"}>
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}

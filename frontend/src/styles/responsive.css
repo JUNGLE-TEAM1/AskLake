@@ -65,6 +65,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .main-shell {
+    grid-column: 1 / -1;
+  }
+
   .content-grid,
   .content-grid.creation-flow-grid,
   .content-grid.creation-flow-grid.permission-grid,
@@ -266,6 +270,10 @@
 @media (max-width: 780px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .main-shell {
+    grid-column: 1 / -1;
   }
 
   .sidebar {
