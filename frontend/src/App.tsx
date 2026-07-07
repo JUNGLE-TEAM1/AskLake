@@ -91,6 +91,7 @@ export function App() {
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
+  const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
   const {
     apiPending,
@@ -133,8 +134,14 @@ export function App() {
   const selectedDatasetAvailable = hasSelectedDataset(selectedDataset, datasets);
   const selectedJobAvailable = hasSelectedJob(selectedJob.id, jobs);
   const requiresSelectedJob = activeFlow === "jobDetail" || activeFlow === "jobRuns" || activeFlow === "jobDag";
-  const requiresSelectedDataset = activeFlow === "catalogDetail" || activeFlow === "sql" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
+  const requiresSelectedDataset = activeFlow === "catalogDetail" || (activeFlow === "dashboard" && dashboardEntry.view === "builder");
   const canRenderActiveFlow = (!requiresSelectedJob || selectedJobAvailable) && (!requiresSelectedDataset || selectedDatasetAvailable);
+  const sqlInitialDataset = useMemo(
+    () => sqlInitialDatasetId
+      ? datasets.find((item) => item.id === sqlInitialDatasetId) ?? (selectedDataset.id === sqlInitialDatasetId ? selectedDataset : null)
+      : null,
+    [datasets, selectedDataset, sqlInitialDatasetId],
+  );
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -166,6 +173,10 @@ export function App() {
 
   const navigateSidebar = (item: NavItem) => {
     writeAuditLog("ui.menu.clicked", `/app/${item.id}`, item.label);
+    if (item.id === "sql") {
+      setSqlInitialDatasetId(null);
+      setSqlResultDraft(null);
+    }
     if (item.id === "dashboard") {
       if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
       setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
@@ -173,6 +184,11 @@ export function App() {
       window.history.pushState(null, "", "/");
     }
     moveToFlow(item.flow);
+  };
+
+  const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
+    setSqlInitialDatasetId(dataset.id);
+    openDatasetInSql(dataset);
   };
 
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
@@ -265,9 +281,9 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSql} />}
-          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSql(selectedDataset)} />}
-          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={selectedDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
+          {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
