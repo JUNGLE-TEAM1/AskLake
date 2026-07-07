@@ -34,6 +34,7 @@ export type DashboardAssistantRuntimeContext = {
   dashboardId?: string;
   onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;
+  promptInsertion?: { id: number; text: string; widgetId?: string | null } | null;
   selectedWidgetId?: string | null;
   workingWidgetId?: string | null;
   widgets: DashboardRuntimeWidget[];

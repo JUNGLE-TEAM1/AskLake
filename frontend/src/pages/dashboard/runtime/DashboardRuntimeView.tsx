@@ -31,6 +31,12 @@ type RuntimeNotice = {
   tone: "success" | "info" | "error";
 };
 
+type VisualizationPromptInsertion = {
+  id: number;
+  text: string;
+  widgetId: string;
+};
+
 type DashboardRuntimeState = {
   canRedoLayout: boolean;
   canUndoLayout: boolean;
@@ -170,6 +176,10 @@ function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
   return widget?.config.placeholderKind === "text" || widget?.config.placeholderKind === "visualization_request";
 }
 
+function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
+  return widget?.config.placeholderKind === "visualization_request";
+}
+
 const emptyDashboardCopy = {
   description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
   title: "위젯을 추가해 주세요",
@@ -181,7 +191,9 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
+  const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
+  const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
   const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
@@ -301,6 +313,7 @@ export function DashboardRuntimeView({
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
+    promptInsertion: visualizationPromptInsertion,
     selectedWidgetId,
     workingWidgetId: aiWorkingWidgetId,
     widgets: selectedDraftWidgets,
@@ -311,6 +324,16 @@ export function DashboardRuntimeView({
     setAssistantPromptInsertion({
       id: assistantPromptInsertionIdRef.current,
       text,
+    });
+  };
+  const queueVisualizationPromptText = (text: string) => {
+    const targetWidgetId = selectedDraftWidget?.id;
+    if (!targetWidgetId || !isVisualizationRequestWidget(selectedDraftWidget)) return;
+    visualizationPromptInsertionIdRef.current += 1;
+    setVisualizationPromptInsertion({
+      id: visualizationPromptInsertionIdRef.current,
+      text,
+      widgetId: targetWidgetId,
     });
   };
   const handleCursorMode = () => {
@@ -343,13 +366,23 @@ export function DashboardRuntimeView({
   };
   const handleSelectDataset = (datasetId: string) => {
     onSelectDataset(datasetId);
-    if (inspectorMode !== "assistant") return;
     const dataset = dashboardDatasets.find((item) => item.id === datasetId);
-    if (dataset) queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+    if (!dataset) return;
+
+    if (inspectorMode === "assistant") {
+      queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+      return;
+    }
+
+    queueVisualizationPromptText(`${dataset.name} 데이터셋으로`);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
-    if (inspectorMode !== "assistant") return;
-    queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+    if (inspectorMode === "assistant") {
+      queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+      return;
+    }
+
+    queueVisualizationPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";

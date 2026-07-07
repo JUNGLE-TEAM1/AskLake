@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState, type FormEvent, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState } from "@tanstack/react-table";
 import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Loader2, Send } from "lucide-react";
@@ -63,6 +63,14 @@ function rowsFromWidget(widget: DashboardRuntimeWidget) {
 function configText(widget: DashboardRuntimeWidget, key: string) {
   const value = (widget.config as Record<string, unknown>)[key];
   return typeof value === "string" ? value : "";
+}
+
+function appendPromptText(currentPrompt: string, nextText: string) {
+  const current = currentPrompt.trim();
+  const next = nextText.trim();
+  if (!next) return currentPrompt;
+  if (!current) return next;
+  return `${current} ${next}`;
 }
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
@@ -659,6 +667,8 @@ function VisualizationRequestWidget({
   const [isPromptEditing, setIsPromptEditing] = useState(false);
   const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
+  const processedPromptInsertionIdRef = useRef<number | null>(null);
+  const promptInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setPrompt(configText(widget, "prompt"));
@@ -669,6 +679,17 @@ function VisualizationRequestWidget({
     setMessage(null);
     setRequestTone(null);
   }, [widget.id]);
+
+  useEffect(() => {
+    const insertion = assistantContext?.promptInsertion;
+    if (!insertion || insertion.id === processedPromptInsertionIdRef.current) return;
+    if (insertion.widgetId && insertion.widgetId !== widget.id) return;
+
+    processedPromptInsertionIdRef.current = insertion.id;
+    setPrompt((current) => appendPromptText(current, insertion.text));
+    setIsPromptEditing(true);
+    requestAnimationFrame(() => promptInputRef.current?.focus());
+  }, [assistantContext?.promptInsertion]);
 
   const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -730,11 +751,13 @@ function VisualizationRequestWidget({
           aria-label="시각화 요청"
           className={isPromptEditing ? "widget-control" : undefined}
           placeholder="어시스턴트에게 이 차트의 생성을 요청하세요."
+          ref={promptInputRef}
           readOnly={!isPromptEditing}
           value={prompt}
           onBlur={() => setIsPromptEditing(false)}
           onChange={(event) => setPrompt(event.target.value)}
-          onDoubleClick={() => setIsPromptEditing(true)}
+          onClick={() => setIsPromptEditing(true)}
+          onFocus={() => setIsPromptEditing(true)}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             setPrompt(configText(widget, "prompt"));
