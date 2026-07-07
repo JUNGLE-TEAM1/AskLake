@@ -1,4 +1,4 @@
-import { Trash2 } from "lucide-react";
+import { Sparkles, Trash2 } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
@@ -48,10 +48,12 @@ export function WidgetFrame({
 }) {
   const columnSpan = clampSpan(widget.layout?.w, 4);
   const rowSpan = clampSpan(widget.layout?.h, 4);
+  const isAiWorking = assistantContext?.workingWidgetId === widget.id;
 
   return (
     <article
-      className={cx("asklake-widget-frame", editable && "editable", selected && "selected")}
+      aria-busy={isAiWorking || undefined}
+      className={cx("asklake-widget-frame", editable && "editable", selected && "selected", isAiWorking && "ai-working")}
       style={{
         gridColumn: editable ? undefined : `span ${columnSpan}`,
         minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
@@ -92,6 +94,14 @@ export function WidgetFrame({
           onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
         />
       </div>
+      {isAiWorking && (
+        <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
+          <span aria-hidden="true" className="asklake-ai-working-icon">
+            <Sparkles size={16} />
+          </span>
+          <strong>AI 시각화 작업중</strong>
+        </div>
+      )}
     </article>
   );
 }

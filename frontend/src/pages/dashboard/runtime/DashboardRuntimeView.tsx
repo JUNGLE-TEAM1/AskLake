@@ -178,6 +178,7 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const [focusedColorSlot, setFocusedColorSlot] = useState<DashboardWidgetColorSlotFocus | null>(null);
+  const [aiWorkingWidgetId, setAiWorkingWidgetId] = useState<string | null>(null);
   const [inspectorMode, setInspectorMode] = useState<"assistant" | "widget">("widget");
   const {
     canRedoLayout,
@@ -275,8 +276,10 @@ export function DashboardRuntimeView({
   });
   const assistantContext = {
     dashboardId: draftRuntime?.dashboard.id ?? title,
+    onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
     selectedWidgetId,
+    workingWidgetId: aiWorkingWidgetId,
     widgets: selectedDraftWidgets,
   };
   const handleCursorMode = () => {
@@ -405,6 +408,7 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
+              onWorkingWidgetChange={setAiWorkingWidgetId}
               pageId={selectedPageId}
               selectedWidget={selectedDraftWidget}
               widgets={selectedDraftWidgets}
