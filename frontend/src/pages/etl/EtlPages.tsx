@@ -4486,7 +4486,7 @@ export function TargetPage({
   const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
   const [customTag, setCustomTag] = useState("");
   const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
-  const [indexColumns, setIndexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
+  const [indexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -4500,9 +4500,7 @@ export function TargetPage({
   const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);
   const usedSchemaRules = useMemo(() => sortedSchemaRules.filter((rule) => rule.use), [sortedSchemaRules]);
   const partitionCandidates = useMemo(() => sortedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [sortedSchemaRules]);
-  const indexCandidates = useMemo(() => sortedSchemaRules.filter((rule) => !rule.raw), [sortedSchemaRules]);
   const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column));
-  const filteredIndexColumns = indexColumns.filter((column) => indexCandidates.some((rule) => rule.name === column));
   const previewRows = useMemo(() => inferredTarget.previewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
@@ -4598,12 +4596,6 @@ export function TargetPage({
 
   const togglePartitionColumn = (columnName: string) => {
     setPartitionColumns((currentColumns) => currentColumns.includes(columnName)
-      ? currentColumns.filter((currentColumn) => currentColumn !== columnName)
-      : [...currentColumns, columnName]);
-  };
-
-  const toggleIndexColumn = (columnName: string) => {
-    setIndexColumns((currentColumns) => currentColumns.includes(columnName)
       ? currentColumns.filter((currentColumn) => currentColumn !== columnName)
       : [...currentColumns, columnName]);
   };
@@ -4776,67 +4768,35 @@ export function TargetPage({
         </>
       ))}
       {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
-        <>
-          <div className="target-option-section">
-            <div className="target-subsection-title">파티션 컬럼</div>
-            <p className="target-option-help">데이터를 폴더 단위로 나누는 기준입니다.</p>
-            <div className="target-chip-grid partition" role="group" aria-label="파티션 컬럼">
-              {partitionCandidates.map((rule) => {
-                const selected = filteredPartitionColumns.includes(rule.name);
-                const disabled = !rule.use;
-                return (
-                  <button
-                    aria-pressed={selected}
-                    className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
-                    disabled={disabled}
-                    key={rule.name}
-                    type="button"
-                    onClick={() => togglePartitionColumn(rule.name)}
-                  >
-                    <span className="target-chip-check">{selected ? "✓" : ""}</span>
-                    <span className="target-chip-label">{rule.name}</span>
-                    {rule.recommendedPartition ? <span className="target-chip-badge">추천</span> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="target-option-section">
-            <div className="target-subsection-title">인덱스 후보</div>
-            <p className="target-option-help">자주 조회할 컬럼 후보입니다. S3/Parquet 저장소에서는 실제 DB 인덱스가 아니라 메타데이터 추천값으로 저장됩니다.</p>
-            <div className="target-chip-grid partition" role="group" aria-label="인덱스 컬럼">
-              {indexCandidates.map((rule) => {
-                const selected = filteredIndexColumns.includes(rule.name);
-                const disabled = !rule.use;
-                return (
-                  <button
-                    aria-pressed={selected}
-                    className={["target-chip", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")}
-                    disabled={disabled}
-                    key={rule.name}
-                    type="button"
-                    onClick={() => toggleIndexColumn(rule.name)}
-                  >
-                    <span className="target-chip-check">{selected ? "✓" : ""}</span>
-                    <span className="target-chip-label">{rule.name}</span>
-                    {rule.recommendedIndex ? <span className="target-chip-badge">추천</span> : null}
-                  </button>
-                );
-              })}
-            </div>
+        <div className="target-partition-settings">
+          <p className="target-partition-help">출력 데이터를 폴더 단위로 나누는 기준 컬럼을 선택합니다.</p>
+          <div className="target-partition-divider" />
+          <div className="target-partition-title">파티션 컬럼 선택</div>
+          <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 선택">
+            {partitionCandidates.map((rule) => {
+              const selected = filteredPartitionColumns.includes(rule.name);
+              const disabled = !rule.use;
+              return (
+                <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
+                  <input checked={selected} disabled={disabled} type="checkbox" onChange={() => togglePartitionColumn(rule.name)} />
+                  <span className="target-partition-name">{rule.name}</span>
+                  <span className="target-partition-type">{rule.type}</span>
+                </label>
+              );
+            })}
           </div>
           <div className="target-path-preview">
-            <span>저장 경로 preview</span>
+            <span>저장 경로 미리보기</span>
             <strong>{partitionPathPreview}</strong>
           </div>
-        </>
+        </div>
       ))}
       {renderToggleSection("preview", "샘플 프리뷰", <Search size={18} />, (
         usedSchemaRules.length > 0 && previewRows.length > 0 ? (
           <div className="target-output-schema">
             <div className="target-output-schema-head">
-              <span>Target Columns</span>
-              <em>{usedSchemaRules.length} fields</em>
+              <span>타겟 컬럼</span>
+              <em>{usedSchemaRules.length}개 컬럼</em>
             </div>
             <div className="target-output-schema-list">
               {usedSchemaRules.map((rule, index) => {
