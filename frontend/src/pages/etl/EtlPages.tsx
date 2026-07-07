@@ -4496,6 +4496,7 @@ export function TargetPage({
     () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
     [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
   );
+  const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [targetTableName, setTargetTableName] = useState(draftTarget?.targetTableName ?? initialTarget.tableName);
   const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
@@ -4518,19 +4519,26 @@ export function TargetPage({
     tags: false,
   });
 
-  const orderedSchemaRules = useMemo(() => [...schemaRules], [schemaRules]);
+  const shouldUseSampleTargetSchema = useMemo(
+    () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
+    [schemaRules],
+  );
+  const activeSchemaRules = shouldUseSampleTargetSchema ? sampleTargetSchema.schemaRules : schemaRules;
+  const activePreviewRows = shouldUseSampleTargetSchema ? sampleTargetSchema.previewRows : inferredTarget.previewRows;
+  const activeJsonParseFailed = shouldUseSampleTargetSchema ? sampleTargetSchema.jsonParseFailed : inferredTarget.jsonParseFailed;
+  const orderedSchemaRules = useMemo(() => [...activeSchemaRules], [activeSchemaRules]);
   const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
   const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
   const recommendedPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => rule.recommendedPartition), [partitionCandidates]);
   const otherPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => !rule.recommendedPartition), [partitionCandidates]);
   const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use));
-  const previewRows = useMemo(() => inferredTarget.previewRows.slice(0, 5).map((row) => {
+  const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
       previewRow[rule.name] = row[rule.name] ?? "";
     });
     return previewRow;
-  }), [inferredTarget.previewRows, usedSchemaRules]);
+  }), [activePreviewRows, usedSchemaRules]);
   const partitionPathPreview = buildPartitionPathPreview(targetStoragePath, filteredPartitionColumns);
   const lineage = {
     sourceName: draft.source.sourceLabel || "Source",
@@ -4552,7 +4560,7 @@ export function TargetPage({
     tags: targetTags,
     partitionColumns: filteredPartitionColumns,
     indexColumns,
-    schemaRules,
+    schemaRules: activeSchemaRules,
     previewRows,
     lineage,
     lastTestRun: testRun,
@@ -4625,7 +4633,7 @@ export function TargetPage({
 
   const saveTargetConfig = () => {
     const config = buildConfig();
-    const errors = validateTargetConfig(config, inferredTarget.jsonParseFailed);
+    const errors = validateTargetConfig(config, activeJsonParseFailed);
     setValidationErrors(errors);
 
     if (errors.length > 0) {
