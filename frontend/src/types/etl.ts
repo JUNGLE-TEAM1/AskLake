@@ -151,12 +151,17 @@ export type PermissionDraft = {
 export type TargetDraft = {
   compression?: "Snappy" | "Gzip" | "None";
   datasetName: string;
+  description?: string;
   format: string;
   layer: TargetLayer;
   partition?: string;
+  partitionColumns?: string[];
   rag: boolean;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tableName?: string;
+  tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
 };
 
 export type DraftPipeline = {

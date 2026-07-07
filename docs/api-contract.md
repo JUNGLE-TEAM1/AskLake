@@ -399,7 +399,7 @@ Request 예시:
   "timezone": "(GMT+09:00) Seoul, Tokyo",
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "storageType": "S3",
-  "partition": "year/month/region",
+  "partition": "date/category",
   "compression": "Snappy",
   "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
@@ -467,6 +467,7 @@ Validation:
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
 - 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
+- 현재 Target 화면의 파티션은 `date`, `category` 같은 컬럼 선택값을 `/`로 연결해 `partition`에 반영합니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
 ### 7.2 작업 명령

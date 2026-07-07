@@ -525,12 +525,14 @@ const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT = "Parquet";
+const DEFAULT_TARGET_TAGS = ["고객데이터", "분석용", "가공됨"];
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
+const TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "분석용", "서비스용", "원본", "가공됨"] as const;
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -554,17 +556,22 @@ type PermissionDraftSlice = {
 type TargetDraftSlice = {
   compression?: "Snappy" | "Gzip" | "None";
   datasetName?: string;
+  description?: string;
   format?: string;
   jobName?: string;
   layer?: string;
   owner?: string;
   partition?: string;
+  partitionColumns?: string[];
   rag?: boolean;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tableName?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
+  tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
 };
 
 type DraftPipelineWithSlices = DraftPipeline & {
@@ -591,6 +598,10 @@ function getKnownOption<T extends string>(value: string | undefined, options: re
 
 function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
+}
+
+function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
 function buildJobName(targetDataset: string) {
@@ -633,14 +644,22 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const target = compatDraft.target;
   const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+  const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
+  const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
 
   return {
+    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
+    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
+    storagePath,
+    tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
+    tags: target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS,
     targetDataset,
     targetFormat,
-    targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
+    targetLayer,
+    testStatus: target?.testStatus ?? draft.target.testStatus ?? "idle",
   };
 }
 
@@ -4199,32 +4218,81 @@ export function TargetPage({
   const initialTarget = getTargetDraftValues(draft);
   const targetLayer = initialTarget.targetLayer;
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
-  const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
+  const [targetTableName, setTargetTableName] = useState(initialTarget.tableName);
+  const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [targetDescription, setTargetDescription] = useState(initialTarget.description);
   const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
+  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
+  const [partitionColumns, setPartitionColumns] = useState<string[]>(initialTarget.partitionColumns);
+  const [targetTestStatus, setTargetTestStatus] = useState<"idle" | "success" | "failed">(initialTarget.testStatus);
+  const includedColumns = useMemo(() => draft.schema.columns.filter(isSchemaColumnIncluded), [draft.schema.columns]);
+  const partitionColumnOptions = useMemo(() => {
+    const schemaColumnNames = includedColumns
+      .map((column) => column.targetName || column.sourceName)
+      .filter(Boolean);
+    return Array.from(new Set(["date", "category", ...schemaColumnNames])).slice(0, 10);
+  }, [includedColumns]);
+  const previewColumns = includedColumns.slice(0, 6);
+  const previewRows = draft.schema.sampleRows.slice(0, 5);
   const applyTargetDraft = (patch: Partial<{
-    owner: string;
+    description: string;
+    partitionColumns: string[];
+    storagePath: string;
+    tableName: string;
+    tags: string[];
     targetDataset: string;
     targetFormat: string;
+    testStatus: "idle" | "success" | "failed";
   }> = {}) => {
     const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
     const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
     const nextTargetLayer = targetLayer;
-    const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
-    const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
+    const nextTableName = getDisplayText(patch.tableName ?? targetTableName, nextTargetDataset);
+    const nextDescription = getDisplayText(patch.description ?? targetDescription, "타겟 데이터셋 설명 없음");
+    const nextTags = patch.tags ?? targetTags;
+    const nextPartitionColumns = patch.partitionColumns ?? partitionColumns;
+    const nextStoragePath = getDisplayText(patch.storagePath ?? targetStoragePath, buildTargetStoragePath(nextTargetDataset, nextTargetLayer));
+    const nextTestStatus = patch.testStatus ?? targetTestStatus;
 
     onDraftChange({
       jobName: buildJobName(nextTargetDataset),
-      owner: nextOwner,
       compression: "Snappy",
-      partition: "year/month/region",
+      partition: nextPartitionColumns.join("/"),
       storagePath: nextStoragePath,
       storageType: "S3",
+      target: {
+        description: nextDescription,
+        partitionColumns: nextPartitionColumns,
+        tableName: nextTableName,
+        tags: nextTags,
+        testStatus: nextTestStatus,
+      },
       targetDataset: nextTargetDataset,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
       rag: false,
     });
+  };
+  const toggleTag = (tag: string) => {
+    const nextTags = targetTags.includes(tag)
+      ? targetTags.filter((currentTag) => currentTag !== tag)
+      : [...targetTags, tag];
+    setTargetTags(nextTags);
+    applyTargetDraft({ tags: nextTags });
+  };
+  const togglePartitionColumn = (columnName: string) => {
+    const nextColumns = partitionColumns.includes(columnName)
+      ? partitionColumns.filter((currentColumn) => currentColumn !== columnName)
+      : [...partitionColumns, columnName];
+    setPartitionColumns(nextColumns);
+    applyTargetDraft({ partitionColumns: nextColumns });
+  };
+  const runTargetTest = () => {
+    const nextStatus = targetDataset.trim() && targetTableName.trim() && targetStoragePath.trim() && targetFormat && includedColumns.length > 0
+      ? "success"
+      : "failed";
+    setTargetTestStatus(nextStatus);
+    applyTargetDraft({ testStatus: nextStatus });
   };
   const goNext = () => {
     applyTargetDraft();
@@ -4238,49 +4306,41 @@ export function TargetPage({
         onSave();
       }} />}
     >
-        <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷을 설정합니다." />
+        <PageTitle title="타겟 설정" description="가공된 데이터의 저장 대상, 파티션, 컬럼 규칙, 샘플 검증을 확인합니다." />
         <section className="panel">
           <div className="panel-header">
             <HardDrive size={18} />
-            <h2>기본 저장소 설정</h2>
+            <h2>타겟 기본정보</h2>
           </div>
           <div className="form-grid">
             <label className="field">
-              <span>타겟 데이터셋 이름</span>
+              <span>데이터셋명</span>
               <input className="input control-input" value={targetDataset} onChange={(event) => {
                 const nextTargetDataset = event.target.value;
+                const nextStoragePath = buildTargetStoragePath(getDisplayText(nextTargetDataset, DEFAULT_TARGET_DATASET), targetLayer);
                 setTargetDataset(nextTargetDataset);
-                applyTargetDraft({ targetDataset: nextTargetDataset });
+                setTargetStoragePath(nextStoragePath);
+                applyTargetDraft({ storagePath: nextStoragePath, targetDataset: nextTargetDataset });
               }} />
             </label>
             <label className="field">
-              <span>소유자</span>
-              <input className="input control-input" value={targetOwner} onChange={(event) => {
-                const nextOwner = event.target.value;
-                setTargetOwner(nextOwner);
-                applyTargetDraft({ owner: nextOwner });
+              <span>테이블명</span>
+              <input className="input control-input" value={targetTableName} onChange={(event) => {
+                const nextTableName = event.target.value;
+                setTargetTableName(nextTableName);
+                applyTargetDraft({ tableName: nextTableName });
               }} />
             </label>
             <label className="field wide">
-              <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+              <span>저장경로</span>
+              <input className="input control-input" value={targetStoragePath} onChange={(event) => {
+                const nextStoragePath = event.target.value;
+                setTargetStoragePath(nextStoragePath);
+                applyTargetDraft({ storagePath: nextStoragePath });
+              }} />
             </label>
-          </div>
-          <div className="tag-row">
-            {[targetDataset.replace(/_gold$/, ""), "sentiment_analysis"].map((tag) => (
-              <span className="tag" key={tag}>{tag}</span>
-            ))}
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>저장소 및 포맷 설정</h2>
-          </div>
-          <div className="form-grid">
-            <Field label="저장소 유형" value="S3" />
             <label className="field">
-              <span>파일 포맷</span>
+              <span>포맷</span>
               <select className="input control-input" value={targetFormat} onChange={(event) => {
                 const nextTargetFormat = getKnownOption(event.target.value, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
                 setTargetFormat(nextTargetFormat);
@@ -4289,13 +4349,128 @@ export function TargetPage({
                 {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
               </select>
             </label>
-            <Field label="파티션" value="year/month/region" />
-            <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`} wide />
+            <label className="field wide">
+              <span>설명</span>
+              <input className="input control-input" value={targetDescription} onChange={(event) => {
+                const nextDescription = event.target.value;
+                setTargetDescription(nextDescription);
+                applyTargetDraft({ description: nextDescription });
+              }} />
+            </label>
+            <label className="field wide">
+              <span>태그</span>
+              <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+                {TARGET_TAG_OPTIONS.map((tag) => (
+                  <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </label>
           </div>
-          <div className="target-status-grid">
-            <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
-            <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <SlidersHorizontal size={18} />
+            <h2>파티션</h2>
+            <span className="panel-note">컬럼 선택만 사용</span>
+          </div>
+          <div className="target-chip-grid partition">
+            {partitionColumnOptions.map((columnName) => (
+              <button className={partitionColumns.includes(columnName) ? "target-chip active" : "target-chip"} key={columnName} type="button" onClick={() => togglePartitionColumn(columnName)}>
+                {columnName}
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <Table2 size={18} />
+            <h2>컬럼 최소 규칙</h2>
+            <span className="panel-note">{includedColumns.length}개 사용 컬럼</span>
+          </div>
+          <div className="hegun-table-scroll">
+            <table className="schema-table target-rule-table">
+              <thead>
+                <tr>
+                  <th>컬럼명</th>
+                  <th>타입</th>
+                  <th>사용 여부</th>
+                  <th>nullable</th>
+                  <th>검증</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draft.schema.columns.slice(0, 10).map((column) => {
+                  const included = isSchemaColumnIncluded(column);
+                  const validationLabel = included && column.targetName && column.type ? "통과" : "확인 필요";
+                  return (
+                    <tr className={included ? undefined : "excluded"} key={`${column.sourceName}-${column.targetName}`}>
+                      <td title={column.targetName || column.sourceName}><strong>{column.targetName || column.sourceName}</strong></td>
+                      <td><span className="schema-type-pill">{column.type}</span></td>
+                      <td>{included ? "사용" : "제외"}</td>
+                      <td>{column.nullable ? "허용" : "필수"}</td>
+                      <td><span className={validationLabel === "통과" ? "target-validation-pill success" : "target-validation-pill"}>{validationLabel}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <Search size={18} />
+            <h2>샘플 프리뷰</h2>
+            <span className="panel-note">최대 5행</span>
+          </div>
+          {previewColumns.length > 0 && previewRows.length > 0 ? (
+            <div className="hegun-table-scroll">
+              <table className="schema-table target-preview-table">
+                <thead>
+                  <tr>{previewColumns.map((column) => <th key={column.targetName}>{column.targetName || column.sourceName}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {previewRows.map((row, rowIndex) => (
+                    <tr key={`target-preview-${rowIndex}`}>
+                      {previewColumns.map((column) => {
+                        const columnIndex = draft.schema.columns.indexOf(column);
+                        return <td key={`${rowIndex}-${column.targetName}`}>{row[columnIndex] ?? "-"}</td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <span className="hegun-empty-table-state">스키마 확정 후 샘플 프리뷰를 볼 수 있습니다.</span>
+          )}
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <PlayCircle size={18} />
+            <h2>테스트 실행</h2>
+            <span className="panel-note">{targetTestStatus === "success" ? "성공" : targetTestStatus === "failed" ? "실패" : "대기"}</span>
+          </div>
+          <div className="target-test-row">
+            <button className="primary-button" type="button" onClick={runTargetTest}>테스트 실행</button>
+            <div className={targetTestStatus === "success" ? "target-test-status success" : targetTestStatus === "failed" ? "target-test-status failed" : "target-test-status"}>
+              <strong>{targetTestStatus === "success" ? "성공" : targetTestStatus === "failed" ? "실패" : "대기"}</strong>
+              <span>{targetTestStatus === "success" ? "필수 타겟 값과 컬럼 규칙이 준비되었습니다." : targetTestStatus === "failed" ? "데이터셋명, 테이블명, 저장경로, 컬럼 규칙을 확인하세요." : "테스트 실행 전입니다."}</span>
+            </div>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-header">
+            <Share2 size={18} />
+            <h2>라인리지</h2>
+          </div>
+          <div className="target-lineage">
+            <span>{draft.source.sourceLabel || "Source"}</span>
+            <strong>→</strong>
+            <span>Transform</span>
+            <strong>→</strong>
+            <span>{targetTableName || "Target"}</span>
           </div>
         </section>
     </CreationFlowLayout>
