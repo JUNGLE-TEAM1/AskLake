@@ -35,8 +35,6 @@ import {
   TerminalSquare,
   Trash2,
 } from "lucide-react";
-import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
-import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -45,6 +43,8 @@ import { testSourceConnector, type SourceConnectorAnalysis } from "../../service
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
+import { SourceAssetTree } from "./SourceAssetTree";
+import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -952,6 +952,10 @@ export function SourceConnectionPage({
     const asset = displayAssets[assetIndex];
     if (!asset) return;
     const [assetPath, assetMeta] = asset;
+    if (assetMeta === "folder" || assetPath.endsWith("/")) {
+      return;
+    }
+    const currentAssets = displayAssets;
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => (
       fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
         ? [fieldLabel, assetPath] as [string, string]
@@ -973,7 +977,7 @@ export function SourceConnectionPage({
       if (result.draftPatch.source?.sourceConfig) {
         setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? nextFields }));
       }
-      setSourceRuntime({ ...result, assets: mergeSourceAssets(displayAssets, result.assets ?? []), message: successMessage });
+      setSourceRuntime({ ...result, assets: mergeSourceAssets(currentAssets, result.assets ?? []), message: successMessage });
       setConnectionStatus(result.status);
       setConnectionMessage(successMessage);
       onDraftChange(result.draftPatch);
@@ -1206,24 +1210,6 @@ export function SourceConnectionPage({
   );
 }
 
-type SourceAssetTreeProps = {
-  assets: Array<[string, string, string]>;
-  selectedIndex: number;
-  onSelect: (assetIndex: number) => void | Promise<void>;
-};
-
-type SourceAssetTreeNode = {
-  id: string;
-  name: string;
-  path: string;
-  meta: string;
-  status: string;
-  assetIndex?: number;
-  isFolder: boolean;
-  children: SourceAssetTreeNode[];
-  childMap: Map<string, SourceAssetTreeNode>;
-};
-
 function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
   const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
   const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
@@ -1250,128 +1236,6 @@ function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextA
     merged.set(path, [path, meta, status]);
   });
   return Array.from(merged.values());
-}
-
-function SourceAssetTree({ assets, selectedIndex, onSelect }: SourceAssetTreeProps) {
-  const { nodes, expandedItems } = useMemo(() => {
-    const root: SourceAssetTreeNode = {
-      id: "root",
-      name: "root",
-      path: "",
-      meta: "folder",
-      status: "",
-      isFolder: true,
-      children: [],
-      childMap: new Map(),
-    };
-
-    const ensureChild = (parent: SourceAssetTreeNode, name: string, path: string, isFolder: boolean) => {
-      const id = path || name;
-      const existing = parent.childMap.get(id);
-      if (existing) {
-        if (isFolder) existing.isFolder = true;
-        return existing;
-      }
-      const node: SourceAssetTreeNode = {
-        id,
-        name,
-        path,
-        meta: isFolder ? "folder" : "file",
-        status: "",
-        isFolder,
-        children: [],
-        childMap: new Map(),
-      };
-      parent.childMap.set(id, node);
-      parent.children.push(node);
-      return node;
-    };
-
-    assets.forEach(([rawPath, meta, status], assetIndex) => {
-      const normalizedPath = rawPath.replace(/^\/+/, "").replace(/\/+$/, meta === "folder" ? "/" : "");
-      const cleanPath = normalizedPath.replace(/\/+$/, "");
-      const segments = cleanPath.split("/").filter(Boolean);
-      if (segments.length === 0) return;
-      const isFolderAsset = meta === "folder" || rawPath.endsWith("/");
-      let current = root;
-      segments.forEach((segment, segmentIndex) => {
-        const isLast = segmentIndex === segments.length - 1;
-        const segmentPath = segments.slice(0, segmentIndex + 1).join("/") + (!isLast || isFolderAsset ? "/" : "");
-        current = ensureChild(current, segment, segmentPath, !isLast || isFolderAsset);
-        if (isLast) {
-          current.meta = meta;
-          current.status = status;
-          current.assetIndex = assetIndex;
-          current.isFolder = isFolderAsset || current.children.length > 0;
-        }
-      });
-    });
-
-    const sortTree = (node: SourceAssetTreeNode) => {
-      node.children.sort((a, b) => {
-        if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
-      node.children.forEach(sortTree);
-    };
-    sortTree(root);
-
-    const expanded: string[] = [];
-    const collectExpanded = (node: SourceAssetTreeNode) => {
-      if (node.isFolder && node.children.length > 0) expanded.push(node.id);
-      node.children.forEach(collectExpanded);
-    };
-    root.children.forEach(collectExpanded);
-    return { nodes: root.children, expandedItems: expanded };
-  }, [assets]);
-
-  const renderNode = (node: SourceAssetTreeNode): React.ReactNode => {
-    const canSelect = typeof node.assetIndex === "number";
-    const isSelected = node.assetIndex === selectedIndex;
-    const label = (
-      <div
-        className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
-        role={canSelect ? "button" : undefined}
-        tabIndex={canSelect ? 0 : -1}
-        title={node.path}
-        onClick={(event) => {
-          if (!canSelect || node.assetIndex === undefined) return;
-          event.stopPropagation();
-          void onSelect(node.assetIndex);
-        }}
-        onKeyDown={(event) => {
-          if (!canSelect || node.assetIndex === undefined) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            event.stopPropagation();
-            void onSelect(node.assetIndex);
-          }
-        }}
-      >
-        <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-          {node.isFolder ? "폴더" : "파일"}
-        </span>
-        <strong>{node.name}</strong>
-        <em>{node.meta === "folder" ? `${node.children.length}개` : node.meta}</em>
-      </div>
-    );
-
-    return (
-      <TreeItem key={node.id} itemId={node.id} label={label}>
-        {node.children.map(renderNode)}
-      </TreeItem>
-    );
-  };
-
-  if (nodes.length === 0) {
-    return <p className="source-empty-note">표시할 오브젝트가 없습니다.</p>;
-  }
-
-  return (
-    <SimpleTreeView className="source-asset-tree" expandedItems={expandedItems}>
-      {nodes.map(renderNode)}
-    </SimpleTreeView>
-  );
 }
 
 function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
@@ -2040,143 +1904,18 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <section className="schema-xflow-workspace">
-        <div className="schema-xflow-toolbar">
-          <label className="schema-search-box">
-            <Search size={16} />
-            <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.currentTarget.value)} placeholder="필드 검색" />
-          </label>
-          <div className="schema-xflow-scope">
-            {sampleScopeOptions.map((option) => (
-              <button
-                className={option.value === schemaSampleScope ? "active" : ""}
-                disabled={isRecheckingSchema}
-                aria-label={option.label}
-                key={option.value}
-                onClick={() => selectSampleScope(option.value)}
-                title={option.label}
-                type="button"
-              >
-                {option.shortLabel}
-              </button>
-            ))}
-          </div>
-          {isFlattenedJson && (
-            <div className="schema-xflow-scope">
-              <button className={flattenObjects ? "active" : ""} disabled={!hasInferredSchema} onClick={() => applyFlattenSettings(!flattenObjects)} type="button">
-                평탄화 {flattenObjects ? "켜짐" : "꺼짐"}
-              </button>
-              {[1, 2, 3].map((depth) => (
-                <button className={flattenObjects && depth === flattenDepth ? "active" : ""} disabled={!hasInferredSchema || !flattenObjects} key={depth} onClick={() => applyFlattenSettings(true, depth)} type="button">
-                  {depth}단계
-                </button>
-              ))}
-            </div>
-          )}
-          <button className="secondary-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
-            <RefreshCw size={15} /> {isRecheckingSchema ? "확인 중" : "다시 확인"}
-          </button>
-        </div>
-
-        <div className="schema-xflow-canvas">
-          <section className="schema-xflow-card source-card">
-            <header>
-              <FileText size={24} />
-              <div>
-                <strong>원본 필드</strong>
-                <span>{sourceFormat} · {schemaColumns.length}개 필드</span>
-              </div>
-            </header>
-            <div className="schema-xflow-column-head">
-              <span>FIELD</span>
-              <span>SAMPLE</span>
-            </div>
-            <div className="schema-xflow-list">
-              {visibleSchemaColumns.map(({ column, index }) => {
-                const sampleValue = schemaSampleRows[0]?.[index] ?? "";
-                return (
-                  <button className={index === selectedIndex ? "schema-xflow-row active" : "schema-xflow-row"} key={`source-${column.sourceName}-${index}`} type="button" onClick={() => setSelectedSchemaIndex(index)}>
-                    <strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong>
-                    <em title={sampleValue}>{sampleValue || "null"}</em>
-                  </button>
-                );
-              })}
-              {visibleSchemaColumns.length === 0 && <div className="schema-xflow-empty">표시할 원본 필드가 없습니다.</div>}
-            </div>
-          </section>
-
-          <div className="schema-xflow-edge-column" aria-hidden="true">
-            {visibleSchemaColumns.map(({ column, index }) => (
-              <button className={index === selectedIndex ? "active" : ""} key={`edge-${column.sourceName}-${index}`} type="button" onClick={() => setSelectedSchemaIndex(index)}>
-                →
-              </button>
-            ))}
-          </div>
-
-          <section className="schema-xflow-card output-card">
-            <header>
-              <Table2 size={24} />
-              <div>
-                <strong>출력 컬럼</strong>
-                <span>{includedSchemaColumns.length}개 출력 · {schemaColumns.length - includedSchemaColumns.length}개 제외</span>
-              </div>
-            </header>
-            <div className="schema-xflow-column-head">
-              <span>COLUMN</span>
-              <span>TYPE</span>
-            </div>
-            <div className="schema-xflow-list">
-              {visibleSchemaColumns.map(({ column, index }) => {
-                const included = isSchemaColumnIncluded(column);
-                return (
-                  <div className={`${index === selectedIndex ? "schema-xflow-row output active" : "schema-xflow-row output"} ${included ? "" : "excluded"}`} key={`output-${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)} role="button" tabIndex={0}>
-                    <input
-                      aria-label={`${column.sourceName} 출력 컬럼명`}
-                      value={column.targetName}
-                      onBlur={(event) => {
-                        if (event.currentTarget.value.trim()) return;
-                        updateSchemaColumn(index, { targetName: normalizeTargetColumnName(column.sourceName) });
-                      }}
-                      onChange={(event) => updateSchemaColumn(index, { targetName: event.currentTarget.value })}
-                    />
-                    <select aria-label={`${column.sourceName} 타입`} value={column.type} onChange={(event) => updateSchemaColumn(index, { type: event.currentTarget.value })}>
-                      {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                    </select>
-                  </div>
-                );
-              })}
-              {visibleSchemaColumns.length === 0 && <div className="schema-xflow-empty">표시할 출력 컬럼이 없습니다.</div>}
-            </div>
-          </section>
-        </div>
-
-        {selectedColumn && (
-          <div className="schema-xflow-detail">
-            <div>
-              <span>선택 필드</span>
-              <strong>{selectedColumn.sourceName} → {selectedColumn.targetName || `column_${selectedIndex + 1}`}</strong>
-            </div>
-            <label>
-              <span>Null</span>
-              <select value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
-                <option value="false">필수</option>
-                <option value="true">허용</option>
-              </select>
-            </label>
-            <label>
-              <span>역할</span>
-              <select value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
-                {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
-              </select>
-            </label>
-            <span className="schema-xflow-metric">Null {selectedNullRatio}%</span>
-            <span className="schema-xflow-metric">샘플 {selectedSampleValues.length}개</span>
-            <button className="secondary-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>
-              {isSchemaColumnIncluded(selectedColumn) ? "출력 제외" : "출력 포함"}
-            </button>
-          </div>
-        )}
-      </section>
+      <XFlowSchemaTransformEditor
+        columns={schemaColumns}
+        sampleRows={schemaSampleRows}
+        selectedIndex={selectedIndex}
+        sourceFormat={sourceFormat}
+        onSelectedIndexChange={setSelectedSchemaIndex}
+        onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
+          patchSchemaColumns(nextColumns, nextSampleRows);
+          const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
+          setSelectedSchemaIndex(boundedIndex);
+        }}
+      />
 
       <section className="schema-bottom-bar">
         <button className="secondary-button" type="button" onClick={onPrev}>이전: 소스 연결</button>

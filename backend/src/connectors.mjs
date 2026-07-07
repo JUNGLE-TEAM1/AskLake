@@ -143,7 +143,7 @@ export async function testDataLakeSource(fields, sourceType = "Data Lake") {
 
   return {
     actionPath: "/api/etl/sources/datalake/test",
-    assets: browsableObjectStorageItems(objects, prefix).slice(0, 50).map((item, index) => [
+    assets: browsableObjectStorageItems(objects, prefix).slice(0, sourceListLimit()).map((item, index) => [
       item.Key ?? `object-${index + 1}`,
       item.__folder ? "folder" : formatBytes(item.Size ?? 0),
       item.LastModified ? item.LastModified.toISOString() : "listed",
@@ -271,7 +271,7 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
 
   return {
     actionPath: "/api/etl/sources/datalake/test",
-    assets: browsableObjectStorageItems(objects, prefix).slice(0, 50).map((item, index) => [
+    assets: browsableObjectStorageItems(objects, prefix).slice(0, sourceListLimit()).map((item, index) => [
       item.Key ?? `object-${index + 1}`,
       item.__folder ? "folder" : formatBytes(item.Size ?? 0),
       item.LastModified ? item.LastModified.toISOString() : "listed",
@@ -678,7 +678,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
 
   return {
     actionPath: "/api/etl/sources/minio/test",
-    assets: browsableObjectStorageItems(objects, prefix).slice(0, 50).map((item, index) => [
+    assets: browsableObjectStorageItems(objects, prefix).slice(0, sourceListLimit()).map((item, index) => [
       item.Key ?? `object-${index + 1}`,
       item.__folder ? "folder" : formatBytes(item.Size ?? 0),
       item.LastModified ? item.LastModified.toISOString() : "listed",
@@ -769,7 +769,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
 
   return {
     actionPath: "/api/etl/sources/minio/test",
-    assets: browsableObjectStorageItems(objects, prefix).slice(0, 50).map((item, index) => [
+    assets: browsableObjectStorageItems(objects, prefix).slice(0, sourceListLimit()).map((item, index) => [
       item.Key ?? `object-${index + 1}`,
       item.__folder ? "folder" : formatBytes(item.Size ?? 0),
       item.LastModified ? item.LastModified.toISOString() : "listed",
@@ -812,33 +812,43 @@ function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessK
 
 async function listObjects(client, bucket, prefix) {
   const normalizedPrefix = normalizePrefix(prefix);
-  const result = await client.send(new ListObjectsV2Command({
-    Bucket: bucket,
-    Delimiter: "/",
-    MaxKeys: 50,
-    Prefix: normalizedPrefix,
-  }));
-  const folders = (result.CommonPrefixes ?? [])
-    .map((item) => item.Prefix)
-    .filter(Boolean)
-    .map((key) => ({
-      __folder: true,
-      Key: key,
-      LastModified: undefined,
-      Size: 0,
+  const limit = sourceListLimit();
+  const objects = [];
+  let continuationToken;
+
+  do {
+    const remaining = Math.max(1, limit - objects.length);
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: Math.min(1000, remaining),
+      Prefix: normalizedPrefix,
     }));
-  const files = (result.Contents ?? [])
-    .filter((item) => item.Key && !(normalizedPrefix.endsWith("/") && item.Key === normalizedPrefix));
-  return [...folders, ...files];
+    objects.push(...(result.Contents ?? [])
+      .filter((item) => item.Key && item.Key !== `${normalizedPrefix}/`));
+    continuationToken = result.IsTruncated && objects.length < limit ? result.NextContinuationToken : undefined;
+  } while (continuationToken && objects.length < limit);
+
+  return objects;
+}
+
+function sourceListLimit() {
+  const configured = Number(process.env.ASKLAKE_SOURCE_LIST_LIMIT ?? 5000);
+  if (!Number.isFinite(configured) || configured <= 0) return 5000;
+  return Math.trunc(configured);
 }
 
 function immediateSampleObject(objects, prefix) {
   const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   return objects.find((item) => {
     const key = String(item.Key ?? "");
     if (!hasTextExtension(key)) return false;
-    if (normalizedPrefix && key === normalizedPrefix) return true;
-    const relative = normalizedPrefix && key.startsWith(normalizedPrefix) ? key.slice(normalizedPrefix.length) : key;
+    if (!key) return false;
+    if (normalizedPrefix && (key === normalizedPrefix || key === normalizedPrefixWithSlash)) return true;
+    const relative = normalizedPrefix
+      ? (key.startsWith(normalizedPrefixWithSlash) ? key.slice(normalizedPrefixWithSlash.length) : "")
+      : key;
     return relative.length > 0 && !relative.includes("/");
   });
 }
@@ -847,21 +857,27 @@ function browsableObjectStorageItems(objects, prefix) {
   const normalizedPrefix = normalizePrefix(prefix);
   const folders = new Map();
   const files = [];
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   for (const item of objects) {
     const key = String(item.Key ?? "");
     if (!key) continue;
-    let relative = normalizedPrefix && key.startsWith(normalizedPrefix) ? key.slice(normalizedPrefix.length) : key;
-    if (!relative && normalizedPrefix && key === normalizedPrefix) {
-      relative = key.split("/").filter(Boolean).at(-1) ?? key;
+    if (normalizedPrefix && (key === normalizedPrefix || key === `${normalizedPrefix}/`)) {
+      continue;
     }
+    if (normalizedPrefix && !key.startsWith(normalizedPrefixWithSlash)) {
+      continue;
+    }
+    const relative = (normalizedPrefix ? key.slice(normalizedPrefixWithSlash.length) : key).replace(/^\/+/, "");
     if (!relative) continue;
-    const slashIndex = relative.indexOf("/");
-    if (slashIndex >= 0) {
-      const folderKey = `${normalizedPrefix}${relative.slice(0, slashIndex + 1)}`;
+    const parts = relative.split("/").filter(Boolean);
+    if (parts.length === 0) continue;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const folderKey = `${normalizedPrefixWithSlash}${parts.slice(0, index + 1).join("/")}/`;
       if (!folders.has(folderKey)) {
         folders.set(folderKey, { __folder: true, Key: folderKey, LastModified: item.LastModified, Size: 0 });
       }
-    } else {
+    }
+    if (!item.__folder && !key.endsWith("/")) {
       files.push(item);
     }
   }
@@ -870,10 +886,11 @@ function browsableObjectStorageItems(objects, prefix) {
 
 function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
   const target = `local/${bucket}/${prefix || ""}`;
-  const listOnlyCurrentFolder = !normalizePrefix(prefix);
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   const result = runMinioClientCommand({
     accessKeyId,
-    command: listOnlyCurrentFolder ? `mc ls --json ${shellQuote(target)} | head -50` : `mc find --json ${shellQuote(target)} | head -50`,
+    command: `mc find --json ${shellQuote(target)} | head -${sourceListLimit()}`,
     endpoint,
     secretAccessKey,
   });
@@ -892,12 +909,19 @@ function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, s
       }
     })
     .filter((item) => item?.status === "success" && item.key)
-    .map((item) => ({
-      __folder: item.type === "folder" || String(item.key).endsWith("/"),
-      Key: String(item.key).startsWith(root) ? String(item.key).slice(root.length) : `${normalizePrefix(prefix)}${String(item.key)}`,
-      LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
-      Size: Number(item.size ?? 0),
-    }));
+    .map((item) => {
+      const rawKey = String(item.key);
+      const normalizedKey = rawKey.startsWith(root) ? rawKey.slice(root.length) : rawKey.replace(/^\/+/, "");
+      const key = normalizedPrefix
+        ? (normalizedKey.startsWith(normalizedPrefixWithSlash) ? normalizedKey : `${normalizedPrefixWithSlash}${normalizedKey}`)
+        : normalizedKey;
+      return {
+        __folder: item.type === "folder" || String(item.key).endsWith("/"),
+        Key: key,
+        LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
+        Size: Number(item.size ?? 0),
+      };
+    });
 }
 
 function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, secretAccessKey }) {
@@ -1155,7 +1179,7 @@ function tail(value) {
 }
 
 function normalizePrefix(prefix) {
-  return String(prefix ?? "").replace(/^\/+/, "");
+  return String(prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
 }
 
 function redactSecretConfigValues(fields) {
