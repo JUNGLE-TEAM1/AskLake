@@ -20,8 +20,15 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 ```powershell
 cd backend
 npm install
+npm run minio:seed-verify
 npm run verify
 npm run dev
+```
+
+로컬 MinIO가 없다면 먼저 repo root에서 실행한다.
+
+```powershell
+docker compose up -d minio
 ```
 
 Initial endpoints:

@@ -11,7 +11,6 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
-  getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -46,12 +45,7 @@ type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
-const liveJobsStorageKey = "asklake.liveJobs";
-const liveDatasetsStorageKey = "asklake.liveDatasets";
 const maxStoredCatalogDatasets = 30;
-const maxStoredLiveRows = 50;
-const liveJobPollIntervalMs = 1500;
-const liveJobPollMaxAttempts = 120;
 
 const initialDraftPipeline: DraftPipeline = {
   id: "pair_a_customer_review_gold",
@@ -90,18 +84,9 @@ const initialDraftPipeline: DraftPipeline = {
   source: {
     connectionMessage: "검토 전에 소스 연결 테스트가 필요합니다.",
     connectionStatus: "idle",
-    sourceConfig: [
-      ["Storage Provider", "S3 Compatible"],
-      ["Endpoint URL", "http://127.0.0.1:9000"],
-      ["Region", "us-east-1"],
-      ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", "nyc_taxi/csv/"],
-      ["Access Key", ""],
-      ["Secret Key", ""],
-      ["Use Path Style", "true"],
-    ],
-    sourceLabel: "m3-raw",
-    sourceType: "File / S3",
+    sourceConfig: [],
+    sourceLabel: "",
+    sourceType: "",
   },
   target: {
     compression: "Snappy",
@@ -166,15 +151,6 @@ function isCatalogDataset(value: unknown): value is CatalogDataset {
     && Array.isArray(dataset.tags);
 }
 
-function isJobRowData(value: unknown): value is JobRowData {
-  if (!value || typeof value !== "object") return false;
-  const job = value as Partial<JobRowData>;
-  return typeof job.id === "string"
-    && typeof job.name === "string"
-    && typeof job.owner === "string"
-    && typeof job.status === "string";
-}
-
 function parseStoredCatalogDatasets(storageKey: string) {
   if (typeof window === "undefined") return [];
 
@@ -184,34 +160,6 @@ function parseStoredCatalogDatasets(storageKey: string) {
   } catch {
     return [];
   }
-}
-
-function parseStoredLiveJobs() {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(liveJobsStorageKey) ?? "[]");
-    return Array.isArray(stored) ? stored.filter(isJobRowData).map(normalizeJobRow) : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseStoredLiveDatasets() {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(liveDatasetsStorageKey) ?? "[]");
-    return Array.isArray(stored) ? stored.filter(isCatalogDataset).map(normalizeDatasetRow) : [];
-  } catch {
-    return [];
-  }
-}
-
-function loadStoredLiveJobs() {
-  if (apiConfig.useMock || typeof window === "undefined") return [];
-  return parseStoredLiveJobs();
-}
-
-function loadStoredLiveDatasets() {
-  if (apiConfig.useMock || typeof window === "undefined") return [];
-  return parseStoredLiveDatasets();
 }
 
 function loadStoredCatalogDatasets() {
@@ -249,27 +197,12 @@ function saveStoredCatalogDataset(dataset: CatalogDataset) {
   window.localStorage.setItem(catalogDatasetStorageKey, JSON.stringify(nextDatasets));
 }
 
-function saveStoredLiveJobs(jobs: JobRowData[]) {
-  if (apiConfig.useMock || typeof window === "undefined") return;
-  window.localStorage.setItem(liveJobsStorageKey, JSON.stringify(jobs.slice(0, maxStoredLiveRows)));
-}
-
-function saveStoredLiveDatasets(datasets: CatalogDataset[]) {
-  if (apiConfig.useMock || typeof window === "undefined") return;
-  window.localStorage.setItem(liveDatasetsStorageKey, JSON.stringify(datasets.slice(0, maxStoredLiveRows)));
-}
-
-function saveStoredLiveData(jobs: JobRowData[], datasets: CatalogDataset[]) {
-  saveStoredLiveJobs(jobs);
-  saveStoredLiveDatasets(datasets);
-}
-
 function getInitialDatasets() {
-  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : loadStoredLiveDatasets();
+  return apiConfig.useMock ? mergeCatalogDatasets(catalogDatasets, loadStoredCatalogDatasets()) : [];
 }
 
 function getInitialJobs() {
-  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : loadStoredLiveJobs();
+  return apiConfig.useMock ? etlJobs.map(normalizeJobRow) : [];
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
@@ -284,20 +217,6 @@ function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
     ...dataset,
     status: normalizeDatasetStatus(String(dataset.status)),
   };
-}
-
-function nextSelectedJob(currentJob: JobRowData | null, jobs: JobRowData[]) {
-  if (currentJob && jobs.some((job) => job.id === currentJob.id)) return currentJob;
-  return jobs[0] ?? emptySelectedJob;
-}
-
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function nextSelectedDataset(currentDataset: CatalogDataset | null, datasets: CatalogDataset[]) {
-  if (currentDataset && datasets.some((dataset) => dataset.id === currentDataset.id)) return currentDataset;
-  return datasets[0] ?? emptySelectedDataset;
 }
 
 function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
@@ -452,13 +371,7 @@ export function useAskLakeData({
   const [dataLoading, setDataLoading] = useState(!apiConfig.useMock);
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
-  const liveJobPollTokensRef = useRef<Record<string, number>>({});
   const commandPendingRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => () => {
-    liveJobPollTokensRef.current = {};
-    commandPendingRef.current.clear();
-  }, []);
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
@@ -487,11 +400,10 @@ export function useAskLakeData({
         const normalizedJobs = nextJobs.map(normalizeJobRow);
         const normalizedDatasets = nextDatasets.map(normalizeDatasetRow);
         const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
-        saveStoredLiveData(normalizedJobs, normalizedDatasets);
         setJobs(normalizedJobs);
         setDatasets(normalizedDatasets);
-        setSelectedJob((job) => nextSelectedJob(job, normalizedJobs));
-        setSelectedDataset((dataset) => nextSelectedDataset(dataset, normalizedDatasets));
+        setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
+        setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
         setRunsByJobId(hydratedRunState.runsByJobId);
         setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
         setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
@@ -536,19 +448,11 @@ export function useAskLakeData({
       const normalizedJob = normalizeJobRow(result.job);
       const normalizedDataset = result.dataset ? normalizeDatasetRow(result.dataset) : null;
 
-      setJobs((items) => {
-        const nextJobs = [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)];
-        saveStoredLiveJobs(nextJobs);
-        return nextJobs;
-      });
+      setJobs((items) => [normalizedJob, ...items.filter((item) => item.name !== normalizedJob.name)]);
       setSelectedJob(normalizedJob);
       if (normalizedDataset) {
         saveStoredCatalogDataset(normalizedDataset);
-        setDatasets((items) => {
-          const nextDatasets = [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)];
-          saveStoredLiveDatasets(nextDatasets);
-          return nextDatasets;
-        });
+        setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
       writeAuditLog("etl.job.created", "/api/etl/jobs", draftPipeline.id);
@@ -577,7 +481,7 @@ export function useAskLakeData({
 
       if (!sourceDataset || !currentSqlResult) {
         writeAuditLog("analysis.derived_dataset.create_failed", "/api/catalog/derived-datasets", request.sourceDatasetId, "failed");
-        showToast("Lake Dataset 생성에 필요한 쿼리 결과를 찾지 못했습니다.", "info");
+        showToast("Lake Dataset 생성에 필요한 Preview 결과를 찾지 못했습니다.", "info");
         return null;
       }
 
@@ -597,65 +501,11 @@ export function useAskLakeData({
     }
   };
 
-  const syncRunStateFromJob = (normalizedJob: JobRowData) => {
-    const nextRunState = buildRunStateFromJobs([normalizedJob]);
-    setRunsByJobId((state) => (
-      nextRunState.runsByJobId[normalizedJob.id]
-        ? { ...state, [normalizedJob.id]: nextRunState.runsByJobId[normalizedJob.id] }
-        : withoutRecordKey(state, normalizedJob.id)
-    ));
-    setSelectedRunIdByJobId((state) => (
-      nextRunState.selectedRunIdByJobId[normalizedJob.id]
-        ? { ...state, [normalizedJob.id]: nextRunState.selectedRunIdByJobId[normalizedJob.id] }
-        : withoutRecordKey(state, normalizedJob.id)
-    ));
-    setDagStepsByRunId((state) => ({
-      ...state,
-      ...nextRunState.dagStepsByRunId,
-    }));
-  };
-
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
-    setJobs((items) => {
-      const nextJobs = items.map((job) => (job.id === jobId ? updater(job) : job));
-      saveStoredLiveJobs(nextJobs);
-      return nextJobs;
-    });
+    setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
   };
 
-  const applyJobUpdate = (updatedJob: JobRowData) => {
-    const normalizedJob = normalizeJobRow(updatedJob);
-    updateJobState(normalizedJob.id, () => normalizedJob);
-    syncRunStateFromJob(normalizedJob);
-    return normalizedJob;
-  };
-
-  const pollLiveJobUntilStable = async (jobId: string) => {
-    const token = Date.now();
-    liveJobPollTokensRef.current[jobId] = token;
-
-    for (let attempt = 0; attempt < liveJobPollMaxAttempts; attempt += 1) {
-      await wait(liveJobPollIntervalMs);
-      if (liveJobPollTokensRef.current[jobId] !== token) return;
-
-      try {
-        const normalizedJob = applyJobUpdate(await getLiveJob(jobId));
-        if (normalizedJob.status !== "running") {
-          delete liveJobPollTokensRef.current[jobId];
-          return;
-        }
-      } catch {
-        delete liveJobPollTokensRef.current[jobId];
-        showToast("작업 최종 상태를 다시 불러오지 못했습니다.", "info");
-        return;
-      }
-    }
-
-    if (liveJobPollTokensRef.current[jobId] === token) {
-      delete liveJobPollTokensRef.current[jobId];
-      showToast("작업이 아직 실행 중입니다. 잠시 뒤 새로고침해 주세요.", "info");
-    }
   const selectRunForJob = (jobId: string, runId: string) => {
     setSelectedRunIdByJobId((state) => {
       const runExists = (runsByJobId[jobId] ?? []).some((run) => run.runId === runId);
@@ -678,7 +528,6 @@ export function useAskLakeData({
     if (command === "delete") {
       writeAuditLog("etl.job.delete_requested", `/api/etl/jobs/${job.id}`, job.id);
       const remaining = jobs.filter((item) => item.id !== job.id);
-      saveStoredLiveJobs(remaining);
       const deletedRunIds = new Set((runsByJobId[job.id] ?? []).map((run) => run.runId));
       setJobs(remaining);
       setSelectedJob(remaining[0] ?? emptySelectedJob);
@@ -736,12 +585,7 @@ export function useAskLakeData({
         ? await runMockJobCommand(job, command)
         : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
-      if (updatedJob) {
-        const normalizedJob = applyJobUpdate(updatedJob);
-        if (!apiConfig.useMock && (command === "run" || command === "retry") && normalizedJob.status === "running") {
-          void pollLiveJobUntilStable(normalizedJob.id);
-        }
-      }
+      if (updatedJob) updateJobState(job.id, () => normalizeJobRow(updatedJob));
       if (run) {
         setRunsByJobId((state) => ({
           ...state,
@@ -768,11 +612,7 @@ export function useAskLakeData({
       if (dataset) {
         const normalizedDataset = normalizeDatasetRow(dataset);
         saveStoredCatalogDataset(normalizedDataset);
-        setDatasets((items) => {
-          const nextDatasets = [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)];
-          saveStoredLiveDatasets(nextDatasets);
-          return nextDatasets;
-        });
+        setDatasets((items) => [normalizedDataset, ...items.filter((item) => item.id !== normalizedDataset.id)]);
         setSelectedDataset(normalizedDataset);
       }
       showToast(commandSuccessMessage(command));
@@ -804,12 +644,6 @@ export function useAskLakeData({
     onFlowChange("jobRuns");
   };
 
-  const openJobDag = (job: JobRowData) => {
-    setSelectedJob(job);
-    writeAuditLog("etl.job.dag_opened", `/api/etl/jobs/${job.id}/dag`, job.id);
-    onFlowChange("jobDag");
-  };
-
   const openDataset = (dataset: CatalogDataset) => {
     setSelectedDataset(dataset);
     writeAuditLog("catalog.dataset.opened", `/api/catalog/datasets/${dataset.id}`, dataset.id);
@@ -838,7 +672,6 @@ export function useAskLakeData({
     jobs,
     openDataset,
     openDatasetInSql,
-    openJobDag,
     openJobDetail,
     openJobRuns,
     runsByJobId,

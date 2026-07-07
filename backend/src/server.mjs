@@ -39,16 +39,6 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/api/harness/rest-sample") {
-      sendJson(response, 200, {
-        data: [
-          { active: true, amount: 42.7, event_time: "2026-07-04T10:00:00Z", id: 1, payload: { region: "KR" }, user_id: "u_001" },
-          { active: false, amount: 19.25, event_time: "2026-07-04T10:01:00Z", id: 2, payload: { region: "US" }, user_id: "u_002" },
-        ],
-      });
-      return;
-    }
-
     if (request.method === "POST" && url.pathname === "/api/etl/sources/test") {
       const body = await readJson(request);
       const sourceType = body.sourceType;
