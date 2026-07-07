@@ -832,16 +832,6 @@ function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], exist
   return { jsonInferred, jsonParseFailed, previewRows, schemaRules };
 }
 
-function buildPartitionPathPreview(storagePath: string, partitionColumns: string[]) {
-  const base = storagePath.trim() || buildTargetStoragePath(DEFAULT_TARGET_DATASET, DEFAULT_TARGET_LAYER);
-  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
-  if (partitionColumns.length === 0) return normalizedBase;
-  const partitionPath = partitionColumns
-    .map((column) => `${column}=${isRecommendedPartitionColumn(column) ? "2026-07-07" : "sample"}`)
-    .join("/");
-  return `${normalizedBase}${partitionPath}/`;
-}
-
 function formatPartitionColumnType(rule: TargetSchemaRule) {
   const displayType = rule.displayType?.trim().toLowerCase();
   if (displayType) return displayType;
@@ -4529,9 +4519,9 @@ export function TargetPage({
   const orderedSchemaRules = useMemo(() => [...activeSchemaRules], [activeSchemaRules]);
   const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
   const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
-  const recommendedPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => rule.recommendedPartition), [partitionCandidates]);
-  const otherPartitionCandidates = useMemo(() => partitionCandidates.filter((rule) => !rule.recommendedPartition), [partitionCandidates]);
-  const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use));
+  const filteredPartitionColumns = partitionColumns
+    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use))
+    .slice(0, 1);
   const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
@@ -4539,7 +4529,6 @@ export function TargetPage({
     });
     return previewRow;
   }), [activePreviewRows, usedSchemaRules]);
-  const partitionPathPreview = buildPartitionPathPreview(targetStoragePath, filteredPartitionColumns);
   const lineage = {
     sourceName: draft.source.sourceLabel || "Source",
     targetDatasetName: targetDataset || "Target",
@@ -4626,9 +4615,7 @@ export function TargetPage({
   };
 
   const togglePartitionColumn = (columnName: string) => {
-    setPartitionColumns((currentColumns) => currentColumns.includes(columnName)
-      ? currentColumns.filter((currentColumn) => currentColumn !== columnName)
-      : [...currentColumns, columnName]);
+    setPartitionColumns([columnName]);
   };
 
   const saveTargetConfig = () => {
@@ -4688,15 +4675,11 @@ export function TargetPage({
   };
 
   const renderPartitionOption = (rule: TargetSchemaRule) => {
-    const selected = filteredPartitionColumns.includes(rule.name);
+    const selected = filteredPartitionColumns[0] === rule.name;
     const disabled = !rule.use;
-    const recommended = rule.recommendedPartition;
     return (
-      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : "", recommended ? "recommended" : "not-recommended"].filter(Boolean).join(" ")} key={rule.name}>
-        <input checked={selected} disabled={disabled} type="checkbox" onChange={() => togglePartitionColumn(rule.name)} />
-        <span className={recommended ? "target-partition-badge recommended" : "target-partition-badge muted"}>
-          {recommended ? "추천" : "비추천"}
-        </span>
+      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
+        <input checked={selected} disabled={disabled} name="target-partition-column" type="radio" onChange={() => togglePartitionColumn(rule.name)} />
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
       </label>
@@ -4816,23 +4799,8 @@ export function TargetPage({
       ))}
       {renderToggleSection("partition", "파티션", <SlidersHorizontal size={18} />, (
         <div className="target-partition-settings">
-          <p className="target-partition-help">파티션은 조회가 빨라지도록 날짜, 지역, 카테고리 기준으로 폴더를 나누는 설정입니다.</p>
-          <div className="target-partition-divider" />
-          <div className="target-partition-group">
-            <div className="target-partition-title">추천 파티션 컬럼</div>
-            <div className="target-partition-grid" role="group" aria-label="추천 파티션 컬럼">
-              {recommendedPartitionCandidates.map(renderPartitionOption)}
-            </div>
-          </div>
-          <div className="target-partition-group">
-            <div className="target-partition-title">기타 컬럼</div>
-            <div className="target-partition-grid" role="group" aria-label="기타 파티션 컬럼">
-              {otherPartitionCandidates.map(renderPartitionOption)}
-            </div>
-          </div>
-          <div className="target-path-preview">
-            <span>저장 경로 미리보기</span>
-            <strong>{partitionPathPreview}</strong>
+          <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+            {partitionCandidates.map(renderPartitionOption)}
           </div>
         </div>
       ))}
