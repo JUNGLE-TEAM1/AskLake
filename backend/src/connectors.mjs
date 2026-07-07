@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
 
@@ -251,7 +252,6 @@ export async function testPostgresSource(fields) {
 }
 
 export async function testMongoSource(fields) {
-  const { MongoClient } = await import("mongodb");
   const endpoint = fieldValue(fields, "Endpoint / Host") || process.env.ASKLAKE_MONGO_HOST || "127.0.0.1";
   const port = Number(fieldValue(fields, "Port") || process.env.ASKLAKE_MONGO_PORT || 27018);
   const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_MONGO_DATABASE || "asklake_sources";
@@ -261,83 +261,68 @@ export async function testMongoSource(fields) {
   const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
   const uri = fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
-  const client = new MongoClient(uri, {
-    connectTimeoutMS: 3000,
-    serverSelectionTimeoutMS: 3000,
-  });
 
-  await client.connect();
-  try {
-    const db = client.db(database);
-    const collections = (await db.listCollections({}, { nameOnly: true }).toArray())
-      .map((item) => item.name)
-      .filter(Boolean)
-      .sort();
-    const collection = collectionSelector || collections[0];
-    if (!collection) throw apiError("MONGO_NO_COLLECTIONS", `${database} 데이터베이스에서 컬렉션을 찾지 못했습니다.`, 404);
-    if (collectionSelector && !collections.includes(collectionSelector)) {
-      throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
-    }
-
-    const docs = await db.collection(collection).find({}, { limit: samplePolicy.rowLimit }).toArray();
-    const parsedSample = {
-      columns: Array.from(new Set(docs.flatMap((doc) => Object.keys(flattenMongoDocument(doc))))),
-      format: "mongodb",
-      rows: [],
-    };
-    const flattenedDocs = docs.map((doc) => flattenMongoDocument(doc));
-    parsedSample.rows = flattenedDocs.map((doc) => parsedSample.columns.map((column) => stringifyCell(doc[column])));
-    const schemaColumns = inferSchemaColumns(parsedSample);
-    const id = sourceId("source", `mongodb://${endpoint}:${port}/${database}/${collection}`);
-    const runId = sourceId("run", `${id}:${Date.now()}`);
-    const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
-      ["Endpoint / Host", endpoint],
-      ["Port", String(port)],
-      ["Database Name", database],
-      ["Username", username],
-      ["__Schema Sample Scope", samplePolicy.scope],
-      ["__Schema Sample Scope Label", samplePolicy.label],
-      ["__Sample Row Limit", String(samplePolicy.rowLimit)],
-      ["__Source ID", id],
-      ["__Run ID", runId],
-      ["__Source Unit Count", String(collections.length)],
-      ["DATASET OR TABLE SELECTOR", collection],
-    ]);
-
-    return {
-      actionPath: "/api/etl/sources/mongodb/test",
-      assets: collections.map((name) => [name, database, name === collection ? "sampled" : "detected"]),
-      draftPatch: {
-        schema: {
-          columns: schemaColumns,
-          sampleRows: parsedSample.rows,
-          schemaFingerprint: schemaFingerprint(schemaColumns),
-          summary: `MongoDB 컬렉션 ${database}.${collection}에서 ${schemaColumns.length}개 필드 추론 · 문서 샘플 확인`,
-        },
-        source: {
-          connectionMessage: `MongoDB 연결 성공: ${database}.${collection}`,
-          connectionStatus: "success",
-          sourceConfig,
-          sourceLabel: `${endpoint}:${port}/${database}.${collection}`,
-          sourceType: "MongoDB",
-        },
-      },
-      logs: [
-        `MongoDB 연결 성공: ${endpoint}:${port}/${database}`,
-        `선택 컬렉션: ${database}.${collection}`,
-        `문서 샘플 추론: ${schemaColumns.length}개 필드, 샘플 문서 ${docs.length}개`,
-        `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}문서)`,
-      ],
-      message: `MongoDB 연결 성공: ${database}.${collection}`,
-      previewColumns: parsedSample.columns,
-      previewNote: `${database}.${collection}에서 가져온 첫 ${docs.length}개 문서`,
-      previewRows: parsedSample.rows,
-      status: "success",
-      testItems: [["Endpoint", `${endpoint}:${port}`], ["Database", database], ["Collection", collection]],
-    };
-  } finally {
-    await client.close().catch(() => undefined);
+  const { collection, collections, docs } = runMongoshSample({ collectionSelector, database, rowLimit: samplePolicy.rowLimit, uri });
+  if (!collection) throw apiError("MONGO_NO_COLLECTIONS", `${database} 데이터베이스에서 컬렉션을 찾지 못했습니다.`, 404);
+  if (collectionSelector && !collections.includes(collectionSelector)) {
+    throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
   }
+
+  const parsedSample = {
+    columns: Array.from(new Set(docs.flatMap((doc) => Object.keys(flattenMongoDocument(doc))))),
+    format: "mongodb",
+    rows: [],
+  };
+  const flattenedDocs = docs.map((doc) => flattenMongoDocument(doc));
+  parsedSample.rows = flattenedDocs.map((doc) => parsedSample.columns.map((column) => stringifyCell(doc[column])));
+  const schemaColumns = inferSchemaColumns(parsedSample);
+  const id = sourceId("source", `mongodb://${endpoint}:${port}/${database}/${collection}`);
+  const runId = sourceId("run", `${id}:${Date.now()}`);
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Endpoint / Host", endpoint],
+    ["Port", String(port)],
+    ["Database Name", database],
+    ["Username", username],
+    ["__Schema Sample Scope", samplePolicy.scope],
+    ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Sample Row Limit", String(samplePolicy.rowLimit)],
+    ["__Source ID", id],
+    ["__Run ID", runId],
+    ["__Source Unit Count", String(collections.length)],
+    ["DATASET OR TABLE SELECTOR", collection],
+  ]);
+
+  return {
+    actionPath: "/api/etl/sources/mongodb/test",
+    assets: collections.map((name) => [name, database, name === collection ? "sampled" : "detected"]),
+    draftPatch: {
+      schema: {
+        columns: schemaColumns,
+        sampleRows: parsedSample.rows,
+        schemaFingerprint: schemaFingerprint(schemaColumns),
+        summary: `MongoDB 컬렉션 ${database}.${collection}에서 ${schemaColumns.length}개 필드 추론 · 문서 샘플 확인`,
+      },
+      source: {
+        connectionMessage: `MongoDB 연결 성공: ${database}.${collection}`,
+        connectionStatus: "success",
+        sourceConfig,
+        sourceLabel: `${endpoint}:${port}/${database}.${collection}`,
+        sourceType: "MongoDB",
+      },
+    },
+    logs: [
+      `MongoDB 연결 성공: ${endpoint}:${port}/${database}`,
+      `선택 컬렉션: ${database}.${collection}`,
+      `문서 샘플 추론: ${schemaColumns.length}개 필드, 샘플 문서 ${docs.length}개`,
+      `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}문서)`,
+    ],
+    message: `MongoDB 연결 성공: ${database}.${collection}`,
+    previewColumns: parsedSample.columns,
+    previewNote: `${database}.${collection}에서 가져온 첫 ${docs.length}개 문서`,
+    previewRows: parsedSample.rows,
+    status: "success",
+    testItems: [["Endpoint", `${endpoint}:${port}`], ["Database", database], ["Collection", collection]],
+  };
 }
 
 export async function testKafkaSource(fields) {
@@ -610,6 +595,50 @@ function quoteIdent(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
 }
 
+function runMongoshSample({ collectionSelector, database, rowLimit, uri }) {
+  const script = `
+const databaseName = ${JSON.stringify(database)};
+const collectionSelector = ${JSON.stringify(collectionSelector || "")};
+const rowLimit = ${Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 10};
+const dbh = db.getSiblingDB(databaseName);
+const collections = dbh.getCollectionNames().filter(Boolean).sort();
+const collection = collectionSelector || collections[0] || "";
+const docs = collection ? dbh.getCollection(collection).find({}).limit(rowLimit).toArray() : [];
+print(JSON.stringify({ collection, collections, docs }));
+`;
+  const result = spawnSync("mongosh", [uri, "--quiet", "--eval", script], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      MONGOSH_DISABLE_TELEMETRY: "1",
+    },
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(result.stderr || result.stdout || result.error?.message)}`, 502);
+  }
+
+  const payloadLine = String(result.stdout)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{") && line.endsWith("}"))
+    .at(-1);
+  if (!payloadLine) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 응답을 파싱하지 못했습니다: ${tailText(result.stdout || result.stderr)}`, 502);
+  }
+
+  try {
+    const payload = JSON.parse(payloadLine);
+    return {
+      collection: String(payload.collection ?? ""),
+      collections: Array.isArray(payload.collections) ? payload.collections.map(String) : [],
+      docs: Array.isArray(payload.docs) ? payload.docs : [],
+    };
+  } catch (error) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 응답 JSON 파싱 실패: ${error.message}`, 502);
+  }
+}
+
 function stringifyCell(value) {
   if (value === null || value === undefined) return "";
   if (typeof value === "object") return JSON.stringify(value);
@@ -642,4 +671,10 @@ export function apiError(code, message, status = 500) {
   error.code = code;
   error.status = status;
   return error;
+}
+
+function tailText(value, maxLength = 1200) {
+  const text = String(value ?? "").trim();
+  if (text.length <= maxLength) return text;
+  return text.slice(-maxLength);
 }
