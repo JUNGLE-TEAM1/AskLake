@@ -29,16 +29,20 @@ class AssistantDatasetContext:
     id: str
     name: str
     layer: str
+    description: str
     columns: list[AssistantColumnContext]
     sample_rows: list[dict[str, Any]]
+    tags: list[str]
 
     def to_prompt_payload(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "name": self.name,
             "layer": self.layer,
+            "description": self.description,
             "columns": [column.to_prompt_payload() for column in self.columns],
             "sampleRows": self.sample_rows,
+            "tags": self.tags,
         }
 
 
@@ -209,8 +213,10 @@ def _dataset_to_context(
         id=dataset.id,
         name=dataset.name,
         layer=dataset.layer,
+        description=dataset.description,
         columns=columns,
         sample_rows=_sample_rows_to_objects(dataset.sample_rows, column_names, max_sample_rows),
+        tags=dataset.tags,
     )
 
 

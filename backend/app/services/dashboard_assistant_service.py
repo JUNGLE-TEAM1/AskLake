@@ -149,6 +149,9 @@ def _assistant_instructions() -> str:
         "For dashboard_question, prefer a report action. "
         "For visualization_request, use update_widget when widgetId or selectedWidgetId targets an existing widget; otherwise use create_widget. "
         "For update_widget actions, put changed title, type, datasetId, and config under patch, not widget. "
+        "For create_widget and visualization_request update_widget actions, always provide a concise Korean widget title. "
+        "Derive the title from the selected dataset name, dataset description, tags, column names, sample rows, and the user's request. "
+        "Translate English dataset and column names into natural Korean business terms when the meaning is clear, and do not keep placeholder titles such as '시각화 요청', 'AI 추천 위젯', or '제목 없는 위젯'. "
         "If the user asks for a column or dimension that is not available in context.availableDatasets, explain that limitation instead of inventing a column. "
         "Write user-facing message and report markdown in Korean."
     )
