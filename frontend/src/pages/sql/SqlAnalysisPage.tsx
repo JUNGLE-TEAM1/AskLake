@@ -17,7 +17,7 @@ import {
 } from "../../services/queryAiService";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
-import { SqlDatasetRow } from "./SqlDatasetRow";
+import { SqlDatasetTree } from "./SqlDatasetRow";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import { SchemaDetailsPanel } from "./SqlSchemaPanel";
 import {
@@ -301,7 +301,7 @@ export function SqlAnalysisPage({
         const list = contextListRef.current;
         if (!panel || !list) return;
 
-        const firstRow = list.querySelector<HTMLElement>(".sql-table-card");
+        const firstRow = list.querySelector<HTMLElement>(".sql-tree-table-row-shell");
         const rowHeight = Math.max(1, firstRow?.getBoundingClientRect().height ?? 56);
         const panelStyle = window.getComputedStyle(panel);
         const panelBottomPadding = Number.parseFloat(panelStyle.paddingBottom) || 0;
@@ -705,19 +705,16 @@ export function SqlAnalysisPage({
           </label>
           <section className="sql-dataset-search-results">
             <div className="sql-section-heading">
-              <h2>선택 가능한 테이블</h2>
+              <h2>데이터셋</h2>
               <span>{filteredDatasets.length}개</span>
             </div>
             <div className="sql-context-result-list" ref={contextListRef}>
-              {paginatedContextDatasets.map((item) => (
-                <SqlDatasetRow
-                  dataset={item}
-                  expanded={expandedDatasetId === item.id}
-                  key={item.id}
-                  onSelect={addSelectedDataset}
-                  onToggle={toggleDatasetPreview}
-                />
-              ))}
+              <SqlDatasetTree
+                datasets={paginatedContextDatasets}
+                expandedDatasetId={expandedDatasetId}
+                onSelect={addSelectedDataset}
+                onToggle={toggleDatasetPreview}
+              />
               {filteredDatasets.length === 0 && (
                 <p>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</p>
               )}
@@ -751,58 +748,57 @@ export function SqlAnalysisPage({
       <main className="sql-workspace">
         <header className="sql-page-header">
           <div>
-            <h1>읽기 전용 SQL 실행</h1>
+            <h1>SQL 분석</h1>
           </div>
-          <section className="sql-ai-assistant compact" aria-label="Query AI 보조">
+          <section className="sql-ai-assistant compact" aria-label="Query AI 생성">
             <div className="sql-ai-heading">
               <div className="sql-ai-title">
                 <Sparkles size={16} />
-                <strong>Query AI 보조</strong>
+                <strong>Query AI 생성</strong>
               </div>
             </div>
-            <div className="sql-ai-input-row">
-              <label className="sql-ai-prompt">
-                <span>요청</span>
-                <textarea
-                  ref={queryAiPromptRef}
-                  onChange={(event) => {
-                    setQueryAiPrompt(event.target.value);
-                    setQueryAiError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" || event.shiftKey) return;
-                    event.preventDefault();
-                    void requestQueryAiSuggestion();
-                  }}
-                  placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
-                  rows={2}
-                  value={queryAiPrompt}
-                />
-              </label>
-              <div className="sql-ai-actions">
-                <button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button">
-                  <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
-                </button>
-                {queryAiSuggestion?.sql && (
-                  <button className="primary-button" onClick={applyQueryAiSuggestion} type="button">
-                    적용
-                  </button>
+            <div className="sql-ai-content">
+              <div className="sql-ai-compose">
+                <div className="sql-ai-input-row">
+                  <label className="sql-ai-prompt">
+                    <span>요청</span>
+                    <textarea
+                      ref={queryAiPromptRef}
+                      onChange={(event) => {
+                        setQueryAiPrompt(event.target.value);
+                        setQueryAiError(null);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || event.shiftKey) return;
+                        event.preventDefault();
+                        void requestQueryAiSuggestion();
+                      }}
+                      placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
+                      rows={2}
+                      value={queryAiPrompt}
+                    />
+                  </label>
+                  <div className="sql-ai-actions">
+                    <button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button">
+                      <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className={queryAiSuggestion ? "sql-ai-suggestion result" : queryAiError ? "sql-ai-suggestion error" : "sql-ai-suggestion empty"}>
+                {queryAiSuggestion ? (
+                  <>
+                    {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
+                    {queryAiSuggestion.sql && (
+                      <button className="sql-ai-apply-button primary-button" onClick={applyQueryAiSuggestion} type="button">
+                        적용
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "왼쪽에서 분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
                 )}
               </div>
-            </div>
-            {queryAiError && <p className="sql-ai-error">{queryAiError}</p>}
-            <div className={queryAiSuggestion ? "sql-ai-suggestion" : "sql-ai-suggestion empty"}>
-              {queryAiSuggestion ? (
-                <>
-                  <div>
-                    <strong>{queryAiSuggestion.title}</strong>
-                    <p>{queryAiSuggestion.body}</p>
-                  </div>
-                  {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
-                </>
-              ) : (
-                <span>{baseDataset ? "자동 실행 없이 초안만 만듭니다." : "왼쪽에서 분석 테이블을 추가하면 AI 제안을 만들 수 있습니다."}</span>
-              )}
             </div>
           </section>
         </header>
