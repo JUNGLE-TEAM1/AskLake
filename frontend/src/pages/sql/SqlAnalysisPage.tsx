@@ -8,8 +8,13 @@ import {
   PlayCircle,
   RotateCcw,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { executeQueryPreview } from "../../services/mockApi";
+import {
+  generateQueryAiSuggestion,
+  type QueryAiSuggestion,
+} from "../../services/queryAiService";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetRow } from "./SqlDatasetRow";
@@ -34,6 +39,15 @@ import {
   type SqlPreflightResult,
 } from "./sqlLogic";
 
+const QUERY_AI_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
+
+function isSqlCandidateDataset(dataset: CatalogDataset) {
+  const normalizedName = dataset.name.toLowerCase();
+  const normalizedTags = dataset.tags.map((tag) => tag.toLowerCase());
+
+  return !normalizedName.includes("legacy") && !normalizedTags.includes("#legacy");
+}
+
 export function SqlAnalysisPage({
   cachedResult,
   dataset,
@@ -43,18 +57,18 @@ export function SqlAnalysisPage({
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
-  dataset: CatalogDataset;
+  dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onPrepareDatasetJob: (request: CreateDerivedDatasetRequest) => boolean;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
-  const [baseDatasetId, setBaseDatasetId] = useState(dataset.id);
+  const [baseDatasetId, setBaseDatasetId] = useState<string | null>(dataset?.id ?? null);
   const baseDataset = useMemo(
-    () => datasets.find((item) => item.id === baseDatasetId) ?? dataset,
+    () => baseDatasetId ? datasets.find((item) => item.id === baseDatasetId) ?? (dataset?.id === baseDatasetId ? dataset : null) : null,
     [baseDatasetId, dataset, datasets],
   );
-  const defaultQuery = useMemo(() => buildDefaultQuery(baseDataset), [baseDataset]);
+  const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
   const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [datasetSearch, setDatasetSearch] = useState("");
@@ -69,11 +83,15 @@ export function SqlAnalysisPage({
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
-  const [derivedDatasetName, setDerivedDatasetName] = useState(buildDefaultDerivedDatasetName(baseDataset));
-  const [derivedDatasetDescription, setDerivedDatasetDescription] = useState(buildDefaultDerivedDatasetDescription(baseDataset));
-  const [derivedDatasetTags, setDerivedDatasetTags] = useState(buildDefaultDerivedDatasetTags(baseDataset));
+  const [queryAiPrompt, setQueryAiPrompt] = useState("");
+  const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
+  const [queryAiPending, setQueryAiPending] = useState(false);
+  const [queryAiError, setQueryAiError] = useState<string | null>(null);
+  const [derivedDatasetName, setDerivedDatasetName] = useState(dataset ? buildDefaultDerivedDatasetName(dataset) : "");
+  const [derivedDatasetDescription, setDerivedDatasetDescription] = useState(dataset ? buildDefaultDerivedDatasetDescription(dataset) : "");
+  const [derivedDatasetTags, setDerivedDatasetTags] = useState(dataset ? buildDefaultDerivedDatasetTags(dataset) : "");
   const [derivedDatasetLayer, setDerivedDatasetLayer] = useState<DerivedDatasetLayer>("GOLD");
-  const [derivedDatasetRag, setDerivedDatasetRag] = useState(baseDataset.rag);
+  const [derivedDatasetRag, setDerivedDatasetRag] = useState(dataset?.rag ?? false);
   const [materializeDialogOpen, setMaterializeDialogOpen] = useState(false);
   const [dashboardDialogOpen, setDashboardDialogOpen] = useState(false);
   const [dashboardDialogVersion, setDashboardDialogVersion] = useState(0);
@@ -83,60 +101,68 @@ export function SqlAnalysisPage({
   const contextListRef = useRef<HTMLDivElement | null>(null);
   const contextPaginationRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const queryAiPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
   const skipNextBaseDatasetResetRef = useRef(false);
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
-      baseDatasetId: baseDataset.id,
+      baseDatasetId: baseDataset?.id ?? null,
       query,
       referenceDatasetIds: [...referenceDatasetIds].sort(),
     }),
-    [baseDataset.id, query, referenceDatasetIds],
+    [baseDataset?.id, query, referenceDatasetIds],
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const selectedContextDatasets = useMemo(
-    () => [
-      baseDataset,
-      ...referenceDatasetIds
-        .map((id) => datasets.find((item) => item.id === id))
-        .filter((item): item is CatalogDataset => Boolean(item)),
-    ],
+    () => baseDataset
+      ? [
+          baseDataset,
+          ...referenceDatasetIds
+            .map((id) => datasets.find((item) => item.id === id))
+            .filter((item): item is CatalogDataset => Boolean(item)),
+        ]
+      : [],
     [baseDataset, datasets, referenceDatasetIds],
   );
   const selectedDatasetIdSet = useMemo(
     () => new Set(selectedContextDatasets.map((item) => item.id)),
     [selectedContextDatasets],
   );
+  const sqlCandidateDatasets = useMemo(
+    () => datasets.filter(isSqlCandidateDataset),
+    [datasets],
+  );
   const schemaDataset = useMemo(
     () => selectedContextDatasets.find((item) => item.id === openSchemaDatasetId) ?? selectedContextDatasets[0] ?? null,
     [openSchemaDatasetId, selectedContextDatasets],
   );
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    dashboardId: resultDraft ? `dash_${baseDataset.id}_${resultDraft.runId}` : `dash_${baseDataset.id}_sql_draft`,
+    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
     source: "sql",
     view: "runtime",
     version: dashboardDialogVersion,
-  }), [baseDataset.id, dashboardDialogVersion, resultDraft]);
-  const canRunPreview = preflightResult?.canExecute === true && preflightResult.key === queryValidationKey;
+  }), [baseDataset, dashboardDialogVersion, resultDraft]);
+  const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     const lineCount = Math.max(query.split("\n").length, 7);
     return Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
   }, [query]);
   const autocompleteContext = useMemo(() => getAutocompleteContext(query, cursorIndex), [cursorIndex, query]);
   const autocompleteCandidates = useMemo(() => {
+    if (!baseDataset) return [];
     if (dismissedAutocompleteKey === autocompleteContext.key) return [];
     return buildAutocompleteCandidates({
       baseDataset,
       context: autocompleteContext,
-      datasets,
+      datasets: sqlCandidateDatasets,
       referenceDatasetIdSet,
     });
-  }, [autocompleteContext, baseDataset, datasets, dismissedAutocompleteKey, referenceDatasetIdSet]);
+  }, [autocompleteContext, baseDataset, dismissedAutocompleteKey, referenceDatasetIdSet, sqlCandidateDatasets]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
-    const contextDatasets = datasets.filter((item) => !selectedDatasetIdSet.has(item.id));
+    const contextDatasets = sqlCandidateDatasets.filter((item) => !selectedDatasetIdSet.has(item.id));
     const searchableDatasets = keyword
       ? contextDatasets.filter((item) => {
           const searchableText = [
@@ -153,23 +179,53 @@ export function SqlAnalysisPage({
       : contextDatasets;
 
     return searchableDatasets;
-  }, [datasetSearch, datasets, selectedDatasetIdSet]);
+  }, [datasetSearch, selectedDatasetIdSet, sqlCandidateDatasets]);
   const totalContextPages = Math.max(1, Math.ceil(filteredDatasets.length / contextPageSize));
   const currentContextPage = Math.min(Math.max(contextPage, 1), totalContextPages);
   const contextPageStartIndex = (currentContextPage - 1) * contextPageSize;
   const paginatedContextDatasets = filteredDatasets.slice(contextPageStartIndex, contextPageStartIndex + contextPageSize);
   const cachedResultBaseDatasetId = cachedResult ? cachedResult.baseDatasetId ?? cachedResult.datasetId : null;
-  const canRestoreCachedResult = Boolean(cachedResult && cachedResultBaseDatasetId === baseDataset.id);
+  const canRestoreCachedResult = Boolean(cachedResult && baseDataset && cachedResultBaseDatasetId === baseDataset.id);
   useEffect(() => {
+    if (!dataset) {
+      setBaseDatasetId(null);
+      setReferenceDatasetIds([]);
+      setOpenSchemaDatasetId(null);
+      setExpandedDatasetId(null);
+      return;
+    }
+
     setBaseDatasetId(dataset.id);
     setReferenceDatasetIds([]);
     setOpenSchemaDatasetId(dataset.id);
     setExpandedDatasetId(null);
-  }, [dataset.id]);
+  }, [dataset?.id]);
 
   useEffect(() => {
     if (skipNextBaseDatasetResetRef.current) {
       skipNextBaseDatasetResetRef.current = false;
+      return;
+    }
+
+    if (!baseDataset) {
+      setExecuted(false);
+      setQuery("");
+      setCursorIndex(0);
+      setResultDraft(null);
+      setExecutionMs(null);
+      setPreflightResult(null);
+      setDerivedDatasetName("");
+      setDerivedDatasetDescription("");
+      setDerivedDatasetTags("");
+      setDerivedDatasetRag(false);
+      setMaterializeDialogOpen(false);
+      setDashboardDialogOpen(false);
+      setQueryAiPrompt("");
+      setQueryAiSuggestion(null);
+      setQueryAiError(null);
+      setOpenSchemaDatasetId(null);
+      setReferenceDatasetIds([]);
+      onResultChange(null);
       return;
     }
 
@@ -187,13 +243,16 @@ export function SqlAnalysisPage({
     setDerivedDatasetRag(baseDataset.rag);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
+    setQueryAiPrompt("");
+    setQueryAiSuggestion(null);
+    setQueryAiError(null);
     setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
-  }, [baseDataset.id, canRestoreCachedResult, defaultQuery]);
+  }, [baseDataset, canRestoreCachedResult, defaultQuery]);
 
   useEffect(() => {
-    if (!cachedResult || !canRestoreCachedResult) return;
+    if (!baseDataset || !cachedResult || !canRestoreCachedResult) return;
 
     const cachedReferences = (cachedResult.referenceDatasetIds ?? []).filter((id) => id !== baseDataset.id);
 
@@ -205,11 +264,13 @@ export function SqlAnalysisPage({
     setExecutionMs(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
+    setQueryAiSuggestion(null);
+    setQueryAiError(null);
     setOpenSchemaDatasetId(baseDataset.id);
-  }, [baseDataset.id, cachedResult, canRestoreCachedResult]);
+  }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
-    const params = new URLSearchParams({ baseDatasetId: baseDataset.id });
+    const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
     params.set("mode", mode);
     if (mode === "preview") params.set("previewLimit", String(PREVIEW_ROW_LIMIT));
@@ -222,7 +283,7 @@ export function SqlAnalysisPage({
 
   useEffect(() => {
     setContextPage(1);
-  }, [baseDataset.id, datasetSearch, selectedDatasetIdSet]);
+  }, [baseDataset?.id, datasetSearch, selectedDatasetIdSet]);
 
   useEffect(() => {
     if (contextPage === currentContextPage) return;
@@ -278,15 +339,22 @@ export function SqlAnalysisPage({
   }, [contextCollapsed, datasetSearch, expandedDatasetId, filteredDatasets.length, selectedContextDatasets.length]);
 
   useEffect(() => {
+    if (!baseDataset) {
+      setPreflightResult(null);
+      return;
+    }
     const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
     setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey));
   }, [baseDataset, datasets, query, queryValidationKey, referenceDatasetIdSet]);
 
-  const buildPreviewDraft = (): Promise<SqlResultDraft> => executeQueryPreview(baseDataset, query, {
-    limit: PREVIEW_ROW_LIMIT,
-    referenceDatasetIds: [...referenceDatasetIds].sort(),
-    validationKey: queryValidationKey,
-  });
+  const buildPreviewDraft = (): Promise<SqlResultDraft> => {
+    if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
+    return executeQueryPreview(baseDataset, query, {
+      limit: PREVIEW_ROW_LIMIT,
+      referenceDatasetIds: [...referenceDatasetIds].sort(),
+      validationKey: queryValidationKey,
+    });
+  };
 
   const resetResultState = () => {
     setExecuted(false);
@@ -301,6 +369,8 @@ export function SqlAnalysisPage({
   const updateQuery = (nextQuery: string) => {
     setQuery(nextQuery);
     setPreflightResult(null);
+    setQueryAiSuggestion(null);
+    setQueryAiError(null);
     resetResultState();
   };
 
@@ -320,11 +390,11 @@ export function SqlAnalysisPage({
     updateQuery(nextQuery);
     setCursorIndex(nextCursorIndex);
     setDismissedAutocompleteKey(null);
-    if (candidate.type === "table" && candidate.datasetId && candidate.datasetId !== baseDataset.id) {
+    if (candidate.type === "table" && candidate.datasetId && candidate.datasetId !== baseDataset?.id) {
       const datasetId = candidate.datasetId;
       setReferenceDatasetIds((ids) => (ids.includes(datasetId) ? ids : [...ids, datasetId]));
     }
-    onAction("analysis.autocomplete.inserted", `/api/query/autocomplete/${candidate.type}/${encodeURIComponent(candidate.label)}`, candidate.datasetId ?? baseDataset.id);
+    onAction("analysis.autocomplete.inserted", `/api/query/autocomplete/${candidate.type}/${encodeURIComponent(candidate.label)}`, candidate.datasetId ?? baseDataset?.id ?? "sql-empty");
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCursorIndex, nextCursorIndex);
@@ -356,8 +426,8 @@ export function SqlAnalysisPage({
   };
 
   const executePreview = async () => {
-    if (!canRunPreview) {
-      onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset.id, "failed");
+    if (!baseDataset || !canRunPreview) {
+      onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
     }
     const startedAt = performance.now();
@@ -383,16 +453,67 @@ export function SqlAnalysisPage({
 
   const preflightSummary = getPreflightSummary(preflightResult);
 
+  const requestQueryAiSuggestion = async () => {
+    if (queryAiPending) return;
+
+    if (!baseDataset) {
+      setQueryAiSuggestion(null);
+      setQueryAiError("왼쪽에서 분석 테이블을 먼저 추가해 주세요.");
+      queryAiPromptRef.current?.focus();
+      return;
+    }
+
+    if (queryAiPrompt.trim().length === 0) {
+      setQueryAiSuggestion(null);
+      setQueryAiError("만들고 싶은 분석을 자연어로 입력해 주세요.");
+      queryAiPromptRef.current?.focus();
+      return;
+    }
+
+    setQueryAiPending(true);
+    setQueryAiError(null);
+    try {
+      const suggestion = await generateQueryAiSuggestion({
+        baseDataset,
+        mode: "draft_sql",
+        preflightMessages: preflightResult?.messages ?? [],
+        prompt: queryAiPrompt,
+        query,
+        selectedDatasets: selectedContextDatasets,
+      });
+      setQueryAiSuggestion(suggestion);
+      onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
+    } catch {
+      setQueryAiError("AI 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
+    } finally {
+      setQueryAiPending(false);
+    }
+  };
+
+  const applyQueryAiSuggestion = () => {
+    if (!baseDataset || !queryAiSuggestion?.sql) return;
+    const nextQuery = queryAiSuggestion.sql;
+    updateQuery(nextQuery);
+    setCursorIndex(nextQuery.length);
+    onAction("analysis.ai.suggestion_applied", `/api/query/ai-suggestions?mode=${queryAiSuggestion.mode}/apply`, baseDataset.id);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
+      syncLineNumberScroll();
+    });
+  };
+
   const resetQuery = () => {
     updateQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
-    onAction("analysis.query.reset", "/api/query/reset", baseDataset.id);
+    onAction("analysis.query.reset", "/api/query/reset", baseDataset?.id ?? "sql-empty");
   };
 
   const toggleContext = () => {
     const nextCollapsed = !contextCollapsed;
     setContextCollapsed(nextCollapsed);
-    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", baseDataset.id);
+    onAction(nextCollapsed ? "analysis.context.collapsed" : "analysis.context.expanded", "/api/query/context", baseDataset?.id ?? "sql-empty");
   };
 
   const insertSqlText = (text: string) => {
@@ -422,6 +543,19 @@ export function SqlAnalysisPage({
       selectSchemaDataset(targetDataset);
       return;
     }
+    if (!baseDataset) {
+      setBaseDatasetId(targetDataset.id);
+      setReferenceDatasetIds([]);
+      setOpenSchemaDatasetId(targetDataset.id);
+      setExpandedDatasetId(null);
+      resetResultState();
+      onAction(
+        "analysis.context.dataset_selected",
+        `/api/query/context/datasets/${targetDataset.id}/select`,
+        targetDataset.id,
+      );
+      return;
+    }
     setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
     setOpenSchemaDatasetId(targetDataset.id);
     setExpandedDatasetId(null);
@@ -435,21 +569,11 @@ export function SqlAnalysisPage({
 
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
     const selectedIds = selectedContextDatasets.map((item) => item.id);
-    if (selectedIds.length <= 1) {
-      onAction(
-        "analysis.context.dataset_remove_blocked",
-        `/api/query/context/datasets/${targetDataset.id}/remove`,
-        targetDataset.id,
-        "failed",
-      );
-      return;
-    }
-
     const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
-    const nextBaseDatasetId = targetDataset.id === baseDataset.id ? nextSelectedIds[0] : baseDataset.id;
+    const nextBaseDatasetId = targetDataset.id === baseDataset?.id ? nextSelectedIds[0] ?? null : baseDataset?.id ?? null;
     const nextReferenceDatasetIds = nextSelectedIds.filter((id) => id !== nextBaseDatasetId);
 
-    if (targetDataset.id === baseDataset.id) {
+    if (targetDataset.id === baseDataset?.id) {
       skipNextBaseDatasetResetRef.current = true;
       setBaseDatasetId(nextBaseDatasetId);
     }
@@ -458,6 +582,14 @@ export function SqlAnalysisPage({
     setOpenSchemaDatasetId(
       openSchemaDatasetId && nextSelectedIds.includes(openSchemaDatasetId) ? openSchemaDatasetId : nextBaseDatasetId,
     );
+    if (nextSelectedIds.length === 0) {
+      setQuery("");
+      setCursorIndex(0);
+      setPreflightResult(null);
+      setQueryAiPrompt("");
+      setQueryAiSuggestion(null);
+      setQueryAiError(null);
+    }
     resetResultState();
     onAction(
       "analysis.context.dataset_removed",
@@ -509,7 +641,7 @@ export function SqlAnalysisPage({
   };
 
   const prepareDerivedDatasetJob = () => {
-    if (!resultDraft) return;
+    if (!baseDataset || !resultDraft) return;
     const request: CreateDerivedDatasetRequest = {
       dataset: {
         description: derivedDatasetDescription.trim() || buildDefaultDerivedDatasetDescription(baseDataset),
@@ -534,7 +666,7 @@ export function SqlAnalysisPage({
   };
 
   const openDashboardBuilder = () => {
-    if (!resultDraft) return;
+    if (!baseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
     setDashboardDialogOpen(true);
     onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
@@ -619,16 +751,65 @@ export function SqlAnalysisPage({
       <main className="sql-workspace">
         <header className="sql-page-header">
           <div>
-            <span>SQL 분석</span>
             <h1>읽기 전용 SQL 실행</h1>
-            <p>선택한 {selectedContextDatasets.length}개 테이블로 SQL을 작성하고 결과를 확인합니다.</p>
           </div>
+          <section className="sql-ai-assistant compact" aria-label="Query AI 보조">
+            <div className="sql-ai-heading">
+              <div className="sql-ai-title">
+                <Sparkles size={16} />
+                <strong>Query AI 보조</strong>
+              </div>
+            </div>
+            <div className="sql-ai-input-row">
+              <label className="sql-ai-prompt">
+                <span>요청</span>
+                <textarea
+                  ref={queryAiPromptRef}
+                  onChange={(event) => {
+                    setQueryAiPrompt(event.target.value);
+                    setQueryAiError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" || event.shiftKey) return;
+                    event.preventDefault();
+                    void requestQueryAiSuggestion();
+                  }}
+                  placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
+                  rows={2}
+                  value={queryAiPrompt}
+                />
+              </label>
+              <div className="sql-ai-actions">
+                <button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button">
+                  <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
+                </button>
+                {queryAiSuggestion?.sql && (
+                  <button className="primary-button" onClick={applyQueryAiSuggestion} type="button">
+                    적용
+                  </button>
+                )}
+              </div>
+            </div>
+            {queryAiError && <p className="sql-ai-error">{queryAiError}</p>}
+            <div className={queryAiSuggestion ? "sql-ai-suggestion" : "sql-ai-suggestion empty"}>
+              {queryAiSuggestion ? (
+                <>
+                  <div>
+                    <strong>{queryAiSuggestion.title}</strong>
+                    <p>{queryAiSuggestion.body}</p>
+                  </div>
+                  {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
+                </>
+              ) : (
+                <span>{baseDataset ? "자동 실행 없이 초안만 만듭니다." : "왼쪽에서 분석 테이블을 추가하면 AI 제안을 만들 수 있습니다."}</span>
+              )}
+            </div>
+          </section>
         </header>
 
         <section className="sql-editor-card">
           <div className="sql-editor-header">
             <div>
-              <span>쿼리 편집기</span>
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
@@ -643,6 +824,7 @@ export function SqlAnalysisPage({
               <div className="sql-editor-input-wrap">
                 <textarea
                   ref={textareaRef}
+                  disabled={!baseDataset}
                   value={query}
                   onChange={(event) => {
                     updateQuery(event.target.value);
@@ -680,7 +862,6 @@ export function SqlAnalysisPage({
           </div>
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              <span>선택 테이블 {selectedContextDatasets.length}개</span>
               {preflightSummary && (
                 <span className={`sql-check-pill ${preflightSummary.tone}`}>
                   {preflightSummary.label}
@@ -806,7 +987,7 @@ export function SqlAnalysisPage({
           </section>
         </div>
       )}
-      {resultDraft && dashboardDialogOpen && (
+      {resultDraft && baseDataset && dashboardDialogOpen && (
         <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
           <section className="sql-dashboard-builder-dialog" role="dialog" aria-modal="true" aria-label="SQL 결과 대시보드 만들기" onMouseDown={(event) => event.stopPropagation()}>
             <button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)}>
