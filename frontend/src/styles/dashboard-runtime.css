@@ -607,7 +607,7 @@
 
 .asklake-dataset-hover-card-head {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
 }
@@ -640,7 +640,7 @@
   white-space: nowrap;
 }
 
-.asklake-dataset-hover-card-head span:not(.asklake-dataset-hover-card-icon, .asklake-dataset-hover-card-actions) {
+.asklake-dataset-hover-card-head span:not(.asklake-dataset-hover-card-icon) {
   min-width: 0;
   overflow: hidden;
   color: #64748b;
@@ -649,13 +649,6 @@
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.asklake-dataset-hover-card-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  color: #64748b;
 }
 
 .asklake-dataset-hover-card dl {

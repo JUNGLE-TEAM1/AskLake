@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
-import { CalendarDays, Copy, Database, Hash, LetterText, Server, Star, Table2 } from "lucide-react";
+import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
@@ -85,10 +85,6 @@ function DatasetHoverCard({
           <strong>{title}</strong>
           {subtitle && <span>{subtitle}</span>}
         </div>
-        <span className="asklake-dataset-hover-card-actions" aria-hidden="true">
-          <Copy size={16} />
-          <Star size={16} />
-        </span>
       </div>
       <dl>
         {rows.map((row) => (
@@ -303,8 +299,8 @@ export function DatasetSidebar({
                                 icon={<Table2 size={18} />}
                                 rows={[
                                   { label: "소유자", value: "System user" },
-                                  { label: "인기도", value: "지난 30일간 데이터 없음" },
-                                  { label: "크기", value: `${dataset.columns.length} columns` },
+                                  { label: "최근 수정 날짜", value: dataset.updatedAt ?? "정보 없음" },
+                                  { label: "컬럼", value: `${dataset.columns.length}개` },
                                   { label: "지표", value: `${numericColumnCount} metrics` },
                                 ]}
                                 subtitle="system.datasets"

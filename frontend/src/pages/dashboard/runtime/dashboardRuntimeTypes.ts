@@ -14,6 +14,7 @@ export type DashboardDatasetOption = {
   layer: CatalogDataset["layer"];
   name: string;
   status: CatalogDataset["status"];
+  updatedAt?: string;
 };
 
 export type CreateDraftWidgetFormInput = {
