@@ -537,6 +537,7 @@ p {
   align-items: center;
   gap: 8px;
   height: 97px;
+  justify-content: center;
   max-width: var(--layout-main-width);
   margin: 0 auto;
   overflow-x: auto;
@@ -551,9 +552,48 @@ p {
 .stepper-item {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: 32px auto 72px;
+  grid-template-columns: minmax(0, auto) 72px;
   align-items: center;
   gap: 10px;
+}
+
+.stepper-item:last-child {
+  grid-template-columns: minmax(0, auto);
+}
+
+.step-trigger {
+  display: grid;
+  grid-template-columns: 32px auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.step-trigger:hover .step-dot,
+.step-trigger:focus-visible .step-dot {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.step-trigger:hover .step-dot.active,
+.step-trigger:focus-visible .step-dot.active {
+  color: #fff;
+}
+
+.step-trigger:hover .step-label,
+.step-trigger:focus-visible .step-label {
+  color: #171a1f;
+}
+
+.step-trigger:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
 }
 
 .step-dot {

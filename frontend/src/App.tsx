@@ -135,6 +135,10 @@ export function App() {
     [datasets, selectedDataset, sqlInitialDatasetId],
   );
   const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow;
+  const wizardStepFlows = useMemo<FlowId[]>(
+    () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
+    [lastScheduleFlow],
+  );
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -164,6 +168,12 @@ export function App() {
       setLastScheduleFlow(flow);
     }
     setActiveFlow(flow);
+  };
+
+  const navigateWizardStep = (stepIndex: number) => {
+    const nextFlow = wizardStepFlows[stepIndex];
+    if (!nextFlow || nextFlow === activeFlow) return;
+    moveToFlow(nextFlow);
   };
 
   const saveDraft = (flow: FlowId) => {
@@ -265,7 +275,7 @@ export function App() {
         <Topbar auditLogs={auditLogs} auditOpen={auditOpen} onAuditToggle={() => setAuditOpen((open) => !open)} onRefresh={() => writeAuditLog("etl.job.status_refreshed", "/api/etl/jobs", "jobs")} />
         {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
-        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} />}
+        {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
           {shouldBlockForInitialData && (
             <div className="module-placeholder-page">
