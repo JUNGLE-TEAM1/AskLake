@@ -406,7 +406,7 @@ Request 예시:
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
   "owner": "Data Engineer Group",
-  "rag": true
+  "rag": false
 }
 ```
 
@@ -465,6 +465,7 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
 ### 7.2 작업 명령

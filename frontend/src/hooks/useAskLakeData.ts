@@ -104,7 +104,7 @@ const initialDraftPipeline: DraftPipeline = {
     format: "Parquet",
     layer: "GOLD",
     partition: "year/month/region",
-    rag: true,
+    rag: false,
     storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
     storageType: "S3",
   },

@@ -4212,10 +4212,8 @@ export function TargetPage({
   const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
   const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
-  const [ragEnabled, setRagEnabled] = useState(initialTarget.rag);
   const applyTargetDraft = (patch: Partial<{
     owner: string;
-    rag: boolean;
     targetDataset: string;
     targetFormat: string;
     targetLayer: TargetLayer;
@@ -4224,7 +4222,6 @@ export function TargetPage({
     const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
     const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
-    const nextRag = patch.rag ?? ragEnabled;
     const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
 
     onDraftChange({
@@ -4237,17 +4234,12 @@ export function TargetPage({
       targetDataset: nextTargetDataset,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
-      rag: nextRag,
+      rag: false,
     });
   };
   const selectLayer = (layer: TargetLayer) => {
     setSelectedLayer(layer);
     applyTargetDraft({ targetLayer: layer });
-  };
-  const toggleRag = () => {
-    const next = !ragEnabled;
-    setRagEnabled(next);
-    applyTargetDraft({ rag: next });
   };
   const goNext = () => {
     applyTargetDraft();
@@ -4261,7 +4253,7 @@ export function TargetPage({
         onSave();
       }} />}
     >
-        <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷, RAG 인덱싱 여부를 설정합니다." />
+        <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷을 설정합니다." />
         <section className="panel">
           <div className="panel-header">
             <HardDrive size={18} />
@@ -4290,10 +4282,9 @@ export function TargetPage({
             </label>
           </div>
           <div className="tag-row">
-            {[targetDataset.replace(/_gold$/, ""), "sentiment_analysis", ragEnabled ? "rag_ready" : "rag_disabled"].map((tag) => (
+            {[targetDataset.replace(/_gold$/, ""), "sentiment_analysis"].map((tag) => (
               <span className="tag" key={tag}>{tag}</span>
             ))}
-            <button className="ghost-link" type="button" onClick={() => onDraftChange({ rag: ragEnabled })}>+ 추가</button>
           </div>
         </section>
         <section className="panel">
@@ -4327,25 +4318,6 @@ export function TargetPage({
           <div className="target-status-grid">
             <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
             <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Search size={18} />
-            <h2>RAG 설정</h2>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>RAG 인덱싱</span>
-              <button className={ragEnabled ? "input control-toggle active" : "input control-toggle"} type="button" onClick={toggleRag}>
-                {ragEnabled ? "활성화" : "비활성화"}
-              </button>
-            </label>
-            <Field label="임베딩 모델" value="text-embedding-3-small" />
-            <Field label="청킹 전략" value="Recursive Character" />
-            <Field label="청크 크기" value="1,000 Tokens" />
-            <Field label="오버랩" value="200 Tokens" />
-            <Field label="인덱스 생성 예정" value="파이프라인 생성 후 자동 큐잉" />
           </div>
         </section>
     </CreationFlowLayout>
@@ -4532,7 +4504,6 @@ export function ReviewPage({
   const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
-  const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
     ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
@@ -4573,7 +4544,7 @@ export function ReviewPage({
             ["처리 규칙", request.ruleSummary, "rules"],
             ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -4608,7 +4579,6 @@ export function ReviewPage({
             <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
             <Field label="타겟 Layer" value={targetReview.targetLayer} />
             <Field label="타겟 Format" value={targetReview.targetFormat} />
-            <Field label="RAG 인덱싱" value={ragReviewLabel} />
             <Field label="데이터 오너" value={targetReview.owner} />
           </div>
         </section>
