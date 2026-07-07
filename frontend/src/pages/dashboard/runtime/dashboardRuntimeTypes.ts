@@ -13,6 +13,7 @@ export type DashboardDatasetOption = {
   id: string;
   layer: "gold";
   name: string;
+  updatedAt?: string;
 };
 
 export type CreateDraftWidgetFormInput = {
