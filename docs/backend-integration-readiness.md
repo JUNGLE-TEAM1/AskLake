@@ -39,7 +39,9 @@ Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode
 - Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
 - Transform: `transformSteps`, `transformOutputColumns`
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
-- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
+- Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
+
+Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 Run 취소는 `cancelRun`, 다음 반복 예약 제거는 `stopSchedule`로 분리한다.
 
 Backend create response:
 
@@ -62,8 +64,8 @@ type JobCommandResponse = {
   action: string;
   apiPath: string;
   job: JobRowData;
-  run: JobRunSummary;
-  dagSteps: JobDagStep[];
+  run?: JobRunSummary;
+  dagSteps?: JobDagStep[];
 };
 ```
 
@@ -148,7 +150,7 @@ Browser smoke:
 - frontend dev server를 켠다.
 - 수집/처리 목록이 처음에는 비어 있는지 확인한다.
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
-- 생성된 Job을 실행하고 Run history와 DAG가 Spark 결과를 반영하는지 확인한다.
+- 생성된 Job을 실행하고 Run history 안의 선택 Run 실행 흐름이 Spark 결과를 반영하는지 확인한다.
 
 ## 7. 완료 기준
 
@@ -156,8 +158,8 @@ Browser smoke:
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
 - Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
 - Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
-- Spark run 후 DAG는 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
-- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed DAG를 보여주지 않는다.
+- Spark run 후 선택 Run 실행 흐름은 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed flow를 보여주지 않는다.
 
 ## 8. Catalog/SQL 연결 범위
 
@@ -179,7 +181,7 @@ Browser smoke:
 | --- | --- | --- |
 | SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE와 comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
 | Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
-| Query AI 보조 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, mock mode에서는 프론트 로컬 fallback 사용 | `POST /api/query/ai-suggestions` |
+| Query AI 생성 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, mock mode에서는 프론트 로컬 fallback 사용 | `POST /api/query/ai-suggestions` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
@@ -201,7 +203,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
-- Query AI 보조는 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
+- Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
@@ -313,7 +315,7 @@ Dashboard 삭제 API는 card/list row 삭제와 함께 runtime revision/page/wid
 
 - `.env`에서 `VITE_USE_MOCK_API=false`로 실행해도 앱이 정상 로딩됩니다.
 - 새 수집/처리 생성 후 목록과 카탈로그에 서버 응답 데이터가 표시됩니다.
-- 즉시 실행/재실행/일시정지/취소 버튼이 서버 상태 전이를 반영합니다.
+- 즉시 실행/재실행/일시정지/현재 Run 취소/스케줄 중지 버튼이 서버 상태 전이를 반영합니다.
 - SQL 실행 결과가 서버 응답 columns/rows 그대로 표시됩니다.
 - SQL 결과에서 대시보드 생성 시 같은 `runId`가 dashboard request에 포함됩니다.
 - 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.

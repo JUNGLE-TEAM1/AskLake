@@ -70,6 +70,28 @@ function nowTimeLabel() {
   return new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function hasScheduledLabel(scheduleLabel) {
+  const schedule = String(scheduleLabel || "").trim().toLowerCase();
+  if (!schedule || schedule === "-") return false;
+  return !["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token));
+}
+
+function scheduleNextRunLabel(scheduleLabel, fallback) {
+  const schedule = String(scheduleLabel || "").trim();
+  const fallbackLabel = String(fallback || "").trim();
+  if (!schedule || !hasScheduledLabel(schedule)) return "-";
+  if (schedule.includes("1회") || schedule.includes("예약")) {
+    return fallbackLabel && fallbackLabel !== "-"
+      ? fallbackLabel
+      : schedule.replace(/\s*(예약\s*)?1회 실행\s*$/, "").trim();
+  }
+  return fallbackLabel && fallbackLabel !== "-" ? fallbackLabel : schedule;
+}
+
+function hasScheduledExecution(job) {
+  return job.status !== "stopped" && hasScheduledLabel(job.schedule);
+}
+
 function buildDagSteps(job, command) {
   if (command === "pause") {
     return [
@@ -84,7 +106,7 @@ function buildDagSteps(job, command) {
     ];
   }
 
-  if (command === "cancel") {
+  if (command === "cancelRun") {
     return [
       { id: "step-1", title: "1. Source connect", meta: job.source, status: "success" },
       { id: "step-2", title: "2. Read files", meta: "72,410 rows scanned", status: "success" },
@@ -111,10 +133,11 @@ function buildDagSteps(job, command) {
 
 function buildCommandResult(job, command) {
   const actionByCommand = {
-    cancel: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
     retry: { action: "etl.run.retry_requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     run: { action: "etl.run.requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
+    stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule/stop` },
   };
   const audit = actionByCommand[command];
   const runId = `run_${Date.now()}`;
@@ -145,13 +168,42 @@ function buildCommandResult(job, command) {
     };
   }
 
-  if (command === "cancel") {
+  if (command === "stopSchedule") {
+    const updatedJob = {
+      ...job,
+      status: "stopped",
+      lastState: "스케줄 중지됨",
+      nextRun: "-",
+      progress: undefined,
+      schedule: "스케줄링 건너뛰기",
+      schedulePolicy: {
+        endDate: "",
+        nextRunUtc: "",
+        overlapPolicy: undefined,
+        startDate: "",
+        timezone: "",
+        watermarkPolicy: {
+          column: "updated_at",
+          enabled: false,
+          lookbackMinutes: 0,
+          mode: "full_refresh",
+        },
+      },
+      scheduleSummary: "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행",
+    };
+    return {
+      ...audit,
+      job: updatedJob,
+    };
+  }
+
+  if (command === "cancelRun") {
     const updatedJob = {
       ...job,
       status: "canceled",
       lastRun: "canceled now",
       lastState: "canceled",
-      nextRun: job.schedule === "Manual" ? "-" : "next schedule pending",
+      nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
       progress: undefined,
     };
     return {
@@ -213,9 +265,21 @@ async function createPipeline(draft) {
     source: `${draft.sourceType} / ${draft.sourceLabel}`,
     target: draft.targetDataset,
     schedule: draft.scheduleLabel,
+    schedulePolicy: {
+      endDate: draft.endDate,
+      nextRunUtc: draft.nextRunUtc,
+      overlapPolicy: draft.overlapPolicy,
+      startDate: draft.startDate,
+      timezone: draft.timezone,
+      watermarkPolicy: draft.watermarkPolicy,
+    },
+    scheduleSummary: draft.scheduleSummary,
+    retryPolicy: draft.retryPolicy,
+    retryPolicySummary: draft.retryPolicySummary,
+    runLimitSummary: draft.runLimitSummary,
     lastRun: "created now",
     lastState: "waiting",
-    nextRun: draft.scheduleLabel === "Manual" ? "-" : "next schedule pending",
+    nextRun: scheduleNextRunLabel(draft.scheduleLabel, draft.scheduleSummary),
   };
   const dataset = {
     id: `ds_${draft.targetDataset}`,
@@ -465,8 +529,24 @@ async function route(request, response) {
       return;
     }
     const { command } = await readJson(request);
-    if (!["run", "retry", "pause", "cancel"].includes(command)) {
+    if (!["run", "retry", "pause", "cancelRun", "stopSchedule"].includes(command)) {
       sendError(response, 400, "VALIDATION_ERROR", "Unsupported command");
+      return;
+    }
+    if (command === "run" && job.status === "running") {
+      sendError(response, 409, "CONFLICT", "Job is already running");
+      return;
+    }
+    if (command === "pause" && job.status !== "running") {
+      sendError(response, 422, "INVALID_JOB_STATE", "Job cannot be paused from this status");
+      return;
+    }
+    if (command === "cancelRun" && job.status !== "running") {
+      sendError(response, 422, "INVALID_JOB_STATE", "Current run cannot be canceled from this status");
+      return;
+    }
+    if (command === "stopSchedule" && !hasScheduledExecution(job)) {
+      sendError(response, 422, "INVALID_JOB_STATE", "Job has no schedule to stop");
       return;
     }
     const result = buildCommandResult(job, command);

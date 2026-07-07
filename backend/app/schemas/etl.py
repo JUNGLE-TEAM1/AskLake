@@ -5,10 +5,10 @@ from pydantic import Field
 from app.schemas.common import CamelModel
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
-JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled"]
+JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
-JobCommand = Literal["run", "retry", "pause", "cancel"]
+JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule"]
 
 SourceFieldRows = list[tuple[str, str]]
 
@@ -65,10 +65,21 @@ class QualityRuleDraft(CamelModel):
 
 
 class RetryPolicyDraft(CamelModel):
+    backoff_multiplier: float = 2
+    backoff_strategy: str = "exponential"
     failure_action: str
+    initial_retry_delay_minutes: int = 1
     max_retries: int
-    retry_interval_minutes: int
+    max_retry_delay_minutes: int = 30
+    retry_interval_minutes: int = 1
     timeout_minutes: int
+
+
+class WatermarkPolicyDraft(CamelModel):
+    column: str = "updated_at"
+    enabled: bool = True
+    lookback_minutes: int = 5
+    mode: str = "last_success_to_scheduled_at"
 
 
 class JobRunSummary(CamelModel):
@@ -103,9 +114,14 @@ class JobRowData(CamelModel):
     source: str
     target: str
     schedule: str
+    schedule_policy: dict[str, Any] | None = None
+    schedule_summary: str | None = None
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    retry_policy: RetryPolicyDraft | dict[str, Any] | None = None
+    retry_policy_summary: str | None = None
+    run_limit_summary: str | None = None
     permission_roles: list[dict[str, Any]] | None = None
     storage_type: str | None = None
     partition: str | None = None
@@ -190,8 +206,16 @@ class CreatePipelineRequest(CamelModel):
     quality_score: float | None = None
     quality_status: str = "idle"
     schedule_label: str
+    schedule_summary: str | None = None
     retry_policy: RetryPolicyDraft | None = None
     retry_policy_summary: str = ""
+    run_limit_summary: str = ""
+    start_date: str | None = None
+    end_date: str | None = None
+    next_run_utc: str | None = None
+    overlap_policy: str | None = None
+    timezone: str | None = None
+    watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
     storage_type: str | None = None

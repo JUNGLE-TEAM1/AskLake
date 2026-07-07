@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import {
+  flexRender,
+  getCoreRowModel,
+  getSortedRowModel,
+  useReactTable,
+  type ColumnDef,
+  type Header,
+  type SortingState,
+} from "@tanstack/react-table";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -7,6 +16,9 @@ import {
   BookOpen,
   Calendar,
   Check,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronUp,
   CircleUser,
   Clock3,
   Download,
@@ -76,6 +88,14 @@ type CatalogSearchQuery = {
 };
 
 type CatalogSortMode = "default" | "name" | "updated" | "quality";
+type CatalogSchemaTableVariant = "full" | "preview";
+type CatalogSchemaRow = {
+  description: string;
+  id: string;
+  name: string;
+  nullable: "NO" | "YES";
+  type: string;
+};
 
 const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
   { label: "기본순", mode: "default" },
@@ -560,14 +580,7 @@ export function CatalogPage({
               <h3>스키마 미리보기</h3>
               <span>{previewDataset.schema.length} 컬럼</span>
             </div>
-            <table className="catalog-schema-preview">
-              <thead>
-                <tr><th>컬럼명</th><th>타입</th></tr>
-              </thead>
-              <tbody>
-                {previewDataset.schema.slice(0, 5).map(([name, type], index) => <tr key={`${name}-${index}`}><td>{name}</td><td><span>{type}</span></td></tr>)}
-              </tbody>
-            </table>
+            <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
             <button className="catalog-text-button" type="button" onClick={() => {
               onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
               setActiveModal("schema");
@@ -751,15 +764,108 @@ function CatalogSchema({ dataset }: { dataset: CatalogDataset }) {
         <h2>스키마</h2>
         <span>{dataset.schema.length} 컬럼</span>
       </div>
-      <table className="schema-table">
-        <thead><tr><th>컬럼명</th><th>타입</th><th>NULL 허용</th><th>설명</th></tr></thead>
-        <tbody>
-          {dataset.schema.map(([name, type], index) => (
-            <tr key={`${name}-${index}`}><td>{name}</td><td>{type}</td><td>{index % 2 === 0 ? "NO" : "YES"}</td><td>{dataset.name}의 {name} 필드</td></tr>
-          ))}
-        </tbody>
-      </table>
+      <CatalogSchemaTable dataset={dataset} />
     </section>
+  );
+}
+
+function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: CatalogDataset; maxRows?: number; variant?: CatalogSchemaTableVariant }) {
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const data = useMemo(
+    () => dataset.schema.slice(0, maxRows ?? dataset.schema.length).map(([name, type], index) => ({
+      description: `${dataset.name}의 ${name} 필드`,
+      id: `${name}-${index}`,
+      name,
+      nullable: index % 2 === 0 ? "NO" as const : "YES" as const,
+      type,
+    })),
+    [dataset.name, dataset.schema, maxRows],
+  );
+  const columns = useMemo<ColumnDef<CatalogSchemaRow>[]>(
+    () => {
+      const baseColumns: ColumnDef<CatalogSchemaRow>[] = [
+        {
+          accessorKey: "name",
+          cell: (info) => info.getValue<string>(),
+          enableSorting: variant !== "preview",
+          header: "컬럼명",
+        },
+        {
+          accessorKey: "type",
+          cell: (info) => <span className="catalog-schema-type-pill">{info.getValue<string>()}</span>,
+          enableSorting: variant !== "preview",
+          header: "타입",
+        },
+      ];
+
+      if (variant === "preview") return baseColumns;
+
+      return [
+        ...baseColumns,
+        {
+          accessorKey: "nullable",
+          cell: (info) => info.getValue<string>(),
+          enableSorting: true,
+          header: "NULL 허용",
+        },
+        {
+          accessorKey: "description",
+          cell: (info) => info.getValue<string>(),
+          enableSorting: true,
+          header: "설명",
+        },
+      ];
+    },
+    [variant],
+  );
+  const table = useReactTable({
+    columns,
+    data,
+    getCoreRowModel: getCoreRowModel(),
+    getRowId: (row) => row.id,
+    getSortedRowModel: getSortedRowModel(),
+    onSortingChange: setSorting,
+    state: { sorting },
+  });
+
+  return (
+    <table className={variant === "preview" ? "catalog-schema-preview" : "schema-table catalog-schema-table"}>
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th key={header.id}>
+                {header.isPlaceholder ? null : <CatalogSchemaHeader header={header} />}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function CatalogSchemaHeader({ header }: { header: Header<CatalogSchemaRow, unknown> }) {
+  const content = flexRender(header.column.columnDef.header, header.getContext());
+  const sorted = header.column.getIsSorted();
+  const SortIcon = sorted === "asc" ? ChevronUp : sorted === "desc" ? ChevronDown : ArrowUpDown;
+
+  if (!header.column.getCanSort()) return content;
+
+  return (
+    <button className="catalog-schema-sort-button" type="button" onClick={header.column.getToggleSortingHandler()}>
+      {content}
+      <SortIcon size={13} />
+    </button>
   );
 }
 

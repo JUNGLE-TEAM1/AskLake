@@ -48,16 +48,28 @@ export async function createPipeline(request) {
     lastRun: "생성 후 미실행",
     lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
-    nextRun: isManualScheduleLabel(request.scheduleLabel) ? "-" : request.scheduleLabel,
+    nextRun: scheduleNextRunLabel(request.scheduleLabel, request.scheduleSummary),
     owner: request.owner,
     permissionRoles: request.permissionRoles,
     rag: Boolean(request.rag),
     runHistory: [],
     schedule: request.scheduleLabel,
+    schedulePolicy: {
+      endDate: request.endDate,
+      nextRunUtc: request.nextRunUtc,
+      overlapPolicy: request.overlapPolicy,
+      startDate: request.startDate,
+      timezone: request.timezone,
+      watermarkPolicy: request.watermarkPolicy,
+    },
+    scheduleSummary: request.scheduleSummary,
     source: `${request.sourceType} / ${request.sourceLabel}`,
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    retryPolicy: request.retryPolicy,
+    retryPolicySummary: request.retryPolicySummary,
+    runLimitSummary: request.runLimitSummary,
     compression: request.compression,
     partition: request.partition,
     storagePath: request.storagePath,
@@ -109,15 +121,17 @@ export async function commandJob(jobId, command) {
   if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
 
   const actionByCommand = {
-    cancel: "etl.run.cancel_requested",
+    cancelRun: "etl.run.cancel_requested",
     pause: "etl.job.pause_requested",
     retry: "etl.run.retry_requested",
     run: "etl.run.requested",
+    stopSchedule: "etl.schedule.stop_requested",
   };
   if (!actionByCommand[command]) throw validationError(`지원하지 않는 작업 명령입니다: ${command}`);
-  if ((command === "run" || command === "retry") && job.status === "running") {
-    throw conflictError(`이미 실행 중인 작업입니다: ${jobId}`);
-  }
+  if (command === "run" && job.status === "running") throw conflictError(`이미 실행 중인 작업입니다: ${jobId}`);
+  if (command === "pause" && job.status !== "running") throw invalidStateError(`일시정지할 수 없는 상태입니다: ${job.status}`);
+  if (command === "cancelRun" && job.status !== "running") throw invalidStateError(`현재 실행을 취소할 수 없는 상태입니다: ${job.status}`);
+  if (command === "stopSchedule" && !hasScheduledExecution(job)) throw invalidStateError(`중지할 스케줄이 없습니다: ${jobId}`);
 
   const startedJob = applyJobCommand(job, command);
   Object.assign(job, startedJob);
@@ -226,6 +240,28 @@ function validateCreatePipelineRequest(request) {
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
 }
 
+function scheduleNextRunLabel(scheduleLabel, fallback) {
+  const schedule = String(scheduleLabel || "").trim();
+  const fallbackLabel = String(fallback || "").trim();
+  if (!schedule || !hasScheduledLabel(schedule)) return "-";
+  if (schedule.includes("1회") || schedule.includes("예약")) {
+    return fallbackLabel && fallbackLabel !== "-"
+      ? fallbackLabel
+      : schedule.replace(/\s*(예약\s*)?1회 실행\s*$/, "").trim();
+  }
+  return fallbackLabel && fallbackLabel !== "-" ? fallbackLabel : schedule;
+}
+
+function hasScheduledLabel(scheduleLabel) {
+  const schedule = String(scheduleLabel || "").trim().toLowerCase();
+  if (!schedule || schedule === "-") return false;
+  return !["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token));
+}
+
+function hasScheduledExecution(job) {
+  return job.status !== "stopped" && hasScheduledLabel(job.schedule);
+}
+
 function normalizeTransformSteps(steps) {
   if (!Array.isArray(steps)) return [];
   return steps
@@ -290,22 +326,24 @@ function validationError(message) {
   return error;
 }
 
-function isManualScheduleLabel(value) {
-  const label = String(value || "");
-  return label === "manual" || label.includes("수동") || label.includes("스케줄 없음");
+function conflictError(message) {
+  const error = new Error(message);
+  error.status = 409;
+  error.code = "CONFLICT";
+  return error;
+}
+
+function invalidStateError(message) {
+  const error = new Error(message);
+  error.status = 422;
+  error.code = "INVALID_JOB_STATE";
+  return error;
 }
 
 function notFoundError(message) {
   const error = new Error(message);
   error.status = 404;
   error.code = "NOT_FOUND";
-  return error;
-}
-
-function conflictError(message) {
-  const error = new Error(message);
-  error.status = 409;
-  error.code = "CONFLICT";
   return error;
 }
 
@@ -332,11 +370,36 @@ function applyJobCommand(job, command) {
     };
   }
 
+  if (command === "stopSchedule") {
+    return {
+      ...job,
+      lastState: "스케줄 중지됨",
+      nextRun: "-",
+      progress: undefined,
+      schedule: "스케줄링 건너뛰기",
+      schedulePolicy: {
+        endDate: "",
+        nextRunUtc: "",
+        overlapPolicy: undefined,
+        startDate: "",
+        timezone: "",
+        watermarkPolicy: {
+          column: "updated_at",
+          enabled: false,
+          lookbackMinutes: 0,
+          mode: "full_refresh",
+        },
+      },
+      scheduleSummary: "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행",
+      status: "stopped",
+    };
+  }
+
   return {
     ...job,
     lastRun: "방금 취소",
     lastState: "취소됨",
-    nextRun: isManualScheduleLabel(job.schedule) ? "-" : job.schedule,
+    nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
     status: "canceled",
   };
@@ -416,16 +479,16 @@ function initialDagSteps(request, metrics) {
     ], ["실행 시 품질 규칙 평가 결과가 기록됩니다."]),
     dagStep("run", "6. 실행 대기", "아직 실행되지 않음", "pending", [
       ["Run ID", "-"],
-    ], ["즉시 실행 또는 예약 실행 후 Run 로그가 연결됩니다."]),
+    ], ["즉시 실행 또는 반복 실행 후 Run 로그가 연결됩니다."]),
   ];
 }
 
 function runFromCommand(job, command) {
-  if (command === "pause") return undefined;
+  if (command === "pause" || command === "stopSchedule") return undefined;
   const now = new Date();
   const runId = sourceId("run", `${job.id}:${command}:${now.toISOString()}`);
   const inputRows = job.stats?.inputRows && job.stats.inputRows !== "-" ? job.stats.inputRows : "0";
-  if (command === "cancel") {
+  if (command === "cancelRun") {
     return {
       duration: "-",
       endedAt: now.toISOString(),
@@ -476,7 +539,7 @@ function finalizeJobFromSparkResult(job, command, result) {
     lastState: success
       ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark Parquet 적재`
       : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
-    nextRun: isManualScheduleLabel(job.schedule) ? "-" : job.schedule,
+    nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
     status: success ? "scheduled" : "failed",
     targetPath: result.outputPath ?? job.targetPath,
@@ -561,7 +624,7 @@ function statsFromRuns(job, runs) {
 }
 
 function dagStepsFromCommand(job, command, run, sparkResult) {
-  const canceled = command === "cancel";
+  const canceled = command === "cancelRun";
   const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
   const sourcePath = sparkResult?.sourcePath ?? job.source;
