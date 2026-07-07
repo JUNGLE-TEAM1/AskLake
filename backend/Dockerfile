@@ -6,7 +6,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends nodejs npm docker.io ca-certificates \
+  && apt-get install -y --no-install-recommends nodejs npm docker-cli ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

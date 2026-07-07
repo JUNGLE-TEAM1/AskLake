@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,10 +19,10 @@ const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/w
 
 export function runSparkPipeline(job, command, runId) {
   ensureSparkServer();
-  mkdirSync(ivyDir, { recursive: true });
-  mkdirSync(reportDir, { recursive: true });
-  mkdirSync(localOutputDir, { recursive: true });
-  mkdirSync(sampleHostDir, { recursive: true });
+  ensureWritableDir(ivyDir);
+  ensureWritableDir(reportDir);
+  ensureWritableDir(localOutputDir);
+  ensureWritableDir(sampleHostDir);
 
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
@@ -342,7 +342,7 @@ function normalizeSparkReport(report, output) {
 
 function copySparkOutputToHost(output) {
   if (!output.relativePath || !output.hostPath) return;
-  mkdirSync(path.dirname(output.hostPath), { recursive: true });
+  ensureWritableDir(path.dirname(output.hostPath));
   const hostParent = path.dirname(output.hostPath);
   const leaf = path.basename(output.hostPath);
   const tmpLeaf = `${leaf}.tmp`;
@@ -371,6 +371,11 @@ function copySparkOutputToHost(output) {
   if (result.status !== 0) {
     throw sparkError(`Spark output was written but could not be copied to host.\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+function ensureWritableDir(dir) {
+  mkdirSync(dir, { recursive: true });
+  chmodSync(dir, 0o777);
 }
 
 function minioAccessKey() {
