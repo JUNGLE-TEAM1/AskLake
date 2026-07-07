@@ -531,12 +531,6 @@ const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공�
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
-const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
-  BRONZE: "수집 정제",
-  GOLD: "서비스 제공",
-  RAW: "원본 보관",
-  SILVER: "분석 표준",
-};
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -597,10 +591,6 @@ function getKnownOption<T extends string>(value: string | undefined, options: re
 
 function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
-}
-
-function displayTargetLayer(layer: TargetLayer) {
-  return TARGET_LAYER_LABELS[layer];
 }
 
 function buildJobName(targetDataset: string) {
@@ -4207,7 +4197,7 @@ export function TargetPage({
   onSave: () => void;
 }) {
   const initialTarget = getTargetDraftValues(draft);
-  const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(initialTarget.targetLayer);
+  const targetLayer = initialTarget.targetLayer;
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
   const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
@@ -4216,11 +4206,10 @@ export function TargetPage({
     owner: string;
     targetDataset: string;
     targetFormat: string;
-    targetLayer: TargetLayer;
   }> = {}) => {
     const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
     const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-    const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
+    const nextTargetLayer = targetLayer;
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
     const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
 
@@ -4236,10 +4225,6 @@ export function TargetPage({
       targetLayer: nextTargetLayer,
       rag: false,
     });
-  };
-  const selectLayer = (layer: TargetLayer) => {
-    setSelectedLayer(layer);
-    applyTargetDraft({ targetLayer: layer });
   };
   const goNext = () => {
     applyTargetDraft();
@@ -4292,13 +4277,6 @@ export function TargetPage({
             <Database size={18} />
             <h2>저장소 및 포맷 설정</h2>
           </div>
-          <div className="format-grid">
-            {TARGET_LAYER_OPTIONS.map((layer) => (
-              <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
-                {displayTargetLayer(layer)}
-              </button>
-            ))}
-          </div>
           <div className="form-grid">
             <Field label="저장소 유형" value="S3" />
             <label className="field">
@@ -4313,7 +4291,7 @@ export function TargetPage({
             </label>
             <Field label="파티션" value="year/month/region" />
             <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
+            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`} wide />
           </div>
           <div className="target-status-grid">
             <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
