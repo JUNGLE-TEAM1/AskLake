@@ -14,6 +14,9 @@ import { dashboardWidgetColorChoices, defaultWidgetColorConfig } from "./widgetD
 import {
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
+  type DashboardAssistantCreateWidgetAction,
+  type DashboardAssistantResponse,
+  type DashboardAssistantUpdateWidgetAction,
   type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
@@ -595,8 +598,8 @@ function VisualizationRequestWidget({
     setRequestTone(null);
     setIsSaving(true);
     try {
-      await onPatchConfig({ prompt: nextPrompt });
       if (!isDashboardAssistantConfigured()) {
+        await onPatchConfig({ prompt: nextPrompt });
         setRequestTone("info");
         setMessage(`${dashboardAssistantEndpointLabel()} 설정 후 이 요청이 Assistant API로 전송됩니다.`);
         setIsPromptEditing(false);
@@ -613,13 +616,14 @@ function VisualizationRequestWidget({
         widgetId: widget.id,
         widgets: widgets.map(buildDashboardAssistantWidgetContext),
       });
-      const configPatch = response.widgetPatch?.config ?? response.configPatch;
-      if (response.widgetPatch && onApplyWidgetPatch) {
+      const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
+      const configPatch = widgetPatch?.config ?? response.configPatch;
+      if (widgetPatch && onApplyWidgetPatch) {
         await onApplyWidgetPatch({
-          ...response.widgetPatch,
+          ...widgetPatch,
           config: {
             prompt: nextPrompt,
-            ...(response.widgetPatch.config ?? {}),
+            ...(widgetPatch.config ?? {}),
           },
         });
       } else if (configPatch && Object.keys(configPatch).length > 0) {
@@ -668,6 +672,32 @@ function VisualizationRequestWidget({
       )}
     </div>
   );
+}
+
+function visualizationResponseWidgetPatch(
+  response: DashboardAssistantResponse,
+  widgetId: string,
+): DashboardAssistantWidgetPatch | null {
+  const updateAction = response.actions.find(
+    (action): action is DashboardAssistantUpdateWidgetAction => (
+      action.type === "update_widget" && action.widgetId === widgetId
+    ),
+  );
+  if (updateAction) return updateAction.patch;
+
+  if (response.widgetPatch) return response.widgetPatch;
+
+  const createAction = response.actions.find(
+    (action): action is DashboardAssistantCreateWidgetAction => action.type === "create_widget",
+  );
+  if (!createAction) return null;
+
+  return {
+    config: createAction.widget.config as Record<string, unknown>,
+    datasetId: createAction.widget.datasetId,
+    title: createAction.widget.title,
+    type: createAction.widget.type,
+  };
 }
 
 function TextPlaceholderWidget({

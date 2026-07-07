@@ -8,6 +8,7 @@ from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
+from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
 from app.schemas.dashboard import (
     AreaChartWidgetConfig,
@@ -409,14 +410,17 @@ class DashboardRuntimeService:
 
         return normalized
 
-    @staticmethod
     def _resolve_widget_data(
+        self,
         explicit_data: list[dict[str, Any]] | None,
         dataset_id: str | None,
     ) -> list[dict[str, Any]]:
         if explicit_data is not None:
             return explicit_data
-        return dataset_rows_to_widget_data(get_demo_dataset(dataset_id))
+        if not dataset_id:
+            return []
+        dataset_payload = CatalogRepository(self.repository.db).get_dataset_payload(dataset_id)
+        return dataset_rows_to_widget_data(dataset_payload or get_demo_dataset(dataset_id))
 
     @staticmethod
     def _default_config(widget_type: DashboardRuntimeWidgetType) -> DashboardWidgetConfigBase:

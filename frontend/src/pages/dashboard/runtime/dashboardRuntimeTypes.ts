@@ -1,4 +1,4 @@
-import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
+import type { CatalogDataset, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetType } from "../../../types";
 
 export type ToolbarDraftWidgetKind = "visualization" | "text";
 
@@ -11,8 +11,9 @@ export type DashboardDatasetOption = {
   columns: DashboardDatasetColumn[];
   description?: string;
   id: string;
-  layer: "gold";
+  layer: CatalogDataset["layer"];
   name: string;
+  status: CatalogDataset["status"];
 };
 
 export type CreateDraftWidgetFormInput = {

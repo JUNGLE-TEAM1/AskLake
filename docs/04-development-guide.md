@@ -42,6 +42,14 @@ VITE_API_BASE_URL=http://localhost:8080
 VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 ```
 
+대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
+로컬 PostgreSQL에 대시보드 demo dataset이 없으면 아래 seed를 먼저 실행한다.
+
+```bash
+cd backend
+.venv/bin/python -m app.seed.seed_dashboard_demo
+```
+
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
 

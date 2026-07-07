@@ -105,7 +105,7 @@ def build_assistant_context(
     *,
     max_sample_rows: int,
 ) -> AssistantDashboardContext:
-    datasets = _gold_dataset_contexts(catalog_repository, max_sample_rows)
+    datasets = _available_dataset_contexts(catalog_repository, max_sample_rows)
     dashboard_id = request.dashboard_id
     if not dashboard_id:
         return _request_fallback_context(request, datasets)
@@ -141,7 +141,7 @@ def build_assistant_context(
             _widget_model_to_context(widget, max_sample_rows)
             for widget in selected_page_widgets
         ],
-        warnings=[] if datasets else ["접근 가능한 GOLD 데이터셋을 찾지 못했습니다."],
+        warnings=[] if datasets else ["대시보드에서 사용할 수 있는 데이터셋을 찾지 못했습니다."],
     )
 
 
@@ -151,7 +151,7 @@ def _select_page(pages: list[Any], page_id: str | None) -> Any | None:
     return pages[0] if pages else None
 
 
-def _gold_dataset_contexts(
+def _available_dataset_contexts(
     catalog_repository: CatalogRepository,
     max_sample_rows: int,
 ) -> list[AssistantDatasetContext]:
@@ -161,7 +161,7 @@ def _gold_dataset_contexts(
             dataset = CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
         except Exception:
             continue
-        if dataset.layer != "GOLD" or dataset.status != "available":
+        if dataset.status != "available" or not dataset.schema_:
             continue
         contexts.append(_dataset_to_context(dataset, max_sample_rows))
     return contexts

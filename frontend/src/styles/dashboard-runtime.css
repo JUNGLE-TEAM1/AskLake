@@ -1731,6 +1731,13 @@
   padding: 24px;
 }
 
+.asklake-dashboard-inspector.assistant {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
 .asklake-dashboard-inspector section {
   display: grid;
   justify-items: center;
@@ -1758,21 +1765,33 @@
   line-height: 1.5;
 }
 
-.asklake-assistant-panel {
-  display: grid;
-  min-height: calc(100vh - 220px);
-  grid-template-rows: minmax(0, 1fr) auto auto;
+.asklake-dashboard-inspector .asklake-assistant-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
   gap: 12px;
   width: 100%;
+  align-items: stretch;
   color: var(--dash-text);
   text-align: left;
 }
 
-.asklake-assistant-chat {
-  display: grid;
-  min-height: 360px;
-  align-content: center;
+.asklake-dashboard-inspector .asklake-assistant-chat {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  justify-content: center;
   gap: 18px;
+  overflow-y: auto;
+  padding: 24px 0 12px;
+}
+
+.asklake-dashboard-inspector .asklake-assistant-chat.has-messages {
+  justify-content: flex-start;
+  padding: 0;
 }
 
 .asklake-assistant-hero {
@@ -1783,35 +1802,35 @@
 }
 
 .asklake-assistant-mark {
-  width: 86px;
-  height: 86px;
+  width: 68px;
+  height: 68px;
   margin-bottom: 4px;
   object-fit: contain;
 }
 
 .asklake-assistant-hero strong {
   color: var(--dash-text);
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 900;
   line-height: 1.12;
 }
 
 .asklake-assistant-hero span {
   color: var(--dash-text-muted);
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 850;
   line-height: 1.3;
 }
 
 .asklake-assistant-messages {
-  display: grid;
-  max-height: 260px;
-  gap: 8px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
 }
 
 .asklake-assistant-messages p {
-  max-width: 86%;
+  max-width: calc(100% - 24px);
   border: 1px solid #dbe4ee;
   border-radius: 10px;
   background: #ffffff;
@@ -1821,26 +1840,30 @@
   line-height: 1.45;
   margin: 0;
   padding: 10px 12px;
-  word-break: keep-all;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: normal;
   overflow-wrap: anywhere;
 }
 
 .asklake-assistant-messages p.user {
-  justify-self: end;
+  align-self: flex-end;
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
 .asklake-assistant-messages p.assistant {
-  justify-self: start;
+  align-self: flex-start;
 }
 
 .asklake-assistant-form {
   display: grid;
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) 42px;
   align-items: end;
   gap: 8px;
+  width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
   background: #ffffff;
@@ -1851,8 +1874,8 @@
 .asklake-assistant-form textarea {
   width: 100%;
   min-width: 0;
-  min-height: 48px;
-  max-height: 132px;
+  min-height: 44px;
+  max-height: 96px;
   border: 0;
   background: transparent;
   color: var(--dash-text);

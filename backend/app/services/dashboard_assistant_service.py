@@ -377,7 +377,7 @@ def _build_dashboard_question_mock_fallback(
         f"- 대상: {widget_label}\n"
         f"- 요청: {request.prompt}\n"
         f"- 현재 page 위젯 수: {len(context.widgets)}개\n"
-        f"- 접근 가능한 GOLD 데이터셋 수: {len(context.datasets)}개\n\n"
+        f"- 대시보드에서 사용할 수 있는 데이터셋 수: {len(context.datasets)}개\n\n"
         "OpenAI 호출이 준비되지 않아 mock fallback 리포트를 반환했습니다."
     )
 

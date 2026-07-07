@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
@@ -45,6 +45,7 @@ export function DashboardAssistantPanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [prompt, setPrompt] = useState("");
+  const messagesEndRef = useRef<HTMLSpanElement | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
@@ -120,20 +121,29 @@ export function DashboardAssistantPanel({
     }
   };
 
+  const hasMessages = messages.length > 0;
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length]);
+
   return (
     <section className="asklake-assistant-panel" aria-label="AskLake Assistant">
-      <div className="asklake-assistant-chat">
-        <div className="asklake-assistant-hero">
-          <AskLakeAssistantMark />
-          <strong>AskLake</strong>
-          <span>AI로 질문하세요</span>
-        </div>
+      <div className={hasMessages ? "asklake-assistant-chat has-messages" : "asklake-assistant-chat"}>
+        {!hasMessages && (
+          <div className="asklake-assistant-hero">
+            <AskLakeAssistantMark />
+            <strong>AskLake</strong>
+            <span>AI로 질문하세요</span>
+          </div>
+        )}
 
-        {messages.length > 0 && (
+        {hasMessages && (
           <div className="asklake-assistant-messages" aria-live="polite">
             {messages.map((message) => (
               <p className={message.role} key={message.id}>{message.text}</p>
             ))}
+            <span ref={messagesEndRef} aria-hidden="true" />
           </div>
         )}
       </div>

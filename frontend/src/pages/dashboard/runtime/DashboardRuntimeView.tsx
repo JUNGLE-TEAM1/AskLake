@@ -1,6 +1,6 @@
 import type { LayoutItem } from "react-grid-layout";
 import { BarChart3, MousePointer2, Redo2, Type, Undo2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   DashboardRuntimeMode,
   DashboardRuntimePage,
@@ -165,7 +165,7 @@ function DashboardEditToolbar({
 }
 
 function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "text";
+  return widget?.config.placeholderKind === "text" || widget?.config.placeholderKind === "visualization_request";
 }
 
 const emptyDashboardCopy = {
@@ -274,11 +274,20 @@ export function DashboardRuntimeView({
     title: widget.title ?? "제목 없는 위젯",
     type: widget.type,
   });
-  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
-    config: {
+  const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const nextConfig = {
       ...widget.config,
       ...(patch.config ?? {}),
-    } as UpdateDraftWidgetFormInput["config"],
+    } as Record<string, unknown>;
+
+    if (widget.config.placeholderKind === "visualization_request" && (patch.config || patch.datasetId || patch.type || patch.title)) {
+      delete nextConfig.placeholderKind;
+    }
+
+    return nextConfig as UpdateDraftWidgetFormInput["config"];
+  };
+  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
+    config: mergeAssistantWidgetConfig(widget, patch),
     datasetId: patch.datasetId ?? widget.datasetId ?? null,
     title: patch.title ?? widget.title ?? "제목 없는 위젯",
     type: patch.type ?? widget.type,
@@ -295,10 +304,16 @@ export function DashboardRuntimeView({
     onClearWidgetSelection();
   };
   const handleSelectWidget = (widgetId: string) => {
-    setInspectorMode("widget");
+    if (inspectorMode !== "assistant") setInspectorMode("widget");
     onSelectWidget(widgetId);
   };
   const handleSelectWidgetColorSlot = (widgetId: string, slotIndex: number) => {
+    if (inspectorMode === "assistant") {
+      setFocusedColorSlot(null);
+      if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
+      return;
+    }
+
     setInspectorMode("widget");
     setFocusedColorSlot({ slotIndex, widgetId });
     if (selectedWidgetId !== widgetId) onSelectWidget(widgetId);
@@ -310,6 +325,10 @@ export function DashboardRuntimeView({
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
   const configurableDraftWidget = selectedWidgetHidesInspector ? null : selectedDraftWidget;
+
+  useEffect(() => {
+    if (selectedWidgetHidesInspector) onPreviewWidget(null);
+  }, [onPreviewWidget, selectedWidgetHidesInspector, selectedWidgetId]);
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
@@ -413,7 +432,7 @@ export function DashboardRuntimeView({
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
         inspector={isAssistantInspectorOpen ? (
-          <aside className="asklake-dashboard-inspector">
+          <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
               pageId={selectedPageId}

@@ -165,12 +165,15 @@ def _guard_create_widget_action(
 ) -> tuple[DashboardAssistantCreateWidgetAction | None, list[str]]:
     dataset = datasets.get(action.widget.dataset_id)
     if dataset is None:
-        return None, [f"create_widget datasetId {action.widget.dataset_id!r}는 접근 가능한 GOLD 데이터셋이 아니어서 제외했습니다."]
+        return None, [
+            f"create_widget datasetId {action.widget.dataset_id!r}는 대시보드에서 사용할 수 있는 데이터셋이 아니어서 제외했습니다. "
+            f"사용 가능한 datasetId: {_available_dataset_ids(datasets)}",
+        ]
     widget_type = _widget_type_enum(action.widget.type)
     config, warnings = _validate_config(widget_type, action.widget.config, dataset)
     if config is None:
         return None, warnings
-    action.widget.config = config
+    action.widget.config = config.model_dump(by_alias=True, exclude_none=True, mode="json")
     return action, warnings
 
 
@@ -194,7 +197,10 @@ def _guard_update_widget_action(
             return None, [f"update_widget {action.widget_id!r}는 datasetId가 없어 config를 검증할 수 없습니다."]
         dataset = datasets.get(dataset_id)
         if dataset is None:
-            return None, [f"update_widget datasetId {dataset_id!r}는 접근 가능한 GOLD 데이터셋이 아니어서 제외했습니다."]
+            return None, [
+                f"update_widget datasetId {dataset_id!r}는 대시보드에서 사용할 수 있는 데이터셋이 아니어서 제외했습니다. "
+                f"사용 가능한 datasetId: {_available_dataset_ids(datasets)}",
+            ]
         config, warnings = _validate_config(target_type, patch.config, dataset)
         if config is None:
             return None, warnings
@@ -218,8 +224,10 @@ def _validate_config(
         return None, [f"{widget_type!r}는 지원하지 않는 위젯 타입입니다."]
 
     config_payload = _config_to_dict(config)
-    if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE} and "color" in config_payload:
+    if widget_type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE} and config_payload.get("color") is not None:
         return None, [f"{widget_type.value} config에는 color를 사용할 수 없습니다."]
+    if widget_type not in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE} and config_payload.get("color") is None:
+        config_payload["color"] = {"colors": ["#2563eb"]}
 
     config_model = CONFIG_MODEL_BY_TYPE[widget_type]
     try:
@@ -258,16 +266,30 @@ def _validate_columns(
             continue
         for column_name in values:
             if column_name not in columns:
-                warnings.append(f"{widget_type.value} config의 {field_name}={column_name!r} 컬럼이 데이터셋 {dataset.id!r}에 없습니다.")
+                warnings.append(
+                    f"{widget_type.value} config의 {field_name}={column_name!r} 컬럼이 데이터셋 "
+                    f"{dataset.name!r}({dataset.id})에 없습니다. 사용 가능한 컬럼: {_available_column_names(columns)}"
+                )
 
     for numeric_field in option["numeric"]:
         column_name = config.get(numeric_field)
         if not isinstance(column_name, str) or column_name not in columns:
             continue
         if not _is_numeric_column(columns[column_name].type):
-            warnings.append(f"{widget_type.value} config의 {numeric_field}={column_name!r} 컬럼은 숫자형이 아닙니다.")
+            warnings.append(
+                f"{widget_type.value} config의 {numeric_field}={column_name!r} 컬럼은 숫자형이 아닙니다. "
+                f"현재 타입: {columns[column_name].type}. 숫자 컬럼만 값/축으로 사용할 수 있습니다."
+            )
 
     return warnings
+
+
+def _available_dataset_ids(datasets: dict[str, AssistantDatasetContext]) -> str:
+    return ", ".join(datasets.keys()) or "없음"
+
+
+def _available_column_names(columns: dict[str, Any]) -> str:
+    return ", ".join(columns.keys()) or "없음"
 
 
 def _is_numeric_column(column_type: str) -> bool:
