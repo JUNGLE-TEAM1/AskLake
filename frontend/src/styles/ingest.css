@@ -733,8 +733,13 @@
 }
 
 .jobs-table-actions .job-action-button {
-  min-width: 56px;
-  padding: 0 10px;
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.jobs-table-actions .job-action-button svg {
+  stroke-width: 2.4;
 }
 
 .jobs-table-empty {

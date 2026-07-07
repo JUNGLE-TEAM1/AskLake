@@ -27,6 +27,7 @@ import {
   HardDrive,
   Info,
   LayoutGrid,
+  Pencil,
   PlayCircle,
   Plus,
   RefreshCw,
@@ -394,7 +395,16 @@ function JobsTableSection({
         return (
           <div className="jobs-table-actions">
             {getJobListActions(job).map((action) => (
-              <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind, job)}>{action.label}</button>
+              <button
+                aria-label={action.label}
+                className={`${action.className} icon-only`}
+                key={action.label}
+                title={action.label}
+                type="button"
+                onClick={() => runAction(action.kind, job)}
+              >
+                <JobListActionIcon action={action} />
+              </button>
             ))}
           </div>
         );
@@ -633,6 +643,16 @@ function renderJobsTableHeader(header: Header<JobsTableRow, unknown>) {
       <SortIcon size={13} />
     </button>
   );
+}
+
+function JobListActionIcon({ action }: { action: JobListAction }) {
+  if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
+  if (action.kind === "runs") return <TerminalSquare aria-hidden="true" size={15} />;
+  if (action.kind === "edit") return <Pencil aria-hidden="true" size={15} />;
+  if (action.kind === "cancel") return <X aria-hidden="true" size={15} />;
+  if (action.kind === "retry") return <RefreshCw aria-hidden="true" size={15} />;
+
+  return <PlayCircle aria-hidden="true" size={15} />;
 }
 
 function JobLogModal({ job, onClose }: { job: JobRowData; onClose: () => void }) {
