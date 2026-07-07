@@ -524,15 +524,14 @@ const DEFAULT_APPROVAL_STATUS = "승인 검토";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
-const DEFAULT_TARGET_FORMAT = "Parquet";
-const DEFAULT_TARGET_TAGS = ["고객데이터", "분석용", "가공됨"];
+const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
+const DEFAULT_TARGET_TAGS = ["고객 데이터", "분석용", "가공 데이터"];
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
-const TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "분석용", "서비스용", "원본", "가공됨"] as const;
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -555,23 +554,81 @@ type PermissionDraftSlice = {
 
 type TargetDraftSlice = {
   compression?: "Snappy" | "Gzip" | "None";
+  databaseName?: string;
   datasetName?: string;
   description?: string;
   format?: string;
+  indexColumns?: string[];
   jobName?: string;
+  lastTestRun?: TargetTestRun;
   layer?: string;
+  manager?: string;
   owner?: string;
   partition?: string;
   partitionColumns?: string[];
   rag?: boolean;
+  schemaRules?: TargetSchemaRule[];
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
   tableName?: string;
+  targetTableName?: string;
   targetDataset?: string;
   targetFormat?: string;
   targetLayer?: string;
   tags?: string[];
   testStatus?: "idle" | "success" | "failed";
+};
+
+type TargetFileFormat = "parquet" | "csv" | "json";
+type TargetTestStatus = "idle" | "pending" | "success" | "failed";
+type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
+
+type TargetSchemaRule = {
+  indexed: boolean;
+  name: string;
+  nullable: boolean;
+  partitionable: boolean;
+  raw?: boolean;
+  recommendedIndex: boolean;
+  recommendedPartition: boolean;
+  sourceName: string;
+  type: TargetColumnType;
+  use: boolean;
+  validationStatus: "valid" | "warning" | "error";
+};
+
+type TargetTestRun = {
+  finishedAt?: string;
+  logs: string[];
+  message?: string;
+  status: TargetTestStatus;
+};
+
+type TargetMetadata = {
+  databaseName: string;
+  datasetName: string;
+  description: string;
+  fileFormat: TargetFileFormat;
+  manager: string;
+  owner: string;
+  storagePath: string;
+  targetTableName: string;
+};
+
+type TargetSavedConfig = {
+  indexColumns: string[];
+  lastTestRun: TargetTestRun;
+  lineage: {
+    sourceName: string;
+    targetDatasetName: string;
+    targetStoragePath: string;
+    transformStepCount: number;
+  };
+  metadata: TargetMetadata;
+  partitionColumns: string[];
+  previewRows: Array<Record<string, string>>;
+  schemaRules: TargetSchemaRule[];
+  tags: string[];
 };
 
 type DraftPipelineWithSlices = DraftPipeline & {
@@ -604,6 +661,185 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
+const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
+const TARGET_DATA_TAG_OPTIONS = ["마케팅용", "고객 데이터", "분석용", "서비스 제공용", "원본 데이터", "가공 데이터", "운영 데이터", "개인정보 포함"] as const;
+const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
+  { included: true, nullable: false, sourceName: "id", targetName: "id", type: "number" },
+  { included: true, nullable: false, sourceName: "user_id", targetName: "user_id", type: "string" },
+  { included: true, nullable: true, sourceName: "amount", targetName: "amount", type: "number" },
+  { included: true, nullable: false, sourceName: "event_time", targetName: "event_time", type: "datetime" },
+  { included: true, nullable: true, sourceName: "active", targetName: "active", type: "boolean" },
+  { included: true, nullable: true, sourceName: "payload.region", targetName: "payload.region", type: "string" },
+];
+const SAMPLE_TARGET_ROWS = [
+  ["1", "u_001", "42.7", "2026-07-04T10:00:00Z", "true", "KR"],
+  ["2", "u_002", "81.2", "2026-07-04T10:05:00Z", "false", "US"],
+  ["3", "u_003", "15.4", "2026-07-04T10:10:00Z", "true", "JP"],
+];
+
+function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
+  const normalized = value?.trim().toLowerCase();
+  return TARGET_FILE_FORMAT_VALUES.find((format) => format === normalized) ?? "parquet";
+}
+
+function isRecommendedPartitionColumn(columnName: string) {
+  return /^(date|event_time|created_at|updated_at|partition_date|event_date)$/i.test(columnName);
+}
+
+function isRecommendedIndexColumn(columnName: string) {
+  return /^(id|user_id|customer_id|order_id|review_id|account_id)$/i.test(columnName);
+}
+
+function normalizeTargetColumnType(value: string): TargetColumnType {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("int") || normalized.includes("float") || normalized.includes("double") || normalized.includes("decimal") || normalized === "number") return "number";
+  if (normalized.includes("bool")) return "boolean";
+  if (normalized.includes("date") || normalized.includes("time")) return "datetime";
+  if (normalized.includes("json") || normalized.includes("object") || normalized.includes("array")) return "json";
+  return "string";
+}
+
+function inferJsonValueType(value: unknown): TargetColumnType {
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (value && typeof value === "object") return "json";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T|\s)?/.test(value)) return "datetime";
+  return "string";
+}
+
+function mergeTargetColumnType(previous: TargetColumnType | undefined, next: TargetColumnType): TargetColumnType {
+  if (!previous || previous === next) return next;
+  if (previous === "json" || next === "json") return "json";
+  return "string";
+}
+
+function flattenJsonObject(value: unknown, prefix: string, output: Record<string, unknown>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    output[prefix] = value;
+    return;
+  }
+
+  Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (child && typeof child === "object" && !Array.isArray(child)) {
+      flattenJsonObject(child, path, output);
+      return;
+    }
+    output[path] = child;
+  });
+}
+
+function stringifyPreviewValue(value: unknown) {
+  if (value === null || typeof value === "undefined") return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], existingRules: TargetSchemaRule[] | undefined) {
+  const sourceColumns = columns.length > 0 ? columns : SAMPLE_TARGET_SCHEMA_COLUMNS;
+  const sourceRows = rows.length > 0 ? rows : SAMPLE_TARGET_ROWS;
+  const dataColumnIndex = sourceColumns.findIndex((column) => (column.targetName || column.sourceName).toLowerCase() === "data");
+  const jsonColumnIndex = dataColumnIndex >= 0 ? dataColumnIndex : sourceColumns.length === 1 ? 0 : -1;
+  const existingByName = new Map(existingRules?.map((rule) => [rule.name, rule]));
+  const previewRows: Array<Record<string, string>> = [];
+  const typeByName = new Map<string, TargetColumnType>();
+  const nullableByName = new Map<string, boolean>();
+  let jsonParseFailed = false;
+  let jsonInferred = false;
+
+  if (jsonColumnIndex >= 0) {
+    sourceRows.forEach((row) => {
+      const rawValue = row[jsonColumnIndex] ?? "";
+      try {
+        const parsed = JSON.parse(rawValue);
+        const flattened: Record<string, unknown> = {};
+        flattenJsonObject(parsed, "", flattened);
+        const previewRow: Record<string, string> = {};
+
+        Object.entries(flattened).forEach(([name, value]) => {
+          previewRow[name] = stringifyPreviewValue(value);
+          typeByName.set(name, mergeTargetColumnType(typeByName.get(name), inferJsonValueType(value)));
+          nullableByName.set(name, (nullableByName.get(name) ?? false) || value === null || typeof value === "undefined");
+        });
+
+        previewRow.raw_data = rawValue;
+        typeByName.set("raw_data", "json");
+        nullableByName.set("raw_data", false);
+        previewRows.push(previewRow);
+        jsonInferred = true;
+      } catch {
+        jsonParseFailed = true;
+      }
+    });
+  }
+
+  if (!jsonInferred) {
+    sourceRows.forEach((row) => {
+      const previewRow: Record<string, string> = {};
+      sourceColumns.forEach((column, index) => {
+        const name = column.targetName || column.sourceName;
+        const value = row[index] ?? "";
+        previewRow[name] = value;
+        typeByName.set(name, mergeTargetColumnType(typeByName.get(name), normalizeTargetColumnType(column.type)));
+        nullableByName.set(name, (nullableByName.get(name) ?? false) || value === "");
+      });
+      previewRows.push(previewRow);
+    });
+  }
+
+  const schemaRules = Array.from(typeByName.keys()).map((name) => {
+    const existing = existingByName.get(name);
+    const recommendedPartition = isRecommendedPartitionColumn(name);
+    const recommendedIndex = isRecommendedIndexColumn(name);
+    const raw = name === "raw_data";
+    const type = existing?.type ?? typeByName.get(name) ?? "string";
+    const validationStatus: TargetSchemaRule["validationStatus"] = raw ? "warning" : "valid";
+
+    return {
+      indexed: existing?.indexed ?? recommendedIndex,
+      name,
+      nullable: existing?.nullable ?? Boolean(nullableByName.get(name)),
+      partitionable: !raw && type !== "json",
+      raw,
+      recommendedIndex,
+      recommendedPartition,
+      sourceName: name,
+      type,
+      use: existing?.use ?? !raw,
+      validationStatus,
+    };
+  });
+
+  return { jsonInferred, jsonParseFailed, previewRows, schemaRules };
+}
+
+function buildPartitionPathPreview(storagePath: string, partitionColumns: string[]) {
+  const base = storagePath.trim() || buildTargetStoragePath(DEFAULT_TARGET_DATASET, DEFAULT_TARGET_LAYER);
+  const normalizedBase = base.endsWith("/") ? base : `${base}/`;
+  if (partitionColumns.length === 0) return normalizedBase;
+  return `${normalizedBase}${partitionColumns[0]}=2026-07-04/`;
+}
+
+function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
+  const errors: string[] = [];
+
+  if (!config.metadata.datasetName.trim()) errors.push("데이터셋명은 필수입니다.");
+  if (!config.metadata.targetTableName.trim()) errors.push("테이블명은 필수입니다.");
+  if (!config.metadata.storagePath.trim()) errors.push("저장경로는 필수입니다.");
+  if (!config.metadata.fileFormat.trim()) errors.push("포맷은 필수입니다.");
+  if (jsonParseFailed) errors.push("JSON 파싱에 실패했습니다.");
+
+  const usedColumnNames = new Set(config.schemaRules.filter((rule) => rule.use).map((rule) => rule.name));
+  if (usedColumnNames.size === 0) errors.push("저장에 사용할 컬럼이 1개 이상 필요합니다.");
+
+  const disabledPartitionColumns = config.partitionColumns.filter((column) => !usedColumnNames.has(column));
+  if (disabledPartitionColumns.length > 0) {
+    errors.push(`partition 컬럼이 사용 제외 상태입니다: ${disabledPartitionColumns.join(", ")}`);
+  }
+
+  return errors;
+}
 function buildJobName(targetDataset: string) {
   return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
 }
@@ -4216,267 +4452,464 @@ export function TargetPage({
   onSave: () => void;
 }) {
   const initialTarget = getTargetDraftValues(draft);
+  const draftTarget = (draft as DraftPipelineWithSlices).target;
   const targetLayer = initialTarget.targetLayer;
+  const inferredTarget = useMemo(
+    () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
+    [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
+  );
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [targetTableName, setTargetTableName] = useState(initialTarget.tableName);
+  const [targetTableName, setTargetTableName] = useState(draftTarget?.targetTableName ?? initialTarget.tableName);
+  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
   const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
   const [targetDescription, setTargetDescription] = useState(initialTarget.description);
-  const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
-  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
-  const [partitionColumns, setPartitionColumns] = useState<string[]>(initialTarget.partitionColumns);
-  const [targetTestStatus, setTargetTestStatus] = useState<"idle" | "success" | "failed">(initialTarget.testStatus);
-  const includedColumns = useMemo(() => draft.schema.columns.filter(isSchemaColumnIncluded), [draft.schema.columns]);
-  const partitionColumnOptions = useMemo(() => {
-    const schemaColumnNames = includedColumns
-      .map((column) => column.targetName || column.sourceName)
-      .filter(Boolean);
-    return Array.from(new Set(["date", "category", ...schemaColumnNames])).slice(0, 10);
-  }, [includedColumns]);
-  const previewColumns = includedColumns.slice(0, 6);
-  const previewRows = draft.schema.sampleRows.slice(0, 5);
-  const applyTargetDraft = (patch: Partial<{
-    description: string;
-    partitionColumns: string[];
-    storagePath: string;
-    tableName: string;
-    tags: string[];
-    targetDataset: string;
-    targetFormat: string;
-    testStatus: "idle" | "success" | "failed";
-  }> = {}) => {
-    const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
-    const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-    const nextTargetLayer = targetLayer;
-    const nextTableName = getDisplayText(patch.tableName ?? targetTableName, nextTargetDataset);
-    const nextDescription = getDisplayText(patch.description ?? targetDescription, "타겟 데이터셋 설명 없음");
-    const nextTags = patch.tags ?? targetTags;
-    const nextPartitionColumns = patch.partitionColumns ?? partitionColumns;
-    const nextStoragePath = getDisplayText(patch.storagePath ?? targetStoragePath, buildTargetStoragePath(nextTargetDataset, nextTargetLayer));
-    const nextTestStatus = patch.testStatus ?? targetTestStatus;
+  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
+  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
+  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags.length > 0 ? initialTarget.tags : [...DEFAULT_TARGET_TAGS]);
+  const [customTag, setCustomTag] = useState("");
+  const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
+  const [indexColumns, setIndexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
+  const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
+  const [testRun, setTestRun] = useState<TargetTestRun>(draftTarget?.lastTestRun ?? { status: "idle", logs: [] });
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [savedConfig, setSavedConfig] = useState<TargetSavedConfig | null>(() => {
+    if (typeof window === "undefined") return null;
+    const saved = window.localStorage.getItem(TARGET_CONFIG_STORAGE_KEY);
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as TargetSavedConfig;
+    } catch {
+      return null;
+    }
+  });
 
+  const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);
+  const usedSchemaRules = useMemo(() => sortedSchemaRules.filter((rule) => rule.use), [sortedSchemaRules]);
+  const partitionCandidates = useMemo(() => usedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [usedSchemaRules]);
+  const indexCandidates = useMemo(() => usedSchemaRules.filter((rule) => !rule.raw), [usedSchemaRules]);
+  const filteredPartitionColumns = partitionColumns.filter((column) => partitionCandidates.some((rule) => rule.name === column));
+  const filteredIndexColumns = indexColumns.filter((column) => indexCandidates.some((rule) => rule.name === column));
+  const previewRows = useMemo(() => inferredTarget.previewRows.slice(0, 5).map((row) => {
+    const previewRow: Record<string, string> = {};
+    usedSchemaRules.forEach((rule) => {
+      previewRow[rule.name] = row[rule.name] ?? "";
+    });
+    return previewRow;
+  }), [inferredTarget.previewRows, usedSchemaRules]);
+  const partitionPathPreview = buildPartitionPathPreview(targetStoragePath, partitionColumns);
+  const lineage = {
+    sourceName: draft.source.sourceLabel || "Source",
+    targetDatasetName: targetDataset || "Target",
+    targetStoragePath,
+    transformStepCount: draft.transform.steps.length,
+  };
+  const targetSummaryRows: Array<[string, string]> = [
+    ["데이터셋", targetDataset || "-"],
+    ["테이블", targetTableName || "-"],
+    ["포맷", targetFormat],
+    ["파티션", partitionColumns.length > 0 ? partitionColumns.join("/") : "없음"],
+    ["사용 컬럼", `${usedSchemaRules.length}개`],
+  ];
+
+  const buildConfig = (lastTestRun: TargetTestRun = testRun): TargetSavedConfig => ({
+    metadata: {
+      databaseName,
+      datasetName: targetDataset,
+      description: targetDescription,
+      fileFormat: targetFormat,
+      manager: targetManager,
+      owner: targetOwner,
+      storagePath: targetStoragePath,
+      targetTableName,
+    },
+    tags: targetTags,
+    partitionColumns,
+    indexColumns,
+    schemaRules,
+    previewRows,
+    lineage,
+    lastTestRun,
+  });
+
+  const persistDraft = (config: TargetSavedConfig) => {
     onDraftChange({
-      jobName: buildJobName(nextTargetDataset),
+      jobName: buildJobName(config.metadata.datasetName),
       compression: "Snappy",
-      partition: nextPartitionColumns.join("/"),
-      storagePath: nextStoragePath,
+      partition: config.partitionColumns.join("/"),
+      storagePath: config.metadata.storagePath,
       storageType: "S3",
       target: {
-        description: nextDescription,
-        partitionColumns: nextPartitionColumns,
-        tableName: nextTableName,
-        tags: nextTags,
-        testStatus: nextTestStatus,
+        databaseName: config.metadata.databaseName,
+        datasetName: config.metadata.datasetName,
+        description: config.metadata.description,
+        format: config.metadata.fileFormat,
+        indexColumns: config.indexColumns,
+        lastTestRun: config.lastTestRun,
+        manager: config.metadata.manager,
+        owner: config.metadata.owner,
+        partitionColumns: config.partitionColumns,
+        rag: false,
+        schemaRules: config.schemaRules,
+        storagePath: config.metadata.storagePath,
+        tableName: config.metadata.targetTableName,
+        targetTableName: config.metadata.targetTableName,
+        tags: config.tags,
+        testStatus: config.lastTestRun.status === "success" ? "success" : config.lastTestRun.status === "failed" ? "failed" : "idle",
       },
-      targetDataset: nextTargetDataset,
-      targetFormat: nextTargetFormat,
-      targetLayer: nextTargetLayer,
+      targetDataset: config.metadata.datasetName,
+      targetFormat: config.metadata.fileFormat,
+      targetLayer,
       rag: false,
     });
   };
+
+  const updateSchemaRule = (sourceName: string, patch: Partial<TargetSchemaRule>) => {
+    setSchemaRules((currentRules) => {
+      const nextRules = currentRules.map((rule) => {
+        if (rule.sourceName !== sourceName) return rule;
+        const nextRule = { ...rule, ...patch };
+        if (patch.type) {
+          nextRule.partitionable = !nextRule.raw && patch.type !== "json";
+        }
+        return nextRule;
+      });
+      return nextRules;
+    });
+  };
+
   const toggleTag = (tag: string) => {
-    const nextTags = targetTags.includes(tag)
-      ? targetTags.filter((currentTag) => currentTag !== tag)
-      : [...targetTags, tag];
-    setTargetTags(nextTags);
-    applyTargetDraft({ tags: nextTags });
+    setTargetTags((currentTags) => currentTags.includes(tag)
+      ? currentTags.filter((currentTag) => currentTag !== tag)
+      : [...currentTags, tag]);
   };
+
+  const addCustomTag = () => {
+    const nextTag = customTag.trim();
+    if (!nextTag) return;
+    setTargetTags((currentTags) => currentTags.includes(nextTag) ? currentTags : [...currentTags, nextTag]);
+    setCustomTag("");
+  };
+
   const togglePartitionColumn = (columnName: string) => {
-    const nextColumns = partitionColumns.includes(columnName)
-      ? partitionColumns.filter((currentColumn) => currentColumn !== columnName)
-      : [...partitionColumns, columnName];
-    setPartitionColumns(nextColumns);
-    applyTargetDraft({ partitionColumns: nextColumns });
+    setPartitionColumns((currentColumns) => currentColumns.includes(columnName)
+      ? currentColumns.filter((currentColumn) => currentColumn !== columnName)
+      : [...currentColumns, columnName]);
   };
-  const runTargetTest = () => {
-    const nextStatus = targetDataset.trim() && targetTableName.trim() && targetStoragePath.trim() && targetFormat && includedColumns.length > 0
-      ? "success"
-      : "failed";
-    setTargetTestStatus(nextStatus);
-    applyTargetDraft({ testStatus: nextStatus });
+
+  const toggleIndexColumn = (columnName: string) => {
+    setIndexColumns((currentColumns) => currentColumns.includes(columnName)
+      ? currentColumns.filter((currentColumn) => currentColumn !== columnName)
+      : [...currentColumns, columnName]);
   };
-  const goNext = () => {
-    applyTargetDraft();
+
+  const saveTargetConfig = () => {
+    const config = buildConfig();
+    const errors = validateTargetConfig(config, inferredTarget.jsonParseFailed);
+    setValidationErrors(errors);
+
+    if (errors.length > 0) {
+      setSaveMessage("필수값과 컬럼 규칙을 먼저 확인하세요.");
+      return false;
+    }
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TARGET_CONFIG_STORAGE_KEY, JSON.stringify(config, null, 2));
+    }
+    setSavedConfig(config);
+    setDebugOpen(true);
+    setSaveMessage("타겟 설정이 저장되었습니다.");
+    persistDraft(config);
+    return true;
+  };
+
+  const runTargetTest = async () => {
+    const pendingRun: TargetTestRun = { status: "pending", logs: ["Target config validation started"] };
+    setTestRun(pendingRun);
+    setValidationErrors([]);
+    setSaveMessage("");
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+
+    const config = buildConfig(pendingRun);
+    const metadataErrors = validateTargetConfig({ ...config, schemaRules: config.schemaRules.length > 0 ? config.schemaRules : [] }, false)
+      .filter((error) => error.includes("데이터셋명") || error.includes("테이블명") || error.includes("저장경로") || error.includes("포맷"));
+    if (metadataErrors.length > 0) {
+      const failedRun: TargetTestRun = { status: "failed", logs: [...pendingRun.logs, "Target metadata validation failed"], message: metadataErrors.join(" "), finishedAt: new Date().toISOString() };
+      setTestRun(failedRun);
+      setValidationErrors(metadataErrors);
+      persistDraft(buildConfig(failedRun));
+      return;
+    }
+
+    const logs = [...pendingRun.logs, "Target metadata validation passed"];
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    if (inferredTarget.jsonParseFailed) {
+      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "JSON schema inference failed"], message: "JSON 파싱에 실패했습니다.", finishedAt: new Date().toISOString() };
+      setTestRun(failedRun);
+      setValidationErrors([failedRun.message ?? "JSON 파싱 실패"]);
+      persistDraft(buildConfig(failedRun));
+      return;
+    }
+
+    logs.push("JSON schema inference completed");
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    const fullErrors = validateTargetConfig(config, inferredTarget.jsonParseFailed);
+    const columnErrors = fullErrors.filter((error) => error.includes("컬럼"));
+    if (columnErrors.length > 0) {
+      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "Column rules validation failed"], message: columnErrors.join(" "), finishedAt: new Date().toISOString() };
+      setTestRun(failedRun);
+      setValidationErrors(columnErrors);
+      persistDraft(buildConfig(failedRun));
+      return;
+    }
+
+    logs.push("Column rules validation passed");
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+    const partitionErrors = fullErrors.filter((error) => error.includes("partition"));
+    if (partitionErrors.length > 0) {
+      const failedRun: TargetTestRun = { status: "failed", logs: [...logs, "Partition rule validation failed"], message: partitionErrors.join(" "), finishedAt: new Date().toISOString() };
+      setTestRun(failedRun);
+      setValidationErrors(partitionErrors);
+      persistDraft(buildConfig(failedRun));
+      return;
+    }
+
+    const successRun: TargetTestRun = {
+      status: "success",
+      logs: [...logs, "Partition rule validation passed", "Sample write test completed"],
+      message: "샘플 저장 테스트가 완료되었습니다.",
+      finishedAt: new Date().toISOString(),
+    };
+    setTestRun(successRun);
+    setValidationErrors([]);
+    persistDraft(buildConfig(successRun));
+  };
+
+  const handleSave = () => {
+    if (saveTargetConfig()) onSave();
+  };
+
+  const handleNext = () => {
+    if (!saveTargetConfig()) return;
     onNext();
   };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="target" title="생성 요약" onPrev={onPrev} onNext={goNext} onSave={() => {
-        applyTargetDraft();
-        onSave();
-      }} />}
+      side={<CreationSummaryPanel flow="target" title="생성 요약" summaryRows={targetSummaryRows} onPrev={onPrev} onNext={handleNext} onSave={handleSave} />}
     >
-        <PageTitle title="타겟 설정" description="가공된 데이터의 저장 대상, 파티션, 컬럼 규칙, 샘플 검증을 확인합니다." />
-        <section className="panel">
-          <div className="panel-header">
-            <HardDrive size={18} />
-            <h2>타겟 기본정보</h2>
-          </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>데이터셋명</span>
-              <input className="input control-input" value={targetDataset} onChange={(event) => {
-                const nextTargetDataset = event.target.value;
-                const nextStoragePath = buildTargetStoragePath(getDisplayText(nextTargetDataset, DEFAULT_TARGET_DATASET), targetLayer);
-                setTargetDataset(nextTargetDataset);
-                setTargetStoragePath(nextStoragePath);
-                applyTargetDraft({ storagePath: nextStoragePath, targetDataset: nextTargetDataset });
-              }} />
-            </label>
-            <label className="field">
-              <span>테이블명</span>
-              <input className="input control-input" value={targetTableName} onChange={(event) => {
-                const nextTableName = event.target.value;
-                setTargetTableName(nextTableName);
-                applyTargetDraft({ tableName: nextTableName });
-              }} />
-            </label>
-            <label className="field wide">
-              <span>저장경로</span>
-              <input className="input control-input" value={targetStoragePath} onChange={(event) => {
-                const nextStoragePath = event.target.value;
-                setTargetStoragePath(nextStoragePath);
-                applyTargetDraft({ storagePath: nextStoragePath });
-              }} />
-            </label>
-            <label className="field">
-              <span>포맷</span>
-              <select className="input control-input" value={targetFormat} onChange={(event) => {
-                const nextTargetFormat = getKnownOption(event.target.value, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-                setTargetFormat(nextTargetFormat);
-                applyTargetDraft({ targetFormat: nextTargetFormat });
-              }}>
-                {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
-              </select>
-            </label>
-            <label className="field wide">
-              <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => {
-                const nextDescription = event.target.value;
-                setTargetDescription(nextDescription);
-                applyTargetDraft({ description: nextDescription });
-              }} />
-            </label>
-            <label className="field wide">
-              <span>태그</span>
-              <div className="target-chip-grid" role="group" aria-label="타겟 태그">
-                {TARGET_TAG_OPTIONS.map((tag) => (
-                  <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            </label>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <SlidersHorizontal size={18} />
-            <h2>파티션</h2>
-            <span className="panel-note">컬럼 선택만 사용</span>
-          </div>
-          <div className="target-chip-grid partition">
-            {partitionColumnOptions.map((columnName) => (
-              <button className={partitionColumns.includes(columnName) ? "target-chip active" : "target-chip"} key={columnName} type="button" onClick={() => togglePartitionColumn(columnName)}>
-                {columnName}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Table2 size={18} />
-            <h2>컬럼 최소 규칙</h2>
-            <span className="panel-note">{includedColumns.length}개 사용 컬럼</span>
-          </div>
-          <div className="hegun-table-scroll">
-            <table className="schema-table target-rule-table">
-              <thead>
-                <tr>
-                  <th>컬럼명</th>
-                  <th>타입</th>
-                  <th>사용 여부</th>
-                  <th>nullable</th>
-                  <th>검증</th>
+      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션, 테스트 실행 상태를 설정합니다." />
+      {validationErrors.length > 0 ? (
+        <div className="target-validation-summary" role="alert">
+          {validationErrors.map((error) => <span key={error}>{error}</span>)}
+        </div>
+      ) : null}
+      <section className="panel">
+        <div className="panel-header">
+          <HardDrive size={18} />
+          <h2>타겟 기본정보</h2>
+        </div>
+        <div className="form-grid target-metadata-grid">
+          <label className="field">
+            <span>데이터셋명</span>
+            <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>테이블명</span>
+            <input className="input control-input" value={targetTableName} onChange={(event) => setTargetTableName(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>DB 이름</span>
+            <input className="input control-input" value={databaseName} onChange={(event) => setDatabaseName(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>포맷</span>
+            <select className="input control-input" value={targetFormat} onChange={(event) => setTargetFormat(normalizeTargetFileFormat(event.target.value))}>
+              {TARGET_FORMAT_OPTIONS.map((format) => <option key={format} value={format}>{format}</option>)}
+            </select>
+          </label>
+          <label className="field wide">
+            <span>저장경로</span>
+            <input className="input control-input" value={targetStoragePath} onChange={(event) => setTargetStoragePath(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>오너</span>
+            <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>담당자</span>
+            <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
+          </label>
+          <label className="field wide">
+            <span>설명</span>
+            <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+          </label>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <BookOpen size={18} />
+          <h2>태그</h2>
+          <span className="panel-note">다중 선택 / 직접 추가</span>
+        </div>
+        <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+          {Array.from(new Set([...TARGET_DATA_TAG_OPTIONS, ...targetTags])).map((tag) => (
+            <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+              {tag}
+            </button>
+          ))}
+        </div>
+        <div className="target-inline-controls">
+          <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              addCustomTag();
+            }
+          }} />
+          <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <SlidersHorizontal size={18} />
+          <h2>파티션</h2>
+          <span className="panel-note">실제 컬럼만 선택</span>
+        </div>
+        <div className="target-chip-grid partition">
+          {partitionCandidates.map((rule) => (
+            <button className={filteredPartitionColumns.includes(rule.name) ? "target-chip active" : "target-chip"} key={rule.name} type="button" onClick={() => togglePartitionColumn(rule.name)}>
+              {rule.name}{rule.recommendedPartition ? <span>추천</span> : null}
+            </button>
+          ))}
+        </div>
+        <div className="target-subsection-title">인덱스 후보</div>
+        <div className="target-chip-grid partition">
+          {indexCandidates.map((rule) => (
+            <button className={filteredIndexColumns.includes(rule.name) ? "target-chip active" : "target-chip"} key={rule.name} type="button" onClick={() => toggleIndexColumn(rule.name)}>
+              {rule.name}{rule.recommendedIndex ? <span>추천</span> : null}
+            </button>
+          ))}
+        </div>
+        <div className="target-path-preview">
+          <span>저장 경로 preview</span>
+          <strong>{partitionPathPreview}</strong>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <Table2 size={18} />
+          <h2>컬럼 최소 규칙</h2>
+          <span className="panel-note">{inferredTarget.jsonInferred ? "JSON 자동 컬럼 추론" : "스키마 컬럼 기준"}</span>
+        </div>
+        <div className="hegun-table-scroll">
+          <table className="schema-table target-rule-table">
+            <thead>
+              <tr>
+                <th>사용</th>
+                <th>컬럼명</th>
+                <th>타입</th>
+                <th>nullable</th>
+                <th>파티션</th>
+                <th>인덱스</th>
+                <th>검증</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSchemaRules.map((rule) => (
+                <tr className={rule.use ? undefined : "excluded"} key={rule.sourceName}>
+                  <td><input checked={rule.use} type="checkbox" onChange={(event) => updateSchemaRule(rule.sourceName, { use: event.target.checked })} /></td>
+                  <td title={rule.name}><strong>{rule.name}</strong>{rule.raw ? <span className="target-rule-note">raw optional</span> : null}</td>
+                  <td>
+                    <select className="target-schema-select" value={rule.type} onChange={(event) => updateSchemaRule(rule.sourceName, { type: event.target.value as TargetColumnType })}>
+                      {(["string", "number", "boolean", "datetime", "json"] as TargetColumnType[]).map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </td>
+                  <td><input checked={rule.nullable} type="checkbox" onChange={(event) => updateSchemaRule(rule.sourceName, { nullable: event.target.checked })} /></td>
+                  <td>{rule.partitionable ? rule.recommendedPartition ? "추천" : "가능" : "제외"}</td>
+                  <td>{rule.recommendedIndex ? "추천" : rule.indexed ? "선택" : "-"}</td>
+                  <td><span className={rule.validationStatus === "valid" ? "target-validation-pill success" : "target-validation-pill"}>{rule.validationStatus === "valid" ? "통과" : "확인"}</span></td>
                 </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <Search size={18} />
+          <h2>샘플 프리뷰</h2>
+          <span className="panel-note">사용 컬럼만 표시</span>
+        </div>
+        {usedSchemaRules.length > 0 && previewRows.length > 0 ? (
+          <div className="hegun-table-scroll">
+            <table className="schema-table target-preview-table">
+              <thead>
+                <tr>{usedSchemaRules.map((rule) => <th key={rule.name}>{rule.name}</th>)}</tr>
               </thead>
               <tbody>
-                {draft.schema.columns.slice(0, 10).map((column) => {
-                  const included = isSchemaColumnIncluded(column);
-                  const validationLabel = included && column.targetName && column.type ? "통과" : "확인 필요";
-                  return (
-                    <tr className={included ? undefined : "excluded"} key={`${column.sourceName}-${column.targetName}`}>
-                      <td title={column.targetName || column.sourceName}><strong>{column.targetName || column.sourceName}</strong></td>
-                      <td><span className="schema-type-pill">{column.type}</span></td>
-                      <td>{included ? "사용" : "제외"}</td>
-                      <td>{column.nullable ? "허용" : "필수"}</td>
-                      <td><span className={validationLabel === "통과" ? "target-validation-pill success" : "target-validation-pill"}>{validationLabel}</span></td>
-                    </tr>
-                  );
-                })}
+                {previewRows.map((row, rowIndex) => (
+                  <tr key={`target-preview-${rowIndex}`}>
+                    {usedSchemaRules.map((rule) => <td key={`${rowIndex}-${rule.name}`}>{row[rule.name] || "-"}</td>)}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Search size={18} />
-            <h2>샘플 프리뷰</h2>
-            <span className="panel-note">최대 5행</span>
+        ) : (
+          <span className="hegun-empty-table-state">사용 컬럼이 없어 샘플 프리뷰를 표시할 수 없습니다.</span>
+        )}
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <PlayCircle size={18} />
+          <h2>테스트 실행</h2>
+          <span className="panel-note">{testRun.status}</span>
+        </div>
+        <div className="target-test-row">
+          <button className="primary-button" type="button" disabled={testRun.status === "pending"} onClick={() => void runTargetTest()}>
+            {testRun.status === "pending" ? "실행 중" : "Test Run"}
+          </button>
+          <div className={testRun.status === "success" ? "target-test-status success" : testRun.status === "failed" ? "target-test-status failed" : "target-test-status"}>
+            <strong>{testRun.status}</strong>
+            <span>{testRun.message || "현재 설정으로 mock write 검증을 실행합니다."}</span>
           </div>
-          {previewColumns.length > 0 && previewRows.length > 0 ? (
-            <div className="hegun-table-scroll">
-              <table className="schema-table target-preview-table">
-                <thead>
-                  <tr>{previewColumns.map((column) => <th key={column.targetName}>{column.targetName || column.sourceName}</th>)}</tr>
-                </thead>
-                <tbody>
-                  {previewRows.map((row, rowIndex) => (
-                    <tr key={`target-preview-${rowIndex}`}>
-                      {previewColumns.map((column) => {
-                        const columnIndex = draft.schema.columns.indexOf(column);
-                        return <td key={`${rowIndex}-${column.targetName}`}>{row[columnIndex] ?? "-"}</td>;
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <span className="hegun-empty-table-state">스키마 확정 후 샘플 프리뷰를 볼 수 있습니다.</span>
-          )}
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <PlayCircle size={18} />
-            <h2>테스트 실행</h2>
-            <span className="panel-note">{targetTestStatus === "success" ? "성공" : targetTestStatus === "failed" ? "실패" : "대기"}</span>
-          </div>
-          <div className="target-test-row">
-            <button className="primary-button" type="button" onClick={runTargetTest}>테스트 실행</button>
-            <div className={targetTestStatus === "success" ? "target-test-status success" : targetTestStatus === "failed" ? "target-test-status failed" : "target-test-status"}>
-              <strong>{targetTestStatus === "success" ? "성공" : targetTestStatus === "failed" ? "실패" : "대기"}</strong>
-              <span>{targetTestStatus === "success" ? "필수 타겟 값과 컬럼 규칙이 준비되었습니다." : targetTestStatus === "failed" ? "데이터셋명, 테이블명, 저장경로, 컬럼 규칙을 확인하세요." : "테스트 실행 전입니다."}</span>
-            </div>
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Share2 size={18} />
-            <h2>라인리지</h2>
-          </div>
-          <div className="target-lineage">
-            <span>{draft.source.sourceLabel || "Source"}</span>
-            <strong>→</strong>
-            <span>Transform</span>
-            <strong>→</strong>
-            <span>{targetTableName || "Target"}</span>
-          </div>
-        </section>
+        </div>
+        {testRun.logs.length > 0 ? (
+          <ul className="target-log-list">
+            {testRun.logs.map((log) => <li key={log}>{log}</li>)}
+          </ul>
+        ) : null}
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <Share2 size={18} />
+          <h2>라인리지</h2>
+        </div>
+        <div className="target-lineage">
+          <span>{lineage.sourceName}</span>
+          <strong>→</strong>
+          <span>Transform {lineage.transformStepCount}</span>
+          <strong>→</strong>
+          <span>{lineage.targetDatasetName}<small>{lineage.targetStoragePath}</small></span>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <Save size={18} />
+          <h2>저장 설정 JSON</h2>
+          <button className="secondary-button compact" type="button" onClick={handleSave}>설정 저장</button>
+        </div>
+        {saveMessage ? <div className="target-save-message">{saveMessage}</div> : null}
+        <details className="target-debug-panel" open={debugOpen} onToggle={(event) => setDebugOpen(event.currentTarget.open)}>
+          <summary>저장된 config 확인</summary>
+          <pre>{JSON.stringify(savedConfig ?? buildConfig(), null, 2)}</pre>
+        </details>
+      </section>
     </CreationFlowLayout>
   );
 }
-
 export function PermissionPage({
   draft,
   onDraftChange,
