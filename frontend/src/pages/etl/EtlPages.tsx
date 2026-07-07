@@ -4482,10 +4482,10 @@ export function TargetPage({
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
   const [openTargetSections, setOpenTargetSections] = useState<Record<TargetToggleSectionKey, boolean>>({
-    partition: true,
-    preview: true,
-    tags: true,
-    testRun: true,
+    partition: false,
+    preview: false,
+    tags: false,
+    testRun: false,
   });
 
   const sortedSchemaRules = useMemo(() => [...schemaRules].sort((a, b) => a.name.localeCompare(b.name)), [schemaRules]);

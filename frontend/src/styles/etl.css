@@ -3280,8 +3280,11 @@
   align-content: start;
   gap: 0;
   min-height: 0;
-  position: sticky;
-  top: 50vh;
+  position: fixed;
+  top: 50%;
+  right: 24px;
+  z-index: 30;
+  width: 220px;
   transform: translateY(-50%);
 }
 
@@ -3439,6 +3442,12 @@
 
   .target-lineage strong {
     text-align: center;
+  }
+
+  .target-action-panel {
+    position: static;
+    width: auto;
+    transform: none;
   }
 }
 
