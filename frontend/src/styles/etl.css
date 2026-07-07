@@ -3276,19 +3276,23 @@
   background: #fef2f2;
 }
 
-.target-action-panel {
+.creation-flow-grid .target-action-panel {
   align-content: start;
   gap: 0;
+  align-self: auto;
   min-height: 0;
   position: fixed;
   top: 50%;
   right: 24px;
   z-index: 30;
   width: 220px;
+  max-height: none;
+  margin-top: 0;
+  overflow: visible;
   transform: translateY(-50%);
 }
 
-.target-action-panel .summary-actions {
+.creation-flow-grid .target-action-panel .summary-actions {
   margin-top: 0;
 }
 
@@ -3444,7 +3448,7 @@
     text-align: center;
   }
 
-  .target-action-panel {
+  .creation-flow-grid .target-action-panel {
     position: static;
     width: auto;
     transform: none;
