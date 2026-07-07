@@ -361,14 +361,7 @@ type JobCommandResponse = {
   action: "etl.run.requested" | "etl.run.retry_requested" | "etl.job.pause_requested" | "etl.run.cancel_requested";
   apiPath: string;
   job?: JobRowData;
-  run?: {
-    runId: string;
-    jobId: string;
-    status: "queued" | "running" | "success" | "failed" | "canceled";
-    startedAt?: string;
-    endedAt?: string;
-    durationMs?: number;
-  };
+  run?: JobRunSummary;
   dagSteps?: Array<{
     id: string;
     title: string;
@@ -383,6 +376,7 @@ type JobCommandResponse = {
 
 - `job`이 있으면 프론트는 해당 응답을 기준으로 Job 상태를 갱신한다.
 - `run.runId`가 있으면 Dashboard의 `sourceRunId`까지 이어진다.
+- `run.airflowDagId`, `run.airflowDagRunId`, `run.airflowRunUrl`, `run.airflowState`, `run.taskStates`, `run.lastSyncedAt`, `run.syncError`는 optional orchestration metadata이며 기존 Run 표시 필드를 대체하지 않는다.
 - `processingResult.runId`와 `processingResult.datasetId`는 Run, Catalog, SQL, Dashboard에서 같아야 한다.
 
 프론트 Run 상태 계약:

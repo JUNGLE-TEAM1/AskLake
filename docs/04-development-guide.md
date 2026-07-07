@@ -82,7 +82,7 @@ OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
 ```
 
-Airflow API 연결 값도 backend env에만 둔다. Phase 3 adapter는 Airflow public API 호출과 상태 mapping만 제공하며, `run`/`retry` command flow 전환은 Phase 5에서 진행한다.
+Airflow API 연결 값도 backend env에만 둔다. Phase 3 adapter는 Airflow public API 호출과 상태 mapping을 제공한다. Phase 4부터 `etl_runs`는 Airflow DAG id, DAG Run id, UI URL, raw state, task state snapshot, sync timestamp, sync error를 optional metadata로 저장할 수 있다. `run`/`retry` command flow 전환은 Phase 5에서 진행한다.
 
 ```bash
 AIRFLOW_API_BASE_URL=http://localhost:8081

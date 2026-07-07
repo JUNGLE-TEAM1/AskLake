@@ -30,8 +30,22 @@ def ensure_schema(db: Session) -> None:
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
-        if "schema_fingerprint" in existing_columns:
+        if "schema_fingerprint" in existing_columns and connection.dialect.name != "sqlite":
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
+
+        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
+        run_column_defs = {
+            "airflow_dag_id": "VARCHAR(255)",
+            "airflow_dag_run_id": "VARCHAR(255)",
+            "airflow_run_url": "VARCHAR(1024)",
+            "airflow_state": "VARCHAR(64)",
+            "last_synced_at": "VARCHAR(64)",
+            "sync_error": "VARCHAR(512)",
+            "task_states": "JSON",
+        }
+        for column_name, column_type in run_column_defs.items():
+            if column_name not in existing_run_columns:
+                connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -271,4 +285,11 @@ def run_to_schema(run: ETLRunModel) -> JobRunSummary:
         output_path=run.output_path,
         failed_stage=run.failed_stage,
         error_summary=run.error_summary,
+        airflow_dag_id=run.airflow_dag_id,
+        airflow_dag_run_id=run.airflow_dag_run_id,
+        airflow_run_url=run.airflow_run_url,
+        airflow_state=run.airflow_state,
+        last_synced_at=run.last_synced_at,
+        sync_error=run.sync_error,
+        task_states=run.task_states,
     )

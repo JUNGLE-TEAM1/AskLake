@@ -234,6 +234,7 @@ type JobRunSummary = {
   duration: string;
   inputRows: string;
   outputRows: string;
+  outputPath?: string;
   failedStage: string;
   errorSummary: string;
   airflowDagId?: string;
@@ -242,6 +243,7 @@ type JobRunSummary = {
   airflowState?: string;
   lastSyncedAt?: string;
   syncError?: string;
+  taskStates?: Record<string, unknown>;
 };
 
 type JobDagStep = {
@@ -601,6 +603,7 @@ Polling rules:
 - terminal 상태가 확인되면 해당 run polling을 멈춘다.
 - 같은 `runId`가 다시 hydrate되면 기존 run row와 `dagStepsByRunId[runId]`를 교체한다.
 - backend가 알 수 없는 Airflow state를 받으면 raw state를 optional metadata에 보관하고, 명확한 terminal state가 확인될 때까지 run은 `running`으로 유지한다.
+- Airflow Task Instance 원본 snapshot은 `run.taskStates`에 optional metadata로 저장한다. UI 단계 표시는 여전히 normalized `dagStepsByRunId[runId]`를 기준으로 한다.
 
 Validation:
 

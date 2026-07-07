@@ -14,7 +14,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB local connector는 `mongosh` CLI로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `queued` 또는 `running` job/run을 저장하고 즉시 응답. Airflow public API adapter는 `backend/app/services/airflow_client.py`에 격리됨 | Airflow command flow integration, pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | 현재는 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인. Airflow 전환 후 같은 public API로 DAG Run/Task Instance state를 반영 | run detail table, Airflow sync metadata, Spark log object storage 분리 |
+| Run/DAG | 현재는 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인. `etl_runs`는 Airflow DAG/Task sync metadata를 optional column으로 저장 가능. Airflow 전환 후 같은 public API로 DAG Run/Task Instance state를 반영 | run detail table, Spark/Airflow log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
@@ -99,7 +99,7 @@ v1 목표:
 - `run`/`retry`는 Airflow DAG Run을 submit하고 `queued` 또는 `running` Run을 빠르게 반환한다.
 - backend는 Airflow DAG Run state를 `JobRunSummary.status`로, Task Instance state를 `JobDagStep.status`로 변환한다.
 - frontend는 `queued`/`running` Run만 polling하고, `success`/`failed`/`canceled` terminal 상태에서 멈춘다.
-- Airflow raw state, DAG id, DAG Run id, Airflow UI URL, sync error는 optional metadata로 저장하며 기존 response 필드를 깨지 않는다.
+- Airflow raw state, DAG id, DAG Run id, Airflow UI URL, task state snapshot, sync timestamp, sync error는 optional metadata로 저장하며 기존 response 필드를 깨지 않는다.
 
 Phase 3 구현:
 
@@ -108,6 +108,13 @@ Phase 3 구현:
 - `AIRFLOW_API_TOKEN` bearer auth를 우선 사용하고, 로컬 basic auth가 필요할 때만 `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`를 사용한다.
 - `airflow_run_status`, `airflow_step_status`, `airflow_run_is_terminal` helper가 SOT mapping을 코드로 고정한다.
 - 현재 `etl_service.py` command path는 아직 Spark runner를 사용한다. Airflow submit으로 전환하는 작업은 Phase 5 범위다.
+
+Phase 4 구현:
+
+- `etl_runs`는 `airflow_dag_id`, `airflow_dag_run_id`, `airflow_run_url`, `airflow_state`, `task_states`, `last_synced_at`, `sync_error`를 optional column으로 저장한다.
+- `JobRunSummary`는 같은 값을 optional camelCase field로 노출한다.
+- `etl_repository.ensure_schema`는 기존 local metadata DB에 새 run column을 추가한다.
+- 기존 Spark command path는 새 metadata를 비워 둔다. Airflow submit/sync 값 채우기는 Phase 5 범위다.
 
 Status mapping:
 

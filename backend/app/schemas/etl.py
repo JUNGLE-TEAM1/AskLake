@@ -72,16 +72,23 @@ class RetryPolicyDraft(CamelModel):
 
 
 class JobRunSummary(CamelModel):
+    airflow_dag_id: str | None = None
+    airflow_dag_run_id: str | None = None
+    airflow_run_url: str | None = None
+    airflow_state: str | None = None
     duration: str
     ended_at: str
     error_summary: str
     failed_stage: str
     input_rows: str
+    last_synced_at: str | None = None
     output_rows: str
     output_path: str | None = None
     run_id: str
     started_at: str
     status: JobRunStatus
+    sync_error: str | None = None
+    task_states: dict[str, Any] | None = None
 
 
 class JobDagStep(CamelModel):

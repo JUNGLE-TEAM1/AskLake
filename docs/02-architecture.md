@@ -124,7 +124,7 @@ Airflow v1은 `docs/airflow-orchestration-sot.md`를 source of truth로 삼는�
 - frontend는 기존 `JobCommandResponse`를 먼저 반영한 뒤 `GET /api/etl/jobs/{jobId}`를 polling한다.
 - backend는 Airflow DAG Run state를 `JobRunSummary.status`로, Task Instance state를 `JobDagStep.status`로 변환한다.
 - terminal run status는 `success`, `failed`, `canceled`이며, terminal 상태가 되면 frontend polling을 멈춘다.
-- Airflow raw state와 DAG Run id는 optional metadata로 저장하며, 기존 response 필드는 깨지지 않는다.
+- Airflow DAG id, DAG Run id, UI URL, raw state, task state snapshot, sync timestamp, sync error는 `JobRunSummary` optional metadata로 저장하며, 기존 response 필드는 깨지지 않는다.
 
 Airflow state mapping:
 

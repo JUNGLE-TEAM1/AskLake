@@ -86,6 +86,8 @@ Phase 3 output:
 
 ### Phase 4. Run Persistence
 
+Status: complete.
+
 Scope:
 
 - Extend ETL run persistence with Airflow identifiers and sync metadata.
@@ -97,6 +99,7 @@ Candidate fields:
 - `airflowDagId`
 - `airflowDagRunId`
 - `airflowRunUrl`
+- `airflowState`
 - `taskStates`
 - `lastSyncedAt`
 - `syncError`
@@ -106,6 +109,16 @@ Acceptance criteria:
 - Existing `JobRunSummary` fields remain compatible.
 - New Airflow fields are optional.
 - Hydrated jobs can reconstruct `runsByJobId` and `dagStepsByRunId`.
+
+Phase 4 output:
+
+- `etl_runs` can persist optional Airflow DAG id, DAG Run id, UI URL, raw
+  Airflow state, task state snapshots, sync timestamp, and sync error.
+- `JobRunSummary` exposes the same metadata as optional camelCase fields.
+- `etl_repository.ensure_schema` adds the new run columns to existing local
+  metadata databases.
+- Existing Spark command flow leaves these fields empty until Phase 5 starts
+  writing Airflow submit/sync results.
 
 ### Phase 5. Async Command Flow
 
