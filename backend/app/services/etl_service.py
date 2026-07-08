@@ -15,7 +15,6 @@ from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CatalogDataset,
-    CreateDerivedDatasetRequest,
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
@@ -24,6 +23,8 @@ from app.schemas.etl import (
     QueryRunRequest,
     QueryRunResponse,
     SchemaDraft,
+    SourceAssetsRequest,
+    SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
 )
@@ -54,6 +55,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     job_id = make_job_id(request.id or request.job_name)
     dag_steps = initial_dag_steps(request, metrics)
     stats = initial_job_stats(metrics)
+    schedule_policy = schedule_policy_from_request(request)
 
     job = ETLJobModel(
         id=job_id,
@@ -64,6 +66,11 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         source=f"{request.source_type} / {request.source_label}",
         target=request.target_dataset,
         schedule=request.schedule_label,
+        schedule_policy=schedule_policy,
+        schedule_summary=request.schedule_summary,
+        retry_policy=request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None,
+        retry_policy_summary=request.retry_policy_summary,
+        run_limit_summary=request.run_limit_summary,
         source_config=tuple_rows_to_lists(request.source_config),
         source_label=request.source_label,
         source_type=request.source_type,
@@ -88,7 +95,7 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         quality_status=request.quality_status,
         last_run="생성 후 미실행",
         last_state=f"{metrics['schema_columns']}개 컬럼 추론 완료",
-        next_run="-" if request.schedule_label == "manual" else request.schedule_label,
+        next_run=schedule_next_run_label(request.schedule_label, request.schedule_summary),
         progress=None,
         stats=stats,
         dag_steps=dag_steps,
@@ -135,53 +142,10 @@ def get_dataset_lineage(db: Session, dataset_id: str) -> dict[str, Any]:
     dataset = etl_repository.get_dataset_by_id(db, dataset_id)
     if dataset is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Dataset not found: {dataset_id}", status.HTTP_404_NOT_FOUND)
+    payload_lineage = dataset.payload.get("lineageGraph") if dataset.payload else None
+    if isinstance(payload_lineage, dict):
+        return payload_lineage
     return dataset.lineage_graph or fallback_lineage_graph(dataset)
-
-
-def create_derived_dataset(db: Session, request: CreateDerivedDatasetRequest) -> CatalogDataset:
-    source = etl_repository.get_dataset_by_id(db, request.source_dataset_id)
-    if source is None:
-        raise ApiError(
-            ErrorCode.NOT_FOUND,
-            f"Source dataset not found: {request.source_dataset_id}",
-            status.HTTP_404_NOT_FOUND,
-        )
-
-    dataset_name = request.dataset.name.strip()
-    if not dataset_name:
-        raise ApiError(ErrorCode.VALIDATION_ERROR, "Derived dataset name is required.", status.HTTP_400_BAD_REQUEST)
-
-    dataset_id = f"ds_{normalize_column_name(dataset_name)}"
-    if etl_repository.get_dataset_by_id(db, dataset_id) or etl_repository.get_dataset_by_name(db, dataset_name):
-        raise ApiError(ErrorCode.CONFLICT, f"Dataset already exists: {dataset_name}", status.HTTP_409_CONFLICT)
-
-    preview_limit = request.preview_limit or 100
-    source_schema = source.schema_json or []
-    sample_rows = [list(map(str, row[:len(source_schema) or None])) for row in (source.sample_rows or [])[:preview_limit]]
-    source_lineage = source.lineage_graph or fallback_lineage_graph(source)
-    derived = CatalogDatasetModel(
-        id=dataset_id,
-        name=dataset_name,
-        description=request.dataset.description.strip() or f"{source.name} SQL Preview 결과 데이터셋",
-        owner=source.owner,
-        layer=request.dataset.layer,
-        status="available",
-        freshness="latest",
-        source=f"SQL Preview · {request.source_run_id}",
-        rows=f"{len(sample_rows):,} preview rows",
-        size="Preview result",
-        quality="Preview verified",
-        last_updated=iso_now(),
-        next_refresh="수동 갱신",
-        rag=request.dataset.rag,
-        tags=normalize_tags(request.dataset.tags, "#sql-derived"),
-        schema_json=source_schema,
-        sample_rows=sample_rows,
-        upstream=[source.name, *request.reference_dataset_ids, request.source_run_id],
-        downstream=["SQL 분석", "대시보드"],
-        lineage_graph=derived_lineage_graph(source, dataset_id, dataset_name, request.dataset.layer, source_schema, source_lineage),
-    )
-    return etl_repository.save_dataset(db, derived)
 
 
 def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
@@ -211,22 +175,35 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
-    if command not in {"run", "retry", "pause", "cancel"}:
+    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
-    if command == "cancel" and job.status not in {"running", "scheduled", "paused"}:
+    if command == "pause" and job.status != "running":
         raise ApiError(
             ErrorCode.INVALID_JOB_STATE,
-            f"Job cannot be canceled from status: {job.status}",
+            f"Job cannot be paused from status: {job.status}",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if command == "cancelRun" and job.status != "running":
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            f"Current run cannot be canceled from status: {job.status}",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if command == "stopSchedule" and not has_scheduled_execution(job):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            f"Job has no schedule to stop: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
     action_by_command = {
-        "cancel": "etl.run.cancel_requested",
+        "cancelRun": "etl.run.cancel_requested",
         "pause": "etl.job.pause_requested",
         "retry": "etl.run.retry_requested",
         "run": "etl.run.requested",
+        "stopSchedule": "etl.schedule.stop_requested",
     }
 
     run_schema = None
@@ -244,7 +221,7 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
         if spark_result.get("status") == "success":
             dataset_model = dataset_from_spark_result(job, spark_result)
-    elif command == "cancel":
+    elif command == "cancelRun":
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
@@ -279,6 +256,21 @@ def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAna
         timeout_seconds=120,
     )
     return SourceConnectorAnalysis.model_validate(result)
+
+
+def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
+    result = run_node_bridge(
+        "list-source-assets.mjs",
+        "ASKLAKE_SOURCE_ASSETS_RESULT",
+        {
+            "prefix": request.prefix,
+            "sourceConfig": request.source_config,
+            "sourceType": request.source_type,
+        },
+        error_marker="ASKLAKE_SOURCE_ASSETS_ERROR",
+        timeout_seconds=120,
+    )
+    return SourceAssetsResponse.model_validate(result)
 
 
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
@@ -354,7 +346,7 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
         if success
         else f"Spark 실행 실패 · {result.get('error') or '원인 확인 필요'}"
     )
-    job.next_run = "-" if job.schedule in {"수동 실행", "manual"} else job.schedule
+    job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
     job.status = "scheduled" if success else "failed"
     job.target_path = result.get("outputPath") or job.target_path
@@ -367,8 +359,13 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         [str(field.get("name") or "-"), str(field.get("type") or "string")]
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
+    dataset_id = f"ds_{normalize_column_name(job.target)}"
+    dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now)
+    storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     return CatalogDatasetModel(
-        id=f"ds_{normalize_column_name(job.target)}",
+        id=dataset_id,
+        payload=dataset_payload,
         name=job.target,
         description=job.target_description or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         owner=job.owner,
@@ -377,7 +374,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         freshness="latest",
         source=job.name,
         rows=format_rows(result.get("outputRows")),
-        size=str(result.get("outputPath") or "-"),
+        size=display_size,
         quality=quality_summary_from_spark_result(job, result),
         last_updated=now,
         next_refresh=job.schedule,
@@ -388,6 +385,106 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         upstream=[job.source_label, job.name],
         downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
     )
+
+
+def dataset_payload_from_spark_result(
+    job: ETLJobModel,
+    result: dict[str, Any],
+    dataset_id: str,
+    schema_json: list[list[str]],
+    last_updated: str,
+) -> dict[str, Any]:
+    output_path = str(result.get("outputPath") or "-")
+    storage_size_bytes = dataset_storage_size_bytes(output_path)
+    display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    return {
+        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        "freshness": "latest",
+        "id": dataset_id,
+        "layer": job.target_layer,
+        "lastUpdated": last_updated,
+        "lineageGraph": lineage_graph,
+        "name": job.target,
+        "nextRefresh": job.schedule,
+        "owner": job.owner,
+        "quality": quality_summary_from_spark_result(job, result),
+        "rag": job.rag,
+        "rows": format_rows(result.get("outputRows")),
+        "sampleRows": job.schema_sample_rows or [],
+        "schema": schema_json,
+        "size": display_size,
+        "source": job.name,
+        "sourceRunId": result.get("runId"),
+        "status": "available",
+        "storageFormat": "parquet",
+        "storageLocation": output_path,
+        "storageSizeBytes": storage_size_bytes,
+        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "upstream": [job.source_label, job.name],
+    }
+
+
+def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: list[list[str]]) -> dict[str, Any]:
+    source_node_id = normalize_lineage_id(f"{dataset_id}-{job.source_label or job.source_type or 'source'}")
+    source_node = lineage_node(
+        source_node_id,
+        job.source_label or job.source_type or "Source",
+        "SOURCE",
+        schema_json,
+        "SOURCE",
+    )
+    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "BRONZE", schema_json, "SPARK")
+    target_node = lineage_node(dataset_id, job.target, job.target_layer or "RAW", schema_json, "ICEBERG")
+    return {
+        "datasetId": dataset_id,
+        "datasets": [source_node, job_node, target_node],
+        "edges": [
+            *lineage_edges_between(source_node, job_node),
+            *lineage_edges_between(job_node, target_node),
+        ],
+    }
+
+
+def lineage_edges_between(source_node: dict[str, Any], target_node: dict[str, Any]) -> list[dict[str, str]]:
+    source_columns = source_node.get("columns") if isinstance(source_node.get("columns"), list) else []
+    target_columns = target_node.get("columns") if isinstance(target_node.get("columns"), list) else []
+    edges = []
+    for index, target_column in enumerate(target_columns):
+        source_column = source_columns[index] if index < len(source_columns) else target_column
+        edges.append({
+            "fromColumnId": str(source_column.get("id") or target_column.get("id")),
+            "fromDatasetId": str(source_node.get("id")),
+            "toColumnId": str(target_column.get("id")),
+            "toDatasetId": str(target_node.get("id")),
+        })
+    return edges
+
+
+def dataset_storage_size_bytes(output_path: str) -> int:
+    path = Path(output_path)
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_file():
+            total += item.stat().st_size
+    return total
+
+
+def format_storage_size(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    units = ["KB", "MB", "GB", "TB"]
+    size = float(size_bytes)
+    for unit in units:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f}{unit}"
+    return f"{size:.1f}PB"
 
 
 def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -548,6 +645,41 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
         )
 
 
+def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
+    schedule = str(schedule_label or "").strip()
+    fallback_label = str(fallback or "").strip()
+    if not schedule or not has_scheduled_label(schedule):
+        return "-"
+    if "1회" in schedule or "예약" in schedule:
+        return fallback_label if fallback_label and fallback_label != "-" else re.sub(r"\s*(예약\s*)?1회 실행\s*$", "", schedule).strip()
+    return fallback_label if fallback_label and fallback_label != "-" else schedule
+
+
+def has_scheduled_label(schedule_label: str | None) -> bool:
+    schedule = str(schedule_label or "").strip().lower()
+    if not schedule or schedule == "-":
+        return False
+    return not any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"])
+
+
+def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, Any]:
+    watermark_policy = request.watermark_policy
+    if hasattr(watermark_policy, "model_dump"):
+        watermark_policy = watermark_policy.model_dump(mode="json", by_alias=True)
+    return {
+        "endDate": request.end_date,
+        "nextRunUtc": request.next_run_utc,
+        "overlapPolicy": request.overlap_policy or ("skip_if_running" if has_scheduled_label(request.schedule_label) else None),
+        "startDate": request.start_date,
+        "timezone": request.timezone,
+        "watermarkPolicy": watermark_policy,
+    }
+
+
+def has_scheduled_execution(job: ETLJobModel) -> bool:
+    return job.status != "stopped" and has_scheduled_label(job.schedule)
+
+
 def apply_job_command(job: ETLJobModel, command: str) -> None:
     if command in {"run", "retry"}:
         now = iso_now()
@@ -563,10 +695,31 @@ def apply_job_command(job: ETLJobModel, command: str) -> None:
         job.progress = job.progress or {"label": "일시정지됨", "value": 50}
         job.status = "paused"
         return
+    if command == "stopSchedule":
+        job.last_state = "스케줄 중지됨"
+        job.next_run = "-"
+        job.progress = None
+        job.schedule = "스케줄링 건너뛰기"
+        job.schedule_policy = {
+            "endDate": None,
+            "nextRunUtc": "",
+            "overlapPolicy": None,
+            "startDate": "",
+            "timezone": "",
+            "watermarkPolicy": {
+                "column": "updated_at",
+                "enabled": False,
+                "lookbackMinutes": 0,
+                "mode": "full_refresh",
+            },
+        }
+        job.schedule_summary = "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행"
+        job.status = "stopped"
+        return
 
     job.last_run = "방금 취소"
     job.last_state = "취소됨"
-    job.next_run = "-" if job.schedule in {"수동 실행", "manual"} else job.schedule
+    job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
     job.status = "canceled"
 
@@ -575,7 +728,7 @@ def run_from_command(job: ETLJobModel, command: str) -> ETLRunModel:
     now = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:{now}")
     input_rows = job.stats.get("inputRows") or job.stats.get("input_rows") or "0"
-    if command == "cancel":
+    if command == "cancelRun":
         return ETLRunModel(
             run_id=run_id,
             job_id=job.id,
@@ -668,7 +821,7 @@ def initial_dag_steps(request: CreatePipelineRequest, metrics: dict[str, Any]) -
 
 
 def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, str]]:
-    if command == "cancel":
+    if command == "cancelRun":
         return [
             {"id": "source", "meta": job.source, "status": "blocked", "title": "1. 소스 연결"},
             {"id": "schema", "meta": job.stats.get("schemaColumns", "-"), "status": "blocked", "title": "2. 스키마 확인"},
@@ -754,7 +907,7 @@ def source_unit_label(source_type: str) -> str:
         return "컬렉션"
     if source_type == "PostgreSQL":
         return "테이블"
-    if source_type == "Stream / Kafka":
+    if source_type in ("Stream / Kafka", "Kafka JSON"):
         return "파티션"
     return "오브젝트"
 
@@ -772,16 +925,6 @@ def normalize_column_name(value: str) -> str:
     normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", value.strip().lower())
     normalized = re.sub(r"_+", "_", normalized).strip("_")
     return normalized or "dataset"
-
-
-def normalize_tags(tags: list[str], fallback: str) -> list[str]:
-    normalized = []
-    for tag in tags:
-        value = str(tag).strip()
-        if not value:
-            continue
-        normalized.append(value if value.startswith("#") else f"#{value}")
-    return list(dict.fromkeys(normalized or [fallback]))
 
 
 def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
@@ -809,45 +952,6 @@ def fallback_lineage_graph(dataset: CatalogDatasetModel) -> dict[str, Any]:
         "datasetId": dataset.id,
         "datasets": [*upstream_nodes, current_node],
         "edges": edges,
-    }
-
-
-def derived_lineage_graph(
-    source: CatalogDatasetModel,
-    dataset_id: str,
-    dataset_name: str,
-    layer: str,
-    schema: list[list[str]],
-    source_lineage: dict[str, Any],
-) -> dict[str, Any]:
-    source_node = lineage_node(source.id, source.name, source.layer, source.schema_json or [], "ICEBERG")
-    derived_node = lineage_node(dataset_id, dataset_name, layer, schema, "ICEBERG")
-    base_nodes = [
-        node for node in source_lineage.get("datasets", [])
-        if isinstance(node, dict) and node.get("id") != dataset_id
-    ]
-    if not any(node.get("id") == source.id for node in base_nodes):
-        base_nodes.append(source_node)
-    base_edges = [
-        edge for edge in source_lineage.get("edges", [])
-        if isinstance(edge, dict)
-        and edge.get("fromDatasetId") != dataset_id
-        and edge.get("toDatasetId") != dataset_id
-    ]
-    derived_edges = []
-    for index, target_column in enumerate(derived_node["columns"]):
-        source_columns = source_node["columns"]
-        source_column = source_columns[index] if index < len(source_columns) else target_column
-        derived_edges.append({
-            "fromColumnId": source_column["id"],
-            "fromDatasetId": source_node["id"],
-            "toColumnId": target_column["id"],
-            "toDatasetId": derived_node["id"],
-        })
-    return {
-        "datasetId": dataset_id,
-        "datasets": [*base_nodes, derived_node],
-        "edges": [*base_edges, *derived_edges],
     }
 
 

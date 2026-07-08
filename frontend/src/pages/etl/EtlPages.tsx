@@ -1,5 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import type React from "react";
+import {
+  flexRender,
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from "@tanstack/react-table";
 import {
   BarChart3,
   BookOpen,
@@ -24,11 +30,9 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
-  Save,
   Star,
   Search,
   Settings,
-  Share2,
   ShieldCheck,
   SlidersHorizontal,
   Table2,
@@ -36,13 +40,18 @@ import {
   Trash2,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
-import { CreationFlowLayout, CreationPanelActions, CreationSummaryPanel, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { S3PathField } from "../../components/s3/S3PathField";
+import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
-import { testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
-import type { QualityRuleDraft, RetryPolicyDraft, TransformStepDraft } from "../../types/etl";
+import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
+import { SourceAssetTree } from "./SourceAssetTree";
+import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
+import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -52,19 +61,17 @@ type RepeatScheduleDraft = {
   minute: string;
   time: string;
 };
+type ScheduleOptionId = "skip" | "repeat";
 
 export function SchedulePage({
-  draftRetryPolicy,
-  draftScheduleLabel,
+  draftSchedule,
   mode,
   onDraftChange,
   onModeChange,
   onPrev,
   onNext,
-  onSave,
 }: {
-  draftRetryPolicy: RetryPolicyDraft;
-  draftScheduleLabel: string;
+  draftSchedule: ScheduleDraft;
   mode: ScheduleFlowId;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onModeChange: (flow: ScheduleFlowId) => void;
@@ -72,104 +79,100 @@ export function SchedulePage({
   onNext: () => void;
   onSave: () => void;
 }) {
+  const draftRetryPolicy = draftSchedule.retryPolicy;
+  const draftScheduleLabel = draftSchedule.label;
   const initialRepeat = parseRepeatScheduleLabel(draftScheduleLabel);
   const [repeatFrequency, setRepeatFrequency] = useState<RepeatFrequency>(initialRepeat.frequency);
   const [repeatDay, setRepeatDay] = useState(initialRepeat.day);
   const [repeatTime, setRepeatTime] = useState(initialRepeat.time);
   const [repeatMinute, setRepeatMinute] = useState(initialRepeat.minute);
   const [customCron, setCustomCron] = useState(initialRepeat.cron);
-  const [onceDateTime, setOnceDateTime] = useState(parseOnceScheduleLabel(draftScheduleLabel));
   const title = "스케줄링 설정";
-  const selected = mode === "repeat" ? "반복 실행" : mode === "manual" ? "수동 실행" : "1회 실행";
   const repeatDraft = { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime };
-  const scheduleLabel = formatScheduleLabel(mode, repeatDraft, onceDateTime);
+  const selectedOption = getScheduleOptionFromLabel(draftScheduleLabel, mode);
+  const scheduleTimezone = draftSchedule.timezone || SCHEDULE_TIMEZONE;
+  const scheduleStartDate = normalizeDateValue(draftSchedule.startDate, SCHEDULE_START_DATE);
+  const scheduleEndDate = normalizeOptionalDateValue(draftSchedule.endDate);
   const updateRetryPolicy = (retryPolicy: RetryPolicyDraft) => {
     onDraftChange({ schedule: { retryPolicy } });
   };
   const applyScheduleDraft = () => {
     const normalizedRepeat = normalizeRepeatScheduleDraft(repeatDraft);
-    const normalizedOnceDateTime = normalizeDateTimeLocal(onceDateTime);
     setRepeatDay(normalizedRepeat.day);
     setRepeatTime(normalizedRepeat.time);
     setRepeatMinute(normalizedRepeat.minute);
     setCustomCron(normalizedRepeat.cron);
-    setOnceDateTime(normalizedOnceDateTime);
-    onDraftChange({ scheduleLabel: formatScheduleLabel(mode, normalizedRepeat, normalizedOnceDateTime) });
+    onDraftChange(buildSchedulePatch(selectedOption, normalizedRepeat, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
   };
-  const selectMode = (nextMode: ScheduleFlowId) => {
-    onDraftChange({ scheduleLabel: formatScheduleLabel(nextMode, repeatDraft, onceDateTime) });
-    onModeChange(nextMode);
+  const selectOption = (nextOption: ScheduleOptionId) => {
+    onDraftChange(buildSchedulePatch(nextOption, repeatDraft, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+    onModeChange(scheduleFlowFromOption(nextOption));
   };
   const goNext = () => {
     applyScheduleDraft();
     onNext();
   };
-  const saveSchedule = () => {
-    applyScheduleDraft();
-    onSave();
-  };
 
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow={mode} title="설정 요약" selected={scheduleLabel || selected} onPrev={onPrev} onNext={goNext} onSave={saveSchedule} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title={title} description="파이프라인의 실행 주기 및 재시도 정책을 설정합니다." />
-        <section className="panel">
-          <div className="section-heading">
-            <PlayCircle size={20} />
-            <h2>실행 방식 설정</h2>
-          </div>
-          <div className="option-grid">
-            <RunTypeCard active={mode === "manual"} icon={<PlayCircle size={24} />} title="수동 실행" desc="사용자가 직접 트리거할 때만 실행됩니다." onClick={() => selectMode("manual")} />
-            <RunTypeCard active={mode === "once"} icon={<Clock3 size={24} />} title="1회 실행" desc="지정된 시간에 단 한 번만 실행됩니다." onClick={() => selectMode("once")} />
-            <RunTypeCard active={mode === "repeat"} icon={<Repeat2 size={24} />} title="반복 실행" desc="주기적으로 반복하여 데이터를 처리합니다." onClick={() => selectMode("repeat")} />
-          </div>
-        </section>
-        {mode === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} onCronChange={(cron) => {
-          const sanitizedCron = sanitizeCronInput(cron);
-          setCustomCron(sanitizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
-        }} onCronCommit={() => {
-          const normalizedCron = normalizeCronExpression(customCron);
-          setCustomCron(normalizedCron);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
-        }} onDayChange={(day) => {
-          setRepeatDay(day);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
-        }} onFrequencyChange={(frequency) => {
-          setRepeatFrequency(frequency);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, onceDateTime) });
-        }} onMinuteChange={(minute) => {
-          setRepeatMinute(minute);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, onceDateTime) });
-        }} onTimeCommit={() => {
-          const normalizedTime = normalizeTimeValue(repeatTime);
-          setRepeatTime(normalizedTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, onceDateTime) });
-        }} onTimeChange={(time) => {
-          setRepeatTime(time);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, onceDateTime) });
-        }} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "manual" && <ManualSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
-        {mode === "once" && <OnceSettings dateTime={onceDateTime} retryPolicy={draftRetryPolicy} onDateTimeChange={(dateTime) => {
-          setOnceDateTime(dateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, dateTime) });
-        }} onDateTimeCommit={() => {
-          const normalizedDateTime = normalizeDateTimeLocal(onceDateTime);
-          setOnceDateTime(normalizedDateTime);
-          onDraftChange({ scheduleLabel: formatScheduleLabel("once", repeatDraft, normalizedDateTime) });
-        }} onRetryPolicyChange={updateRetryPolicy} />}
+        <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
+        <div className="xflow-review-stack schedule-xflow-stack">
+          <section className="xflow-review-card schedule-xflow-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+              <div>
+                <h2>실행 방식 설정</h2>
+                <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
+              </div>
+              <span className="schedule-xflow-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
+            </div>
+            <div className="schedule-xflow-mode-grid">
+              <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
+              <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={20} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
+            </div>
+          </section>
+          {selectedOption === "repeat" && <RepeatSettings customCron={customCron} frequency={repeatFrequency} minute={repeatMinute} retryPolicy={draftRetryPolicy} selectedDay={repeatDay} time={repeatTime} timezone={scheduleTimezone} onCronChange={(cron) => {
+            const sanitizedCron = sanitizeCronInput(cron);
+            setCustomCron(sanitizedCron);
+            onDraftChange(buildSchedulePatch("repeat", { cron: sanitizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onCronCommit={() => {
+            const normalizedCron = normalizeCronExpression(customCron);
+            setCustomCron(normalizedCron);
+            onDraftChange(buildSchedulePatch("repeat", { cron: normalizedCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onDayChange={(day) => {
+            setRepeatDay(day);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day, frequency: repeatFrequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onFrequencyChange={(frequency) => {
+            setRepeatFrequency(frequency);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency, minute: repeatMinute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onMinuteChange={(minute) => {
+            setRepeatMinute(minute);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute, time: repeatTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onTimeCommit={() => {
+            const normalizedTime = normalizeTimeValue(repeatTime);
+            setRepeatTime(normalizedTime);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time: normalizedTime }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onTimeChange={(time) => {
+            setRepeatTime(time);
+            onDraftChange(buildSchedulePatch("repeat", { cron: customCron, day: repeatDay, frequency: repeatFrequency, minute: repeatMinute, time }, scheduleTimezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }));
+          }} onRetryPolicyChange={updateRetryPolicy} onTimezoneChange={(timezone) => onDraftChange(buildSchedulePatch("repeat", repeatDraft, timezone, draftSchedule, { endDate: scheduleEndDate, startDate: scheduleStartDate }))} />}
+          {selectedOption === "skip" && <NoScheduleSettings retryPolicy={draftRetryPolicy} onRetryPolicyChange={updateRetryPolicy} />}
+        </div>
     </CreationFlowLayout>
   );
 }
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "run-card active" : "run-card"} type="button" onClick={onClick}>
+    <button className={active ? "schedule-xflow-mode-card active" : "schedule-xflow-mode-card"} type="button" onClick={onClick}>
       {active && <span className="run-selected-dot" />}
-      <span className="run-icon">{icon}</span>
-      <strong>{title}</strong>
-      <span>{desc}</span>
+      <span className="schedule-xflow-mode-icon">{icon}</span>
+      <span>
+        <strong>{title}</strong>
+        <small>{desc}</small>
+      </span>
     </button>
   );
 }
@@ -215,10 +218,11 @@ function mergeConnectorAnalysisSourceConfig(result: SourceConnectorAnalysis, cur
 const sourceTypeLabels: Record<string, string> = {
   Database: "PostgreSQL",
   "Data Lake": "데이터 레이크",
-  "File / S3": "파일 / MinIO(S3)",
+  "File / S3": "파일 / MinIO",
   MongoDB: "MongoDB",
   PostgreSQL: "PostgreSQL",
   "REST API": "REST API",
+  "SQL Result": "SQL Result",
   "Stream / Kafka": "스트림 / Kafka",
 };
 
@@ -253,12 +257,20 @@ const sourceFieldLabels: Record<string, string> = {
   "Password / Auth Token": "비밀번호 / 인증 토큰",
   Path: "경로",
   "Path / Prefix": "경로 / 프리픽스",
+  "Preview Limit": "Preview 제한",
+  "Preview Row Count": "Preview 행 수",
   Port: "포트",
+  Query: "SQL Query",
+  "Reference Dataset IDs": "참조 데이터셋 ID",
   Region: "리전",
   Response: "응답",
   Result: "결과",
   Schema: "스키마",
   "Secret Key": "시크릿 키",
+  "Source Dataset": "원본 데이터셋",
+  "Source Dataset ID": "원본 데이터셋 ID",
+  "SQL Preview": "SQL Preview",
+  "SQL Run ID": "SQL Run ID",
   "Storage Provider": "스토리지 제공자",
   "Stream Type": "스트림 유형",
   Table: "테이블",
@@ -317,8 +329,14 @@ const sourceValueLabels: Record<string, string> = {
   "Not tested": "미테스트",
   Pending: "대기",
   Reachable: "접근 가능",
+  "read-only": "읽기 전용",
   Required: "필수",
+  "Read-only": "읽기 전용",
   sampled: "샘플링됨",
+  skipped: "생략",
+  Skipped: "생략",
+  verified: "검증됨",
+  Verified: "검증됨",
 };
 
 const sourceActionLabels: Record<string, string> = {
@@ -419,7 +437,21 @@ const DEFAULT_REPEAT_DAY = "목";
 const DEFAULT_REPEAT_TIME = "10:30";
 const DEFAULT_REPEAT_MINUTE = "00";
 const DEFAULT_CUSTOM_CRON = "0 10 * * 1-5";
-const DEFAULT_ONCE_DATE_TIME = "2026-07-05T10:00";
+const SCHEDULE_START_DATE = "2026-07-07";
+const SCHEDULE_TIMEZONE = "Asia/Seoul";
+const DEFAULT_OVERLAP_POLICY: ScheduleOverlapPolicy = "skip_if_running";
+const DEFAULT_WATERMARK_POLICY: WatermarkPolicyDraft = {
+  column: "updated_at",
+  enabled: true,
+  lookbackMinutes: 5,
+  mode: "last_success_to_scheduled_at",
+};
+const timezoneOptions = [
+  { label: "Asia/Seoul (UTC+09:00)", value: "Asia/Seoul" },
+  { label: "UTC", value: "UTC" },
+  { label: "America/New_York (DST 적용)", value: "America/New_York" },
+  { label: "Europe/London (DST 적용)", value: "Europe/London" },
+];
 const validRepeatMinutes = ["00", "15", "30", "45"];
 const validRepeatDays = ["월", "화", "수", "목", "금", "토", "일"];
 const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
@@ -428,11 +460,11 @@ const repeatFrequencyLabels: Record<RepeatFrequency, string> = {
   weekly: "매주",
   custom: "커스텀",
 };
+const repeatFrequencyOptions = Object.entries(repeatFrequencyLabels).map(([value, label]) => ({ label, value: value as RepeatFrequency }));
 
-function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, onceDateTime: string) {
+function formatScheduleLabel(option: ScheduleOptionId, repeat: RepeatScheduleDraft) {
   const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
-  if (mode === "manual") return "수동 실행";
-  if (mode === "once") return `${formatDateTimeLocalLabel(onceDateTime)} 1회 실행`;
+  if (option === "skip") return "스케줄링 건너뛰기";
   if (normalizedRepeat.frequency === "hourly") return `매시간 ${normalizedRepeat.minute}분`;
   if (normalizedRepeat.frequency === "daily") return `매일 ${normalizedRepeat.time}`;
   if (normalizedRepeat.frequency === "custom") return `커스텀: ${normalizedRepeat.cron}`;
@@ -440,14 +472,67 @@ function formatScheduleLabel(mode: ScheduleFlowId, repeat: RepeatScheduleDraft, 
 }
 
 function getScheduleFlowFromLabel(label: string): ScheduleFlowId {
-  if (label.includes("수동")) return "manual";
-  if (label.includes("1회")) return "once";
+  if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "manual";
+  if (label.includes("예약") || label.includes("1회")) return "manual";
   return "repeat";
 }
 
-function parseOnceScheduleLabel(label: string) {
-  if (!label.includes("1회")) return DEFAULT_ONCE_DATE_TIME;
-  return normalizeDateTimeLocal(label.replace(/\s*1회 실행\s*$/, "").trim());
+function getScheduleOptionFromLabel(label: string, fallbackFlow: ScheduleFlowId): ScheduleOptionId {
+  if (label.includes("건너뛰기") || label.includes("스케줄 없음") || label.includes("수동")) return "skip";
+  if (label.includes("예약") || label.includes("1회")) return "skip";
+  if (label) return "repeat";
+  return fallbackFlow === "manual" ? "skip" : "repeat";
+}
+
+function scheduleFlowFromOption(option: ScheduleOptionId): ScheduleFlowId {
+  if (option === "skip") return "manual";
+  return "repeat";
+}
+
+function buildSchedulePatch(option: ScheduleOptionId, repeat: RepeatScheduleDraft, timezone: string = SCHEDULE_TIMEZONE, currentSchedule?: ScheduleDraft, dates?: { endDate?: string; startDate?: string }): DraftPipelinePatch {
+  const normalizedRepeat = normalizeRepeatScheduleDraft(repeat);
+  const label = formatScheduleLabel(option, normalizedRepeat);
+  const nextRun = option === "skip"
+    ? "-"
+    : "저장 시점 기준 계산";
+  const startDate = option === "repeat" ? normalizeDateValue(dates?.startDate ?? currentSchedule?.startDate, SCHEDULE_START_DATE) : "";
+  const normalizedEndDate = option === "repeat" ? normalizeOptionalDateValue(dates?.endDate ?? currentSchedule?.endDate) : "";
+  const endDate = normalizedEndDate && normalizedEndDate >= startDate ? normalizedEndDate : "";
+  const scheduleTimezone = option === "skip" ? "" : timezone;
+  const summary = formatScheduleSummary(option, label, scheduleTimezone);
+  const nextRunUtc = option === "skip" ? "" : "";
+  const restoreRepeatDefaults = option === "repeat" && (currentSchedule?.mode === "manual" || currentSchedule?.label.includes("건너뛰기"));
+  const overlapPolicy = option === "skip" ? undefined : restoreRepeatDefaults ? DEFAULT_OVERLAP_POLICY : currentSchedule?.overlapPolicy ?? DEFAULT_OVERLAP_POLICY;
+  const watermarkPolicy = option === "skip"
+    ? { ...DEFAULT_WATERMARK_POLICY, enabled: false, mode: "full_refresh" as WatermarkWindowMode }
+    : restoreRepeatDefaults ? DEFAULT_WATERMARK_POLICY : currentSchedule?.watermarkPolicy ?? DEFAULT_WATERMARK_POLICY;
+
+  return {
+    endDate,
+    nextRunUtc,
+    overlapPolicy,
+    schedule: {
+      endDate,
+      label,
+      nextRun,
+      nextRunUtc,
+      overlapPolicy,
+      startDate,
+      summary,
+      timezone: scheduleTimezone,
+      watermarkPolicy,
+    },
+    scheduleLabel: label,
+    scheduleSummary: summary,
+    startDate,
+    timezone: scheduleTimezone,
+    watermarkPolicy,
+  };
+}
+
+function formatScheduleSummary(option: ScheduleOptionId, label: string, timezone: string) {
+  if (option === "skip") return "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행";
+  return `반복 실행 · ${label} · ${timezone} · 저장 후 다음 예약부터 시작`;
 }
 
 function parseRepeatScheduleLabel(label: string) {
@@ -480,13 +565,12 @@ function normalizeTimeValue(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value) ? value : DEFAULT_REPEAT_TIME;
 }
 
-function normalizeDateTimeLocal(value: string) {
-  const normalizedValue = value.replace(".", "-").replace(".", "-").replace(" ", "T");
-  return /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(normalizedValue) ? normalizedValue : DEFAULT_ONCE_DATE_TIME;
+function normalizeDateValue(value: string | undefined, fallback: string) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : fallback;
 }
 
-function formatDateTimeLocalLabel(value: string) {
-  return normalizeDateTimeLocal(value).replace("T", " ").replaceAll("-", ".");
+function normalizeOptionalDateValue(value: string | undefined) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 }
 
 function sanitizeCronInput(value: string) {
@@ -505,25 +589,19 @@ function normalizeCronExpression(value: string) {
 
 const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
 const DEFAULT_VISIBILITY = "조직 내부";
-const DEFAULT_APPROVAL_STATUS = "승인 메타데이터";
+const DEFAULT_APPROVAL_STATUS = "승인 검토";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
-const DEFAULT_TARGET_DESCRIPTION = "고객 리뷰 분석용 정제 데이터셋";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
-const DEFAULT_TARGET_FORMAT = "Parquet";
-const DEFAULT_TARGET_PARTITION = "year/month/region";
+const DEFAULT_TARGET_FORMAT: TargetFileFormat = "parquet";
+const DEFAULT_TARGET_TAGS: string[] = [];
+const LEGACY_TARGET_TAG_OPTIONS = ["마케팅용", "고객데이터", "고객 데이터", "분석용", "서비스용", "서비스 제공용", "원본", "원본 데이터", "가공됨", "가공 데이터", "운영 데이터", "개인정보 포함"];
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
-const APPROVAL_STATUS_OPTIONS = ["승인 메타데이터", "오너 승인 필요", "실제 승인 연동 전"] as const;
+const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
-const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
-  BRONZE: "수집 정제",
-  GOLD: "서비스 제공",
-  RAW: "원본 보관",
-  SILVER: "분석 표준",
-};
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -546,22 +624,89 @@ type PermissionDraftSlice = {
 
 type TargetDraftSlice = {
   compression?: "Snappy" | "Gzip" | "None";
+  databaseName?: string;
   datasetName?: string;
   description?: string;
   format?: string;
+  indexColumns?: string[];
   jobName?: string;
+  lastTestRun?: TargetTestRun;
   layer?: string;
+  manager?: string;
   owner?: string;
   partition?: string;
+  partitionColumns?: string[];
   rag?: boolean;
+  schemaRules?: TargetSchemaRule[];
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
-  tags?: string[];
+  tableName?: string;
+  targetTableName?: string;
   targetDataset?: string;
-  targetDescription?: string;
   targetFormat?: string;
   targetLayer?: string;
-  targetTags?: string[];
+  tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
+};
+
+type TargetFileFormat = "parquet" | "csv" | "json";
+type TargetTestStatus = "idle" | "pending" | "success" | "failed";
+type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
+
+type TargetSchemaRule = {
+  displayType?: string;
+  indexed: boolean;
+  name: string;
+  nullable: boolean;
+  partitionable: boolean;
+  raw?: boolean;
+  recommendedIndex: boolean;
+  recommendedPartition: boolean;
+  sourceName: string;
+  type: TargetColumnType;
+  use: boolean;
+  validationStatus: "valid" | "warning" | "error";
+};
+
+type TargetTestRun = {
+  finishedAt?: string;
+  logs: string[];
+  message?: string;
+  status: TargetTestStatus;
+};
+
+type TargetMetadata = {
+  databaseName: string;
+  datasetName: string;
+  description: string;
+  fileFormat: TargetFileFormat;
+  manager: string;
+  owner: string;
+  storagePath: string;
+  targetTableName: string;
+};
+
+type TargetSavedConfig = {
+  indexColumns: string[];
+  lastTestRun: TargetTestRun;
+  lineage: {
+    sourceName: string;
+    targetDatasetName: string;
+    targetStoragePath: string;
+    transformStepCount: number;
+  };
+  metadata: TargetMetadata;
+  partitionColumns: string[];
+  previewRows: Array<Record<string, string>>;
+  schemaRules: TargetSchemaRule[];
+  tags: string[];
+};
+
+type ReviewSchemaRow = {
+  columnName: string;
+  nullable: string;
+  transform: string;
+  type: string;
 };
 
 type DraftPipelineWithSlices = DraftPipeline & {
@@ -590,10 +735,204 @@ function normalizeTargetLayer(value: string | undefined): TargetLayer {
   return getKnownOption(value?.toUpperCase(), TARGET_LAYER_OPTIONS, DEFAULT_TARGET_LAYER);
 }
 
-function displayTargetLayer(layer: TargetLayer) {
-  return TARGET_LAYER_LABELS[layer];
+function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
+const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
+const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
+  { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
+  { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
+  { included: true, nullable: false, sourceName: "gross_sales", targetName: "gross_sales", type: "decimal" },
+  { included: true, nullable: false, sourceName: "updated_at", targetName: "updated_at", type: "timestamp" },
+];
+const SAMPLE_TARGET_ROWS = [
+  ["2026-07-07", "128", "10200.50", "2026-07-07T09:30:00Z"],
+  ["2026-07-08", "96", "15700.00", "2026-07-08T09:30:00Z"],
+  ["2026-07-09", "141", "99900.25", "2026-07-09T09:30:00Z"],
+];
+
+function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
+  const normalized = value?.trim().toLowerCase();
+  return TARGET_FILE_FORMAT_VALUES.find((format) => format === normalized) ?? "parquet";
+}
+
+function filterVisibleTargetTags(tags: string[] | undefined) {
+  return (tags ?? []).filter((tag) => !LEGACY_TARGET_TAG_OPTIONS.includes(tag));
+}
+
+function isRecommendedPartitionColumn(columnName: string, columnType = "") {
+  const normalizedName = columnName.trim().toLowerCase();
+  const normalizedType = columnType.trim().toLowerCase();
+  return (
+    normalizedName === "date"
+    || normalizedName.endsWith("_date")
+    || ["event_time", "created_at", "updated_at", "partition_date", "event_date", "region", "category"].includes(normalizedName)
+    || normalizedType.includes("date")
+    || normalizedType.includes("time")
+  );
+}
+
+function isRecommendedIndexColumn(columnName: string) {
+  return /^(id|user_id|customer_id|product_id|order_id|review_id|account_id)$/i.test(columnName);
+}
+
+function normalizeTargetColumnType(value: string): TargetColumnType {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("int") || normalized.includes("float") || normalized.includes("double") || normalized.includes("decimal") || normalized === "number") return "number";
+  if (normalized.includes("bool")) return "boolean";
+  if (normalized.includes("date") || normalized.includes("time")) return "datetime";
+  if (normalized.includes("json") || normalized.includes("object") || normalized.includes("array")) return "json";
+  return "string";
+}
+
+function inferJsonValueType(value: unknown): TargetColumnType {
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  if (value && typeof value === "object") return "json";
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}(T|\s)?/.test(value)) return "datetime";
+  return "string";
+}
+
+function mergeTargetColumnType(previous: TargetColumnType | undefined, next: TargetColumnType): TargetColumnType {
+  if (!previous || previous === next) return next;
+  if (previous === "json" || next === "json") return "json";
+  return "string";
+}
+
+function flattenJsonObject(value: unknown, prefix: string, output: Record<string, unknown>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    output[prefix] = value;
+    return;
+  }
+
+  Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (child && typeof child === "object" && !Array.isArray(child)) {
+      flattenJsonObject(child, path, output);
+      return;
+    }
+    output[path] = child;
+  });
+}
+
+function stringifyPreviewValue(value: unknown) {
+  if (value === null || typeof value === "undefined") return "";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], existingRules: TargetSchemaRule[] | undefined) {
+  const sourceColumns = columns.length > 0 ? columns : SAMPLE_TARGET_SCHEMA_COLUMNS;
+  const sourceRows = rows.length > 0 ? rows : SAMPLE_TARGET_ROWS;
+  const dataColumnIndex = sourceColumns.findIndex((column) => (column.targetName || column.sourceName).toLowerCase() === "data");
+  const jsonColumnIndex = dataColumnIndex >= 0 ? dataColumnIndex : sourceColumns.length === 1 ? 0 : -1;
+  const existingByName = new Map(existingRules?.map((rule) => [rule.name, rule]));
+  const previewRows: Array<Record<string, string>> = [];
+  const typeByName = new Map<string, TargetColumnType>();
+  const displayTypeByName = new Map<string, string>();
+  const nullableByName = new Map<string, boolean>();
+  let jsonParseFailed = false;
+  let jsonInferred = false;
+
+  if (jsonColumnIndex >= 0) {
+    sourceRows.forEach((row) => {
+      const rawValue = row[jsonColumnIndex] ?? "";
+      try {
+        const parsed = JSON.parse(rawValue);
+        const flattened: Record<string, unknown> = {};
+        flattenJsonObject(parsed, "", flattened);
+        const previewRow: Record<string, string> = {};
+
+        Object.entries(flattened).forEach(([name, value]) => {
+          previewRow[name] = stringifyPreviewValue(value);
+          const inferredType = inferJsonValueType(value);
+          typeByName.set(name, mergeTargetColumnType(typeByName.get(name), inferredType));
+          displayTypeByName.set(name, inferredType === "datetime" ? "timestamp" : inferredType);
+          nullableByName.set(name, (nullableByName.get(name) ?? false) || value === null || typeof value === "undefined");
+        });
+
+        previewRow.raw_data = rawValue;
+        typeByName.set("raw_data", "json");
+        displayTypeByName.set("raw_data", "json");
+        nullableByName.set("raw_data", false);
+        previewRows.push(previewRow);
+        jsonInferred = true;
+      } catch {
+        jsonParseFailed = true;
+      }
+    });
+  }
+
+  if (!jsonInferred) {
+    sourceRows.forEach((row) => {
+      const previewRow: Record<string, string> = {};
+      sourceColumns.forEach((column, index) => {
+        const name = column.targetName || column.sourceName;
+        const value = row[index] ?? "";
+        previewRow[name] = value;
+        typeByName.set(name, mergeTargetColumnType(typeByName.get(name), normalizeTargetColumnType(column.type)));
+        displayTypeByName.set(name, column.type.trim().toLowerCase());
+        nullableByName.set(name, (nullableByName.get(name) ?? false) || value === "");
+      });
+      previewRows.push(previewRow);
+    });
+  }
+
+  const schemaRules = Array.from(typeByName.keys()).map((name) => {
+    const existing = existingByName.get(name);
+    const displayType = existing?.displayType ?? displayTypeByName.get(name);
+    const recommendedPartition = isRecommendedPartitionColumn(name, displayType);
+    const recommendedIndex = isRecommendedIndexColumn(name);
+    const raw = name === "raw_data";
+    const type = existing?.type ?? typeByName.get(name) ?? "string";
+    const validationStatus: TargetSchemaRule["validationStatus"] = raw ? "warning" : "valid";
+
+    return {
+      displayType,
+      indexed: existing?.indexed ?? recommendedIndex,
+      name,
+      nullable: existing?.nullable ?? Boolean(nullableByName.get(name)),
+      partitionable: !raw && type !== "json",
+      raw,
+      recommendedIndex,
+      recommendedPartition,
+      sourceName: name,
+      type,
+      use: existing?.use ?? !raw,
+      validationStatus,
+    };
+  });
+
+  return { jsonInferred, jsonParseFailed, previewRows, schemaRules };
+}
+
+function formatPartitionColumnType(rule: TargetSchemaRule) {
+  const displayType = rule.displayType?.trim().toLowerCase();
+  if (displayType) return displayType;
+  if (rule.type === "datetime") return rule.name.toLowerCase().endsWith("_date") ? "date" : "timestamp";
+  return rule.type;
+}
+
+function validateTargetConfig(config: TargetSavedConfig, jsonParseFailed: boolean) {
+  const errors: string[] = [];
+
+  if (!config.metadata.datasetName.trim()) errors.push("데이터셋명은 필수입니다.");
+  if (!config.metadata.storagePath.trim()) errors.push("저장경로는 필수입니다.");
+  if (!config.metadata.fileFormat.trim()) errors.push("포맷은 필수입니다.");
+  if (jsonParseFailed) errors.push("JSON 파싱에 실패했습니다.");
+
+  const usedColumnNames = new Set(config.schemaRules.filter((rule) => rule.use).map((rule) => rule.name));
+  if (usedColumnNames.size === 0) errors.push("저장에 사용할 컬럼이 1개 이상 필요합니다.");
+
+  const disabledPartitionColumns = config.partitionColumns.filter((column) => !usedColumnNames.has(column));
+  if (disabledPartitionColumns.length > 0) {
+    errors.push(`partition 컬럼이 사용 제외 상태입니다: ${disabledPartitionColumns.join(", ")}`);
+  }
+
+  return errors;
+}
 function buildJobName(targetDataset: string) {
   return `${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}_pipeline`;
 }
@@ -635,50 +974,28 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
   const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
-  const targetTags = normalizeTargetTags(target?.targetTags ?? target?.tags ?? draft.target.tags, targetDataset, draft.target.rag);
+  const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
 
   return {
+    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
+    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
-    targetDescription: getDisplayText(target?.targetDescription ?? target?.description ?? draft.target.description, DEFAULT_TARGET_DESCRIPTION),
+    storagePath,
+    tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
+    tags: filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
-    targetPartition: getDisplayText(target?.partition ?? draft.target.partition, DEFAULT_TARGET_PARTITION),
-    targetStoragePath: getDisplayText(target?.storagePath ?? draft.target.storagePath, buildStoragePath(targetDataset, targetLayer)),
-    targetTags,
+    testStatus: target?.testStatus ?? draft.target.testStatus ?? "idle",
   };
 }
 
-function buildStoragePath(targetDataset: string, targetLayer: TargetLayer) {
-  return `s3a://asklake-output/${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}/${targetLayer.toLowerCase()}/`;
-}
-
-function normalizeTargetTags(value: string[] | undefined, targetDataset: string, ragEnabled: boolean) {
-  const fallbackTags = [
-    `#${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET).replace(/_gold$/, "").replace(/[^a-zA-Z0-9가-힣_-]+/g, "_")}`,
-    "#dataset",
-    ragEnabled ? "#rag" : "#no-rag",
-  ];
-  const tags = (value && value.length > 0 ? value : fallbackTags)
-    .map((tag) => normalizeTargetTag(tag))
-    .filter(Boolean);
-  return Array.from(new Set(tags)).slice(0, 8);
-}
-
-function normalizeTargetTag(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
-}
-
-function parseTargetTags(value: string, targetDataset: string, ragEnabled: boolean) {
-  const tags = value
-    .split(/[\s,]+/)
-    .map(normalizeTargetTag)
-    .filter(Boolean);
-  return normalizeTargetTags(tags, targetDataset, ragEnabled);
+function getInitialSourceStage(draft: DraftPipeline): "choose" | "connect" | "browse" {
+  if (!draft.source.sourceType) return "choose";
+  if (draft.source.connectionStatus === "success") return "browse";
+  return "connect";
 }
 
 export function SourceConnectionPage({
@@ -688,7 +1005,6 @@ export function SourceConnectionPage({
   onNotify,
   onPrev,
   onNext,
-  onSave,
 }: {
   draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -698,18 +1014,22 @@ export function SourceConnectionPage({
   onNext: () => void;
   onSave: () => void;
 }) {
-  const [sourceType, setSourceType] = useState(draft.source.sourceType || "File / S3");
+  const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
+  const [loadingAssetPath, setLoadingAssetPath] = useState("");
+  const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO/S3 버킷과 텍스트 샘플 조회", icon: <SourceBrandIcon kind="s3" />, label: "MinIO/S3", status: "실제 연결" },
+    "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
     MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
     "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
     "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
-    "Stream / Kafka": { desc: "Kafka 브로커와 토픽 메타데이터", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
+    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
+    "Stream / Kafka": { desc: "Apache Kafka 스트림 데이터를 연결합니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -726,6 +1046,29 @@ export function SourceConnectionPage({
     actions?: string[];
     info?: string;
   }> = {
+    "SQL Result": {
+      title: "SQL 결과 입력",
+      description: "SQL Preview 결과와 query/run metadata를 처리 Job 입력으로 사용합니다.",
+      fields: [
+        ["Source Dataset", ""],
+        ["Source Dataset ID", ""],
+        ["SQL Run ID", ""],
+        ["Preview Limit", "100"],
+        ["Preview Row Count", ""],
+        ["Reference Dataset IDs", "-"],
+        ["Validation Key", "-"],
+        ["Query", ""],
+      ],
+      testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
+      logs: ["SQL Preview 결과가 이미 검증되어 소스 연결 단계를 생략합니다.", "Review에서 Job 생성 후 실행 정책과 타겟 저장소를 확정합니다."],
+      assetsTitle: "SQL 실행 근거",
+      assets: [],
+      previewTitle: "SQL Preview 결과",
+      previewNote: "SQL 분석 화면에서 전달된 Preview 결과를 사용합니다.",
+      previewColumns: ["Column", "Type", "Source"],
+      previewRows: [],
+      info: "SQL 결과 저장은 Catalog 직접 저장이 아니라 수집/처리 Job 생성 검토로 이어집니다.",
+    },
     PostgreSQL: {
       title: "PostgreSQL 연결",
       description: "백엔드 커넥터가 PostgreSQL 테이블 목록, 샘플 행, 스키마를 조회합니다.",
@@ -746,7 +1089,7 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하면 샘플 행을 가져옵니다.",
       previewColumns: ["Table", "Rows", "Status"],
       previewRows: [],
-      info: "PostgreSQL 자격 증명은 브라우저가 아니라 백엔드 커넥터에서 검증합니다.",
+      info: "",
     },
     MongoDB: {
       title: "MongoDB 연결",
@@ -767,21 +1110,21 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · MongoDB 연결 테스트를 실행하세요.",
       previewColumns: ["Collection", "Documents", "Status"],
       previewRows: [],
-      info: "MongoDB 연결과 샘플 조회는 백엔드 커넥터에서 실행합니다.",
+      info: "",
     },
     "File / S3": {
       title: "MinIO 소스 설정",
-      description: "MinIO/S3 호환 오브젝트 스토리지에서 버킷, 프리픽스, 제한 샘플을 실제 조회합니다.",
+      description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
         ["Storage Provider", "MinIO"],
-        ["Endpoint URL", "http://127.0.0.1:9000"],
-        ["Region", "us-east-1"],
-        ["Bucket / Stage Name", "m3-raw"],
-        ["Path / Prefix", "nyc_taxi/csv/"],
+        ["Endpoint URL", ""],
+        ["Region", ""],
+        ["Bucket / Stage Name", ""],
+        ["Path / Prefix", ""],
         ["Access Key", ""],
         ["Secret Key", ""],
         ["Use Path Style", "true"],
-        ["File Type", "CSV (Comma Separated)"],
+        ["File Type", "auto"],
         ["Delimiter", ","],
         ["Encoding", "UTF-8"],
         ["Header", "Treat first row as header"],
@@ -870,14 +1213,20 @@ export function SourceConnectionPage({
       actions: ["Show Advanced Configuration"],
     },
   };
-  const activeSourceType = sourceType === "Database" ? "PostgreSQL" : sourceConfigs[sourceType] ? sourceType : "File / S3";
-  const current = sourceConfigs[activeSourceType];
+  const selectedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
+  const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
+  const hasSelectedSource = activeSourceType.length > 0;
+  const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
   const editableFields = sourceFields[activeSourceType] ?? (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
   );
-  const sourceLabel = editableFields.find(([label]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType;
+  const isSqlResultSource = activeSourceType === "SQL Result";
+  const hasSqlResultPreview = isSqlResultSource && hasSqlResultPreviewConfig(editableFields);
+  const sourceLabel = hasSelectedSource
+    ? editableFields.find(([label]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(label))?.[1] ?? activeSourceType
+    : "미선택";
   const connectionStatusCopy: Record<SourceDraft["connectionStatus"], { badge: string; title: string }> = {
     failed: { badge: "확인 실패", title: "연결 실패" },
     idle: { badge: "테스트 필요", title: "연결 테스트 대기" },
@@ -887,20 +1236,30 @@ export function SourceConnectionPage({
   const visibleEditableFields = editableFields.filter(([label]) => isVisibleSourceField(activeSourceType, label));
   const displayTestItems = (sourceRuntime?.testItems ?? current.testItems).filter(([label]) => !isInternalSourceField(label));
   const displayAssets = sourceRuntime?.assets ?? current.assets;
-  const displayPreviewColumns = sourceRuntime?.previewColumns ?? current.previewColumns;
-  const displayPreviewRows = sourceRuntime?.previewRows ?? current.previewRows;
+  const hasDetectedAssets = displayAssets.length > 0;
+  const selectedAsset = selectedAssetPath ? displayAssets.find(([path]) => path === selectedAssetPath) ?? null : null;
+  const requiresAssetSelectionForPreview = activeSourceType === "File / S3" || activeSourceType === "Data Lake";
+  const selectedAssetHasSample = Boolean(
+    (!requiresAssetSelectionForPreview || selectedAsset) && sourceRuntime?.draftPatch.schema?.columns?.length,
+  );
+  const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
+  const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
+  const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
+  const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
   const previewTableMinWidth = Math.max(880, displayPreviewColumns.length * 148);
   const publicConnectionMessage = publicSourceLog(connectionMessage);
   const publicDisplayPreviewNote = publicSourceLog(displayPreviewNote);
   const runtimeSourceConfig = sourceRuntime?.draftPatch.source?.sourceConfig;
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
+  const displayPreviewFormat = activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType);
+  const usesJsonSampleTree = displayPreviewFormat === "JSON" || displayPreviewFormat === "JSONL";
   const sourceSummaryRows: Array<[string, string]> = [
-    ["선택 커넥터", sourceTypeLabel(activeSourceType)],
-    ["연결 상태", connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
-    ["감지 파일", `${displayAssets.length}개`],
-    ["인증 방식", activeSourceType === "File / S3" ? "MinIO/S3 액세스 키" : "백엔드 커넥터"],
-    ["다음 단계", "스키마 추론"],
+    ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
+    ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
+    ["감지 파일", isSqlResultSource ? `${sourceConfigValue(editableFields, "Preview Row Count") || "0"} rows` : `${displayAssets.length}개`],
+    ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
+    ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
   ];
 
   const applySourceDraft = (
@@ -909,6 +1268,18 @@ export function SourceConnectionPage({
     nextStatus = connectionStatus,
     nextMessage = connectionMessage,
   ) => {
+    if (!nextType) {
+      onDraftChange({
+        source: {
+          connectionMessage: nextMessage,
+          connectionStatus: nextStatus,
+          sourceConfig: [],
+          sourceLabel: "",
+          sourceType: "",
+        },
+      });
+      return;
+    }
     const label = sourceLabelFromFields(nextType, nextFields);
     onDraftChange({
       source: {
@@ -922,58 +1293,213 @@ export function SourceConnectionPage({
   };
 
   const selectSource = (value: string) => {
-    const nextMessage = `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
+    const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
+    const nextIsSqlResult = value === "SQL Result";
+    const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
+    const nextStatus: SourceDraft["connectionStatus"] = nextIsSqlResult ? (nextHasSqlResultPreview ? "success" : "idle") : "idle";
+    const nextMessage = nextIsSqlResult
+      ? nextHasSqlResultPreview
+        ? "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다."
+        : "SQL Result는 SQL 분석 Preview에서 처리 Job 생성으로 진입할 때 사용합니다."
+      : `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
     setSourceRuntime(null);
-    setConnectionStatus("idle");
+    setSelectedAssetPath("");
+    setSourceStage("connect");
+    setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
-    applySourceDraft(value, sourceFields[value] ?? sourceConfigs[value].fields, "idle", nextMessage);
+    applySourceDraft(value, nextFields, nextStatus, nextMessage);
     onAction("etl.source.connector_selected", "/api/etl/sources/connectors", value);
   };
 
   const updateSourceField = (label: string, value: string) => {
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
-    const nextMessage = "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
+    const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
+    const nextStatus = isSqlResultSource ? connectionStatus : "idle";
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
+    setSelectedAssetPath("");
+    setConnectionStatus(nextStatus);
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
+  };
+
+  const fillMinioDemoFields = () => {
+    const demoFields: Array<[string, string]> = [
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://127.0.0.1:19000"],
+      ["Region", "us-east-1"],
+      ["Bucket / Stage Name", "m3-raw"],
+      ["Path / Prefix", ""],
+      ["Access Key", "m3admin"],
+      ["Secret Key", "wishuponastar"],
+      ["Use Path Style", "true"],
+      ["File Type", "auto"],
+      ["Delimiter", ","],
+      ["Encoding", "UTF-8"],
+      ["Header", "Treat first row as header"],
+    ];
+    const nextFields = mergeFieldRows(editableFields, demoFields);
+    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime(null);
+    setSelectedAssetPath("");
     setConnectionStatus("idle");
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
+  };
+
+  const loadSourceAssetChildren = async (folderPath: string) => {
+    if (!hasSelectedSource || !(activeSourceType === "File / S3" || activeSourceType === "Data Lake")) return;
+    const folderPrefix = normalizeFolderPrefix(folderPath);
+    setLoadingAssetPath(folderPrefix);
+    try {
+      const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
+      setSourceRuntime((runtime) => runtime
+        ? { ...runtime, assets: mergeSourceAssets(runtime.assets ?? [], result.assets ?? []) }
+        : {
+          actionPath: "/api/etl/sources/assets",
+          assets: result.assets ?? [],
+          draftPatch: {},
+          logs: [],
+          message: connectionMessage,
+          previewColumns: [],
+          previewNote: "",
+          previewRows: [],
+          status: connectionStatus,
+          testItems: displayTestItems,
+        });
+      onAction("etl.source.folder_opened", "/api/etl/sources/assets", folderPrefix);
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : "하위 목록을 가져오지 못했습니다.");
+    } finally {
+      setLoadingAssetPath("");
+    }
+  };
+
+  const selectSourceAsset = async (assetPath: string) => {
+    const asset = displayAssets.find(([path]) => path === assetPath);
+    if (!asset) return;
+    const [, assetMeta] = asset;
+    if (assetMeta === "folder" || assetPath.endsWith("/")) {
+      await loadSourceAssetChildren(assetPath);
+      return;
+    }
+    const currentAssets = displayAssets;
+    const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
+      fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
+        ? [fieldLabel, assetPath] as [string, string]
+        : [fieldLabel, fieldValue] as [string, string]
+    )), [
+      ["__Selected Object", assetPath],
+      ["__Sample Object", assetPath],
+    ]);
+    const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
+    setSelectedAssetPath(assetPath);
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(nextMessage);
+    setConnectionStatus("testing");
+    applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
+    onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
+    try {
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+        nextFields,
+      );
+      const successMessage = `${assetPath} 기준 샘플을 가져왔습니다.`;
+      if (result.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? nextFields }));
+      }
+      setSourceRuntime({ ...result, assets: mergeSourceAssets(currentAssets, result.assets ?? []), message: successMessage });
+      setConnectionStatus(result.status);
+      setConnectionMessage(successMessage);
+      onDraftChange(result.draftPatch);
+      onAction("etl.source.asset_sampled", result.actionPath, assetPath);
+      onNotify(successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "선택한 오브젝트의 샘플을 가져오지 못했습니다.";
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
+      onNotify(message);
+    }
   };
 
   const testConnection = async () => {
+    if (!hasSelectedSource) {
+      onNotify("먼저 소스를 선택하세요.");
+      return;
+    }
+    if (isSqlResultSource) {
+      const message = hasSqlResultPreview
+        ? "SQL Preview 결과가 이미 검증되어 소스 연결 테스트를 생략합니다."
+        : "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요.";
+      const nextStatus: SourceDraft["connectionStatus"] = hasSqlResultPreview ? "success" : "idle";
+      setConnectionStatus(nextStatus);
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, editableFields, nextStatus, message);
+      onNotify(message);
+      return;
+    }
+
     const testingMessage = `${sourceTypeLabel(activeSourceType)} 커넥터 테스트 실행 중입니다.`;
     setConnectionStatus("testing");
     setConnectionMessage(testingMessage);
+    setSourceRuntime(null);
+    setSelectedAssetPath("");
     applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
     try {
-      const result = mergeConnectorAnalysisSourceConfig(
-        publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
-        editableFields,
-      );
-      if (result.draftPatch.source?.sourceConfig) {
-        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+      if (activeSourceType !== "File / S3" && activeSourceType !== "Data Lake") {
+        const result = mergeConnectorAnalysisSourceConfig(
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
+          editableFields,
+        );
+        if (result.draftPatch.source?.sourceConfig) {
+          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+        }
+        setSourceRuntime(result);
+        setSelectedAssetPath("");
+        setConnectionStatus(result.status);
+        setConnectionMessage(result.message);
+        onDraftChange(result.draftPatch);
+        onAction("etl.source.connection_tested", result.actionPath, activeSourceType);
+        onNotify(result.message);
+        return;
       }
-      setSourceRuntime(result);
-      setConnectionStatus(result.status);
-      setConnectionMessage(result.message);
-      onDraftChange(result.draftPatch);
-      onAction("etl.source.connection_tested", result.actionPath, activeSourceType);
-      onNotify(result.message);
+      const result = await listSourceAssets(activeSourceType, editableFields, "");
+      const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
+      const connectorResult: SourceConnectorAnalysis = {
+        actionPath: "/api/etl/sources/assets",
+        assets: result.assets,
+        draftPatch: {
+          source: {
+            connectionMessage: successMessage,
+            connectionStatus: "success",
+            sourceConfig: editableFields,
+            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
+            sourceType: activeSourceType,
+          },
+        },
+        logs: [successMessage],
+        message: successMessage,
+        previewColumns: [],
+        previewNote: "파일을 선택하면 제한 샘플과 스키마 추론 결과가 표시됩니다.",
+        previewRows: [],
+        status: "success",
+        testItems: [["Connector", activeSourceType], ["Result", "Verified"], ["Objects", `${result.assets.length}`]],
+      };
+      setSourceRuntime(connectorResult);
+      setSelectedAssetPath("");
+      setConnectionStatus("success");
+      setConnectionMessage(successMessage);
+      onDraftChange(connectorResult.draftPatch);
+      onAction("etl.source.connection_tested", connectorResult.actionPath, activeSourceType);
+      onNotify(successMessage);
     } catch (error) {
       const message = error instanceof Error ? error.message : "소스 커넥터 테스트에 실패했습니다.";
-      setSourceRuntime({
-        actionPath: "/api/etl/sources/test",
-        assets: [],
-        draftPatch: {},
-        logs: [`[ERROR] ${message}`],
-        message,
-        previewColumns: ["Status", "Reason"],
-        previewNote: "연결 테스트에 실패했습니다. 샘플을 가져오지 못했습니다.",
-        previewRows: [["failed", message]],
-        status: "failed",
-        testItems: [["Connector", activeSourceType], ["Result", "Failed"]],
-      });
+      setSourceRuntime(null);
       setConnectionStatus("failed");
       setConnectionMessage(message);
       applySourceDraft(activeSourceType, editableFields, "failed", message);
@@ -982,55 +1508,85 @@ export function SourceConnectionPage({
     }
   };
 
+  const goNext = () => {
+    if (!hasSelectedSource) {
+      onNotify("먼저 소스를 선택하세요.");
+      return;
+    }
+    if (connectionStatus !== "success") {
+      onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+      return;
+    }
+    applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
+    onNext();
+  };
+
   const fetchMetadata = () => {
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
+  const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
+
   return (
     <CreationFlowLayout
-      side={<CreationSummaryPanel flow="source" title="소스 요약" selected={`${sourceTypeLabel(activeSourceType)} · ${sourceLabel}`} summaryRows={sourceSummaryRows} onPrev={onPrev} onNext={() => {
-        if (connectionStatus !== "success") {
-          onNotify("먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
-          return;
-        }
-        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
-        onNext();
-      }} onSave={() => {
-        applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
-        onSave();
-      }} />}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="소스 연결" description="소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다." />
+        <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>소스 선택 및 연결</h2>
-            <span className="panel-note">소스를 선택하면 연결 설정과 테스트가 바로 이어집니다</span>
+          <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
+            <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
+            <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
+            <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
           </div>
-          <div className="source-connect-stack">
-            <div className="source-picker-strip" role="group" aria-label="소스 선택">
-              {Object.entries(connectorMeta).map(([connector, meta]) => (
-                <button aria-label={`${meta.label} ${meta.desc} ${meta.status}`} className={activeSourceType === connector ? "hegun-connector active" : "hegun-connector"} key={connector} title={`${meta.desc} · ${meta.status}`} type="button" onClick={() => selectSource(connector)}>
-                  <span className="hegun-connector-icon">{meta.icon}</span>
-                  <strong>{meta.label}</strong>
-                </button>
-              ))}
+
+          {sourceStage === "choose" && (
+            <div className="source-stage-screen source-choice-screen">
+              <div className="xflow-source-select-heading">
+                <h2>Select a data source</h2>
+                <p>Choose the type of data source you want to connect</p>
+              </div>
+              <div className="source-choice-grid">
+                {sourceChoiceConnectors.map((connector) => {
+                  const meta = connectorMeta[connector];
+                  return (
+                    <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "source-choice-card active" : "source-choice-card"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                      <span className="source-choice-icon">{meta.icon}</span>
+                      <strong>{meta.label}</strong>
+                      <span>{meta.desc}</span>
+                      {sourceType === connector && <span className="source-choice-check"><Check size={18} /></span>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="source-active-config">
-              <div className="source-active-heading">
-                <Settings size={18} />
-                <strong>{current.title}</strong>
-                <span>{current.description}</span>
-              </div>
-              <div className="hegun-field-grid">
-                {visibleEditableFields.map(([label, value]) => (
-                  <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
-                    <span>{sourceFieldLabel(label)}</span>
-                    <input className="input control-input" value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
-                  </label>
-                ))}
-              </div>
-              {current.info && <InfoBox title="보안 연결" body={current.info} />}
+          )}
+
+          {sourceStage === "connect" && hasSelectedSource && (
+            <div className="source-stage-screen">
+              <section className="source-step-section active">
+                <div className="source-step-header">
+                  <em>1</em>
+                  <div>
+                    <strong>{current.title}</strong>
+                  </div>
+                  <div className="hegun-status-actions">
+                  {activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
+                  {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                  {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
+                  </div>
+                </div>
+                <div className="hegun-field-grid source-flow-fields">
+                  {visibleEditableFields.map(([label, value]) => (
+                    <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
+                      <span>{sourceFieldLabel(label)}</span>
+                      <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                    </label>
+                  ))}
+                </div>
+                {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
+              </section>
+
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
                   <div className="hegun-status-copy">
@@ -1039,9 +1595,8 @@ export function SourceConnectionPage({
                     <span className="panel-note">{publicConnectionMessage}</span>
                   </div>
                   <div className="hegun-status-actions">
-                    {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                    {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>
+                    {connectionStatus === "success" && hasDetectedAssets && <button className="secondary-button" type="button" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</button>}
+                    {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
                 <div className="hegun-test-strip">
@@ -1055,45 +1610,113 @@ export function SourceConnectionPage({
                 </div>
               </section>
             </div>
-          </div>
+          )}
+
+          {sourceStage === "browse" && hasSelectedSource && (
+            <div className="source-stage-screen source-xflow-layout">
+              <section className="source-from-panel">
+                <div className="source-xflow-heading">
+                  <LayoutGrid size={18} />
+                  <div><h2>{current.assetsTitle}</h2></div>
+                </div>
+                {hasDetectedAssets ? (
+                  <SourceAssetTree
+                    assets={displayAssets}
+                    loadingPath={loadingAssetPath}
+                    selectedPath={selectedAssetPath}
+                    onOpenFolder={loadSourceAssetChildren}
+                    onSelect={selectSourceAsset}
+                  />
+                ) : (
+                  <p className="source-empty-note">연결 테스트 후 실제 폴더와 파일이 표시됩니다.</p>
+                )}
+              </section>
+              <section className="source-flow-panel">
+                <section className="source-step-section active">
+                  <div className="source-step-header">
+                    <em>2</em>
+                    <div>
+                      <strong>제한 샘플 미리보기</strong>
+                    </div>
+                    <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : "선택 대기"}</span>
+                  </div>
+                  <div className="source-preview-format-strip">
+                    <strong>{displayPreviewFormat}</strong>
+                    <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                  </div>
+                  {displayPreviewRows.length > 0 ? (
+                    usesJsonSampleTree ? (
+                      <SourceJsonSampleTree
+                        columns={displayPreviewColumns}
+                        format={displayPreviewFormat}
+                        rows={displayPreviewRows}
+                      />
+                    ) : (
+                      <div className="hegun-table-scroll source-preview-scroll">
+                        <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
+                          <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
+                          <tbody>
+                            {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
+                          </tbody>
+                        </table>
+                      </div>
+                    )
+                  ) : (
+                    <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
+                  )}
+                </section>
+              </section>
+            </div>
+          )}
         </section>
-        {displayAssets.length > 0 && (
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <LayoutGrid size={18} />
-              <h2>{current.assetsTitle}</h2>
-              <span className="panel-note">총 {displayAssets.length}개</span>
-            </div>
-            <div className="hegun-asset-list">
-              {displayAssets.map(([name, meta, status], index) => (
-                <article key={`${activeSourceType}-${name}-${index}`}>
-                  <strong>{name}</strong>
-                  <span>{meta}</span>
-                  <em>{sourceValueLabel(status)}</em>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {displayPreviewRows.length > 0 && (
-          <section className="panel hegun-console-panel">
-            <div className="panel-header">
-              <FileText size={18} />
-              <h2>{current.previewTitle}</h2>
-              <span className="panel-note">{publicDisplayPreviewNote}</span>
-            </div>
-            <div className="hegun-table-scroll">
-              <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
-                <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
-                <tbody>
-                  {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
     </CreationFlowLayout>
   );
+}
+
+function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
+  const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
+  const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
+  const selectedPath = [
+    fieldMap.get("Path / Prefix"),
+    fieldMap.get("Path"),
+    fieldMap.get("DATASET OR TABLE SELECTOR"),
+  ].find((value) => value && value.trim().length > 0)?.trim().toLowerCase() || "";
+  const rawFormat = declaredFormat && declaredFormat !== "auto"
+    ? declaredFormat
+    : selectedPath.replace(/^.*\./, "");
+  if (rawFormat.includes("jsonl")) return "JSONL";
+  if (rawFormat.includes("json")) return "JSON";
+  if (rawFormat.includes("csv")) return "CSV";
+  if (rawFormat.includes("tsv")) return "TSV";
+  if (rawFormat.includes("txt")) return "TXT";
+  if (rawFormat.includes("parquet")) return "PARQUET";
+  return "AUTO";
+}
+
+function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
+  const merged = new Map<string, [string, string, string]>();
+  [...currentAssets, ...nextAssets].forEach(([path, meta, status]) => {
+    merged.set(path, [path, meta, status]);
+  });
+  return Array.from(merged.values());
+}
+
+function normalizeFolderPrefix(path: string) {
+  const cleanPath = path.replace(/^\/+/, "").replace(/\/+$/, "");
+  return cleanPath ? `${cleanPath}/` : "";
+}
+
+function upsertSourceFields(fields: Array<[string, string]>, patches: Array<[string, string]>) {
+  const nextFields = [...fields];
+  patches.forEach(([label, value]) => {
+    const index = nextFields.findIndex(([fieldLabel]) => fieldLabel === label);
+    if (index >= 0) {
+      nextFields[index] = [label, value];
+    } else {
+      nextFields.push([label, value]);
+    }
+  });
+  return nextFields;
 }
 
 function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
@@ -1106,7 +1729,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header"].includes(label);
+    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix"].includes(label);
   }
   return true;
 }
@@ -1175,7 +1798,7 @@ function sourceCheckIcon(label: string) {
 
 function sourceCheckState(value: string) {
   const normalized = value.toLowerCase();
-  if (/(ok|success|reachable|verified|fetched|listed|ready|완료|성공|가능)/.test(normalized)) return "success";
+  if (/(ok|success|reachable|verified|fetched|listed|ready|skipped|완료|성공|가능|생략)/.test(normalized)) return "success";
   if (/(fail|error|denied|실패|오류)/.test(normalized)) return "failed";
   if (/(pending|required|not tested|대기|필요|미확인)/.test(normalized)) return "idle";
   return "idle";
@@ -1204,6 +1827,11 @@ type SchemaSampleScopeOption = {
 };
 
 function schemaSampleScopeOptionsForSource(sourceType: string): SchemaSampleScopeOption[] {
+  if (sourceType === "SQL Result") {
+    return [
+      { label: "SQL Preview", shortLabel: "Preview", value: "current" },
+    ];
+  }
   if (sourceType === "MongoDB") {
     return [
       { label: "현재 문서", shortLabel: "현재", value: "current" },
@@ -1238,6 +1866,7 @@ function detectSchemaSourceFormat(draft: DraftPipeline) {
   if (draft.source.sourceType === "PostgreSQL") return "TABLE";
   if (draft.source.sourceType === "MongoDB") return "JSON";
   if (draft.source.sourceType === "Stream / Kafka") return "JSON";
+  if (draft.source.sourceType === "SQL Result") return "SQL";
   return "SAMPLE";
 }
 
@@ -1707,6 +2336,12 @@ export function SchemaInferencePage({
   };
 
   const rerunCurrentInference = async () => {
+    if (draft.source.sourceType === "SQL Result") {
+      onAction("etl.schema.inference_skipped", "/api/query/runs", draft.source.sourceLabel || "SQL Result");
+      onNotify("SQL Preview에서 전달된 schema를 사용하므로 재확인을 생략합니다.");
+      return;
+    }
+
     if (!draft.source.sourceType || draft.source.sourceConfig.length === 0) {
       onNotify("다시 확인할 소스 연결 정보가 없습니다. 소스 연결 테스트를 먼저 실행하세요.");
       return;
@@ -1762,254 +2397,30 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <section className="schema-designer">
-        <aside className="schema-settings-panel">
-          <div className="schema-panel-title">
-            <SlidersHorizontal size={17} />
-            <h2>{isFlattenedJson ? "문서 샘플링" : "파서 설정"}</h2>
-          </div>
-          <label className="schema-setting-field">
-            <span>소스 형식</span>
-            <select className="input control-input" value={sourceFormat} disabled>
-              <option>{sourceFormat}</option>
-            </select>
-          </label>
-          <label className="schema-setting-field">
-            <span>{isFlattenedJson ? "루트 경로" : "헤더 처리"}</span>
-            <input className="input control-input" value={isFlattenedJson ? "$" : "첫 행을 컬럼명으로 사용"} readOnly />
-          </label>
-          <label className="schema-setting-field">
-            <span>인코딩</span>
-            <select className="input control-input" value="UTF-8" disabled>
-              <option>UTF-8</option>
-            </select>
-          </label>
-          <div className="schema-segment-field">
-            <span>샘플 범위</span>
-            <div>
-              {sampleScopeOptions.map((option) => (
-                <button
-                  className={option.value === schemaSampleScope ? "active" : ""}
-                  disabled={isRecheckingSchema}
-                  aria-label={option.label}
-                  key={option.value}
-                  onClick={() => selectSampleScope(option.value)}
-                  title={option.label}
-                  type="button"
-                >
-                  {option.shortLabel}
-                </button>
-              ))}
-            </div>
-          </div>
-          {isFlattenedJson && (
-            <>
-              <label className="schema-check-row">
-                <span>
-                  <strong>중첩 객체 평탄화</strong>
-                  <small>{flattenObjects ? `${nestedFieldCount}개 중첩 필드를 출력 컬럼으로 펼침` : "중첩 객체를 JSON 컬럼으로 유지"}</small>
-                </span>
-                <input
-                  aria-label="중첩 객체 평탄화"
-                  checked={flattenObjects}
-                  disabled={!hasInferredSchema}
-                  onChange={(event) => applyFlattenSettings(event.currentTarget.checked)}
-                  type="checkbox"
-                />
-              </label>
-              <div className="schema-segment-field">
-                <span>평탄화 깊이</span>
-                <div>
-                  {["1", "2", "3"].map((depth) => (
-                    <button
-                      className={Number(depth) === flattenDepth ? "active" : ""}
-                      disabled={!hasInferredSchema || !flattenObjects}
-                      key={depth}
-                      onClick={() => applyFlattenSettings(true, Number(depth))}
-                      type="button"
-                    >
-                      {depth}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <label className="schema-setting-field">
-                <span>배열 처리</span>
-                <select className="input control-input" value="JSON 유지" disabled>
-                  <option>JSON 유지</option>
-                </select>
-              </label>
-            </>
-          )}
-          <button className="secondary-button schema-wide-button" type="button" disabled={isRecheckingSchema || !hasInferredSchema} onClick={rerunCurrentInference}>
-            <RefreshCw size={15} /> {isRecheckingSchema ? "스키마 확인 중" : "선택 범위 다시 확인"}
-          </button>
-        </aside>
-
-        <main className="schema-field-panel">
-          <div className="schema-field-toolbar">
-            <label className="schema-search-box">
-              <Search size={16} />
-              <input value={schemaFilter} onChange={(event) => setSchemaFilter(event.currentTarget.value)} placeholder="필드 검색..." />
-            </label>
-            <button className="schema-toolbar-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>매핑 초기화</button>
-            <span>{visibleSchemaColumns.length} / {schemaColumns.length}개 표시</span>
-          </div>
-          <div className="schema-field-table-wrap">
-            <table className="schema-field-table">
-              <thead>
-                <tr>
-                  <th>포함</th>
-                  <th>순서</th>
-                  <th>{isFlattenedJson ? "필드 경로" : "원본 필드"}</th>
-                  <th>출력 필드</th>
-                  <th>타입</th>
-                  <th>Null</th>
-                  <th>역할</th>
-                  <th>삭제</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleSchemaColumns.map(({ column, index }) => {
-                  const confidence = column.confidence ?? 70;
-                  return (
-                    <tr className={`${index === selectedIndex ? "selected" : ""} ${confidence < 80 ? "needs-review" : ""} ${isSchemaColumnIncluded(column) ? "" : "excluded"}`} key={`${column.sourceName}-${index}`} onClick={() => setSelectedSchemaIndex(index)}>
-                      <td>
-                        <input aria-label={`${column.targetName} 포함`} checked={isSchemaColumnIncluded(column)} type="checkbox" onChange={(event) => {
-                          event.stopPropagation();
-                          updateSchemaColumn(index, { included: event.currentTarget.checked });
-                        }} onClick={(event) => event.stopPropagation()} />
-                      </td>
-                      <td>#{index + 1}</td>
-                      <td><strong title={column.sourceName}>{formatSourceFieldPath(column.sourceName)}</strong></td>
-                      <td>
-                        <button type="button" onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedSchemaIndex(index);
-                        }}>{column.targetName || `column_${index + 1}`}</button>
-                      </td>
-                      <td><span className="schema-type-pill">{column.type}</span></td>
-                      <td>{column.nullable ? "허용" : "필수"}</td>
-                      <td>{schemaRoleLabel(column.role)}</td>
-                      <td>
-                        <button className="schema-table-delete" type="button" title="컬럼 삭제" onClick={(event) => {
-                          event.stopPropagation();
-                          deleteSchemaColumn(index);
-                        }}>
-                          <Trash2 size={15} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {visibleSchemaColumns.length === 0 && <tr><td colSpan={8}>표시할 스키마 필드가 없습니다. 소스 연결 테스트를 먼저 실행하거나 검색어를 지우세요.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </main>
-
-        <aside className="schema-inspector-panel">
-          {selectedColumn ? (
-            <>
-              <div className="schema-inspector-scroll">
-                <div className="schema-inspector-heading">
-                  <div>
-                    <h2>{formatSourceFieldPath(selectedColumn.sourceName)}</h2>
-                    <span>필드 ID: {selectedIndex + 1}</span>
-                  </div>
-                  <em>{selectedColumn.confidence ?? 70}% 확신</em>
-                </div>
-                <div className="schema-flow-detail">
-                  <span>원본 → 출력</span>
-                  <strong>{selectedColumn.sourceName} → {selectedColumn.targetName || `column_${selectedIndex + 1}`}</strong>
-                  <small>{selectedFlowItem?.action ?? mappingModeText}</small>
-                </div>
-                <label className="schema-setting-field">
-                  <span>출력 필드명</span>
-                  <input className="input control-input" value={selectedColumn.targetName} onBlur={(event) => {
-                    if (event.currentTarget.value.trim()) return;
-                    updateSchemaColumn(selectedIndex, { targetName: normalizeTargetColumnName(selectedColumn.sourceName) });
-                  }} onChange={(event) => updateSchemaColumn(selectedIndex, { targetName: event.currentTarget.value })} />
-                </label>
-                <label className="schema-setting-field">
-                  <span>타입 재정의</span>
-                  <select className="input control-input" value={selectedColumn.type} onChange={(event) => updateSchemaColumn(selectedIndex, { type: event.currentTarget.value })}>
-                    {schemaTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-                  </select>
-                </label>
-                <label className="schema-setting-field">
-                  <span>Null 정책</span>
-                  <select className="input control-input" value={selectedColumn.nullable ? "true" : "false"} onChange={(event) => updateSchemaColumn(selectedIndex, { nullable: event.currentTarget.value === "true" })}>
-                    <option value="false">필수</option>
-                    <option value="true">허용</option>
-                  </select>
-                </label>
-                <label className="schema-setting-field">
-                  <span>역할</span>
-                  <select className="input control-input" value={selectedColumn.role ?? ""} onChange={(event) => updateSchemaColumn(selectedIndex, { role: event.currentTarget.value || undefined })}>
-                    {schemaRoleOptions.map((role) => <option key={role.value || "none"} value={role.value}>{role.label}</option>)}
-                  </select>
-                </label>
-                <div className="schema-inspector-metrics">
-                  <div><span>Null 비율</span><strong>{selectedNullRatio}%</strong></div>
-                  <div><span>샘플 값 수</span><strong>{selectedSampleValues.length}</strong></div>
-                </div>
-                <div className="schema-null-meter"><span style={{ width: `${selectedNullRatio}%` }} /></div>
-                <div className="schema-distribution">
-                  <span>값 분포</span>
-                  {selectedDistribution.map((item) => (
-                    <div key={item.label}>
-                      <strong title={item.label}>{item.label}</strong>
-                      <span><i style={{ width: `${item.percent}%` }} /></span>
-                      <em>{item.count}</em>
-                    </div>
-                  ))}
-                  {selectedDistribution.length === 0 && <small>샘플 값 없음</small>}
-                </div>
-                <div className="schema-sample-chips">
-                  <span>샘플 값</span>
-                  <div>
-                    {selectedSampleValues.slice(0, 5).map((value, index) => <em key={`${value}-${index}`} title={value}>{value || "null"}</em>)}
-                    {selectedSampleValues.length === 0 && <em>값 없음</em>}
-                  </div>
-                </div>
-              </div>
-              <div className="schema-inspector-actions">
-                <button className="primary-button schema-wide-button" type="button" onClick={applySelectedField}>변경 적용</button>
-                <button className="secondary-button schema-wide-button" type="button" onClick={() => updateSchemaColumn(selectedIndex, { included: !isSchemaColumnIncluded(selectedColumn) })}>{isSchemaColumnIncluded(selectedColumn) ? "출력에서 제외" : "출력에 포함"}</button>
-              </div>
-            </>
-          ) : <div className="schema-inspector-empty">선택된 필드가 없습니다.</div>}
-        </aside>
-      </section>
-
-      <section className="schema-preview-panel">
-        <div className="schema-preview-tabs">
-          <strong>원본 → 출력 미리보기</strong>
-          <span>{mappingModeText}</span>
-        </div>
-        <div className="schema-preview-comparison-grid">
-          <div className="schema-preview-card raw">
-            <div className="schema-preview-card-title"><FileText size={15} /><span>원본 구조</span></div>
-            <pre className="schema-raw-preview">{sourcePreviewText}</pre>
-          </div>
-          <div className="schema-preview-card output">
-            <div className="schema-preview-card-title"><Table2 size={15} /><span>출력 테이블</span>{hiddenPreviewColumnCount > 0 && <em>+{hiddenPreviewColumnCount}개 컬럼</em>}</div>
-            <div className="hegun-table-scroll">
-              <table className="schema-table schema-output-preview-table" style={{ minWidth: Math.max(680, previewOutputItems.length * 132) }}>
-                <thead><tr>{previewOutputItems.map(({ column, index }) => <th key={`${column.targetName}-${index}`} title={column.targetName}>{column.targetName || `column_${index + 1}`}</th>)}</tr></thead>
-                <tbody>
-                  {previewOutputRows.map((row, rowIndex) => <tr key={`schema-preview-${rowIndex}`}>{previewOutputItems.map(({ column, index }) => <td key={`${column.sourceName}-${index}`} title={row[index] ?? ""}>{row[index] ?? ""}</td>)}</tr>)}
-                  {previewOutputItems.length === 0 && <tr><td>출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </section>
+      <XFlowSchemaTransformEditor
+        columns={schemaColumns}
+        sampleRows={schemaSampleRows}
+        selectedIndex={selectedIndex}
+        sourceFormat={sourceFormat}
+        transformSteps={draft.transform.steps}
+        onSelectedIndexChange={setSelectedSchemaIndex}
+        onColumnsChange={(nextColumns, nextSampleRows = schemaSampleRows) => {
+          patchSchemaColumns(nextColumns, nextSampleRows);
+          const boundedIndex = nextColumns.length > 0 ? Math.min(selectedIndex, nextColumns.length - 1) : 0;
+          setSelectedSchemaIndex(boundedIndex);
+        }}
+        onTransformStepsChange={(steps) => {
+          onDraftChange({
+            transform: {
+              steps,
+              summary: steps.length > 0 ? `스키마 단계 변환 ${steps.length}개 설정` : "스키마 단계 변환 없음",
+            },
+          });
+        }}
+      />
 
       <section className="schema-bottom-bar">
-        <button className="secondary-button" type="button" onClick={onPrev}>이전: 소스 연결</button>
+        <button className="secondary-button" type="button" onClick={onPrev}>이전: 데이터 탐색</button>
         <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
         <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
@@ -3992,11 +4403,13 @@ function RepeatSettings({
   onFrequencyChange,
   onMinuteChange,
   onRetryPolicyChange,
+  onTimezoneChange,
   onTimeCommit,
   onTimeChange,
   retryPolicy,
   selectedDay,
   time,
+  timezone,
 }: {
   customCron: string;
   frequency: RepeatFrequency;
@@ -4007,156 +4420,151 @@ function RepeatSettings({
   onFrequencyChange: (frequency: RepeatFrequency) => void;
   onMinuteChange: (minute: string) => void;
   onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
+  onTimezoneChange: (timezone: string) => void;
   onTimeCommit: () => void;
   onTimeChange: (time: string) => void;
   retryPolicy: RetryPolicyDraft;
   selectedDay: string;
   time: string;
+  timezone: string;
 }) {
   const cronIsValid = isValidCronExpression(customCron);
+  const visibleRepeatFrequencyOptions = frequency === "custom"
+    ? repeatFrequencyOptions
+    : repeatFrequencyOptions.filter((option) => option.value !== "custom");
   const preview = frequency === "hourly"
-    ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정: 2026.07.05 11:${minute}`
+    ? `매시간 ${minute}분에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
     : frequency === "daily"
-      ? `매일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.06 ${time}`
+      ? `매일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`
       : frequency === "custom"
-        ? `Cron ${customCron || DEFAULT_CUSTOM_CRON} 기준으로 실행됩니다.`
-        : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정: 2026.07.09 ${time}`;
+        ? `Cron ${customCron || DEFAULT_CUSTOM_CRON} 기준으로 반복 실행됩니다.`
+        : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <Repeat2 size={18} />
-        <h2>반복 실행 상세 설정</h2>
+    <section className="xflow-review-card schedule-xflow-card">
+      <div className="xflow-review-card-header">
+        <span className="xflow-review-icon schema"><Repeat2 size={17} /></span>
+        <div>
+          <h2>반복 실행 상세 설정</h2>
+          <p>실행 주기, 시간대, 재시도 정책을 한 번에 확인하고 조정합니다.</p>
+        </div>
+        <span className="schedule-xflow-state">{repeatFrequencyLabels[frequency]}</span>
       </div>
-      <div className="form-grid">
-        <label className="field">
-          <span>반복 주기</span>
-          <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
-            {Object.entries(repeatFrequencyLabels).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-        {frequency === "hourly" && (
+      <div className="schedule-config-section">
+        <div className="schedule-xflow-subheader">
+          <Clock3 size={16} />
+          <h3>실행 일정</h3>
+        </div>
+        <div className="schedule-xflow-form-grid">
           <label className="field">
-            <span>실행 분</span>
-            <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
-              {validRepeatMinutes.map((value) => (
-                <option key={value} value={value}>{value}분</option>
+            <span>반복 주기</span>
+            <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+              {visibleRepeatFrequencyOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
-        )}
-        {frequency === "daily" && (
-          <label className="field">
-            <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-          </label>
-        )}
-        {frequency === "weekly" && (
-          <div className="field wide">
-            <span>실행 요일</span>
-            <div className="weekday-group">
-              {validRepeatDays.map((day) => (
-                <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
-                  {day}
-                </button>
-              ))}
+          {frequency === "hourly" && (
+            <label className="field">
+              <span>실행 분</span>
+              <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+                {validRepeatMinutes.map((value) => (
+                  <option key={value} value={value}>{value}분</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {frequency === "daily" && (
+            <label className="field">
+              <span>실행 시간</span>
+              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </label>
+          )}
+          {frequency === "weekly" && (
+            <div className="field wide">
+              <span>실행 요일</span>
+              <div className="weekday-group">
+                {validRepeatDays.map((day) => (
+                  <button className={day === selectedDay ? "weekday active" : "weekday"} key={day} type="button" onClick={() => onDayChange(day)}>
+                    {day}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        {frequency === "weekly" && (
+          )}
+          {frequency === "weekly" && (
+            <label className="field">
+              <span>실행 시간</span>
+              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            </label>
+          )}
+          {frequency === "custom" && (
+            <label className="field wide">
+              <span>Cron 표현식</span>
+              <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+            </label>
+          )}
           <label className="field">
-            <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            <span>시간대</span>
+            <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+              {timezoneOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </label>
-        )}
-        {frequency === "custom" && (
-          <label className="field wide">
-            <span>Cron 표현식</span>
-            <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
-          </label>
-        )}
-        <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
-        <Field label="시작 날짜" value="07/02/2026" icon={<Calendar size={16} />} />
-        <Field label="종료 날짜" value="mm/dd/yyyy" icon={<Calendar size={16} />} muted />
+        </div>
+        <div className="schedule-xflow-preview">
+          <InfoBox title="실행 미리보기" body={preview} />
+          {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
+        </div>
       </div>
-      <InfoBox title="실행 미리보기" body={preview} />
-      {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
-      <label className="policy-check-row">
-        <input type="checkbox" defaultChecked />
-        <span>
-          <strong>과거 데이터 소급 (Backfill)</strong>
-          <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
-        </span>
-      </label>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+      <div className="schedule-xflow-policy-section">
+        <div className="schedule-xflow-subheader">
+          <ShieldCheck size={16} />
+          <h3>재시도 정책</h3>
+        </div>
+        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+      </div>
     </section>
   );
 }
 
-function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
+function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <PlayCircle size={18} />
-        <h2>수동 실행 상세 설정</h2>
+    <section className="xflow-review-card schedule-xflow-card">
+      <div className="xflow-review-card-header">
+        <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+        <div>
+          <h2>직접 실행 정책</h2>
+          <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
+        </div>
+        <span className="schedule-xflow-state muted">스케줄 없음</span>
       </div>
-      <InfoBox title="자동 스케줄 없음" body="이 파이프라인은 저장 후 사용자가 직접 실행할 때만 동작합니다. 테스트 실행이나 필요할 때만 데이터를 적재하는 작업에 적합합니다." />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
-          <span>
-            <strong>실패 시 재시도 활성화</strong>
-            <small>수동 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
-          </span>
-        </label>
+      <div className="xflow-review-validation schedule-xflow-validation">
+        <div className="ready">
+          <Check size={14} />
+          <span>자동 스케줄</span>
+          <strong>없음</strong>
+        </div>
+        <div className="ready">
+          <Check size={14} />
+          <span>실행 방식</span>
+          <strong>수동</strong>
+        </div>
+        <div className="needs-review">
+          <Clock3 size={14} />
+          <span>다음 실행</span>
+          <strong>미생성</strong>
+        </div>
       </div>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
-      <InfoBox title="자동 실행 예정 없음" body="저장 후 필요할 때 직접 실행할 수 있으며, 다음 실행 일시는 생성되지 않습니다." />
-    </section>
-  );
-}
-
-function OnceSettings({
-  dateTime,
-  onDateTimeChange,
-  onDateTimeCommit,
-  onRetryPolicyChange,
-  retryPolicy,
-}: {
-  dateTime: string;
-  onDateTimeChange: (dateTime: string) => void;
-  onDateTimeCommit: () => void;
-  onRetryPolicyChange: (policy: RetryPolicyDraft) => void;
-  retryPolicy: RetryPolicyDraft;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <Clock3 size={18} />
-        <h2>1회 실행 상세 설정</h2>
+      <div className="schedule-xflow-policy-section">
+        <div className="schedule-xflow-subheader">
+          <ShieldCheck size={16} />
+          <h3>재시도 정책</h3>
+        </div>
+        <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
+        <InfoBox title="다음 실행 없음" body="스케줄을 저장하지 않으므로 다음 예약 일시는 생성되지 않습니다. 필요할 때 Job 목록에서 즉시 실행합니다." />
       </div>
-      <div className="form-grid">
-        <label className="field">
-          <span>실행 예정 일시</span>
-          <input className="input control-input" min="2026-07-04T00:00" type="datetime-local" value={normalizeDateTimeLocal(dateTime)} onBlur={onDateTimeCommit} onChange={(event) => onDateTimeChange(event.target.value)} onInput={(event) => onDateTimeChange(event.currentTarget.value)} />
-        </label>
-        <Field label="시간대" value="Asia/Seoul (GMT+09:00)" icon={<Clock3 size={16} />} />
-      </div>
-      <InfoBox title="실행 미리보기" body={`${formatDateTimeLocalLabel(dateTime)}에 한 번 실행됩니다. 실행 완료 후 반복되지 않습니다.`} />
-      <div className="policy-section">
-        <h3>실행 정책</h3>
-        <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
-          <span>
-            <strong>실패 시 재시도</strong>
-            <small>예약 실행 실패 시 재시도 정책을 적용합니다.</small>
-          </span>
-        </label>
-      </div>
-      <RetryPolicy value={retryPolicy} onChange={onRetryPolicyChange} />
     </section>
   );
 }
@@ -4166,7 +4574,6 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4175,198 +4582,315 @@ export function TargetPage({
   onSave: () => void;
 }) {
   const initialTarget = getTargetDraftValues(draft);
-  const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(initialTarget.targetLayer);
+  const draftTarget = (draft as DraftPipelineWithSlices).target;
+  const targetLayer = initialTarget.targetLayer;
+  const inferredTarget = useMemo(
+    () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
+    [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
+  );
+  const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
-  const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
-  const [targetDescription, setTargetDescription] = useState(initialTarget.targetDescription);
-  const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
-  const [targetPartition, setTargetPartition] = useState(initialTarget.targetPartition);
-  const [targetTagsText, setTargetTagsText] = useState(initialTarget.targetTags.join(" "));
-  const [ragEnabled, setRagEnabled] = useState(initialTarget.rag);
-  const applyTargetDraft = (patch: Partial<{
-    partition: string;
-    tagsText: string;
-    targetDescription: string;
-    owner: string;
-    rag: boolean;
-    targetDataset: string;
-    targetFormat: string;
-    targetLayer: TargetLayer;
-  }> = {}) => {
-    const nextTargetDataset = getDisplayText(patch.targetDataset ?? targetDataset, DEFAULT_TARGET_DATASET);
-    const nextTargetFormat = getKnownOption(patch.targetFormat ?? targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-    const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
-    const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
-    const nextRag = patch.rag ?? ragEnabled;
-    const nextTargetDescription = getDisplayText(patch.targetDescription ?? targetDescription, DEFAULT_TARGET_DESCRIPTION);
-    const nextPartition = getDisplayText(patch.partition ?? targetPartition, DEFAULT_TARGET_PARTITION);
-    const nextTags = parseTargetTags(patch.tagsText ?? targetTagsText, nextTargetDataset, nextRag);
-    const nextStoragePath = buildStoragePath(nextTargetDataset, nextTargetLayer);
+  const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "asklake");
+  const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
+  const [targetDescription, setTargetDescription] = useState(initialTarget.description);
+  const [targetFormat, setTargetFormat] = useState<TargetFileFormat>(normalizeTargetFileFormat(initialTarget.targetFormat));
+  const [targetOwner, setTargetOwner] = useState(draftTarget?.owner ?? initialTarget.owner);
+  const [targetManager, setTargetManager] = useState(draftTarget?.manager ?? initialTarget.owner);
+  const [targetTags, setTargetTags] = useState<string[]>(initialTarget.tags);
+  const [customTag, setCustomTag] = useState("");
+  const [partitionColumns, setPartitionColumns] = useState<string[]>(draftTarget?.partitionColumns ?? initialTarget.partitionColumns);
+  const [indexColumns] = useState<string[]>(draftTarget?.indexColumns ?? []);
+  const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
+  const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
 
+  const shouldUseSampleTargetSchema = useMemo(
+    () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
+    [schemaRules],
+  );
+  const activeSchemaRules = shouldUseSampleTargetSchema ? sampleTargetSchema.schemaRules : schemaRules;
+  const activePreviewRows = shouldUseSampleTargetSchema ? sampleTargetSchema.previewRows : inferredTarget.previewRows;
+  const activeJsonParseFailed = shouldUseSampleTargetSchema ? sampleTargetSchema.jsonParseFailed : inferredTarget.jsonParseFailed;
+  const orderedSchemaRules = useMemo(() => [...activeSchemaRules], [activeSchemaRules]);
+  const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
+  const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
+  const filteredPartitionColumns = partitionColumns
+    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use))
+    .slice(0, 1);
+  const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
+    const previewRow: Record<string, string> = {};
+    usedSchemaRules.forEach((rule) => {
+      previewRow[rule.name] = row[rule.name] ?? "";
+    });
+    return previewRow;
+  }), [activePreviewRows, usedSchemaRules]);
+  const lineage = {
+    sourceName: draft.source.sourceLabel || "Source",
+    targetDatasetName: targetDataset || "Target",
+    targetStoragePath,
+    transformStepCount: draft.transform.steps.length,
+  };
+  const targetTableName = targetDataset.trim();
+  const buildConfig = (testRun: TargetTestRun = lastTestRun): TargetSavedConfig => ({
+    metadata: {
+      databaseName,
+      datasetName: targetDataset,
+      description: targetDescription,
+      fileFormat: targetFormat,
+      manager: targetManager,
+      owner: targetOwner,
+      storagePath: targetStoragePath,
+      targetTableName,
+    },
+    tags: targetTags,
+    partitionColumns: filteredPartitionColumns,
+    indexColumns,
+    schemaRules: activeSchemaRules,
+    previewRows,
+    lineage,
+    lastTestRun: testRun,
+  });
+
+  const persistDraft = (config: TargetSavedConfig) => {
     onDraftChange({
-      jobName: buildJobName(nextTargetDataset),
-      owner: nextOwner,
+      jobName: buildJobName(config.metadata.datasetName),
       compression: "Snappy",
-      partition: nextPartition,
-      storagePath: nextStoragePath,
+      partition: config.partitionColumns.join("/"),
+      storagePath: config.metadata.storagePath,
       storageType: "S3",
-      targetDataset: nextTargetDataset,
-      targetDescription: nextTargetDescription,
-      targetFormat: nextTargetFormat,
-      targetLayer: nextTargetLayer,
-      targetTags: nextTags,
-      rag: nextRag,
+      target: {
+        databaseName: config.metadata.databaseName,
+        datasetName: config.metadata.datasetName,
+        description: config.metadata.description,
+        format: config.metadata.fileFormat,
+        indexColumns: config.indexColumns,
+        lastTestRun: config.lastTestRun,
+        manager: config.metadata.manager,
+        owner: config.metadata.owner,
+        partitionColumns: config.partitionColumns,
+        rag: false,
+        schemaRules: config.schemaRules,
+        storagePath: config.metadata.storagePath,
+        tableName: config.metadata.targetTableName,
+        targetTableName: config.metadata.targetTableName,
+        tags: config.tags,
+        testStatus: config.lastTestRun.status === "success" ? "success" : config.lastTestRun.status === "failed" ? "failed" : "idle",
+      },
+      targetDataset: config.metadata.datasetName,
+      targetFormat: config.metadata.fileFormat,
+      targetLayer,
+      rag: false,
     });
   };
-  const selectLayer = (layer: TargetLayer) => {
-    setSelectedLayer(layer);
-    applyTargetDraft({ targetLayer: layer });
+
+  const updateSchemaRule = (sourceName: string, patch: Partial<TargetSchemaRule>) => {
+    setSchemaRules((currentRules) => {
+      const nextRules = currentRules.map((rule) => {
+        if (rule.sourceName !== sourceName) return rule;
+        const nextRule = { ...rule, ...patch };
+        if (patch.type) {
+          nextRule.partitionable = !nextRule.raw && patch.type !== "json";
+        }
+        return nextRule;
+      });
+      return nextRules;
+    });
   };
-  const toggleRag = () => {
-    const next = !ragEnabled;
-    setRagEnabled(next);
-    const nextTags = parseTargetTags(targetTagsText, targetDataset, next);
-    setTargetTagsText(nextTags.join(" "));
-    applyTargetDraft({ rag: next, tagsText: nextTags.join(" ") });
+
+  const toggleTag = (tag: string) => {
+    setTargetTags((currentTags) => currentTags.includes(tag)
+      ? currentTags.filter((currentTag) => currentTag !== tag)
+      : [...currentTags, tag]);
   };
-  const goNext = () => {
-    applyTargetDraft();
+
+  const addCustomTag = () => {
+    const nextTag = customTag.trim();
+    if (!nextTag) return;
+    setTargetTags((currentTags) => currentTags.includes(nextTag) ? currentTags : [...currentTags, nextTag]);
+    setCustomTag("");
+  };
+
+  const togglePartitionColumn = (columnName: string) => {
+    setPartitionColumns([columnName]);
+  };
+
+  const saveTargetConfig = () => {
+    const config = buildConfig();
+    const errors = validateTargetConfig(config, activeJsonParseFailed);
+    setValidationErrors(errors);
+
+    if (errors.length > 0) {
+      return false;
+    }
+
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(TARGET_CONFIG_STORAGE_KEY, JSON.stringify(config, null, 2));
+    }
+    persistDraft(config);
+    return true;
+  };
+
+  const handleNext = () => {
+    if (!saveTargetConfig()) return;
     onNext();
   };
 
+  const renderPartitionOption = (rule: TargetSchemaRule) => {
+    const selected = filteredPartitionColumns[0] === rule.name;
+    const disabled = !rule.use;
+    return (
+      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
+        <input checked={selected} disabled={disabled} name="target-partition-column" type="radio" onChange={() => togglePartitionColumn(rule.name)} />
+        <span className="target-partition-name">{rule.name}</span>
+        <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
+      </label>
+    );
+  };
+
   return (
-    <CreationFlowLayout
-      side={<CreationSummaryPanel flow="target" title="생성 요약" onPrev={onPrev} onNext={goNext} onSave={() => {
-        applyTargetDraft();
-        onSave();
-      }} />}
-    >
-        <PageTitle title="타겟 설정" description="가공된 데이터가 저장될 위치와 포맷, RAG 인덱싱 여부를 설정합니다." />
-        <section className="panel">
-          <div className="panel-header">
-            <HardDrive size={18} />
-            <h2>기본 저장소 설정</h2>
+    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
+      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
+      {validationErrors.length > 0 ? (
+        <div className="target-validation-summary" role="alert">
+          {validationErrors.map((error) => <span key={error}>{error}</span>)}
+        </div>
+      ) : null}
+      <div className="xflow-review-stack target-xflow-stack">
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon"><FileText size={17} /></span>
+            <div>
+              <h2>Basic Information</h2>
+              <p>타겟 데이터셋의 이름과 소유 정보를 설정합니다.</p>
+            </div>
           </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>타겟 데이터셋 이름</span>
-              <input className="input control-input" value={targetDataset} onChange={(event) => {
-                const nextTargetDataset = event.target.value;
-                setTargetDataset(nextTargetDataset);
-                applyTargetDraft({ targetDataset: nextTargetDataset });
-              }} />
+          <div className="target-xflow-form-grid basic">
+            <label className="field wide">
+              <span>데이터셋명</span>
+              <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
             </label>
             <label className="field">
-              <span>소유자</span>
-              <input className="input control-input" value={targetOwner} onChange={(event) => {
-                const nextOwner = event.target.value;
-                setTargetOwner(nextOwner);
-                applyTargetDraft({ owner: nextOwner });
-              }} />
+              <span>오너</span>
+              <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+            </label>
+            <label className="field">
+              <span>담당자</span>
+              <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </label>
             <label className="field wide">
               <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => {
-                const nextDescription = event.target.value;
-                setTargetDescription(nextDescription);
-                applyTargetDraft({ targetDescription: nextDescription });
-              }} />
+              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
             </label>
-          </div>
-          <div className="tag-row">
-            {parseTargetTags(targetTagsText, targetDataset, ragEnabled).map((tag) => (
-              <span className="tag" key={tag}>{tag}</span>
-            ))}
-          </div>
-          <label className="field wide">
-            <span>태그</span>
-            <input
-              className="input control-input"
-              placeholder="#customer #review #gold"
-              value={targetTagsText}
-              onBlur={() => {
-                const normalizedTags = parseTargetTags(targetTagsText, targetDataset, ragEnabled);
-                setTargetTagsText(normalizedTags.join(" "));
-                applyTargetDraft({ tagsText: normalizedTags.join(" ") });
-              }}
-              onChange={(event) => {
-                const nextTagsText = event.target.value;
-                setTargetTagsText(nextTagsText);
-                applyTargetDraft({ tagsText: nextTagsText });
-              }}
-            />
-          </label>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>저장소 및 포맷 설정</h2>
-          </div>
-          <div className="format-grid">
-            {TARGET_LAYER_OPTIONS.map((layer) => (
-              <button className={layer === selectedLayer ? "format-card active" : "format-card"} key={layer} type="button" onClick={() => selectLayer(layer)}>
-                {displayTargetLayer(layer)}
-              </button>
-            ))}
-          </div>
-          <div className="form-grid">
-            <Field label="저장소 유형" value="S3" />
-            <label className="field">
-              <span>파일 포맷</span>
-              <select className="input control-input" value={targetFormat} onChange={(event) => {
-                const nextTargetFormat = getKnownOption(event.target.value, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-                setTargetFormat(nextTargetFormat);
-                applyTargetDraft({ targetFormat: nextTargetFormat });
-              }}>
-                {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>파티션</span>
-              <input className="input control-input" value={targetPartition} onChange={(event) => {
-                const nextPartition = event.target.value;
-                setTargetPartition(nextPartition);
-                applyTargetDraft({ partition: nextPartition });
-              }} />
-            </label>
-            <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={buildStoragePath(targetDataset, selectedLayer)} wide />
-          </div>
-          <InfoBox title="저장소 선택 범위" body="이번 데모에서는 local MinIO/S3 출력 경로를 고정으로 사용합니다. 외부 DB/웨어하우스 browse는 아직 지원하지 않으므로 클릭 가능한 가짜 선택 버튼을 두지 않습니다." />
-          <div className="target-status-grid">
-            <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
-            <StatusTile label="경로 검증" value="실행 시 Spark 쓰기 결과로 확인" status="대기" />
           </div>
         </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Search size={18} />
-            <h2>RAG 설정</h2>
+
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+            <div>
+              <h2>Destination Settings</h2>
+              <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 설정합니다.</p>
+            </div>
           </div>
-          <div className="form-grid">
-            <label className="field">
-              <span>RAG 인덱싱</span>
-              <button className={ragEnabled ? "input control-toggle active" : "input control-toggle"} type="button" onClick={toggleRag}>
-                {ragEnabled ? "활성화" : "비활성화"}
-              </button>
+          <div className="target-xflow-form-grid destination">
+            <label className="field target-db-field">
+              <span>DB 선택</span>
+              <DatabaseField value={databaseName} onChange={setDatabaseName} />
             </label>
-            <Field label="임베딩 모델" value="text-embedding-3-small" />
-            <Field label="청킹 전략" value="Recursive Character" />
-            <Field label="청크 크기" value="1,000 Tokens" />
-            <Field label="오버랩" value="200 Tokens" />
-            <Field label="인덱스 생성 예정" value="파이프라인 생성 후 자동 큐잉" />
+            <label className="field target-format-field">
+              <span>포맷</span>
+              <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
+                <button
+                  aria-expanded={formatOptionsOpen}
+                  className="target-format-trigger"
+                  type="button"
+                  onClick={() => setFormatOptionsOpen((open) => !open)}
+                >
+                  <span>{targetFormat}</span>
+                  {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                {formatOptionsOpen ? (
+                  <div className="target-format-menu">
+                    {TARGET_FORMAT_OPTIONS.map((format) => (
+                      <button
+                        aria-pressed={targetFormat === format}
+                        className={targetFormat === format ? "target-format-option active" : "target-format-option"}
+                        key={format}
+                        type="button"
+                        onClick={() => {
+                          setTargetFormat(format);
+                          setFormatOptionsOpen(false);
+                        }}
+                      >
+                        {format}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </label>
+            <label className="field wide target-storage-field">
+              <span>저장경로</span>
+              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+            </label>
           </div>
         </section>
+        <section className="xflow-review-card target-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><SlidersHorizontal size={17} /></span>
+            <div>
+              <h2>Partition & Tags</h2>
+              <p>검색, 저장, 운영 기준으로 사용할 태그와 파티션을 설정합니다.</p>
+            </div>
+          </div>
+          <div className="target-xflow-split">
+            <div className="target-xflow-subsection">
+              <div className="target-xflow-subheader">
+                <BookOpen size={16} />
+                <h3>Tags</h3>
+              </div>
+              {targetTags.length > 0 ? (
+                <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+                  {targetTags.map((tag) => (
+                    <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="target-inline-controls">
+                <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCustomTag();
+                  }
+                }} />
+                <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
+              </div>
+            </div>
+            <div className="target-xflow-subsection">
+              <div className="target-xflow-subheader">
+                <SlidersHorizontal size={16} />
+                <h3>Partition</h3>
+              </div>
+              <div className="target-partition-settings">
+                <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+                  {partitionCandidates.map(renderPartitionOption)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </CreationFlowLayout>
   );
 }
-
 export function PermissionPage({
   draft,
   onDraftChange,
   onNext,
   onPrev,
-  onSave,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
@@ -4413,33 +4937,50 @@ export function PermissionPage({
     applyPermissionDraft();
     onNext();
   };
+  const selectedRoleCount = PERMISSION_ROLES.filter((role) => Boolean(roleChecks[role.name])).length;
+  const governanceChecks = [
+    ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
+    ["민감 데이터", "review_text 포함", "검토 필요"],
+    ["승인자", dataOwner, approvalStatus === "승인 완료" ? "준비됨" : "대기"],
+  ];
 
   return (
     <CreationFlowLayout
       variant="permission"
-      side={(
-        <CreationValidationPanel
-          className="permission-aside"
-          title="거버넌스 체크"
-          actions={<CreationPanelActions withDivider onPrev={onPrev} onSave={() => {
-            applyPermissionDraft();
-            onSave();
-          }} onNext={goNext} />}
-        >
-          <StatusTile label="공유 범위" value={visibility} status={visibility === "외부 공유" ? "검토 필요" : "안전" } />
-          <StatusTile label="민감 데이터" value="review_text 포함" status="검토 필요" />
-          <StatusTile label="승인 메타데이터" value={dataOwner} status={approvalStatus === "오너 승인 필요" ? "검토 필요" : "저장 예정"} />
-        </CreationValidationPanel>
-      )}
+      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." icon={<ShieldCheck size={24} />} />
-        <section className="panel permission-share-panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>공유 대상</h2>
+      <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." />
+      <div className="xflow-review-stack permission-xflow-stack">
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+            <div>
+              <h2>Governance Check</h2>
+              <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
+            </div>
+          </div>
+          <div className="xflow-review-validation permission-xflow-validation">
+            {governanceChecks.map(([label, value, status]) => (
+              <div className={status === "안전" || status === "준비됨" ? "ready" : "needs-review"} key={label}>
+                <Check size={15} />
+                <span>{label}</span>
+                <strong>{value} · {status}</strong>
+              </div>
+            ))}
+          </div>
+          <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
+        </section>
+
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon"><SlidersHorizontal size={17} /></span>
+            <div>
+              <h2>Access Policy</h2>
+              <p>조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다.</p>
+            </div>
           </div>
           <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="form-grid">
+          <div className="target-xflow-form-grid permission-xflow-form-grid">
             <label className="field">
               <span>권한 템플릿</span>
               <select className="input control-input" value={permissionTemplate} onChange={(event) => {
@@ -4470,7 +5011,7 @@ export function PermissionPage({
               }} />
             </label>
             <label className="field">
-              <span>승인 메타데이터</span>
+              <span>승인 상태</span>
               <select className="input control-input" value={approvalStatus} onChange={(event) => {
                 const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
                 setApprovalStatus(nextApprovalStatus);
@@ -4481,26 +5022,40 @@ export function PermissionPage({
             </label>
           </div>
         </section>
-        <section className="panel">
-          <h2 className="panel-title">세부 권한</h2>
-          <div className="permission-list">
-            {PERMISSION_ROLES.map((role) => (
-              <label className={role.name === permissionTemplate ? "permission-row detailed active" : "permission-row detailed"} key={role.name}>
-                <input type="checkbox" checked={roleChecks[role.name]} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
-                <span>
-                  <strong>{role.name}</strong>
-                  <small>{role.note}</small>
-                </span>
-                <div className="permission-chip-row">
-                  {PERMISSION_ACCESS_ITEMS.map((item) => (
-                    <em className={roleChecks[role.name] && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
-                  ))}
-                </div>
-              </label>
-            ))}
+
+        <section className="xflow-review-card permission-xflow-card">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon schema"><CircleUser size={17} /></span>
+            <div>
+              <h2>Role Grants</h2>
+              <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
+            </div>
           </div>
-          <InfoBox title="권한 metadata 범위" body="현재 화면은 create payload에 저장할 권한 metadata를 정리합니다. 실제 인증/인가 enforcement는 후속 Governance API 연동 범위입니다." />
+          <div className="permission-xflow-role-list">
+            {PERMISSION_ROLES.map((role) => {
+              const selected = Boolean(roleChecks[role.name]);
+              const recommended = role.name === permissionTemplate;
+              return (
+                <label className={["permission-xflow-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
+                  <input type="checkbox" checked={selected} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
+                  <span className="permission-xflow-role-body">
+                    <span className="permission-xflow-role-title">
+                      <strong>{role.name}</strong>
+                      {recommended ? <em>Template</em> : null}
+                    </span>
+                    <small>{role.note}</small>
+                  </span>
+                  <div className="permission-chip-row permission-xflow-access-row">
+                    {PERMISSION_ACCESS_ITEMS.map((item) => (
+                      <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
+                    ))}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
         </section>
+      </div>
     </CreationFlowLayout>
   );
 }
@@ -4510,7 +5065,6 @@ export function ReviewPage({
   draft,
   onCreate,
   onEdit,
-  onSave,
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
@@ -4520,36 +5074,57 @@ export function ReviewPage({
 }) {
   const request = toCreatePipelineRequest(draft);
   const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
-  const schemaRows = draft.transform.outputColumns.length > 0
+  const schemaRows: ReviewSchemaRow[] = draft.transform.outputColumns.length > 0
     ? draft.transform.outputColumns.map(([name, type]) => {
         const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return [
-          name,
+        return {
+          columnName: name,
+          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
+          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
           type,
-          sourceColumn ? (sourceColumn.nullable ? "예" : "아니오") : "생성",
-          sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
-        ];
+        };
       })
-    : includedReviewColumns.map((column) => [
-        column.targetName,
-        column.type,
-        column.nullable ? "예" : "아니오",
-        column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
-      ]);
+    : includedReviewColumns.map((column) => ({
+        columnName: column.targetName,
+        nullable: column.nullable ? "예" : "아니요",
+        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+        type: column.type,
+      }));
   const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const reviewSchemaSummary = publicSchemaSummary(request.schemaSummary);
-  const scheduleEditFlow = getScheduleFlowFromLabel(request.scheduleLabel);
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
-  const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
+  const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
+  const basicInformationRows = [
+    ["Job ID", request.id],
+    ["Job Name", targetReview.jobName],
+    ["Source", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`],
+    ["Target Dataset", targetReview.targetDataset],
+    ["Description", targetReview.description],
+  ];
+  const destinationRows = [
+    ["Output Path", targetReview.storagePath],
+    ["Database", targetDatabaseName],
+    ["Table Name", targetReview.tableName],
+    ["Format", targetReview.targetFormat],
+    ["Layer", targetReview.targetLayer],
+    ["Partition", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
+  ];
+  const permissionRows = [
+    ["Permission Template", permissionReview.permissionTemplate],
+    ["Visibility", permissionReview.visibility],
+    ["Approval", permissionReview.approvalStatus],
+    ["Owner", permissionReview.owner],
+    ["Summary", permissionReview.permissionSummary],
+  ];
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "실제 연결 확인" : "연결 테스트 필요"],
     ["스키마", includedReviewColumns.length > 0 ? "추론 결과 있음" : "추론 필요"],
-    ["처리/품질", request.ruleSummary ? "설정값 저장" : "후속 검증 필요"],
-    ["스케줄", request.scheduleLabel ? "설정값 저장" : "확인 필요"],
-    ["실패 처리 정책", request.retryPolicySummary ? "설정값 저장" : "확인 필요"],
+    ["처리 규칙", request.ruleSummary ? "설정값 저장" : "규칙 없음"],
+    ["스케줄", request.scheduleLabel ? "예약 메타데이터 저장" : "확인 필요"],
+    ["실패 재시도", request.retryPolicySummary ? "정책 메타데이터 저장" : "기본 정책"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "메타데이터 저장" : "확인 필요"],
   ];
+  const readyValidationStatuses = new Set(["실제 연결 확인", "추론 결과 있음", "설정값 저장", "규칙 없음", "예약 메타데이터 저장", "정책 메타데이터 저장", "기본 정책", "메타데이터 저장"]);
   const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
   const createDisabled = createPending || !canCreate;
   const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
@@ -4557,100 +5132,136 @@ export function ReviewPage({
   return (
     <CreationFlowLayout
       variant="review"
-      side={(
-        <CreationValidationPanel
-          title="최종 유효성 검사"
-          actions={<CreationPanelActions withDivider nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onSave={onSave} onNext={onCreate} />}
-        >
-          {validationRows.map(([item, status]) => (
-            <div className="validation-row" key={item}>
-              <Check size={16} />
-              <span>{item}</span>
-              <strong>{status}</strong>
-            </div>
-          ))}
-          <InfoBox title="안내사항" body="권한과 타겟 설정은 이번 생성 요청의 metadata로 저장됩니다. 실제 승인/인가 적용은 별도 Governance 연동 범위입니다." />
-        </CreationValidationPanel>
-      )}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
         <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
-        <div className="review-card-grid">
-          {[
-            ["기본 정보", `${targetReview.targetDataset} · ${targetReview.owner}`, "target"],
-            ["소스", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`, "source"],
-            ["스키마", reviewSchemaSummary, "schema"],
-            ["처리 규칙", request.ruleSummary, "rules"],
-            ["스케줄", request.scheduleLabel, scheduleEditFlow],
-            ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${targetReview.targetPartition} · ${ragReviewLabel}`, "target"],
-          ].map(([label, value, flow]) => (
-            <article className="review-mini-card" key={label}>
-              <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
-              <strong>{label}</strong>
-              <span>{value}</span>
-              <button type="button" onClick={() => onEdit(flow as FlowId)}>수정</button>
-            </article>
-          ))}
-        </div>
-        <section className="panel">
-          <div className="panel-header">
-            <ShieldCheck size={18} />
-            <h2>권한 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
-          </div>
-          <div className="form-grid">
-            <Field label="권한 템플릿" value={permissionReview.permissionTemplate} />
-            <Field label="공개 범위" value={permissionReview.visibility} />
-            <Field label="승인 상태" value={permissionReview.approvalStatus} />
-            <Field label="데이터 오너" value={permissionReview.owner} />
-            <Field label="권한 요약" value={permissionReview.permissionSummary} wide />
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <HardDrive size={18} />
-            <h2>타겟 draft 상세</h2>
-            <span className="panel-note">검토 카드 반영값</span>
-          </div>
-          <div className="form-grid">
-            <Field label="생성될 Job 이름" value={buildJobName(targetReview.targetDataset)} />
-            <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
-            <Field label="타겟 Layer" value={targetReview.targetLayer} />
-            <Field label="타겟 Format" value={targetReview.targetFormat} />
-            <Field label="설명" value={targetReview.targetDescription} wide />
-            <Field label="태그" value={targetReview.targetTags.join(" ")} wide />
-            <Field label="파티션" value={targetReview.targetPartition} />
-            <Field label="저장 경로" value={targetReview.targetStoragePath} wide />
-            <Field label="RAG 인덱싱" value={ragReviewLabel} />
-            <Field label="데이터 오너" value={targetReview.owner} />
-          </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header">
-            <Database size={18} />
-            <h2>출력 스키마 미리보기</h2>
-            <span className="panel-note">{reviewSchemaSummary}</span>
-          </div>
-          <table className="schema-table">
-            <thead>
-              <tr>
-                <th>컬럼명</th>
-                <th>타입</th>
-                <th>Null 허용</th>
-                <th>변환식</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schemaRows.map((row, rowIndex) => (
-                <tr key={`${row[0]}-${rowIndex}`}>
-                  {row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}
-                </tr>
+        <div className="xflow-review-stack">
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><FileText size={17} /></span>
+              <div>
+                <h2>Basic Information</h2>
+                <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv">
+              {basicInformationRows.map(([label, value]) => (
+                <div className={label === "Description" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
               ))}
-              {schemaRows.length === 0 && <tr><td colSpan={4}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td></tr>}
-            </tbody>
-          </table>
-        </section>
+            </dl>
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon schema"><Database size={17} /></span>
+              <div>
+                <h2>Output Schema</h2>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
+            </div>
+            <ReviewSchemaTable rows={schemaRows} />
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+              <div>
+                <h2>Destination Settings</h2>
+                <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv destination">
+              {destinationRows.map(([label, value]) => (
+                <div className={label === "Output Path" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+              <div>
+                <h2>Permission & Validation</h2>
+                <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
+              </div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("permission")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv permission">
+              {permissionRows.map(([label, value]) => (
+                <div className={label === "Summary" ? "wide" : undefined} key={label}>
+                  <dt>{label}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="xflow-review-validation">
+              {validationRows.map(([item, status]) => (
+                <div className={readyValidationStatuses.has(status) ? "ready" : "needs-review"} key={item}>
+                  <Check size={15} />
+                  <span>{item}</span>
+                  <strong>{status}</strong>
+                </div>
+              ))}
+            </div>
+            <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
+          </section>
+        </div>
     </CreationFlowLayout>
+  );
+}
+
+function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
+  const columns = useMemo<ColumnDef<ReviewSchemaRow>[]>(
+    () => [
+      { accessorKey: "columnName", cell: (info) => info.getValue<string>(), header: "컬럼명" },
+      { accessorKey: "type", cell: (info) => info.getValue<string>(), header: "타입" },
+      { accessorKey: "nullable", cell: (info) => info.getValue<string>(), header: "Null 허용" },
+      { accessorKey: "transform", cell: (info) => info.getValue<string>(), header: "변환식" },
+    ],
+    [],
+  );
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <table className="schema-table review-schema-table">
+      <thead>
+        {table.getHeaderGroups().map((headerGroup) => (
+          <tr key={headerGroup.id}>
+            {headerGroup.headers.map((header) => (
+              <th key={header.id}>
+                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell) => (
+              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+            ))}
+          </tr>
+        ))}
+        {rows.length === 0 && (
+          <tr>
+            <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
+          </tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 
@@ -4675,5 +5286,13 @@ function sourceLabelFromFields(sourceType: string, fields: Array<[string, string
     if (bucket) return bucket;
   }
 
-  return fields.find(([fieldLabel]) => ["Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
+  return fields.find(([fieldLabel]) => ["Source Dataset", "SQL Run ID", "Bucket / Stage Name", "Endpoint / Host", "Path", "Endpoint URL", "Broker / Endpoint", "DATASET OR TABLE SELECTOR"].includes(fieldLabel))?.[1] ?? sourceType;
+}
+
+function sourceConfigValue(fields: Array<[string, string]>, label: string) {
+  return fields.find(([fieldLabel]) => fieldLabel === label)?.[1]?.trim() ?? "";
+}
+
+function hasSqlResultPreviewConfig(fields: Array<[string, string]>) {
+  return Boolean(sourceConfigValue(fields, "Source Dataset") && sourceConfigValue(fields, "SQL Run ID") && sourceConfigValue(fields, "Query"));
 }

@@ -10,3 +10,34 @@
 @import "./styles/dashboard-runtime.css";
 @import "./styles/etl.css";
 @import "./styles/responsive.css";
+
+.page-title h1,
+.jobs-page-header .page-title h1,
+.sql-page-header h1,
+.dashboard-header h1 {
+  color: #0f172a;
+  font-size: var(--page-title-font-size);
+  font-weight: var(--page-title-font-weight);
+  letter-spacing: 0;
+  line-height: var(--page-title-line-height);
+}
+
+.page-title p,
+.jobs-page-header .page-title p,
+.sql-page-header p,
+.dashboard-header p {
+  max-width: 720px;
+  color: #475569;
+  font-size: var(--page-title-description-size);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: var(--page-title-description-line-height);
+}
+
+.page-body.jobs-body > .jobs-landing,
+.page-body.jobs-body > .jobs-table-demo-page {
+  width: 100%;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}

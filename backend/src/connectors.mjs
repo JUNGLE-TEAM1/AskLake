@@ -1,5 +1,5 @@
-import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { spawnSync } from "node:child_process";
+import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,24 +10,56 @@ const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const scriptsDir = path.join(backendDir, "scripts");
 const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
 
+const objectStorageSourceTypes = new Set(["File / S3", "File / S3 CSV", "File / S3 JSON", "File / S3 JSONL", "File / S3 TSV", "File / S3 TXT"]);
+const dataLakeSourceTypes = new Set(["Data Lake", "Data Lake Parquet"]);
+const kafkaSourceTypes = new Set(["Stream / Kafka", "Kafka JSON"]);
+
 export async function testSourceConnector(sourceType, fields) {
-  if (sourceType === "File / S3") return testObjectStorageSource(fields);
+  if (objectStorageSourceTypes.has(sourceType)) return testObjectStorageSource(fields, sourceType);
   if (sourceType === "REST API") return testRestSource(fields);
   if (sourceType === "Database" || sourceType === "PostgreSQL") return testPostgresSource(fields);
   if (sourceType === "MongoDB") return testMongoSource(fields);
-  if (sourceType === "Data Lake") return testDataLakeSourceStable(fields);
-  if (sourceType === "Stream / Kafka") return testKafkaSource(fields);
+  if (dataLakeSourceTypes.has(sourceType)) return testDataLakeSourceStable(fields, sourceType);
+  if (kafkaSourceTypes.has(sourceType)) return testKafkaSource(fields, sourceType);
   throw apiError("UNSUPPORTED_SOURCE", `${sourceType}는 지원하지 않는 소스 커넥터입니다.`, 400);
 }
 
-export async function testObjectStorageSource(fields) {
-  const endpoint = fieldValue(fields, "Endpoint URL") || process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000";
-  const region = fieldValue(fields, "Region") || process.env.MINIO_REGION || "us-east-1";
-  const bucket = fieldValue(fields, "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw";
-  const prefix = normalizePrefix(fieldValue(fields, "Path / Prefix") || process.env.MINIO_PREFIX || "nyc_taxi/csv/");
-  const accessKeyId = fieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || "";
-  const secretAccessKey = fieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || "";
+export async function listSourceAssets(sourceType, fields, requestedPrefix) {
+  if (!objectStorageSourceTypes.has(sourceType) && !dataLakeSourceTypes.has(sourceType)) {
+    throw apiError("UNSUPPORTED_SOURCE_ASSETS", `${sourceType} source asset listing is not supported.`, 400);
+  }
+  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
+  const region = fieldValue(fields, "Region") || "us-east-1";
+  const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
+  const bucket = fieldValue(fields, "Bucket / Stage Name") || parsedLakePath?.bucket;
+  if (!bucket) throw apiError("SOURCE_FIELD_REQUIRED", "MinIO/S3 bucket name is required.", 400);
+  const prefix = sourceAssetPrefix(sourceType, fields, requestedPrefix);
+  const limit = sourceAssetListLimit();
+  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
+  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
+  let items = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
+  if (!items) {
+    const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+    items = await listDirectObjects(client, bucket, prefix, limit);
+  }
+  return {
+    assets: toSourceAssets(items, limit),
+    count: items.length,
+    limit,
+    prefix,
+  };
+}
+
+export async function testObjectStorageSource(fields, sourceType = "File / S3") {
+  const endpoint = requiredSourceField(fields, "Endpoint URL", "MinIO/S3 endpoint URL is required.");
+  const region = fieldValue(fields, "Region") || "us-east-1";
+  const bucket = requiredSourceField(fields, "Bucket / Stage Name", "MinIO/S3 bucket name is required.");
+  const prefix = normalizePrefix(fieldValue(fields, "Path / Prefix"));
+  const accessKeyId = requiredSourceField(fields, "Access Key", "MinIO/S3 access key is required.");
+  const secretAccessKey = requiredSourceField(fields, "Secret Key", "MinIO/S3 secret key is required.");
+  const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
+  const selectedObject = selectedObjectKey(fields);
 
   if (!accessKeyId || !secretAccessKey) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
@@ -35,9 +67,18 @@ export async function testObjectStorageSource(fields) {
 
   const samplePolicy = samplePolicyForFields(fields, "object");
   const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+  if (shouldPreferMinioContainer(endpoint)) {
+    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
+    if (fallback) return fallback;
+  }
   try {
-    const objects = await listObjects(client, bucket, prefix);
-    const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
+    let objects = selectedObject
+      ? await listSelectedObject(client, bucket, selectedObject)
+      : await listDirectObjects(client, bucket, prefix);
+    if (!prefix && objects.length === 0) {
+      objects = listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) ?? objects;
+    }
+    const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
     return buildObjectStorageAnalysis({
       bucket,
       client,
@@ -49,34 +90,43 @@ export async function testObjectStorageSource(fields) {
       region,
       samplePolicy,
       sampleObject,
-      sourceType: "File / S3",
+      selectedObject,
+      sourceType,
     });
   } catch (error) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey });
+    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
     if (fallback) return fallback;
     throw error;
   }
 }
 
-export async function testDataLakeSource(fields) {
-  const path = fieldValue(fields, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/";
+function shouldPreferMinioContainer(endpoint) {
+  if (String(process.env.ASKLAKE_MINIO_DOCKER_FALLBACK ?? "true").toLowerCase() === "false") return false;
+  return /^https?:\/\/(?:127\.0\.0\.1|localhost):(?:9000|19000)(?:\/|$)/i.test(String(endpoint ?? ""));
+}
+
+export async function testDataLakeSource(fields, sourceType = "Data Lake") {
+  return testDataLakeSourceStable(fields, sourceType);
+
+  const path = requiredSourceField(fields, "Path", "Data Lake path is required.");
   const parsed = parseS3Path(path);
   if (!parsed) {
     throw apiError("UNSUPPORTED_LAKE_PATH", "데이터 레이크 경로는 이 로컬 러너에서 s3:// 또는 s3a:// MinIO 경로여야 합니다.", 400);
   }
 
-  const endpoint = fieldValue(fields, "Endpoint URL") || process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000";
-  const region = fieldValue(fields, "Region") || process.env.MINIO_REGION || "us-east-1";
-  const accessKeyId = fieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || "";
-  const secretAccessKey = fieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || "";
+  const endpoint = requiredSourceField(fields, "Endpoint URL", "Data Lake endpoint URL is required.");
+  const region = fieldValue(fields, "Region") || "us-east-1";
+  const accessKeyId = requiredSourceField(fields, "Access Key", "Data Lake access key is required.");
+  const secretAccessKey = requiredSourceField(fields, "Secret Key", "Data Lake secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   if (!accessKeyId || !secretAccessKey) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "로컬 데이터 레이크 경로에는 MinIO 액세스 키와 시크릿 키가 필요합니다.", 400);
   }
 
+  let client;
   let objects;
   try {
-    const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+    client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
     objects = await listObjects(client, parsed.bucket, parsed.prefix);
   } catch (error) {
     objects = listObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
@@ -101,6 +151,17 @@ export async function testDataLakeSource(fields) {
       });
     } catch (error) {
       inspectError = error?.message || "Data Lake Parquet schema inference failed.";
+      try {
+        inspected = await inspectParquetObjectWithJs({
+          bucket: parsed.bucket,
+          client,
+          key: sample?.Key,
+          rowLimit: samplePolicy.rowLimit,
+        });
+        inspectError = "";
+      } catch (fallbackError) {
+        inspectError = `${inspectError}; JS Parquet fallback failed: ${fallbackError?.message || fallbackError}`;
+      }
       if (parseBoolean(process.env.ASKLAKE_DATALAKE_SCHEMA_STRICT, false)) throw error;
     }
   }
@@ -124,11 +185,7 @@ export async function testDataLakeSource(fields) {
 
   return {
     actionPath: "/api/etl/sources/datalake/test",
-    assets: objects.slice(0, 20).map((item, index) => [
-      item.Key ?? `object-${index + 1}`,
-      formatBytes(item.Size ?? 0),
-      item.LastModified ? item.LastModified.toISOString() : "listed",
-    ]),
+    assets: toSourceAssets(objects),
     draftPatch: {
       schema: {
         columns: schemaColumns,
@@ -143,7 +200,7 @@ export async function testDataLakeSource(fields) {
         connectionStatus: "success",
         sourceConfig,
         sourceLabel: path,
-        sourceType: "Data Lake",
+        sourceType,
       },
     },
     logs: [
@@ -159,39 +216,51 @@ export async function testDataLakeSource(fields) {
       : "오브젝트 메타데이터 미리보기입니다.",
     previewRows: sampleRows.length
       ? sampleRows
-      : objects.slice(0, 8).map((item) => [item.Key ?? "-", formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
+      : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
     testItems: [["Path", path], ["Objects", String(objects.length)], ["Parquet", String(parquetObjects.length)]],
   };
 }
 
-export async function testDataLakeSourceStable(fields) {
-  const lakePath = fieldValue(fields, "Path") || "s3://m3-raw/nyc_taxi/yellow_parquet/";
-  const parsed = parseS3Path(lakePath);
+export async function testDataLakeSourceStable(fields, sourceType = "Data Lake") {
+  const rawLakePath = requiredSourceField(fields, "Path", "Data Lake path is required.");
+  const selectedObject = selectedObjectKey(fields);
+  let parsed = parseS3Path(rawLakePath);
+  if (!parsed && selectedObject && fieldValue(fields, "Bucket / Stage Name")) {
+    parsed = { bucket: fieldValue(fields, "Bucket / Stage Name"), prefix: normalizePrefix(fieldValue(fields, "Path / Prefix")) };
+  }
   if (!parsed) {
     throw apiError("UNSUPPORTED_LAKE_PATH", "Data Lake path must be an s3:// or s3a:// MinIO path.", 400);
   }
+  const lakePath = parseS3Path(rawLakePath) ? rawLakePath : `s3://${parsed.bucket}/${selectedObject || parsed.prefix}`;
 
-  const endpoint = fieldValue(fields, "Endpoint URL") || process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000";
-  const region = fieldValue(fields, "Region") || process.env.MINIO_REGION || "us-east-1";
-  const accessKeyId = fieldValue(fields, "Access Key") || process.env.MINIO_ACCESS_KEY || "";
-  const secretAccessKey = fieldValue(fields, "Secret Key") || process.env.MINIO_SECRET_KEY || "";
+  const endpoint = requiredSourceField(fields, "Endpoint URL", "Data Lake endpoint URL is required.");
+  const region = fieldValue(fields, "Region") || "us-east-1";
+  const accessKeyId = requiredSourceField(fields, "Access Key", "Data Lake access key is required.");
+  const secretAccessKey = requiredSourceField(fields, "Secret Key", "Data Lake secret key is required.");
   const forcePathStyle = parseBoolean(fieldValue(fields, "Use Path Style"), true);
   if (!accessKeyId || !secretAccessKey) {
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "Data Lake MinIO access key and secret key are required.", 400);
   }
 
+  let client;
   let objects;
   try {
-    const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
-    objects = await listObjects(client, parsed.bucket, parsed.prefix);
+    client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
+    objects = selectedObject
+      ? await listSelectedObject(client, parsed.bucket, selectedObject)
+      : await listDirectObjects(client, parsed.bucket, parsed.prefix);
   } catch (error) {
-    objects = listObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
+    objects = selectedObject
+      ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, key: selectedObject, secretAccessKey })
+      : listDirectObjectsViaMinioContainer({ accessKeyId, bucket: parsed.bucket, endpoint, prefix: parsed.prefix, secretAccessKey });
     if (!objects) throw error;
   }
 
-  const parquetObjects = objects.filter((item) => String(item.Key ?? "").toLowerCase().endsWith(".parquet"));
-  const sample = parquetObjects[0] ?? objects[0];
+  const parquetObjects = selectedObject
+    ? objects.filter((item) => String(item.Key ?? "").toLowerCase().endsWith(".parquet"))
+    : [];
+  const sample = selectedObject ? parquetObjects[0] ?? objects.find((item) => item.Key === selectedObject) : null;
   const samplePolicy = samplePolicyForFields(fields, "rows");
   const inspectPath = sample?.Key && String(sample.Key).toLowerCase().endsWith(".parquet")
     ? `s3a://${parsed.bucket}/${sample.Key}`
@@ -209,6 +278,17 @@ export async function testDataLakeSourceStable(fields) {
       });
     } catch (error) {
       inspectError = error?.message || "Data Lake Parquet schema inference failed.";
+      try {
+        inspected = await inspectParquetObjectWithJs({
+          bucket: parsed.bucket,
+          client,
+          key: sample?.Key,
+          rowLimit: samplePolicy.rowLimit,
+        });
+        inspectError = "";
+      } catch (fallbackError) {
+        inspectError = `${inspectError}; JS Parquet fallback failed: ${fallbackError?.message || fallbackError}`;
+      }
       if (parseBoolean(process.env.ASKLAKE_DATALAKE_SCHEMA_STRICT, false)) throw error;
     }
   }
@@ -219,6 +299,8 @@ export async function testDataLakeSourceStable(fields) {
   const runId = sourceId("run", `${id}:${Date.now()}`);
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["Path", lakePath],
+    ["Bucket / Stage Name", parsed.bucket],
+    ["Path / Prefix", parsed.prefix],
     ["Endpoint URL", endpoint],
     ["Region", region],
     ["Use Path Style", String(forcePathStyle)],
@@ -229,6 +311,7 @@ export async function testDataLakeSourceStable(fields) {
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
     ["__Sample Object", sample?.Key ?? ""],
+    ["__Selected Object", selectedObject],
     ["__Schema Inspect Path", inspectPath],
     ["__Schema Inspect Error", inspectError],
   ]);
@@ -236,15 +319,13 @@ export async function testDataLakeSourceStable(fields) {
     ? `Data Lake Parquet schema inferred: ${schemaColumns.length} fields, ${sampleRows.length} sample rows`
     : inspectError
       ? "Data Lake path reachable, but Parquet schema inference failed"
-      : `Data Lake path reachable: ${parquetObjects.length} Parquet files, schema inference pending`;
+      : selectedObject
+        ? `Data Lake selected file reachable: ${selectedObject}, schema inference pending`
+        : `Data Lake path reachable: ${objects.length} immediate children, select a file to infer schema`;
 
   return {
     actionPath: "/api/etl/sources/datalake/test",
-    assets: objects.slice(0, 20).map((item, index) => [
-      item.Key ?? `object-${index + 1}`,
-      formatBytes(item.Size ?? 0),
-      item.LastModified ? item.LastModified.toISOString() : "listed",
-    ]),
+    assets: toSourceAssets(objects),
     draftPatch: {
       schema: {
         columns: schemaColumns,
@@ -253,11 +334,11 @@ export async function testDataLakeSourceStable(fields) {
         summary,
       },
       source: {
-        connectionMessage: `Data Lake reachable: ${lakePath} (${objects.length} objects)`,
+        connectionMessage: `Data Lake reachable: ${lakePath} (${objects.length} immediate children)`,
         connectionStatus: "success",
         sourceConfig,
         sourceLabel: lakePath,
-        sourceType: "Data Lake",
+        sourceType,
       },
     },
     logs: [
@@ -270,16 +351,16 @@ export async function testDataLakeSourceStable(fields) {
           : "No Parquet physical schema sample was inferred.",
       ]),
     ],
-    message: `Data Lake reachable: ${objects.length} objects`,
+    message: `Data Lake reachable: ${objects.length} immediate children`,
     previewColumns: schemaColumns.length ? schemaColumns.map((column) => column.targetName) : ["Object Key", "Size", "Last Modified"],
     previewNote: schemaColumns.length
-      ? `Spark-read bounded Parquet sample from ${lakePath}`
-      : "Object metadata preview. Parquet schema was not inferred for this source test.",
+      ? `${lakePath}에서 가져온 Parquet 제한 샘플`
+      : "Parquet 스키마를 추론하지 못해 오브젝트 메타데이터만 표시합니다.",
     previewRows: sampleRows.length
       ? sampleRows
-      : objects.slice(0, 8).map((item) => [item.Key ?? "-", formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
+      : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
-    testItems: [["Path", lakePath], ["Objects", String(objects.length)], ["Parquet", String(parquetObjects.length)]],
+    testItems: [["Path", lakePath], ["Immediate children", String(objects.length)], ["Parquet", String(parquetObjects.length)]],
   };
 }
 
@@ -339,12 +420,12 @@ export async function testRestSource(fields) {
 
 export async function testPostgresSource(fields) {
   const { Client } = await import("pg");
-  const host = fieldValue(fields, "Endpoint / Host") || process.env.ASKLAKE_SOURCE_PGHOST || "127.0.0.1";
-  const port = Number(fieldValue(fields, "Port") || process.env.ASKLAKE_SOURCE_PGPORT || 15432);
-  const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_SOURCE_PGDATABASE || "asklake_sources";
+  const host = requiredSourceField(fields, "Endpoint / Host", "PostgreSQL host is required.");
+  const port = Number(requiredSourceField(fields, "Port", "PostgreSQL port is required."));
+  const database = requiredSourceField(fields, "Database Name", "PostgreSQL database name is required.");
   const schema = fieldValue(fields, "Schema") || "public";
-  const user = fieldValue(fields, "Username") || process.env.ASKLAKE_SOURCE_PGUSER || "asklake";
-  const password = fieldValue(fields, "Password / Auth Token") || process.env.ASKLAKE_SOURCE_PGPASSWORD || "";
+  const user = requiredSourceField(fields, "Username", "PostgreSQL username is required.");
+  const password = requiredSourceField(fields, "Password / Auth Token", "PostgreSQL password is required.");
   const tableSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR");
   const samplePolicy = samplePolicyForFields(fields, "rows");
 
@@ -420,100 +501,87 @@ export async function testPostgresSource(fields) {
 }
 
 export async function testMongoSource(fields) {
-  const { MongoClient } = await import("mongodb");
-  const endpoint = fieldValue(fields, "Endpoint / Host") || process.env.ASKLAKE_MONGO_HOST || "127.0.0.1";
-  const port = Number(fieldValue(fields, "Port") || process.env.ASKLAKE_MONGO_PORT || 27018);
+  const endpoint = process.env.ASKLAKE_MONGO_HOST || fieldValue(fields, "Endpoint / Host") || "127.0.0.1";
+  const port = Number(process.env.ASKLAKE_MONGO_PORT || fieldValue(fields, "Port") || 27018);
   const database = fieldValue(fields, "Database Name") || process.env.ASKLAKE_MONGO_DATABASE || "asklake_sources";
-  const username = fieldValue(fields, "Username") || process.env.ASKLAKE_MONGO_USER || "";
-  const password = fieldValue(fields, "Password / Auth Token") || process.env.ASKLAKE_MONGO_PASSWORD || "";
+  const username = process.env.ASKLAKE_MONGO_USER || fieldValue(fields, "Username") || "";
+  const password = process.env.ASKLAKE_MONGO_PASSWORD || fieldValue(fields, "Password / Auth Token") || "";
   const collectionSelector = fieldValue(fields, "DATASET OR TABLE SELECTOR") || fieldValue(fields, "Collection");
   const samplePolicy = samplePolicyForFields(fields, "documents");
   const authPart = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : "";
-  const uri = fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
-  const client = new MongoClient(uri, {
-    connectTimeoutMS: 3000,
-    serverSelectionTimeoutMS: 3000,
-  });
+  const uri = process.env.ASKLAKE_MONGO_HOST
+    ? `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`
+    : fieldValue(fields, "Connection URI") || `mongodb://${authPart}${endpoint}:${port}/${database}${username ? "?authSource=admin" : ""}`;
 
-  await client.connect();
-  try {
-    const db = client.db(database);
-    const collections = (await db.listCollections({}, { nameOnly: true }).toArray())
-      .map((item) => item.name)
-      .filter(Boolean)
-      .sort();
-    const collection = collectionSelector || collections[0];
-    if (!collection) throw apiError("MONGO_NO_COLLECTIONS", `${database} 데이터베이스에서 컬렉션을 찾지 못했습니다.`, 404);
-    if (collectionSelector && !collections.includes(collectionSelector)) {
-      throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
-    }
-
-    const docs = await db.collection(collection).find({}, { limit: samplePolicy.rowLimit }).toArray();
-    const parsedSample = {
-      columns: Array.from(new Set(docs.flatMap((doc) => Object.keys(flattenMongoDocument(doc))))),
-      format: "mongodb",
-      rows: [],
-    };
-    const flattenedDocs = docs.map((doc) => flattenMongoDocument(doc));
-    parsedSample.rows = flattenedDocs.map((doc) => parsedSample.columns.map((column) => stringifyCell(doc[column])));
-    const schemaColumns = inferSchemaColumns(parsedSample);
-    const id = sourceId("source", `mongodb://${endpoint}:${port}/${database}/${collection}`);
-    const runId = sourceId("run", `${id}:${Date.now()}`);
-    const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
-      ["Endpoint / Host", endpoint],
-      ["Port", String(port)],
-      ["Database Name", database],
-      ["Username", username],
-      ["__Schema Sample Scope", samplePolicy.scope],
-      ["__Schema Sample Scope Label", samplePolicy.label],
-      ["__Sample Row Limit", String(samplePolicy.rowLimit)],
-      ["__Source ID", id],
-      ["__Run ID", runId],
-      ["__Source Unit Count", String(collections.length)],
-      ["DATASET OR TABLE SELECTOR", collection],
-    ]);
-
-    return {
-      actionPath: "/api/etl/sources/mongodb/test",
-      assets: collections.map((name) => [name, database, name === collection ? "sampled" : "detected"]),
-      draftPatch: {
-        schema: {
-          columns: schemaColumns,
-          sampleRows: parsedSample.rows,
-          schemaFingerprint: schemaFingerprint(schemaColumns),
-          summary: `MongoDB 컬렉션 ${database}.${collection}에서 ${schemaColumns.length}개 필드 추론 · 문서 샘플 확인`,
-        },
-        source: {
-          connectionMessage: `MongoDB 연결 성공: ${database}.${collection}`,
-          connectionStatus: "success",
-          sourceConfig,
-          sourceLabel: `${endpoint}:${port}/${database}.${collection}`,
-          sourceType: "MongoDB",
-        },
-      },
-      logs: [
-        `MongoDB 연결 성공: ${endpoint}:${port}/${database}`,
-        `선택 컬렉션: ${database}.${collection}`,
-        `문서 샘플 추론: ${schemaColumns.length}개 필드, 샘플 문서 ${docs.length}개`,
-        `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}문서)`,
-      ],
-      message: `MongoDB 연결 성공: ${database}.${collection}`,
-      previewColumns: parsedSample.columns,
-      previewNote: `${database}.${collection}에서 가져온 첫 ${docs.length}개 문서`,
-      previewRows: parsedSample.rows,
-      status: "success",
-      testItems: [["Endpoint", `${endpoint}:${port}`], ["Database", database], ["Collection", collection]],
-    };
-  } finally {
-    await client.close().catch(() => undefined);
+  const { collection, collections, docs } = await runMongoDriverSample({ collectionSelector, database, rowLimit: samplePolicy.rowLimit, uri });
+  if (!collection) throw apiError("MONGO_NO_COLLECTIONS", `${database} 데이터베이스에서 컬렉션을 찾지 못했습니다.`, 404);
+  if (collectionSelector && !collections.includes(collectionSelector)) {
+    throw apiError("MONGO_COLLECTION_NOT_FOUND", `${database}.${collectionSelector} 컬렉션을 찾지 못했습니다.`, 404);
   }
+
+  const parsedSample = {
+    columns: Array.from(new Set(docs.flatMap((doc) => Object.keys(flattenMongoDocument(doc))))),
+    format: "mongodb",
+    rows: [],
+  };
+  const flattenedDocs = docs.map((doc) => flattenMongoDocument(doc));
+  parsedSample.rows = flattenedDocs.map((doc) => parsedSample.columns.map((column) => stringifyCell(doc[column])));
+  const schemaColumns = inferSchemaColumns(parsedSample);
+  const id = sourceId("source", `mongodb://${endpoint}:${port}/${database}/${collection}`);
+  const runId = sourceId("run", `${id}:${Date.now()}`);
+  const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
+    ["Endpoint / Host", endpoint],
+    ["Port", String(port)],
+    ["Database Name", database],
+    ["Username", username],
+    ["__Schema Sample Scope", samplePolicy.scope],
+    ["__Schema Sample Scope Label", samplePolicy.label],
+    ["__Sample Row Limit", String(samplePolicy.rowLimit)],
+    ["__Source ID", id],
+    ["__Run ID", runId],
+    ["__Source Unit Count", String(collections.length)],
+    ["DATASET OR TABLE SELECTOR", collection],
+  ]);
+
+  return {
+    actionPath: "/api/etl/sources/mongodb/test",
+    assets: collections.map((name) => [name, database, name === collection ? "sampled" : "detected"]),
+    draftPatch: {
+      schema: {
+        columns: schemaColumns,
+        sampleRows: parsedSample.rows,
+        schemaFingerprint: schemaFingerprint(schemaColumns),
+        summary: `MongoDB 컬렉션 ${database}.${collection}에서 ${schemaColumns.length}개 필드 추론 · 문서 샘플 확인`,
+      },
+      source: {
+        connectionMessage: `MongoDB 연결 성공: ${database}.${collection}`,
+        connectionStatus: "success",
+        sourceConfig,
+        sourceLabel: `${endpoint}:${port}/${database}.${collection}`,
+        sourceType: "MongoDB",
+      },
+    },
+    logs: [
+      `MongoDB 연결 성공: ${endpoint}:${port}/${database}`,
+      `선택 컬렉션: ${database}.${collection}`,
+      `문서 샘플 추론: ${schemaColumns.length}개 필드, 샘플 문서 ${docs.length}개`,
+      `샘플 범위 적용: ${samplePolicy.label} (최대 ${samplePolicy.rowLimit.toLocaleString()}문서)`,
+    ],
+    message: `MongoDB 연결 성공: ${database}.${collection}`,
+    previewColumns: parsedSample.columns,
+    previewNote: `${database}.${collection}에서 가져온 첫 ${docs.length}개 문서`,
+    previewRows: parsedSample.rows,
+    status: "success",
+    testItems: [["Endpoint", `${endpoint}:${port}`], ["Database", database], ["Collection", collection]],
+  };
 }
 
-export async function testKafkaSource(fields) {
+export async function testKafkaSource(fields, sourceType = "Stream / Kafka") {
   const { Kafka } = await import("kafkajs");
-  const broker = fieldValue(fields, "Broker / Endpoint") || process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
-  const topic = fieldValue(fields, "TOPIC / QUEUE NAME") || process.env.ASKLAKE_KAFKA_TOPIC || "asklake-source-events";
-  const groupId = fieldValue(fields, "CONSUMER GROUP ID") || `asklake-schema-${Date.now()}`;
+  const broker = requiredSourceField(fields, "Broker / Endpoint", "Kafka broker endpoint is required.");
+  const topic = requiredSourceField(fields, "TOPIC / QUEUE NAME", "Kafka topic name is required.");
+  const configuredGroupId = fieldValue(fields, "CONSUMER GROUP ID") || "asklake-schema-preview";
+  const sampleGroupId = `asklake-schema-preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const samplePolicy = samplePolicyForFields(fields, "rows");
   const kafka = new Kafka({ brokers: [broker], clientId: "asklake-source-test", retry: { retries: 1 } });
   const admin = kafka.admin();
@@ -524,7 +592,7 @@ export async function testKafkaSource(fields) {
     if (!topicMeta || topicMeta.partitions.length === 0) {
       throw apiError("KAFKA_TOPIC_NOT_FOUND", `${topic} Kafka 토픽을 찾지 못했거나 파티션이 없습니다.`, 404);
     }
-    const messages = await sampleKafkaMessages({ broker, groupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
+    const messages = await sampleKafkaMessages({ broker, groupId: sampleGroupId, rowLimit: Math.min(samplePolicy.rowLimit, 100), topic });
     const parsedSample = parseKafkaMessages(topic, messages, samplePolicy.rowLimit);
     const schemaColumns = inferSchemaColumns(parsedSample);
 
@@ -533,7 +601,8 @@ export async function testKafkaSource(fields) {
     const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
       ["Broker / Endpoint", broker],
       ["TOPIC / QUEUE NAME", topic],
-      ["CONSUMER GROUP ID", groupId],
+      ["CONSUMER GROUP ID", configuredGroupId],
+      ["__Sample Consumer Group ID", sampleGroupId],
       ["__Schema Sample Scope", samplePolicy.scope],
       ["__Schema Sample Scope Label", samplePolicy.label],
       ["__Sample Row Limit", String(samplePolicy.rowLimit)],
@@ -563,7 +632,7 @@ export async function testKafkaSource(fields) {
           connectionStatus: "success",
           sourceConfig,
           sourceLabel: `${broker}/${topic}`,
-          sourceType: "Stream / Kafka",
+          sourceType,
         },
       },
       logs: [
@@ -590,7 +659,7 @@ export async function testKafkaSource(fields) {
   }
 }
 
-async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, forcePathStyle, objects, prefix, region, sampleObject, samplePolicy, sourceType }) {
+async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, forcePathStyle, objects, prefix, region, sampleObject, samplePolicy, selectedObject = "", sourceType }) {
   const logs = [
     `MinIO/S3 오브젝트 목록 조회 성공: bucket=${bucket}, prefix=${prefix || "(root)"}`,
     `소스 단위 감지: ${objects.length}개`,
@@ -640,16 +709,13 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
     ["__Sample Object", sampleKey],
+    ["__Selected Object", selectedObject],
   ]);
   const sourceLabel = `${bucket}${prefix ? `/${prefix}` : ""}`;
 
   return {
     actionPath: "/api/etl/sources/minio/test",
-    assets: objects.slice(0, 20).map((item, index) => [
-      item.Key ?? `object-${index + 1}`,
-      formatBytes(item.Size ?? 0),
-      item.LastModified ? item.LastModified.toISOString() : "listed",
-    ]),
+    assets: toSourceAssets(objects),
     draftPatch: {
       schema: {
         columns: schemaColumns,
@@ -671,17 +737,19 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     previewNote: sampleKey ? `${sampleKey}에서 가져온 제한 샘플` : `MinIO/S3 오브젝트 ${objects.length}개 목록 조회`,
     previewRows: parsedSample.rows.length
       ? parsedSample.rows
-      : objects.slice(0, 8).map((item) => [item.Key ?? "-", formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
+      : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
-    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Objects", String(objects.length)]],
+    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
   };
 }
 
-function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey }) {
-  const objects = listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
+function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject = "", sourceType = "File / S3" }) {
+  const objects = selectedObject
+    ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, key: selectedObject, secretAccessKey })
+    : listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
   if (!objects) return null;
 
-  const sampleObject = objects.find((item) => hasTextExtension(item.Key ?? "")) ?? objects[0];
+  const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
   let parsedSample = { columns: [], format: "unknown", rows: [] };
   let sampleKey = "";
   let requestedBytes = 0;
@@ -730,17 +798,14 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     ["__Run ID", runId],
     ["__Source Unit Count", String(objects.length)],
     ["__Sample Object", sampleKey],
+    ["__Selected Object", selectedObject],
     ["__MinIO Runtime", "docker-container"],
   ]);
   const sourceLabel = `${bucket}${prefix ? `/${prefix}` : ""}`;
 
   return {
     actionPath: "/api/etl/sources/minio/test",
-    assets: objects.slice(0, 20).map((item, index) => [
-      item.Key ?? `object-${index + 1}`,
-      formatBytes(item.Size ?? 0),
-      item.LastModified ? item.LastModified.toISOString() : "listed",
-    ]),
+    assets: toSourceAssets(objects),
     draftPatch: {
       schema: {
         columns: schemaColumns,
@@ -753,7 +818,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
         connectionStatus: "success",
         sourceConfig,
         sourceLabel,
-        sourceType: "File / S3",
+        sourceType,
       },
     },
     logs,
@@ -762,9 +827,9 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     previewNote: sampleKey ? `${sampleKey}에서 가져온 제한 샘플` : `MinIO/S3 오브젝트 ${objects.length}개 목록 조회`,
     previewRows: parsedSample.rows.length
       ? parsedSample.rows
-      : objects.slice(0, 8).map((item) => [item.Key ?? "-", formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
+      : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
-    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Objects", String(objects.length)]],
+    testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
   };
 }
 
@@ -778,15 +843,148 @@ function s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessK
 }
 
 async function listObjects(client, bucket, prefix) {
-  const result = await client.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 50, Prefix: prefix }));
-  return (result.Contents ?? []).filter((item) => item.Key);
+  const normalizedPrefix = normalizePrefix(prefix);
+  const limit = sourceListLimit();
+  const objects = [];
+  let continuationToken;
+
+  do {
+    const remaining = Math.max(1, limit - objects.length);
+    const result = await client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      ContinuationToken: continuationToken,
+      MaxKeys: Math.min(1000, remaining),
+      Prefix: normalizedPrefix,
+    }));
+    objects.push(...(result.Contents ?? [])
+      .filter((item) => item.Key && item.Key !== `${normalizedPrefix}/`));
+    continuationToken = result.IsTruncated && objects.length < limit ? result.NextContinuationToken : undefined;
+  } while (continuationToken && objects.length < limit);
+
+  return objects;
 }
 
-function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey }) {
-  const target = `local/${bucket}/${prefix || ""}`;
+async function listSelectedObject(client, bucket, key) {
+  const normalizedKey = normalizePrefix(key);
+  if (!normalizedKey) return [];
+  const result = await client.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    MaxKeys: 1,
+    Prefix: normalizedKey,
+  }));
+  const exact = (result.Contents ?? []).find((item) => item.Key === normalizedKey);
+  if (!exact) {
+    throw apiError("SOURCE_OBJECT_NOT_FOUND", `Selected object was not found: ${normalizedKey}`, 404);
+  }
+  return [{ ...exact, __folder: false }];
+}
+
+function sourceAssetPrefix(sourceType, fields, requestedPrefix) {
+  if (typeof requestedPrefix === "string") return normalizeAssetPrefix(requestedPrefix);
+  const parsedLakePath = dataLakeSourceTypes.has(sourceType) ? parseS3Path(fieldValue(fields, "Path")) : null;
+  const selectedObject = selectedObjectKey(fields);
+  return safeAssetConfigPrefix(fieldValue(fields, "Path / Prefix") || parsedLakePath?.prefix || fieldValue(fields, "Path"), selectedObject);
+}
+
+function normalizeAssetPrefix(value) {
+  const parsed = parseS3Path(value);
+  return normalizePrefix(parsed?.prefix ?? value);
+}
+
+function safeAssetConfigPrefix(value, selectedObject) {
+  const normalized = normalizeAssetPrefix(value);
+  if (!normalized) return "";
+  const normalizedSelectedObject = normalizePrefix(selectedObject);
+  if ((normalizedSelectedObject && normalized === normalizedSelectedObject) || looksLikeObjectKey(normalized)) {
+    return parentPrefix(normalized);
+  }
+  return normalized;
+}
+
+function parentPrefix(value) {
+  const parts = normalizePrefix(value).split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+
+function looksLikeObjectKey(value) {
+  return /\.(csv|json|jsonl|parquet|tsv|txt)$/i.test(String(value ?? "").trim());
+}
+
+function sourceListLimit() {
+  return configuredListLimit("ASKLAKE_SOURCE_LIST_LIMIT", 5000);
+}
+
+function sourceAssetListLimit() {
+  return Math.min(configuredListLimit("ASKLAKE_SOURCE_ASSET_LIST_LIMIT", 200), 1000);
+}
+
+function configuredListLimit(envName, defaultLimit) {
+  const configured = Number(process.env[envName] ?? defaultLimit);
+  if (!Number.isFinite(configured) || configured <= 0) return defaultLimit;
+  return Math.trunc(configured);
+}
+
+function configuredInlineLimit(value, defaultLimit) {
+  const configured = Number(value ?? defaultLimit);
+  if (!Number.isFinite(configured) || configured <= 0) return defaultLimit;
+  return Math.trunc(configured);
+}
+
+function immediateSampleObject(objects, prefix) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  return objects.find((item) => {
+    const key = String(item.Key ?? "");
+    if (!hasTextExtension(key)) return false;
+    if (!key) return false;
+    if (normalizedPrefix && (key === normalizedPrefix || key === normalizedPrefixWithSlash)) return true;
+    const relative = normalizedPrefix
+      ? (key.startsWith(normalizedPrefixWithSlash) ? key.slice(normalizedPrefixWithSlash.length) : "")
+      : key;
+    return relative.length > 0 && !relative.includes("/");
+  });
+}
+
+function browsableObjectStorageItems(objects, prefix) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const folders = new Map();
+  const files = [];
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  for (const item of objects) {
+    const key = String(item.Key ?? "");
+    if (!key) continue;
+    if (normalizedPrefix && (key === normalizedPrefix || key === `${normalizedPrefix}/`)) {
+      continue;
+    }
+    if (normalizedPrefix && !key.startsWith(normalizedPrefixWithSlash)) {
+      continue;
+    }
+    const relative = (normalizedPrefix ? key.slice(normalizedPrefixWithSlash.length) : key).replace(/^\/+/, "");
+    if (!relative) continue;
+    const parts = relative.split("/").filter(Boolean);
+    if (parts.length === 0) continue;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      const folderKey = `${normalizedPrefixWithSlash}${parts.slice(0, index + 1).join("/")}/`;
+      if (!folders.has(folderKey)) {
+        folders.set(folderKey, { __folder: true, Key: folderKey, LastModified: item.LastModified, Size: 0 });
+      }
+    }
+    if (!item.__folder && !key.endsWith("/")) {
+      files.push(item);
+    }
+  }
+  return [...folders.values(), ...files].sort((left, right) => String(left.Key ?? "").localeCompare(String(right.Key ?? "")));
+}
+
+function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const maxItems = configuredInlineLimit(limit, sourceListLimit());
+  const target = `local/${bucket}/${normalizedPrefix ? `${normalizedPrefix}/` : ""}`;
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
   const result = runMinioClientCommand({
     accessKeyId,
-    command: `mc find --json ${shellQuote(target)} | head -50`,
+    command: `mc ls --json ${shellQuote(target)} | head -n ${maxItems}`,
     endpoint,
     secretAccessKey,
   });
@@ -804,12 +1002,79 @@ function listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, s
         return null;
       }
     })
-    .filter((item) => item?.status === "success" && item.key && !String(item.key).endsWith("/"))
-    .map((item) => ({
-      Key: String(item.key).startsWith(root) ? String(item.key).slice(root.length) : String(item.key),
+    .filter((item) => item?.status === "success" && item.key)
+    .map((item) => {
+      const rawKey = String(item.key);
+      const normalizedKey = rawKey.startsWith(root) ? rawKey.slice(root.length) : rawKey.replace(/^\/+/, "");
+      const key = normalizedPrefix
+        ? (normalizedKey.startsWith(normalizedPrefixWithSlash) ? normalizedKey : `${normalizedPrefixWithSlash}${normalizedKey}`)
+        : normalizedKey;
+      return {
+        __folder: item.type === "folder" || String(item.key).endsWith("/"),
+        Key: key,
+        LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
+        Size: Number(item.size ?? 0),
+      };
+    });
+}
+
+function listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit = sourceListLimit(), prefix, secretAccessKey }) {
+  return listObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, limit, prefix, secretAccessKey });
+}
+
+function listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, key, secretAccessKey }) {
+  const normalizedKey = normalizePrefix(key);
+  if (!normalizedKey) return [];
+  const result = runMinioClientCommand({
+    accessKeyId,
+    command: `mc stat --json ${shellQuote(`local/${bucket}/${normalizedKey}`)}`,
+    endpoint,
+    secretAccessKey,
+  });
+  if (!result) return null;
+  const line = result.split(/\r?\n/).map((item) => item.trim()).filter(Boolean).at(-1);
+  if (!line) return null;
+  try {
+    const item = JSON.parse(line);
+    return [{
+      __folder: false,
+      Key: normalizedKey,
       LastModified: item.lastModified ? new Date(item.lastModified) : undefined,
       Size: Number(item.size ?? 0),
-    }));
+    }];
+  } catch {
+    return null;
+  }
+}
+
+async function listDirectObjects(client, bucket, prefix, limit = sourceListLimit()) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedPrefixWithSlash = normalizedPrefix ? `${normalizedPrefix}/` : "";
+  const maxItems = configuredInlineLimit(limit, sourceListLimit());
+  const result = await client.send(new ListObjectsV2Command({
+    Bucket: bucket,
+    Delimiter: "/",
+    MaxKeys: Math.min(1000, maxItems),
+    Prefix: normalizedPrefixWithSlash || normalizedPrefix,
+  }));
+  const folders = (result.CommonPrefixes ?? []).map((item) => ({
+    __folder: true,
+    Key: item.Prefix,
+    LastModified: undefined,
+    Size: 0,
+  }));
+  const files = (result.Contents ?? [])
+    .filter((item) => item.Key && item.Key !== normalizedPrefix && item.Key !== normalizedPrefixWithSlash)
+    .map((item) => ({ ...item, __folder: false }));
+  return [...folders, ...files].sort((left, right) => String(left.Key ?? "").localeCompare(String(right.Key ?? "")));
+}
+
+function toSourceAssets(items, limit = sourceListLimit()) {
+  return items.slice(0, configuredInlineLimit(limit, sourceListLimit())).map((item, index) => [
+    item.Key ?? `object-${index + 1}`,
+    item.__folder ? "folder" : formatBytes(item.Size ?? 0),
+    item.LastModified ? item.LastModified.toISOString() : "listed",
+  ]);
 }
 
 function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, secretAccessKey }) {
@@ -822,10 +1087,10 @@ function readObjectSampleViaMinioContainer({ accessKeyId, bucket, bytes, key, se
   }) ?? "";
 }
 
-function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:9000", secretAccessKey }) {
+function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.0.1:19000", secretAccessKey }) {
   if (process.env.ASKLAKE_MINIO_DOCKER_FALLBACK === "false") return null;
   const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
-  const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://127.0.0.1:9000";
+  const minioEndpoint = process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || endpointForMinioContainer(endpoint);
   const accessKey = accessKeyId || process.env.MINIO_ACCESS_KEY || process.env.MINIO_ROOT_USER || "m3admin";
   const secretKey = secretAccessKey || process.env.MINIO_SECRET_KEY || process.env.MINIO_ROOT_PASSWORD || "wishuponastar";
   const script = [
@@ -841,8 +1106,17 @@ function runMinioClientCommand({ accessKeyId, command, endpoint = "http://127.0.
   return result.stdout ?? "";
 }
 
+function endpointForMinioContainer(endpoint) {
+  const value = String(endpoint || "");
+  if (/^https?:\/\/(127\.0\.0\.1|localhost):19000\b/i.test(value)) {
+    return value.replace(/:19000\b/i, ":9000");
+  }
+  return value;
+}
+
 function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, rowLimit, secretAccessKey }) {
   mkdirSync(ivyDir, { recursive: true });
+  const sparkMinioEndpoint = process.env.MINIO_ENDPOINT_IN_DOCKER || endpointForDockerNetwork(endpoint);
   const dockerArgs = [
     "run",
     "--rm",
@@ -853,7 +1127,7 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
     "-v",
     `${ivyDir}:/tmp/.ivy2`,
     "-e",
-    `MINIO_ENDPOINT=${process.env.MINIO_ENDPOINT_IN_DOCKER || endpoint}`,
+    `MINIO_ENDPOINT=${sparkMinioEndpoint}`,
     "-e",
     `MINIO_ACCESS_KEY=${accessKeyId || process.env.MINIO_ACCESS_KEY || "m3admin"}`,
     "-e",
@@ -914,12 +1188,59 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
   };
 }
 
+function endpointForDockerNetwork(endpoint) {
+  const value = String(endpoint || "");
+  if (value.includes("127.0.0.1:19000") || value.includes("localhost:19000")) {
+    return "http://asklake-source-minio:9000";
+  }
+  if (value.includes("127.0.0.1:9000") || value.includes("localhost:9000")) {
+    return process.env.ASKLAKE_MINIO_CONTAINER_ENDPOINT || "http://m3-minio:9000";
+  }
+  return value;
+}
+
+async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
+  if (!key) throw new Error("Parquet sample key is required.");
+  const parquet = await import("parquetjs-lite");
+  const objectResult = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const buffer = await readBodyBufferWithinLimit(objectResult.Body, Number(process.env.ASKLAKE_PARQUET_JS_MAX_BYTES || 64 * 1024 * 1024));
+  const reader = await parquet.default.ParquetReader.openBuffer(buffer);
+  try {
+    const schema = reader.getSchema();
+    const fieldEntries = Object.entries(schema.fields ?? {});
+    const cursor = reader.getCursor();
+    const rows = [];
+    for (let index = 0; index < Math.max(1, Math.min(Number(rowLimit) || 10, 100)); index += 1) {
+      const row = await cursor.next();
+      if (!row) break;
+      rows.push(fieldEntries.map(([name]) => stringifyCell(row[name])));
+    }
+    return {
+      logs: [
+        `JS Parquet metadata fallback succeeded: ${fieldEntries.length} fields`,
+        `제한 샘플 조회: ${rows.length.toLocaleString()}행`,
+      ],
+      sampleRows: rows,
+      schemaColumns: fieldEntries.map(([name, field]) => ({
+        confidence: 88,
+        nullable: field?.optional !== false,
+        role: undefined,
+        sourceName: name,
+        targetName: normalizeSparkColumnName(name),
+        type: parquetJsLogicalType(name, field),
+      })),
+    };
+  } finally {
+    await reader.close().catch(() => undefined);
+  }
+}
+
 async function sampleKafkaMessages({ broker, groupId, rowLimit, topic }) {
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({ brokers: [broker], clientId: "asklake-source-sampler", retry: { retries: 1 } });
   const consumer = kafka.consumer({ groupId });
   const messages = [];
-  const timeoutMs = Number(process.env.ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS || 3000);
+  const timeoutMs = Number(process.env.ASKLAKE_KAFKA_SAMPLE_TIMEOUT_MS || 8000);
   await consumer.connect();
   try {
     await consumer.subscribe({ fromBeginning: true, topic });
@@ -992,6 +1313,18 @@ function sparkLogicalType(value) {
   return "String";
 }
 
+function parquetJsLogicalType(name, field) {
+  const normalizedName = String(name || "").toLowerCase();
+  const primitive = String(field?.primitiveType || field?.type || field?.originalType || "").toLowerCase();
+  const logical = String(field?.logicalType || field?.originalType || "").toLowerCase();
+  if (primitive.includes("boolean")) return "Boolean";
+  if (logical.includes("timestamp") || normalizedName.includes("time") || normalizedName.endsWith("_at")) return "Timestamp";
+  if (logical.includes("date")) return "Date";
+  if (primitive.includes("int") || logical.includes("int")) return "Integer";
+  if (primitive.includes("float") || primitive.includes("double") || primitive.includes("decimal")) return "Float";
+  return "String";
+}
+
 function tail(value) {
   const text = String(value ?? "").trim();
   if (text.length <= 1200) return text;
@@ -999,7 +1332,11 @@ function tail(value) {
 }
 
 function normalizePrefix(prefix) {
-  return String(prefix ?? "").replace(/^\/+/, "");
+  return String(prefix ?? "").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function selectedObjectKey(fields) {
+  return normalizePrefix(fieldValue(fields, "__Selected Object") || fieldValue(fields, "__Sample Object"));
 }
 
 function redactSecretConfigValues(fields) {
@@ -1066,13 +1403,18 @@ function sampleObjectRangeBytes(policy, objectSize) {
 }
 
 async function readBodyTextWithinLimit(body, maxBytes) {
-  if (!body) return "";
+  const buffer = await readBodyBufferWithinLimit(body, maxBytes);
+  return buffer.toString("utf8");
+}
+
+async function readBodyBufferWithinLimit(body, maxBytes) {
+  if (!body) return Buffer.alloc(0);
   const byteLimit = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : 512 * 1024;
   const chunks = [];
   let totalBytes = 0;
 
   if (typeof body[Symbol.asyncIterator] !== "function") {
-    return "";
+    return Buffer.alloc(0);
   }
 
   for await (const chunk of body) {
@@ -1085,7 +1427,7 @@ async function readBodyTextWithinLimit(body, maxBytes) {
     if (totalBytes >= byteLimit) break;
   }
 
-  return Buffer.concat(chunks, totalBytes).toString("utf8");
+  return Buffer.concat(chunks, totalBytes);
 }
 
 function parseBoolean(value, fallback) {
@@ -1093,8 +1435,36 @@ function parseBoolean(value, fallback) {
   return ["true", "1", "yes", "y"].includes(value.toLowerCase());
 }
 
+function requiredSourceField(fields, label, message) {
+  const value = fieldValue(fields, label);
+  if (String(value ?? "").trim()) return value;
+  throw apiError("SOURCE_FIELD_REQUIRED", message || `${label} is required.`, 400);
+}
+
 function quoteIdent(value) {
   return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+async function runMongoDriverSample({ collectionSelector, database, rowLimit, uri }) {
+  const { MongoClient } = await import("mongodb");
+  const limit = Number.isFinite(rowLimit) && rowLimit > 0 ? Math.floor(rowLimit) : 10;
+  const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
+
+  try {
+    await client.connect();
+    const dbh = client.db(database);
+    const collections = (await dbh.listCollections({}, { nameOnly: true }).toArray())
+      .map((collectionInfo) => String(collectionInfo.name ?? ""))
+      .filter(Boolean)
+      .sort();
+    const collection = collectionSelector || collections[0] || "";
+    const docs = collection ? await dbh.collection(collection).find({}).limit(limit).toArray() : [];
+    return { collection, collections, docs };
+  } catch (error) {
+    throw apiError("MONGO_SOURCE_FAILED", `MongoDB 연결 실패: ${tailText(error?.message || error)}`, 502);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
 }
 
 function stringifyCell(value) {
@@ -1129,4 +1499,10 @@ export function apiError(code, message, status = 500) {
   error.code = code;
   error.status = status;
   return error;
+}
+
+function tailText(value, maxLength = 1200) {
+  const text = String(value ?? "").trim();
+  if (text.length <= maxLength) return text;
+  return text.slice(-maxLength);
 }

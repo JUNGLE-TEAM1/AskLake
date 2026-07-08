@@ -1,5 +1,4 @@
 import type React from "react";
-import { Filter } from "lucide-react";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 
@@ -73,6 +72,7 @@ export function DashboardRuntimeShell({
   title: string;
 }) {
   const hasDatasetSidebar = Boolean(datasetSidebar);
+  const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
   const workspaceClassName = [
     "asklake-dashboard-workspace",
     hasDatasetSidebar && "has-dataset-sidebar",
@@ -112,20 +112,18 @@ export function DashboardRuntimeShell({
         </div>
       )}
       <div className="asklake-dashboard-subnav">
-        <button
-          aria-controls={hasDatasetSidebar ? "asklake-dashboard-dataset-sidebar" : undefined}
-          aria-pressed={hasDatasetSidebar ? datasetSidebarOpen : undefined}
-          className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
-          disabled={!onToggleDatasetSidebar}
-          type="button"
-          onClick={onToggleDatasetSidebar}
-        >
-          <span aria-hidden="true">▦</span>
-          데이터
-        </button>
-        <button className="asklake-dashboard-filter-button" type="button" aria-label="필터">
-          <Filter size={17} />
-        </button>
+        {canToggleDatasetSidebar && (
+          <button
+            aria-controls="asklake-dashboard-dataset-sidebar"
+            aria-pressed={datasetSidebarOpen}
+            className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
+            type="button"
+            onClick={onToggleDatasetSidebar}
+          >
+            <span aria-hidden="true">▦</span>
+            데이터
+          </button>
+        )}
         <DashboardPageTabs
           isAddingPage={isAddingPage}
           mode={mode}
@@ -137,9 +135,6 @@ export function DashboardRuntimeShell({
           onRenamePage={onRenamePage}
           onSelectPage={onSelectPage}
         />
-      </div>
-      <div className="asklake-dashboard-filter-row">
-        <span className="asklake-dashboard-filter-chip">필터가 설정되지 않았습니다</span>
       </div>
       <div className={workspaceClassName}>
         {datasetSidebar}

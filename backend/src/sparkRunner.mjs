@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,10 +7,11 @@ import { fieldValue, normalizeColumnName } from "./profile.mjs";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.join(backendDir, "scripts");
-const ivyDir = path.join(backendDir, "tmp", "spark-ivy");
+const sparkHostScriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || scriptsDir);
+const ivyDir = path.resolve(process.env.ASKLAKE_SPARK_IVY_DIR || path.join(backendDir, "tmp", "spark-ivy"));
 const reportDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.join(backendDir, "tmp", "spark-runs"));
 const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
-const localOutputDir = path.join(backendDir, "tmp", "spark-output");
+const localOutputDir = path.resolve(process.env.ASKLAKE_SPARK_LOCAL_OUTPUT_DIR || path.join(backendDir, "tmp", "spark-output"));
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
@@ -18,22 +19,23 @@ const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/w
 
 export function runSparkPipeline(job, command, runId) {
   ensureSparkServer();
-  mkdirSync(ivyDir, { recursive: true });
-  mkdirSync(reportDir, { recursive: true });
-  mkdirSync(localOutputDir, { recursive: true });
-  mkdirSync(sampleHostDir, { recursive: true });
+  ensureWritableDir(ivyDir);
+  ensureWritableDir(reportDir);
+  ensureWritableDir(localOutputDir);
+  ensureWritableDir(sampleHostDir);
 
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
+  const packageArgs = sparkPackageArgs(source, output);
   const dockerArgs = [
     "run",
     "--rm",
     "--network",
     process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
     "-v",
-    `${scriptsDir}:/work/scripts:ro`,
+    `${sparkHostScriptsDir}:/work/scripts:ro`,
     "-v",
     `${ivyDir}:/tmp/.ivy2`,
     "-v",
@@ -78,8 +80,7 @@ export function runSparkPipeline(job, command, runId) {
     process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077",
     "--conf",
     "spark.jars.ivy=/tmp/.ivy2",
-    "--packages",
-    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+    ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
 
@@ -110,6 +111,19 @@ export function runSparkPipeline(job, command, runId) {
     stderr: tail(result.stderr),
     stdout: tail(result.stdout),
   };
+}
+
+function sparkPackageArgs(source, output) {
+  if (process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE === "none") return [];
+  if (!usesS3A(source.path) && !usesS3A(output.sparkPath)) return [];
+  return [
+    "--packages",
+    process.env.ASKLAKE_SPARK_HADOOP_AWS_PACKAGE || "org.apache.hadoop:hadoop-aws:3.4.1",
+  ];
+}
+
+function usesS3A(value) {
+  return /^s3a?:\/\//i.test(String(value || ""));
 }
 
 function runSparkSubmitContainer(dockerArgs) {
@@ -184,7 +198,7 @@ function writeSampleRowsSource(job, runId) {
 
 function writeConnectorSampleRowsSource(job, runId) {
   const sourceType = job.sourceType || "";
-  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka"].includes(sourceType)) return "";
+  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka", "Kafka JSON"].includes(sourceType)) return "";
 
   const result = spawnSync(process.execPath, [path.join(scriptsDir, "export-connector-sample.mjs")], {
     cwd: backendDir,
@@ -328,7 +342,7 @@ function normalizeSparkReport(report, output) {
 
 function copySparkOutputToHost(output) {
   if (!output.relativePath || !output.hostPath) return;
-  mkdirSync(path.dirname(output.hostPath), { recursive: true });
+  ensureWritableDir(path.dirname(output.hostPath));
   const hostParent = path.dirname(output.hostPath);
   const leaf = path.basename(output.hostPath);
   const tmpLeaf = `${leaf}.tmp`;
@@ -357,6 +371,11 @@ function copySparkOutputToHost(output) {
   if (result.status !== 0) {
     throw sparkError(`Spark output was written but could not be copied to host.\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+function ensureWritableDir(dir) {
+  mkdirSync(dir, { recursive: true });
+  chmodSync(dir, 0o777);
 }
 
 function minioAccessKey() {

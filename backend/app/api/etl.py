@@ -9,6 +9,8 @@ from app.schemas.etl import (
     JobCommandResponse,
     JobRowData,
     SchemaDraft,
+    SourceAssetsRequest,
+    SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
 )
@@ -20,6 +22,11 @@ router = APIRouter(prefix="/etl", tags=["etl"])
 @router.post("/sources/test", response_model=SourceConnectorAnalysis)
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
     return etl_service.test_source_connector(request)
+
+
+@router.post("/sources/assets", response_model=SourceAssetsResponse)
+def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
+    return etl_service.list_source_assets(request)
 
 
 @router.post("/schema-inference", response_model=SchemaDraft)

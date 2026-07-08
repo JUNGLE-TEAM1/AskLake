@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, String
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -15,11 +15,16 @@ class ETLJobModel(TimestampMixin, Base):
     source: Mapped[str] = mapped_column(String(255), nullable=False)
     target: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     schedule: Mapped[str] = mapped_column(String(255), nullable=False)
+    schedule_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    schedule_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_policy: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    retry_policy_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    run_limit_summary: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_config: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
     schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
-    schema_fingerprint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schema_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     permission_roles: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     storage_type: Mapped[str | None] = mapped_column(String(64), nullable=True)

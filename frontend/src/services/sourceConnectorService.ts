@@ -1,4 +1,4 @@
-import { apiClient, apiConfig } from "./apiClient";
+import { apiClient } from "./apiClient";
 import type { DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../types";
 
 type SourceFieldRows = Array<[string, string]>;
@@ -18,186 +18,223 @@ export type SourceConnectorAnalysis = {
 
 type BackendSourceConnectorResponse = SourceConnectorAnalysis;
 
+export type SourceAssetsResponse = {
+  assets: Array<[string, string, string]>;
+  count?: number;
+  limit?: number;
+  prefix: string;
+};
+
 export async function testSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<SourceConnectorAnalysis> {
-  if (apiConfig.useMock) {
-    return resolveMock(buildMockSourceConnectorAnalysis(sourceType, fields));
+  const normalizedSourceType = normalizeSourceType(sourceType);
+  if (normalizedSourceType === "SQL Result") {
+    return buildSqlResultConnectorAnalysis(fields);
+  }
+  return normalizeConnectorAnalysis(
+    await postSourceConnector(normalizedSourceType, fields),
+    normalizedSourceType,
+    fields,
+  );
+}
+
+export async function listSourceAssets(sourceType: string, fields: SourceFieldRows, prefix = ""): Promise<SourceAssetsResponse> {
+  return postSourceAssets(normalizeSourceType(sourceType), fields, prefix);
+}
+
+async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
+  const body = { sourceConfig: fields, sourceType };
+  return postWithDevFallback<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
+}
+
+async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
+  const body = { prefix, sourceConfig: fields, sourceType };
+  return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
+}
+
+async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {
+  if (import.meta.env.DEV) {
+    try {
+      return await postBackendDirect<T>(path, body);
+    } catch (error) {
+      if (!isNetworkError(error) && !isNotFoundError(error)) {
+        throw error;
+      }
+    }
   }
 
-  return apiClient.post<BackendSourceConnectorResponse>("/api/etl/sources/test", {
-    sourceConfig: fields,
-    sourceType,
+  try {
+    return await apiClient.post<T>(path, body);
+  } catch (error) {
+    if (import.meta.env.DEV && isNotFoundError(error)) {
+      return postBackendDirect<T>(path, body);
+    }
+    throw error;
+  }
+}
+
+async function postBackendDirect<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`http://127.0.0.1:8080${path}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  if (response.ok) {
+    return await response.json() as T;
+  }
+  const text = await response.text().catch(() => "");
+  throw new Error(text || `Backend ${response.status} ${response.statusText}`);
+}
+
+function isNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /failed to fetch|networkerror|load failed/i.test(message);
+}
+
+function normalizeSourceType(sourceType: string) {
+  return sourceType === "Database" ? "PostgreSQL" : sourceType;
+}
+
+function isNotFoundError(error: unknown) {
+  const status = typeof error === "object" && error && "status" in error ? Number((error as { status?: unknown }).status) : 0;
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return status === 404 || /404|not found/i.test(`${code} ${message}`);
+}
+
+function normalizeConnectorAnalysis(
+  analysis: BackendSourceConnectorResponse,
+  sourceType: string,
+  fields: SourceFieldRows,
+): SourceConnectorAnalysis {
+  const columns = analysis.draftPatch.schema?.columns ?? [];
+  const sampleRows = analysis.draftPatch.schema?.sampleRows ?? [];
+  if (columns.length > 0 && sampleRows.length > 0) {
+    return analysis;
+  }
+
+  if (isObjectStorageSource(sourceType) && !hasSelectedObject(fields)) {
+    return {
+      ...analysis,
+      draftPatch: {
+        ...analysis.draftPatch,
+        schema: undefined,
+      },
+    };
+  }
+
+  if (analysis.previewColumns.length === 0 || analysis.previewRows.length === 0) {
+    return analysis;
+  }
+
+  const inferredColumns = inferSchemaColumnsFromPreview(analysis.previewColumns, analysis.previewRows);
+  if (inferredColumns.length === 0) {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    draftPatch: {
+      ...analysis.draftPatch,
+      schema: {
+        columns: inferredColumns,
+        sampleRows: analysis.previewRows,
+        schemaFingerprint: inferredColumns
+          .map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`)
+          .join("|"),
+        summary: `${analysis.previewNote || "\uC0D8\uD50C"} \uAE30\uC900 ${inferredColumns.length}\uAC1C \uD544\uB4DC \uCD94\uB860`,
+      },
+    },
+  };
+}
+
+function isObjectStorageSource(sourceType: string) {
+  return sourceType === "File / S3" || sourceType === "Data Lake";
+}
+
+function hasSelectedObject(fields: SourceFieldRows) {
+  return Boolean(
+    fieldValue(fields, "__Selected Object")
+      || fieldValue(fields, "__Sample Object")
+      || looksLikeDataFile(fieldValue(fields, "Path / Prefix"))
+      || looksLikeDataFile(fieldValue(fields, "Path"))
+      || looksLikeDataFile(fieldValue(fields, "DATASET OR TABLE SELECTOR")),
+  );
+}
+
+function looksLikeDataFile(value: string) {
+  return /\.(csv|tsv|txt|json|jsonl|parquet)$/i.test(value.trim());
+}
+
+function inferSchemaColumnsFromPreview(columns: string[], rows: string[][]): SchemaColumnDraft[] {
+  return columns.map((column, columnIndex) => {
+    const values = rows.map((row) => row[columnIndex] ?? "");
+    return {
+      confidence: 85,
+      nullable: values.some((value) => isEmptyValue(value)),
+      sourceName: column,
+      targetName: normalizeColumnName(column),
+      type: inferPreviewColumnType(values),
+    };
   });
 }
 
-function buildMockSourceConnectorAnalysis(sourceType: string, fields: SourceFieldRows): SourceConnectorAnalysis {
-  const normalizedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
-  const sourceLabel = getSourceLabel(normalizedSourceType, fields);
-  const sourceId = toStableId("source", `${normalizedSourceType}:${sourceLabel}`);
-  const runId = toStableId("run", `${sourceId}:${Date.now()}`);
-  const sample = getMockSourceSample(normalizedSourceType);
-  const sourceConfig = upsertFields(fields, [
-    ["__Source ID", sourceId],
-    ["__Run ID", runId],
-    ["__Source Unit Count", String(sample.assets.length || sample.previewRows.length || 1)],
-  ]);
+function inferPreviewColumnType(values: string[]) {
+  const nonEmptyValues = values.map((value) => value.trim()).filter((value) => !isEmptyValue(value));
+  if (nonEmptyValues.length === 0) return "String";
+  if (nonEmptyValues.every((value) => /^(true|false)$/i.test(value))) return "Boolean";
+  if (nonEmptyValues.every((value) => /^-?\d+$/.test(value))) return "Integer";
+  if (nonEmptyValues.every((value) => /^-?\d+(\.\d+)?$/.test(value))) return "Float";
+  if (nonEmptyValues.every((value) => !Number.isNaN(Date.parse(value)) && /[-T:]/.test(value))) return "Timestamp";
+  if (nonEmptyValues.some((value) => /^[\[{]/.test(value))) return "JSON";
+  return "String";
+}
+
+function normalizeColumnName(value: string) {
+  return value.trim().replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "") || "column";
+}
+
+function isEmptyValue(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" || normalized === "null" || normalized === "undefined" || normalized === "-";
+}
+
+function buildSqlResultConnectorAnalysis(fields: SourceFieldRows): SourceConnectorAnalysis {
+  const sourceDataset = fieldValue(fields, "Source Dataset");
+  const runId = fieldValue(fields, "SQL Run ID");
+  const rowCount = fieldValue(fields, "Preview Row Count");
+  const sourceLabel = [sourceDataset, runId].filter(Boolean).join(" / ") || "SQL Result";
+  const previewRows = [
+    ["Source Dataset", sourceDataset || "-"],
+    ["SQL Run ID", runId || "-"],
+    ["Preview Row Count", rowCount || "-"],
+    ["Backend connector", "Skipped"],
+  ];
 
   return {
-    actionPath: "/api/etl/sources/test/mock",
-    assets: sample.assets,
+    actionPath: "/api/query/runs",
+    assets: sourceDataset ? [[sourceDataset, runId || "SQL Preview", "verified"]] : [],
     draftPatch: {
-      schema: {
-        columns: sample.schemaColumns,
-        sampleRows: sample.previewRows,
-        schemaFingerprint: sample.schemaColumns.map((column) => `${column.targetName}:${column.type}:${column.nullable ? "nullable" : "required"}`).join("|"),
-        summary: `${sourceLabel} mock sample에서 ${sample.schemaColumns.length}개 필드 추론`,
-      },
       source: {
-        connectionMessage: `${getSourceTypeLabel(normalizedSourceType)} mock 연결 성공: ${sourceLabel}`,
+        connectionMessage: "SQL Preview result is already verified; connector test is skipped.",
         connectionStatus: "success",
-        sourceConfig,
+        sourceConfig: fields,
         sourceLabel,
-        sourceType: normalizedSourceType,
+        sourceType: "SQL Result",
       },
     },
     logs: [
-      `${getSourceTypeLabel(normalizedSourceType)} mock connector 실행`,
-      `샘플 소스 식별: ${sourceLabel}`,
-      `스키마 필드 ${sample.schemaColumns.length}개, 샘플 행 ${sample.previewRows.length}개 반환`,
+      "SQL Preview result is used as the processing job input.",
+      "Browser connector test and schema re-inference are skipped.",
     ],
-    message: `${getSourceTypeLabel(normalizedSourceType)} mock 연결 성공`,
-    previewColumns: sample.previewColumns,
-    previewNote: "Mock mode에서는 백엔드 커넥터 호출 없이 제한 샘플을 반환합니다.",
-    previewRows: sample.previewRows,
+    message: "SQL Preview result is already verified; connector test is skipped.",
+    previewColumns: ["Item", "Value"],
+    previewNote: "SQL Preview result is preserved.",
+    previewRows,
     status: "success",
-    testItems: [["Connector", normalizedSourceType], ["Mode", "Mock"], ["Result", "Success"]],
+    testItems: [["SQL Preview", "Verified"], ["Query", "Read-only"], ["Backend connector", "Skipped"]],
   };
-}
-
-function getMockSourceSample(sourceType: string) {
-  if (sourceType === "PostgreSQL") {
-    return makeSample({
-      assets: [["commerce.orders", "public", "sampled"], ["commerce.customers", "public", "detected"]],
-      columns: [["order_id", "string"], ["customer_id", "string"], ["order_date", "timestamp"], ["total_amount", "decimal"], ["status", "string"]],
-      rows: [["ORD-1001", "CUS-204", "2026-07-02", "128000", "paid"], ["ORD-1002", "CUS-118", "2026-07-02", "56000", "shipped"]],
-    });
-  }
-
-  if (sourceType === "MongoDB") {
-    return makeSample({
-      assets: [["events", "42,000 documents", "sampled"], ["profiles", "8,400 documents", "detected"]],
-      columns: [["_id", "string"], ["user_id", "string"], ["event_name", "string"], ["event_time", "timestamp"], ["payload", "JSON"]],
-      rows: [["evt_001", "u_001", "page_view", "2026-07-04T10:00:00Z", "{\"page\":\"/pricing\"}"], ["evt_002", "u_002", "purchase", "2026-07-04T10:03:00Z", "{\"amount\":42000}"]],
-    });
-  }
-
-  if (sourceType === "REST API") {
-    return makeSample({
-      assets: [["REST endpoint", "246 bytes", "HTTP 200"]],
-      columns: [["user_id", "string"], ["email", "string"], ["date", "date"], ["status", "string"], ["amount", "decimal"]],
-      rows: [["u_001", "demo1@example.com", "2026-07-04", "active", "42.7"], ["u_002", "demo2@example.com", "2026-07-04", "active", "19.25"]],
-    });
-  }
-
-  if (sourceType === "Data Lake") {
-    return makeSample({
-      assets: [["nyc_taxi/yellow_parquet/part-0001.parquet", "128 MB", "listed"], ["nyc_taxi/yellow_parquet/part-0002.parquet", "126 MB", "listed"]],
-      columns: [["pickup_at", "timestamp"], ["dropoff_at", "timestamp"], ["passenger_count", "integer"], ["fare_amount", "decimal"], ["payment_type", "string"]],
-      rows: [["2026-07-04 09:12:00", "2026-07-04 09:31:00", "2", "18.4", "card"], ["2026-07-04 09:20:00", "2026-07-04 09:44:00", "1", "24.8", "cash"]],
-    });
-  }
-
-  if (sourceType === "Stream / Kafka") {
-    return makeSample({
-      assets: [["asklake-source-events", "3 partitions", "sampled"], ["consumer-group", "asklake-etl-consumer-01", "ready"]],
-      columns: [["event_id", "string"], ["user_id", "string"], ["event_time", "timestamp"], ["page_url", "string"], ["raw_payload", "JSON"]],
-      rows: [["EVT-881", "CUS-204", "2026-07-04T10:21:00Z", "/pricing", "{\"action\":\"click\"}"], ["EVT-882", "CUS-118", "2026-07-04T10:22:00Z", "/checkout", "{\"action\":\"view\"}"]],
-    });
-  }
-
-  return makeSample({
-    assets: [["nyc_taxi/csv/yellow_tripdata_sample.csv", "24 MB", "listed"], ["nyc_taxi/csv/yellow_tripdata_02.csv", "27 MB", "listed"]],
-    columns: [["trip_id", "string"], ["pickup_at", "timestamp"], ["dropoff_at", "timestamp"], ["fare_amount", "decimal"], ["payment_type", "string"]],
-    rows: [["trip_001", "2026-07-04 09:12:00", "2026-07-04 09:31:00", "18.4", "card"], ["trip_002", "2026-07-04 09:20:00", "2026-07-04 09:44:00", "24.8", "cash"]],
-  });
-}
-
-function makeSample({
-  assets,
-  columns,
-  rows,
-}: {
-  assets: Array<[string, string, string]>;
-  columns: Array<[string, string]>;
-  rows: string[][];
-}) {
-  const schemaColumns: SchemaColumnDraft[] = columns.map(([name, type]) => ({
-    confidence: 90,
-    nullable: false,
-    sourceName: name,
-    targetName: name,
-    type,
-  }));
-
-  return {
-    assets,
-    previewColumns: columns.map(([name]) => name),
-    previewRows: rows,
-    schemaColumns,
-  };
-}
-
-function getSourceLabel(sourceType: string, fields: SourceFieldRows) {
-  const labelBySourceType: Record<string, string[]> = {
-    "Data Lake": ["Path"],
-    "File / S3": ["Bucket / Stage Name", "Path / Prefix"],
-    MongoDB: ["Database Name", "Collection"],
-    PostgreSQL: ["Endpoint / Host", "Database Name", "DATASET OR TABLE SELECTOR"],
-    "REST API": ["Endpoint URL"],
-    "Stream / Kafka": ["TOPIC / QUEUE NAME", "Broker / Endpoint"],
-  };
-  const labels = labelBySourceType[sourceType] ?? [];
-  const values = labels.map((label) => fieldValue(fields, label)).filter(Boolean);
-  return values.join(" / ") || sourceType;
-}
-
-function getSourceTypeLabel(sourceType: string) {
-  const labels: Record<string, string> = {
-    "Data Lake": "Data Lake",
-    "File / S3": "File / S3",
-    MongoDB: "MongoDB",
-    PostgreSQL: "PostgreSQL",
-    "REST API": "REST API",
-    "Stream / Kafka": "Kafka",
-  };
-  return labels[sourceType] ?? sourceType;
 }
 
 function fieldValue(fields: SourceFieldRows, label: string) {
   return fields.find(([fieldLabel]) => fieldLabel === label)?.[1]?.trim() ?? "";
-}
-
-function upsertFields(fields: SourceFieldRows, patches: SourceFieldRows) {
-  const nextFields = [...fields];
-  patches.forEach(([label, value]) => {
-    const index = nextFields.findIndex(([fieldLabel]) => fieldLabel === label);
-    if (index >= 0) {
-      nextFields[index] = [label, value];
-    } else {
-      nextFields.push([label, value]);
-    }
-  });
-  return nextFields;
-}
-
-function toStableId(prefix: string, value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = Math.imul(31, hash) + value.charCodeAt(index) | 0;
-  }
-  return `${prefix}_${Math.abs(hash).toString(16)}`;
-}
-
-async function resolveMock<T>(payload: T): Promise<T> {
-  await new Promise((resolve) => window.setTimeout(resolve, 120));
-  return payload;
 }

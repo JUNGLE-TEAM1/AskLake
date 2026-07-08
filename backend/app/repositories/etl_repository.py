@@ -21,17 +21,54 @@ def ensure_schema(db: Session) -> None:
         existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
         column_defs = {
             "compression": "VARCHAR(64)",
+            "dag_steps": "JSON",
             "dag_steps_by_run_id": "JSON",
+            "dataset_id": "VARCHAR(120)",
+            "last_run": "VARCHAR(64)",
+            "last_state": "VARCHAR(255)",
+            "name": "VARCHAR(255)",
+            "next_run": "VARCHAR(255)",
+            "owner": "VARCHAR(255)",
             "partition": "VARCHAR(255)",
             "permission_roles": "JSON",
+            "progress": "JSON",
+            "quality_invalid_rows": "JSON",
+            "quality_rules": "JSON",
+            "quality_score": "FLOAT",
+            "quality_status": "VARCHAR(32)",
+            "rag": "BOOLEAN",
+            "retry_policy": "JSON",
+            "retry_policy_summary": "VARCHAR(255)",
+            "run_limit_summary": "VARCHAR(255)",
+            "schedule": "VARCHAR(255)",
+            "schedule_policy": "JSON",
+            "schedule_summary": "TEXT",
+            "schema_columns": "JSON",
+            "schema_fingerprint": "TEXT",
+            "schema_sample_rows": "JSON",
+            "source": "VARCHAR(255)",
+            "source_config": "JSON",
+            "source_label": "VARCHAR(255)",
+            "source_type": "VARCHAR(120)",
+            "stats": "JSON",
+            "status": "VARCHAR(64)",
             "storage_path": "VARCHAR(512)",
             "storage_type": "VARCHAR(64)",
+            "tag": "VARCHAR(64)",
+            "target": "VARCHAR(255)",
             "target_description": "VARCHAR(512)",
+            "target_format": "VARCHAR(120)",
+            "target_layer": "VARCHAR(32)",
+            "target_path": "VARCHAR(512)",
             "target_tags": "JSON",
+            "transform_output_columns": "JSON",
+            "transform_steps": "JSON",
         }
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+        if "schema_fingerprint" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -174,16 +211,21 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         id=job.id,
-        name=job.name,
-        owner=job.owner,
-        status=job.status,
-        tag=job.tag,
-        source=job.source,
-        target=job.target,
-        schedule=job.schedule,
+        name=job.name or job.target or job.id,
+        owner=job.owner or "demo-user",
+        status=job.status or "scheduled",
+        tag=job.tag or "[생성]",
+        source=job.source or job.source_label or "-",
+        target=job.target or job.name or job.id,
+        schedule=job.schedule or "-",
+        schedule_policy=job.schedule_policy,
+        schedule_summary=job.schedule_summary,
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        retry_policy=job.retry_policy,
+        retry_policy_summary=job.retry_policy_summary,
+        run_limit_summary=job.run_limit_summary,
         permission_roles=job.permission_roles,
         storage_type=job.storage_type,
         partition=job.partition,
@@ -200,9 +242,9 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         quality_rules=job.quality_rules,
         quality_score=job.quality_score,
         quality_status=job.quality_status,
-        last_run=job.last_run,
-        last_state=job.last_state,
-        next_run=job.next_run,
+        last_run=job.last_run or "-",
+        last_state=job.last_state or "-",
+        next_run=job.next_run or "-",
         progress=job.progress,
         stats=job.stats,
         run_history=list_runs_for_job(db, job.id),
@@ -212,7 +254,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
 
 
 def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
-    if dataset.payload and dataset.name is None:
+    if dataset.payload:
         payload = dataset.payload
         return CatalogDataset(
             id=str(payload.get("id") or dataset.id),

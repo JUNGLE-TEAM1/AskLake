@@ -1,19 +1,34 @@
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
 import { runSparkPipeline } from "./sparkRunner.mjs";
-
-const jobs = [];
-const datasets = [];
+import {
+  countJobs,
+  findDatasetForJob,
+  getDataset,
+  getJob,
+  listDatasets as listStoredDatasets,
+  listJobs as listStoredJobs,
+  saveDataset,
+  saveJob,
+  saveSqlRun,
+} from "./metadataStore.mjs";
 
 export function listJobs() {
-  return jobs;
+  return listStoredJobs();
+}
+
+export async function getPipelineJob(jobId) {
+  const job = await getJob(jobId);
+  if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
+  return job;
 }
 
 export function listDatasets() {
-  return datasets;
+  return listStoredDatasets();
 }
 
-export function createPipeline(request) {
+export async function createPipeline(request) {
   validateCreatePipelineRequest(request);
+  const jobCount = await countJobs();
   const transformSteps = normalizeTransformSteps(request.transformSteps);
   const transformOutputColumns = normalizeTransformOutputColumns(request.transformOutputColumns);
   const qualityRules = normalizeQualityRules(request.qualityRules);
@@ -21,9 +36,9 @@ export function createPipeline(request) {
   const datasetSchema = datasetSchemaFromRequest(request);
   const datasetSampleRows = datasetSampleRowsFromRequest(request, datasetSchema);
   const sourceMetrics = sourceMetricsFromRequest(request, datasetSchema, datasetSampleRows);
-  const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobs.length + 1).padStart(3, "0")}`;
+  const jobId = request.id ? `JOB-${sourceId("job", `${request.id}:${Date.now()}`).slice(-8).toUpperCase()}` : `JOB-${String(jobCount + 1).padStart(3, "0")}`;
   const datasetId = `ds_${normalizeColumnName(request.targetDataset)}`;
-  assertTargetDatasetAvailable(datasetId, request.targetDataset);
+  await assertTargetDatasetAvailable(datasetId, request.targetDataset);
 
   const job = {
     dagSteps: initialDagSteps(request, sourceMetrics),
@@ -33,16 +48,28 @@ export function createPipeline(request) {
     lastRun: "생성 후 미실행",
     lastState: `${sourceMetrics.schemaColumns}개 컬럼 추론 완료`,
     name: request.jobName,
-    nextRun: request.scheduleLabel === "manual" ? "-" : request.scheduleLabel,
+    nextRun: scheduleNextRunLabel(request.scheduleLabel, request.scheduleSummary),
     owner: request.owner,
     permissionRoles: request.permissionRoles,
     rag: Boolean(request.rag),
     runHistory: [],
     schedule: request.scheduleLabel,
+    schedulePolicy: {
+      endDate: request.endDate,
+      nextRunUtc: request.nextRunUtc,
+      overlapPolicy: request.overlapPolicy,
+      startDate: request.startDate,
+      timezone: request.timezone,
+      watermarkPolicy: request.watermarkPolicy,
+    },
+    scheduleSummary: request.scheduleSummary,
     source: `${request.sourceType} / ${request.sourceLabel}`,
     sourceConfig: request.sourceConfig,
     sourceLabel: request.sourceLabel,
     sourceType: request.sourceType,
+    retryPolicy: request.retryPolicy,
+    retryPolicySummary: request.retryPolicySummary,
+    runLimitSummary: request.runLimitSummary,
     compression: request.compression,
     partition: request.partition,
     storagePath: request.storagePath,
@@ -63,7 +90,7 @@ export function createPipeline(request) {
     qualityStatus: request.qualityStatus,
   };
 
-  jobs.unshift(job);
+  await saveJob(job);
 
   return {
     catalogTarget: {
@@ -76,8 +103,9 @@ export function createPipeline(request) {
   };
 }
 
-function assertTargetDatasetAvailable(datasetId, targetDataset) {
+async function assertTargetDatasetAvailable(datasetId, targetDataset) {
   const normalizedTarget = normalizeColumnName(targetDataset);
+  const [datasets, jobs] = await Promise.all([listStoredDatasets(), listStoredJobs()]);
   const datasetExists = datasets.some((dataset) => dataset.id === datasetId || normalizeColumnName(dataset.name) === normalizedTarget);
   const pendingJobExists = jobs.some((job) => job.datasetId === datasetId || normalizeColumnName(job.target) === normalizedTarget);
   if (datasetExists || pendingJobExists) {
@@ -88,70 +116,101 @@ function assertTargetDatasetAvailable(datasetId, targetDataset) {
   }
 }
 
-export function commandJob(jobId, command) {
-  const job = jobs.find((item) => item.id === jobId);
+export async function commandJob(jobId, command) {
+  const job = await getJob(jobId);
   if (!job) throw notFoundError(`작업을 찾지 못했습니다: ${jobId}`);
 
   const actionByCommand = {
-    cancel: "etl.run.cancel_requested",
+    cancelRun: "etl.run.cancel_requested",
     pause: "etl.job.pause_requested",
     retry: "etl.run.retry_requested",
     run: "etl.run.requested",
+    stopSchedule: "etl.schedule.stop_requested",
   };
   if (!actionByCommand[command]) throw validationError(`지원하지 않는 작업 명령입니다: ${command}`);
+  if (command === "run" && job.status === "running") throw conflictError(`이미 실행 중인 작업입니다: ${jobId}`);
+  if (command === "pause" && job.status !== "running") throw invalidStateError(`일시정지할 수 없는 상태입니다: ${job.status}`);
+  if (command === "cancelRun" && job.status !== "running") throw invalidStateError(`현재 실행을 취소할 수 없는 상태입니다: ${job.status}`);
+  if (command === "stopSchedule" && !hasScheduledExecution(job)) throw invalidStateError(`중지할 스케줄이 없습니다: ${jobId}`);
 
   const startedJob = applyJobCommand(job, command);
   Object.assign(job, startedJob);
   const run = runFromCommand(job, command);
-  let dataset;
-  let sparkResult;
-  if (run && (command === "run" || command === "retry")) {
-    try {
-      sparkResult = runSparkPipeline(job, command, run.runId);
-    } catch (error) {
-      sparkResult = {
-        endedAt: new Date().toISOString(),
-        error: error.message || "Spark job failed.",
-        inputRows: 0,
-        outputPath: "-",
-        outputRows: 0,
-        runId: run.runId,
-        sourcePath: job.source,
-        startedAt: run.startedAt,
-        status: "failed",
-      };
-    }
-    Object.assign(run, runFromSparkResult(run, sparkResult));
-    Object.assign(job, finalizeJobFromSparkResult(job, command, sparkResult));
-    dataset = updateDatasetFromSparkResult(job, sparkResult);
-  }
   if (run) {
     job.runHistory = [run, ...(job.runHistory ?? [])];
     job.stats = statsFromRuns(job, job.runHistory);
-    job.dagSteps = dagStepsFromCommand(job, command, run, sparkResult);
+    job.dagSteps = dagStepsFromCommand(job, command, run);
     job.dagStepsByRunId = {
       ...(job.dagStepsByRunId ?? {}),
       [run.runId]: job.dagSteps,
     };
   }
+  await saveJob(job);
+  if (run && (command === "run" || command === "retry")) {
+    setImmediate(() => {
+      void finalizeSparkJobRun(jobId, command, run.runId).catch((error) => {
+        console.error(`Spark job finalization failed for ${jobId}/${run.runId}`, error);
+      });
+    });
+  }
   return {
     action: actionByCommand[command],
     apiPath: `/api/etl/jobs/${jobId}/commands`,
-    dataset,
     job,
     run,
     dagSteps: job.dagSteps ?? [],
   };
 }
 
-export function executeQuery(request) {
+async function finalizeSparkJobRun(jobId, command, runId) {
+  const startedJob = await getJob(jobId);
+  const startedRun = startedJob?.runHistory?.find((item) => item.runId === runId);
+  if (!startedJob || !startedRun || startedRun.status !== "running") return;
+
+  let sparkResult;
+  try {
+    sparkResult = runSparkPipeline(startedJob, command, runId);
+  } catch (error) {
+    sparkResult = {
+      endedAt: new Date().toISOString(),
+      error: error.message || "Spark job failed.",
+      inputRows: 0,
+      outputPath: "-",
+      outputRows: 0,
+      runId,
+      sourcePath: startedJob.source,
+      startedAt: startedRun.startedAt,
+      status: "failed",
+    };
+  }
+
+  const latestJob = await getJob(jobId);
+  const latestRun = latestJob?.runHistory?.find((item) => item.runId === runId);
+  if (!latestJob || !latestRun || latestRun.status !== "running") return;
+
+  const finalRun = runFromSparkResult(latestRun, sparkResult);
+  const finalJob = finalizeJobFromSparkResult(latestJob, command, sparkResult);
+  finalJob.runHistory = [finalRun, ...(latestJob.runHistory ?? []).filter((item) => item.runId !== runId)];
+  finalJob.stats = statsFromRuns(finalJob, finalJob.runHistory);
+  finalJob.dagSteps = dagStepsFromCommand(finalJob, command, finalRun, sparkResult);
+  finalJob.dagStepsByRunId = {
+    ...(latestJob.dagStepsByRunId ?? {}),
+    [runId]: finalJob.dagSteps,
+  };
+
+  const dataset = await updateDatasetFromSparkResult(finalJob, sparkResult);
+  await saveJob(finalJob);
+  return dataset;
+}
+
+export async function executeQuery(request) {
   const datasetId = request?.datasetId;
-  const dataset = datasets.find((item) => item.id === datasetId);
+  const dataset = await getDataset(datasetId);
   if (!dataset) throw notFoundError(`데이터셋을 찾지 못했습니다: ${datasetId}`);
 
   const columns = dataset.schema.slice(0, 6).map(([name]) => name);
   const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
-  return {
+  const result = {
     columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
@@ -161,6 +220,8 @@ export function executeQuery(request) {
     rows,
     runId: sourceId("sql", `${dataset.id}:${Date.now()}`),
   };
+  await saveSqlRun(result);
+  return result;
 }
 
 function validateCreatePipelineRequest(request) {
@@ -177,6 +238,28 @@ function validateCreatePipelineRequest(request) {
     missing.push("schemaColumns[included]");
   }
   if (missing.length > 0) throw validationError(`Missing required fields: ${missing.join(", ")}`);
+}
+
+function scheduleNextRunLabel(scheduleLabel, fallback) {
+  const schedule = String(scheduleLabel || "").trim();
+  const fallbackLabel = String(fallback || "").trim();
+  if (!schedule || !hasScheduledLabel(schedule)) return "-";
+  if (schedule.includes("1회") || schedule.includes("예약")) {
+    return fallbackLabel && fallbackLabel !== "-"
+      ? fallbackLabel
+      : schedule.replace(/\s*(예약\s*)?1회 실행\s*$/, "").trim();
+  }
+  return fallbackLabel && fallbackLabel !== "-" ? fallbackLabel : schedule;
+}
+
+function hasScheduledLabel(scheduleLabel) {
+  const schedule = String(scheduleLabel || "").trim().toLowerCase();
+  if (!schedule || schedule === "-") return false;
+  return !["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token));
+}
+
+function hasScheduledExecution(job) {
+  return job.status !== "stopped" && hasScheduledLabel(job.schedule);
 }
 
 function normalizeTransformSteps(steps) {
@@ -243,6 +326,20 @@ function validationError(message) {
   return error;
 }
 
+function conflictError(message) {
+  const error = new Error(message);
+  error.status = 409;
+  error.code = "CONFLICT";
+  return error;
+}
+
+function invalidStateError(message) {
+  const error = new Error(message);
+  error.status = 422;
+  error.code = "INVALID_JOB_STATE";
+  return error;
+}
+
 function notFoundError(message) {
   const error = new Error(message);
   error.status = 404;
@@ -273,11 +370,36 @@ function applyJobCommand(job, command) {
     };
   }
 
+  if (command === "stopSchedule") {
+    return {
+      ...job,
+      lastState: "스케줄 중지됨",
+      nextRun: "-",
+      progress: undefined,
+      schedule: "스케줄링 건너뛰기",
+      schedulePolicy: {
+        endDate: "",
+        nextRunUtc: "",
+        overlapPolicy: undefined,
+        startDate: "",
+        timezone: "",
+        watermarkPolicy: {
+          column: "updated_at",
+          enabled: false,
+          lookbackMinutes: 0,
+          mode: "full_refresh",
+        },
+      },
+      scheduleSummary: "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행",
+      status: "stopped",
+    };
+  }
+
   return {
     ...job,
     lastRun: "방금 취소",
     lastState: "취소됨",
-    nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+    nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
     status: "canceled",
   };
@@ -357,16 +479,16 @@ function initialDagSteps(request, metrics) {
     ], ["실행 시 품질 규칙 평가 결과가 기록됩니다."]),
     dagStep("run", "6. 실행 대기", "아직 실행되지 않음", "pending", [
       ["Run ID", "-"],
-    ], ["즉시 실행 또는 예약 실행 후 Run 로그가 연결됩니다."]),
+    ], ["즉시 실행 또는 반복 실행 후 Run 로그가 연결됩니다."]),
   ];
 }
 
 function runFromCommand(job, command) {
-  if (command === "pause") return undefined;
+  if (command === "pause" || command === "stopSchedule") return undefined;
   const now = new Date();
   const runId = sourceId("run", `${job.id}:${command}:${now.toISOString()}`);
   const inputRows = job.stats?.inputRows && job.stats.inputRows !== "-" ? job.stats.inputRows : "0";
-  if (command === "cancel") {
+  if (command === "cancelRun") {
     return {
       duration: "-",
       endedAt: now.toISOString(),
@@ -417,34 +539,31 @@ function finalizeJobFromSparkResult(job, command, result) {
     lastState: success
       ? `${command === "retry" ? "재실행" : "실행"} 완료 · Spark Parquet 적재`
       : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
-    nextRun: job.schedule === "수동 실행" || job.schedule === "manual" ? "-" : job.schedule,
+    nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
     status: success ? "scheduled" : "failed",
     targetPath: result.outputPath ?? job.targetPath,
   };
 }
 
-function updateDatasetFromSparkResult(job, result) {
+async function updateDatasetFromSparkResult(job, result) {
   if (result.status !== "success") return undefined;
-  let dataset = datasets.find((item) => item.name === job.target || item.id === `ds_${normalizeColumnName(job.target)}`);
-  if (!dataset) {
-    dataset = datasetFromSuccessfulRun(job, result);
-    datasets.unshift(dataset);
-    return dataset;
-  }
-  dataset.lastUpdated = result.endedAt ?? new Date().toISOString();
+  const existingDataset = await findDatasetForJob(job);
+  const nextDataset = existingDataset ? { ...existingDataset } : datasetFromSuccessfulRun(job, result);
+  nextDataset.lastUpdated = result.endedAt ?? new Date().toISOString();
   if (Array.isArray(result.schema) && result.schema.length > 0) {
-    dataset.schema = result.schema.map((field) => [field.name, field.type]);
+    nextDataset.schema = result.schema.map((field) => [field.name, field.type]);
   }
   if (result.quality) {
-    dataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
+    nextDataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
   }
-  dataset.rows = formatRows(result.outputRows);
-  dataset.size = result.outputPath ?? dataset.size;
-  dataset.source = job.name;
-  dataset.status = "available";
-  dataset.upstream = Array.from(new Set([...(dataset.upstream ?? []), result.sourcePath ?? job.source]));
-  return dataset;
+  nextDataset.rows = formatRows(result.outputRows);
+  nextDataset.size = result.outputPath ?? nextDataset.size;
+  nextDataset.source = job.name;
+  nextDataset.status = "available";
+  nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
+  await saveDataset(nextDataset);
+  return nextDataset;
 }
 
 function datasetFromSuccessfulRun(job, result) {
@@ -505,7 +624,7 @@ function statsFromRuns(job, runs) {
 }
 
 function dagStepsFromCommand(job, command, run, sparkResult) {
-  const canceled = command === "cancel";
+  const canceled = command === "cancelRun";
   const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
   const sourcePath = sparkResult?.sourcePath ?? job.source;
@@ -581,7 +700,7 @@ function compactSparkLogs(result) {
 function sourceUnitLabel(sourceType) {
   if (sourceType === "MongoDB") return "컬렉션";
   if (sourceType === "PostgreSQL") return "테이블";
-  if (sourceType === "Stream / Kafka") return "파티션";
+  if (sourceType === "Stream / Kafka" || sourceType === "Kafka JSON") return "파티션";
   return "오브젝트";
 }
 

@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Plus, Table2 } from "lucide-react";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
@@ -80,6 +80,7 @@ export function DashboardLandingPage({
       <header className="dashboard-header">
         <div>
           <h1>대시보드</h1>
+          <p>게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다.</p>
         </div>
         <div className="dashboard-header-actions">
           <button
@@ -88,40 +89,54 @@ export function DashboardLandingPage({
             type="button"
             onClick={onCreateDashboard}
           >
-            <Plus size={24} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+            <Plus size={16} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
           </button>
         </div>
       </header>
 
-      <DashboardListToolbar
-        onClearTags={onClearTags}
-        onSearchQueryChange={onSearchQueryChange}
-        onSelectOwner={onSelectOwner}
-        onSelectSort={onSelectSort}
-        onToggleControl={onToggleControl}
-        onToggleTag={onToggleTag}
-        openControl={openControl}
-        ownerFilter={ownerFilter}
-        owners={owners}
-        searchQuery={searchQuery}
-        selectedTags={selectedTags}
-        sortOption={sortOption}
-        tags={tags}
-      />
-
-      <section className="dashboard-table-list">
-        <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
-        {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
-        {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
-        {createError && <div className="dashboard-list-count">대시보드 생성 오류: {createError}</div>}
-        <DashboardTable
-          dashboards={dashboards}
-          deletingDashboardId={deletingDashboardId}
-          onOpenDetail={onOpenDashboard}
-          onRequestDelete={onRequestDelete}
+      <div className="dashboard-xflow-stack">
+        <DashboardListToolbar
+          onClearTags={onClearTags}
+          onSearchQueryChange={onSearchQueryChange}
+          onSelectOwner={onSelectOwner}
+          onSelectSort={onSelectSort}
+          onToggleControl={onToggleControl}
+          onToggleTag={onToggleTag}
+          openControl={openControl}
+          ownerFilter={ownerFilter}
+          owners={owners}
+          searchQuery={searchQuery}
+          selectedTags={selectedTags}
+          sortOption={sortOption}
+          tags={tags}
         />
-        <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
-      </section>
+
+        <section className="dashboard-table-list dashboard-xflow-card">
+          <div className="dashboard-xflow-card-header">
+            <span className="dashboard-xflow-icon">
+              <Table2 size={16} />
+            </span>
+            <div className="dashboard-xflow-heading">
+              <h2>대시보드 목록</h2>
+              <p>대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다.</p>
+            </div>
+            <span className="dashboard-xflow-state">{pageStart}-{pageEnd}</span>
+          </div>
+          <div className="dashboard-table-list-body">
+            <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
+            {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
+            {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
+            {createError && <div className="dashboard-list-count">대시보드 생성 오류: {createError}</div>}
+            <DashboardTable
+              dashboards={dashboards}
+              deletingDashboardId={deletingDashboardId}
+              onOpenDetail={onOpenDashboard}
+              onRequestDelete={onRequestDelete}
+            />
+            <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
+          </div>
+        </section>
+      </div>
       {deleteTarget && (
         <DashboardDeleteConfirmDialog
           dashboard={deleteTarget}

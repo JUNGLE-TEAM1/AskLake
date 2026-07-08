@@ -6,6 +6,7 @@
 
 .page-body > .dashboard-list-page,
 .dashboard-list-page {
+  width: 100%;
   max-width: none;
 }
 
@@ -13,12 +14,14 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 20px;
+  min-height: var(--page-masthead-height);
 }
 
 .dashboard-header > div:first-child {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .dashboard-header span,
@@ -31,36 +34,39 @@
 
 .dashboard-header h1 {
   color: #0f172a;
-  font-size: 28px;
-  line-height: 1.2;
+  font-size: var(--page-title-font-size);
+  font-weight: var(--page-title-font-weight);
+  line-height: var(--page-title-line-height);
 }
 
 .dashboard-header p,
 .dashboard-card-header p {
   max-width: 680px;
   color: #64748b;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--page-title-description-size);
+  line-height: var(--page-title-description-line-height);
 }
 
 .dashboard-header-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 8px;
+  padding-top: 2px;
 }
 
 .dashboard-header-actions .dashboard-create-button {
   display: inline-flex;
-  height: 56px;
+  height: 44px;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  border-radius: 12px;
-  font-size: 18px;
-  font-weight: 900;
+  gap: 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 800;
   line-height: 1;
-  padding: 0 20px;
+  padding: 0 16px;
 }
 
 .dashboard-header-actions .dashboard-create-button svg {
@@ -70,6 +76,81 @@
 .dashboard-header-actions .dashboard-create-button:disabled {
   cursor: wait;
   opacity: 0.72;
+}
+
+.dashboard-xflow-stack {
+  display: grid;
+  gap: 20px;
+}
+
+.dashboard-xflow-card {
+  overflow: hidden;
+  border: 1px solid #dee4ee;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
+}
+
+.dashboard-list-toolbar.dashboard-xflow-card {
+  overflow: visible;
+}
+
+.dashboard-xflow-card-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 16px 20px;
+}
+
+.dashboard-xflow-icon {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 8px;
+  background: #eef4ff;
+  color: #2563eb;
+}
+
+.dashboard-xflow-heading {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.dashboard-xflow-heading h2 {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-xflow-heading p {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-xflow-state {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1;
+  padding: 0 9px;
+  white-space: nowrap;
 }
 
 .dashboard-filter-bar,
@@ -397,10 +478,15 @@
 }
 
 .dashboard-source-card span,
+.dashboard-source-card small,
 .dashboard-share-box span {
   color: #64748b;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.dashboard-source-card small {
+  overflow-wrap: anywhere;
 }
 
 .dashboard-side-panel button {
@@ -493,10 +579,20 @@
 
 .dashboard-list-toolbar {
   display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.dashboard-list-toolbar-body {
+  display: grid;
   grid-template-columns: minmax(320px, 1fr) auto;
   align-items: center;
   gap: 14px;
-  padding: 18px;
+  border-top: 1px solid #eef2f7;
+  background: #fbfdff;
+  padding: 12px 20px;
 }
 
 .dashboard-list-toolbar button,
@@ -514,7 +610,7 @@
 
 .dashboard-list-search {
   display: flex;
-  min-height: 48px;
+  min-height: 42px;
   min-width: 0;
   align-items: center;
   gap: 12px;
@@ -555,13 +651,13 @@
 
 .dashboard-list-toolbar .dashboard-filter-button {
   display: inline-flex;
-  min-height: 48px;
+  min-height: 42px;
   align-items: center;
   gap: 14px;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #475569;
-  font-size: 16px;
-  padding: 0 22px;
+  font-size: 14px;
+  padding: 0 16px;
 }
 
 .dashboard-list-toolbar .dashboard-filter-button span {
@@ -571,11 +667,11 @@
 
 .dashboard-list-toolbar .dashboard-sort-button {
   display: inline-grid;
-  width: 52px;
-  min-height: 48px;
+  width: 42px;
+  min-height: 42px;
   place-items: center;
-  border: 0;
-  background: transparent;
+  border: 1px solid #cbd5e1;
+  background: #fff;
   color: #64748b;
   padding: 0;
 }
@@ -637,21 +733,27 @@
 
 .dashboard-list-toolbar .dashboard-menu-option:hover,
 .dashboard-list-toolbar .dashboard-menu-option.active {
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
 }
 
 .dashboard-menu-option.checkbox input {
   width: 15px;
   height: 15px;
-  accent-color: #636ae8;
+  accent-color: #2563eb;
 }
 
 .dashboard-table-list {
   display: grid;
-  gap: 12px;
-  padding: 16px;
+  gap: 0;
+  padding: 0;
   width: 100%;
+}
+
+.dashboard-table-list-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px 20px;
 }
 
 .dashboard-table-list .schema-table th,
@@ -701,10 +803,10 @@
   display: inline-flex;
   min-height: 24px;
   align-items: center;
-  border: 1px solid #dddffd;
+  border: 1px solid #bfdbfe;
   border-radius: 999px;
-  background: #f2f2fd;
-  color: #636ae8;
+  background: #eff6ff;
+  color: #2563eb;
   font-size: 12px;
   font-weight: 850;
   padding: 0 9px;

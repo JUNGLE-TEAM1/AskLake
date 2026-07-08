@@ -5,8 +5,8 @@ Node demo API는 아직 제거하지 않으며, FastAPI 전환 작업은 `app/` 
 
 ## FastAPI 실행
 
-FastAPI backend는 Python 3.13 환경에서 검증한다. macOS 기본 `python3`가 3.14인 경우
-`psycopg[binary]==3.2.9` 설치가 실패할 수 있으므로 `python3.13`을 사용한다.
+FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도
+`python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
 
 ```bash
 cd backend
@@ -16,7 +16,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-환경 변수는 `.env.example`을 참고한다.
+환경 변수는 `.env.example`을 참고한다. 실제 OpenAI 키는 git에 올리지 않는 `.env.local`의 `OPENAI_API_KEY`에 둔다.
 
 ## Smoke Check
 
@@ -36,12 +36,14 @@ pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
-이 검증은 PostgreSQL이 `localhost:54328`에서 실행 중이어야 한다. `app.seed.seed_pair2_demo`로 `orders_clean` demo dataset을 넣고, 별도 포트의 FastAPI 서버를 띄운 뒤 아래 흐름을 확인한다.
+이 검증은 PostgreSQL이 `localhost:54328`에서 실행 중이어야 한다. `app.seed.seed_pair2_demo`로 commerce demo dataset(`orders_clean`, `customers_clean`, `order_items_clean`, `products_clean`, `payments_clean`)을 넣고, 별도 포트의 FastAPI 서버를 띄운 뒤 아래 흐름을 확인한다.
+대시보드 사이드바와 Assistant demo dataset은 `.venv/bin/python -m app.seed.seed_dashboard_demo`로 `catalog_datasets`에 넣을 수 있다.
 
 - `GET /api/catalog/datasets`
 - `GET /api/catalog/datasets/{datasetId}`
 - `GET /api/catalog/datasets/{datasetId}/lineage`
 - `POST /api/query/runs`
+- `POST /api/query/ai-suggestions`
 - `POST /api/catalog/derived-datasets`
 - 생성된 derived dataset의 catalog 재조회와 lineage 조회
 

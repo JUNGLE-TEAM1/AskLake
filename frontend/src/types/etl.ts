@@ -1,5 +1,5 @@
-export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancel" | "delete";
+export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
@@ -13,17 +13,20 @@ export type JobRowData = {
   source: string;
   target: string;
   schedule: string;
+  schedulePolicy?: SchedulePolicyDraft;
+  scheduleSummary?: string;
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  retryPolicy?: RetryPolicyDraft;
+  retryPolicySummary?: string;
+  runLimitSummary?: string;
   permissionRoles?: PermissionDraft["roles"];
   compression?: "Snappy" | "Gzip" | "None";
   partition?: string;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
-  targetDescription?: string;
   targetFormat?: string;
-  targetTags?: string[];
   targetLayer?: TargetLayer;
   targetPath?: string;
   transformOutputColumns?: Array<[string, string]>;
@@ -123,21 +126,47 @@ export type QualityDraft = {
 export type ScheduleDraft = {
   endDate?: string;
   label: string;
-  mode: "manual" | "once" | "repeat";
+  mode: "manual" | "repeat";
   nextRun?: string;
+  nextRunUtc?: string;
+  overlapPolicy?: ScheduleOverlapPolicy;
   retryPolicy: RetryPolicyDraft;
   startDate?: string;
   summary?: string;
   timezone?: string;
+  watermarkPolicy?: WatermarkPolicyDraft;
+};
+
+export type SchedulePolicyDraft = {
+  endDate?: string;
+  nextRunUtc?: string;
+  overlapPolicy?: ScheduleOverlapPolicy;
+  startDate?: string;
+  timezone?: string;
+  watermarkPolicy?: WatermarkPolicyDraft;
 };
 
 export type RetryFailureAction = "retry_then_fail" | "retry_then_quarantine" | "notify_only";
+export type RetryBackoffStrategy = "fixed" | "exponential";
+export type ScheduleOverlapPolicy = "skip_if_running" | "queue_after_current" | "allow_parallel";
+export type WatermarkWindowMode = "last_success_to_scheduled_at" | "last_success_to_run_started_at" | "full_refresh";
 
 export type RetryPolicyDraft = {
+  backoffMultiplier: number;
+  backoffStrategy: RetryBackoffStrategy;
   failureAction: RetryFailureAction;
+  initialRetryDelayMinutes: number;
   maxRetries: number;
+  maxRetryDelayMinutes: number;
   retryIntervalMinutes: number;
   timeoutMinutes: number;
+};
+
+export type WatermarkPolicyDraft = {
+  column: string;
+  enabled: boolean;
+  lookbackMinutes: number;
+  mode: WatermarkWindowMode;
 };
 
 export type PermissionDraft = {
@@ -152,15 +181,42 @@ export type PermissionDraft = {
 
 export type TargetDraft = {
   compression?: "Snappy" | "Gzip" | "None";
+  databaseName?: string;
   datasetName: string;
   description?: string;
   format: string;
+  indexColumns?: string[];
   layer: TargetLayer;
+  lastTestRun?: {
+    finishedAt?: string;
+    logs: string[];
+    message?: string;
+    status: "idle" | "pending" | "success" | "failed";
+  };
+  manager?: string;
+  owner?: string;
   partition?: string;
+  partitionColumns?: string[];
   rag: boolean;
+  schemaRules?: Array<{
+    indexed: boolean;
+    name: string;
+    nullable: boolean;
+    partitionable: boolean;
+    raw?: boolean;
+    recommendedIndex: boolean;
+    recommendedPartition: boolean;
+    sourceName: string;
+    type: "string" | "number" | "boolean" | "datetime" | "json";
+    use: boolean;
+    validationStatus: "valid" | "warning" | "error";
+  }>;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tableName?: string;
+  targetTableName?: string;
   tags?: string[];
+  testStatus?: "idle" | "success" | "failed";
 };
 
 export type DraftPipeline = {
@@ -194,10 +250,14 @@ export type CreatePipelineRequest = {
   scheduleLabel: string;
   retryPolicy: RetryPolicyDraft;
   retryPolicySummary: string;
+  runLimitSummary: string;
   scheduleSummary?: string;
   startDate?: string;
   endDate?: string;
+  nextRunUtc?: string;
+  overlapPolicy?: ScheduleOverlapPolicy;
   timezone?: string;
+  watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   permissionRoles?: PermissionDraft["roles"];
   storageType?: "S3" | "Local" | "HDFS";

@@ -1,7 +1,7 @@
 export { ApiError } from "./types/audit";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
 export type { CatalogDataset, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
-export type { BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, SavedDashboardCard, TableWidgetConfig } from "./types/dashboard";
+export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
   DagStepsByRunId,
@@ -20,9 +20,12 @@ export type {
   PermissionDraft,
   QualityDraft,
   QualityRuleDraft,
+  RetryBackoffStrategy,
   RetryFailureAction,
   RetryPolicyDraft,
   ScheduleDraft,
+  ScheduleOverlapPolicy,
+  SchedulePolicyDraft,
   SchemaColumnDraft,
   SchemaDraft,
   RunsByJobId,
@@ -32,6 +35,8 @@ export type {
   TargetLayer,
   TransformDraft,
   TransformStepDraft,
+  WatermarkPolicyDraft,
+  WatermarkWindowMode,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

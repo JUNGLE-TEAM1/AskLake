@@ -239,17 +239,36 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     sourceType: draftPipeline.source.sourceType,
     targetFormat: draftPipeline.target.format,
     targetLayer: draftPipeline.target.layer,
-    targetDescription: draftPipeline.target.description,
-    targetTags: draftPipeline.target.tags,
-    partition: draftPipeline.target.partition,
-    storagePath: draftPipeline.target.storagePath,
-    storageType: draftPipeline.target.storageType,
     transformOutputColumns: draftPipeline.transform.outputColumns,
     transformSteps: draftPipeline.transform.steps,
   };
 
+  const sourceConfig = new Map(draftPipeline.source.sourceConfig);
+  const isSqlResultSource = draftPipeline.source.sourceType === "SQL Result";
+  const sourceRunId = sourceConfig.get("SQL Run ID") ?? "";
+  const referenceDatasetIds = sourceConfig.get("Reference Dataset IDs") ?? "";
+  const previewRowCount = sourceConfig.get("Preview Row Count") ?? "";
+  const querySummary = sourceConfig.get("Query")?.replace(/\s+/g, " ").trim() ?? "";
+  const schema = draftPipeline.transform.outputColumns.length > 0
+    ? draftPipeline.transform.outputColumns
+    : draftPipeline.schema.columns
+      .filter((column) => column.included !== false)
+      .map((column) => [column.targetName, column.type] as [string, string]);
+  const sampleRows = draftPipeline.schema.sampleRows.length > 0
+    ? draftPipeline.schema.sampleRows.map((row) => row.slice(0, Math.max(schema.length, 1)))
+    : [["-", "-", "-", "-", "Pipeline queued"]];
+  const normalizedTags = normalizeDerivedDatasetTags(
+    draftPipeline.target.tags && draftPipeline.target.tags.length > 0
+      ? draftPipeline.target.tags
+      : isSqlResultSource
+        ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
+        : ["#customer", "#RAG", "#review"],
+  );
+
   const dataset: CatalogDataset = {
-    description: draftPipeline.target.description || "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+    description: draftPipeline.target.description || (isSqlResultSource
+      ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -258,30 +277,28 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
-    quality: "95% (Draft verified)",
+    quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
-    rows: "0 rows",
-    sampleRows: [["-", "-", "-", "-", "Pipeline queued"]],
-    schema: draftPipeline.transform.outputColumns.length > 0
-      ? draftPipeline.transform.outputColumns
+    rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
+    sampleRows,
+    schema: schema.length > 0
+      ? schema
       : [["review_id", "bigint"], ["product_id", "string"], ["rating", "int"], ["review_text", "string"], ["sentiment", "string"]],
-    size: "Pending",
+    size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
-    tags: normalizePipelineDatasetTags(draftPipeline.target.tags, draftPipeline.target.layer, draftPipeline.target.rag),
-    upstream: [draftPipeline.source.sourceLabel, job.name],
+    tags: normalizedTags,
+    upstream: [
+      draftPipeline.source.sourceLabel,
+      ...(isSqlResultSource && sourceRunId ? [sourceRunId] : []),
+      ...(isSqlResultSource && referenceDatasetIds && referenceDatasetIds !== "-" ? referenceDatasetIds.split(",").map((item) => item.trim()).filter(Boolean) : []),
+      ...(isSqlResultSource && querySummary ? [`SQL: ${querySummary.slice(0, 96)}`] : []),
+      job.name,
+    ],
   };
   dataset.lineageGraph = buildPipelineDatasetLineageGraph(draftPipeline, dataset);
 
   return resolveMock({ dataset, job });
-}
-
-function normalizePipelineDatasetTags(tags: string[] | undefined, layer: string, rag: boolean) {
-  const normalizedTags = (tags ?? [])
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-    .map((tag) => (tag.startsWith("#") ? tag : `#${tag}`));
-  return Array.from(new Set(["#생성", `#${layer.toLowerCase()}`, ...(rag ? ["#rag"] : []), ...normalizedTags]));
 }
 
 export async function getDatasetLineageGraph(dataset: CatalogDataset): Promise<LineageGraph> {
@@ -302,7 +319,8 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     run: { action: "etl.run.requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     retry: { action: "etl.run.retry_requested", apiPath: `/api/etl/jobs/${job.id}/runs` },
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
-    cancel: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
+    stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
   };
   const audit = actionByCommand[command];
   const runId = `run_${Date.now()}`;
@@ -412,7 +430,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       status: "canceled",
       lastRun: "방금 취소",
       lastState: "취소됨",
-      nextRun: job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
+      nextRun: job.schedule === "스케줄 없음" || job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
       progress: undefined,
     },
     run,
@@ -480,7 +498,7 @@ export async function createDerivedDatasetFromSql({
   }
 
   const normalizedName = request.dataset.name.trim() || `${sourceDataset.name}_analysis`;
-  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL Preview 결과로 생성한 분석 데이터셋`;
+  const normalizedDescription = request.dataset.description.trim() || `${sourceDataset.name} SQL 쿼리 결과로 생성한 분석 데이터셋`;
   const normalizedTags = normalizeDerivedDatasetTags(request.dataset.tags);
   const derivedDatasetId = `ds_${normalizeDerivedDatasetId(normalizedName)}`;
   const dataset: CatalogDataset = {

@@ -6,6 +6,8 @@ This document records the Pair A person-1 backend validation path for Source, Sc
 
 - `backend/src/server.mjs`: local JSON API server
 - `backend/src/connectors.mjs`: source connector runner
+- `backend/src/s3.service.mjs`: Target 저장경로 picker용 S3 bucket/prefix 조회
+- `backend/src/targetDatabase.service.mjs`: Target DB picker용 허용 DB 목록 조회
 - `backend/src/profile.mjs`: CSV/TSV/JSON/JSONL/TXT parser and schema profiler
 - `backend/src/createPipeline.mjs`: create `{ job, catalogTarget }`, run success `dataset` mapper
 - `backend/scripts/prepare-minio-samples.mjs`: local 1GB-style sample preparation
@@ -31,12 +33,45 @@ npm run dev
 docker compose up -d minio
 ```
 
+EC2 prod deploy에서는 MinIO가 `deploy/docker-compose.prod.yml`의 `minio` service로 실행된다. 서버 `deploy/.env`에는 최소 아래 값이 필요하다.
+
+```text
+MINIO_ENDPOINT=http://minio:9000
+MINIO_ENDPOINT_IN_DOCKER=http://minio:9000
+MINIO_ACCESS_KEY=<server-only value>
+MINIO_SECRET_KEY=<server-only value>
+MINIO_BUCKET=m3-raw
+S3_ENDPOINT=http://minio:9000
+S3_FORCE_PATH_STYLE=true
+S3_ALLOWED_BUCKETS=m3-raw,asklake-output
+```
+
+초기 object sample은 EC2 backend container에서 준비한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml exec backend npm run minio:seed-verify
+```
+
 Initial endpoints:
 
 ```text
 GET /api/etl/jobs -> []
 GET /api/catalog/datasets -> []
+GET /api/s3/buckets -> { "buckets": ["asklake-output"] }
+GET /api/s3/prefixes?bucket=asklake-output&prefix= -> folder prefixes
+GET /api/target/databases -> { "databases": [{ "name": "asklake", "description": "..." }] }
 ```
+
+Target S3 picker 환경변수:
+
+```powershell
+$env:S3_ALLOWED_BUCKETS = "asklake-output"
+$env:S3_ENDPOINT = "http://localhost:9000"
+$env:S3_FORCE_PATH_STYLE = "true"
+$env:TARGET_DATABASES = "asklake,asklake_gold,analytics,marketing"
+```
+
+운영에서는 AWS SDK credential provider chain 또는 IAM role을 사용한다. 브라우저에는 AWS access key / secret key를 넣지 않는다.
 
 ## 3. Source Fixtures
 
@@ -105,7 +140,7 @@ Master UI: http://127.0.0.1:18080
 Worker UI: http://127.0.0.1:18081
 ```
 
-The script recreates master and worker containers with the local sample directory mounted at `/opt/asklake-samples`.
+The script recreates master and worker containers with the local sample directory mounted at `/opt/asklake-samples`, local Spark output mounted at `/work/output`, and the backend run report directory mounted at `/work/reports`. Connector-backed runs write bounded sample rows to `backend/tmp/spark-runs/*-source.jsonl`, so stale Spark containers are recreated when `/work/reports` points at an older backend path.
 
 ## 6. Spark Validation
 
@@ -132,7 +167,7 @@ cd backend
 npm run verify:spark-run
 ```
 
-This verifier starts from an empty in-memory ETL/Catalog state, creates one live job from a MinIO sample, submits a run command, and verifies that Spark writes Parquet output. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
+This verifier starts from an empty ETL/Catalog metadata state, creates one live job from a MinIO sample, submits a run command, verifies that the command response immediately returns `running`, then polls `GET /api/etl/jobs/{jobId}` until Spark writes Parquet output and the job returns to its final state. The create payload includes submitted `transformSteps`, `transformOutputColumns`, and `qualityRules`; the expected DAG includes Source, Schema, Spark source read, Transform, Quality, Parquet write, and Catalog update steps.
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
