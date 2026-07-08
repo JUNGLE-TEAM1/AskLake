@@ -8,6 +8,19 @@ Pair A Source/Schema 화면은 일반 connector에 mock 값이나 로컬 endpoin
 - 파일 형식은 소스 선택 카드에서 미리 고르지 않는다. `MinIO/S3`에 연결한 뒤 데이터 탐색 단계에서 실제 오브젝트를 선택한다.
 - 이 문서의 값은 로컬 개발자 테스트 전용이다. 운영/팀 환경 값은 각자 환경 변수나 별도 secret 관리에서 가져온다.
 
+## 0. Connector 지원 매트릭스
+
+| Connector | UI 분리 | Backend 실제 연결 | 탐색 방식 | Smoke 검증 | 현재 데모 권장 |
+| --- | --- | --- | --- | --- | --- |
+| MinIO/S3 | 지원 | 지원 | bucket/prefix/object tree | `npm run verify:sources`, `npm run verify:fastapi-sources` | 권장 |
+| PostgreSQL | 지원 | 지원 | schema/table list + sample rows | `npm run verify:sources`, `npm run verify:fastapi-sources` | 권장 |
+| MongoDB | 지원 | 지원 | database/collection list + document tree | `npm run verify:sources`, `npm run verify:fastapi-sources` | 권장 |
+| REST API | 지원 | 지원 | endpoint response + root path sample | `npm run verify:sources`, `npm run verify:fastapi-sources` | 조건부 권장 |
+| Data Lake | 지원 | MinIO/Parquet 범위 | lake object path list | MinIO fixture 필요 | 보조 |
+| Kafka | 지원 | fixture 실행 시 지원 | topic metadata + JSON sample | `ASKLAKE_VERIFY_KAFKA=true` 필요 | 조건부 |
+
+Smoke 결과를 “통과”로 표시하려면 위 명령이 성공해야 한다. UI에서 연결 테스트가 성공해도, fixture 또는 backend connector가 준비되지 않은 connector는 “조건부”로 표시한다.
+
 ## 1. 로컬 소스 fixture 준비
 
 ```powershell

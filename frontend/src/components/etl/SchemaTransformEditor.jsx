@@ -10,12 +10,10 @@ import {
   Play,
   Loader2,
   AlertTriangle,
-  Sparkles,
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api";
 import { schemaTransformApi } from "../../services/schemaTransformApi";
 import TransformFunctionModal from "./TransformFunctionModal";
-import InlineAIInput from "../ai/InlineAIInput";
 
 /**
  * SchemaTransformEditor - Dual List Box style schema transformation UI
@@ -88,7 +86,6 @@ export default function SchemaTransformEditor({
   // Tab UI: Column Selection vs SQL Transform
   const [activeTab, setActiveTab] = useState("columns"); // 'columns' | 'sql'
   const [customSql, setCustomSql] = useState("");
-  const [showAI, setShowAI] = useState(false);
 
   // Initialize beforeColumns when sourceSchema changes (source tab switches)
   useEffect(() => {
@@ -963,38 +960,8 @@ export default function SchemaTransformEditor({
                 <span className="w-1 h-3 bg-purple-600 rounded-full"></span>
                 SQL Query Editor
               </h3>
-              <button
-                onClick={() => setShowAI(!showAI)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium
-                                    bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600
-                                    hover:from-indigo-100 hover:to-purple-100 transition-all
-                                    border border-indigo-200/50"
-                title="AI Assistant"
-              >
-                <Sparkles size={14} />
-                <span>AI</span>
-              </button>
             </div>
             <div className="flex-1 flex flex-col p-4">
-              {/* AI Input Panel - appears between header and textarea */}
-              {showAI && (
-                <InlineAIInput
-                  promptType="sql_transform"
-                  metadata={{
-                    sources: allSources.map((s) => ({
-                      name: s.name,
-                      schema: s.schema || [],
-                    })),
-                  }}
-                  placeholder="e.g., join tables, aggregate data, filter rows..."
-                  onApply={(suggestion) => {
-                    setCustomSql(suggestion);
-                    setShowAI(false);
-                  }}
-                  onCancel={() => setShowAI(false)}
-                />
-              )}
-
               <textarea
                 value={customSql}
                 onChange={(e) => setCustomSql(e.target.value)}
