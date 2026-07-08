@@ -37,7 +37,9 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
+import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
+import { Panel, PanelHeader } from "@/components/ui/panel";
 import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
@@ -143,21 +145,17 @@ export function JobsLandingPage({
         />
       </div>
       <div className="content-main jobs-panel-stack">
-        <section className="jobs-panel-card jobs-metrics-card">
-          <div className="jobs-panel-header">
-            <span className="jobs-panel-icon">
-              <BarChart3 size={16} />
-            </span>
-            <div className="jobs-panel-heading">
-              <h2>작업 현황</h2>
-              <p>수집/처리 Job의 현재 상태와 확인이 필요한 항목을 요약합니다.</p>
-            </div>
-            <span className="jobs-panel-state">{jobs.length} jobs</span>
-          </div>
+        <Panel className="jobs-metrics-card">
+          <PanelHeader
+            description="수집/처리 Job의 현재 상태와 확인이 필요한 항목을 요약합니다."
+            icon={<BarChart3 size={16} />}
+            meta={<Badge size="sm">{jobs.length} jobs</Badge>}
+            title="작업 현황"
+          />
           <div className="metric-grid jobs-panel-metrics">
             {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
           </div>
-        </section>
+        </Panel>
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
@@ -176,30 +174,15 @@ export function JobsLandingPage({
   );
 }
 
-function MetricCard({ active, label, tone, value }: JobMetric) {
-  const className = ["metric-card", `metric-card-${tone}`, active ? "active" : ""].filter(Boolean).join(" ");
-
-  return (
-    <article className={className}>
-      <span>{value}</span>
-      <strong>{label}</strong>
-    </article>
-  );
-}
-
 function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void; onReset: () => void }) {
   return (
-    <section className="jobs-toolbar jobs-panel-card">
-      <div className="jobs-panel-header">
-        <span className="jobs-panel-icon">
-          <SlidersHorizontal size={16} />
-        </span>
-        <div className="jobs-panel-heading">
-          <h2>검색 및 필터</h2>
-          <p>작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다.</p>
-        </div>
-        <span className="jobs-panel-state">필터</span>
-      </div>
+    <Panel className="jobs-toolbar">
+      <PanelHeader
+        description="작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다."
+        icon={<SlidersHorizontal size={16} />}
+        meta={<Badge size="sm">필터</Badge>}
+        title="검색 및 필터"
+      />
       <div className="jobs-toolbar-body">
         <div className="jobs-search">
           <Search size={16} />
@@ -210,7 +193,7 @@ function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void
         ))}
         <Button className="ghost-link reset-filter" size="sm" type="button" variant="ghost" onClick={onReset}>↺ 필터 초기화</Button>
       </div>
-    </section>
+    </Panel>
   );
 }
 
@@ -480,17 +463,14 @@ function JobsTableSection({
   ], [openJobLog]);
 
   return (
-    <section className="jobs-table-preview-card jobs-panel-card" aria-label={ariaLabel}>
-      <div className="jobs-table-preview-header jobs-panel-header">
-        <span className="jobs-panel-icon">
-          <Table2 size={16} />
-        </span>
-        <div className="jobs-panel-heading">
-          <h2>{title}</h2>
-          <p>상태, 타깃, 최근 실행 결과를 한 화면에서 확인하고 필요한 작업을 실행합니다.</p>
-        </div>
-        <strong className="jobs-panel-state">{jobs.length} jobs</strong>
-      </div>
+    <Panel className="jobs-table-preview-card" aria-label={ariaLabel}>
+      <PanelHeader
+        className="jobs-table-preview-header"
+        description="상태, 타깃, 최근 실행 결과를 한 화면에서 확인하고 필요한 작업을 실행합니다."
+        icon={<Table2 size={16} />}
+        meta={<Badge size="sm">{jobs.length} jobs</Badge>}
+        title={title}
+      />
       <DataTable
         className="jobs-data-table"
         columns={columns}
@@ -532,7 +512,7 @@ function JobsTableSection({
         viewportClassName="jobs-table-scroll border-0 bg-transparent rounded-none"
       />
       {activeLogJob && <JobLogModal job={activeLogJob} onClose={() => setActiveLogJob(null)} />}
-    </section>
+    </Panel>
   );
 }
 

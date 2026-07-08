@@ -1,5 +1,7 @@
 import { Plus, Table2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Panel, PanelHeader } from "@/components/ui/panel";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
@@ -114,17 +116,13 @@ export function DashboardLandingPage({
           tags={tags}
         />
 
-        <section className="dashboard-table-list dashboard-panel-card">
-          <div className="dashboard-panel-header">
-            <span className="dashboard-panel-icon">
-              <Table2 size={16} />
-            </span>
-            <div className="dashboard-panel-heading">
-              <h2>대시보드 목록</h2>
-              <p>대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다.</p>
-            </div>
-            <span className="dashboard-panel-state">{pageStart}-{pageEnd}</span>
-          </div>
+        <Panel className="dashboard-table-list">
+          <PanelHeader
+            description="대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다."
+            icon={<Table2 size={16} />}
+            meta={<Badge size="sm">{pageStart}-{pageEnd}</Badge>}
+            title="대시보드 목록"
+          />
           <div className="dashboard-table-list-body">
             <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
             {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
@@ -138,7 +136,7 @@ export function DashboardLandingPage({
             />
             <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
           </div>
-        </section>
+        </Panel>
       </div>
       {deleteTarget && (
         <DashboardDeleteConfirmDialog

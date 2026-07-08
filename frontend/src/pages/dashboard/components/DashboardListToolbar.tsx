@@ -1,6 +1,8 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Panel, PanelHeader } from "@/components/ui/panel";
 import { dashboardSortOptions, getDashboardSortLabel } from "../dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "../dashboardListUtils";
 
@@ -37,17 +39,13 @@ export function DashboardListToolbar({
   const activeFilterCount = (ownerFilter === "all" ? 0 : 1) + selectedTags.length;
 
   return (
-    <section className="dashboard-list-toolbar dashboard-panel-card">
-      <div className="dashboard-panel-header">
-        <span className="dashboard-panel-icon">
-          <SlidersHorizontal size={16} />
-        </span>
-        <div className="dashboard-panel-heading">
-          <h2>검색 및 필터</h2>
-          <p>이름, 소유자, 태그, 정렬 기준으로 대시보드 목록을 좁혀 봅니다.</p>
-        </div>
-        <span className="dashboard-panel-state">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</span>
-      </div>
+    <Panel className="dashboard-list-toolbar">
+      <PanelHeader
+        description="이름, 소유자, 태그, 정렬 기준으로 대시보드 목록을 좁혀 봅니다."
+        icon={<SlidersHorizontal size={16} />}
+        meta={<Badge size="sm">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</Badge>}
+        title="검색 및 필터"
+      />
       <div className="dashboard-list-toolbar-body">
         <div className="dashboard-list-search">
           <Search size={16} />
@@ -111,6 +109,6 @@ export function DashboardListToolbar({
           </div>
         </div>
       </div>
-    </section>
+    </Panel>
   );
 }

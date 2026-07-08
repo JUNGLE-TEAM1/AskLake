@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
+import { Panel, PanelHeader } from "@/components/ui/panel";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
@@ -443,17 +444,13 @@ export function CatalogPage({
       <PageTitle title="검색/카탈로그" description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다." />
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <section className="catalog-search-panel catalog-panel-card">
-            <div className="catalog-panel-header">
-              <span className="catalog-panel-icon">
-                <Search size={16} />
-              </span>
-              <div className="catalog-panel-heading">
-                <h2>검색 조건</h2>
-                <p>테이블명, 컬럼명, 태그, 업무 키워드로 데이터셋을 찾습니다.</p>
-              </div>
-              <span className="catalog-panel-state">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</span>
-            </div>
+          <Panel className="catalog-search-panel">
+            <PanelHeader
+              description="테이블명, 컬럼명, 태그, 업무 키워드로 데이터셋을 찾습니다."
+              icon={<Search size={16} />}
+              meta={<Badge size="sm">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</Badge>}
+              title="검색 조건"
+            />
             <div className="catalog-search-body">
               <div className="catalog-search-box">
                 <Search size={18} />
@@ -494,20 +491,17 @@ export function CatalogPage({
                 </div>
               </div>
             </div>
-          </section>
+          </Panel>
 
-          <section className="catalog-results-section catalog-panel-card">
+          <Panel className="catalog-results-section">
             <div className="catalog-results-header">
-              <div className="catalog-panel-header">
-                <span className="catalog-panel-icon">
-                  <LayoutGrid size={16} />
-                </span>
-                <div className="catalog-panel-heading">
-                  <h2>검색 결과</h2>
-                  <p>조건에 맞는 데이터셋을 선택하면 우측에서 상세 정보를 확인합니다.</p>
-                </div>
-                <span className="catalog-panel-state">{filteredDatasets.length}건</span>
-              </div>
+              <PanelHeader
+                bordered={false}
+                description="조건에 맞는 데이터셋을 선택하면 우측에서 상세 정보를 확인합니다."
+                icon={<LayoutGrid size={16} />}
+                meta={<Badge size="sm">{filteredDatasets.length}건</Badge>}
+                title="검색 결과"
+              />
               <div className="catalog-filter-row">
                 <label>
                   <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
@@ -648,88 +642,90 @@ export function CatalogPage({
                 </div>
               </div>
             )}
-          </section>
+          </Panel>
         </div>
 
         {hasCatalogResults ? (
-          <aside className="catalog-preview-panel catalog-panel-card">
-          <div className="catalog-preview-title catalog-panel-header">
-            <span className="catalog-panel-icon catalog-panel-icon-dataset">
-              <LayoutGrid size={16} />
-            </span>
-            <div className="catalog-panel-heading">
-              <h2>{previewDataset.name}</h2>
-              <p>{previewDataset.layer} 데이터셋 · {previewDataset.owner}</p>
-            </div>
-            <Button
-              aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-              aria-pressed={isPreviewPinned}
-              className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
-              title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-              type="button"
-              size="icon"
-              variant="ghost"
-              onClick={togglePinnedDataset}
-            >
-              <Star size={18} />
-            </Button>
-          </div>
-          <div className="catalog-overview-metrics catalog-preview-metrics">
-            <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-            <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-            <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-            <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-            <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-            <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-          </div>
+          <Panel asChild className="catalog-preview-panel">
+            <aside>
+              <PanelHeader
+                actions={(
+                  <Button
+                    aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+                    aria-pressed={isPreviewPinned}
+                    className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
+                    title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    onClick={togglePinnedDataset}
+                  >
+                    <Star size={18} />
+                  </Button>
+                )}
+                className="catalog-preview-title"
+                description={`${previewDataset.layer} 데이터셋 · ${previewDataset.owner}`}
+                icon={<LayoutGrid size={16} />}
+                iconVariant="success"
+                title={previewDataset.name}
+              />
+              <div className="catalog-overview-metrics catalog-preview-metrics">
+                <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+                <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+                <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+                <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+                <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+                <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
+              </div>
 
-          <article className="catalog-preview-card">
-            <div className="catalog-preview-card-header">
-              <TerminalSquare size={16} />
-              <h3>스키마 미리보기</h3>
-              <span>{previewDataset.schema.length} 컬럼</span>
-            </div>
-            <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
-            <Button className="catalog-text-button" type="button" onClick={() => {
-              onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
-              setActiveModal("schema");
-            }} size="sm" variant="link">전체 스키마 상세 보기</Button>
-          </article>
+              <article className="catalog-preview-card">
+                <div className="catalog-preview-card-header">
+                  <TerminalSquare size={16} />
+                  <h3>스키마 미리보기</h3>
+                  <span>{previewDataset.schema.length} 컬럼</span>
+                </div>
+                <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
+                <Button className="catalog-text-button" type="button" onClick={() => {
+                  onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
+                  setActiveModal("schema");
+                }} size="sm" variant="link">전체 스키마 상세 보기</Button>
+              </article>
 
-          <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
-            onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-            setActiveModal("lineage");
-          }} onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-              setActiveModal("lineage");
-            }
-          }}>
-            <Share2 size={16} />
-            <div>
-              <strong>리니지 보기</strong>
-            </div>
-            <span>›</span>
-          </article>
+              <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
+                onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
+                setActiveModal("lineage");
+              }} onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
+                  setActiveModal("lineage");
+                }
+              }}>
+                <Share2 size={16} />
+                <div>
+                  <strong>리니지 보기</strong>
+                </div>
+                <span>›</span>
+              </article>
 
-          <Button
-            className="primary-button catalog-wide-button"
-            disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-            title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
-            type="button"
-            size="sm"
-            variant="primary"
-            onClick={openSelectedSqlDataset}
-          >
-            <ExternalLink size={16} /> SQL 분석에서 열기
-          </Button>
-          <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
-            {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-              ? `선택된 결과: ${selectedSqlRunTarget.runId}`
-              : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
-          </p>
-          </aside>
+              <Button
+                className="primary-button catalog-wide-button"
+                disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+                title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+                type="button"
+                size="sm"
+                variant="primary"
+                onClick={openSelectedSqlDataset}
+              >
+                <ExternalLink size={16} /> SQL 분석에서 열기
+              </Button>
+              <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
+                {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
+                  ? `선택된 결과: ${selectedSqlRunTarget.runId}`
+                  : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
+              </p>
+            </aside>
+          </Panel>
         ) : (
           <aside className="catalog-preview-panel catalog-preview-panel-empty">
             <LayoutGrid size={22} />

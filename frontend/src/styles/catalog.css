@@ -35,77 +35,6 @@
   background: #fff;
 }
 
-.catalog-panel-card {
-  overflow: hidden;
-  border-color: #dee4ee;
-  box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
-}
-
-.catalog-panel-header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 72px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
-  padding: 16px 20px;
-}
-
-.catalog-panel-icon {
-  display: inline-grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 8px;
-  background: #eef4ff;
-  color: #2563eb;
-}
-
-.catalog-panel-icon-dataset {
-  background: #f0fdf4;
-  color: #16a34a;
-}
-
-.catalog-panel-heading {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.catalog-panel-heading h2 {
-  margin: 0;
-  color: #111827;
-  font-size: 16px;
-  font-weight: 850;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.catalog-panel-heading p {
-  margin: 0;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 750;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-
-.catalog-panel-state {
-  display: inline-flex;
-  min-height: 24px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 12px;
-  font-weight: 850;
-  line-height: 1;
-  padding: 0 9px;
-  white-space: nowrap;
-}
-
 .catalog-search-panel {
   display: grid;
   gap: 0;
@@ -210,10 +139,6 @@
   gap: 0;
   border-bottom: 1px solid #e2e8f0;
   padding: 0;
-}
-
-.catalog-results-header .catalog-panel-header {
-  border-bottom: 0;
 }
 
 .catalog-filter-row {
@@ -736,16 +661,16 @@
   padding: 24px;
 }
 
-.catalog-preview-panel.catalog-panel-card {
+.catalog-preview-panel:not(.catalog-preview-panel-empty) {
   gap: 16px;
   padding: 0 0 20px;
 }
 
-.catalog-preview-panel.catalog-panel-card > :not(.catalog-preview-title):not(.catalog-wide-button) {
+.catalog-preview-panel:not(.catalog-preview-panel-empty) > :not(.catalog-preview-title):not(.catalog-wide-button) {
   margin-inline: 20px;
 }
 
-.catalog-preview-panel.catalog-panel-card .catalog-wide-button {
+.catalog-preview-panel:not(.catalog-preview-panel-empty) .catalog-wide-button {
   width: calc(100% - 40px);
   margin-inline: 20px;
 }
@@ -760,7 +685,7 @@
   gap: 12px;
 }
 
-.catalog-preview-title.catalog-panel-header {
+.catalog-preview-title {
   grid-template-columns: auto minmax(0, 1fr) auto;
   border-bottom: 1px solid #e5e7eb;
 }

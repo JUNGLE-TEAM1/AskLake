@@ -36,6 +36,9 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - `Select`
 - `Dialog`
 - `PageHeader`
+- `Panel`
+- `PanelHeader`
+- `MetricCard`
 - `EmptyState`
 - `Table`
 - `DataTable`
@@ -44,12 +47,12 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 
 | 영역 | 패턴 | 상태 | 필요한 컴포넌트 후보 | 메모 |
 | --- | --- | --- | --- | --- |
-| 전체 | 화면 섹션 헤더 + 아이콘 + 상태 pill + actions | `설계 필요` | `SectionHeader` 또는 `PanelHeader` | ETL, Catalog, Dashboard에서 유사한 header 구조가 반복됨. |
-| 전체 | 강조 패널/작업 패널 | `설계 필요` | `Panel` | `Card`보다 업무 화면 패널에 가까운 bordered panel 패턴이 많음. |
+| 전체 | 화면 섹션 헤더 + 아이콘 + 상태 pill + actions | `해결됨` | `PanelHeader` | #367에서 Jobs/Catalog/Dashboard list shell에 1차 적용. ETL/SQL/runtime의 특수 header는 후속 PR에서 추가 적용 판단. |
+| 전체 | 강조 패널/작업 패널 | `해결됨` | `Panel` | #367에서 Jobs/Catalog/Dashboard list의 bordered panel shell을 공통화. 화면 고유 body/layout CSS는 유지. |
 | 전체 | 하단 고정/반고정 command 영역 | `관찰됨` | `CommandBar` | ETL schema/rule bottom bar, Dashboard runtime action 영역 등에서 반복 가능성 있음. |
 | 전체 | key-value review summary | `설계 필요` | `ReviewSummary` 또는 `KeyValueList` | ETL Review, Catalog detail, Dashboard metadata에서 반복 가능성 있음. |
 | 전체 | 상태 검증 목록 | `설계 필요` | `ValidationList` | ETL governance/review validation, backend readiness UI 후보에서 반복 가능성 있음. |
-| 전체 | metric summary card grid | `구현 후보` | `MetricCard` | Ingest metrics, Dashboard list, ETL preview summary에서 반복됨. |
+| 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
 | 전체 | filter/search toolbar | `관찰됨` | `FilterToolbar` | Ingest, Catalog, Dashboard list에서 반복됨. |
 | 전체 | preview/result panel | `설계 필요` | `PreviewPanel` 또는 `ResultPanel` | SQL preview, Catalog schema preview, Dashboard widget preview에서 반복됨. |
 | 전체 | dense settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup` | Dashboard widget config, ETL rule builder, SQL option form에서 input/select/textarea layout CSS가 계속 남음. |
@@ -130,3 +133,4 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | Issue #358에서 B02-B04 Dashboard/B 작업 중 공통 primitive로 대체하지 않은 preview, toolbar, widget frame, config panel, color picker, tree, graph/editor gap을 기록. |
 | 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거 상태를 반영. TreePanel/TreeHoverCard gap은 유지. |
+| 2026-07-09 | #367에서 `Panel`, `PanelHeader`, `MetricCard`를 추가하고 Jobs/Catalog/Dashboard list shell에 1차 적용. FilterToolbar, PreviewPanel, WidgetShell, TreePanel gap은 유지. |
