@@ -2267,8 +2267,11 @@
 
 .schema-workbench.schema-workbench-focused {
   box-sizing: border-box;
-  grid-template-rows: minmax(0, 1fr);
-  padding-bottom: 76px;
+  display: flex;
+  flex-direction: column;
+  grid-template-rows: none;
+  gap: 0;
+  padding-bottom: 0;
 }
 
 .schema-workbench.schema-workbench-focused .schema-status-strip {
@@ -4499,19 +4502,17 @@
 }
 
 .schema-bottom-bar {
-  position: absolute;
+  position: relative;
   z-index: 12;
-  left: 14px;
-  right: 14px;
-  bottom: 14px;
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 0 0 auto;
   min-height: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  pointer-events: none;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 14px;
+  pointer-events: auto;
 }
 
 .schema-bottom-bar span {

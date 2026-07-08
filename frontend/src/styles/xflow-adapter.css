@@ -1,23 +1,35 @@
 .asklake-xflow-source-adapter {
-  max-height: calc(100vh - 252px);
-  min-height: 540px;
-  overflow: auto;
+  display: flex;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 
 .asklake-xflow-scroll-frame {
+  display: flex;
+  flex: 1 1 auto;
   min-width: 960px;
+  min-height: 0;
+  height: 100%;
 }
 
 .asklake-xflow-source-adapter .flex.flex-col.bg-gray-50 {
-  min-height: 540px;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
 }
 
 .asklake-xflow-source-adapter .flex.flex-1.p-4.gap-4 {
-  height: clamp(420px, 52vh, 540px) !important;
-  max-height: clamp(420px, 52vh, 540px) !important;
+  flex: 1 1 auto !important;
+  height: 100% !important;
+  max-height: none !important;
   min-height: 0 !important;
   overflow: hidden;
 }
@@ -100,7 +112,6 @@
 
 @media (max-width: 900px) {
   .asklake-xflow-source-adapter {
-    max-height: calc(100vh - 212px);
     min-height: 0;
   }
 
@@ -109,11 +120,11 @@
   }
 
   .asklake-xflow-source-adapter .flex.flex-col.bg-gray-50 {
-    min-height: 520px;
+    min-height: 0;
   }
 
   .asklake-xflow-source-adapter .flex.flex-1.p-4.gap-4 {
-    height: 460px !important;
-    max-height: 460px !important;
+    height: auto !important;
+    max-height: none !important;
   }
 }

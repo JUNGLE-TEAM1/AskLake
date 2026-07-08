@@ -178,7 +178,9 @@ function sparkSourceFromJob(job, runId) {
     };
   }
 
-  const samplePath = writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId);
+  const samplePath = isConnectorSampleSource(sourceType)
+    ? writeConnectorSampleRowsSource(job, runId) || writeSampleRowsSource(job, runId)
+    : writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId);
   if (samplePath) {
     return {
       format: "jsonl",
@@ -187,6 +189,12 @@ function sparkSourceFromJob(job, runId) {
   }
 
   throw sparkError(`Spark execution requires File / S3, Data Lake, or a connector sample with schema rows. Unsupported sourceType=${sourceType}`);
+}
+
+function isConnectorSampleSource(sourceType) {
+  return ["mongodb", "postgresql", "database", "rest api", "stream / kafka", "kafka json"].includes(
+    String(sourceType || "").trim().toLowerCase(),
+  );
 }
 
 function writeSampleRowsSource(job, runId) {
@@ -198,7 +206,7 @@ function writeSampleRowsSource(job, runId) {
 
 function writeConnectorSampleRowsSource(job, runId) {
   const sourceType = job.sourceType || "";
-  if (!["MongoDB", "PostgreSQL", "Database", "REST API", "Stream / Kafka", "Kafka JSON"].includes(sourceType)) return "";
+  if (!isConnectorSampleSource(sourceType)) return "";
 
   const result = spawnSync(process.execPath, [path.join(scriptsDir, "export-connector-sample.mjs")], {
     cwd: backendDir,

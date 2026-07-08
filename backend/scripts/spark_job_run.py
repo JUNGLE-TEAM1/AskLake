@@ -32,7 +32,7 @@ def main():
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
         contracted_df = apply_schema_contract(normalized_df, schema_columns)
-        transformed_df = apply_transform_steps(contracted_df, transform_steps)
+        transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
         quality = evaluate_quality_rules(transformed_df, quality_rules)
         if quality["status"] == "fail":
             ended_at = now_iso()
@@ -245,7 +245,7 @@ def spark_sql_type(logical_type):
     return "string"
 
 
-def apply_transform_steps(frame, steps):
+def apply_transform_steps(spark, frame, steps):
     current = frame
     for step in steps:
         if not step or step.get("enabled") is False:
@@ -257,7 +257,23 @@ def apply_transform_steps(frame, steps):
         if not input_column or not output_column:
             continue
         source = safe_col(current, input_column)
-        if "json" in operation:
+        if "default" in operation:
+            expression = F.when(
+                source.isNull() | (F.length(F.trim(source.cast("string"))) == 0),
+                F.lit(params),
+            ).otherwise(source)
+        elif "null guard" in operation or "not null" in operation:
+            current = current.filter(source.isNotNull() & (F.length(F.trim(source.cast("string"))) > 0))
+            if output_column != normalize_column_name(input_column):
+                current = current.withColumn(output_column, source)
+            continue
+        elif "sql expression" in operation and params.strip().lower().startswith("select"):
+            current.createOrReplaceTempView("input")
+            current = spark.sql(params)
+            continue
+        elif "sql expression" in operation and params.strip():
+            expression = F.expr(params)
+        elif "json" in operation:
             expression = F.get_json_object(source.cast("string"), params or "$.value")
         elif "lower" in operation or "trim" in operation:
             expression = F.lower(F.trim(source.cast("string")))
