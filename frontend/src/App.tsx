@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type React from "react";
 import { BookOpen, CircleHelp, Database, History, LogOut, Settings, ShieldCheck, Workflow } from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
 import asklakeLogo from "./assets/asklake-logo.png";
 import { flowTabs, wizardFlows } from "./data/appShellData";
 import { Sidebar } from "./components/layout/Sidebar";
@@ -15,7 +16,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
-import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
+import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
 type PlaceholderFlow = Extract<FlowId, "ai" | "admin">;
@@ -52,6 +53,22 @@ type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
 
+type AppRouteState = {
+  dashboardRoute: DashboardRouteState | null;
+  datasetId?: string;
+  flow: FlowId;
+  jobId?: string;
+};
+
+type FlowPathContext = {
+  dashboardEntry?: DashboardEntry;
+  lastScheduleFlow?: ScheduleFlowId;
+  selectedDataset?: CatalogDataset;
+  selectedJob?: JobRowData;
+};
+
+const defaultScheduleFlow: ScheduleFlowId = "repeat";
+
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "dashboards") return null;
@@ -77,6 +94,122 @@ function getDashboardPath(dashboardId: string, mode: DashboardRuntimeMode) {
   return mode === "draft" ? `/dashboards/${encodedId}/edit` : `/dashboards/${encodedId}`;
 }
 
+function decodePathSegment(segment?: string) {
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+function encodePathSegment(segment: string) {
+  return encodeURIComponent(segment);
+}
+
+function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = defaultScheduleFlow): AppRouteState {
+  const dashboardRoute = parseDashboardRoute(pathname);
+  if (dashboardRoute) return { dashboardRoute, flow: "dashboard" };
+
+  const segments = pathname.split("/").filter(Boolean);
+  const [area, id, action] = segments;
+
+  if (!area) return { dashboardRoute: null, flow: "jobs" };
+  if (area === "jobs-table-demo") return { dashboardRoute: null, flow: "jobsTableDemo" };
+  if (area === "jobs") {
+    const jobId = decodePathSegment(id);
+    if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
+    if (jobId) return { dashboardRoute: null, flow: "jobDetail", jobId };
+    return { dashboardRoute: null, flow: "jobs" };
+  }
+  if (area === "etl") {
+    if (id === "source") return { dashboardRoute: null, flow: "source" };
+    if (id === "schema") return { dashboardRoute: null, flow: "schema" };
+    if (id === "rules") return { dashboardRoute: null, flow: "rules" };
+    if (id === "schedule") return { dashboardRoute: null, flow: currentScheduleFlow };
+    if (id === "permission") return { dashboardRoute: null, flow: "permission" };
+    if (id === "target") return { dashboardRoute: null, flow: "target" };
+    if (id === "review") return { dashboardRoute: null, flow: "review" };
+    return { dashboardRoute: null, flow: "jobs" };
+  }
+  if (area === "catalog") {
+    const datasetId = decodePathSegment(id);
+    if (datasetId) return { dashboardRoute: null, datasetId, flow: "catalogDetail" };
+    return { dashboardRoute: null, flow: "catalog" };
+  }
+  if (area === "sql") return { dashboardRoute: null, flow: "sql" };
+  if (area === "ai") return { dashboardRoute: null, flow: "ai" };
+  if (area === "admin") return { dashboardRoute: null, flow: "admin" };
+
+  return { dashboardRoute: null, flow: "jobs" };
+}
+
+function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
+  if (flow === "jobs") return "/jobs";
+  if (flow === "jobsTableDemo") return "/jobs-table-demo";
+  if (flow === "jobDetail" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}`;
+  if (flow === "jobRuns" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}/runs`;
+  if (flow === "source") return "/etl/source";
+  if (flow === "schema") return "/etl/schema";
+  if (flow === "rules") return "/etl/rules";
+  if (isScheduleFlow(flow)) return "/etl/schedule";
+  if (flow === "permission") return "/etl/permission";
+  if (flow === "target") return "/etl/target";
+  if (flow === "review") return "/etl/review";
+  if (flow === "catalog") return "/catalog";
+  if (flow === "catalogDetail" && context.selectedDataset && context.selectedDataset.id !== emptyDatasetId) return `/catalog/${encodePathSegment(context.selectedDataset.id)}`;
+  if (flow === "sql") return "/sql";
+  if (flow === "dashboard") {
+    const entry = context.dashboardEntry;
+    if (entry?.view === "runtime" && entry.dashboardId && entry.runtimeMode) return getDashboardPath(entry.dashboardId, entry.runtimeMode);
+    return "/dashboards";
+  }
+  if (flow === "ai") return "/ai";
+  if (flow === "admin") return "/admin";
+  return "/jobs";
+}
+
+function buildMissingJobFromRoute(jobId: string): JobRowData {
+  return {
+    id: jobId,
+    lastRun: "-",
+    lastState: "목록에서 찾을 수 없음",
+    name: "선택한 Job을 찾을 수 없음",
+    nextRun: "-",
+    owner: "-",
+    schedule: "-",
+    source: "-",
+    status: "paused",
+    tag: "Missing",
+    target: "-",
+  };
+}
+
+function buildMissingDatasetFromRoute(datasetId: string): CatalogDataset {
+  return {
+    description: "목록에서 찾을 수 없는 데이터셋입니다.",
+    downstream: [],
+    freshness: "stale",
+    id: datasetId,
+    lastUpdated: "-",
+    layer: "RAW",
+    materializationRuns: [],
+    name: "선택한 데이터셋을 찾을 수 없음",
+    nextRefresh: "-",
+    owner: "-",
+    quality: "-",
+    rag: false,
+    rows: "-",
+    sampleRows: [],
+    schema: [],
+    size: "-",
+    source: "-",
+    status: "approval_required",
+    tags: [],
+    upstream: [],
+  };
+}
+
 function hasSelectedDataset(dataset: CatalogDataset, datasets: CatalogDataset[]) {
   return dataset.id !== emptyDatasetId && datasets.some((item) => item.id === dataset.id);
 }
@@ -86,15 +219,29 @@ function hasSelectedJob(jobId: string, jobs: Array<{ id: string }>) {
 }
 
 export function App() {
-  const initialDashboardRoute = parseDashboardRoute(window.location.pathname);
-  const initialJobsTableDemoRoute = window.location.pathname === "/jobs-table-demo";
-  const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : initialJobsTableDemoRoute ? "jobsTableDemo" : "jobs");
-  const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>("repeat");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialRoute = parseAppRoute(window.location.pathname, defaultScheduleFlow);
+  const [activeFlow, setActiveFlow] = useState<FlowId>(initialRoute.flow);
+  const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>(() => isScheduleFlow(initialRoute.flow) ? initialRoute.flow : defaultScheduleFlow);
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
-    initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
+    initialRoute.dashboardRoute ? dashboardEntryFromRoute(initialRoute.dashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
+  const changeFlowFromData = (flow: FlowId) => {
+    const nextFlow = flow === "rules" ? lastScheduleFlow : flow;
+    const nextScheduleFlow = isScheduleFlow(nextFlow) ? nextFlow : lastScheduleFlow;
+    if (isScheduleFlow(nextFlow)) {
+      setLastScheduleFlow(nextFlow);
+    }
+    setActiveFlow(nextFlow);
+
+    const nextPath = getFlowPath(nextFlow, { dashboardEntry, lastScheduleFlow: nextScheduleFlow });
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
+    }
+  };
   const {
     apiPending,
     createPipeline,
@@ -106,19 +253,18 @@ export function App() {
     handleJobCommand,
     jobExecutionEvidence,
     jobs,
-    openDatasetInSql,
-    openJobDetail,
-    openJobRuns,
     prepareSqlDatasetJobDraft,
     runsByJobId,
     selectedDataset,
     selectedJob,
     selectedRunIdByJobId,
     selectRunForJob,
+    setSelectedDataset,
+    setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
-  } = useAskLakeData({ onFlowChange: setActiveFlow, showToast, writeAuditLog });
+  } = useAskLakeData({ onFlowChange: changeFlowFromData, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
   const activeNavId = useMemo<NavId>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
@@ -149,33 +295,64 @@ export function App() {
     () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
     [lastScheduleFlow],
   );
+  const routeState = useMemo(
+    () => parseAppRoute(location.pathname, lastScheduleFlow),
+    [lastScheduleFlow, location.pathname],
+  );
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeFlow, selectedJob?.id]);
 
   useEffect(() => {
-    const handlePopState = () => {
-      const route = parseDashboardRoute(window.location.pathname);
-      if (route) {
-        setDashboardEntry((entry) => dashboardEntryFromRoute(route, entry.version + 1));
-        setActiveFlow("dashboard");
-        return;
-      }
-      setActiveFlow(window.location.pathname === "/jobs-table-demo" ? "jobsTableDemo" : "jobs");
-    };
+    if (routeState.dashboardRoute) {
+      setDashboardEntry((entry) => dashboardEntryFromRoute(routeState.dashboardRoute!, entry.version + 1));
+    }
+    if (isScheduleFlow(routeState.flow)) {
+      setLastScheduleFlow(routeState.flow);
+    }
+    setActiveFlow((flow) => flow === routeState.flow ? flow : routeState.flow);
+  }, [routeState]);
 
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  useEffect(() => {
+    if (!routeState.jobId) return;
+    const matchedJob = jobs.find((job) => job.id === routeState.jobId);
+    const nextJob = matchedJob ?? buildMissingJobFromRoute(routeState.jobId);
+    setSelectedJob((job) => (
+      job === nextJob || (job.id === nextJob.id && job.name === nextJob.name && job.lastState === nextJob.lastState)
+        ? job
+        : nextJob
+    ));
+  }, [jobs, routeState.jobId, setSelectedJob]);
 
-  const moveToFlow = (flow: FlowId) => {
+  useEffect(() => {
+    if (!routeState.datasetId) return;
+    const matchedDataset = datasets.find((dataset) => dataset.id === routeState.datasetId);
+    const nextDataset = matchedDataset ?? buildMissingDatasetFromRoute(routeState.datasetId);
+    setSelectedDataset((dataset) => (
+      dataset === nextDataset || (dataset.id === nextDataset.id && dataset.name === nextDataset.name && dataset.status === nextDataset.status)
+        ? dataset
+        : nextDataset
+    ));
+  }, [datasets, routeState.datasetId, setSelectedDataset]);
+
+  const moveToFlow = (flow: FlowId, context: FlowPathContext = {}) => {
     if (flow === "rules") {
-      setActiveFlow(lastScheduleFlow);
+      moveToFlow(lastScheduleFlow, context);
       return;
     }
+    const nextScheduleFlow = isScheduleFlow(flow) ? flow : lastScheduleFlow;
     if (isScheduleFlow(flow)) {
       setLastScheduleFlow(flow);
+    }
+    const nextPath = getFlowPath(flow, {
+      dashboardEntry: context.dashboardEntry ?? dashboardEntry,
+      lastScheduleFlow: nextScheduleFlow,
+      selectedDataset: context.selectedDataset ?? selectedDataset,
+      selectedJob: context.selectedJob ?? selectedJob,
+    });
+    if (location.pathname !== nextPath) {
+      navigate(nextPath);
     }
     setActiveFlow(flow);
   };
@@ -198,49 +375,60 @@ export function App() {
       setSqlResultDraft(null);
     }
     if (item.id === "dashboard") {
-      if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
-      setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
-    } else if (window.location.pathname.startsWith("/dashboards") || window.location.pathname === "/jobs-table-demo") {
-      window.history.pushState(null, "", "/jobs");
+      const nextDashboardEntry: DashboardEntry = { source: "sidebar", view: "list", version: dashboardEntry.version + 1 };
+      setDashboardEntry(nextDashboardEntry);
+      moveToFlow(item.flow, { dashboardEntry: nextDashboardEntry });
+      return;
     }
     moveToFlow(item.flow);
   };
 
   const openJobsTableDemo = () => {
     writeAuditLog("etl.jobs.table_demo_opened", "/jobs-table-demo", "jobs-table-demo", "success", { targetType: "ui" });
-    if (window.location.pathname !== "/jobs-table-demo") window.history.pushState(null, "", "/jobs-table-demo");
     moveToFlow("jobsTableDemo");
   };
 
   const closeJobsTableDemo = () => {
     writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
-    if (window.location.pathname === "/jobs-table-demo") window.history.pushState(null, "", "/jobs");
     moveToFlow("jobs");
   };
 
   const navigateIngestLanding = () => {
     writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
-    if (window.location.pathname !== "/jobs") window.history.pushState(null, "", "/jobs");
     setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
     moveToFlow("jobs");
   };
 
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
-    openDatasetInSql(dataset);
+    setSelectedDataset(dataset);
+    setSqlResultDraft(null);
+    writeAuditLog("catalog.open_in_sql.clicked", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "success", { targetType: "dataset" });
+    moveToFlow("sql", { selectedDataset: dataset });
   };
 
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
-    const path = getDashboardPath(dashboardId, mode);
-    if (window.location.pathname !== path) window.history.pushState(null, "", path);
-    setDashboardEntry((entry) => ({
+    const nextDashboardEntry: DashboardEntry = {
       dashboardId,
       runtimeMode: mode,
       source: "internal",
       view: "runtime",
-      version: entry.version + 1,
-    }));
-    moveToFlow("dashboard");
+      version: dashboardEntry.version + 1,
+    };
+    setDashboardEntry(nextDashboardEntry);
+    moveToFlow("dashboard", { dashboardEntry: nextDashboardEntry });
+  };
+
+  const openJobDetailWithRoute = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.detail_opened", `/api/etl/jobs/${job.id}`, job.id);
+    moveToFlow("jobDetail", { selectedJob: job });
+  };
+
+  const openJobRunsWithRoute = (job: JobRowData) => {
+    setSelectedJob(job);
+    writeAuditLog("etl.job.runs_opened", `/api/etl/jobs/${job.id}/runs`, job.id);
+    moveToFlow("jobRuns", { selectedJob: job });
   };
 
   const recordPlaceholderAction = (flow: PlaceholderFlow, actionType: PlaceholderAction) => {
@@ -316,9 +504,9 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
-          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRuns(selectedJob)} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onRuns={openJobRunsWithRoute} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
+          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRunsWithRoute} onDetail={openJobDetailWithRoute} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRunsWithRoute(selectedJob)} onAction={writeAuditLog} />}
           {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
