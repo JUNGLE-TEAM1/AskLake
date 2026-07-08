@@ -1,23 +1,12 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import type React from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import {
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
-  type ColumnDef,
-  type Header,
-  type SortingState,
-} from "@tanstack/react-table";
-import {
-  ArrowUpDown,
   BarChart3,
   BookOpen,
   Bot,
   Calendar,
   Check,
-  ChevronDown,
-  ChevronUp,
   CircleUser,
   Clock3,
   Database,
@@ -45,6 +34,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { IconButton } from "@/components/ui/icon-button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -179,7 +169,6 @@ export function JobsLandingPage({
           onCreate={onCreate}
           onDetail={onDetail}
           onRuns={onRuns}
-          pageActionPrefix="etl.jobs"
           title="작업 상태 목록"
         />
       </div>
@@ -358,7 +347,6 @@ type JobsTableSectionProps = {
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
   onRuns: (job: JobRowData) => void;
-  pageActionPrefix: string;
   title: string;
 };
 
@@ -372,11 +360,9 @@ function JobsTableSection({
   onCreate,
   onDetail,
   onRuns,
-  pageActionPrefix,
   title,
 }: JobsTableSectionProps) {
   const [activeLogJob, setActiveLogJob] = useState<JobRowData | null>(null);
-  const [sorting, setSorting] = useState<SortingState>([]);
   const tableRows = useMemo<JobsTableRow[]>(() => jobs.map((job) => ({
     executionDisplay: getJobExecutionDisplay(job),
     job,
@@ -402,6 +388,9 @@ function JobsTableSection({
       cell: ({ row }) => <StatusPill status={row.original.job.status} />,
       header: "상태",
       id: "status",
+      meta: {
+        widthClassName: "w-[92px]",
+      } satisfies DataTableColumnMeta,
     },
     {
       accessorFn: (row) => row.job.name,
@@ -417,6 +406,9 @@ function JobsTableSection({
       },
       header: "작업명",
       id: "job",
+      meta: {
+        widthClassName: "w-[250px]",
+      } satisfies DataTableColumnMeta,
     },
     {
       accessorFn: (row) => row.job.target,
@@ -432,12 +424,18 @@ function JobsTableSection({
       },
       header: "타깃 데이터셋",
       id: "target",
+      meta: {
+        widthClassName: "w-[260px]",
+      } satisfies DataTableColumnMeta,
     },
     {
       accessorFn: (row) => row.job.owner,
       cell: ({ row }) => <Badge className="owner-chip" variant="outline">{row.original.job.owner}</Badge>,
       header: "소유자",
       id: "owner",
+      meta: {
+        widthClassName: "w-[120px]",
+      } satisfies DataTableColumnMeta,
     },
     {
       accessorFn: (row) => row.executionDisplay.summary,
@@ -457,6 +455,9 @@ function JobsTableSection({
       },
       header: "최근 실행 결과",
       id: "executionResult",
+      meta: {
+        widthClassName: "w-[238px]",
+      } satisfies DataTableColumnMeta,
     },
     {
       accessorFn: (row) => row.job.lastRun,
@@ -472,43 +473,11 @@ function JobsTableSection({
       },
       header: "마지막 실행",
       id: "lastRun",
+      meta: {
+        widthClassName: "w-[156px]",
+      } satisfies DataTableColumnMeta,
     },
-    {
-      cell: ({ row }) => {
-        const { job } = row.original;
-
-        return (
-          <div className="jobs-table-actions">
-            {getJobListActions(job).map((action) => (
-              <IconButton
-                className={`${action.className} icon-only`}
-                key={action.label}
-                label={action.label}
-                size="xs"
-                type="button"
-                variant={getJobActionButtonVariant(action.className)}
-                onClick={() => runAction(action.kind, job)}
-              >
-                <JobListActionIcon action={action} />
-              </IconButton>
-            ))}
-          </div>
-        );
-      },
-      enableSorting: false,
-      header: "액션",
-      id: "actions",
-    },
-  ], [openJobLog, runAction]);
-  const table = useReactTable({
-    columns,
-    data: tableRows,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getRowId: (row) => row.job.id,
-    onSortingChange: setSorting,
-    state: { sorting },
-  });
+  ], [openJobLog]);
 
   return (
     <section className="jobs-table-preview-card jobs-xflow-card" aria-label={ariaLabel}>
@@ -522,49 +491,46 @@ function JobsTableSection({
         </div>
         <strong className="jobs-xflow-state">{jobs.length} jobs</strong>
       </div>
-      <div className="jobs-table-scroll">
-        <table className="jobs-table-preview">
-          <thead>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <th key={header.id}>{renderJobsTableHeader(header)}</th>
-                ))}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {jobs.length === 0 && (
-              <tr>
-                <td className="jobs-table-empty" colSpan={7}>
-                  <EmptyState
-                    action={<Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>}
-                    className="job-empty-state table-empty-state"
-                    description={emptyBody}
-                    icon={<Plus size={22} />}
-                    title="생성된 수집/처리 작업이 없습니다."
-                    variant="plain"
-                  />
-                </td>
-              </tr>
-            )}
-            {table.getRowModel().rows.map((row) => (
-              <tr className={`job-table-row ${jobStatusMeta[row.original.job.status].className}`} key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="jobs-table-preview-footer">
-        <span>1-{jobs.length} of {jobs.length}</span>
-        <div>
-          <IconButton label="이전 페이지" size="xs" type="button" variant="outline" onClick={() => onAction(`${pageActionPrefix}.page_previous`, "/api/etl/jobs?page=previous", "jobs")}>‹</IconButton>
-          <IconButton label="다음 페이지" size="xs" type="button" variant="outline" onClick={() => onAction(`${pageActionPrefix}.page_next`, "/api/etl/jobs?page=next", "jobs")}>›</IconButton>
-        </div>
-      </div>
+      <DataTable
+        className="jobs-data-table"
+        columns={columns}
+        data={tableRows}
+        emptyState={{
+          action: <Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>,
+          description: emptyBody,
+          icon: <Plus size={22} />,
+          title: "생성된 수집/처리 작업이 없습니다.",
+        }}
+        getRowClassName={(row) => `job-table-row ${jobStatusMeta[row.original.job.status].className}`}
+        getRowId={(row) => row.job.id}
+        pagination={{ label: title, pageSize: 10 }}
+        renderRowActions={(row) => {
+          const { job } = row.original;
+
+          return (
+            <div className="jobs-table-actions">
+              {getJobListActions(job).map((action) => (
+                <IconButton
+                  className={`${action.className} icon-only`}
+                  key={action.label}
+                  label={action.label}
+                  size="xs"
+                  type="button"
+                  variant={getJobActionButtonVariant(action.className)}
+                  onClick={() => runAction(action.kind, job)}
+                >
+                  <JobListActionIcon action={action} />
+                </IconButton>
+              ))}
+            </div>
+          );
+        }}
+        resetPaginationKey={jobs.length}
+        rowActionsClassName="jobs-table-actions-column"
+        rowActionsHeader="액션"
+        tableClassName="jobs-table-preview"
+        viewportClassName="jobs-table-scroll border-0 bg-transparent rounded-none"
+      />
       {activeLogJob && <JobLogModal job={activeLogJob} onClose={() => setActiveLogJob(null)} />}
     </section>
   );
@@ -705,7 +671,6 @@ export function JobsTableDemoPage({
           onCreate={onCreate}
           onDetail={onDetail}
           onRuns={onRuns}
-          pageActionPrefix="etl.jobs.table_demo"
           title="작업 상태 중심 목록"
         />
       </div>
@@ -717,23 +682,6 @@ type JobsTableRow = {
   executionDisplay: JobExecutionDisplay;
   job: JobRowData;
 };
-
-function renderJobsTableHeader(header: Header<JobsTableRow, unknown>) {
-  if (header.isPlaceholder) return null;
-
-  const label = flexRender(header.column.columnDef.header, header.getContext());
-  if (!header.column.getCanSort()) return label;
-
-  const sorted = header.column.getIsSorted();
-  const SortIcon = sorted === "asc" ? ChevronUp : sorted === "desc" ? ChevronDown : ArrowUpDown;
-
-  return (
-    <button className="jobs-table-sort-button" type="button" onClick={header.column.getToggleSortingHandler()}>
-      {label}
-      <SortIcon size={13} />
-    </button>
-  );
-}
 
 function JobListActionIcon({ action }: { action: JobListAction }) {
   if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
