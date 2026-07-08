@@ -359,6 +359,7 @@ class UpdateDraftWidgetRequest(CamelModel):
     title: str | None = None
     dataset_id: str | None = None
     config: DashboardRuntimeWidgetConfig | None = None
+    data: list[dict[str, Any]] | None = None
 
 
 class DashboardWidgetMutationResponse(CamelModel):

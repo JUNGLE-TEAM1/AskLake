@@ -12,10 +12,11 @@ import {
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
-import type { CreateDraftWidgetFormInput, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
+  datasets: DashboardDatasetOption[];
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   pageId: string | null;
@@ -49,6 +50,7 @@ function appendPromptText(currentPrompt: string, nextText: string) {
 
 export function DashboardAssistantPanel({
   dashboardId,
+  datasets,
   onCreateWidget,
   onUpdateWidget,
   pageId,
@@ -105,6 +107,7 @@ export function DashboardAssistantPanel({
         (action): action is DashboardAssistantReportAction => action.type === "report",
       );
       const actionMessages = await applyAssistantWidgetActions({
+        datasets,
         onCreateWidget,
         onUpdateWidget,
         response,
@@ -201,11 +204,13 @@ export function DashboardAssistantPanel({
 }
 
 async function applyAssistantWidgetActions({
+  datasets,
   onCreateWidget,
   onUpdateWidget,
   response,
   widgets,
 }: {
+  datasets: DashboardDatasetOption[];
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   response: DashboardAssistantResponse;
@@ -223,7 +228,7 @@ async function applyAssistantWidgetActions({
     }
 
     if (action.type === "update_widget") {
-      const result = await applyUpdateWidgetAction(action, widgets, onUpdateWidget);
+      const result = await applyUpdateWidgetAction(action, datasets, widgets, onUpdateWidget);
       if (result) messages.push(result);
     }
   }
@@ -251,6 +256,7 @@ async function applyCreateWidgetAction(
 
 async function applyUpdateWidgetAction(
   action: DashboardAssistantUpdateWidgetAction,
+  datasets: DashboardDatasetOption[],
   widgets: DashboardRuntimeWidget[],
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void,
 ) {
@@ -261,12 +267,16 @@ async function applyUpdateWidgetAction(
     return "수정 대상 위젯을 찾지 못해 변경사항을 적용하지 못했습니다.";
   }
 
+  const nextDatasetId = action.patch.datasetId ?? currentWidget?.datasetId ?? null;
+  const nextRows = nextDatasetId ? datasets.find((dataset) => dataset.id === nextDatasetId)?.rows : undefined;
+
   await onUpdateWidget(action.widgetId, {
     config: {
       ...(currentWidget?.config ?? {}),
       ...(action.patch.config ?? {}),
     } as UpdateDraftWidgetFormInput["config"],
-    datasetId: action.patch.datasetId ?? currentWidget?.datasetId ?? null,
+    data: nextRows?.length ? nextRows.map((row) => ({ ...row })) : undefined,
+    datasetId: nextDatasetId,
     title: action.patch.title ?? currentWidget?.title ?? "제목 없는 위젯",
     type: action.patch.type ?? currentWidget?.type ?? "bar_chart",
   });

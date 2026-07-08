@@ -1921,10 +1921,12 @@ type DashboardAssistantResponse = {
 
 - `message`는 사용자에게 요청 결과 안내로 표시한다.
 - `actions.type: "report"`는 AskLake 보조 패널의 분석/리포트 응답에 사용한다.
-- `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 후속 작업에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
+- `actions.type: "create_widget"`와 `actions.type: "update_widget"`는 시각화 요청 위젯에서 실제 위젯 생성/수정 적용 흐름에 사용한다.
 - `configPatch` 또는 `widgetPatch.config`는 현재 시각화 요청 위젯의 기존 config에 병합한다.
-- `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 응답 shape에는 열어두지만, 자동 적용은 후속 백엔드/UX 결정 후 확장한다.
+- `widgetPatch.title`, `widgetPatch.type`, `widgetPatch.datasetId`는 시각화 요청 위젯을 실제 차트로 변환할 때 자동 적용한다.
 - `warnings`에 `mock fallback`이 포함되면 OpenAI 실제 응답이 아니라 서버 fallback 응답으로 봐야 한다.
+
+Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema/sample rows 기준으로 검증한다. 없는 컬럼은 alias로 보정하고, 차원 컬럼만 제시된 막대/선/면 차트 요청은 `count` 집계로 보정한다. 그래도 적용 가능한 action이 없으면 `visualization_request`에 한해 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성할 수 있다.
 
 ## 9. P2 API
 

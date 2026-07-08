@@ -85,8 +85,9 @@ function emptyVisualizationRequestWidgetIds(runtime: DashboardRuntimeResponse | 
     .flat()
     .filter((widget) => {
       const config = widget.config as { placeholderKind?: unknown; prompt?: unknown };
-      return config.placeholderKind === "visualization_request"
-        && (typeof config.prompt !== "string" || !config.prompt.trim());
+      const isVisualizationRequest = config.placeholderKind === "visualization_request"
+        || (widget.title === "시각화 요청" && !widget.datasetId && widget.data.length === 0);
+      return isVisualizationRequest && (typeof config.prompt !== "string" || !config.prompt.trim());
     })
     .map((widget) => widget.id);
 }

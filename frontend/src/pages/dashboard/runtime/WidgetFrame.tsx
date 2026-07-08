@@ -7,7 +7,11 @@ import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardA
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
   const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
-  return kind === "visualization_request" || kind === "text" ? kind : null;
+  if (kind === "visualization_request" || kind === "text") return kind;
+  if (widget.title === "시각화 요청" && !widget.datasetId && widget.data.length === 0) {
+    return "visualization_request";
+  }
+  return null;
 }
 
 function widgetTypeLabel(widget: DashboardRuntimeWidget) {
