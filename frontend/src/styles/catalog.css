@@ -35,13 +35,13 @@
   background: #fff;
 }
 
-.catalog-xflow-card {
+.catalog-panel-card {
   overflow: hidden;
   border-color: #dee4ee;
   box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
 }
 
-.catalog-xflow-card-header {
+.catalog-panel-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -52,7 +52,7 @@
   padding: 16px 20px;
 }
 
-.catalog-xflow-icon {
+.catalog-panel-icon {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -62,18 +62,18 @@
   color: #2563eb;
 }
 
-.catalog-xflow-icon-dataset {
+.catalog-panel-icon-dataset {
   background: #f0fdf4;
   color: #16a34a;
 }
 
-.catalog-xflow-heading {
+.catalog-panel-heading {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.catalog-xflow-heading h2 {
+.catalog-panel-heading h2 {
   margin: 0;
   color: #111827;
   font-size: 16px;
@@ -82,7 +82,7 @@
   overflow-wrap: anywhere;
 }
 
-.catalog-xflow-heading p {
+.catalog-panel-heading p {
   margin: 0;
   color: #64748b;
   font-size: 12px;
@@ -91,7 +91,7 @@
   overflow-wrap: anywhere;
 }
 
-.catalog-xflow-state {
+.catalog-panel-state {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -212,7 +212,7 @@
   padding: 0;
 }
 
-.catalog-results-header .catalog-xflow-card-header {
+.catalog-results-header .catalog-panel-header {
   border-bottom: 0;
 }
 
@@ -736,16 +736,16 @@
   padding: 24px;
 }
 
-.catalog-preview-panel.catalog-xflow-card {
+.catalog-preview-panel.catalog-panel-card {
   gap: 16px;
   padding: 0 0 20px;
 }
 
-.catalog-preview-panel.catalog-xflow-card > :not(.catalog-preview-title):not(.catalog-wide-button) {
+.catalog-preview-panel.catalog-panel-card > :not(.catalog-preview-title):not(.catalog-wide-button) {
   margin-inline: 20px;
 }
 
-.catalog-preview-panel.catalog-xflow-card .catalog-wide-button {
+.catalog-preview-panel.catalog-panel-card .catalog-wide-button {
   width: calc(100% - 40px);
   margin-inline: 20px;
 }
@@ -760,7 +760,7 @@
   gap: 12px;
 }
 
-.catalog-preview-title.catalog-xflow-card-header {
+.catalog-preview-title.catalog-panel-header {
   grid-template-columns: auto minmax(0, 1fr) auto;
   border-bottom: 1px solid #e5e7eb;
 }
@@ -1261,7 +1261,7 @@
   box-shadow: none;
 }
 
-.xflow-schema-node {
+.lineage-schema-node {
   position: relative;
   min-width: 240px;
   max-width: 280px;
@@ -1273,21 +1273,21 @@
   transition: border-color 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
 }
 
-.xflow-schema-node.dimmed {
+.lineage-schema-node.dimmed {
   opacity: 0.34;
 }
 
-.xflow-schema-node.highlighted {
+.lineage-schema-node.highlighted {
   border-color: #fb923c;
   box-shadow: 0 14px 30px rgb(251 146 60 / 16%);
 }
 
-.xflow-schema-node.gold {
+.lineage-schema-node.gold {
   border: 2px solid #2563eb;
   box-shadow: 0 14px 34px rgb(37 99 235 / 16%);
 }
 
-.xflow-schema-header {
+.lineage-schema-header {
   display: flex;
   min-height: 68px;
   overflow: hidden;
@@ -1297,7 +1297,7 @@
   background: #fff;
 }
 
-.xflow-schema-icon {
+.lineage-schema-icon {
   display: grid;
   width: 46px;
   place-items: center;
@@ -1306,25 +1306,25 @@
   color: #2563eb;
 }
 
-.xflow-schema-node.source .xflow-schema-icon {
+.lineage-schema-node.source .lineage-schema-icon {
   border-color: #fed7aa;
   background: #fff7ed;
   color: #ea580c;
 }
 
-.xflow-schema-node.silver .xflow-schema-icon {
+.lineage-schema-node.silver .lineage-schema-icon {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
 }
 
-.xflow-schema-node.gold .xflow-schema-icon {
+.lineage-schema-node.gold .lineage-schema-icon {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #2563eb;
 }
 
-.xflow-schema-title {
+.lineage-schema-title {
   display: grid;
   flex: 1;
   min-width: 0;
@@ -1333,7 +1333,7 @@
   padding: 10px 12px;
 }
 
-.xflow-schema-title strong {
+.lineage-schema-title strong {
   min-width: 0;
   color: #111827;
   font-size: 14px;
@@ -1343,7 +1343,7 @@
   white-space: normal;
 }
 
-.xflow-schema-title span {
+.lineage-schema-title span {
   color: #6b7280;
   font-size: 10px;
   font-weight: 800;
@@ -1351,7 +1351,7 @@
   white-space: normal;
 }
 
-.xflow-column-head {
+.lineage-column-head {
   position: sticky;
   top: 0;
   z-index: 2;
@@ -1367,18 +1367,18 @@
   text-transform: uppercase;
 }
 
-.xflow-column-head span:last-child {
+.lineage-column-head span:last-child {
   text-align: right;
 }
 
-.xflow-schema-columns {
+.lineage-schema-columns {
   display: grid;
   overflow-x: hidden;
   border-radius: 0 0 8px 8px;
   background: #f9fafb;
 }
 
-.xflow-column-row {
+.lineage-column-row {
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(54px, auto);
@@ -1398,7 +1398,7 @@
   transition: background 140ms ease, opacity 140ms ease;
 }
 
-.catalog-lineage-flow .xflow-column-row {
+.catalog-lineage-flow .lineage-column-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(54px, auto);
   align-items: center;
@@ -1417,32 +1417,32 @@
   transition: background 140ms ease, opacity 140ms ease;
 }
 
-.xflow-column-row:last-child {
+.lineage-column-row:last-child {
   border-bottom: 0;
 }
 
-.xflow-column-row:hover {
+.lineage-column-row:hover {
   background: #eff6ff;
 }
 
-.catalog-lineage-flow .xflow-column-row:hover {
+.catalog-lineage-flow .lineage-column-row:hover {
   background: #eff6ff;
 }
 
-.xflow-column-row.dimmed {
+.lineage-column-row.dimmed {
   opacity: 0.32;
 }
 
-.xflow-column-row.related {
+.lineage-column-row.related {
   background: #fff7ed;
 }
 
-.xflow-column-row.active {
+.lineage-column-row.active {
   background: #ffedd5;
   box-shadow: inset 0 0 0 1px #fdba74;
 }
 
-.xflow-column-row span {
+.lineage-column-row span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1483,7 +1483,7 @@
   color: #475569;
 }
 
-.catalog-lineage-flow .xflow-column-handle {
+.catalog-lineage-flow .lineage-column-handle {
   width: 12px;
   height: 12px;
   border: 2px solid #fff;
@@ -1494,20 +1494,20 @@
   transition: transform 120ms ease;
 }
 
-.catalog-lineage-flow .xflow-column-handle:hover {
+.catalog-lineage-flow .lineage-column-handle:hover {
   transform: translateY(-50%) scale(1.18);
 }
 
-.xflow-column-row.active .xflow-column-handle {
+.lineage-column-row.active .lineage-column-handle {
   background: #f97316;
   box-shadow: 0 1px 6px rgb(249 115 22 / 34%);
 }
 
-.catalog-lineage-flow .xflow-column-handle.left {
+.catalog-lineage-flow .lineage-column-handle.left {
   left: -7px;
 }
 
-.catalog-lineage-flow .xflow-column-handle.right {
+.catalog-lineage-flow .lineage-column-handle.right {
   right: -7px;
 }
 

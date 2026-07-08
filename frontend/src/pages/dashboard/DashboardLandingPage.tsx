@@ -97,7 +97,7 @@ export function DashboardLandingPage({
         </div>
       </header>
 
-      <div className="dashboard-xflow-stack">
+      <div className="dashboard-panel-stack">
         <DashboardListToolbar
           onClearTags={onClearTags}
           onSearchQueryChange={onSearchQueryChange}
@@ -114,16 +114,16 @@ export function DashboardLandingPage({
           tags={tags}
         />
 
-        <section className="dashboard-table-list dashboard-xflow-card">
-          <div className="dashboard-xflow-card-header">
-            <span className="dashboard-xflow-icon">
+        <section className="dashboard-table-list dashboard-panel-card">
+          <div className="dashboard-panel-header">
+            <span className="dashboard-panel-icon">
               <Table2 size={16} />
             </span>
-            <div className="dashboard-xflow-heading">
+            <div className="dashboard-panel-heading">
               <h2>대시보드 목록</h2>
               <p>대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다.</p>
             </div>
-            <span className="dashboard-xflow-state">{pageStart}-{pageEnd}</span>
+            <span className="dashboard-panel-state">{pageStart}-{pageEnd}</span>
           </div>
           <div className="dashboard-table-list-body">
             <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>

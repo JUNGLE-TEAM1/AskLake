@@ -78,12 +78,12 @@
   opacity: 0.72;
 }
 
-.dashboard-xflow-stack {
+.dashboard-panel-stack {
   display: grid;
   gap: 20px;
 }
 
-.dashboard-xflow-card {
+.dashboard-panel-card {
   overflow: hidden;
   border: 1px solid #dee4ee;
   border-radius: 8px;
@@ -91,11 +91,11 @@
   box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
 }
 
-.dashboard-list-toolbar.dashboard-xflow-card {
+.dashboard-list-toolbar.dashboard-panel-card {
   overflow: visible;
 }
 
-.dashboard-xflow-card-header {
+.dashboard-panel-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -106,7 +106,7 @@
   padding: 16px 20px;
 }
 
-.dashboard-xflow-icon {
+.dashboard-panel-icon {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -116,13 +116,13 @@
   color: #2563eb;
 }
 
-.dashboard-xflow-heading {
+.dashboard-panel-heading {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.dashboard-xflow-heading h2 {
+.dashboard-panel-heading h2 {
   color: #111827;
   font-size: 16px;
   font-weight: 850;
@@ -130,7 +130,7 @@
   overflow-wrap: anywhere;
 }
 
-.dashboard-xflow-heading p {
+.dashboard-panel-heading p {
   color: #64748b;
   font-size: 12px;
   font-weight: 750;
@@ -138,7 +138,7 @@
   overflow-wrap: anywhere;
 }
 
-.dashboard-xflow-state {
+.dashboard-panel-state {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
