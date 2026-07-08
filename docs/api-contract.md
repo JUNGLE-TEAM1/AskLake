@@ -2037,7 +2037,7 @@ Response `201 Created`:
 - CORS에서 `http://localhost:5173`을 허용합니다.
 - 모든 response에 `Content-Type: application/json`을 설정합니다.
 - 실패 응답은 `error.code`, `error.message`를 반드시 포함합니다.
-- SQL 실행은 read-only guard를 반드시 둡니다.
+- SQL 실행은 read-only guard를 반드시 둡니다. Mutation statement는 차단하지만, `SELECT` projection의 scalar 함수(`UPPER`, `LOWER`, `TRIM`, `REPLACE`, `SUBSTR`, `CONCAT`, `CAST`, `COALESCE`, `ROUND`, `ABS`)는 transform preview에서 허용합니다.
 - ETL job command는 상태 전이를 서버에서 검증합니다.
 - `request_id`를 서버 로그에 남깁니다.
 - 날짜는 ISO 8601 UTC 문자열로 내려줍니다.

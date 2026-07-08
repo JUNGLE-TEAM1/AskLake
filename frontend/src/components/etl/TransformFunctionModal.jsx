@@ -1,33 +1,40 @@
 import React, { useState, useRef } from 'react';
 
+const quoteSqlIdentifier = (identifier) => {
+    const value = String(identifier || '').replace(/`/g, '``');
+    return `\`${value}\``;
+};
+
 /**
  * TransformFunctionModal - Modal for editing column transform functions
  */
 export default function TransformFunctionModal({ column, onApply, onClose }) {
     const editorRef = useRef(null);
+    const sourceColumnName = column.originalName || column.name;
+    const sourceColumnRef = quoteSqlIdentifier(sourceColumnName);
     const [newName, setNewName] = useState(column.name);
     const [newType, setNewType] = useState(column.type);
-    const [transformExpr, setTransformExpr] = useState(column.transform || column.originalName || column.name);
+    const [transformExpr, setTransformExpr] = useState(column.transform || sourceColumnName);
     const [selectedFunction, setSelectedFunction] = useState('');
 
     const functions = [
-        { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${column.originalName} AS STRING))` },
-        { name: 'LOWER', desc: 'Convert to lowercase', template: `LOWER(CAST(${column.originalName} AS STRING))` },
-        { name: 'TRIM', desc: 'Remove whitespace', template: `TRIM(CAST(${column.originalName} AS STRING))` },
-        { name: 'REPLACE', desc: 'Replace characters', template: `REPLACE(CAST(${column.originalName} AS STRING), '', '')` },
-        { name: 'SUBSTR', desc: 'Extract substring', template: `SUBSTR(CAST(${column.originalName} AS STRING), 1, 10)` },
-        { name: 'CONCAT', desc: 'Concatenate strings', template: `CONCAT(CAST(${column.originalName} AS STRING), '-', CAST(${column.originalName} AS STRING))` },
-        { name: 'CAST', desc: 'Convert type', template: `CAST(${column.originalName} AS STRING)` },
-        { name: 'COALESCE', desc: 'Handle nulls', template: `COALESCE(${column.originalName}, 'default')` },
+        { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${sourceColumnRef} AS STRING))` },
+        { name: 'LOWER', desc: 'Convert to lowercase', template: `LOWER(CAST(${sourceColumnRef} AS STRING))` },
+        { name: 'TRIM', desc: 'Remove whitespace', template: `TRIM(CAST(${sourceColumnRef} AS STRING))` },
+        { name: 'REPLACE', desc: 'Replace characters', template: `REPLACE(CAST(${sourceColumnRef} AS STRING), '', '')` },
+        { name: 'SUBSTR', desc: 'Extract substring', template: `SUBSTR(CAST(${sourceColumnRef} AS STRING), 1, 10)` },
+        { name: 'CONCAT', desc: 'Concatenate strings', template: `CONCAT(CAST(${sourceColumnRef} AS STRING), '-', CAST(${sourceColumnRef} AS STRING))` },
+        { name: 'CAST', desc: 'Convert type', template: `CAST(${sourceColumnRef} AS STRING)` },
+        { name: 'COALESCE', desc: 'Handle nulls', template: `COALESCE(${sourceColumnRef}, 'default')` },
 
-        { name: 'ROUND', desc: 'Round number', template: `ROUND(CAST(${column.originalName} AS DOUBLE), 2)` },
-        { name: 'ABS', desc: 'Absolute value', template: `ABS(CAST(${column.originalName} AS DOUBLE))` },
+        { name: 'ROUND', desc: 'Round number', template: `ROUND(CAST(${sourceColumnRef} AS DOUBLE), 2)` },
+        { name: 'ABS', desc: 'Absolute value', template: `ABS(CAST(${sourceColumnRef} AS DOUBLE))` },
     ];
 
     const applyFunction = (func) => {
         // If current expression is just the original field name (not transformed yet),
         // replace it entirely with the function template
-        const isOriginalField = transformExpr === column.originalName || transformExpr === column.name;
+        const isOriginalField = transformExpr === column.originalName || transformExpr === column.name || transformExpr === sourceColumnRef;
 
         if (isOriginalField) {
             // Replace entire expression
@@ -113,7 +120,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                             onChange={(e) => setTransformExpr(e.target.value)}
                             rows={3}
                             className="w-full px-3 py-2 border border-slate-200 rounded-xl font-mono text-sm focus:outline-none focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50/50 transition-all bg-slate-50/30"
-                            placeholder={`e.g., CONCAT(SUBSTR(${column.originalName}, 1, 3), '-', SUBSTR(${column.originalName}, 4, 4))`}
+                            placeholder={`e.g., CONCAT(SUBSTR(${sourceColumnRef}, 1, 3), '-', SUBSTR(${sourceColumnRef}, 4, 4))`}
                         />
                     </div>
                 </div>

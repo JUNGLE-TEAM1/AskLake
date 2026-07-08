@@ -108,6 +108,35 @@ async function runSmoke() {
   }, 422);
   assert(fileRelationError.error?.code === "VALIDATION_ERROR", "DuckDB file path relation sources should be rejected by backend guard.");
 
+  const transformPreview = await post("/api/sql/test", {
+    sources: [{ source_dataset_id: "quick_function_source", columns: ["email", "amount", "profile city"] }],
+    sql: [
+      "SELECT",
+      "UPPER(CAST(`email` AS STRING)) AS email_upper,",
+      "LOWER(CAST(`email` AS STRING)) AS email_lower,",
+      "TRIM(CAST(`profile city` AS STRING)) AS city_trimmed,",
+      "REPLACE(CAST(`email` AS STRING), 'sample', 'SAMPLE') AS email_replaced,",
+      "SUBSTR(CAST(`email` AS STRING), 1, 5) AS email_prefix,",
+      "CONCAT(CAST(`email` AS STRING), '-', CAST(`email` AS STRING)) AS email_concat,",
+      "CAST(`email` AS STRING) AS email_cast,",
+      "COALESCE(`email`, 'default') AS email_coalesced,",
+      "ROUND(CAST(`amount` AS DOUBLE), 2) AS amount_rounded,",
+      "ABS(CAST(`amount` AS DOUBLE)) AS amount_abs",
+      "FROM input",
+    ].join(" "),
+  });
+  assert(transformPreview.valid === true, "SQL transform quick function pretest should return a valid response.");
+  assert(transformPreview.sample_rows[0].email_upper === "EMAIL_SAMPLE_1", "UPPER quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].email_lower === "email_sample_1", "LOWER quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].city_trimmed === "profile city_sample_1", "TRIM quick function should apply to quoted space identifiers.");
+  assert(transformPreview.sample_rows[0].email_replaced === "email_SAMPLE_1", "REPLACE quick function should be allowed by the read-only guard.");
+  assert(transformPreview.sample_rows[0].email_prefix === "email", "SUBSTR quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].email_concat === "email_sample_1-email_sample_1", "CONCAT quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].email_cast === "email_sample_1", "CAST quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].email_coalesced === "email_sample_1", "COALESCE quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].amount_rounded === 1, "ROUND quick function should apply in SQL transform pretest.");
+  assert(transformPreview.sample_rows[0].amount_abs === 1, "ABS quick function should apply in SQL transform pretest.");
+
   const derivedName = `orders_clean_smoke_${Date.now()}`;
   const derivedDataset = await post("/api/catalog/derived-datasets", {
     dataset: {

@@ -29,7 +29,6 @@ MUTATION_KEYWORDS = (
     "merge",
     "grant",
     "revoke",
-    "replace",
     "copy",
     "call",
     "execute",
