@@ -11,6 +11,8 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
@@ -724,9 +726,9 @@ export function SqlAnalysisPage({
         </div>
       </header>
       {contextCollapsed && (
-        <button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기">
+        <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
           <PanelLeftOpen size={16} />
-        </button>
+        </Button>
       )}
       {!contextCollapsed && (
         <aside className="sql-dataset-panel" ref={contextPanelRef}>
@@ -735,9 +737,9 @@ export function SqlAnalysisPage({
               <strong>SQL 도구</strong>
               <span className="sql-panel-header-actions">
                 <em>{contextPanelTab === "tables" ? `${Math.max(0, datasets.length - selectedContextDatasets.length)}개 후보` : queryAiSuggestion ? "초안 생성됨" : "보조 기능"}</em>
-                <button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기">
+                <Button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기" size="icon" variant="ghost">
                   <PanelLeftClose size={15} />
-                </button>
+                </Button>
               </span>
             </div>
             <div className="sql-sidebar-tabs" role="tablist" aria-label="SQL 도구 선택">
@@ -765,7 +767,7 @@ export function SqlAnalysisPage({
             <div className="sql-sidebar-tab-panel tables">
               <label className="sql-context-search">
                 <Search size={15} />
-                <input
+                <Input
                   value={datasetSearch}
                   onChange={(event) => setDatasetSearch(event.target.value)}
                   placeholder="데이터셋, 컬럼, 태그 검색"
@@ -845,9 +847,9 @@ export function SqlAnalysisPage({
                         />
                       </label>
                       <div className="sql-ai-actions">
-                        <button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button">
+                        <Button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
                           <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -856,9 +858,9 @@ export function SqlAnalysisPage({
                       <>
                         {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
                         {queryAiSuggestion.sql && (
-                          <button className="sql-ai-apply-button primary-button" onClick={applyQueryAiSuggestion} type="button">
+                          <Button className="sql-ai-apply-button primary-button" onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
                             SQL에 적용
-                          </button>
+                          </Button>
                         )}
                       </>
                     ) : (
@@ -879,9 +881,9 @@ export function SqlAnalysisPage({
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+              <Button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
                 <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
-              </button>
+              </Button>
             </div>
           </div>
           <div className="sql-editor-layout">
@@ -936,7 +938,7 @@ export function SqlAnalysisPage({
               )}
               {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
-            <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> SQL 초기화</button>
+            <Button className="secondary-button" type="button" onClick={resetQuery} size="sm" variant="outline"><RotateCcw size={14} /> SQL 초기화</Button>
           </div>
         </section>
 
@@ -961,9 +963,9 @@ export function SqlAnalysisPage({
                   {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
                 </span>
                 <div className="sql-result-actions">
-                  <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
-                  <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>
-                  <button type="button" onClick={openDashboardBuilder}><BarChart3 size={14} /> 대시보드 만들기</button>
+                  <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download size={14} /> CSV 다운로드</Button>
+                  <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database size={14} /> 처리 Job 생성</Button>
+                  <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 size={14} /> 대시보드 만들기</Button>
                 </div>
               </div>
               <div className="sql-result-scroll">
@@ -986,12 +988,12 @@ export function SqlAnalysisPage({
                 <span>처리 작업</span>
                 <h2 id="sql-materialize-dialog-title">SQL 결과 처리 Job 생성</h2>
               </div>
-              <button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기">닫기</button>
+              <Button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기" size="sm" variant="outline">닫기</Button>
             </header>
             <div className="sql-materialize-form">
               <label>
                 <span>데이터셋 이름</span>
-                <input
+                <Input
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
                   }}
@@ -1010,7 +1012,7 @@ export function SqlAnalysisPage({
               </label>
               <label className="wide">
                 <span>태그</span>
-                <input
+                <Input
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
                   }}
@@ -1040,14 +1042,16 @@ export function SqlAnalysisPage({
                 />
                 <span>RAG 사용 가능</span>
               </label>
-              <button
+              <Button
                 className="primary-button"
                 disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
                 onClick={prepareDerivedDatasetJob}
                 type="button"
+                size="sm"
+                variant="primary"
               >
                 <Database size={15} /> Job 생성 검토로 이동
-              </button>
+              </Button>
             </div>
             <div className="sql-materialize-summary">
               <span>실행 {resultDraft.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {resultDraft.columns.length}개 · 검토 단계에서 생성 요청</span>
@@ -1058,9 +1062,9 @@ export function SqlAnalysisPage({
       {resultDraft && baseDataset && dashboardDialogOpen && (
         <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
           <section className="sql-dashboard-builder-dialog" role="dialog" aria-modal="true" aria-label="SQL 결과 대시보드 만들기" onMouseDown={(event) => event.stopPropagation()}>
-            <button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)}>
+            <Button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)} size="sm" variant="outline">
               닫기
-            </button>
+            </Button>
             <DashboardPage
               dataset={baseDataset}
               datasets={selectedContextDatasets}

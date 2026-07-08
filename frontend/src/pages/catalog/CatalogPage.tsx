@@ -1,49 +1,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import {
-  flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
   type ColumnDef,
-  type Header,
-  type SortingState,
 } from "@tanstack/react-table";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  BookOpen,
-  Calendar,
-  Check,
-  ArrowUpDown,
   ChevronDown,
   ChevronUp,
-  CircleUser,
-  Clock3,
-  Download,
   ExternalLink,
-  FileText,
-  HardDrive,
-  Info,
   LayoutGrid,
-  Maximize2,
-  Minus,
   Pin,
-  PlayCircle,
-  Plus,
-  RefreshCw,
-  Repeat2,
-  Save,
   Star,
   Search,
-  Settings,
   Share2,
-  ShieldCheck,
-  SlidersHorizontal,
   Table2,
   TerminalSquare,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { Input } from "@/components/ui/input";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
@@ -479,7 +457,8 @@ export function CatalogPage({
             <div className="catalog-search-body">
               <div className="catalog-search-box">
                 <Search size={18} />
-                <input
+                <Input
+                  className="catalog-search-input"
                   aria-label="카탈로그 검색"
                   onChange={(event) => setSearchText(event.target.value)}
                   onKeyDown={(event) => {
@@ -499,15 +478,17 @@ export function CatalogPage({
                     const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
 
                     return (
-                      <button
+                      <Button
                         aria-pressed={isTagInSearch}
                         className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
                         key={tag}
                         type="button"
+                        size="sm"
+                        variant="outline"
                         onClick={() => addTagToSearch(tag)}
                       >
                         {tag}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -541,32 +522,36 @@ export function CatalogPage({
                   RAG 여부
                 </label>
                 <div className="catalog-sort-control" ref={sortMenuRef}>
-                  <button
+                  <Button
                     aria-expanded={isSortMenuOpen}
                     aria-haspopup="menu"
                     className="catalog-sort-button"
                     type="button"
+                    size="sm"
+                    variant="outline"
                     onClick={() => {
                       setIsSortMenuOpen((isOpen) => !isOpen);
                       onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
                     }}
                   >
                     정렬: {selectedSortOption.label} ▾
-                  </button>
+                  </Button>
                   {isSortMenuOpen && (
                     <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
                       {catalogSortOptions.map((option) => (
-                        <button
+                        <Button
                           aria-checked={sortMode === option.mode}
                           className={sortMode === option.mode ? "active" : ""}
                           key={option.mode}
                           role="menuitemradio"
                           type="button"
+                          size="sm"
+                          variant="ghost"
                           onClick={() => updateSortMode(option.mode)}
                         >
                           <span>{sortMode === option.mode ? "✓" : ""}</span>
                           {option.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   )}
@@ -641,21 +626,25 @@ export function CatalogPage({
               <div className="catalog-pagination" aria-label="검색 결과 페이지">
                 <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
                 <div>
-                  <button
+                  <Button
                     type="button"
                     disabled={currentCatalogPage === 1}
                     onClick={() => updateResultPage(currentCatalogPage - 1)}
+                    size="sm"
+                    variant="outline"
                   >
                     이전
-                  </button>
+                  </Button>
                   <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
-                  <button
+                  <Button
                     type="button"
                     disabled={currentCatalogPage === totalCatalogPages}
                     onClick={() => updateResultPage(currentCatalogPage + 1)}
+                    size="sm"
+                    variant="outline"
                   >
                     다음
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -672,16 +661,18 @@ export function CatalogPage({
               <h2>{previewDataset.name}</h2>
               <p>{previewDataset.layer} 데이터셋 · {previewDataset.owner}</p>
             </div>
-            <button
+            <Button
               aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
               aria-pressed={isPreviewPinned}
               className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
               title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
               type="button"
+              size="icon"
+              variant="ghost"
               onClick={togglePinnedDataset}
             >
               <Star size={18} />
-            </button>
+            </Button>
           </div>
           <div className="catalog-overview-metrics catalog-preview-metrics">
             <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
@@ -699,10 +690,10 @@ export function CatalogPage({
               <span>{previewDataset.schema.length} 컬럼</span>
             </div>
             <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
-            <button className="catalog-text-button" type="button" onClick={() => {
+            <Button className="catalog-text-button" type="button" onClick={() => {
               onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
               setActiveModal("schema");
-            }}>전체 스키마 상세 보기</button>
+            }} size="sm" variant="link">전체 스키마 상세 보기</Button>
           </article>
 
           <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
@@ -722,15 +713,17 @@ export function CatalogPage({
             <span>›</span>
           </article>
 
-          <button
+          <Button
             className="primary-button catalog-wide-button"
             disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
             title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
             type="button"
+            size="sm"
+            variant="primary"
             onClick={openSelectedSqlDataset}
           >
             <ExternalLink size={16} /> SQL 분석에서 열기
-          </button>
+          </Button>
           <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
             {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
               ? `선택된 결과: ${selectedSqlRunTarget.runId}`
@@ -781,7 +774,7 @@ function CatalogModal({
             <h2>{dataset.name}</h2>
             <p>{title}</p>
           </div>
-          <button type="button" onClick={onClose}>닫기</button>
+          <Button type="button" onClick={onClose} size="sm" variant="outline">닫기</Button>
         </header>
         <div className="catalog-modal-body">
           {children}
@@ -814,7 +807,7 @@ export function CatalogDetailPage({
   return (
     <div className="catalog-detail-page">
       <header className="catalog-detail-header">
-        <button className="job-detail-breadcrumb" type="button" onClick={onBack}>검색/카탈로그 &gt; {dataset.name}</button>
+        <Button className="job-detail-breadcrumb" type="button" onClick={onBack} size="sm" variant="link">검색/카탈로그 &gt; {dataset.name}</Button>
         <div className="catalog-detail-title-row">
           <div>
             <h1>{dataset.name}</h1>
@@ -826,9 +819,9 @@ export function CatalogDetailPage({
             </div>
           </div>
           <div className="job-detail-actions">
-            <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
-            <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
-            <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
+            <Button className="job-action-button primary" type="button" onClick={onOpenSql} size="sm" variant="primary"><ExternalLink size={14} /> SQL 분석에서 열기</Button>
+            <Button className="job-action-button" type="button" onClick={openLineage} size="sm" variant="outline">리니지 보기</Button>
+            <Button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)} size="sm" variant="outline">새로고침</Button>
           </div>
         </div>
         <nav className="job-detail-tabs" aria-label="데이터셋 상세 탭">
@@ -859,8 +852,8 @@ export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
 
   return (
     <>
-      {dataset.rag && <span className="dataset-rag-badge">RAG</span>}
-      <span className={`dataset-status-badge ${statusMeta.className}`}>{statusMeta.label}</span>
+      {dataset.rag && <Badge className="dataset-rag-badge" size="sm" variant="success">RAG</Badge>}
+      <Badge className={`dataset-status-badge ${statusMeta.className}`} size="sm" variant="outline">{statusMeta.label}</Badge>
     </>
   );
 }
@@ -930,10 +923,12 @@ function CatalogMaterializationRuns({
               <span>{run.rowCount.toLocaleString()} rows</span>
               <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
               <span title={run.sourceLabel}>{run.sourceLabel}</span>
-              <button
+              <Button
                 aria-label={`${run.runId} append 결과 삭제`}
                 className="catalog-materialization-delete"
                 type="button"
+                size="sm"
+                variant="destructive"
                 onClick={(event) => {
                   if (window.confirm("이 append 결과를 데이터셋에서 삭제할까요?")) {
                     onDelete(event, dataset, run.runId);
@@ -943,7 +938,7 @@ function CatalogMaterializationRuns({
                 }}
               >
                 삭제
-              </button>
+              </Button>
             </div>
             );
           })}
@@ -955,9 +950,9 @@ function CatalogMaterializationRuns({
         <div className="catalog-materialization-pagination">
           <span>{pageStartIndex + 1}-{Math.min(pageStartIndex + visibleRuns.length, runs.length)} / {runs.length}</span>
           <div>
-            <button disabled={currentPage === 1} type="button" onClick={(event) => onPageChange(event, dataset, currentPage - 1)}>이전</button>
+            <Button disabled={currentPage === 1} type="button" onClick={(event) => onPageChange(event, dataset, currentPage - 1)} size="sm" variant="outline">이전</Button>
             <strong>{currentPage} / {totalPages}</strong>
-            <button disabled={currentPage === totalPages} type="button" onClick={(event) => onPageChange(event, dataset, currentPage + 1)}>다음</button>
+            <Button disabled={currentPage === totalPages} type="button" onClick={(event) => onPageChange(event, dataset, currentPage + 1)} size="sm" variant="outline">다음</Button>
           </div>
         </div>
       )}
@@ -971,7 +966,7 @@ function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLi
       <section className="catalog-overview-card">
         <h2>리니지</h2>
         <CatalogLineageMini dataset={dataset} />
-        <button className="catalog-text-button" type="button" onClick={onLineage}>전체 리니지 보기</button>
+        <Button className="catalog-text-button" type="button" onClick={onLineage} size="sm" variant="link">전체 리니지 보기</Button>
       </section>
     </div>
   );
@@ -990,7 +985,6 @@ function CatalogSchema({ dataset }: { dataset: CatalogDataset }) {
 }
 
 function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: CatalogDataset; maxRows?: number; variant?: CatalogSchemaTableVariant }) {
-  const [sorting, setSorting] = useState<SortingState>([]);
   const data = useMemo(
     () => dataset.schema.slice(0, maxRows ?? dataset.schema.length).map(([name, type], index) => ({
       description: `${dataset.name}의 ${name} 필드`,
@@ -1006,15 +1000,22 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
       const baseColumns: ColumnDef<CatalogSchemaRow>[] = [
         {
           accessorKey: "name",
-          cell: (info) => info.getValue<string>(),
+          cell: (info) => <span title={info.getValue<string>()}>{info.getValue<string>()}</span>,
           enableSorting: variant !== "preview",
           header: "컬럼명",
+          meta: {
+            cellClassName: "catalog-schema-name-cell",
+            widthClassName: variant === "preview" ? "w-[58%]" : "w-[28%]",
+          } as DataTableColumnMeta,
         },
         {
           accessorKey: "type",
           cell: (info) => <span className="catalog-schema-type-pill">{info.getValue<string>()}</span>,
           enableSorting: variant !== "preview",
           header: "타입",
+          meta: {
+            widthClassName: variant === "preview" ? "w-[42%]" : "w-[18%]",
+          } as DataTableColumnMeta,
         },
       ];
 
@@ -1027,65 +1028,38 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
           cell: (info) => info.getValue<string>(),
           enableSorting: true,
           header: "NULL 허용",
+          meta: {
+            widthClassName: "w-[16%]",
+          } as DataTableColumnMeta,
         },
         {
           accessorKey: "description",
-          cell: (info) => info.getValue<string>(),
+          cell: (info) => <span title={info.getValue<string>()}>{info.getValue<string>()}</span>,
           enableSorting: true,
           header: "설명",
+          meta: {
+            cellClassName: "catalog-schema-description-cell",
+            widthClassName: "w-[38%]",
+          } as DataTableColumnMeta,
         },
       ];
     },
     [variant],
   );
-  const table = useReactTable({
-    columns,
-    data,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (row) => row.id,
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: setSorting,
-    state: { sorting },
-  });
-
   return (
-    <table className={variant === "preview" ? "catalog-schema-preview" : "schema-table catalog-schema-table"}>
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id}>
-                {header.isPlaceholder ? null : <CatalogSchemaHeader header={header} />}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function CatalogSchemaHeader({ header }: { header: Header<CatalogSchemaRow, unknown> }) {
-  const content = flexRender(header.column.columnDef.header, header.getContext());
-  const sorted = header.column.getIsSorted();
-  const SortIcon = sorted === "asc" ? ChevronUp : sorted === "desc" ? ChevronDown : ArrowUpDown;
-
-  if (!header.column.getCanSort()) return content;
-
-  return (
-    <button className="catalog-schema-sort-button" type="button" onClick={header.column.getToggleSortingHandler()}>
-      {content}
-      <SortIcon size={13} />
-    </button>
+    <DataTable
+      className={variant === "preview" ? "catalog-schema-table-wrap preview" : "catalog-schema-table-wrap"}
+      columns={columns}
+      data={data}
+      emptyState={{
+        title: "스키마 컬럼이 없습니다.",
+        description: "선택한 데이터셋에 표시할 컬럼 정보가 없습니다.",
+      }}
+      enableSorting={variant !== "preview"}
+      getRowId={(row) => row.id}
+      tableClassName={variant === "preview" ? "catalog-schema-preview" : "schema-table catalog-schema-table"}
+      viewportClassName={variant === "preview" ? "catalog-schema-preview-viewport" : "catalog-schema-table-viewport"}
+    />
   );
 }
 
