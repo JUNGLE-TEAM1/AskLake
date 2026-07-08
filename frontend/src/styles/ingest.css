@@ -30,6 +30,15 @@
   line-height: var(--page-title-description-line-height);
 }
 
+.jobs-page-title {
+  flex: 1 1 auto;
+  min-height: var(--page-masthead-height);
+}
+
+.jobs-page-title > div {
+  width: 100%;
+}
+
 .jobs-header-actions {
   display: flex;
   flex: 0 0 auto;
@@ -864,6 +873,20 @@
   margin: 0;
   border-radius: 0;
   background: #f8fafc;
+}
+
+.jobs-data-table {
+  gap: 0;
+}
+
+.jobs-data-table > div:last-child {
+  min-height: 56px;
+  border-width: 1px 0 0;
+  border-radius: 0;
+}
+
+.jobs-table-actions-column {
+  width: 166px;
 }
 
 .jobs-table-preview-footer {
