@@ -368,16 +368,10 @@
   .job-detail-title-row,
   .job-table-footer,
   .jobs-table-preview-header,
-  .jobs-table-preview-footer,
   .job-log-modal-header,
   .run-dag-modal-header {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .jobs-table-preview-footer div {
-    width: 100%;
-    justify-content: flex-end;
   }
 
   .job-log-modal,

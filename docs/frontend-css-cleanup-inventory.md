@@ -30,7 +30,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. PR마다 실제 route QA와 `rg` 확인 결과를 반영해 갱신한다.
 
@@ -38,16 +38,16 @@
 | --- | ---: | --- | --- | --- |
 | `frontend/src/styles/base.css` | 717 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. primitive 전환 후 축소 대상. |
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,991 | A | `교체 후보` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. legacy table footer/empty selector는 삭제 후보로 분리됨. |
+| `frontend/src/styles/ingest.css` | 1,949 | A | `교체 후보` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
 | `frontend/src/styles/etl.css` | 9,064 | A | `보류` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. Source/Schema/Schedule/Permission/Target/Review selector는 component gap 범위가 커서 단계적 분리 필요. |
-| `frontend/src/styles/responsive.css` | 591 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. 각 route 모바일 QA 후 정리. |
+| `frontend/src/styles/responsive.css` | 585 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector만 제거. 각 route 모바일 QA 후 추가 정리. |
 | `frontend/src/styles/catalog.css` | 1,602 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. #361에서 Catalog shell은 `catalog-panel-*`, lineage graph는 `lineage-*` selector로 rename. B03 전환 후 정리. |
 | `frontend/src/styles/sql.css` | 2,603 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
 | `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
 | `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
 | `frontend/src/styles/dashboard.css` | 1,423 | B | `교체 후보` | Dashboard list가 DataTable과 Button/Input primitive로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. builder preview 관련 selector는 계속 유지. |
-| `frontend/src/styles/dashboard-runtime.css` | 2,175 | B | `보류` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. grid/runtime 상태 selector는 삭제 금지. |
+| `frontend/src/styles/dashboard-runtime.css` | 2,148 | B | `보류` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. grid/runtime 상태 selector는 삭제 금지. |
 
 ## A 작업으로 정리될 CSS
 
@@ -57,7 +57,7 @@
 | Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `교체 후보` | `PageHeader` primitive 적용 화면이 늘어난 뒤 중복 title selector를 줄인다. |
 | Legacy button class | `layout.css`, `ingest.css`, `etl.css`, `catalog.css`, `sql.css`, `dashboard.css` | `교체 후보` | `.primary-button`, `.secondary-button`, `.ghost-button`, `.icon-button` 사용처를 `Button`/`IconButton`으로 옮긴 뒤 제거한다. |
 | Jobs 목록 shell | `ingest.css`, `responsive.css` | `교체 후보` | A02에서 Card/PageHeader/DataTable이 적용된 범위부터 selector를 축소한다. |
-| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | A02에서 `JobsPages.tsx` 사용처는 제거됨. 현재 `ingest.css`, `responsive.css`에 CSS만 남아 있으므로 `/jobs` QA 후 삭제한다. |
+| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `정리됨` | A02에서 `JobsPages.tsx` 사용처가 제거된 뒤 CSS만 남아 있던 `jobs-table-empty`, `jobs-table-preview-footer` selector를 #364에서 삭제. |
 | Jobs status/owner/tag chip | `ingest.css` | `교체 후보` | `Badge` primitive로 톤이 안정되면 `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`을 줄인다. |
 | Run History table | `ingest.css`, `ingest-dag.css` | `교체 후보` | DataTable 적용 후 `.runs-table*`, `.runs-pagination*`을 정리한다. DAG modal은 별도 QA 전 유지한다. |
 | ETL Source/Schema flow | `etl.css`, `schema-transform-adapter.css`, `schema-transform-source.css` | `보류` | A03에서 PageHeader와 주요 action button은 primitive 적용. #357에서 legacy naming은 정리. card, segmented tabs, schema workbench, review summary는 component gap으로 분리한다. |
@@ -77,7 +77,7 @@
 | Dashboard list/table | `dashboard.css` | `삭제 후보` | B04에서 Dashboard 목록 table이 DataTable 기준으로 전환됨. `.dashboard-list-data-table`, toolbar/action layout selector는 `/dashboards` overflow/empty/sort QA 후 별도 cleanup PR에서 축소한다. |
 | Dashboard builder preview | `dashboard.css` | `보류` | builder canvas, widget preview, draft widget 상태가 많아 B04 QA 후 판단한다. |
 | Dashboard runtime canvas/widget | `dashboard-runtime.css` | `보류` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. Table widget은 DataTable 기준으로 전환되어 `.asklake-table-widget*` selector가 새 기준이 됨. |
-| Dashboard dataset tree | `dashboard-runtime.css` | `삭제 후보` | B04에서 runtime dataset tree가 `react-arborist` 기준으로 전환됨. 기존 `.MuiTreeItem-*` selector는 visual QA 후 삭제 후보로 둔다. |
+| Dashboard dataset tree | `dashboard-runtime.css` | `보류` | B04에서 runtime dataset tree가 `react-arborist` 기준으로 전환됨. 기존 `.MuiTreeItem-*` selector는 #364에서 삭제. arborist row/hover card CSS는 `TreePanel` gap 기준으로 유지한다. |
 | Dashboard widget form/buttons | `dashboard-runtime.css` | `교체 후보` | Config panel의 text/number input, select, action/color/type button은 primitive 또는 shadcn-style wrapper로 옮김. checkbox, textarea, color picker, layout selector는 계속 유지한다. |
 
 ## 우선 정리 순서
@@ -118,3 +118,4 @@ npm run build
 | 2026-07-09 | #357에서 ETL 내부 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | Issue #350 B04에서 Dashboard list/table, runtime topbar/widget frame/table widget/config panel/dataset tree 전환 범위를 반영. `dashboard.css`, `dashboard-runtime.css` 줄 수와 cleanup 후보를 갱신하고 MUI TreeItem selector 삭제 후보를 기록. |
 | 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
+| 2026-07-09 | #364에서 Jobs legacy footer/empty selector와 Dashboard dataset tree legacy MUI TreeItem selector를 제거하고 CSS 줄 수를 갱신. |

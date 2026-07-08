@@ -87,7 +87,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | Dashboard widget config panel | dense chart/table settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | B04에서 text/number input, select, button만 primitive/shadcn-style wrapper로 전환. checkbox, textarea, color picker, layout은 유지. |
 | Dashboard widget type picker | icon-only chart type grid + tooltip | `관찰됨` | `IconOptionGrid` | 선택 state와 tooltip layer가 결합되어 있어 단순 `Button`만으로는 CSS를 제거하기 어려움. |
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
-| Dashboard dataset tree | arborist tree row + hover card + type icon | `보류` | `TreePanel`, `TreeHoverCard` | B04에서 `react-arborist`로 전환했지만 공통 tree wrapper/hover card primitive는 아직 없음. |
+| Dashboard dataset tree | arborist tree row + hover card + type icon | `보류` | `TreePanel`, `TreeHoverCard` | B04에서 `react-arborist`로 전환했고 #364에서 legacy MUI TreeItem selector는 제거. 공통 tree wrapper/hover card primitive는 아직 없음. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
 | SQL editor/action surface | editor toolbar + execution status + result shell | `관찰됨` | `QueryActionBar`, `ResultPanel` | B03/B02 전환 이후에도 editor-specific action grouping과 result shell은 화면 전용으로 남을 수 있음. |
 
@@ -129,3 +129,4 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | #357에서 ETL 내부 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | Issue #358에서 B02-B04 Dashboard/B 작업 중 공통 primitive로 대체하지 않은 preview, toolbar, widget frame, config panel, color picker, tree, graph/editor gap을 기록. |
 | 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
+| 2026-07-09 | #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거 상태를 반영. TreePanel/TreeHoverCard gap은 유지. |
