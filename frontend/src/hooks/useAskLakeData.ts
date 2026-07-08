@@ -977,6 +977,7 @@ export function useAskLakeData({
     selectedRunIdByJobId,
     selectRunForJob,
     setSelectedDataset,
+    setSelectedJob,
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
