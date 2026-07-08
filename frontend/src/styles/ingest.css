@@ -30,6 +30,15 @@
   line-height: var(--page-title-description-line-height);
 }
 
+.jobs-page-title {
+  flex: 1 1 auto;
+  min-height: var(--page-masthead-height);
+}
+
+.jobs-page-title > div {
+  width: 100%;
+}
+
 .jobs-header-actions {
   display: flex;
   flex: 0 0 auto;

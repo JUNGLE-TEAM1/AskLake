@@ -43,7 +43,12 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
-import { Field, PageTitle } from "../../components/common";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { IconButton } from "@/components/ui/icon-button";
+import { PageHeader } from "@/components/ui/page-header";
+import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
@@ -62,6 +67,37 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   failed: { className: "failed", label: "실패" },
   blocked: { className: "paused", label: "중단" },
 };
+
+type BadgeVariant = React.ComponentProps<typeof Badge>["variant"];
+type JobActionButtonVariant = "destructive" | "outline" | "primary" | "subtle";
+
+function getJobStatusBadgeVariant(status: JobStatus): BadgeVariant {
+  if (status === "failed" || status === "canceled") return "destructive";
+  if (status === "running") return "success";
+  if (status === "paused") return "warning";
+  return "default";
+}
+
+function getRunStatusBadgeVariant(status: JobRunStatus): BadgeVariant {
+  if (status === "failed" || status === "canceled") return "destructive";
+  if (status === "success") return "success";
+  if (status === "running") return "success";
+  return "muted";
+}
+
+function getDagStatusBadgeVariant(status: JobDagStepStatus): BadgeVariant {
+  if (status === "failed") return "destructive";
+  if (status === "success") return "success";
+  if (status === "running") return "default";
+  return "muted";
+}
+
+function getJobActionButtonVariant(className: string): JobActionButtonVariant {
+  if (className.includes("danger")) return "destructive";
+  if (className.includes("primary soft")) return "subtle";
+  if (className.includes("primary")) return "primary";
+  return "outline";
+}
 
 type JobMetricTone = "total" | "running" | "scheduled" | "failed" | "attention";
 
@@ -103,10 +139,18 @@ export function JobsLandingPage({
   return (
     <div className="jobs-landing">
       <div className="jobs-page-header">
-        <PageTitle title="수집/처리" description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다." />
-        <div className="jobs-header-actions">
-          <button className="primary-button create-job-button" type="button" onClick={onCreate}><Plus size={16} /> 새 수집/처리 생성</button>
-        </div>
+        <PageHeader
+          actions={(
+            <Button className="primary-button create-job-button" type="button" onClick={onCreate}>
+              <Plus size={16} />
+              새 수집/처리 생성
+            </Button>
+          )}
+          className="jobs-page-title"
+          description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
+          icon={<Database size={18} />}
+          title="수집/처리"
+        />
       </div>
       <div className="content-main jobs-xflow-stack">
         <section className="jobs-xflow-card jobs-metrics-card">
@@ -173,9 +217,9 @@ function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void
           <span>작업명, 소스명, 타깃 데이터셋명 검색</span>
         </div>
         {["상태", "소스", "Owner", "태그"].map((filter) => (
-          <button className="filter-chip jobs-filter" key={filter} type="button" onClick={() => onFilter(filter)}>{filter} ▾</button>
+          <Button className="filter-chip jobs-filter" key={filter} size="sm" type="button" variant="outline" onClick={() => onFilter(filter)}>{filter} ▾</Button>
         ))}
-        <button className="ghost-link reset-filter" type="button" onClick={onReset}>↺ 필터 초기화</button>
+        <Button className="ghost-link reset-filter" size="sm" type="button" variant="ghost" onClick={onReset}>↺ 필터 초기화</Button>
       </div>
     </section>
   );
@@ -231,12 +275,14 @@ function JobsCardSection({
   return (
     <section className="job-table" aria-label="ETL 작업 카드 목록">
       {jobs.length === 0 && (
-        <div className="job-empty-state">
-          <Plus size={22} />
-          <strong>생성된 수집/처리 작업이 없습니다.</strong>
-          <p>소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다.</p>
-          <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
-        </div>
+        <EmptyState
+          action={<Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>}
+          className="job-empty-state"
+          description="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
+          icon={<Plus size={22} />}
+          title="생성된 수집/처리 작업이 없습니다."
+          variant="plain"
+        />
       )}
       {jobs.map((job) => {
         const statusClass = jobStatusMeta[job.status].className;
@@ -254,8 +300,8 @@ function JobsCardSection({
                   <p>{job.id}</p>
                 </div>
                 <div className="job-owner">
-                  <span className="owner-chip">{job.owner}</span>
-                  <span className="tag-chip">{job.tag}</span>
+                  <Badge className="owner-chip" variant="outline">{job.owner}</Badge>
+                  <Badge className="tag-chip" variant="secondary">{job.tag}</Badge>
                 </div>
               </div>
               {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
@@ -279,9 +325,9 @@ function JobsCardSection({
               </dl>
               <div className="job-row-actions">
                 {getJobListActions(job).map((action) => (
-                  <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind, job)}>
+                  <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind, job)}>
                     {action.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -292,8 +338,8 @@ function JobsCardSection({
         <div className="job-table-footer">
           <span>1-{jobs.length} of {jobs.length}</span>
           <div>
-            <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</button>
-            <button className="ghost-link" type="button" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</button>
+            <Button className="ghost-link" size="sm" type="button" variant="ghost" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</Button>
+            <Button className="ghost-link" size="sm" type="button" variant="ghost" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</Button>
           </div>
         </div>
       )}
@@ -389,7 +435,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <span className="owner-chip">{row.original.job.owner}</span>,
+      cell: ({ row }) => <Badge className="owner-chip" variant="outline">{row.original.job.owner}</Badge>,
       header: "소유자",
       id: "owner",
     },
@@ -404,7 +450,7 @@ function JobsTableSection({
             {showStage && <span>{executionDisplay.stage}</span>}
             <strong className={executionDisplay.tone === "danger" ? "danger-text" : ""} title={executionDisplay.raw}>{executionDisplay.summary}</strong>
             {executionDisplay.hasRawLog && (
-              <button type="button" onClick={() => openJobLog(job)}>로그</button>
+              <Button size="sm" type="button" variant="link" onClick={() => openJobLog(job)}>로그</Button>
             )}
           </div>
         );
@@ -434,16 +480,17 @@ function JobsTableSection({
         return (
           <div className="jobs-table-actions">
             {getJobListActions(job).map((action) => (
-              <button
-                aria-label={action.label}
+              <IconButton
                 className={`${action.className} icon-only`}
                 key={action.label}
-                title={action.label}
+                label={action.label}
+                size="xs"
                 type="button"
+                variant={getJobActionButtonVariant(action.className)}
                 onClick={() => runAction(action.kind, job)}
               >
                 <JobListActionIcon action={action} />
-              </button>
+              </IconButton>
             ))}
           </div>
         );
@@ -490,12 +537,14 @@ function JobsTableSection({
             {jobs.length === 0 && (
               <tr>
                 <td className="jobs-table-empty" colSpan={7}>
-                  <div className="job-empty-state table-empty-state">
-                    <Plus size={22} />
-                    <strong>생성된 수집/처리 작업이 없습니다.</strong>
-                    <p>{emptyBody}</p>
-                    <button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</button>
-                  </div>
+                  <EmptyState
+                    action={<Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>}
+                    className="job-empty-state table-empty-state"
+                    description={emptyBody}
+                    icon={<Plus size={22} />}
+                    title="생성된 수집/처리 작업이 없습니다."
+                    variant="plain"
+                  />
                 </td>
               </tr>
             )}
@@ -512,8 +561,8 @@ function JobsTableSection({
       <div className="jobs-table-preview-footer">
         <span>1-{jobs.length} of {jobs.length}</span>
         <div>
-          <button type="button" aria-label="이전 페이지" onClick={() => onAction(`${pageActionPrefix}.page_previous`, "/api/etl/jobs?page=previous", "jobs")}>‹</button>
-          <button type="button" aria-label="다음 페이지" onClick={() => onAction(`${pageActionPrefix}.page_next`, "/api/etl/jobs?page=next", "jobs")}>›</button>
+          <IconButton label="이전 페이지" size="xs" type="button" variant="outline" onClick={() => onAction(`${pageActionPrefix}.page_previous`, "/api/etl/jobs?page=previous", "jobs")}>‹</IconButton>
+          <IconButton label="다음 페이지" size="xs" type="button" variant="outline" onClick={() => onAction(`${pageActionPrefix}.page_next`, "/api/etl/jobs?page=next", "jobs")}>›</IconButton>
         </div>
       </div>
       {activeLogJob && <JobLogModal job={activeLogJob} onClose={() => setActiveLogJob(null)} />}
@@ -624,11 +673,21 @@ export function JobsTableDemoPage({
   return (
     <div className="jobs-table-demo-page">
       <div className="jobs-page-header">
-        <PageTitle title="수집/처리" description="TanStack Table 버전으로 작업 밀도, 정렬, 액션 배치를 비교합니다." />
-        <div className="jobs-header-actions">
-          <JobViewSwitch activeView="table" onCards={onBack} onTable={() => undefined} />
-          <button className="primary-button create-job-button" type="button" onClick={onCreate}>+ 새 수집/처리 생성</button>
-        </div>
+        <PageHeader
+          actions={(
+            <>
+              <JobViewSwitch activeView="table" onCards={onBack} onTable={() => undefined} />
+              <Button className="primary-button create-job-button" type="button" onClick={onCreate}>
+                <Plus size={16} />
+                새 수집/처리 생성
+              </Button>
+            </>
+          )}
+          className="jobs-page-title"
+          description="TanStack Table 버전으로 작업 밀도, 정렬, 액션 배치를 비교합니다."
+          icon={<Table2 size={18} />}
+          title="수집/처리"
+        />
       </div>
 
       <div className="content-main">
@@ -699,7 +758,7 @@ function JobLogModal({ job, onClose }: { job: JobRowData; onClose: () => void })
             <h2>{job.name}</h2>
             <p>{executionDisplay.stage} · {executionDisplay.summary}</p>
           </div>
-          <button type="button" aria-label="닫기" onClick={onClose}><X size={16} />닫기</button>
+          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
         </header>
         <pre>{executionDisplay.raw}</pre>
       </section>
@@ -807,7 +866,7 @@ function truncateText(value: string, maxLength: number) {
 
 function StatusPill({ status }: { status: JobStatus }) {
   const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <span className={`status-pill ${statusClass}`}>{jobStatusMeta[status].label}</span>;
+  return <Badge className={`status-pill ${statusClass}`} variant={getJobStatusBadgeVariant(status)}>{jobStatusMeta[status].label}</Badge>;
 }
 
 function JobProgress({ label, value }: { label: string; value: number }) {
@@ -931,13 +990,13 @@ function JobDetailHeader({
           <h1>{job.name}</h1>
           <div className="job-detail-meta">
             <StatusPill status={job.status} />
-            <span className="owner-chip">Owner: {job.owner}</span>
-            <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
+            <Badge className="owner-chip" variant="outline">Owner: {job.owner}</Badge>
+            <Badge className="tag-chip" variant="secondary">{job.tag.replace("[", "").replace("]", "")}</Badge>
           </div>
         </div>
         <div className="job-detail-actions">
           {getJobDetailActions(job).map((action) => (
-            <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind)}>{action.label}</button>
+            <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
           ))}
         </div>
       </div>
@@ -993,7 +1052,7 @@ export function JobDetailPage({
             </div>
             {showPrimaryAction && (
               <div className="job-next-actions">
-                <button className="job-action-button primary" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</button>
+                <Button className="job-action-button primary" size="sm" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</Button>
               </div>
             )}
             <div className="job-summary-stat-grid">
@@ -1180,12 +1239,12 @@ export function JobRunsPage({
 
         <div className="runs-filter-bar">
           <div className="runs-filters-left">
-            <button className="runs-filter-button" type="button" onClick={() => onAction("etl.runs.status_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/status`, job.id)}>상태: 전체 <span>▾</span></button>
-            <button className="runs-filter-button date" type="button" onClick={() => onAction("etl.runs.date_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/date`, job.id)}><Calendar size={14} /> 날짜 선택</button>
+            <Button className="runs-filter-button" size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.status_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/status`, job.id)}>상태: 전체 <span>▾</span></Button>
+            <Button className="runs-filter-button date" size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.date_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/date`, job.id)}><Calendar size={14} /> 날짜 선택</Button>
           </div>
           <div className="runs-filters-right">
             <span>{runs.length} runs total</span>
-            <button className="runs-refresh-button" type="button" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}><RefreshCw size={14} /> 새로고침</button>
+            <Button className="runs-refresh-button" size="sm" type="button" variant="subtle" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}><RefreshCw size={14} /> 새로고침</Button>
           </div>
         </div>
 
@@ -1223,10 +1282,10 @@ export function JobRunsPage({
                   <td>{row.outputRows}</td>
                   <td>{row.failedStage}</td>
                   <td>
-                    <button className="runs-log-button" type="button" onClick={() => openRunLog(row)}>로그 보기</button>
+                    <Button className="runs-log-button" size="sm" type="button" variant="subtle" onClick={() => openRunLog(row)}>로그 보기</Button>
                   </td>
                   <td>
-                    <button className="runs-detail-button" type="button" onClick={() => openRunDetail(row)}>실행 단계 보기</button>
+                    <Button className="runs-detail-button" size="sm" type="button" variant="link" onClick={() => openRunDetail(row)}>실행 단계 보기</Button>
                   </td>
                 </tr>
               ))}
@@ -1236,8 +1295,8 @@ export function JobRunsPage({
           <div className="runs-pagination">
             <span>Showing {runs.length ? `1-${runs.length}` : "0"} of {runs.length}</span>
             <div>
-              <button type="button" aria-label="이전 페이지" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</button>
-              <button type="button" aria-label="다음 페이지" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</button>
+              <IconButton label="이전 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</IconButton>
+              <IconButton label="다음 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</IconButton>
             </div>
           </div>
         </article>
@@ -1252,10 +1311,10 @@ function RunStatusPill({ status }: { status: JobRunStatus }) {
   const statusMeta = runStatusMeta[status];
 
   return (
-    <span className={`run-status-pill ${statusMeta.className}`}>
+    <Badge className={`run-status-pill ${statusMeta.className}`} variant={getRunStatusBadgeVariant(status)}>
       {status === "running" && <span className="run-status-dot" />}
       {statusMeta.label}
-    </span>
+    </Badge>
   );
 }
 
@@ -1280,7 +1339,7 @@ function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => vo
             <h2>{job.name}</h2>
             <p>{run.failedStage} · {formatCompactDateTime(run.startedAt)} - {formatCompactDateTime(run.endedAt)}</p>
           </div>
-          <button type="button" aria-label="닫기" onClick={onClose}><X size={16} />닫기</button>
+          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
         </header>
         <pre>{logBody}</pre>
       </section>
@@ -1356,7 +1415,7 @@ function RunDagModal({
             <h2>{currentRun.runId} 실행 상세</h2>
             <p>{currentRun.startedAt} · {runStatusMeta[currentRun.status].label}</p>
           </div>
-          <button type="button" aria-label="닫기" onClick={onClose}><X size={16} />닫기</button>
+          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
         </header>
         <div className="run-dag-modal-body">
           <section className="dag-body-content">
@@ -1416,7 +1475,7 @@ function DagSummaryCard({ helper, label, value }: { helper?: string; label: stri
 
 function DagStatePill({ status }: { status: JobDagStepStatus }) {
   const statusMeta = dagStepStatusMeta[status];
-  return <span className={`dag-state-pill ${statusMeta.className}`}>{statusMeta.label}</span>;
+  return <Badge className={`dag-state-pill ${statusMeta.className}`} variant={getDagStatusBadgeVariant(status)}>{statusMeta.label}</Badge>;
 }
 
 function DagStepNode({
