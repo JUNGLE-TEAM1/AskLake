@@ -133,7 +133,7 @@ npm run verify:spark-run
 FastAPI Pair2 smoke:
 
 - `npm run verify:fastapi-pair2`는 `orders_clean` demo dataset을 seed한 뒤 별도 포트에서 FastAPI를 띄운다.
-- Catalog 목록/상세/lineage, SQL preview, SQL read-only guard, derived dataset 생성, 생성 dataset 재조회, derived lineage를 한 번에 확인한다.
+- Catalog 목록/상세/lineage, SQL preview, SQL run snapshot hydrate, SQL read-only guard, derived dataset 생성, 생성 dataset 재조회, derived lineage를 한 번에 확인한다.
 - 기본 포트는 `18084`이며 `ASKLAKE_FASTAPI_SMOKE_PORT`로 바꿀 수 있다.
 - 이미 실행 중인 FastAPI를 대상으로 볼 때는 `ASKLAKE_FASTAPI_SMOKE_START_SERVER=false`와 `ASKLAKE_FASTAPI_SMOKE_BASE_URL`을 지정한다.
 - `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
@@ -205,6 +205,7 @@ Pair2 FastAPI 5단계 완료 기준:
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
 - SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
 - SQL Preview는 단일 테이블 projection/filter와 선택된 참조 테이블 JOIN을 실제 실행 결과로 반환한다.
+- `GET /api/query/runs/{runId}`는 SQL Preview snapshot의 query, columns, rows를 다시 반환한다.
 - Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 선택 dataset metadata 전체를 request에 포함하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
 - SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.

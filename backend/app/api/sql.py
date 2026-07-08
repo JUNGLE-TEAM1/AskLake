@@ -39,6 +39,14 @@ def create_query_run(
     return service.create_query_run(request)
 
 
+@router.get("/runs/{run_id}", response_model=QueryRunResponse)
+def get_query_run(
+    run_id: str,
+    service: Annotated[SqlService, Depends(get_sql_service)],
+) -> QueryRunResponse:
+    return service.get_query_run(run_id)
+
+
 @router.post("/ai-suggestions", response_model=QueryAiSuggestionResponse)
 def create_query_ai_suggestion(
     request: QueryAiSuggestionRequest,

@@ -74,6 +74,7 @@ Canonical status values:
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
+| `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
@@ -417,6 +418,7 @@ type QueryRunResponse = SqlResultDraft;
 - `runId`는 Dashboard `sourceRunId`가 된다.
 - `datasetId`는 Dashboard `datasetId`와 같아야 한다.
 - `mode: "preview"`와 `previewLimit`이 있으면 전체 materialize가 아니라 SQL Preview 결과로 취급한다.
+- Dashboard route가 `dash_<baseDatasetId>_<runId>` 형태로 직접 열리면 프론트는 `GET /api/query/runs/{runId}`로 SQL result snapshot을 복구한다.
 
 ### Pair B -> Pair C: Lineage Context
 

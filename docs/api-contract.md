@@ -887,6 +887,24 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
+`GET /api/query/runs/{runId}`
+
+Response `200 OK`:
+
+```ts
+type GetQueryRunResponse = SqlResultDraft;
+```
+
+Validation:
+
+- 존재하지 않는 `runId`는 `404 NOT_FOUND`.
+- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환합니다.
+
+프론트 기대 동작:
+
+- SQL 결과 기반 dashboard route가 직접 열리거나 새로고침되어 메모리의 `SqlResultDraft`가 없으면 이 endpoint로 snapshot을 복구합니다.
+- 복구에 실패하면 일반 dashboard로 fallback하지 않고 SQL 분석에서 Preview를 다시 실행하라는 안내를 표시합니다.
+
 ### 7.4 Query AI SQL 초안 생성
 
 `POST /api/query/ai-suggestions`

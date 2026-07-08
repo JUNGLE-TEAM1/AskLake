@@ -233,3 +233,13 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 - FastAPI 실행은 `backend/README.md`와 `docs/04-development-guide.md`를 따른다.
 - Node demo API는 FastAPI 구현과 비교하는 reference로 유지한다.
 - CI가 생기면 최소 required check 후보는 frontend build, backend import/compile, conflict marker scan이다.
+
+## 12) SQL 결과 기반 Dashboard Builder
+
+- SQL 분석에서 Dashboard builder로 진입할 때는 `DashboardEntry.source = "sql"`과 함께 `sqlRunId`, `baseDatasetId`, `sqlResultDatasetId`를 전달한다.
+- Dashboard builder는 SQL entry에서 일치하는 `SqlResultDraft`가 없으면 일반 dataset builder로 fallback하지 않고 SQL 분석에서 다시 실행하라는 안내 상태를 보여준다.
+- SQL entry가 유효하면 Dashboard runtime dataset sidebar는 일반 Catalog dataset 목록을 숨기고 `SQL 실행 결과` 하나만 데이터 소스로 노출한다.
+- SQL entry의 draft runtime이 비어 있으면 SQL 결과 row/column snapshot을 사용해 결과 테이블과 기본 차트 1개를 자동 생성한다. 숫자 컬럼이 없으면 깨진 차트를 만들지 않고 결과 테이블만 생성한다.
+- SQL 결과 mode의 위젯 생성/편집/Assistant 적용은 현재 노출된 SQL 결과 데이터소스의 컬럼만 사용할 수 있다. 기존 위젯이나 AI patch가 없는 컬럼 또는 다른 dataset id를 들고 오면 저장 전에 현재 SQL 결과 컬럼으로 정규화한다.
+- `/dashboards/dash_<baseDatasetId>_<sqlRunId>/edit` 같은 SQL 결과 dashboard route는 `sqlRunId`를 복원해 SQL entry로 취급한다. 브라우저 새로고침이나 직접 URL 진입으로 `SqlResultDraft`가 없으면 `GET /api/query/runs/{sqlRunId}`로 저장된 SQL Preview snapshot을 복구한다. 복구 실패 시 일반 dashboard로 fallback하지 않고 SQL 분석 재실행 안내와 복귀 액션을 보여준다.
+- 이 단계는 SQL result snapshot을 대시보드 입력으로 고정하는 UX 범위이며, run 단위 snapshot을 별도 persistent dashboard dataset으로 저장하는 기능은 후속 범위다.

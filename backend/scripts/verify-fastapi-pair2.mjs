@@ -61,6 +61,12 @@ async function runSmoke() {
   assert(previewRun.rowCount === 2, "SQL preview should execute WHERE/ORDER BY/LIMIT in DuckDB.");
   assert(JSON.stringify(previewRun.rows[0]) === JSON.stringify(["ORD-1001", "paid", "128000"]), "SQL preview should return DuckDB query rows.");
 
+  const hydratedPreviewRun = await get(`/api/query/runs/${encodeURIComponent(previewRun.runId)}`);
+  assert(hydratedPreviewRun.runId === previewRun.runId, "SQL preview snapshot hydrate should return the requested runId.");
+  assert(hydratedPreviewRun.query === previewRun.query, "SQL preview snapshot hydrate should preserve query text.");
+  assert(JSON.stringify(hydratedPreviewRun.columns) === JSON.stringify(previewRun.columns), "SQL preview snapshot hydrate should preserve columns.");
+  assert(JSON.stringify(hydratedPreviewRun.rows) === JSON.stringify(previewRun.rows), "SQL preview snapshot hydrate should preserve rows.");
+
   const joinQuery = "SELECT o.order_id, c.segment FROM orders_clean o JOIN customers_clean c ON o.customer_id = c.customer_id WHERE c.is_vip = true ORDER BY o.order_id LIMIT 3";
   const joinRun = await post("/api/query/runs", {
     baseDatasetId: seedDatasetId,

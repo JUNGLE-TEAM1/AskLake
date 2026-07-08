@@ -55,7 +55,9 @@ const checks = [
     name: "Visualization request patches can use the active dataset",
     file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
     patterns: [
-      /const nextDatasetId = patch\.datasetId \?\? widget\.datasetId \?\? selectedDatasetId \?\? null;/,
+      /const requestedDatasetId = patch\.datasetId \?\? widget\.datasetId \?\? selectedDatasetId \?\? null;/,
+      /const nextDataset = dashboardDatasets\.find\(\(dataset\) => dataset\.id === requestedDatasetId\)/,
+      /\?\? dashboardDatasets\[0\]/,
       /const nextData = cloneDatasetRows\(dashboardDatasets, nextDatasetId\);/,
       /activeDatasetId: selectedDatasetId,/,
     ],

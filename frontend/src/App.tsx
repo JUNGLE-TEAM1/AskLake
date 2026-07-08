@@ -15,6 +15,7 @@ import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
+import { getQueryRun } from "./services/pipelineApi";
 import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
@@ -52,6 +53,21 @@ type DashboardRouteState =
   | { dashboardId: string; runtimeMode: DashboardRuntimeMode; view: "runtime" }
   | { view: "list" };
 
+function parseSqlDashboardContext(dashboardId: string) {
+  const runIdMatch = dashboardId.match(/_((?:sql|sql_preview)_[A-Za-z0-9_-]+)$/);
+  if (!runIdMatch || runIdMatch.index === undefined) return null;
+
+  const sqlRunId = runIdMatch[1];
+  const baseDatasetId = dashboardId.startsWith("dash_")
+    ? dashboardId.slice("dash_".length, runIdMatch.index)
+    : undefined;
+
+  return {
+    baseDatasetId: baseDatasetId || undefined,
+    sqlRunId,
+  };
+}
+
 function parseDashboardRoute(pathname: string): DashboardRouteState | null {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "dashboards") return null;
@@ -63,6 +79,18 @@ function parseDashboardRoute(pathname: string): DashboardRouteState | null {
 
 function dashboardEntryFromRoute(route: DashboardRouteState, version: number): DashboardEntry {
   if (route.view === "list") return { source: "sidebar", view: "list", version };
+  const sqlContext = parseSqlDashboardContext(route.dashboardId);
+  if (sqlContext) {
+    return {
+      baseDatasetId: sqlContext.baseDatasetId,
+      dashboardId: route.dashboardId,
+      runtimeMode: route.runtimeMode,
+      source: "sql",
+      sqlRunId: sqlContext.sqlRunId,
+      view: "runtime",
+      version,
+    };
+  }
   return {
     dashboardId: route.dashboardId,
     runtimeMode: route.runtimeMode,
@@ -93,6 +121,7 @@ export function App() {
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
   ));
+  const [hydratingSqlRunId, setHydratingSqlRunId] = useState<string | null>(null);
   const [sqlInitialDatasetId, setSqlInitialDatasetId] = useState<string | null>(null);
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
   const {
@@ -153,6 +182,33 @@ export function App() {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeFlow, selectedJob?.id]);
+
+  useEffect(() => {
+    if (activeFlow !== "dashboard" || dashboardEntry.source !== "sql" || !dashboardEntry.sqlRunId) return undefined;
+    if (sqlResultDraft?.runId === dashboardEntry.sqlRunId) return undefined;
+
+    const sqlRunId = dashboardEntry.sqlRunId;
+    let cancelled = false;
+    setHydratingSqlRunId(sqlRunId);
+    void getQueryRun(sqlRunId)
+      .then((result) => {
+        if (cancelled) return;
+        setSqlResultDraft(result);
+        setSqlInitialDatasetId(result.baseDatasetId ?? result.datasetId);
+        writeAuditLog("dashboard.sql_result_context_hydrated", `/api/query/runs/${sqlRunId}`, sqlRunId);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        writeAuditLog("dashboard.sql_result_context_hydrate_failed", `/api/query/runs/${sqlRunId}`, sqlRunId, "failed");
+      })
+      .finally(() => {
+        if (!cancelled) setHydratingSqlRunId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeFlow, dashboardEntry.source, dashboardEntry.sqlRunId, setSqlResultDraft, sqlResultDraft?.runId, writeAuditLog]);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -228,6 +284,14 @@ export function App() {
   const openDatasetInSqlWithSelection = (dataset: CatalogDataset) => {
     setSqlInitialDatasetId(dataset.id);
     openDatasetInSql(dataset);
+  };
+
+  const reopenSqlAnalysisFromDashboard = () => {
+    const targetDatasetId = dashboardEntry.baseDatasetId ?? sqlResultDraft?.baseDatasetId ?? sqlResultDraft?.datasetId ?? null;
+    setSqlInitialDatasetId(targetDatasetId);
+    if (window.location.pathname.startsWith("/dashboards")) window.history.pushState(null, "", "/");
+    writeAuditLog("dashboard.sql_result_context_reopen_sql", "/api/query/runs", dashboardEntry.sqlRunId ?? "sql-result");
+    moveToFlow("sql");
   };
 
   const navigateDashboardRuntime = (dashboardId: string, mode: DashboardRuntimeMode) => {
@@ -329,7 +393,7 @@ export function App() {
           {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onMaterializationRunDelete={deleteMaterializationRun} onOpenSql={openDatasetInSqlWithSelection} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
-          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
+          {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} isHydratingSqlResult={hydratingSqlRunId === dashboardEntry.sqlRunId} sqlResult={sqlResultDraft} onAction={writeAuditLog} onMissingSqlResult={reopenSqlAnalysisFromDashboard} onRuntimeNavigate={navigateDashboardRuntime} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
           {activeFlow === "admin" && <ModulePlaceholderPage flow="admin" title="관리" owner="확장 예정" description="사용자, 그룹, API 권한과 감사 로그를 관리하는 운영 영역입니다." onRequirements={() => recordPlaceholderAction("admin", "requirements")} onStatusRecord={() => recordPlaceholderAction("admin", "status")} onPrimary={() => recordPlaceholderAction("admin", "primary")} />}
             </>

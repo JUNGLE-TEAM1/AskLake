@@ -178,8 +178,11 @@ export type DashboardListResponse = {
 };
 
 export type DashboardEntry = {
+  baseDatasetId?: string;
   dashboardId?: string;
   runtimeMode?: DashboardRuntimeMode;
+  sqlResultDatasetId?: string;
+  sqlRunId?: string;
   source: "sidebar" | "sql" | "catalog" | "internal";
   view: DashboardView;
   version: number;

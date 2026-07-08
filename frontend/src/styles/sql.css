@@ -1414,6 +1414,31 @@
   padding: 14px;
 }
 
+.sql-sidebar-tab-panel.ai {
+  align-content: start;
+}
+
+.sql-ai-assistant.sidebar {
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-heading {
+  align-items: center;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-title-block {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-context {
+  max-width: 100%;
+  text-align: left;
+}
+
 .sql-ai-assistant.compact {
   align-self: flex-start;
   justify-self: stretch;
@@ -1490,10 +1515,20 @@
   gap: 10px;
 }
 
+.sql-ai-assistant.sidebar .sql-ai-input-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
 .sql-ai-content {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-content {
+  align-content: start;
+  gap: 12px;
 }
 
 .sql-ai-compose {
@@ -1548,6 +1583,11 @@
   padding: 10px 12px;
 }
 
+.sql-ai-assistant.sidebar .sql-ai-prompt textarea {
+  min-height: 116px;
+  max-height: 180px;
+}
+
 .sql-ai-assistant.compact .sql-ai-prompt textarea {
   min-height: 42px;
   max-height: 64px;
@@ -1568,6 +1608,10 @@
   gap: 8px;
 }
 
+.sql-ai-assistant.sidebar .sql-ai-actions {
+  justify-content: flex-end;
+}
+
 .sql-ai-assistant.compact .sql-ai-actions {
   flex-direction: row;
   align-items: stretch;
@@ -1585,6 +1629,11 @@
   font-weight: 900;
   padding: 0 12px;
   white-space: nowrap;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-actions .secondary-button {
+  min-width: 88px;
+  justify-content: center;
 }
 
 .sql-ai-assistant.compact .sql-ai-actions .primary-button,
@@ -1612,6 +1661,11 @@
   gap: 10px;
   border-top: 1px solid #e2e8f0;
   padding-top: 12px;
+}
+
+.sql-ai-assistant.sidebar .sql-ai-suggestion {
+  min-height: 44px;
+  align-content: center;
 }
 
 .sql-ai-assistant.compact .sql-ai-suggestion {

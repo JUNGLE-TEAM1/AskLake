@@ -76,6 +76,7 @@ type DashboardRuntimeDatasetState = {
   isLoading: boolean;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
+  sourceMode?: "dataset" | "sqlResult";
 };
 
 type DashboardRuntimeViewActions = {
@@ -245,6 +246,7 @@ export function DashboardRuntimeView({
     isLoading: dashboardDatasetsLoading,
     selectedDataset,
     selectedDatasetId,
+    sourceMode = "dataset",
   } = datasets;
   const {
     addPage: onAddPage,
@@ -322,7 +324,12 @@ export function DashboardRuntimeView({
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
   const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
-    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const requestedDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const nextDataset = dashboardDatasets.find((dataset) => dataset.id === requestedDatasetId)
+      ?? (selectedDatasetId ? dashboardDatasets.find((dataset) => dataset.id === selectedDatasetId) : null)
+      ?? dashboardDatasets[0]
+      ?? null;
+    const nextDatasetId = nextDataset?.id ?? null;
     const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
 
     return onUpdateWidget(widget.id, {
@@ -520,6 +527,7 @@ export function DashboardRuntimeView({
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
             selectedDatasetId={selectedDatasetId}
+            sourceMode={sourceMode}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />
