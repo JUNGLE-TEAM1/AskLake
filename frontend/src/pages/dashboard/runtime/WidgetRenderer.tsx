@@ -1,8 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
-import { flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type ColumnDef, type SortingState } from "@tanstack/react-table";
-import { AlertCircle, ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Loader2 } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import Chart from "react-apexcharts";
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import type {
   DashboardRuntimeWidget,
   DashboardWidgetAggregation,
@@ -962,102 +963,49 @@ function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
     return (validConfiguredColumns.length ? validConfiguredColumns : availableColumns).slice(0, 8);
   }, [availableColumns, configuredColumns]);
   const limit = Math.max(1, Math.min(widget.config.limit ?? 10, 100));
-  const defaultSorting = useMemo<SortingState>(() => {
+  const defaultSorting = useMemo(() => {
     const sortKey = typeof widget.config.sortKey === "string" ? widget.config.sortKey : "";
     if (!sortKey || !columns.includes(sortKey)) return [];
     return [{ desc: widget.config.sortDirection === "desc", id: sortKey }];
   }, [columns, widget.config.sortDirection, widget.config.sortKey]);
-  const [sorting, setSorting] = useState<SortingState>(defaultSorting);
   const tableColumns = useMemo<ColumnDef<SimpleRow, unknown>[]>(
     () => columns.map((column) => ({
       accessorFn: (row) => row[column],
-      cell: (info) => formatCell(info.getValue()),
-      enableResizing: true,
+      cell: (info) => <span className="asklake-table-cell-content">{formatCell(info.getValue())}</span>,
       enableSorting: true,
       header: column,
       id: column,
-      minSize: 96,
-      size: Math.min(Math.max(column.length * 12, 124), 240),
+      meta: {
+        align: rows.every((row) => row[column] === null || row[column] === undefined || typeof row[column] === "number") ? "right" : "left",
+        cellClassName: typeof rows[0]?.[column] === "number" ? "tabular-nums" : undefined,
+        widthClassName: "min-w-32",
+      } as DataTableColumnMeta,
       sortingFn: (rowA, rowB, columnId) => compareValues(rowA.original[columnId], rowB.original[columnId]),
     })),
-    [columns],
+    [columns, rows],
   );
-  const table = useReactTable({
-    columnResizeMode: "onChange",
-    columns: tableColumns,
-    data: rows,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    onSortingChange: setSorting,
-    state: { sorting },
-  });
-  const visibleRows = table.getRowModel().rows.slice(0, limit);
-
-  useEffect(() => {
-    setSorting(defaultSorting);
-  }, [defaultSorting, widget.id]);
+  const tableRows = useMemo(
+    () => sortRows(rows, widget.config.sortKey, widget.config.sortDirection).slice(0, limit),
+    [limit, rows, widget.config.sortDirection, widget.config.sortKey],
+  );
 
   if (!rows.length || !columns.length) return <EmptyWidgetData />;
 
   return (
-    <div className="asklake-table-widget" data-table-engine="tanstack">
-      <table style={{ minWidth: `${Math.max(table.getTotalSize(), 420)}px` }}>
-        <thead>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <tr key={headerGroup.id}>
-              {headerGroup.headers.map((header) => {
-                const sortState = header.column.getIsSorted();
-                const SortIcon = sortState === "asc" ? ArrowUp : sortState === "desc" ? ArrowDown : ArrowUpDown;
-                const resizeHandler = header.getResizeHandler();
-                return (
-                  <th key={header.id} style={{ width: `${header.getSize()}px` }}>
-                    {header.isPlaceholder ? null : (
-                      <>
-                        <button
-                          aria-label={`${String(header.column.columnDef.header)} 정렬`}
-                          className={`asklake-table-header-button${sortState ? " sorted" : ""}`}
-                          type="button"
-                          onClick={header.column.getToggleSortingHandler()}
-                          onMouseDown={(event) => event.stopPropagation()}
-                        >
-                          <span>{flexRender(header.column.columnDef.header, header.getContext())}</span>
-                          <SortIcon aria-hidden="true" size={13} strokeWidth={2.2} />
-                        </button>
-                        <span
-                          aria-hidden="true"
-                          className={`asklake-table-column-resizer${header.column.getIsResizing() ? " resizing" : ""}`}
-                          onMouseDown={(event) => {
-                            event.stopPropagation();
-                            resizeHandler(event);
-                          }}
-                          onTouchStart={(event) => {
-                            event.stopPropagation();
-                            resizeHandler(event);
-                          }}
-                        />
-                      </>
-                    )}
-                  </th>
-                );
-              })}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {visibleRows.map((row) => (
-            <tr key={row.id}>
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} style={{ width: `${cell.column.getSize()}px` }}>
-                  <span className="asklake-table-cell-content">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </span>
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      className="asklake-table-widget"
+      columns={tableColumns}
+      data={tableRows}
+      emptyState={{
+        title: "표시할 행이 없습니다.",
+        description: "선택한 데이터셋과 컬럼 조건으로 표시할 table row가 없습니다.",
+      }}
+      getRowId={(_row, index) => `${widget.id}-${index}`}
+      initialSorting={defaultSorting}
+      key={`${widget.id}:${widget.config.sortKey ?? ""}:${widget.config.sortDirection ?? ""}:${columns.join("|")}`}
+      tableClassName="asklake-widget-data-table"
+      viewportClassName="asklake-table-widget-viewport"
+    />
   );
 }
 

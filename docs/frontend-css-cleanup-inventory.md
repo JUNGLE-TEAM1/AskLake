@@ -29,7 +29,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: `docs-#347`, `origin/refactor` 기반
+기준 브랜치: `feat-#350`, `origin/refactor` 기반
 
 주의: A02 `feat-#341`과 B02 `origin/feat-#340`의 일부 작업은 아직 `refactor`에 모두 정리되어 들어온 상태가 아닐 수 있다. 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다.
 
@@ -43,8 +43,8 @@
 | `frontend/src/styles/responsive.css` | 591 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. 각 route 모바일 QA 후 정리. |
 | `frontend/src/styles/catalog.css` | 1,579 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
 | `frontend/src/styles/sql.css` | 2,607 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
-| `frontend/src/styles/dashboard.css` | 1,418 | B | `교체 후보` | Dashboard list/builder. B04 전환 후 정리. |
-| `frontend/src/styles/dashboard-runtime.css` | 2,127 | B | `보류` | Runtime canvas/widget/editor 상태와 밀접. B04 QA 전 삭제 금지. |
+| `frontend/src/styles/dashboard.css` | 1,423 | B | `교체 후보` | Dashboard list가 DataTable과 Button/Input primitive로 일부 전환됨. builder preview 관련 selector는 계속 유지. |
+| `frontend/src/styles/dashboard-runtime.css` | 2,175 | B | `보류` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. grid/runtime 상태 selector는 삭제 금지. |
 | `frontend/src/styles/xflow-adapter.css` | 119 | A | `보류` | XFlow adapter 전용. ETL graph QA 후 판단. |
 | `frontend/src/styles/xflow-source.css` | 1 | A | `삭제 후보` | 현재 1줄 placeholder 성격. import 필요 여부 확인 후 별도 삭제 가능. |
 
@@ -72,10 +72,11 @@
 | SQL editor/action buttons | `sql.css` | `교체 후보` | B03에서 editor action button을 `Button` primitive로 옮긴 뒤 `.sql-editor-actions .primary-button` 계열을 축소한다. |
 | Catalog result/list cards | `catalog.css` | `교체 후보` | Catalog 목록/상세 card, badge, schema preview를 primitive 기준으로 바꾼 뒤 중복 카드/칩 selector를 줄인다. |
 | Catalog lineage/XFlow | `catalog.css` | `보류` | React Flow node/edge class와 연결되어 있어 lineage QA 전 삭제 금지. |
-| Dashboard list/table | `dashboard.css` | `교체 후보` | Dashboard 목록 table/list가 DataTable 또는 공통 card 기준으로 바뀐 뒤 정리한다. |
+| Dashboard list/table | `dashboard.css` | `삭제 후보` | B04에서 Dashboard 목록 table이 DataTable 기준으로 전환됨. `.dashboard-list-data-table`, toolbar/action layout selector는 `/dashboards` overflow/empty/sort QA 후 별도 cleanup PR에서 축소한다. |
 | Dashboard builder preview | `dashboard.css` | `보류` | builder canvas, widget preview, draft widget 상태가 많아 B04 QA 후 판단한다. |
-| Dashboard runtime canvas/widget | `dashboard-runtime.css` | `보류` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. |
-| Dashboard widget form/buttons | `dashboard-runtime.css` | `교체 후보` | Config panel의 input/select/button을 primitive로 옮긴 뒤 `.asklake-widget-*` 중 form/button selector부터 줄인다. |
+| Dashboard runtime canvas/widget | `dashboard-runtime.css` | `보류` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. Table widget은 DataTable 기준으로 전환되어 `.asklake-table-widget*` selector가 새 기준이 됨. |
+| Dashboard dataset tree | `dashboard-runtime.css` | `삭제 후보` | B04에서 runtime dataset tree가 `react-arborist` 기준으로 전환됨. 기존 `.MuiTreeItem-*` selector는 visual QA 후 삭제 후보로 둔다. |
+| Dashboard widget form/buttons | `dashboard-runtime.css` | `교체 후보` | Config panel의 text/number input, select, action/color/type button은 primitive 또는 shadcn-style wrapper로 옮김. checkbox, textarea, color picker, layout selector는 계속 유지한다. |
 
 ## 우선 정리 순서
 
@@ -108,4 +109,5 @@ npm run build
 
 | 날짜 | 변경 |
 | --- | --- |
+| 2026-07-09 | Issue #350 B04에서 Dashboard list/table, runtime topbar/widget frame/table widget/config panel/dataset tree 전환 범위를 반영. `dashboard.css`, `dashboard-runtime.css` 줄 수와 cleanup 후보를 갱신하고 MUI TreeItem selector 삭제 후보를 기록. |
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
