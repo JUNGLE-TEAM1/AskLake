@@ -24,12 +24,14 @@ import type {
   DraftPipelinePatch,
   FlowId,
   JobCommand,
+  JobCommandPendingByJobId,
   JobExecutionEvidence,
   JobRowData,
   JobRunSummary,
   RunsByJobId,
   SelectedRunIdByJobId,
   SchemaColumnDraft,
+  ServerJobCommand,
   SqlResultDraft,
   TransformStepDraft,
 } from "../types";
@@ -41,9 +43,6 @@ type JobRunStateMaps = {
   runsByJobId: RunsByJobId;
   selectedRunIdByJobId: SelectedRunIdByJobId;
 };
-
-type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
-type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
@@ -473,6 +472,13 @@ function commandSuccessMessage(command: ServerJobCommand): string {
   return "작업 취소 요청을 접수했습니다.";
 }
 
+function commandFailureMessage(error: unknown): string {
+  if (error instanceof ApiError && error.message) {
+    return `작업 명령 처리에 실패했습니다: ${error.message}`;
+  }
+  return "작업 명령 처리에 실패했습니다.";
+}
+
 function buildClientRunId(jobId: string): string {
   return `client:${jobId}:${Date.now()}`;
 }
@@ -522,7 +528,7 @@ export function useAskLakeData({
   const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
   const [selectedRunIdByJobId, setSelectedRunIdByJobId] = useState<SelectedRunIdByJobId>({});
   const [dagStepsByRunId, setDagStepsByRunId] = useState<DagStepsByRunId>({});
-  const [commandPendingByJobId, setCommandPendingByJobId] = useState<CommandPendingByJobId>({});
+  const [commandPendingByJobId, setCommandPendingByJobId] = useState<JobCommandPendingByJobId>({});
   const [sqlResultDraft, setSqlResultDraft] = useState<SqlResultDraft | null>(null);
   const [apiPending, setApiPending] = useState(false);
   const [dataLoading, setDataLoading] = useState(false);
@@ -775,12 +781,12 @@ export function useAskLakeData({
         setSelectedDataset(normalizedDataset);
       }
       showToast(commandSuccessMessage(command));
-    } catch {
+    } catch (error) {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast("작업 명령 처리에 실패했습니다.", "info");
+      showToast(commandFailureMessage(error), "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {

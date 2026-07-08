@@ -1,5 +1,7 @@
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
+export type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
+export type JobCommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";

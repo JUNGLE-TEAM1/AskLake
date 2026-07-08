@@ -96,6 +96,7 @@ export function App() {
   const { auditLogs, auditOpen, auditSignal, setAuditOpen, showToast, toast, writeAuditLog } = useAuditLogs();
   const {
     apiPending,
+    commandPendingByJobId,
     createPipeline,
     dataError,
     dataLoading,
@@ -300,10 +301,10 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
-          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRuns(selectedJob)} onAction={writeAuditLog} />}
-          {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
+          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage commandPendingByJobId={commandPendingByJobId} jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage commandPendingByJobId={commandPendingByJobId} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRuns(selectedJob)} onAction={writeAuditLog} />}
+          {activeFlow === "jobRuns" && <JobRunsPage commandPendingByJobId={commandPendingByJobId} evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
           {isScheduleFlow(activeFlow) && <SchedulePage draftSchedule={draftPipeline.schedule} mode={activeFlow} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("schema")} onModeChange={moveToFlow} onNext={() => moveToFlow("permission")} onSave={() => saveDraft(activeFlow)} />}

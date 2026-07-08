@@ -30,6 +30,7 @@ def ensure_schema(db: Session) -> None:
             "next_run": "VARCHAR(255)",
             "owner": "VARCHAR(255)",
             "partition": "VARCHAR(255)",
+            "payload": "JSONB NOT NULL DEFAULT '{}'::jsonb",
             "permission_roles": "JSON",
             "progress": "JSON",
             "quality_invalid_rows": "JSON",
@@ -65,6 +66,9 @@ def ensure_schema(db: Session) -> None:
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+        if "payload" in existing_columns:
+            connection.execute(text("UPDATE etl_jobs SET payload = '{}'::jsonb WHERE payload IS NULL"))
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload SET DEFAULT '{}'::jsonb"))
         if "schema_fingerprint" in existing_columns:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
 
@@ -151,6 +155,7 @@ def save_command_result(
     merged_dataset = db.merge(dataset) if dataset is not None else None
     if run is not None:
         db.add(run)
+    sync_job_payload(db, job, run)
     db.add(job)
 
     try:
@@ -174,6 +179,7 @@ def save_command_result(
 
 def create_job(db: Session, job: ETLJobModel) -> JobRowData:
     ensure_schema(db)
+    sync_job_payload(db, job)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -182,6 +188,7 @@ def create_job(db: Session, job: ETLJobModel) -> JobRowData:
 
 def save_job(db: Session, job: ETLJobModel) -> JobRowData:
     ensure_schema(db)
+    sync_job_payload(db, job)
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -206,46 +213,60 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     return [run_to_schema(run) for run in runs]
 
 
-def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
+def sync_job_payload(db: Session, job: ETLJobModel, pending_run: ETLRunModel | None = None) -> None:
+    run_history = list_runs_for_job(db, job.id)
+    if pending_run is not None:
+        run_history = [run_to_schema(pending_run), *[run for run in run_history if run.run_id != pending_run.run_id]]
+
+    payload = job_to_schema(db, job, run_history=run_history).model_dump(mode="json", by_alias=True)
+    job.payload = {
+        **(job.payload or {}),
+        **payload,
+    }
+
+
+def job_to_schema(db: Session, job: ETLJobModel, run_history: list[JobRunSummary] | None = None) -> JobRowData:
+    payload = job.payload if isinstance(job.payload, dict) else {}
+
     return JobRowData(
         id=job.id,
-        name=job.name or job.target or job.id,
-        owner=job.owner or "demo-user",
-        status=job.status or "scheduled",
-        tag=job.tag or "[생성]",
-        source=job.source or job.source_label or "-",
-        target=job.target or job.name or job.id,
-        schedule=job.schedule or "-",
-        schedule_policy=job.schedule_policy,
-        schedule_summary=job.schedule_summary,
-        source_config=job.source_config,
-        source_label=job.source_label,
-        source_type=job.source_type,
-        retry_policy=job.retry_policy,
-        retry_policy_summary=job.retry_policy_summary,
-        run_limit_summary=job.run_limit_summary,
-        permission_roles=job.permission_roles,
-        storage_type=job.storage_type,
-        partition=job.partition,
-        compression=job.compression,
-        storage_path=job.storage_path,
-        target_format=job.target_format,
-        target_layer=job.target_layer,
-        target_path=job.target_path,
-        transform_output_columns=job.transform_output_columns,
-        transform_steps=job.transform_steps,
-        quality_invalid_rows=job.quality_invalid_rows,
-        quality_rules=job.quality_rules,
-        quality_score=job.quality_score,
-        quality_status=job.quality_status,
-        last_run=job.last_run or "-",
-        last_state=job.last_state or "-",
-        next_run=job.next_run or "-",
-        progress=job.progress,
-        stats=job.stats,
-        run_history=list_runs_for_job(db, job.id),
-        dag_steps=job.dag_steps,
-        dag_steps_by_run_id=job.dag_steps_by_run_id,
+        name=job.name or payload.get("name") or job.target or job.id,
+        owner=job.owner or payload.get("owner") or "demo-user",
+        status=job.status or payload.get("status") or "scheduled",
+        tag=job.tag or payload.get("tag") or "[생성]",
+        source=job.source or payload.get("source") or job.source_label or "-",
+        target=job.target or payload.get("target") or job.name or job.id,
+        schedule=job.schedule or payload.get("schedule") or "-",
+        schedule_policy=job.schedule_policy or payload.get("schedulePolicy"),
+        schedule_summary=job.schedule_summary or payload.get("scheduleSummary"),
+        source_config=job.source_config or payload.get("sourceConfig"),
+        source_label=job.source_label or payload.get("sourceLabel"),
+        source_type=job.source_type or payload.get("sourceType"),
+        retry_policy=job.retry_policy or payload.get("retryPolicy"),
+        retry_policy_summary=job.retry_policy_summary or payload.get("retryPolicySummary"),
+        run_limit_summary=job.run_limit_summary or payload.get("runLimitSummary"),
+        permission_roles=job.permission_roles or payload.get("permissionRoles"),
+        storage_type=job.storage_type or payload.get("storageType"),
+        partition=job.partition or payload.get("partition"),
+        compression=job.compression or payload.get("compression"),
+        storage_path=job.storage_path or payload.get("storagePath"),
+        target_format=job.target_format or payload.get("targetFormat"),
+        target_layer=job.target_layer or payload.get("targetLayer"),
+        target_path=job.target_path or payload.get("targetPath"),
+        transform_output_columns=job.transform_output_columns or payload.get("transformOutputColumns"),
+        transform_steps=job.transform_steps or payload.get("transformSteps"),
+        quality_invalid_rows=job.quality_invalid_rows or payload.get("qualityInvalidRows"),
+        quality_rules=job.quality_rules or payload.get("qualityRules"),
+        quality_score=job.quality_score if job.quality_score is not None else payload.get("qualityScore"),
+        quality_status=job.quality_status or payload.get("qualityStatus"),
+        last_run=job.last_run or payload.get("lastRun") or "-",
+        last_state=job.last_state or payload.get("lastState") or "-",
+        next_run=job.next_run or payload.get("nextRun") or "-",
+        progress=job.progress or payload.get("progress"),
+        stats=job.stats or payload.get("stats"),
+        run_history=run_history if run_history is not None else list_runs_for_job(db, job.id),
+        dag_steps=job.dag_steps or payload.get("dagSteps"),
+        dag_steps_by_run_id=job.dag_steps_by_run_id or payload.get("dagStepsByRunId"),
     )
 
 

@@ -1,4 +1,7 @@
+from typing import Any
+
 from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -8,6 +11,7 @@ class ETLJobModel(TimestampMixin, Base):
     __tablename__ = "etl_jobs"
 
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     owner: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="scheduled")

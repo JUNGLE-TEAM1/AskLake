@@ -728,6 +728,7 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 - DAG/실행 흐름은 별도 top-level tab이 아니라 History 화면 내부의 선택 Run 상세 카드로 렌더링합니다.
 - 초기 `/api/etl/jobs` hydrate에서는 `job.runHistory`를 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`를 최신 Run의 `runId`에 연결합니다.
 - PR1 optimistic 실행 상태는 API request에 `clientRunId`를 추가하지 않습니다. 프론트가 `client:<jobId>:<timestamp>` 형식의 temp run id를 만들고, 서버 응답의 `run.runId`가 오면 temp run을 실제 Run으로 교체합니다.
+- `commandPendingByJobId[job.id]`가 있으면 수집/처리 목록, Job 상세 header, 실행 이력 header의 서버 command 버튼은 disabled/loading 상태를 표시하고 같은 Job의 중복 command 클릭을 막습니다.
 
 Response 예시:
 

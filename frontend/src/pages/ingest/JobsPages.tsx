@@ -44,7 +44,7 @@ import {
   X,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
-import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
+import type { AuditResult, JobCommand, JobCommandPendingByJobId, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus, ServerJobCommand } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -63,7 +63,16 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+const commandPendingLabels: Record<ServerJobCommand, string> = {
+  cancelRun: "취소 요청 중",
+  pause: "일시정지 요청 중",
+  retry: "재실행 요청 중",
+  run: "실행 요청 중",
+  stopSchedule: "중지 요청 중",
+};
+
 export function JobsLandingPage({
+  commandPendingByJobId,
   jobs,
   onAction,
   onCommand,
@@ -71,6 +80,7 @@ export function JobsLandingPage({
   onDetail,
   onRuns,
 }: {
+  commandPendingByJobId: JobCommandPendingByJobId;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -102,6 +112,7 @@ export function JobsLandingPage({
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
+          commandPendingByJobId={commandPendingByJobId}
           emptyBody="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
           jobs={jobs}
           logAction="etl.job.log_opened"
@@ -158,6 +169,7 @@ function JobViewSwitch({ activeView, onCards, onTable }: { activeView: "cards" |
 }
 
 function JobsCardSection({
+  commandPendingByJobId,
   jobs,
   onAction,
   onCommand,
@@ -165,6 +177,7 @@ function JobsCardSection({
   onDetail,
   onRuns,
 }: {
+  commandPendingByJobId: JobCommandPendingByJobId;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
@@ -240,9 +253,12 @@ function JobsCardSection({
               </dl>
               <div className="job-row-actions">
                 {getJobListActions(job).map((action) => (
-                  <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind, job)}>
-                    {action.label}
-                  </button>
+                  <JobActionButton
+                    action={action}
+                    key={action.label}
+                    pendingCommand={commandPendingByJobId[job.id]}
+                    onClick={() => runAction(action.kind, job)}
+                  />
                 ))}
               </div>
             </div>
@@ -265,6 +281,7 @@ function JobsCardSection({
 
 type JobsTableSectionProps = {
   ariaLabel: string;
+  commandPendingByJobId: JobCommandPendingByJobId;
   emptyBody: string;
   jobs: JobRowData[];
   logAction: string;
@@ -279,6 +296,7 @@ type JobsTableSectionProps = {
 
 function JobsTableSection({
   ariaLabel,
+  commandPendingByJobId,
   emptyBody,
   jobs,
   logAction,
@@ -395,16 +413,14 @@ function JobsTableSection({
         return (
           <div className="jobs-table-actions">
             {getJobListActions(job).map((action) => (
-              <button
-                aria-label={action.label}
-                className={`${action.className} icon-only`}
+              <JobActionButton
+                action={action}
+                icon={<JobListActionIcon action={action} />}
+                iconOnly
                 key={action.label}
-                title={action.label}
-                type="button"
+                pendingCommand={commandPendingByJobId[job.id]}
                 onClick={() => runAction(action.kind, job)}
-              >
-                <JobListActionIcon action={action} />
-              </button>
+              />
             ))}
           </div>
         );
@@ -413,7 +429,7 @@ function JobsTableSection({
       header: "액션",
       id: "actions",
     },
-  ], [openJobLog, runAction]);
+  ], [commandPendingByJobId, openJobLog, runAction]);
   const table = useReactTable({
     columns,
     data: tableRows,
@@ -560,7 +576,53 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   ];
 }
 
+type JobActionButtonProps = {
+  action: JobListAction | JobDetailAction;
+  icon?: React.ReactNode;
+  iconOnly?: boolean;
+  onClick: () => void;
+  pendingCommand?: ServerJobCommand;
+};
+
+function isServerJobCommand(kind: JobCommand | JobListActionKind): kind is ServerJobCommand {
+  return kind === "run" || kind === "retry" || kind === "pause" || kind === "cancelRun" || kind === "stopSchedule";
+}
+
+function JobActionButton({
+  action,
+  icon,
+  iconOnly = false,
+  onClick,
+  pendingCommand,
+}: JobActionButtonProps) {
+  const commandAction = isServerJobCommand(action.kind);
+  const disabled = Boolean(pendingCommand && commandAction);
+  const activePending = Boolean(pendingCommand && action.kind === pendingCommand);
+  const label = activePending && pendingCommand ? commandPendingLabels[pendingCommand] : action.label;
+  const title = activePending && pendingCommand
+    ? `${commandPendingLabels[pendingCommand]}입니다.`
+    : pendingCommand && commandAction
+      ? `${commandPendingLabels[pendingCommand]}이라 잠시 비활성화되었습니다.`
+      : action.label;
+
+  return (
+    <button
+      aria-busy={activePending || undefined}
+      aria-label={iconOnly ? label : undefined}
+      className={`${action.className}${iconOnly ? " icon-only" : ""}${activePending ? " pending" : ""}`}
+      disabled={disabled}
+      title={title}
+      type="button"
+      onClick={onClick}
+    >
+      {activePending ? <RefreshCw aria-hidden="true" className="job-action-spinner" size={14} /> : icon}
+      {!iconOnly && <span>{label}</span>}
+    </button>
+  );
+}
+
 export function JobsTableDemoPage({
+  commandPendingByJobId,
   jobs,
   onAction,
   onBack,
@@ -569,6 +631,7 @@ export function JobsTableDemoPage({
   onDetail,
   onRuns,
 }: {
+  commandPendingByJobId: JobCommandPendingByJobId;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -602,6 +665,7 @@ export function JobsTableDemoPage({
         <JobsToolbar onFilter={(filter) => onAction("etl.jobs.table_demo_filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.table_demo_filter_reset", "/api/etl/jobs", "filters")} />
         <JobsTableSection
           ariaLabel="ETL 작업 표형 데모"
+          commandPendingByJobId={commandPendingByJobId}
           emptyBody="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
           jobs={jobs}
           logAction="etl.job.table_demo_log_opened"
@@ -874,6 +938,7 @@ function JobDetailHeader({
   onDetail,
   onEdit,
   onRuns,
+  pendingCommand,
 }: {
   activeTab: "detail" | "runs";
   job: JobRowData;
@@ -882,6 +947,7 @@ function JobDetailHeader({
   onDetail: () => void;
   onEdit: () => void;
   onRuns: () => void;
+  pendingCommand?: ServerJobCommand;
 }) {
   const runAction = (action: JobCommand) => {
     onCommand(job, action);
@@ -901,7 +967,12 @@ function JobDetailHeader({
         </div>
         <div className="job-detail-actions">
           {getJobDetailActions(job).map((action) => (
-            <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind)}>{action.label}</button>
+            <JobActionButton
+              action={action}
+              key={action.label}
+              pendingCommand={pendingCommand}
+              onClick={() => runAction(action.kind)}
+            />
           ))}
         </div>
       </div>
@@ -914,6 +985,7 @@ function JobDetailHeader({
 }
 
 export function JobDetailPage({
+  commandPendingByJobId,
   job,
   onAction,
   onBack,
@@ -921,6 +993,7 @@ export function JobDetailPage({
   onEdit,
   onRuns,
 }: {
+  commandPendingByJobId: JobCommandPendingByJobId;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -935,6 +1008,7 @@ export function JobDetailPage({
   const executionDisplay = getJobExecutionDisplay(job);
   const latestRunId = job.runHistory?.[0]?.runId ?? "-";
   const primaryAction = getJobNextAction(job);
+  const pendingCommand = commandPendingByJobId[job.id];
   const showPrimaryAction = job.status !== "running";
   const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
   const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
@@ -943,7 +1017,7 @@ export function JobDetailPage({
 
   return (
     <div className="job-detail-page">
-      <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} pendingCommand={pendingCommand} />
 
       <section className="job-detail-section">
         <div className="job-detail-section-heading">
@@ -957,7 +1031,11 @@ export function JobDetailPage({
             </div>
             {showPrimaryAction && (
               <div className="job-next-actions">
-                <button className="job-action-button primary" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</button>
+                <JobActionButton
+                  action={{ className: "job-action-button primary", kind: primaryAction.kind, label: primaryAction.label }}
+                  pendingCommand={pendingCommand}
+                  onClick={() => onCommand(job, primaryAction.kind)}
+                />
               </div>
             )}
             <div className="job-summary-stat-grid">
@@ -1104,12 +1182,14 @@ export function JobDetailPage({
 }
 
 export function JobRunsPage({
+  commandPendingByJobId,
   evidence,
   job,
   onAction,
   onBack,
   onCommand,
 }: {
+  commandPendingByJobId: JobCommandPendingByJobId;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -1118,6 +1198,7 @@ export function JobRunsPage({
 }) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
+  const pendingCommand = commandPendingByJobId[job.id];
   const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
   const openRunDetail = (run: JobRunSummary) => {
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}`, run.runId);
@@ -1130,7 +1211,7 @@ export function JobRunsPage({
 
   return (
     <div className="job-detail-page job-runs-page">
-      <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
+      <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} pendingCommand={pendingCommand} />
 
       <section className="runs-body-content">
         <article className="runs-stats-summary">
