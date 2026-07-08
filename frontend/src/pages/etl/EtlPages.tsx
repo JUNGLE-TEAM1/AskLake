@@ -39,8 +39,10 @@ import {
   TerminalSquare,
   Trash2,
 } from "lucide-react";
-import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
+import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -117,7 +119,12 @@ export function SchedulePage({
     <CreationFlowLayout
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title={title} description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다." />
+        <PageHeader
+          className="etl-flow-page-header"
+          description="파이프라인의 실행 시간, 반복 여부, 실행 정책을 설정합니다."
+          icon={<Calendar size={18} />}
+          title={title}
+        />
         <div className="xflow-review-stack schedule-xflow-stack">
           <section className="xflow-review-card schedule-xflow-card">
             <div className="xflow-review-card-header">
@@ -1531,7 +1538,12 @@ export function SourceConnectionPage({
     <CreationFlowLayout
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
+        <PageHeader
+          className="etl-flow-page-header"
+          description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."}
+          icon={<Database size={18} />}
+          title="소스 연결"
+        />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
             <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
@@ -1570,10 +1582,10 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                  {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
+                  {activeSourceType === "File / S3" && <Button className="secondary-button" type="button" variant="outline" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</Button>}
+                  {current.actions?.includes("Show Advanced Configuration") && <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</Button>}
+                  {current.actions?.includes("Fetch Metadata") && <Button className="secondary-button" type="button" variant="outline" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</Button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
@@ -1595,7 +1607,7 @@ export function SourceConnectionPage({
                     <span className="panel-note">{publicConnectionMessage}</span>
                   </div>
                   <div className="hegun-status-actions">
-                    {connectionStatus === "success" && hasDetectedAssets && <button className="secondary-button" type="button" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</button>}
+                    {connectionStatus === "success" && hasDetectedAssets && <Button className="secondary-button" type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
                     {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
@@ -2403,12 +2415,12 @@ export function SchemaInferencePage({
           <strong>{hasInferredSchema ? (lowConfidenceCount > 0 ? "검토 필요" : "추론 완료") : "소스 연결 필요"}</strong>
         </div>
         <div className="schema-status-actions">
-          <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
+          <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={resetSchemaMappings}>
             <RefreshCw size={15} /> 매핑 초기화
-          </button>
-          <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
+          </Button>
+          <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={() => schemaAction("etl.schema.approved_all", "/api/etl/schema-inference/approve-all", approvedSummary)}>
             <Check size={15} /> 스키마 승인
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -2435,11 +2447,11 @@ export function SchemaInferencePage({
       />
 
       <section className="schema-bottom-bar">
-        <button className="secondary-button" type="button" onClick={onPrev}>이전: 데이터 탐색</button>
-        <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전: 데이터 탐색</Button>
+        <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</Button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
-        <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
-        <button className="ghost-button" type="button" onClick={saveSchemaDraft}>설정 저장</button>
+        <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</Button>
+        <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
       </section>
     </div>
   );
@@ -3913,9 +3925,9 @@ function RuleStepBuilder({
             )}
           </div>
           <div className="hegun-rule-form-actions">
-            {isEditing && <button className="ghost-button" type="button" onClick={cancelEdit}>수정 취소</button>}
-            <button className="secondary-button" type="button" onClick={previewDraft}>{isTransform ? "선택 단계 미리보기" : "선택 검사 미리보기"}</button>
-            <button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</button>
+            {isEditing && <Button className="ghost-button" type="button" variant="ghost" onClick={cancelEdit}>수정 취소</Button>}
+            <Button className="secondary-button" type="button" variant="outline" onClick={previewDraft}>{isTransform ? "선택 단계 미리보기" : "선택 검사 미리보기"}</Button>
+            <Button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</Button>
           </div>
         </>
       )}
@@ -4013,18 +4025,18 @@ function RuleBottomBar({
 }) {
   return (
     <div className="hegun-rule-bottom-bar">
-      <button className="secondary-button" type="button" onClick={onPrev}>스키마로 돌아가기</button>
-      <button className="ghost-button hegun-bottom-command" type="button" onClick={onTest}>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>스키마로 돌아가기</Button>
+      <Button className="ghost-button hegun-bottom-command" type="button" variant="ghost" onClick={onTest}>
         <Search size={16} />
         샘플 테스트 (1,000개 행)
-      </button>
-      <button className={invalidRowsVisible ? "ghost-button hegun-bottom-command active" : "ghost-button hegun-bottom-command"} type="button" onClick={onInvalidRows}>
+      </Button>
+      <Button className={invalidRowsVisible ? "ghost-button hegun-bottom-command active" : "ghost-button hegun-bottom-command"} type="button" variant="ghost" onClick={onInvalidRows}>
         <Info size={16} />
         유효하지 않은 행 보기 ({invalidRowCount})
-      </button>
+      </Button>
       <span className="hegun-target-engine">실행 엔진<br /><strong>Spark</strong></span>
-      <button className="secondary-button" type="button" onClick={onSave}>임시 저장</button>
-      <button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</button>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>임시 저장</Button>
+      <Button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</Button>
     </div>
   );
 }
@@ -4131,7 +4143,7 @@ function StepPreviewAnalysis({
       <div className="panel-header">
         <RefreshCw size={18} />
         <h2>단계 미리보기 및 분석</h2>
-        <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</button>
+        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.sample_rows_refetched", "/api/etl/rules/sample-rows")}>새 샘플 행 가져오기</Button>
       </div>
       <div className="hegun-selected-step-banner">
         <span>선택 단계</span>
@@ -4268,7 +4280,7 @@ function QualityPreviewAnalysis({
       <div className="panel-header">
         <ShieldCheck size={18} />
         <h2>품질 검증 미리보기</h2>
-        <button className="secondary-button hegun-header-button" type="button" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</button>
+        <Button className="secondary-button hegun-header-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_sample_refetched", "/api/etl/rules/quality/sample-rows")}>새 샘플 행 가져오기</Button>
       </div>
       <div className="hegun-preview-grid">
         <div className="hegun-preview-column">
@@ -4353,8 +4365,8 @@ function QualityFailedRowsPanel({
         </table>
       </div>
       <div className="hegun-rule-form-actions">
-        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</button>
-        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
+        <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
       </div>
     </section>
   );
@@ -4401,8 +4413,8 @@ function InvalidRowsPanel({
         </table>
       </div>
       <div className="hegun-rule-form-actions">
-        <button className="secondary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</button>
-        <button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</button>
+        <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
+        <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
       </div>
     </section>
   );
@@ -4765,7 +4777,12 @@ export function TargetPage({
 
   return (
     <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
-      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
+      <PageHeader
+        className="etl-flow-page-header"
+        description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다."
+        icon={<HardDrive size={18} />}
+        title="타겟 설정"
+      />
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
@@ -4881,7 +4898,7 @@ export function TargetPage({
                     addCustomTag();
                   }
                 }} />
-                <button className="secondary-button" type="button" onClick={addCustomTag}><Plus size={14} />추가</button>
+                <Button className="secondary-button" type="button" variant="outline" onClick={addCustomTag}><Plus size={14} />추가</Button>
               </div>
             </div>
             <div className="target-xflow-subsection">
@@ -4964,7 +4981,12 @@ export function PermissionPage({
       variant="permission"
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-      <PageTitle title="권한 설정" description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요." />
+      <PageHeader
+        className="etl-flow-page-header"
+        description="생성할 데이터셋에 접근할 수 있는 역할과 사용자를 선택하세요."
+        icon={<ShieldCheck size={18} />}
+        title="권한 설정"
+      />
       <div className="xflow-review-stack permission-xflow-stack">
         <section className="xflow-review-card permission-xflow-card">
           <div className="xflow-review-card-header">
@@ -5153,7 +5175,12 @@ export function ReviewPage({
       variant="review"
       actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
-        <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
+        <PageHeader
+          className="etl-flow-page-header"
+          description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."
+          icon={<FileText size={18} />}
+          title="검토 및 생성"
+        />
         <div className="xflow-review-stack">
           <section className="xflow-review-card">
             <div className="xflow-review-card-header">
@@ -5162,7 +5189,7 @@ export function ReviewPage({
                 <h2>Basic Information</h2>
                 <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
             <dl className="xflow-review-kv">
               {basicInformationRows.map(([label, value]) => (
@@ -5180,7 +5207,7 @@ export function ReviewPage({
               <div>
                 <h2>Output Schema</h2>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton onClick={() => onEdit("schema")} />
             </div>
             <ReviewSchemaTable rows={schemaRows} />
           </section>
@@ -5192,7 +5219,7 @@ export function ReviewPage({
                 <h2>Destination Settings</h2>
                 <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("target")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
             <dl className="xflow-review-kv destination">
               {destinationRows.map(([label, value]) => (
@@ -5211,7 +5238,7 @@ export function ReviewPage({
                 <h2>Permission & Validation</h2>
                 <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
               </div>
-              <button className="xflow-review-edit" type="button" onClick={() => onEdit("permission")}><Pencil size={14} /> 수정</button>
+              <ReviewEditButton onClick={() => onEdit("permission")} />
             </div>
             <dl className="xflow-review-kv permission">
               {permissionRows.map(([label, value]) => (
@@ -5234,6 +5261,14 @@ export function ReviewPage({
           </section>
         </div>
     </CreationFlowLayout>
+  );
+}
+
+function ReviewEditButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button className="xflow-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
+      <Pencil size={14} /> 수정
+    </Button>
   );
 }
 

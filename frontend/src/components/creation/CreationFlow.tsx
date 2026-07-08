@@ -1,5 +1,6 @@
 import type React from "react";
 import { FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
@@ -44,8 +45,8 @@ export function CreationTopActions({
 }) {
   return (
     <div className="creation-top-actions">
-      <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
-      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </div>
   );
 }
@@ -71,9 +72,9 @@ export function CreationPanelActions({
 }) {
   return (
     <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
-      <button className="secondary-button" type="button" onClick={onPrev}>{prevLabel}</button>
-      <button className="secondary-button" type="button" onClick={onSave}>{saveLabel}</button>
-      <button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</button>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+      <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>{saveLabel}</Button>
+      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </div>
   );
 }
