@@ -762,7 +762,7 @@ function VisualizationRequestWidget({
           setIsPromptEditing(false);
           return;
         }
-        if (!patchCanRenderVisualization(widget, widgetPatch)) {
+        if (!patchCanRenderVisualization(widget, widgetPatch, assistantContext?.activeDatasetId)) {
           await onPatchConfig({ prompt: nextPrompt });
           setRequestTone("info");
           setMessage(response.message?.trim() || "데이터셋이나 필드를 먼저 선택한 뒤 시각화를 요청해 주세요.");
@@ -856,10 +856,14 @@ function visualizationResponseWidgetPatch(
   };
 }
 
-function patchCanRenderVisualization(widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) {
+function patchCanRenderVisualization(
+  widget: DashboardRuntimeWidget,
+  patch: DashboardAssistantWidgetPatch,
+  activeDatasetId?: string | null,
+) {
   if (widget.config.placeholderKind !== "visualization_request") return true;
   if (!patch.type || patch.type === "table" || patch.type === "metric") return true;
-  if (patch.datasetId || widget.datasetId) return true;
+  if (patch.datasetId || widget.datasetId || activeDatasetId) return true;
   return widget.data.length > 0;
 }
 

@@ -51,6 +51,43 @@ const checks = [
       /<div className="asklake-apex-widget" ref=\{chartContainerRef\}/,
     ],
   },
+  {
+    name: "Visualization request patches can use the active dataset",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+    patterns: [
+      /const nextDatasetId = patch\.datasetId \?\? widget\.datasetId \?\? selectedDatasetId \?\? null;/,
+      /const nextData = cloneDatasetRows\(dashboardDatasets, nextDatasetId\);/,
+      /activeDatasetId: selectedDatasetId,/,
+    ],
+  },
+  {
+    name: "Visualization request render guard accepts active dataset fallback",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /patchCanRenderVisualization\(widget, widgetPatch, assistantContext\?\.activeDatasetId\)/,
+      /activeDatasetId\?: string \| null,/,
+      /if \(patch\.datasetId \|\| widget\.datasetId \|\| activeDatasetId\) return true;/,
+    ],
+  },
+  {
+    name: "Widget config updates include selected dataset rows",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /function cloneDatasetRows\(dataset: DashboardDatasetOption \| null \| undefined\)/,
+      /data: cloneDatasetRows\(selectedDataset\),/,
+      /await onCreateWidget\(\{\s*\.\.\.nextInput,\s*data: cloneDatasetRows\(selectedDataset\),/s,
+    ],
+  },
+  {
+    name: "Count visualization settings do not require a numeric value column",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /const usesCount = config\.aggregation === "count";/,
+      /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
+      /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
+      /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
+    ],
+  },
 ];
 
 const failures = [];
