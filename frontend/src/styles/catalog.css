@@ -551,6 +551,28 @@
   padding: 8px;
 }
 
+.catalog-materialization-row.selectable {
+  cursor: pointer;
+}
+
+.catalog-materialization-row.selectable:hover,
+.catalog-materialization-row.selectable:focus-visible {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  outline: none;
+}
+
+.catalog-materialization-row.selected {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 16%);
+}
+
+.catalog-materialization-row.disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
 .catalog-materialization-row strong,
 .catalog-materialization-row span {
   min-width: 0;
@@ -947,6 +969,30 @@
 .catalog-wide-button svg {
   flex: 0 0 auto;
   margin-right: 0;
+}
+
+.catalog-wide-button:disabled {
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  box-shadow: none;
+}
+
+.catalog-wide-button:disabled svg {
+  color: #64748b;
+}
+
+.catalog-sql-target-hint {
+  margin: -2px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.catalog-sql-target-hint.active {
+  color: #1d4ed8;
 }
 
 .catalog-modal-backdrop {
