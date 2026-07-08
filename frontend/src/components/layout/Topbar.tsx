@@ -1,4 +1,5 @@
 import { Activity, RefreshCw } from "lucide-react";
+import { IconButton } from "@/components/ui/icon-button";
 import type { AuditEntry } from "../../types";
 
 export function Topbar({
@@ -16,10 +17,10 @@ export function Topbar({
     <header className="topbar">
       <div className="topbar-actions">
         <div className="audit-menu">
-          <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
+          <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" type="button" onClick={onAuditToggle}>
             <Activity size={18} />
             {auditLogs.length > 0 && <span className="audit-dot" />}
-          </button>
+          </IconButton>
           {auditOpen && (
             <section className="audit-popover">
               <div className="audit-popover-header">
@@ -41,9 +42,9 @@ export function Topbar({
             </section>
           )}
         </div>
-        <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
+        <IconButton className="icon-button" label="새로고침" type="button" onClick={onRefresh}>
           <RefreshCw size={18} />
-        </button>
+        </IconButton>
         <div className="avatar" />
       </div>
     </header>

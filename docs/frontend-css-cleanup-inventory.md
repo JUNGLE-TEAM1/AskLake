@@ -29,20 +29,20 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: `docs-#347`, `origin/refactor` 기반
+기준 브랜치: `refactor`에 #348, B02, B03 merge 후 A02 `feat-#341` 확인 기준
 
-주의: A02 `feat-#341`과 B02 `origin/feat-#340`의 일부 작업은 아직 `refactor`에 모두 정리되어 들어온 상태가 아닐 수 있다. 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다.
+주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. PR마다 실제 route QA와 `rg` 확인 결과를 반영해 갱신한다.
 
 | 파일 | 줄 수 | 주 담당 | 현재 판단 | 메모 |
 | --- | ---: | --- | --- | --- |
 | `frontend/src/styles/base.css` | 717 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. primitive 전환 후 축소 대상. |
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,968 | A | `교체 후보` | Jobs 목록/상세/Run History. A02와 DataTable 적용 후 정리 후보가 생김. |
+| `frontend/src/styles/ingest.css` | 1,991 | A | `교체 후보` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. legacy table footer/empty selector는 삭제 후보로 분리됨. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
 | `frontend/src/styles/etl.css` | 9,064 | A | `보류` | Source/Schema/Schedule/Permission/Target/Review가 한 파일에 섞여 있어 A03 이후 단계적 분리 필요. |
 | `frontend/src/styles/responsive.css` | 591 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. 각 route 모바일 QA 후 정리. |
-| `frontend/src/styles/catalog.css` | 1,579 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
-| `frontend/src/styles/sql.css` | 2,607 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
+| `frontend/src/styles/catalog.css` | 1,602 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
+| `frontend/src/styles/sql.css` | 2,603 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
 | `frontend/src/styles/dashboard.css` | 1,418 | B | `교체 후보` | Dashboard list/builder. B04 전환 후 정리. |
 | `frontend/src/styles/dashboard-runtime.css` | 2,127 | B | `보류` | Runtime canvas/widget/editor 상태와 밀접. B04 QA 전 삭제 금지. |
 | `frontend/src/styles/xflow-adapter.css` | 119 | A | `보류` | XFlow adapter 전용. ETL graph QA 후 판단. |
@@ -56,7 +56,7 @@
 | Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `교체 후보` | `PageHeader` primitive 적용 화면이 늘어난 뒤 중복 title selector를 줄인다. |
 | Legacy button class | `layout.css`, `ingest.css`, `etl.css`, `catalog.css`, `sql.css`, `dashboard.css` | `교체 후보` | `.primary-button`, `.secondary-button`, `.ghost-button`, `.icon-button` 사용처를 `Button`/`IconButton`으로 옮긴 뒤 제거한다. |
 | Jobs 목록 shell | `ingest.css`, `responsive.css` | `교체 후보` | A02에서 Card/PageHeader/DataTable이 적용된 범위부터 selector를 축소한다. |
-| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | DataTable empty/pagination으로 완전히 대체되고 `/jobs` QA가 끝나면 삭제한다. |
+| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | A02에서 `JobsPages.tsx` 사용처는 제거됨. 현재 `ingest.css`, `responsive.css`에 CSS만 남아 있으므로 `/jobs` QA 후 삭제한다. |
 | Jobs status/owner/tag chip | `ingest.css` | `교체 후보` | `Badge` primitive로 톤이 안정되면 `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`을 줄인다. |
 | Run History table | `ingest.css`, `ingest-dag.css` | `교체 후보` | DataTable 적용 후 `.runs-table*`, `.runs-pagination*`을 정리한다. DAG modal은 별도 QA 전 유지한다. |
 | ETL Source/Schema flow | `etl.css`, `xflow-adapter.css`, `xflow-source.css` | `보류` | A03에서 화면 외곽을 전환한 뒤 selector 그룹을 Source, Schema, Schedule, Permission, Target 단위로 분리 검토한다. |
@@ -109,3 +109,4 @@ npm run build
 | 날짜 | 변경 |
 | --- | --- |
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
+| 2026-07-09 | A02에서 Jobs 목록 PageHeader/primitive/DataTable 적용 상태를 반영. `jobs-table-empty`, `jobs-table-preview-footer`는 CSS-only 삭제 후보로 표시. |
