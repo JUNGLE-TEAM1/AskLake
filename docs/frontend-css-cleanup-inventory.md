@@ -15,6 +15,7 @@
 - `styles.css` import 순서는 전체 영향이 크므로 동시 수정 금지 영역으로 본다.
 - Backend API, 데이터 계약, 도메인 로직은 CSS 정리 범위가 아니다.
 - B가 Catalog/SQL/Dashboard 작업으로 정리하게 될 CSS도 이 문서에서 함께 추적한다.
+- CSS가 남는 이유가 공통 컴포넌트 부재라면 `docs/frontend-component-gap-inventory.md`에도 함께 기록한다.
 
 ## 상태 값
 
@@ -29,24 +30,24 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: `feat-#350`, `origin/refactor` 기반
+기준 브랜치: A03 `feat-#352` 및 B04 `feat-#350` 확인 기준
 
-주의: A02 `feat-#341`과 B02 `origin/feat-#340`의 일부 작업은 아직 `refactor`에 모두 정리되어 들어온 상태가 아닐 수 있다. 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다.
+주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. PR마다 실제 route QA와 `rg` 확인 결과를 반영해 갱신한다.
 
 | 파일 | 줄 수 | 주 담당 | 현재 판단 | 메모 |
 | --- | ---: | --- | --- | --- |
 | `frontend/src/styles/base.css` | 717 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. primitive 전환 후 축소 대상. |
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,968 | A | `교체 후보` | Jobs 목록/상세/Run History. A02와 DataTable 적용 후 정리 후보가 생김. |
+| `frontend/src/styles/ingest.css` | 1,991 | A | `교체 후보` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. legacy table footer/empty selector는 삭제 후보로 분리됨. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
-| `frontend/src/styles/etl.css` | 9,064 | A | `보류` | Source/Schema/Schedule/Permission/Target/Review가 한 파일에 섞여 있어 A03 이후 단계적 분리 필요. |
+| `frontend/src/styles/etl.css` | 9,064 | A | `보류` | A03에서 PageHeader/Button primitive 일부 적용. Source/Schema/Schedule/Permission/Target/Review selector는 component gap과 xflow rename 범위가 커서 단계적 분리 필요. |
 | `frontend/src/styles/responsive.css` | 591 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. 각 route 모바일 QA 후 정리. |
-| `frontend/src/styles/catalog.css` | 1,579 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
-| `frontend/src/styles/sql.css` | 2,607 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
+| `frontend/src/styles/catalog.css` | 1,602 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
+| `frontend/src/styles/sql.css` | 2,603 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
 | `frontend/src/styles/dashboard.css` | 1,423 | B | `교체 후보` | Dashboard list가 DataTable과 Button/Input primitive로 일부 전환됨. builder preview 관련 selector는 계속 유지. |
 | `frontend/src/styles/dashboard-runtime.css` | 2,175 | B | `보류` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. grid/runtime 상태 selector는 삭제 금지. |
-| `frontend/src/styles/xflow-adapter.css` | 119 | A | `보류` | XFlow adapter 전용. ETL graph QA 후 판단. |
-| `frontend/src/styles/xflow-source.css` | 1 | A | `삭제 후보` | 현재 1줄 placeholder 성격. import 필요 여부 확인 후 별도 삭제 가능. |
+| `frontend/src/styles/xflow-adapter.css` | 119 | A | `보류` | `XFlowSchemaTransformEditor` adapter 전용. 후속 xflow rename cleanup에서 파일명/className 변경 검토. |
+| `frontend/src/styles/xflow-source.css` | 1 | A | `삭제 후보` | 현재 1줄 placeholder 성격. import 필요 여부 확인 후 후속 xflow cleanup에서 삭제 가능. |
 
 ## A 작업으로 정리될 CSS
 
@@ -56,11 +57,12 @@
 | Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `교체 후보` | `PageHeader` primitive 적용 화면이 늘어난 뒤 중복 title selector를 줄인다. |
 | Legacy button class | `layout.css`, `ingest.css`, `etl.css`, `catalog.css`, `sql.css`, `dashboard.css` | `교체 후보` | `.primary-button`, `.secondary-button`, `.ghost-button`, `.icon-button` 사용처를 `Button`/`IconButton`으로 옮긴 뒤 제거한다. |
 | Jobs 목록 shell | `ingest.css`, `responsive.css` | `교체 후보` | A02에서 Card/PageHeader/DataTable이 적용된 범위부터 selector를 축소한다. |
-| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | DataTable empty/pagination으로 완전히 대체되고 `/jobs` QA가 끝나면 삭제한다. |
+| Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | A02에서 `JobsPages.tsx` 사용처는 제거됨. 현재 `ingest.css`, `responsive.css`에 CSS만 남아 있으므로 `/jobs` QA 후 삭제한다. |
 | Jobs status/owner/tag chip | `ingest.css` | `교체 후보` | `Badge` primitive로 톤이 안정되면 `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`을 줄인다. |
 | Run History table | `ingest.css`, `ingest-dag.css` | `교체 후보` | DataTable 적용 후 `.runs-table*`, `.runs-pagination*`을 정리한다. DAG modal은 별도 QA 전 유지한다. |
-| ETL Source/Schema flow | `etl.css`, `xflow-adapter.css`, `xflow-source.css` | `보류` | A03에서 화면 외곽을 전환한 뒤 selector 그룹을 Source, Schema, Schedule, Permission, Target 단위로 분리 검토한다. |
+| ETL Source/Schema flow | `etl.css`, `xflow-adapter.css`, `xflow-source.css` | `보류` | A03에서 PageHeader와 주요 action button은 primitive 적용. card, segmented tabs, schema workbench, review summary는 component gap으로 분리한다. |
 | Tree UI | `etl.css`, `xflow-adapter.css` | `보류` | MUI TreeView 유지가 아니라 `react-arborist` 기준 교체가 목표다. 단, 실제 교체 전 tree 관련 CSS는 삭제하지 않는다. |
+| ETL xflow naming | `etl.css`, `xflow-adapter.css`, `xflow-source.css`, `pages/etl` | `보류` | A03 기준 ETL 내부 `xflow|XFlow|XFLOW` 잔재는 약 567건. 이번 PR에서는 대규모 rename하지 않고 후속 cleanup 범위로 분리한다. |
 
 ## B 작업으로 정리될 CSS
 
@@ -84,7 +86,8 @@
 2. A02, B02, B03, B04, A03 PR이 merge될 때마다 관련 행을 `사용 중`, `교체 후보`, `삭제 후보`, `보류`로 업데이트한다.
 3. 작은 삭제 후보부터 별도 cleanup PR로 제거한다.
 4. 전역 button/page title selector는 여러 화면이 같이 쓰므로 마지막에 정리한다.
-5. `etl.css`와 `dashboard-runtime.css`는 가장 늦게 건드린다.
+5. primitive로 커버하지 못하는 반복 UI는 `docs/frontend-component-gap-inventory.md`에 기록한다.
+6. `etl.css`와 `dashboard-runtime.css`는 가장 늦게 건드린다.
 
 ## 삭제 전 확인 명령
 
@@ -109,5 +112,7 @@ npm run build
 
 | 날짜 | 변경 |
 | --- | --- |
-| 2026-07-09 | Issue #350 B04에서 Dashboard list/table, runtime topbar/widget frame/table widget/config panel/dataset tree 전환 범위를 반영. `dashboard.css`, `dashboard-runtime.css` 줄 수와 cleanup 후보를 갱신하고 MUI TreeItem selector 삭제 후보를 기록. |
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
+| 2026-07-09 | A02에서 Jobs 목록 PageHeader/primitive/DataTable 적용 상태를 반영. `jobs-table-empty`, `jobs-table-preview-footer`는 CSS-only 삭제 후보로 표시. |
+| 2026-07-09 | A03에서 ETL PageHeader/주요 action button primitive 적용 상태를 반영. component gap inventory와 xflow rename 후속 cleanup 기준을 연결. |
+| 2026-07-09 | Issue #350 B04에서 Dashboard list/table, runtime topbar/widget frame/table widget/config panel/dataset tree 전환 범위를 반영. `dashboard.css`, `dashboard-runtime.css` 줄 수와 cleanup 후보를 갱신하고 MUI TreeItem selector 삭제 후보를 기록. |
