@@ -106,8 +106,14 @@ export async function createPipeline(request) {
 async function assertTargetDatasetAvailable(datasetId, targetDataset) {
   const normalizedTarget = normalizeColumnName(targetDataset);
   const [datasets, jobs] = await Promise.all([listStoredDatasets(), listStoredJobs()]);
-  const datasetExists = datasets.some((dataset) => dataset.id === datasetId || normalizeColumnName(dataset.name) === normalizedTarget);
-  const pendingJobExists = jobs.some((job) => job.datasetId === datasetId || normalizeColumnName(job.target) === normalizedTarget);
+  const datasetExists = datasets.some((dataset) => {
+    if (!dataset || typeof dataset !== "object") return false;
+    return dataset.id === datasetId || normalizeColumnName(dataset.name) === normalizedTarget;
+  });
+  const pendingJobExists = jobs.some((job) => {
+    if (!job || typeof job !== "object") return false;
+    return job.datasetId === datasetId || normalizeColumnName(job.target) === normalizedTarget;
+  });
   if (datasetExists || pendingJobExists) {
     const error = new Error(`타깃 데이터셋이 이미 생성되었거나 실행 대기 중입니다: ${targetDataset}`);
     error.status = 409;

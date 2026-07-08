@@ -78,13 +78,17 @@ export async function countJobs() {
 export async function listJobs() {
   await ensureMetadataSchema();
   const result = await pool.query("SELECT payload FROM etl_jobs ORDER BY updated_at DESC, created_at DESC");
-  return result.rows.map((row) => row.payload);
+  return result.rows
+    .map((row) => row.payload)
+    .filter(isPlainObject);
 }
 
 export async function listDatasets() {
   await ensureMetadataSchema();
   const result = await pool.query("SELECT payload FROM catalog_datasets ORDER BY updated_at DESC, created_at DESC");
-  return result.rows.map((row) => row.payload);
+  return result.rows
+    .map((row) => row.payload)
+    .filter(isPlainObject);
 }
 
 export async function getJob(jobId) {
@@ -189,4 +193,8 @@ export async function saveSqlRun(run) {
     [run.runId, run.datasetId, run.query, JSON.stringify(run)],
   );
   return run;
+}
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
