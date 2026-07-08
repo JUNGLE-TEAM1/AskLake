@@ -542,33 +542,6 @@
   font-weight: 900;
 }
 
-.asklake-dataset-tree .MuiTreeItem-content {
-  min-height: 32px;
-  border-radius: 6px;
-  padding: 3px 6px;
-}
-
-.asklake-dataset-tree .MuiTreeItem-content:hover {
-  background: #f8fbff;
-}
-
-.asklake-dataset-tree .MuiTreeItem-content.Mui-selected,
-.asklake-dataset-tree .MuiTreeItem-content.Mui-selected:hover,
-.asklake-dataset-tree .MuiTreeItem-content.Mui-focused.Mui-selected {
-  background: #e8f1ff;
-  color: #0f172a;
-}
-
-.asklake-dataset-tree .MuiTreeItem-groupTransition {
-  margin-left: 14px;
-  padding-left: 10px;
-  border-left: 1px solid #dbe4ef;
-}
-
-.asklake-dataset-tree .MuiTreeItem-iconContainer {
-  color: #64748b;
-}
-
 .asklake-dataset-tree-label {
   display: grid;
   min-width: 0;
