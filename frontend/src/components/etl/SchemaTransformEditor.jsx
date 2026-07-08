@@ -1020,10 +1020,7 @@ export default function SchemaTransformEditor({
       )}
 
       {/* Run Preview Test Button - Works for both tabs */}
-      <div className="flex items-center justify-between p-4 border-t border-slate-100 bg-white">
-        <div>
-          <h4 className="text-sm font-bold text-slate-900">Preview Changes</h4>
-        </div>
+      <div className="flex items-center justify-end p-4 border-t border-slate-100 bg-white">
         <div className="flex items-center gap-3">
           {isTestSuccessful && (
             <div className="flex items-center gap-1 text-green-600 bg-green-50 px-3 py-1 rounded-lg border border-green-200 animate-in fade-in slide-in-from-right-4 duration-300">
