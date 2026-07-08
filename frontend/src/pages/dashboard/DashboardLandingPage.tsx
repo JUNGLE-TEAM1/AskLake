@@ -1,4 +1,5 @@
 import { Plus, Table2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
@@ -83,14 +84,16 @@ export function DashboardLandingPage({
           <p>게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다.</p>
         </div>
         <div className="dashboard-header-actions">
-          <button
+          <Button
             className="primary-button dashboard-create-button"
             disabled={isCreatingDashboard}
             type="button"
+            size="sm"
+            variant="primary"
             onClick={onCreateDashboard}
           >
             <Plus size={16} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
-          </button>
+          </Button>
         </div>
       </header>
 

@@ -1,3 +1,4 @@
+import { Button } from "@/components/ui/button";
 import type { SavedDashboardCard } from "../../../types";
 
 export function DashboardDeleteConfirmDialog({
@@ -23,10 +24,10 @@ export function DashboardDeleteConfirmDialog({
         </p>
         {error && <p className="dashboard-delete-error">{error}</p>}
         <div className="form-actions inline">
-          <button className="secondary-button" type="button" disabled={isDeleting} onClick={onCancel}>취소</button>
-          <button className="primary-button danger-button" type="button" disabled={isDeleting} onClick={onConfirm}>
+          <Button className="secondary-button" type="button" disabled={isDeleting} onClick={onCancel} size="sm" variant="outline">취소</Button>
+          <Button className="primary-button danger-button" type="button" disabled={isDeleting} onClick={onConfirm} size="sm" variant="destructive">
             {isDeleting ? "삭제 중" : "삭제"}
-          </button>
+          </Button>
         </div>
       </section>
     </div>

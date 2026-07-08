@@ -441,10 +441,15 @@
 }
 
 .dashboard-table-scroll {
-  overflow-x: auto;
+  min-width: 0;
 }
 
-.dashboard-table-scroll .schema-table {
+.dashboard-table-viewport {
+  border-radius: 8px;
+}
+
+.dashboard-table-scroll .schema-table,
+.dashboard-list-data-table {
   min-width: 820px;
   font-size: 14px;
   table-layout: fixed;

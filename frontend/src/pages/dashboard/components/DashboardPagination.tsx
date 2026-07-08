@@ -1,3 +1,5 @@
+import { Button } from "@/components/ui/button";
+
 export function DashboardPagination({
   currentPage,
   onNext,
@@ -11,9 +13,9 @@ export function DashboardPagination({
 }) {
   return (
     <div className="dashboard-pagination">
-      <button type="button" disabled={currentPage === 1} onClick={onPrevious}>이전</button>
+      <Button type="button" disabled={currentPage === 1} onClick={onPrevious} size="sm" variant="outline">이전</Button>
       <span>{currentPage}</span>
-      <button type="button" disabled={currentPage === totalPages} onClick={onNext}>다음</button>
+      <Button type="button" disabled={currentPage === totalPages} onClick={onNext} size="sm" variant="outline">다음</Button>
     </div>
   );
 }
