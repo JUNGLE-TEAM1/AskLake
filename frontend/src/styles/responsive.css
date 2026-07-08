@@ -163,18 +163,18 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .xflow-review-kv,
-  .target-xflow-form-grid,
-  .target-xflow-split,
-  .xflow-review-validation {
+  .etl-review-kv,
+  .target-config-form-grid,
+  .target-config-split,
+  .etl-review-validation {
     grid-template-columns: 1fr;
   }
 
-  .xflow-review-schema-row {
+  .etl-review-schema-row {
     grid-template-columns: 28px minmax(0, 1fr) auto;
   }
 
-  .xflow-review-schema-null {
+  .etl-review-schema-null {
     display: none;
   }
 
@@ -536,7 +536,7 @@
     text-align: left;
   }
 
-  .permission-xflow-access-row {
+  .permission-config-access-row {
     grid-column: 1 / -1;
   }
 
