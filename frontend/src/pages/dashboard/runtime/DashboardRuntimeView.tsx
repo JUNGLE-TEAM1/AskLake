@@ -192,6 +192,7 @@ export function DashboardRuntimeView({
   runtime,
 }: DashboardRuntimeViewProps) {
   const assistantPromptInsertionIdRef = useRef(0);
+  const visualizationPromptTargetWidgetIdRef = useRef<string | null>(null);
   const visualizationPromptInsertionIdRef = useRef(0);
   const [assistantPromptInsertion, setAssistantPromptInsertion] = useState<DashboardAssistantPromptInsertion | null>(null);
   const [visualizationPromptInsertion, setVisualizationPromptInsertion] = useState<VisualizationPromptInsertion | null>(null);
@@ -329,8 +330,10 @@ export function DashboardRuntimeView({
     });
   };
   const queueVisualizationPromptText = (text: string) => {
-    const targetWidgetId = selectedDraftWidget?.id;
-    if (!targetWidgetId || !isVisualizationRequestWidget(selectedDraftWidget)) return;
+    const targetWidgetId = selectedDraftWidget && isVisualizationRequestWidget(selectedDraftWidget)
+      ? selectedDraftWidget.id
+      : visualizationPromptTargetWidgetIdRef.current;
+    if (!targetWidgetId) return;
     visualizationPromptInsertionIdRef.current += 1;
     setVisualizationPromptInsertion({
       id: visualizationPromptInsertionIdRef.current,
@@ -372,19 +375,21 @@ export function DashboardRuntimeView({
     if (!dataset) return;
 
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(`${dataset.name} 데이터셋으로`);
+      queueAssistantPromptText(dataset.name);
       return;
     }
 
-    queueVisualizationPromptText(`${dataset.name} 데이터셋으로`);
+    queueVisualizationPromptText(dataset.name);
   };
   const handleSelectDatasetColumn = (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => {
     if (inspectorMode === "assistant") {
-      queueAssistantPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+      queueAssistantPromptText(column.name);
+      onSelectDataset(dataset.id);
       return;
     }
 
-    queueVisualizationPromptText(`${dataset.name} 데이터셋의 ${column.name} 컬럼`);
+    queueVisualizationPromptText(column.name);
+    onSelectDataset(dataset.id);
   };
   const selectedWidgetHidesInspector = hidesInspectorForWidget(selectedDraftWidget);
   const isAssistantInspectorOpen = isDraftMode && inspectorMode === "assistant";
@@ -393,6 +398,13 @@ export function DashboardRuntimeView({
   useEffect(() => {
     if (selectedWidgetHidesInspector) onPreviewWidget(null);
   }, [onPreviewWidget, selectedWidgetHidesInspector, selectedWidgetId]);
+
+  useEffect(() => {
+    if (!selectedDraftWidget) return;
+    visualizationPromptTargetWidgetIdRef.current = isVisualizationRequestWidget(selectedDraftWidget)
+      ? selectedDraftWidget.id
+      : null;
+  }, [selectedDraftWidget]);
 
   const runtimeCanvas = isDraftMode ? (
     draftLoading ? (
