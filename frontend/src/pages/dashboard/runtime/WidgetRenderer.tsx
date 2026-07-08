@@ -666,15 +666,16 @@ function VisualizationRequestWidget({
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPromptEditing, setIsPromptEditing] = useState(false);
-  const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
+  const savedPrompt = configText(widget, "prompt");
+  const [prompt, setPrompt] = useState(() => savedPrompt);
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setPrompt(configText(widget, "prompt"));
+    setPrompt(savedPrompt);
     setIsPromptEditing(false);
-  }, [widget.id, widget.config]);
+  }, [savedPrompt, widget.id]);
 
   useEffect(() => {
     setMessage(null);
@@ -761,7 +762,7 @@ function VisualizationRequestWidget({
           onFocus={() => setIsPromptEditing(true)}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
-            setPrompt(configText(widget, "prompt"));
+            setPrompt(savedPrompt);
             setIsPromptEditing(false);
             event.currentTarget.blur();
           }}

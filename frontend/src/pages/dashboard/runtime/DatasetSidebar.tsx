@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
@@ -176,12 +176,51 @@ export function DatasetSidebar({
     });
   }, [requiredExpandedItems]);
 
+  const handleActivateTreeItem = (itemId: string | null) => {
+    if (typeof itemId !== "string") return;
+
+    if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
+      setExpandedItems((currentItems) => (
+        currentItems.includes(itemId) ? currentItems : [...currentItems, itemId]
+      ));
+      onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
+      return;
+    }
+
+    const columnItem = parseColumnTreeItemId(itemId);
+    if (!columnItem) return;
+    const dataset = datasets.find((item) => item.id === columnItem.datasetId);
+    const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
+    if (!dataset || !column) return;
+    const parentDatasetItemId = datasetTreeItemId(dataset.id);
+    setExpandedItems((currentItems) => (
+      currentItems.includes(parentDatasetItemId) ? currentItems : [...currentItems, parentDatasetItemId]
+    ));
+    onSelectColumn?.(dataset, column);
+  };
+  const handleTreeMouseDownCapture = (event: MouseEvent<HTMLElement>) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const treeItem = target?.closest('[role="treeitem"]');
+    if (!treeItem || !event.currentTarget.contains(treeItem)) return;
+
+    const domItemId = treeItem.getAttribute("id") ?? "";
+    const columnItemIndex = domItemId.indexOf(COLUMN_ITEM_PREFIX);
+    if (columnItemIndex >= 0) {
+      handleActivateTreeItem(domItemId.slice(columnItemIndex));
+      return;
+    }
+
+    const datasetItemIndex = domItemId.indexOf(DATASET_ITEM_PREFIX);
+    if (datasetItemIndex >= 0) handleActivateTreeItem(domItemId.slice(datasetItemIndex));
+  };
+
   return (
     <aside
       aria-hidden={!isOpen}
       aria-label="데이터셋"
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
+      onMouseDownCapture={handleTreeMouseDownCapture}
     >
       <div className="asklake-dataset-sidebar-header">
         <h2>데이터셋</h2>
@@ -201,22 +240,8 @@ export function DatasetSidebar({
             className="asklake-dataset-tree"
             expandedItems={expandedItems}
             selectedItems={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : null}
-            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => setExpandedItems([...itemIds])}
-            onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-              if (typeof itemId !== "string") return;
-
-              if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
-                onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
-                return;
-              }
-
-              const columnItem = parseColumnTreeItemId(itemId);
-              if (!columnItem) return;
-              const dataset = datasets.find((item) => item.id === columnItem.datasetId);
-              const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
-              if (!dataset || !column) return;
-              onSelectDataset(dataset.id);
-              onSelectColumn?.(dataset, column);
+            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
+              setExpandedItems((currentItems) => Array.from(new Set([...currentItems, ...itemIds])));
             }}
           >
             <TreeItem
