@@ -46,7 +46,7 @@ import {
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -105,6 +105,7 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
 ];
 
 const catalogPageSize = 5;
+const materializationRunPageSize = 5;
 const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
@@ -143,6 +144,35 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
+}
+
+function formatRunCreatedAt(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value || "-";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(parsed));
+}
+
+function formatRunStorageSize(sizeBytes: number) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0B";
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
+  if (status === "success") return "성공";
+  if (status === "failed") return "실패";
+  if (status === "canceled") return "취소";
+  if (status === "running") return "실행 중";
+  return "대기";
 }
 
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
@@ -242,11 +272,13 @@ function compareCatalogDatasetsBySort(
 export function CatalogPage({
   datasets,
   onAction,
+  onMaterializationRunDelete,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onMaterializationRunDelete: (datasetId: string, runId: string) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
@@ -254,6 +286,8 @@ export function CatalogPage({
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
+  const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
+  const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -390,7 +424,24 @@ export function CatalogPage({
 
   const selectPreviewDataset = (dataset: CatalogDataset) => {
     setPreviewDataset(dataset);
+    setExpandedDatasetIds((ids) => ids.includes(dataset.id) ? ids.filter((id) => id !== dataset.id) : [...ids, dataset.id]);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+  };
+
+  const updateMaterializationRunPage = (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => {
+    event.stopPropagation();
+    const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
+    const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
+    setMaterializationRunPageByDatasetId((state) => ({
+      ...state,
+      [dataset.id]: normalizedPage,
+    }));
+    onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
+  };
+
+  const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
+    event.stopPropagation();
+    onMaterializationRunDelete(dataset.id, runId);
   };
 
   return (
@@ -511,35 +562,53 @@ export function CatalogPage({
               {paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
+                const isExpanded = expandedDatasetIds.includes(dataset.id);
 
                 return (
-                  <article
-                    className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
-                    key={dataset.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => selectPreviewDataset(dataset)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        selectPreviewDataset(dataset);
-                      }
-                    }}
-                  >
-                    {isPinned && (
-                      <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
-                        <Pin size={13} />
-                        고정됨
-                      </span>
+                  <div className={["catalog-result-item", isExpanded ? "expanded" : ""].filter(Boolean).join(" ")} key={dataset.id}>
+                    <article
+                      className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectPreviewDataset(dataset)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectPreviewDataset(dataset);
+                        }
+                      }}
+                    >
+                      <div className="catalog-result-summary">
+                        {isPinned && (
+                          <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
+                            <Pin size={13} />
+                            고정됨
+                          </span>
+                        )}
+                        <div className="catalog-result-title">
+                          <strong>{dataset.name}</strong>
+                          <DatasetStatusBadge dataset={dataset} />
+                          <span className="catalog-result-expand-indicator">{isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
+                        </div>
+                        <div className="catalog-result-metrics">
+                          <span>{dataset.rows}</span>
+                          <span>{dataset.size}</span>
+                          <span>{dataset.materializationRuns?.length ?? 0} runs</span>
+                        </div>
+                        <div className="catalog-result-tags">
+                          {dataset.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                        </div>
+                      </div>
+                    </article>
+                    {isExpanded && (
+                      <CatalogMaterializationRuns
+                        dataset={dataset}
+                        onDelete={deleteMaterializationRun}
+                        onPageChange={updateMaterializationRunPage}
+                        page={materializationRunPageByDatasetId[dataset.id] ?? 1}
+                      />
                     )}
-                    <div className="catalog-result-title">
-                      <strong>{dataset.name}</strong>
-                      <DatasetStatusBadge dataset={dataset} />
-                    </div>
-                    <div className="catalog-result-tags">
-                      {dataset.tags.map((tag) => <span key={tag}>{tag}</span>)}
-                    </div>
-                  </article>
+                  </div>
                 );
               })}
               {!hasCatalogResults && (
@@ -772,6 +841,73 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
     <div className="catalog-mini-metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function CatalogMaterializationRuns({
+  dataset,
+  onDelete,
+  onPageChange,
+  page,
+}: {
+  dataset: CatalogDataset;
+  onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
+  onPageChange: (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => void;
+  page: number;
+}) {
+  const runs = dataset.materializationRuns ?? [];
+  const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const pageStartIndex = (currentPage - 1) * materializationRunPageSize;
+  const visibleRuns = runs.slice(pageStartIndex, pageStartIndex + materializationRunPageSize);
+
+  return (
+    <div className="catalog-materialization-panel" onClick={(event) => event.stopPropagation()}>
+      <div className="catalog-materialization-header">
+        <strong>생성/append 결과</strong>
+        <span>{runs.length}개 결과 · {dataset.rows} · {dataset.size}</span>
+      </div>
+      {visibleRuns.length > 0 ? (
+        <div className="catalog-materialization-list">
+          {visibleRuns.map((run) => (
+            <div className="catalog-materialization-row" key={run.runId}>
+              <span className={`catalog-run-status ${run.status}`}>{materializationRunStatusLabel(run.status)}</span>
+              <strong title={run.runId}>{run.runId}</strong>
+              <span>{formatRunCreatedAt(run.createdAt)}</span>
+              <span>{run.rowCount.toLocaleString()} rows</span>
+              <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
+              <span title={run.sourceLabel}>{run.sourceLabel}</span>
+              <button
+                aria-label={`${run.runId} append 결과 삭제`}
+                className="catalog-materialization-delete"
+                type="button"
+                onClick={(event) => {
+                  if (window.confirm("이 append 결과를 데이터셋에서 삭제할까요?")) {
+                    onDelete(event, dataset, run.runId);
+                  } else {
+                    event.stopPropagation();
+                  }
+                }}
+              >
+                삭제
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
+      )}
+      {runs.length > materializationRunPageSize && (
+        <div className="catalog-materialization-pagination">
+          <span>{pageStartIndex + 1}-{Math.min(pageStartIndex + visibleRuns.length, runs.length)} / {runs.length}</span>
+          <div>
+            <button disabled={currentPage === 1} type="button" onClick={(event) => onPageChange(event, dataset, currentPage - 1)}>이전</button>
+            <strong>{currentPage} / {totalPages}</strong>
+            <button disabled={currentPage === totalPages} type="button" onClick={(event) => onPageChange(event, dataset, currentPage + 1)}>다음</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

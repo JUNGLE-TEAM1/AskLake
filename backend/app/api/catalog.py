@@ -11,6 +11,7 @@ from app.schemas.catalog import (
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
     CreateDerivedDatasetResponse,
+    DeleteMaterializationRunResponse,
     LineageGraphResponse,
 )
 from app.services.catalog_service import CatalogService
@@ -48,6 +49,18 @@ def get_dataset_lineage(
     service: Annotated[CatalogService, Depends(get_catalog_service)],
 ) -> LineageGraphResponse:
     return service.get_dataset_lineage(dataset_id)
+
+
+@router.delete(
+    "/datasets/{dataset_id}/materialization-runs/{run_id}",
+    response_model=DeleteMaterializationRunResponse,
+)
+def delete_materialization_run(
+    dataset_id: str,
+    run_id: str,
+    service: Annotated[CatalogService, Depends(get_catalog_service)],
+) -> DeleteMaterializationRunResponse:
+    return service.delete_materialization_run(dataset_id, run_id)
 
 
 @router.post(

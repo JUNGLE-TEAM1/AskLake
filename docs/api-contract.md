@@ -284,6 +284,17 @@ type CatalogDataset = {
   storageFormat?: string;
   storageLocation?: string;
   storageSizeBytes?: number;
+  materializationRuns?: Array<{
+    runId: string;
+    jobId: string;
+    status: "queued" | "running" | "success" | "failed" | "canceled";
+    createdAt: string;
+    rowCount: number;
+    storageSizeBytes: number;
+    storageLocation?: string;
+    sourceKind: "etl" | "sql";
+    sourceLabel: string;
+  }>;
   upstream: string[];
   downstream: string[];
   lineageGraph?: LineageGraph;
@@ -291,6 +302,7 @@ type CatalogDataset = {
 ```
 
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
+`materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
 ### LineageGraph
 
@@ -671,7 +683,7 @@ Validation:
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼만 선택하며, 선택값을 `/`로 연결해 create request의 `partition`에 반영합니다.
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
-- 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
+- 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
 ### 7.3 작업 명령
 
@@ -1107,6 +1119,7 @@ Response `200 OK`:
 - Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
+- Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`에 대해 `materializationRuns`를 idempotent하게 append합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다.
 - Spark run 결과 dataset은 source -> Spark job -> target 기본 `lineageGraph`를 payload에 저장합니다. SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다.
 - SQL derived dataset 생성은 `CatalogService`와 `CatalogRepository.saveDatasetPayload` 경로만 사용합니다. ETL service는 pipeline/job/run 생성과 Spark 결과 dataset 저장만 소유합니다.
 - mock mode에서는 pipeline 생성 dataset과 SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다.
@@ -1174,7 +1187,24 @@ Response 예시:
 현재 프론트는 `CatalogDataset` 하나에 schema, sampleRows, upstream, downstream을 포함해서 표시하고, lineage modal은 `LineageGraph`를 우선 사용합니다.
 Lineage API나 `lineageGraph` fixture가 없으면 mock adapter가 `CatalogDataset.upstream`으로 fallback graph를 생성합니다.
 
-### 8.2 Dashboard FastAPI 구현 경계
+### 8.3 데이터셋 append 결과 삭제
+
+`DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}`
+
+이 API는 dataset 전체를 삭제하지 않고, dataset 안의 특정 append/materialize 결과 metadata만 제거합니다. 현재 범위에서는 물리 lake 파일 삭제나 compaction을 수행하지 않습니다.
+
+Response `200 OK`:
+
+```ts
+type DeleteMaterializationRunResponse = {
+  deletedRunId: string;
+  dataset: CatalogDataset;
+};
+```
+
+서버는 삭제 후 남아 있는 성공 `materializationRuns` 기준으로 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`를 재계산합니다. 마지막 append 결과까지 삭제되면 dataset shell은 남고 합산 값은 `0 rows`, `0B`가 됩니다. 전체 dataset 삭제는 별도 API/UX로 분리합니다.
+
+### 8.4 Dashboard FastAPI 구현 경계
 
 Dashboard FastAPI 전환은 `dashboard card`와 `dashboard runtime`을 분리해서 구현한다.
 목록 화면은 card metadata만 사용하고, 대시보드 내부 화면은 draft/published revision snapshot을 사용한다.
