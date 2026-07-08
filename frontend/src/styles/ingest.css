@@ -123,51 +123,6 @@
   padding: 16px 20px 20px;
 }
 
-.jobs-toolbar {
-  display: grid;
-  gap: 0;
-}
-
-.jobs-toolbar-body {
-  display: grid;
-  grid-template-columns: minmax(430px, 1fr) repeat(4, max-content) max-content;
-  align-items: center;
-  gap: 8px;
-  border-top: 1px solid #eef2f7;
-  background: #fbfdff;
-  padding: 12px 20px;
-}
-
-.jobs-search {
-  display: flex;
-  min-height: 38px;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid #e4e7ee;
-  border-radius: 7px;
-  background: #f9fbfc;
-  color: #9095a1;
-  padding: 0 14px;
-  font-size: 13px;
-  min-width: 0;
-}
-
-.jobs-search span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.jobs-filter {
-  min-width: 74px;
-  border-radius: 7px;
-}
-
-.reset-filter {
-  justify-self: end;
-  white-space: nowrap;
-}
-
 .job-table {
   display: grid;
   gap: 12px;

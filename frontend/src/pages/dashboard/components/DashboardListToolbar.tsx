@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FilterToolbar, FilterToolbarActions, FilterToolbarDivider, FilterToolbarMenu, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { dashboardSortOptions, getDashboardSortLabel } from "../dashboardListUtils";
@@ -39,27 +40,27 @@ export function DashboardListToolbar({
   const activeFilterCount = (ownerFilter === "all" ? 0 : 1) + selectedTags.length;
 
   return (
-    <Panel className="dashboard-list-toolbar">
+    <Panel className="dashboard-list-toolbar" overflow="visible">
       <PanelHeader
         description="이름, 소유자, 태그, 정렬 기준으로 대시보드 목록을 좁혀 봅니다."
         icon={<SlidersHorizontal size={16} />}
         meta={<Badge size="sm">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</Badge>}
         title="검색 및 필터"
       />
-      <div className="dashboard-list-toolbar-body">
-        <div className="dashboard-list-search">
-          <Search size={16} />
+      <FilterToolbar layout="actions">
+        <FilterToolbarSearch icon={<Search size={16} />}>
           <Input
-            className="dashboard-list-search-input"
+            className="h-auto border-0 bg-transparent px-0 py-0 font-bold shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
             aria-label="대시보드 검색"
             type="search"
             placeholder="대시보드 검색..."
+            variant="ghost"
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
           />
-        </div>
-        <div className="dashboard-toolbar-actions">
-          <div className="dashboard-toolbar-menu">
+        </FilterToolbarSearch>
+        <FilterToolbarActions>
+          <FilterToolbarMenu>
             <Button className="dashboard-filter-button" type="button" aria-expanded={openControl === "owner"} aria-haspopup="menu" onClick={() => onToggleControl("owner")} size="sm" variant="outline">
               <Filter size={22} />
               <span>{ownerFilter === "all" ? "모든 소유자" : ownerFilter}</span>
@@ -73,8 +74,8 @@ export function DashboardListToolbar({
                 ))}
               </div>
             )}
-          </div>
-          <div className="dashboard-toolbar-menu">
+          </FilterToolbarMenu>
+          <FilterToolbarMenu>
             <Button className="dashboard-filter-button" type="button" aria-expanded={openControl === "tag"} aria-haspopup="menu" onClick={() => onToggleControl("tag")} size="sm" variant="outline">
               <span>{selectedTags.length ? `태그 ${selectedTags.length}개` : "태그 필터"}</span>
               <ChevronRight size={18} />
@@ -90,9 +91,9 @@ export function DashboardListToolbar({
                 ))}
               </div>
             )}
-          </div>
-          <span className="dashboard-toolbar-divider" aria-hidden="true" />
-          <div className="dashboard-toolbar-menu">
+          </FilterToolbarMenu>
+          <FilterToolbarDivider aria-hidden="true" />
+          <FilterToolbarMenu>
             <Button className="dashboard-sort-button" type="button" aria-label={`정렬 기준: ${activeSortLabel}`} aria-expanded={openControl === "sort"} aria-haspopup="menu" title={activeSortLabel} onClick={() => onToggleControl("sort")} size="icon" variant="outline">
               <ArrowUpDown size={24} />
             </Button>
@@ -106,9 +107,9 @@ export function DashboardListToolbar({
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      </div>
+          </FilterToolbarMenu>
+        </FilterToolbarActions>
+      </FilterToolbar>
     </Panel>
   );
 }
