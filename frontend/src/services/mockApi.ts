@@ -258,17 +258,15 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     ? draftPipeline.schema.sampleRows.map((row) => row.slice(0, Math.max(schema.length, 1)))
     : [["-", "-", "-", "-", "Pipeline queued"]];
   const normalizedTags = normalizeDerivedDatasetTags(
-    draftPipeline.target.tags && draftPipeline.target.tags.length > 0
-      ? draftPipeline.target.tags
-      : isSqlResultSource
-        ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
-        : ["#customer", "#RAG", "#review"],
+    isSqlResultSource
+      ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
+      : ["#customer", "#RAG", "#리뷰"],
   );
 
   const dataset: CatalogDataset = {
-    description: draftPipeline.target.description || (isSqlResultSource
+    description: isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
-      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,

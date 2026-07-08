@@ -62,10 +62,8 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     storagePath: draft.target.storagePath,
     storageType: draft.target.storageType,
     targetDataset,
-    targetDescription: draft.target.description,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
-    targetTags: draft.target.tags,
     transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
@@ -133,10 +131,8 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.storagePath !== undefined) next.target.storagePath = patch.storagePath;
   if (patch.storageType !== undefined) next.target.storageType = patch.storageType;
   if (patch.targetDataset !== undefined) next.target.datasetName = patch.targetDataset;
-  if (patch.targetDescription !== undefined) next.target.description = patch.targetDescription;
   if (patch.targetFormat !== undefined) next.target.format = patch.targetFormat;
   if (patch.targetLayer !== undefined) next.target.layer = patch.targetLayer;
-  if (patch.targetTags !== undefined) next.target.tags = patch.targetTags;
   if (patch.rag !== undefined) next.target.rag = patch.rag;
 
   return next;

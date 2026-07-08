@@ -343,7 +343,6 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
-- Target draft? `description`, `tags`? create request? `targetDescription`, `targetTags`? ???? Catalog Dataset metadata? ????.
 - 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
 - Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.

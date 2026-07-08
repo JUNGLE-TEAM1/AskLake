@@ -537,10 +537,8 @@ type CreatePipelineRequest = {
   compression: "Snappy" | "Gzip" | "None";
   storagePath: string;
   targetDataset: string;
-  targetDescription?: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;
-  targetTags?: string[];
   owner: string;
   rag: boolean;
 };
@@ -591,10 +589,8 @@ Request 예시:
   "compression": "Snappy",
   "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
-  "targetDescription": "?? ?? ??? ?? ????",
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
-  "targetTags": ["#customer", "#review", "#silver"],
   "owner": "Data Engineer Group",
   "rag": false
 }
@@ -670,7 +666,6 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
-- `targetDescription`, `targetTags`? Catalog Dataset metadata? ???? Spark run ?? ? ???? dataset description/tags? ?????.
 - 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.

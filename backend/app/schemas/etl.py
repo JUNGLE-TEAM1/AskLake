@@ -127,9 +127,7 @@ class JobRowData(CamelModel):
     partition: str | None = None
     compression: str | None = None
     storage_path: str | None = None
-    target_description: str | None = None
     target_format: str | None = None
-    target_tags: list[str] | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
     transform_output_columns: SourceFieldRows | None = None
@@ -225,10 +223,8 @@ class CreatePipelineRequest(CamelModel):
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
-    target_description: str = ""
     target_layer: TargetLayer
     target_format: str
-    target_tags: list[str] = Field(default_factory=list)
     owner: str
     rag: bool = False
 
