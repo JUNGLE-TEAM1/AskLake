@@ -2562,7 +2562,7 @@ const FALLBACK_QUALITY_RULES: QualityRule[] = [{
   targetColumn: "value",
   validationType: "Not Null",
 }];
-const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
+const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Uppercase + Trim", "Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
 const TRANSFORM_FAILURE_POLICY_OPTIONS = ["Warn", "Set Null", "Drop Row", "Fail Run"] as const;
 const QUALITY_VALIDATION_OPTIONS: Array<QualityRule["validationType"]> = ["Not Null", "Regex Match", "Range Check", "Accepted Values"];
 const QUALITY_SEVERITY_OPTIONS: Array<QualityRule["severity"]> = ["Warning", "Error"];
@@ -2572,6 +2572,8 @@ const TRANSFORM_OPERATION_LABELS: Record<TransformOperation, string> = {
   "Cast Decimal": "숫자 타입 변환",
   "Extract JSONPath": "JSON 경로 추출",
   "Lowercase + Trim": "소문자/공백 정리",
+  Trim: "공백 정리",
+  "Uppercase + Trim": "대문자/공백 정리",
   Mask: "마스킹",
   "Parse Timestamp": "시간 타입 변환",
 };
@@ -3607,6 +3609,10 @@ function getDefaultParamForOperation(operation: TransformOperation) {
       return "$.user.contact.email";
     case "Lowercase + Trim":
       return "lower(), trim()";
+    case "Uppercase + Trim":
+      return "upper(), trim()";
+    case "Trim":
+      return "trim()";
     case "Cast Decimal":
       return "decimal(10,2)";
     case "Parse Timestamp":
@@ -3679,6 +3685,8 @@ function RuleStepBuilder({
       case "Extract JSONPath":
         return jsonPath.trim() || getDefaultParamForOperation(operation);
       case "Lowercase + Trim":
+      case "Uppercase + Trim":
+      case "Trim":
         return getDefaultParamForOperation(operation);
       case "Cast Decimal":
         return decimalFormat.trim() || getDefaultParamForOperation(operation);
@@ -3991,11 +3999,11 @@ function TransformParameterControl({
   operation: TransformOperation;
   timestampFormat: string;
 }) {
-  if (operation === "Lowercase + Trim") {
+  if (operation === "Lowercase + Trim" || operation === "Uppercase + Trim" || operation === "Trim") {
     return (
       <div className="hegun-rule-select">
         <strong>추가 파라미터 없음</strong>
-        <em>lower(), trim() 규칙으로 저장됩니다.</em>
+        <em>{getDefaultParamForOperation(operation)} 규칙으로 저장됩니다.</em>
       </div>
     );
   }

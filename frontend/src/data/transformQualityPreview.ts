@@ -137,8 +137,16 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
     if (operation.includes("json")) {
       return { failed: false, value: readJsonPath(inputValue, step.params) };
     }
-    if (operation.includes("lower") || operation.includes("trim")) {
-      return { failed: false, value: inputValue.trim().toLowerCase() };
+    if (operation.includes("upper")) {
+      const trimmedValue = operation.includes("trim") ? inputValue.trim() : inputValue;
+      return { failed: false, value: trimmedValue.toUpperCase() };
+    }
+    if (operation.includes("lower")) {
+      const trimmedValue = operation.includes("trim") ? inputValue.trim() : inputValue;
+      return { failed: false, value: trimmedValue.toLowerCase() };
+    }
+    if (operation.includes("trim")) {
+      return { failed: false, value: inputValue.trim() };
     }
     if (operation.includes("decimal") || operation.includes("cast")) {
       const value = Number(inputValue);

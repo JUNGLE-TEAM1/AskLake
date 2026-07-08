@@ -83,6 +83,8 @@ P0에서는 옵션 A. 추천 Transform Step 목록 on/off 방식을 사용한다
 ```text
 [on] Extract JSONPath: meta_json -> user_email
 [on] Lowercase + Trim: user_email -> user_email
+[off] Uppercase + Trim: country_code -> country_code
+[off] Trim: display_name -> display_name
 [on] Cast Decimal: price_usd -> price_usd
 [on] Parse Timestamp: created_at -> created_at_utc
 [on] Mask: phone_number -> phone_masked
