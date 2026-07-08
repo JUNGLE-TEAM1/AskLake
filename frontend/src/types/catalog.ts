@@ -35,6 +35,7 @@ export type CatalogDataset = {
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   lastUpdated: string;
   lineageGraph?: LineageGraph;
+  materializationRuns?: DatasetMaterializationRun[];
   name: string;
   nextRefresh: string;
   owner: string;
@@ -52,4 +53,16 @@ export type CatalogDataset = {
   storageSizeBytes?: number;
   tags: string[];
   upstream: string[];
+};
+
+export type DatasetMaterializationRun = {
+  createdAt: string;
+  jobId: string;
+  rowCount: number;
+  runId: string;
+  sourceKind: "etl" | "sql";
+  sourceLabel: string;
+  status: "success" | "failed" | "canceled" | "running" | "queued";
+  storageLocation?: string;
+  storageSizeBytes: number;
 };

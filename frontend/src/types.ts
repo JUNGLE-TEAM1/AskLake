@@ -1,6 +1,6 @@
 export { ApiError } from "./types/audit";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
-export type { CatalogDataset, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
+export type { CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
 export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
 export type {
   CreatePipelineRequest,

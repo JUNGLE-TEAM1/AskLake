@@ -36,17 +36,18 @@ SCRIPTS_DIR = BACKEND_DIR / "scripts"
 def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
     validate_create_request(request)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
-
-    if (
-        etl_repository.get_dataset_by_id(db, dataset_id)
-        or etl_repository.get_dataset_by_name(db, request.target_dataset)
-        or etl_repository.get_job_by_dataset_id(db, dataset_id)
-        or etl_repository.get_job_by_target(db, request.target_dataset)
-    ):
-        raise ApiError(
-            ErrorCode.CONFLICT,
-            f"Dataset already exists or is pending run: {request.target_dataset}",
-            status.HTTP_409_CONFLICT,
+    existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
+    if existing_job is not None:
+        update_existing_append_job(existing_job, request, dataset_id)
+        saved_job = etl_repository.save_job(db, existing_job)
+        return CreatePipelineResponse(
+            catalog_target={
+                "id": dataset_id,
+                "layer": request.target_layer,
+                "name": request.target_dataset,
+                "status": "pending_run",
+            },
+            job=saved_job,
         )
 
     dataset_schema = dataset_schema_from_request(request)
@@ -216,7 +217,8 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
         if spark_result.get("status") == "success":
-            dataset_model = dataset_from_spark_result(job, spark_result)
+            existing_dataset = etl_repository.get_dataset_by_id(db, job.dataset_id) if job.dataset_id else None
+            dataset_model = dataset_from_spark_result(job, spark_result, existing_dataset)
     elif command == "cancelRun":
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
@@ -348,7 +350,7 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
     job.target_path = result.get("outputPath") or job.target_path
 
 
-def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> CatalogDatasetModel:
+def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:
     now = str(result.get("endedAt") or iso_now())
     schema = result.get("schema")
     schema_json = [
@@ -356,7 +358,8 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         for field in schema
     ] if isinstance(schema, list) and schema else schema_from_job(job)
     dataset_id = f"ds_{normalize_column_name(job.target)}"
-    dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now)
+    previous_payload = existing_dataset.payload if existing_dataset and existing_dataset.payload else None
+    dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     return CatalogDatasetModel(
@@ -389,37 +392,128 @@ def dataset_payload_from_spark_result(
     dataset_id: str,
     schema_json: list[list[str]],
     last_updated: str,
+    previous_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     output_path = str(result.get("outputPath") or "-")
     storage_size_bytes = dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    materialization_runs = append_materialization_run(
+        previous_payload.get("materializationRuns") if previous_payload else [],
+        {
+            "createdAt": last_updated,
+            "jobId": job.id,
+            "rowCount": parse_count_value(result.get("outputRows")),
+            "runId": str(result.get("runId") or ""),
+            "sourceKind": "sql" if job.source_type == "SQL Result" else "etl",
+            "sourceLabel": job.name or job.source or job.source_label or job.id,
+            "status": "success" if result.get("status") == "success" else "failed",
+            "storageLocation": output_path,
+            "storageSizeBytes": storage_size_bytes,
+        },
+    )
+    aggregate = aggregate_materialization_runs(materialization_runs)
     return {
         "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
         "layer": job.target_layer,
-        "lastUpdated": last_updated,
+        "lastUpdated": aggregate["lastUpdated"] or last_updated,
         "lineageGraph": lineage_graph,
+        "materializationRuns": materialization_runs,
         "name": job.target,
         "nextRefresh": job.schedule,
         "owner": job.owner,
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
-        "rows": format_rows(result.get("outputRows")),
+        "rows": format_rows(aggregate["rowCount"]),
         "sampleRows": job.schema_sample_rows or [],
         "schema": schema_json,
-        "size": display_size,
+        "size": format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] > 0 else display_size,
         "source": job.name,
-        "sourceRunId": result.get("runId"),
+        "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
         "storageFormat": "parquet",
         "storageLocation": output_path,
-        "storageSizeBytes": storage_size_bytes,
+        "storageSizeBytes": aggregate["storageSizeBytes"],
         "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
         "upstream": [job.source_label, job.name],
     }
+
+
+def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest, dataset_id: str) -> None:
+    dataset_schema = dataset_schema_from_request(request)
+    sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
+    metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
+    job.name = request.job_name or job.name
+    job.owner = request.owner
+    job.tag = "[append]"
+    job.source = f"{request.source_type} / {request.source_label}"
+    job.target = request.target_dataset
+    job.schedule = request.schedule_label
+    job.schedule_policy = schedule_policy_from_request(request)
+    job.schedule_summary = request.schedule_summary
+    job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
+    job.retry_policy_summary = request.retry_policy_summary
+    job.run_limit_summary = request.run_limit_summary
+    job.source_config = tuple_rows_to_lists(request.source_config)
+    job.source_label = request.source_label
+    job.source_type = request.source_type
+    job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
+    job.schema_fingerprint = request.schema_fingerprint
+    job.schema_sample_rows = request.schema_sample_rows
+    job.permission_roles = request.permission_roles
+    job.storage_type = request.storage_type
+    job.partition = request.partition
+    job.compression = request.compression
+    job.storage_path = request.storage_path
+    job.target_format = request.target_format
+    job.target_layer = request.target_layer
+    job.rag = request.rag
+    job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
+    job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
+    job.quality_invalid_rows = request.quality_invalid_rows
+    job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
+    job.quality_score = request.quality_score
+    job.quality_status = request.quality_status
+    job.last_run = "append draft updated"
+    job.last_state = f"{metrics['schema_columns']}개 컬럼 · 기존 데이터셋 append 대기"
+    job.next_run = schedule_next_run_label(request.schedule_label, request.schedule_summary)
+    job.progress = None
+    job.stats = initial_job_stats(metrics)
+    job.dag_steps = initial_dag_steps(request, metrics)
+    job.dataset_id = dataset_id
+
+
+def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> list[dict[str, Any]]:
+    runs = [run for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
+    run_id = str(next_run.get("runId") or "")
+    if not run_id:
+        return runs
+    return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    active_runs = [run for run in runs if run.get("status") == "success"]
+    latest_run = active_runs[0] if active_runs else None
+    return {
+        "latestRunId": latest_run.get("runId") if latest_run else None,
+        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
+        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
+        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
+    }
+
+
+def parse_count_value(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    digits = re.sub(r"[^0-9]", "", str(value))
+    return int(digits) if digits else 0
 
 
 def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: list[list[str]]) -> dict[str, Any]:

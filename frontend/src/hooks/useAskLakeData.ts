@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
+import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
@@ -405,8 +406,37 @@ function normalizeJobRow(job: JobRowData): JobRowData {
 function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   return {
     ...dataset,
+    materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
   };
+}
+
+function formatStorageSize(sizeBytes: number) {
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
+  const materializationRuns = dataset.materializationRuns ?? [];
+  const activeRuns = materializationRuns.filter((run) => run.status === "success");
+  const latestRun = activeRuns[0];
+  const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
+  const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
+
+  return normalizeDatasetRow({
+    ...dataset,
+    lastUpdated: latestRun?.createdAt ?? dataset.lastUpdated,
+    rows: `${rowCount.toLocaleString()} rows`,
+    size: storageSizeBytes > 0 ? formatStorageSize(storageSizeBytes) : "0B",
+    sourceRunId: latestRun?.runId,
+    storageSizeBytes,
+  });
 }
 
 function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
@@ -730,6 +760,43 @@ export function useAskLakeData({
     return true;
   };
 
+  const deleteMaterializationRun = async (datasetId: string, runId: string) => {
+    const previousState = {
+      datasets,
+      selectedDataset,
+    };
+    const targetDataset = datasets.find((dataset) => dataset.id === datasetId);
+    if (!targetDataset) {
+      showToast("삭제할 append 결과를 찾지 못했습니다.", "info");
+      return;
+    }
+
+    const applyDataset = (dataset: CatalogDataset) => {
+      const normalizedDataset = normalizeDatasetRow(dataset);
+      setDatasets((items) => items.map((item) => (item.id === datasetId ? normalizedDataset : item)));
+      setSelectedDataset((current) => (current.id === datasetId ? normalizedDataset : current));
+      return normalizedDataset;
+    };
+
+    try {
+      const nextDataset = apiConfig.useMock
+        ? recalculateDatasetFromMaterializationRuns({
+            ...targetDataset,
+            materializationRuns: (targetDataset.materializationRuns ?? []).filter((run) => run.runId !== runId),
+          })
+        : normalizeDatasetRow((await deleteDatasetMaterializationRun(datasetId, runId)).dataset);
+
+      applyDataset(nextDataset);
+      writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
+      showToast("데이터셋 append 결과를 삭제했습니다.");
+    } catch {
+      setDatasets(previousState.datasets);
+      setSelectedDataset(previousState.selectedDataset);
+      writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
+      showToast("append 결과 삭제에 실패했습니다.", "info");
+    }
+  };
+
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
     setJobs((items) => items.map((job) => (job.id === jobId ? updater(job) : job)));
     setSelectedJob((job) => (job.id === jobId ? updater(job) : job));
@@ -903,6 +970,7 @@ export function useAskLakeData({
     openJobDetail,
     openJobRuns,
     prepareSqlDatasetJobDraft,
+    deleteMaterializationRun,
     runsByJobId,
     selectedDataset,
     selectedJob,
