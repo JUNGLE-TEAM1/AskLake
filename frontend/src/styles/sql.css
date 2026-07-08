@@ -1861,7 +1861,7 @@
   min-height: 320px;
   max-height: min(560px, 58vh);
   min-width: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
 }
 
@@ -1883,6 +1883,10 @@
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.sql-preview-table-wrap > div:first-child {
+  max-width: 100%;
 }
 
 .sql-preview-table th,
@@ -1907,6 +1911,7 @@
   font-weight: 750;
 }
 
+.sql-preview-table th button,
 .sql-preview-table th span,
 .sql-preview-table td span {
   display: block;
@@ -1914,15 +1919,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sql-preview-table td[data-value-kind="number"] {
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.sql-preview-table td[data-value-kind="date"] {
-  font-variant-numeric: tabular-nums;
 }
 
 .sql-preview-table-wrap[data-column-count="1"] .sql-preview-table,
