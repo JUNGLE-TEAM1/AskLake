@@ -12,6 +12,10 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: "@",
+        replacement: fileURLToPath(new URL("./src", import.meta.url)),
+      },
+      {
         find: /^lucide-react$/,
         replacement: fileURLToPath(new URL("./src/vendor/lucide.ts", import.meta.url)),
       },
