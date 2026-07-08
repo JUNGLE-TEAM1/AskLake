@@ -1,4 +1,4 @@
-.asklake-xflow-source-adapter {
+.asklake-schema-transform-adapter {
   max-height: calc(100vh - 252px);
   min-height: 540px;
   overflow: auto;
@@ -7,33 +7,33 @@
   scrollbar-width: thin;
 }
 
-.asklake-xflow-scroll-frame {
+.asklake-schema-transform-scroll-frame {
   min-width: 960px;
 }
 
-.asklake-xflow-source-adapter .flex.flex-col.bg-gray-50 {
+.asklake-schema-transform-adapter .flex.flex-col.bg-gray-50 {
   min-height: 540px;
 }
 
-.asklake-xflow-source-adapter .flex.flex-1.p-4.gap-4 {
+.asklake-schema-transform-adapter .flex.flex-1.p-4.gap-4 {
   height: clamp(420px, 52vh, 540px) !important;
   max-height: clamp(420px, 52vh, 540px) !important;
   min-height: 0 !important;
   overflow: hidden;
 }
 
-.asklake-xflow-source-adapter .flex-1.basis-0.flex.flex-col.bg-white {
+.asklake-schema-transform-adapter .flex-1.basis-0.flex.flex-col.bg-white {
   min-height: 0;
   max-height: 100%;
 }
 
-.asklake-xflow-source-adapter .flex-1.overflow-y-auto,
-.asklake-xflow-source-adapter textarea {
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto,
+.asklake-schema-transform-adapter textarea {
   min-height: 0;
   scrollbar-width: thin;
 }
 
-.asklake-xflow-source-adapter .flex-1.overflow-y-auto.p-2 {
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto.p-2 {
   flex: 1 1 0 !important;
   height: auto !important;
   max-height: 100% !important;
@@ -46,7 +46,7 @@
   scrollbar-width: auto;
 }
 
-.asklake-xflow-source-adapter .flex-1.overflow-y-auto.p-2::before {
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto.p-2::before {
   content: "";
   position: sticky;
   top: 10px;
@@ -62,7 +62,7 @@
   pointer-events: none;
 }
 
-.asklake-xflow-source-adapter .flex-1.overflow-y-auto.p-4 {
+.asklake-schema-transform-adapter .flex-1.overflow-y-auto.p-4 {
   overflow-y: scroll !important;
   position: relative;
   padding-right: 18px !important;
@@ -72,47 +72,47 @@
   scrollbar-width: auto;
 }
 
-.asklake-xflow-source-adapter .overflow-x-auto {
+.asklake-schema-transform-adapter .overflow-x-auto {
   max-height: 280px;
   overflow: auto;
   scrollbar-width: thin;
 }
 
-.asklake-xflow-source-adapter ::-webkit-scrollbar {
+.asklake-schema-transform-adapter ::-webkit-scrollbar {
   width: 18px;
   height: 18px;
 }
 
-.asklake-xflow-source-adapter ::-webkit-scrollbar-track {
+.asklake-schema-transform-adapter ::-webkit-scrollbar-track {
   background: #dbeafe;
   border-radius: 999px;
 }
 
-.asklake-xflow-source-adapter ::-webkit-scrollbar-thumb {
+.asklake-schema-transform-adapter ::-webkit-scrollbar-thumb {
   background: #2563eb;
   border: 4px solid #dbeafe;
   border-radius: 999px;
 }
 
-.asklake-xflow-source-adapter ::-webkit-scrollbar-thumb:hover {
+.asklake-schema-transform-adapter ::-webkit-scrollbar-thumb:hover {
   background: #1d4ed8;
 }
 
 @media (max-width: 900px) {
-  .asklake-xflow-source-adapter {
+  .asklake-schema-transform-adapter {
     max-height: calc(100vh - 212px);
     min-height: 0;
   }
 
-  .asklake-xflow-scroll-frame {
+  .asklake-schema-transform-scroll-frame {
     min-width: 840px;
   }
 
-  .asklake-xflow-source-adapter .flex.flex-col.bg-gray-50 {
+  .asklake-schema-transform-adapter .flex.flex-col.bg-gray-50 {
     min-height: 520px;
   }
 
-  .asklake-xflow-source-adapter .flex.flex-1.p-4.gap-4 {
+  .asklake-schema-transform-adapter .flex.flex-1.p-4.gap-4 {
     height: 460px !important;
     max-height: 460px !important;
   }

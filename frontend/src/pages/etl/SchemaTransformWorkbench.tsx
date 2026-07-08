@@ -1,10 +1,10 @@
 import { useMemo } from "react";
 import SchemaTransformEditor from "../../components/etl/SchemaTransformEditor.jsx";
-import "../../styles/xflow-source.css";
-import "../../styles/xflow-adapter.css";
+import "../../styles/schema-transform-source.css";
+import "../../styles/schema-transform-adapter.css";
 import type { SchemaColumnDraft, TransformStepDraft } from "../../types";
 
-type XFlowColumn = {
+type SchemaTransformColumn = {
   defaultValue?: string;
   name: string;
   notNull?: boolean;
@@ -17,7 +17,7 @@ type XFlowColumn = {
   type: string;
 };
 
-type XFlowSchemaTransformEditorProps = {
+type SchemaTransformWorkbenchProps = {
   columns: SchemaColumnDraft[];
   sampleRows: string[][];
   selectedIndex: number;
@@ -28,10 +28,10 @@ type XFlowSchemaTransformEditorProps = {
   onTransformStepsChange?: (steps: TransformStepDraft[]) => void;
 };
 
-const XFLOW_SOURCE_ID = "asklake-source";
-const XFLOW_DATASET_ID = "asklake-draft-source";
+const SCHEMA_TRANSFORM_SOURCE_ID = "asklake-source";
+const SCHEMA_TRANSFORM_DATASET_ID = "asklake-draft-source";
 
-export function XFlowSchemaTransformEditor({
+export function SchemaTransformWorkbench({
   columns,
   sampleRows,
   selectedIndex,
@@ -40,30 +40,30 @@ export function XFlowSchemaTransformEditor({
   onColumnsChange,
   onSelectedIndexChange,
   onTransformStepsChange,
-}: XFlowSchemaTransformEditorProps) {
+}: SchemaTransformWorkbenchProps) {
   const sourceSchema = useMemo(() => columns.map((column) => ({
     field: column.sourceName,
     name: column.sourceName,
-    type: toXFlowType(column.type),
+    type: toSchemaTransformType(column.type),
   })), [columns]);
 
   const targetSchema = useMemo(
     () => columns
       .filter((column) => column.included !== false)
-      .map((column) => toXFlowTargetColumn(column, transformSteps)),
+      .map((column) => toSchemaTransformTargetColumn(column, transformSteps)),
     [columns, transformSteps],
   );
 
   const allSources = useMemo(() => [{
-    datasetId: XFLOW_DATASET_ID,
-    id: XFLOW_SOURCE_ID,
+    datasetId: SCHEMA_TRANSFORM_DATASET_ID,
+    id: SCHEMA_TRANSFORM_SOURCE_ID,
     name: sourceFormat || "Source",
     schema: sourceSchema,
     sourceType: sourceFormat?.toLowerCase?.() ?? "source",
   }], [sourceFormat, sourceSchema]);
 
-  const handleSchemaChange = (nextTargetSchema: XFlowColumn[]) => {
-    const { nextColumns, nextRows } = projectXFlowSchema(columns, sampleRows, nextTargetSchema);
+  const handleSchemaChange = (nextTargetSchema: SchemaTransformColumn[]) => {
+    const { nextColumns, nextRows } = projectSchemaTransformSchema(columns, sampleRows, nextTargetSchema);
     onColumnsChange(nextColumns, nextRows);
     onSelectedIndexChange(Math.min(selectedIndex, Math.max(nextColumns.length - 1, 0)));
     onTransformStepsChange?.(buildTransformSteps(nextTargetSchema));
@@ -74,21 +74,21 @@ export function XFlowSchemaTransformEditor({
     onTransformStepsChange?.([
       {
         enabled: true,
-        id: "xflow-sql-transform",
+        id: "schema-transform-sql",
         input: sourceFormat || "source",
         kind: "derive",
         label: "SQL Transform",
         onError: "Warn",
         operation: "SQL Expression",
-        output: "xflow_sql_output",
+        output: "schema_transform_sql_output",
         params: sql,
       },
     ]);
   };
 
   return (
-    <div className="asklake-xflow-source-adapter">
-      <div className="asklake-xflow-scroll-frame">
+    <div className="asklake-schema-transform-adapter">
+      <div className="asklake-schema-transform-scroll-frame">
         <SchemaTransformEditor
           allSources={allSources}
           initialCustomSql=""
@@ -96,8 +96,8 @@ export function XFlowSchemaTransformEditor({
           onSchemaChange={handleSchemaChange}
           onSqlChange={handleSqlChange}
           onTestStatusChange={() => undefined}
-          sourceDatasetId={XFLOW_DATASET_ID}
-          sourceId={XFLOW_SOURCE_ID}
+          sourceDatasetId={SCHEMA_TRANSFORM_DATASET_ID}
+          sourceId={SCHEMA_TRANSFORM_SOURCE_ID}
           sourceName={sourceFormat || "Source"}
           sourceSchema={sourceSchema}
           sourceTabs={null}
@@ -108,7 +108,7 @@ export function XFlowSchemaTransformEditor({
   );
 }
 
-function toXFlowTargetColumn(column: SchemaColumnDraft, transformSteps: TransformStepDraft[]): XFlowColumn {
+function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps: TransformStepDraft[]): SchemaTransformColumn {
   const outputName = column.targetName || column.sourceName;
   const step = transformSteps.find((item) => item.output === outputName);
   return {
@@ -116,19 +116,19 @@ function toXFlowTargetColumn(column: SchemaColumnDraft, transformSteps: Transfor
     name: outputName,
     notNull: column.nullable === false || step?.operation === "Null Guard",
     originalName: column.sourceName,
-    originalType: toXFlowType(column.type),
-    sourceId: XFLOW_SOURCE_ID,
+    originalType: toSchemaTransformType(column.type),
+    sourceId: SCHEMA_TRANSFORM_SOURCE_ID,
     sourceName: "Source",
     transform: step?.operation === "SQL Expression" ? step.params : null,
     transformDisplay: step?.operation === "SQL Expression" ? step.params : null,
-    type: toXFlowType(column.type),
+    type: toSchemaTransformType(column.type),
   };
 }
 
-function projectXFlowSchema(
+function projectSchemaTransformSchema(
   currentColumns: SchemaColumnDraft[],
   sampleRows: string[][],
-  nextTargetSchema: XFlowColumn[],
+  nextTargetSchema: SchemaTransformColumn[],
 ) {
   const sourceIndexByName = new Map(currentColumns.map((column, index) => [column.sourceName, index]));
   const usedSourceNames = new Set<string>();
@@ -147,10 +147,10 @@ function projectXFlowSchema(
       }),
       included: true,
       nullable: !target.notNull,
-      role: target.transform ? `xflow-transform:${target.transform}` : existing?.role,
+      role: target.transform ? `schema-transform:${target.transform}` : existing?.role,
       sourceName: existing?.sourceName ?? sourceName,
       targetName: target.name,
-      type: fromXFlowType(target.type),
+      type: fromSchemaTransformType(target.type),
     } satisfies SchemaColumnDraft;
   });
 
@@ -167,14 +167,14 @@ function projectXFlowSchema(
   return { nextColumns, nextRows };
 }
 
-function buildTransformSteps(targetSchema: XFlowColumn[]): TransformStepDraft[] {
+function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column) => {
     const output = column.name;
     const input = normalizeSourceName(column.originalName || column.name);
     if (column.transform) {
       return [{
         enabled: true,
-        id: `xflow-${output}`,
+        id: `schema-transform-${output}`,
         input,
         kind: "derive",
         label: `SQL Expression: ${output}`,
@@ -187,7 +187,7 @@ function buildTransformSteps(targetSchema: XFlowColumn[]): TransformStepDraft[] 
     if (column.defaultValue) {
       return [{
         enabled: true,
-        id: `xflow-${output}`,
+        id: `schema-transform-${output}`,
         input,
         kind: "derive",
         label: `Default Value: ${output}`,
@@ -200,7 +200,7 @@ function buildTransformSteps(targetSchema: XFlowColumn[]): TransformStepDraft[] 
     if (column.notNull) {
       return [{
         enabled: true,
-        id: `xflow-${output}`,
+        id: `schema-transform-${output}`,
         input,
         kind: "derive",
         label: `Null Guard: ${output}`,
@@ -218,7 +218,7 @@ function normalizeSourceName(value: string) {
   return value.replace(/\./g, "_");
 }
 
-function toXFlowType(type: string) {
+function toSchemaTransformType(type: string) {
   const normalized = type.toLowerCase();
   if (normalized === "integer" || normalized === "int") return "integer";
   if (normalized === "long" || normalized === "bigint") return "long";
@@ -230,7 +230,7 @@ function toXFlowType(type: string) {
   return "string";
 }
 
-function fromXFlowType(type: string) {
+function fromSchemaTransformType(type: string) {
   const normalized = type.toLowerCase();
   if (normalized === "integer") return "Integer";
   if (normalized === "long") return "Long";

@@ -63,15 +63,15 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 
 | ETL 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 PR 처리 |
 | --- | --- | --- | --- | --- |
-| Source/Target/Permission/Review card | `xflow-review-card`, `target-xflow-card`, `permission-xflow-card` | `설계 필요` | `Panel` | CSS 유지. 후속 component 확장 후보로 기록. |
+| Source/Target/Permission/Review card | `etl-review-card`, `target-config-card`, `permission-config-card` | `설계 필요` | `Panel` | Naming cleanup 완료. 후속 component 확장 후보로 유지. |
 | Source stage tabs | `source-stage-tabs` | `관찰됨` | `SegmentedTabs` | custom stage state가 있어 이번 PR에서는 유지. |
 | Source connector cards | `source-choice-card` | `보류` | `SelectableCard` | 선택 상태, 아이콘, 설명, check 표시를 포함해 설계 필요. |
-| Schedule run type cards | `schedule-xflow-mode-card` | `보류` | `SelectableCard` | Source connector card와 함께 설계 가능. |
-| Schema transform workbench | `XFlowSchemaTransformEditor`, `schema-xflow-*`, `xflow-transform-*` | `보류` | `TransformWorkbench` | 대규모 rename/컴포넌트 분리 필요. 이번 PR에서는 후속 범위로 분리. |
+| Schedule run type cards | `schedule-config-mode-card` | `보류` | `SelectableCard` | Source connector card와 함께 설계 가능. |
+| Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
 | Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `설계 필요` | `RuleBuilderPanel`, `FormFieldGroup` | Button 전환만 진행. form/select 구조는 유지. |
-| Review edit action | `xflow-review-edit` | `구현 후보` | `SectionAction` | 이번 PR에서 `ReviewEditButton` wrapper로 반복 제거. |
-| Validation rows | `xflow-review-validation`, `permission-xflow-validation` | `설계 필요` | `ValidationList` | CSS 유지. 후속 component 확장 후보. |
-| Review key-value rows | `xflow-review-kv` | `설계 필요` | `KeyValueList` | CSS 유지. 후속 component 확장 후보. |
+| Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
+| Validation rows | `etl-review-validation`, `permission-config-validation` | `설계 필요` | `ValidationList` | Naming cleanup 완료. 후속 component 확장 후보. |
+| Review key-value rows | `etl-review-kv` | `설계 필요` | `KeyValueList` | Naming cleanup 완료. 후속 component 확장 후보. |
 | Bottom command bar | `schema-bottom-bar`, `hegun-rule-bottom-bar` | `설계 필요` | `CommandBar` | Button 전환만 진행. layout CSS는 유지. |
 
 ## B02-B04 Dashboard/B Seed Gap
@@ -91,30 +91,32 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
 | SQL editor/action surface | editor toolbar + execution status + result shell | `관찰됨` | `QueryActionBar`, `ResultPanel` | B03/B02 전환 이후에도 editor-specific action grouping과 result shell은 화면 전용으로 남을 수 있음. |
 
-## xflow Naming Gap
+## Legacy xflow Naming Gap
 
 `xflow|XFlow|XFLOW` 잔재는 단순 CSS 문제가 아니라 imported 서비스의 흔적을 AskLake 도메인 언어로 바꾸는 cleanup 작업이다.
 
-A03 기준 방침:
+#357 기준 처리 결과:
 
-- 이번 PR에서는 대규모 rename을 하지 않는다.
-- ETL 내부 잔재를 조사하고 위험도를 분류한다.
-- 파일명, component name, className은 후속 cleanup에서 rename 후보로 본다.
-- `id`, `role`, 저장될 수 있는 문자열은 API/state 영향 확인 전까지 보류한다.
-- Catalog/Dashboard/Ingest 잔재는 각 담당 작업 또는 별도 전역 cleanup에서 다룬다.
+- ETL 내부 file/component/className/CSS selector의 legacy xflow naming은 AskLake 도메인 언어로 rename한다.
+- `XFlowSchemaTransformEditor`는 `SchemaTransformWorkbench`로 rename한다.
+- `xflow-adapter.css`는 `schema-transform-adapter.css`로 rename한다.
+- `xflow-source.css`는 Tailwind import 역할을 유지하되 `schema-transform-source.css`로 rename한다.
+- `xflow-review-*`, `schema-xflow-*`, `source-xflow-*`, `schedule-xflow-*`, `target-xflow-*`, `permission-xflow-*`는 ETL 도메인 className으로 rename한다.
+- Catalog/Ingest/Dashboard 쪽 legacy naming은 이번 ETL cleanup 범위 밖이다. 각 담당 화면 작업 또는 별도 service-wide cleanup에서 다룬다.
 
-후속 cleanup 후보:
+후속 component 확장 후보:
 
-- `XFlowSchemaTransformEditor` -> `SchemaTransformWorkbench` 또는 `SchemaTransformFlowEditor`
-- `xflow-adapter.css` -> `schema-transform-adapter.css`
-- `asklake-xflow-source-adapter` -> `asklake-schema-transform-adapter`
-- `xflow-review-*` -> `review-*` 또는 `etl-review-*`
-- `schema-xflow-*` -> `schema-transform-*`
-- `source-xflow-*`, `schedule-xflow-*`, `target-xflow-*`, `permission-xflow-*` -> 각 도메인별 `*-panel-*` 또는 `*-config-*`
+- `Panel`
+- `SegmentedTabs`
+- `SelectableCard`
+- `TransformWorkbench`
+- `ValidationList`
+- `KeyValueList`
 
 ## 업데이트 로그
 
 | 날짜 | 변경 |
 | --- | --- |
 | 2026-07-09 | A03에서 서비스 전체 component gap inventory 초기 생성. ETL에서 발견한 gap을 seed로 기록. |
+| 2026-07-09 | #357에서 ETL 내부 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | Issue #358에서 B02-B04 Dashboard/B 작업 중 공통 primitive로 대체하지 않은 preview, toolbar, widget frame, config panel, color picker, tree, graph/editor gap을 기록. |

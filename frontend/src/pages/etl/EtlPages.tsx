@@ -53,7 +53,7 @@ import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlap
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
 import { SourceJsonSampleTree } from "./SourceJsonSampleTree";
-import { XFlowSchemaTransformEditor } from "./XFlowSchemaTransformEditor";
+import { SchemaTransformWorkbench } from "./SchemaTransformWorkbench";
 
 type RepeatFrequency = "hourly" | "daily" | "weekly" | "custom";
 type RepeatScheduleDraft = {
@@ -125,17 +125,17 @@ export function SchedulePage({
           icon={<Calendar size={18} />}
           title={title}
         />
-        <div className="xflow-review-stack schedule-xflow-stack">
-          <section className="xflow-review-card schedule-xflow-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+        <div className="etl-review-stack schedule-config-stack">
+          <section className="etl-review-card schedule-config-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon"><PlayCircle size={17} /></span>
               <div>
                 <h2>실행 방식 설정</h2>
                 <p>저장만 할지, 정해진 주기로 자동 실행할지 선택합니다.</p>
               </div>
-              <span className="schedule-xflow-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
+              <span className="schedule-config-state">{selectedOption === "repeat" ? "자동 실행" : "직접 실행"}</span>
             </div>
-            <div className="schedule-xflow-mode-grid">
+            <div className="schedule-config-mode-grid">
               <RunTypeCard active={selectedOption === "skip"} icon={<PlayCircle size={20} />} title="스케줄링 건너뛰기" desc="시간을 정하지 않고 저장만 합니다. 필요할 때 목록에서 즉시 실행합니다." onClick={() => selectOption("skip")} />
               <RunTypeCard active={selectedOption === "repeat"} icon={<Repeat2 size={20} />} title="반복 실행" desc="정해진 주기마다 자동으로 실행합니다." onClick={() => selectOption("repeat")} />
             </div>
@@ -173,9 +173,9 @@ export function SchedulePage({
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "schedule-xflow-mode-card active" : "schedule-xflow-mode-card"} type="button" onClick={onClick}>
+    <button className={active ? "schedule-config-mode-card active" : "schedule-config-mode-card"} type="button" onClick={onClick}>
       {active && <span className="run-selected-dot" />}
-      <span className="schedule-xflow-mode-icon">{icon}</span>
+      <span className="schedule-config-mode-icon">{icon}</span>
       <span>
         <strong>{title}</strong>
         <small>{desc}</small>
@@ -1553,7 +1553,7 @@ export function SourceConnectionPage({
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
-              <div className="xflow-source-select-heading">
+              <div className="source-select-heading">
                 <h2>Select a data source</h2>
                 <p>Choose the type of data source you want to connect</p>
               </div>
@@ -1625,9 +1625,9 @@ export function SourceConnectionPage({
           )}
 
           {sourceStage === "browse" && hasSelectedSource && (
-            <div className="source-stage-screen source-xflow-layout">
+            <div className="source-stage-screen source-browser-layout">
               <section className="source-from-panel">
-                <div className="source-xflow-heading">
+                <div className="source-browser-heading">
                   <LayoutGrid size={18} />
                   <div><h2>{current.assetsTitle}</h2></div>
                 </div>
@@ -2424,7 +2424,7 @@ export function SchemaInferencePage({
         </div>
       </section>
 
-      <XFlowSchemaTransformEditor
+      <SchemaTransformWorkbench
         columns={schemaColumns}
         sampleRows={schemaSampleRows}
         selectedIndex={selectedIndex}
@@ -4468,21 +4468,21 @@ function RepeatSettings({
         : `매주 ${selectedDay}요일 ${time}에 실행됩니다. 다음 실행 예정은 저장 시점 기준으로 계산됩니다.`;
 
   return (
-    <section className="xflow-review-card schedule-xflow-card">
-      <div className="xflow-review-card-header">
-        <span className="xflow-review-icon schema"><Repeat2 size={17} /></span>
+    <section className="etl-review-card schedule-config-card">
+      <div className="etl-review-card-header">
+        <span className="etl-review-icon schema"><Repeat2 size={17} /></span>
         <div>
           <h2>반복 실행 상세 설정</h2>
           <p>실행 주기, 시간대, 재시도 정책을 한 번에 확인하고 조정합니다.</p>
         </div>
-        <span className="schedule-xflow-state">{repeatFrequencyLabels[frequency]}</span>
+        <span className="schedule-config-state">{repeatFrequencyLabels[frequency]}</span>
       </div>
       <div className="schedule-config-section">
-        <div className="schedule-xflow-subheader">
+        <div className="schedule-config-subheader">
           <Clock3 size={16} />
           <h3>실행 일정</h3>
         </div>
-        <div className="schedule-xflow-form-grid">
+        <div className="schedule-config-form-grid">
           <label className="field">
             <span>반복 주기</span>
             <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
@@ -4540,13 +4540,13 @@ function RepeatSettings({
             </select>
           </label>
         </div>
-        <div className="schedule-xflow-preview">
+        <div className="schedule-config-preview">
           <InfoBox title="실행 미리보기" body={preview} />
           {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
         </div>
       </div>
-      <div className="schedule-xflow-policy-section">
-        <div className="schedule-xflow-subheader">
+      <div className="schedule-config-policy-section">
+        <div className="schedule-config-subheader">
           <ShieldCheck size={16} />
           <h3>재시도 정책</h3>
         </div>
@@ -4558,16 +4558,16 @@ function RepeatSettings({
 
 function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyChange: (policy: RetryPolicyDraft) => void; retryPolicy: RetryPolicyDraft }) {
   return (
-    <section className="xflow-review-card schedule-xflow-card">
-      <div className="xflow-review-card-header">
-        <span className="xflow-review-icon"><PlayCircle size={17} /></span>
+    <section className="etl-review-card schedule-config-card">
+      <div className="etl-review-card-header">
+        <span className="etl-review-icon"><PlayCircle size={17} /></span>
         <div>
           <h2>직접 실행 정책</h2>
           <p>자동 예약 없이 저장하고 필요할 때 Job 목록에서 직접 실행합니다.</p>
         </div>
-        <span className="schedule-xflow-state muted">스케줄 없음</span>
+        <span className="schedule-config-state muted">스케줄 없음</span>
       </div>
-      <div className="xflow-review-validation schedule-xflow-validation">
+      <div className="etl-review-validation schedule-config-validation">
         <div className="ready">
           <Check size={14} />
           <span>자동 스케줄</span>
@@ -4584,8 +4584,8 @@ function NoScheduleSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolic
           <strong>미생성</strong>
         </div>
       </div>
-      <div className="schedule-xflow-policy-section">
-        <div className="schedule-xflow-subheader">
+      <div className="schedule-config-policy-section">
+        <div className="schedule-config-subheader">
           <ShieldCheck size={16} />
           <h3>재시도 정책</h3>
         </div>
@@ -4788,16 +4788,16 @@ export function TargetPage({
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
         </div>
       ) : null}
-      <div className="xflow-review-stack target-xflow-stack">
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon"><FileText size={17} /></span>
+      <div className="etl-review-stack target-config-stack">
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon"><FileText size={17} /></span>
             <div>
               <h2>Basic Information</h2>
               <p>타겟 데이터셋의 이름과 소유 정보를 설정합니다.</p>
             </div>
           </div>
-          <div className="target-xflow-form-grid basic">
+          <div className="target-config-form-grid basic">
             <label className="field wide">
               <span>데이터셋명</span>
               <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
@@ -4817,15 +4817,15 @@ export function TargetPage({
           </div>
         </section>
 
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon destination"><HardDrive size={17} /></span>
             <div>
               <h2>Destination Settings</h2>
               <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 설정합니다.</p>
             </div>
           </div>
-          <div className="target-xflow-form-grid destination">
+          <div className="target-config-form-grid destination">
             <label className="field target-db-field">
               <span>DB 선택</span>
               <DatabaseField value={databaseName} onChange={setDatabaseName} />
@@ -4868,17 +4868,17 @@ export function TargetPage({
             </label>
           </div>
         </section>
-        <section className="xflow-review-card target-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission"><SlidersHorizontal size={17} /></span>
+        <section className="etl-review-card target-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
               <h2>Partition & Tags</h2>
               <p>검색, 저장, 운영 기준으로 사용할 태그와 파티션을 설정합니다.</p>
             </div>
           </div>
-          <div className="target-xflow-split">
-            <div className="target-xflow-subsection">
-              <div className="target-xflow-subheader">
+          <div className="target-config-split">
+            <div className="target-config-subsection">
+              <div className="target-config-subheader">
                 <BookOpen size={16} />
                 <h3>Tags</h3>
               </div>
@@ -4901,8 +4901,8 @@ export function TargetPage({
                 <Button className="secondary-button" type="button" variant="outline" onClick={addCustomTag}><Plus size={14} />추가</Button>
               </div>
             </div>
-            <div className="target-xflow-subsection">
-              <div className="target-xflow-subheader">
+            <div className="target-config-subsection">
+              <div className="target-config-subheader">
                 <SlidersHorizontal size={16} />
                 <h3>Partition</h3>
               </div>
@@ -4987,16 +4987,16 @@ export function PermissionPage({
         icon={<ShieldCheck size={18} />}
         title="권한 설정"
       />
-      <div className="xflow-review-stack permission-xflow-stack">
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+      <div className="etl-review-stack permission-config-stack">
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
             <div>
               <h2>Governance Check</h2>
               <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
             </div>
           </div>
-          <div className="xflow-review-validation permission-xflow-validation">
+          <div className="etl-review-validation permission-config-validation">
             {governanceChecks.map(([label, value, status]) => (
               <div className={status === "안전" || status === "준비됨" ? "ready" : "needs-review"} key={label}>
                 <Check size={15} />
@@ -5008,16 +5008,16 @@ export function PermissionPage({
           <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>
 
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon"><SlidersHorizontal size={17} /></span>
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon"><SlidersHorizontal size={17} /></span>
             <div>
               <h2>Access Policy</h2>
               <p>조직 정책에 맞는 권한 템플릿과 공개 범위를 설정합니다.</p>
             </div>
           </div>
           <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
-          <div className="target-xflow-form-grid permission-xflow-form-grid">
+          <div className="target-config-form-grid permission-config-form-grid">
             <label className="field">
               <span>권한 템플릿</span>
               <select className="input control-input" value={permissionTemplate} onChange={(event) => {
@@ -5060,29 +5060,29 @@ export function PermissionPage({
           </div>
         </section>
 
-        <section className="xflow-review-card permission-xflow-card">
-          <div className="xflow-review-card-header">
-            <span className="xflow-review-icon schema"><CircleUser size={17} /></span>
+        <section className="etl-review-card permission-config-card">
+          <div className="etl-review-card-header">
+            <span className="etl-review-icon schema"><CircleUser size={17} /></span>
             <div>
               <h2>Role Grants</h2>
               <p>{selectedRoleCount}개 역할 선택 · 템플릿 기준 접근 권한을 조정합니다.</p>
             </div>
           </div>
-          <div className="permission-xflow-role-list">
+          <div className="permission-config-role-list">
             {PERMISSION_ROLES.map((role) => {
               const selected = Boolean(roleChecks[role.name]);
               const recommended = role.name === permissionTemplate;
               return (
-                <label className={["permission-xflow-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
+                <label className={["permission-config-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
                   <input type="checkbox" checked={selected} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
-                  <span className="permission-xflow-role-body">
-                    <span className="permission-xflow-role-title">
+                  <span className="permission-config-role-body">
+                    <span className="permission-config-role-title">
                       <strong>{role.name}</strong>
                       {recommended ? <em>Template</em> : null}
                     </span>
                     <small>{role.note}</small>
                   </span>
-                  <div className="permission-chip-row permission-xflow-access-row">
+                  <div className="permission-chip-row permission-config-access-row">
                     {PERMISSION_ACCESS_ITEMS.map((item) => (
                       <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
                     ))}
@@ -5181,17 +5181,17 @@ export function ReviewPage({
           icon={<FileText size={18} />}
           title="검토 및 생성"
         />
-        <div className="xflow-review-stack">
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon"><FileText size={17} /></span>
+        <div className="etl-review-stack">
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
                 <h2>Basic Information</h2>
                 <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
               </div>
               <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
-            <dl className="xflow-review-kv">
+            <dl className="etl-review-kv">
               {basicInformationRows.map(([label, value]) => (
                 <div className={label === "Description" ? "wide" : undefined} key={label}>
                   <dt>{label}</dt>
@@ -5201,9 +5201,9 @@ export function ReviewPage({
             </dl>
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon schema"><Database size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon schema"><Database size={17} /></span>
               <div>
                 <h2>Output Schema</h2>
               </div>
@@ -5212,16 +5212,16 @@ export function ReviewPage({
             <ReviewSchemaTable rows={schemaRows} />
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon destination"><HardDrive size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon destination"><HardDrive size={17} /></span>
               <div>
                 <h2>Destination Settings</h2>
                 <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
               </div>
               <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
-            <dl className="xflow-review-kv destination">
+            <dl className="etl-review-kv destination">
               {destinationRows.map(([label, value]) => (
                 <div className={label === "Output Path" ? "wide" : undefined} key={label}>
                   <dt>{label}</dt>
@@ -5231,16 +5231,16 @@ export function ReviewPage({
             </dl>
           </section>
 
-          <section className="xflow-review-card">
-            <div className="xflow-review-card-header">
-              <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+          <section className="etl-review-card">
+            <div className="etl-review-card-header">
+              <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
                 <h2>Permission & Validation</h2>
                 <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
               </div>
               <ReviewEditButton onClick={() => onEdit("permission")} />
             </div>
-            <dl className="xflow-review-kv permission">
+            <dl className="etl-review-kv permission">
               {permissionRows.map(([label, value]) => (
                 <div className={label === "Summary" ? "wide" : undefined} key={label}>
                   <dt>{label}</dt>
@@ -5248,7 +5248,7 @@ export function ReviewPage({
                 </div>
               ))}
             </dl>
-            <div className="xflow-review-validation">
+            <div className="etl-review-validation">
               {validationRows.map(([item, status]) => (
                 <div className={status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "needs-review"} key={item}>
                   <Check size={15} />
@@ -5266,7 +5266,7 @@ export function ReviewPage({
 
 function ReviewEditButton({ onClick }: { onClick: () => void }) {
   return (
-    <Button className="xflow-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
+    <Button className="etl-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
       <Pencil size={14} /> 수정
     </Button>
   );

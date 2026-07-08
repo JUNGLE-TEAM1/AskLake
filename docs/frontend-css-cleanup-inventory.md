@@ -30,7 +30,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352` 및 B04 `feat-#350` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. PR마다 실제 route QA와 `rg` 확인 결과를 반영해 갱신한다.
 
@@ -40,14 +40,14 @@
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
 | `frontend/src/styles/ingest.css` | 1,991 | A | `교체 후보` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. legacy table footer/empty selector는 삭제 후보로 분리됨. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
-| `frontend/src/styles/etl.css` | 9,064 | A | `보류` | A03에서 PageHeader/Button primitive 일부 적용. Source/Schema/Schedule/Permission/Target/Review selector는 component gap과 xflow rename 범위가 커서 단계적 분리 필요. |
+| `frontend/src/styles/etl.css` | 9,064 | A | `보류` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. Source/Schema/Schedule/Permission/Target/Review selector는 component gap 범위가 커서 단계적 분리 필요. |
 | `frontend/src/styles/responsive.css` | 591 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. 각 route 모바일 QA 후 정리. |
 | `frontend/src/styles/catalog.css` | 1,602 | B | `교체 후보` | Catalog 목록/상세, lineage, schema preview. B03 전환 후 정리. |
 | `frontend/src/styles/sql.css` | 2,603 | B | `교체 후보` | SQL panel/editor/preview. B02 DataTable, B03 primitive 전환 후 정리. |
+| `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
+| `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
 | `frontend/src/styles/dashboard.css` | 1,423 | B | `교체 후보` | Dashboard list가 DataTable과 Button/Input primitive로 일부 전환됨. builder preview 관련 selector는 계속 유지. |
 | `frontend/src/styles/dashboard-runtime.css` | 2,175 | B | `보류` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. grid/runtime 상태 selector는 삭제 금지. |
-| `frontend/src/styles/xflow-adapter.css` | 119 | A | `보류` | `XFlowSchemaTransformEditor` adapter 전용. 후속 xflow rename cleanup에서 파일명/className 변경 검토. |
-| `frontend/src/styles/xflow-source.css` | 1 | A | `삭제 후보` | 현재 1줄 placeholder 성격. import 필요 여부 확인 후 후속 xflow cleanup에서 삭제 가능. |
 
 ## A 작업으로 정리될 CSS
 
@@ -60,9 +60,9 @@
 | Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `삭제 후보` | A02에서 `JobsPages.tsx` 사용처는 제거됨. 현재 `ingest.css`, `responsive.css`에 CSS만 남아 있으므로 `/jobs` QA 후 삭제한다. |
 | Jobs status/owner/tag chip | `ingest.css` | `교체 후보` | `Badge` primitive로 톤이 안정되면 `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`을 줄인다. |
 | Run History table | `ingest.css`, `ingest-dag.css` | `교체 후보` | DataTable 적용 후 `.runs-table*`, `.runs-pagination*`을 정리한다. DAG modal은 별도 QA 전 유지한다. |
-| ETL Source/Schema flow | `etl.css`, `xflow-adapter.css`, `xflow-source.css` | `보류` | A03에서 PageHeader와 주요 action button은 primitive 적용. card, segmented tabs, schema workbench, review summary는 component gap으로 분리한다. |
-| Tree UI | `etl.css`, `xflow-adapter.css` | `보류` | MUI TreeView 유지가 아니라 `react-arborist` 기준 교체가 목표다. 단, 실제 교체 전 tree 관련 CSS는 삭제하지 않는다. |
-| ETL xflow naming | `etl.css`, `xflow-adapter.css`, `xflow-source.css`, `pages/etl` | `보류` | A03 기준 ETL 내부 `xflow|XFlow|XFLOW` 잔재는 약 567건. 이번 PR에서는 대규모 rename하지 않고 후속 cleanup 범위로 분리한다. |
+| ETL Source/Schema flow | `etl.css`, `schema-transform-adapter.css`, `schema-transform-source.css` | `보류` | A03에서 PageHeader와 주요 action button은 primitive 적용. #357에서 legacy naming은 정리. card, segmented tabs, schema workbench, review summary는 component gap으로 분리한다. |
+| Tree UI | `etl.css`, `schema-transform-adapter.css` | `보류` | MUI TreeView 유지가 아니라 `react-arborist` 기준 교체가 목표다. 단, 실제 교체 전 tree 관련 CSS는 삭제하지 않는다. |
+| ETL legacy xflow naming | `etl.css`, `schema-transform-adapter.css`, `schema-transform-source.css`, `pages/etl` | `사용 중` | #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. Catalog/Ingest/Dashboard 쪽 legacy naming은 이번 범위 밖이다. |
 
 ## B 작업으로 정리될 CSS
 
@@ -115,4 +115,5 @@ npm run build
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
 | 2026-07-09 | A02에서 Jobs 목록 PageHeader/primitive/DataTable 적용 상태를 반영. `jobs-table-empty`, `jobs-table-preview-footer`는 CSS-only 삭제 후보로 표시. |
 | 2026-07-09 | A03에서 ETL PageHeader/주요 action button primitive 적용 상태를 반영. component gap inventory와 xflow rename 후속 cleanup 기준을 연결. |
+| 2026-07-09 | #357에서 ETL 내부 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | Issue #350 B04에서 Dashboard list/table, runtime topbar/widget frame/table widget/config panel/dataset tree 전환 범위를 반영. `dashboard.css`, `dashboard-runtime.css` 줄 수와 cleanup 후보를 갱신하고 MUI TreeItem selector 삭제 후보를 기록. |
