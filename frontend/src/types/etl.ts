@@ -21,7 +21,9 @@ export type JobRowData = {
   partition?: string;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  targetDescription?: string;
   targetFormat?: string;
+  targetTags?: string[];
   targetLayer?: TargetLayer;
   targetPath?: string;
   transformOutputColumns?: Array<[string, string]>;
@@ -151,12 +153,14 @@ export type PermissionDraft = {
 export type TargetDraft = {
   compression?: "Snappy" | "Gzip" | "None";
   datasetName: string;
+  description?: string;
   format: string;
   layer: TargetLayer;
   partition?: string;
   rag: boolean;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tags?: string[];
 };
 
 export type DraftPipeline = {
@@ -201,8 +205,10 @@ export type CreatePipelineRequest = {
   compression?: "Snappy" | "Gzip" | "None";
   storagePath?: string;
   targetDataset: string;
+  targetDescription?: string;
   targetLayer: TargetLayer;
   targetFormat: string;
+  targetTags?: string[];
   owner: string;
   rag: boolean;
 };

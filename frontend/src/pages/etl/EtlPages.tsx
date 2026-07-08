@@ -505,15 +505,17 @@ function normalizeCronExpression(value: string) {
 
 const DEFAULT_PERMISSION_TEMPLATE = "Data Engineer Group";
 const DEFAULT_VISIBILITY = "조직 내부";
-const DEFAULT_APPROVAL_STATUS = "승인 검토";
+const DEFAULT_APPROVAL_STATUS = "승인 메타데이터";
 const DEFAULT_OWNER = "data-team-01";
 const DEFAULT_TARGET_DATASET = "customer_review_gold";
+const DEFAULT_TARGET_DESCRIPTION = "고객 리뷰 분석용 정제 데이터셋";
 const DEFAULT_TARGET_LAYER: TargetLayer = "GOLD";
 const DEFAULT_TARGET_FORMAT = "Parquet";
+const DEFAULT_TARGET_PARTITION = "year/month/region";
 
 const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML Team"] as const;
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
-const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
+const APPROVAL_STATUS_OPTIONS = ["승인 메타데이터", "오너 승인 필요", "실제 승인 연동 전"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
 const TARGET_FORMAT_OPTIONS = ["Parquet", "Delta", "Iceberg", "CSV"] as const;
 const TARGET_LAYER_LABELS: Record<TargetLayer, string> = {
@@ -545,6 +547,7 @@ type PermissionDraftSlice = {
 type TargetDraftSlice = {
   compression?: "Snappy" | "Gzip" | "None";
   datasetName?: string;
+  description?: string;
   format?: string;
   jobName?: string;
   layer?: string;
@@ -553,9 +556,12 @@ type TargetDraftSlice = {
   rag?: boolean;
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  tags?: string[];
   targetDataset?: string;
+  targetDescription?: string;
   targetFormat?: string;
   targetLayer?: string;
+  targetTags?: string[];
 };
 
 type DraftPipelineWithSlices = DraftPipeline & {
@@ -628,15 +634,51 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const target = compatDraft.target;
   const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
   const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
+  const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
+  const targetTags = normalizeTargetTags(target?.targetTags ?? target?.tags ?? draft.target.tags, targetDataset, draft.target.rag);
 
   return {
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
+    targetDescription: getDisplayText(target?.targetDescription ?? target?.description ?? draft.target.description, DEFAULT_TARGET_DESCRIPTION),
     targetDataset,
     targetFormat,
-    targetLayer: normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer),
+    targetLayer,
+    targetPartition: getDisplayText(target?.partition ?? draft.target.partition, DEFAULT_TARGET_PARTITION),
+    targetStoragePath: getDisplayText(target?.storagePath ?? draft.target.storagePath, buildStoragePath(targetDataset, targetLayer)),
+    targetTags,
   };
+}
+
+function buildStoragePath(targetDataset: string, targetLayer: TargetLayer) {
+  return `s3a://asklake-output/${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET)}/${targetLayer.toLowerCase()}/`;
+}
+
+function normalizeTargetTags(value: string[] | undefined, targetDataset: string, ragEnabled: boolean) {
+  const fallbackTags = [
+    `#${getDisplayText(targetDataset, DEFAULT_TARGET_DATASET).replace(/_gold$/, "").replace(/[^a-zA-Z0-9가-힣_-]+/g, "_")}`,
+    "#dataset",
+    ragEnabled ? "#rag" : "#no-rag",
+  ];
+  const tags = (value && value.length > 0 ? value : fallbackTags)
+    .map((tag) => normalizeTargetTag(tag))
+    .filter(Boolean);
+  return Array.from(new Set(tags)).slice(0, 8);
+}
+
+function normalizeTargetTag(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
+}
+
+function parseTargetTags(value: string, targetDataset: string, ragEnabled: boolean) {
+  const tags = value
+    .split(/[\s,]+/)
+    .map(normalizeTargetTag)
+    .filter(Boolean);
+  return normalizeTargetTags(tags, targetDataset, ragEnabled);
 }
 
 export function SourceConnectionPage({
@@ -4136,10 +4178,15 @@ export function TargetPage({
   const [selectedLayer, setSelectedLayer] = useState<TargetLayer>(initialTarget.targetLayer);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [targetOwner, setTargetOwner] = useState(initialTarget.owner);
-  const [targetDescription, setTargetDescription] = useState("고객 리뷰 분석용 정제 데이터셋");
+  const [targetDescription, setTargetDescription] = useState(initialTarget.targetDescription);
   const [targetFormat, setTargetFormat] = useState(initialTarget.targetFormat);
+  const [targetPartition, setTargetPartition] = useState(initialTarget.targetPartition);
+  const [targetTagsText, setTargetTagsText] = useState(initialTarget.targetTags.join(" "));
   const [ragEnabled, setRagEnabled] = useState(initialTarget.rag);
   const applyTargetDraft = (patch: Partial<{
+    partition: string;
+    tagsText: string;
+    targetDescription: string;
     owner: string;
     rag: boolean;
     targetDataset: string;
@@ -4151,18 +4198,23 @@ export function TargetPage({
     const nextTargetLayer = normalizeTargetLayer(patch.targetLayer ?? selectedLayer);
     const nextOwner = getDisplayText(patch.owner ?? targetOwner, DEFAULT_OWNER);
     const nextRag = patch.rag ?? ragEnabled;
-    const nextStoragePath = `s3a://asklake-output/${nextTargetDataset}/${nextTargetLayer.toLowerCase()}/`;
+    const nextTargetDescription = getDisplayText(patch.targetDescription ?? targetDescription, DEFAULT_TARGET_DESCRIPTION);
+    const nextPartition = getDisplayText(patch.partition ?? targetPartition, DEFAULT_TARGET_PARTITION);
+    const nextTags = parseTargetTags(patch.tagsText ?? targetTagsText, nextTargetDataset, nextRag);
+    const nextStoragePath = buildStoragePath(nextTargetDataset, nextTargetLayer);
 
     onDraftChange({
       jobName: buildJobName(nextTargetDataset),
       owner: nextOwner,
       compression: "Snappy",
-      partition: "year/month/region",
+      partition: nextPartition,
       storagePath: nextStoragePath,
       storageType: "S3",
       targetDataset: nextTargetDataset,
+      targetDescription: nextTargetDescription,
       targetFormat: nextTargetFormat,
       targetLayer: nextTargetLayer,
+      targetTags: nextTags,
       rag: nextRag,
     });
   };
@@ -4173,7 +4225,9 @@ export function TargetPage({
   const toggleRag = () => {
     const next = !ragEnabled;
     setRagEnabled(next);
-    applyTargetDraft({ rag: next });
+    const nextTags = parseTargetTags(targetTagsText, targetDataset, next);
+    setTargetTagsText(nextTags.join(" "));
+    applyTargetDraft({ rag: next, tagsText: nextTags.join(" ") });
   };
   const goNext = () => {
     applyTargetDraft();
@@ -4212,15 +4266,36 @@ export function TargetPage({
             </label>
             <label className="field wide">
               <span>설명</span>
-              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+              <input className="input control-input" value={targetDescription} onChange={(event) => {
+                const nextDescription = event.target.value;
+                setTargetDescription(nextDescription);
+                applyTargetDraft({ targetDescription: nextDescription });
+              }} />
             </label>
           </div>
           <div className="tag-row">
-            {[targetDataset.replace(/_gold$/, ""), "sentiment_analysis", ragEnabled ? "rag_ready" : "rag_disabled"].map((tag) => (
+            {parseTargetTags(targetTagsText, targetDataset, ragEnabled).map((tag) => (
               <span className="tag" key={tag}>{tag}</span>
             ))}
-            <button className="ghost-link" type="button" onClick={() => onDraftChange({ rag: ragEnabled })}>+ 추가</button>
           </div>
+          <label className="field wide">
+            <span>태그</span>
+            <input
+              className="input control-input"
+              placeholder="#customer #review #gold"
+              value={targetTagsText}
+              onBlur={() => {
+                const normalizedTags = parseTargetTags(targetTagsText, targetDataset, ragEnabled);
+                setTargetTagsText(normalizedTags.join(" "));
+                applyTargetDraft({ tagsText: normalizedTags.join(" ") });
+              }}
+              onChange={(event) => {
+                const nextTagsText = event.target.value;
+                setTargetTagsText(nextTagsText);
+                applyTargetDraft({ tagsText: nextTagsText });
+              }}
+            />
+          </label>
         </section>
         <section className="panel">
           <div className="panel-header">
@@ -4246,13 +4321,21 @@ export function TargetPage({
                 {TARGET_FORMAT_OPTIONS.map((format) => <option key={format}>{format}</option>)}
               </select>
             </label>
-            <Field label="파티션" value="year/month/region" />
+            <label className="field">
+              <span>파티션</span>
+              <input className="input control-input" value={targetPartition} onChange={(event) => {
+                const nextPartition = event.target.value;
+                setTargetPartition(nextPartition);
+                applyTargetDraft({ partition: nextPartition });
+              }} />
+            </label>
             <Field label="압축" value="Snappy" />
-            <Field label="저장 경로" value={`s3a://asklake-output/${targetDataset}/${selectedLayer.toLowerCase()}/`} wide />
+            <Field label="저장 경로" value={buildStoragePath(targetDataset, selectedLayer)} wide />
           </div>
+          <InfoBox title="저장소 선택 범위" body="이번 데모에서는 local MinIO/S3 출력 경로를 고정으로 사용합니다. 외부 DB/웨어하우스 browse는 아직 지원하지 않으므로 클릭 가능한 가짜 선택 버튼을 두지 않습니다." />
           <div className="target-status-grid">
             <StatusTile label="카탈로그 등록" value="실행 성공 후 등록" status="준비됨" />
-            <StatusTile label="경로 검증" value="쓰기 권한 확인 완료" status="유효함" />
+            <StatusTile label="경로 검증" value="실행 시 Spark 쓰기 결과로 확인" status="대기" />
           </div>
         </section>
         <section className="panel">
@@ -4345,7 +4428,7 @@ export function PermissionPage({
         >
           <StatusTile label="공유 범위" value={visibility} status={visibility === "외부 공유" ? "검토 필요" : "안전" } />
           <StatusTile label="민감 데이터" value="review_text 포함" status="검토 필요" />
-          <StatusTile label="승인자" value={dataOwner} status={approvalStatus === "승인 완료" ? "준비됨" : "대기"} />
+          <StatusTile label="승인 메타데이터" value={dataOwner} status={approvalStatus === "오너 승인 필요" ? "검토 필요" : "저장 예정"} />
         </CreationValidationPanel>
       )}
     >
@@ -4387,7 +4470,7 @@ export function PermissionPage({
               }} />
             </label>
             <label className="field">
-              <span>승인 상태</span>
+              <span>승인 메타데이터</span>
               <select className="input control-input" value={approvalStatus} onChange={(event) => {
                 const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
                 setApprovalStatus(nextApprovalStatus);
@@ -4416,7 +4499,7 @@ export function PermissionPage({
               </label>
             ))}
           </div>
-          <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
+          <InfoBox title="권한 metadata 범위" body="현재 화면은 create payload에 저장할 권한 metadata를 정리합니다. 실제 인증/인가 enforcement는 후속 Governance API 연동 범위입니다." />
         </section>
     </CreationFlowLayout>
   );
@@ -4460,12 +4543,12 @@ export function ReviewPage({
   const targetReview = getTargetDraftValues(draft);
   const ragReviewLabel = targetReview.rag ? "RAG 활성화" : "RAG 비활성화";
   const validationRows = [
-    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
-    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
-    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
-    ["실패 처리 정책", request.retryPolicySummary ? "유효함" : "확인 필요"],
-    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
+    ["소스 연결", draft.source.connectionStatus === "success" ? "실제 연결 확인" : "연결 테스트 필요"],
+    ["스키마", includedReviewColumns.length > 0 ? "추론 결과 있음" : "추론 필요"],
+    ["처리/품질", request.ruleSummary ? "설정값 저장" : "후속 검증 필요"],
+    ["스케줄", request.scheduleLabel ? "설정값 저장" : "확인 필요"],
+    ["실패 처리 정책", request.retryPolicySummary ? "설정값 저장" : "확인 필요"],
+    ["권한/타겟", request.permissionSummary && request.targetDataset ? "메타데이터 저장" : "확인 필요"],
   ];
   const canCreate = draft.source.connectionStatus === "success" && includedReviewColumns.length > 0;
   const createDisabled = createPending || !canCreate;
@@ -4486,7 +4569,7 @@ export function ReviewPage({
               <strong>{status}</strong>
             </div>
           ))}
-          <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
+          <InfoBox title="안내사항" body="권한과 타겟 설정은 이번 생성 요청의 metadata로 저장됩니다. 실제 승인/인가 적용은 별도 Governance 연동 범위입니다." />
         </CreationValidationPanel>
       )}
     >
@@ -4499,7 +4582,7 @@ export function ReviewPage({
             ["처리 규칙", request.ruleSummary, "rules"],
             ["스케줄", request.scheduleLabel, scheduleEditFlow],
             ["권한", `${permissionReview.permissionSummary} · ${permissionReview.owner}`, "permission"],
-            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${ragReviewLabel}`, "target"],
+            ["타겟 저장소", `${targetReview.targetLayer} / ${targetReview.targetFormat} · ${targetReview.targetPartition} · ${ragReviewLabel}`, "target"],
           ].map(([label, value, flow]) => (
             <article className="review-mini-card" key={label}>
               <span className="review-card-icon">{flow === "permission" ? <ShieldCheck size={14} /> : flow === "repeat" ? <Calendar size={14} /> : flow === "rules" || flow === "schema" ? <SlidersHorizontal size={14} /> : <Database size={14} />}</span>
@@ -4534,6 +4617,10 @@ export function ReviewPage({
             <Field label="타겟 데이터셋" value={targetReview.targetDataset} />
             <Field label="타겟 Layer" value={targetReview.targetLayer} />
             <Field label="타겟 Format" value={targetReview.targetFormat} />
+            <Field label="설명" value={targetReview.targetDescription} wide />
+            <Field label="태그" value={targetReview.targetTags.join(" ")} wide />
+            <Field label="파티션" value={targetReview.targetPartition} />
+            <Field label="저장 경로" value={targetReview.targetStoragePath} wide />
             <Field label="RAG 인덱싱" value={ragReviewLabel} />
             <Field label="데이터 오너" value={targetReview.owner} />
           </div>

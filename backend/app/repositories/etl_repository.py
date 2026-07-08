@@ -26,6 +26,8 @@ def ensure_schema(db: Session) -> None:
             "permission_roles": "JSON",
             "storage_path": "VARCHAR(512)",
             "storage_type": "VARCHAR(64)",
+            "target_description": "VARCHAR(512)",
+            "target_tags": "JSON",
         }
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
@@ -187,7 +189,9 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         partition=job.partition,
         compression=job.compression,
         storage_path=job.storage_path,
+        target_description=job.target_description,
         target_format=job.target_format,
+        target_tags=job.target_tags,
         target_layer=job.target_layer,
         target_path=job.target_path,
         transform_output_columns=job.transform_output_columns,

@@ -100,12 +100,14 @@ const initialDraftPipeline: DraftPipeline = {
   target: {
     compression: "Snappy",
     datasetName: "pair_a_customer_review_gold",
+    description: "고객 리뷰 분석용 정제 데이터셋",
     format: "Parquet",
     layer: "GOLD",
     partition: "year/month/region",
     rag: true,
     storagePath: "s3a://asklake-output/pair_a_customer_review_gold/gold/",
     storageType: "S3",
+    tags: ["#customer", "#review", "#gold", "#rag"],
   },
   transform: {
     outputColumns: [],

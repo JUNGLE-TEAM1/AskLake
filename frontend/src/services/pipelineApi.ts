@@ -4,10 +4,12 @@ import { apiClient } from "./apiClient";
 
 export type PipelineCreationResult = {
   catalogTarget?: {
+    description?: string;
     id: string;
     layer: string;
     name: string;
     status: "pending_run";
+    tags?: string[];
   };
   dataset?: CatalogDataset;
   job: JobRowData;

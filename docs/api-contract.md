@@ -365,8 +365,10 @@ type CreatePipelineRequest = {
   compression: "Snappy" | "Gzip" | "None";
   storagePath: string;
   targetDataset: string;
+  targetDescription?: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;
+  targetTags?: string[];
   owner: string;
   rag: boolean;
 };
@@ -397,8 +399,10 @@ Request 예시:
   "compression": "Snappy",
   "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
+  "targetDescription": "고객 리뷰 분석용 정제 데이터셋",
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
+  "targetTags": ["#customer", "#review", "#silver"],
   "owner": "Data Engineer Group",
   "rag": true
 }
@@ -410,10 +414,12 @@ Response `201 Created`:
 type CreatePipelineResponse = {
   job: JobRowData;
   catalogTarget: {
+    description?: string;
     id: string;
     name: string;
     layer: string;
     status: "pending_run";
+    tags?: string[];
   };
 };
 ```
@@ -436,10 +442,12 @@ Response 예시:
     "nextRun": "다음 예약 대기"
   },
   "catalogTarget": {
+    "description": "고객 리뷰 분석용 정제 데이터셋",
     "id": "ds_customer_review_silver",
     "name": "customer_review_silver",
     "layer": "SILVER",
-    "status": "pending_run"
+    "status": "pending_run",
+    "tags": ["#customer", "#review", "#silver"]
   }
 }
 ```
@@ -459,6 +467,7 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- `targetDescription`, `targetTags`는 Catalog Dataset metadata로 저장하며 Spark run 성공 후 생성되는 dataset description/tags에 반영합니다.
 - 같은 `targetDataset`이 이미 존재하면 `409 CONFLICT`를 권장합니다.
 
 ### 7.2 작업 명령

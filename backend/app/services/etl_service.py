@@ -75,8 +75,10 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         partition=request.partition,
         compression=request.compression,
         storage_path=request.storage_path,
+        target_description=request.target_description,
         target_format=request.target_format,
         target_layer=request.target_layer,
+        target_tags=normalize_tags(request.target_tags, f"#{str(request.target_layer).lower()}"),
         rag=request.rag,
         transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
         transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
@@ -97,9 +99,11 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     return CreatePipelineResponse(
         catalog_target={
             "id": dataset_id,
+            "description": request.target_description,
             "layer": request.target_layer,
             "name": request.target_dataset,
             "status": "pending_run",
+            "tags": normalize_tags(request.target_tags, f"#{str(request.target_layer).lower()}"),
         },
         job=saved_job,
     )
@@ -366,7 +370,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
     return CatalogDatasetModel(
         id=f"ds_{normalize_column_name(job.target)}",
         name=job.target,
-        description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        description=job.target_description or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
         owner=job.owner,
         layer=job.target_layer,
         status="available",
@@ -378,7 +382,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> Catal
         last_updated=now,
         next_refresh=job.schedule,
         rag=job.rag,
-        tags=["#생성", f"#{str(job.target_layer).lower()}"],
+        tags=normalize_tags(["#생성", *(job.target_tags or [])], f"#{str(job.target_layer).lower()}"),
         schema_json=schema_json,
         sample_rows=job.schema_sample_rows or [],
         upstream=[job.source_label, job.name],

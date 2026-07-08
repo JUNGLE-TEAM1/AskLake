@@ -239,12 +239,17 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     sourceType: draftPipeline.source.sourceType,
     targetFormat: draftPipeline.target.format,
     targetLayer: draftPipeline.target.layer,
+    targetDescription: draftPipeline.target.description,
+    targetTags: draftPipeline.target.tags,
+    partition: draftPipeline.target.partition,
+    storagePath: draftPipeline.target.storagePath,
+    storageType: draftPipeline.target.storageType,
     transformOutputColumns: draftPipeline.transform.outputColumns,
     transformSteps: draftPipeline.transform.steps,
   };
 
   const dataset: CatalogDataset = {
-    description: "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+    description: draftPipeline.target.description || "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -263,12 +268,20 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     size: "Pending",
     source: job.name,
     status: "available",
-    tags: ["#customer", "#RAG", "#리뷰"],
+    tags: normalizePipelineDatasetTags(draftPipeline.target.tags, draftPipeline.target.layer, draftPipeline.target.rag),
     upstream: [draftPipeline.source.sourceLabel, job.name],
   };
   dataset.lineageGraph = buildPipelineDatasetLineageGraph(draftPipeline, dataset);
 
   return resolveMock({ dataset, job });
+}
+
+function normalizePipelineDatasetTags(tags: string[] | undefined, layer: string, rag: boolean) {
+  const normalizedTags = (tags ?? [])
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => (tag.startsWith("#") ? tag : `#${tag}`));
+  return Array.from(new Set(["#생성", `#${layer.toLowerCase()}`, ...(rag ? ["#rag"] : []), ...normalizedTags]));
 }
 
 export async function getDatasetLineageGraph(dataset: CatalogDataset): Promise<LineageGraph> {

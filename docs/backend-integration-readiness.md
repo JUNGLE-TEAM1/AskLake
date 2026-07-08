@@ -37,7 +37,7 @@ Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode
 - Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
 - Transform: `transformSteps`, `transformOutputColumns`
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
-- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetLayer`, `targetFormat`
+- Schedule/Permission/Target: `scheduleLabel`, `retryPolicy`, `owner`, `targetDataset`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `partition`, `storagePath`
 
 Backend create response:
 
@@ -45,10 +45,12 @@ Backend create response:
 type CreateJobResponse = {
   job: JobRowData;
   catalogTarget: {
+    description?: string;
     id: string;
     name: string;
     layer: string;
     status: "pending_run";
+    tags?: string[];
   };
 };
 ```
