@@ -148,9 +148,30 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
     if (operation.includes("trim")) {
       return { failed: false, value: inputValue.trim() };
     }
+    if (operation.includes("replace")) {
+      const { search, replacement } = parseReplaceParams(step.params);
+      return { failed: false, value: inputValue.split(search).join(replacement) };
+    }
+    if (operation.includes("substr") || operation.includes("substring")) {
+      const { length, startIndex } = parseSubstringParams(step.params);
+      return { failed: false, value: inputValue.slice(startIndex, startIndex + length) };
+    }
+    if (operation.includes("concat")) {
+      const delimiter = step.params.trim() || "-";
+      return { failed: false, value: `${inputValue}${delimiter}${inputValue}` };
+    }
     if (operation.includes("decimal") || operation.includes("cast")) {
       const value = Number(inputValue);
       return Number.isFinite(value) ? { failed: false, value: value.toFixed(2) } : { failed: true, value: "" };
+    }
+    if (operation.includes("round")) {
+      const value = Number(inputValue);
+      const decimals = parseIntegerParam(step.params, 2);
+      return Number.isFinite(value) ? { failed: false, value: value.toFixed(decimals) } : { failed: true, value: "" };
+    }
+    if (operation.includes("abs")) {
+      const value = Number(inputValue);
+      return Number.isFinite(value) ? { failed: false, value: String(Math.abs(value)) } : { failed: true, value: "" };
     }
     if (operation.includes("timestamp") || operation.includes("date")) {
       const value = new Date(inputValue);
@@ -163,6 +184,29 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
   } catch {
     return { failed: true, value: "" };
   }
+}
+
+function parseReplaceParams(params: string) {
+  const rawParams = params.trim();
+  if (!rawParams) return { search: "sample", replacement: "SAMPLE" };
+  const separator = rawParams.includes("=>") ? "=>" : ",";
+  const [search = "sample", replacement = "SAMPLE"] = rawParams.split(separator).map((value) => value.trim());
+  return {
+    search: search || "sample",
+    replacement,
+  };
+}
+
+function parseSubstringParams(params: string) {
+  const [rawStart = "1", rawLength = "5"] = params.split(",").map((value) => value.trim());
+  const start = Math.max(1, parseIntegerParam(rawStart, 1));
+  const length = Math.max(0, parseIntegerParam(rawLength, 5));
+  return { length, startIndex: start - 1 };
+}
+
+function parseIntegerParam(value: string, fallback: number) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function readJsonPath(rawJson: string, path: string) {

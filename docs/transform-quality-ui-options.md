@@ -86,7 +86,12 @@ P0에서는 옵션 A. 추천 Transform Step 목록 on/off 방식을 사용한다
 [on] Lowercase + Trim: user_email -> user_email
 [off] Uppercase + Trim: country_code -> country_code
 [off] Trim: display_name -> display_name
+[off] Replace: user_email -> user_email
+[off] Substring: user_email -> user_email_prefix
+[off] Concat: user_email -> user_email_joined
 [on] Cast Decimal: price_usd -> price_usd
+[off] Round: price_usd -> price_usd
+[off] Absolute Value: balance_delta -> balance_delta
 [on] Parse Timestamp: created_at -> created_at_utc
 [on] Mask: phone_number -> phone_masked
 ```

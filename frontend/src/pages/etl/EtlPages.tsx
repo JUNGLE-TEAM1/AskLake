@@ -2562,7 +2562,7 @@ const FALLBACK_QUALITY_RULES: QualityRule[] = [{
   targetColumn: "value",
   validationType: "Not Null",
 }];
-const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Uppercase + Trim", "Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
+const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Uppercase + Trim", "Trim", "Replace", "Substring", "Concat", "Cast Decimal", "Round", "Absolute Value", "Parse Timestamp", "Mask"] as const;
 const TRANSFORM_FAILURE_POLICY_OPTIONS = ["Warn", "Set Null", "Drop Row", "Fail Run"] as const;
 const QUALITY_VALIDATION_OPTIONS: Array<QualityRule["validationType"]> = ["Not Null", "Regex Match", "Range Check", "Accepted Values"];
 const QUALITY_SEVERITY_OPTIONS: Array<QualityRule["severity"]> = ["Warning", "Error"];
@@ -2572,6 +2572,11 @@ const TRANSFORM_OPERATION_LABELS: Record<TransformOperation, string> = {
   "Cast Decimal": "숫자 타입 변환",
   "Extract JSONPath": "JSON 경로 추출",
   "Lowercase + Trim": "소문자/공백 정리",
+  "Absolute Value": "절대값",
+  Concat: "문자 결합",
+  Replace: "문자 치환",
+  Round: "반올림",
+  Substring: "문자 추출",
   Trim: "공백 정리",
   "Uppercase + Trim": "대문자/공백 정리",
   Mask: "마스킹",
@@ -2859,7 +2864,7 @@ function getTransformStepKind(operation: string): TransformStepDraft["kind"] {
   const normalizedOperation = operation.toLowerCase();
   if (normalizedOperation.includes("json")) return "jsonPath";
   if (normalizedOperation.includes("cast") || normalizedOperation.includes("decimal")) return "cast";
-  if (normalizedOperation.includes("trim") || normalizedOperation.includes("lower")) return "trim";
+  if (normalizedOperation.includes("trim") || normalizedOperation.includes("lower") || normalizedOperation.includes("upper")) return "trim";
   if (normalizedOperation.includes("mask")) return "mask";
   return "derive";
 }
@@ -3613,12 +3618,41 @@ function getDefaultParamForOperation(operation: TransformOperation) {
       return "upper(), trim()";
     case "Trim":
       return "trim()";
+    case "Replace":
+      return "sample=>SAMPLE";
+    case "Substring":
+      return "1,5";
+    case "Concat":
+      return "-";
     case "Cast Decimal":
       return "decimal(10,2)";
+    case "Round":
+      return "2";
+    case "Absolute Value":
+      return "abs()";
     case "Parse Timestamp":
       return "UTC";
     case "Mask":
       return "keep first 3 digits";
+    default:
+      return "";
+  }
+}
+
+function isAdvancedTransformOperation(operation: TransformOperation) {
+  return ["Replace", "Substring", "Concat", "Round", "Absolute Value"].includes(operation);
+}
+
+function getAdvancedTransformParamHint(operation: TransformOperation) {
+  switch (operation) {
+    case "Replace":
+      return "치환 규칙: 찾을값=>바꿀값";
+    case "Substring":
+      return "추출 범위: 시작위치,길이";
+    case "Concat":
+      return "같은 값을 연결할 구분자";
+    case "Round":
+      return "소수점 자리수";
     default:
       return "";
   }
@@ -3671,6 +3705,7 @@ function RuleStepBuilder({
   const [outputColumnTouched, setOutputColumnTouched] = useState(false);
   const [jsonPath, setJsonPath] = useState(getDefaultParamForOperation("Extract JSONPath"));
   const [decimalFormat, setDecimalFormat] = useState(getDefaultParamForOperation("Cast Decimal"));
+  const [advancedParams, setAdvancedParams] = useState(getDefaultParamForOperation("Replace"));
   const [timestampFormat, setTimestampFormat] = useState(getDefaultParamForOperation("Parse Timestamp"));
   const [maskPolicy, setMaskPolicy] = useState(getDefaultParamForOperation("Mask"));
   const [onError, setOnError] = useState<TransformFailurePolicy>("Set Null");
@@ -3687,6 +3722,13 @@ function RuleStepBuilder({
       case "Lowercase + Trim":
       case "Uppercase + Trim":
       case "Trim":
+        return getDefaultParamForOperation(operation);
+      case "Replace":
+      case "Substring":
+      case "Concat":
+      case "Round":
+        return advancedParams.trim() || getDefaultParamForOperation(operation);
+      case "Absolute Value":
         return getDefaultParamForOperation(operation);
       case "Cast Decimal":
         return decimalFormat.trim() || getDefaultParamForOperation(operation);
@@ -3724,6 +3766,7 @@ function RuleStepBuilder({
     setOutputColumnTouched(false);
     setJsonPath(operation === "Extract JSONPath" ? preset.params : getDefaultParamForOperation("Extract JSONPath"));
     setDecimalFormat(operation === "Cast Decimal" ? preset.params : getDefaultParamForOperation("Cast Decimal"));
+    setAdvancedParams(isAdvancedTransformOperation(operation) ? preset.params : getDefaultParamForOperation(operation));
     setTimestampFormat(operation === "Parse Timestamp" ? preset.params : getDefaultParamForOperation("Parse Timestamp"));
     setMaskPolicy(operation === "Mask" ? preset.params : getDefaultParamForOperation("Mask"));
     setOnError(TRANSFORM_FAILURE_POLICY_OPTIONS.find((option) => option === preset.onError) ?? "Warn");
@@ -3742,6 +3785,7 @@ function RuleStepBuilder({
     setOutputColumnTouched(true);
     setJsonPath(operation === "Extract JSONPath" ? draft.params : getDefaultParamForOperation("Extract JSONPath"));
     setDecimalFormat(operation === "Cast Decimal" ? draft.params : getDefaultParamForOperation("Cast Decimal"));
+    setAdvancedParams(isAdvancedTransformOperation(operation) ? draft.params : getDefaultParamForOperation(operation));
     setTimestampFormat(operation === "Parse Timestamp" ? draft.params : getDefaultParamForOperation("Parse Timestamp"));
     setMaskPolicy(operation === "Mask" ? draft.params : getDefaultParamForOperation("Mask"));
     setOnError(getTransformFailurePolicy(draft.onError));
@@ -3795,6 +3839,9 @@ function RuleStepBuilder({
   };
   const selectTransformOperation = (operation: TransformOperation) => {
     setSelectedOperation(operation);
+    if (isAdvancedTransformOperation(operation)) {
+      setAdvancedParams(getDefaultParamForOperation(operation));
+    }
     if (!outputColumnTouched) {
       setOutputColumn(getRecommendedOutputColumn(operation, selectedInputColumn));
     }
@@ -3938,11 +3985,13 @@ function RuleStepBuilder({
               <span>{isTransform ? "옵션" : "실패 처리"}</span>
               {isTransform ? (
                 <TransformParameterControl
+                  advancedParams={advancedParams}
                   decimalFormat={decimalFormat}
                   jsonPath={jsonPath}
                   maskPolicy={maskPolicy}
                   operation={selectedOperation}
                   timestampFormat={timestampFormat}
+                  onAdvancedParamsChange={setAdvancedParams}
                   onDecimalFormatChange={setDecimalFormat}
                   onJsonPathChange={setJsonPath}
                   onMaskPolicyChange={setMaskPolicy}
@@ -3979,9 +4028,11 @@ function RuleStepBuilder({
 }
 
 function TransformParameterControl({
+  advancedParams,
   decimalFormat,
   jsonPath,
   maskPolicy,
+  onAdvancedParamsChange,
   onDecimalFormatChange,
   onJsonPathChange,
   onMaskPolicyChange,
@@ -3989,9 +4040,11 @@ function TransformParameterControl({
   operation,
   timestampFormat,
 }: {
+  advancedParams: string;
   decimalFormat: string;
   jsonPath: string;
   maskPolicy: string;
+  onAdvancedParamsChange: (value: string) => void;
   onDecimalFormatChange: (value: string) => void;
   onJsonPathChange: (value: string) => void;
   onMaskPolicyChange: (value: string) => void;
@@ -4022,6 +4075,24 @@ function TransformParameterControl({
       <div className="hegun-rule-control-stack">
         <input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
         <em>숫자 변환 형식</em>
+      </div>
+    );
+  }
+
+  if (isAdvancedTransformOperation(operation) && operation !== "Absolute Value") {
+    return (
+      <div className="hegun-rule-control-stack">
+        <input className="input control-input" type="text" value={advancedParams} onChange={(event) => onAdvancedParamsChange(event.target.value)} />
+        <em>{getAdvancedTransformParamHint(operation)}</em>
+      </div>
+    );
+  }
+
+  if (operation === "Absolute Value") {
+    return (
+      <div className="hegun-rule-select">
+        <strong>추가 파라미터 없음</strong>
+        <em>abs() 규칙으로 저장됩니다.</em>
       </div>
     );
   }
