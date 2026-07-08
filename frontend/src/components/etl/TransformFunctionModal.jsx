@@ -18,18 +18,19 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
     const [selectedFunction, setSelectedFunction] = useState('');
 
     const functions = [
-        { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${sourceColumnRef} AS STRING))` },
-        { name: 'LOWER', desc: 'Convert to lowercase', template: `LOWER(CAST(${sourceColumnRef} AS STRING))` },
-        { name: 'TRIM', desc: 'Remove whitespace', template: `TRIM(CAST(${sourceColumnRef} AS STRING))` },
-        { name: 'REPLACE', desc: 'Replace characters', template: `REPLACE(CAST(${sourceColumnRef} AS STRING), '', '')` },
-        { name: 'SUBSTR', desc: 'Extract substring', template: `SUBSTR(CAST(${sourceColumnRef} AS STRING), 1, 10)` },
-        { name: 'CONCAT', desc: 'Concatenate strings', template: `CONCAT(CAST(${sourceColumnRef} AS STRING), '-', CAST(${sourceColumnRef} AS STRING))` },
-        { name: 'CAST', desc: 'Convert type', template: `CAST(${sourceColumnRef} AS STRING)` },
-        { name: 'COALESCE', desc: 'Handle nulls', template: `COALESCE(${sourceColumnRef}, 'default')` },
+        { name: 'UPPER', desc: 'Convert to uppercase', template: `UPPER(CAST(${sourceColumnRef} AS STRING))`, preview: 'SQL Test Preview supported' },
+        { name: 'LOWER', desc: 'Convert to lowercase', template: `LOWER(CAST(${sourceColumnRef} AS STRING))`, preview: 'SQL Test Preview supported' },
+        { name: 'TRIM', desc: 'Remove whitespace', template: `TRIM(CAST(${sourceColumnRef} AS STRING))`, preview: 'SQL Test Preview supported' },
+        { name: 'REPLACE', desc: 'Replace characters', template: `REPLACE(CAST(${sourceColumnRef} AS STRING), '', '')`, preview: 'SQL Test Preview supported' },
+        { name: 'SUBSTR', desc: 'Extract substring', template: `SUBSTR(CAST(${sourceColumnRef} AS STRING), 1, 10)`, preview: 'SQL Test Preview supported' },
+        { name: 'CONCAT', desc: 'Concatenate strings', template: `CONCAT(CAST(${sourceColumnRef} AS STRING), '-', CAST(${sourceColumnRef} AS STRING))`, preview: 'SQL Test Preview supported' },
+        { name: 'CAST', desc: 'Convert type', template: `CAST(${sourceColumnRef} AS STRING)`, preview: 'SQL Test Preview supported' },
+        { name: 'COALESCE', desc: 'Handle nulls', template: `COALESCE(${sourceColumnRef}, 'default')`, preview: 'SQL Test Preview supported' },
 
-        { name: 'ROUND', desc: 'Round number', template: `ROUND(CAST(${sourceColumnRef} AS DOUBLE), 2)` },
-        { name: 'ABS', desc: 'Absolute value', template: `ABS(CAST(${sourceColumnRef} AS DOUBLE))` },
+        { name: 'ROUND', desc: 'Round number', template: `ROUND(CAST(${sourceColumnRef} AS DOUBLE), 2)`, preview: 'SQL Test Preview supported' },
+        { name: 'ABS', desc: 'Absolute value', template: `ABS(CAST(${sourceColumnRef} AS DOUBLE))`, preview: 'SQL Test Preview supported' },
     ];
+    const selectedFunctionMeta = functions.find((func) => func.name === selectedFunction);
 
     const applyFunction = (func) => {
         // If current expression is just the original field name (not transformed yet),
@@ -96,16 +97,30 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                                 <button
                                     key={func.name}
                                     onClick={() => applyFunction(func)}
+                                    aria-label={`${func.name}: ${func.desc}. ${func.preview}. Inserts ${func.template}`}
                                     className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border ${selectedFunction === func.name
                                         ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                                         : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400 hover:text-indigo-600'
                                         }`}
-                                    title={func.desc}
+                                    title={`${func.desc}. ${func.preview}. ${func.template}`}
                                 >
                                     {func.name}
                                 </button>
                             ))}
                         </div>
+                        {selectedFunctionMeta && (
+                            <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2">
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">
+                                        {selectedFunctionMeta.preview}
+                                    </span>
+                                    <span className="text-[10px] font-bold text-slate-500">{selectedFunctionMeta.name}</span>
+                                </div>
+                                <code className="mt-1 block truncate font-mono text-[11px] text-slate-700" title={selectedFunctionMeta.template}>
+                                    {selectedFunctionMeta.template}
+                                </code>
+                            </div>
+                        )}
                     </div>
 
                     {/* Expression Editor */}

@@ -820,12 +820,21 @@ export default function SchemaTransformEditor({
                         {/* Transform Function Button */}
                         <button
                           onClick={() => openFunctionEditor(col, index)}
+                          aria-label={
+                            col.transform
+                              ? `Edit transform expression for ${col.name}: ${col.transform}`
+                              : `Add transform expression for ${col.name}`
+                          }
                           className={`p-1.5 rounded transition-colors ${
                             col.transform
                               ? "bg-purple-100 text-purple-600 hover:bg-purple-200"
                               : "bg-gray-100 text-gray-500 hover:bg-gray-200"
                           }`}
-                          title="Add transform function"
+                          title={
+                            col.transform
+                              ? `Edit transform: ${col.transform}`
+                              : "Add transform function"
+                          }
                         >
                           <Braces className="w-4 h-4" />
                         </button>
@@ -885,7 +894,10 @@ export default function SchemaTransformEditor({
 
                         {/* Transform Display */}
                         {col.transformDisplay && (
-                          <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-mono">
+                          <span
+                            className="max-w-[360px] truncate px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-mono"
+                            title={col.transformDisplay}
+                          >
                             fx: {col.transformDisplay}
                           </span>
                         )}
