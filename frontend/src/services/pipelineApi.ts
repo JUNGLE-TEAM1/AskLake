@@ -38,3 +38,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {
   return apiClient.post<SqlResultDraft>("/api/query/runs", { datasetId: dataset.id, query });
 }
+
+export async function getQueryRun(runId: string): Promise<SqlResultDraft> {
+  return apiClient.get<SqlResultDraft>(`/api/query/runs/${encodeURIComponent(runId)}`);
+}

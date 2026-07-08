@@ -118,6 +118,17 @@ class SqlService:
         )
         return response
 
+    def get_query_run(self, run_id: str) -> QueryRunResponse:
+        payload = self.repository.get_run_payload(run_id)
+        if payload is None:
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "SQL run not found",
+                status.HTTP_404_NOT_FOUND,
+                {"runId": run_id},
+            )
+        return QueryRunResponse.model_validate(payload)
+
     def get_catalog_dataset(
         self,
         dataset_id: str,
