@@ -28,10 +28,12 @@ Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며
 
 ```bash
 cd frontend
+npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
+`npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -73,6 +75,7 @@ cd backend
 
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+Assistant guard는 OpenAI가 없는 컬럼/부적절한 값축을 반환해도 catalog schema와 sample rows 기준으로 보정한다. 차원 컬럼만 제시된 요청은 `count` 집계 차트로, 매출/금액 지표가 포함된 요청은 `revenue`/`total_amount` 같은 실제 수치 컬럼으로 보정한다. OpenAI 응답이 비어 있으면 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성한다.
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -81,6 +84,11 @@ OPENAI_ASSISTANT_MODEL=gpt-4o-mini
 OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
 OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
+```
+
+```bash
+cd backend
+npm run verify:dashboard-assistant-guard
 ```
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.

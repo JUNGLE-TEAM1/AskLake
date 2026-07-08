@@ -538,6 +538,7 @@ type DashboardAssistantResponse = {
 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 없으면 UI는 미설정 안내만 표시하고 요청을 보내지 않는다.
 `widgets`는 구버전/테스트 호환 fallback payload로 유지하지만, `dashboardId`가 있으면 서버 DB runtime 컨텍스트가 우선이다.
 `selectedWidgetId` 또는 `widgetId`가 있으면 서버는 해당 위젯만 `update_widget` 대상에 포함한다.
+서버 guard는 Assistant가 없는 컬럼이나 문자열 값축을 반환하면 catalog schema/sample rows 기준으로 보정한다. 차원-only 요청은 `count` 집계 차트로 보정하고, `revenue`/`total_amount` 같은 금액 alias는 실제 dataset 컬럼에 맞춰 정규화한다. OpenAI 응답에서 적용 가능한 action이 남지 않으면 서버가 요청 문장과 available dataset 기준의 기본 막대 차트 `create_widget`/`update_widget` action을 생성할 수 있다.
 
 ## 9) 변경 규칙
 

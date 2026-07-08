@@ -72,7 +72,9 @@ COLUMN_TITLE_TERMS = {
     "month": "월",
     "on_time_rate": "정시 배송률",
     "order_date": "주문일",
+    "orders": "주문 수",
     "region": "지역",
+    "revenue": "매출",
     "service_level": "서비스 등급",
     "ship_date": "배송일",
     "shipment_count": "배송 건수",
@@ -86,6 +88,18 @@ COLUMN_TITLE_TERMS = {
     "transport_cost": "운송비",
     "warehouse": "창고",
     "warehouse_cost": "창고비",
+}
+
+COLUMN_ALIASES = {
+    "amount": ["revenue", "total_amount", "total_cost"],
+    "customer_count": ["customers"],
+    "order_count": ["orders", "shipment_count"],
+    "revenue": ["revenue", "total_amount"],
+    "sales": ["revenue", "total_amount"],
+    "sales_amount": ["revenue", "total_amount"],
+    "total_revenue": ["revenue", "total_amount"],
+    "total_sales": ["revenue", "total_amount"],
+    "total_amount": ["revenue", "total_cost"],
 }
 
 DATASET_TITLE_TERMS = {
@@ -411,6 +425,11 @@ def _validate_config(
     elif config_payload.get("color") is None:
         config_payload["color"] = {"colors": ["#2563eb"]}
 
+    column_names = [column.name for column in dataset.columns]
+    config_payload, normalization_warnings = _normalize_config_columns(config_payload, column_names)
+    config_payload, count_warnings = _normalize_count_aggregation(widget_type, config_payload, dataset)
+    normalization_warnings.extend(count_warnings)
+
     config_model = CONFIG_MODEL_BY_TYPE[widget_type]
     try:
         parsed_config = config_model.model_validate(config_payload)
@@ -420,7 +439,7 @@ def _validate_config(
     warnings = _validate_columns(widget_type, parsed_config.model_dump(by_alias=True, exclude_none=True), dataset)
     if warnings:
         return None, warnings
-    return parsed_config, []
+    return parsed_config, normalization_warnings
 
 
 def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:
@@ -457,7 +476,9 @@ def _validate_columns(
         column_name = config.get(numeric_field)
         if not isinstance(column_name, str) or column_name not in columns:
             continue
-        if not _is_numeric_column(columns[column_name].type):
+        if config.get("aggregation") == "count":
+            continue
+        if not _is_numeric_column(columns[column_name].type) and not _sample_values_are_numeric(dataset, column_name):
             warnings.append(
                 f"{widget_type.value} config의 {numeric_field}={column_name!r} 컬럼은 숫자형이 아닙니다. "
                 f"현재 타입: {columns[column_name].type}. 숫자 컬럼만 값/축으로 사용할 수 있습니다."
@@ -474,9 +495,101 @@ def _available_column_names(columns: dict[str, Any]) -> str:
     return ", ".join(columns.keys()) or "없음"
 
 
+def _normalize_config_columns(config: dict[str, Any], column_names: list[str]) -> tuple[dict[str, Any], list[str]]:
+    columns = set(column_names)
+    normalized_columns = {_normalize_column_name(column_name): column_name for column_name in column_names}
+    warnings: list[str] = []
+
+    def normalize_value(value: Any) -> Any:
+        if not isinstance(value, str) or value in columns:
+            return value
+        normalized_value = _normalize_column_name(value)
+        replacement = normalized_columns.get(normalized_value) or _alias_column(value, columns, normalized_columns)
+        if replacement is None:
+            return value
+        warnings.append(f"Assistant column {value!r}를 실제 컬럼 {replacement!r}로 보정했습니다.")
+        return replacement
+
+    next_config = dict(config)
+    for key, value in list(next_config.items()):
+        if key == "columns" and isinstance(value, list):
+            next_config[key] = [normalize_value(item) for item in value]
+        elif key.endswith("Key"):
+            next_config[key] = normalize_value(value)
+    return next_config, warnings
+
+
+def _normalize_count_aggregation(
+    widget_type: DashboardRuntimeWidgetType,
+    config: dict[str, Any],
+    dataset: AssistantDatasetContext,
+) -> tuple[dict[str, Any], list[str]]:
+    option = WIDGET_OPTIONS[widget_type]
+    next_config = dict(config)
+    warnings: list[str] = []
+    columns = {column.name: column for column in dataset.columns}
+
+    for numeric_field in option["numeric"]:
+        column_name = next_config.get(numeric_field)
+        if not isinstance(column_name, str) or column_name not in columns:
+            continue
+        if _is_numeric_column(columns[column_name].type) or _sample_values_are_numeric(dataset, column_name):
+            continue
+        if next_config.get("aggregation") != "count":
+            next_config["aggregation"] = "count"
+            warnings.append(
+                f"{widget_type.value} config의 {numeric_field}={column_name!r} 컬럼이 숫자형이 아니어서 aggregation을 'count'로 보정했습니다."
+            )
+    return next_config, warnings
+
+
+def _alias_column(value: str, columns: set[str], normalized_columns: dict[str, str]) -> str | None:
+    alias_key = _normalize_column_name(value)
+    alias_candidates = COLUMN_ALIASES.get(value.lower(), []) or COLUMN_ALIASES.get(alias_key, [])
+    for candidate in alias_candidates:
+        if candidate in columns:
+            return candidate
+        normalized_candidate = normalized_columns.get(_normalize_column_name(candidate))
+        if normalized_candidate:
+            return normalized_candidate
+    return None
+
+
+def _normalize_column_name(value: str) -> str:
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
 def _is_numeric_column(column_type: str) -> bool:
     normalized = column_type.strip().lower()
     return any(hint in normalized for hint in NUMERIC_TYPE_HINTS)
+
+
+def _sample_values_are_numeric(dataset: AssistantDatasetContext, column_name: str) -> bool:
+    values = [
+        row.get(column_name)
+        for row in dataset.sample_rows
+        if isinstance(row, dict) and row.get(column_name) not in {None, ""}
+    ]
+    if not values:
+        return False
+    return all(_can_parse_number(value) for value in values[:10])
+
+
+def _can_parse_number(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int | float):
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().replace(",", "")
+    if not normalized:
+        return False
+    try:
+        float(normalized)
+    except ValueError:
+        return False
+    return True
 
 
 def _config_to_dict(config: Any) -> dict[str, Any]:

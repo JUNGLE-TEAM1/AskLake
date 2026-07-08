@@ -735,11 +735,16 @@
 }
 
 .catalog-wide-button {
+  display: inline-flex;
   width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .catalog-wide-button svg {
-  margin-right: 6px;
+  flex: 0 0 auto;
+  margin-right: 0;
 }
 
 .catalog-modal-backdrop {
