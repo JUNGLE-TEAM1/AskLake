@@ -289,6 +289,7 @@ export function CatalogPage({
   const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
@@ -439,9 +440,24 @@ export function CatalogPage({
     onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
   };
 
+  const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
+    event.stopPropagation();
+    if (run.status !== "success") return;
+    setPreviewDataset(dataset);
+    setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
+    onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
+  };
+
   const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
     event.stopPropagation();
+    setSelectedSqlRunTarget((target) => target?.datasetId === dataset.id && target.datasetName === dataset.name && target.runId === runId ? null : target);
     onMaterializationRunDelete(dataset.id, runId);
+  };
+
+  const openSelectedSqlDataset = () => {
+    if (!selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
+    onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
+    onOpenSql(previewDataset);
   };
 
   return (
@@ -565,7 +581,7 @@ export function CatalogPage({
                 const isExpanded = expandedDatasetIds.includes(dataset.id);
 
                 return (
-                  <div className={["catalog-result-item", isExpanded ? "expanded" : ""].filter(Boolean).join(" ")} key={dataset.id}>
+                  <div className={["catalog-result-item", isExpanded ? "expanded" : ""].filter(Boolean).join(" ")} key={`${dataset.id}:${dataset.name}`}>
                     <article
                       className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
                       role="button"
@@ -605,7 +621,9 @@ export function CatalogPage({
                         dataset={dataset}
                         onDelete={deleteMaterializationRun}
                         onPageChange={updateMaterializationRunPage}
+                        onSelectRun={selectSqlMaterializationRun}
                         page={materializationRunPageByDatasetId[dataset.id] ?? 1}
+                        selectedRunId={selectedSqlRunTarget?.runId ?? null}
                       />
                     )}
                   </div>
@@ -704,9 +722,20 @@ export function CatalogPage({
             <span>›</span>
           </article>
 
-          <button className="primary-button catalog-wide-button" type="button" onClick={() => onOpenSql(previewDataset)}>
+          <button
+            className="primary-button catalog-wide-button"
+            disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+            title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+            type="button"
+            onClick={openSelectedSqlDataset}
+          >
             <ExternalLink size={16} /> SQL 분석에서 열기
           </button>
+          <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
+            {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
+              ? `선택된 결과: ${selectedSqlRunTarget.runId}`
+              : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
+          </p>
           </aside>
         ) : (
           <aside className="catalog-preview-panel catalog-preview-panel-empty">
@@ -849,12 +878,16 @@ function CatalogMaterializationRuns({
   dataset,
   onDelete,
   onPageChange,
+  onSelectRun,
   page,
+  selectedRunId,
 }: {
   dataset: CatalogDataset;
   onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
   onPageChange: (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => void;
+  onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
   page: number;
+  selectedRunId: string | null;
 }) {
   const runs = dataset.materializationRuns ?? [];
   const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
@@ -870,8 +903,27 @@ function CatalogMaterializationRuns({
       </div>
       {visibleRuns.length > 0 ? (
         <div className="catalog-materialization-list">
-          {visibleRuns.map((run) => (
-            <div className="catalog-materialization-row" key={run.runId}>
+          {visibleRuns.map((run) => {
+            const isSelectable = run.status === "success";
+            const isSelected = run.runId === selectedRunId;
+
+            return (
+            <div
+              aria-disabled={!isSelectable}
+              aria-pressed={isSelected}
+              className={["catalog-materialization-row", isSelectable ? "selectable" : "disabled", isSelected ? "selected" : ""].filter(Boolean).join(" ")}
+              key={run.runId}
+              role="button"
+              tabIndex={isSelectable ? 0 : -1}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              onClick={(event) => onSelectRun(event, dataset, run)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectRun(event, dataset, run);
+                }
+              }}
+            >
               <span className={`catalog-run-status ${run.status}`}>{materializationRunStatusLabel(run.status)}</span>
               <strong title={run.runId}>{run.runId}</strong>
               <span>{formatRunCreatedAt(run.createdAt)}</span>
@@ -893,7 +945,8 @@ function CatalogMaterializationRuns({
                 삭제
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
