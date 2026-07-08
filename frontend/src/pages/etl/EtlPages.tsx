@@ -2192,6 +2192,9 @@ export function SchemaInferencePage({
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary,
       },
+      transform: {
+        outputColumns: buildSchemaDraftOutputColumns(columns),
+      },
     });
     return true;
   };
@@ -2204,6 +2207,9 @@ export function SchemaInferencePage({
         sampleRows,
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
+      },
+      transform: {
+        outputColumns: buildSchemaDraftOutputColumns(columns),
       },
     });
   };
@@ -2640,6 +2646,23 @@ function writeTransformQualityPreviewCache(cache: TransformQualityPreviewCache) 
 
 function schemaColumnOutputName(column: SchemaColumnDraft) {
   return (column.targetName || column.sourceName || "column").trim();
+}
+
+function buildSchemaDraftOutputColumns(columns: SchemaColumnDraft[]) {
+  return columns
+    .filter(isSchemaColumnIncluded)
+    .map((column) => [schemaColumnOutputName(column), column.type] as [string, string]);
+}
+
+function reviewTransformLabel(outputName: string, sourceColumn: SchemaColumnDraft | undefined, steps: TransformStepDraft[]) {
+  const matchedSteps = steps.filter((step) => step.enabled !== false && step.output === outputName);
+  if (matchedSteps.length > 0) {
+    return matchedSteps
+      .map((step) => `${step.operation}${step.params ? `: ${step.params}` : ""}`)
+      .join(" -> ");
+  }
+  if (!sourceColumn) return "변환 출력";
+  return sourceColumn.sourceName === outputName ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${outputName}`;
 }
 
 function getRuleSourceColumns(columns: SchemaColumnDraft[]) {
@@ -5095,14 +5118,14 @@ export function ReviewPage({
         return {
           columnName: name,
           nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
-          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
+          transform: reviewTransformLabel(name, sourceColumn, draft.transform.steps),
           type,
         };
       })
     : includedReviewColumns.map((column) => ({
         columnName: column.targetName,
         nullable: column.nullable ? "예" : "아니요",
-        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+        transform: reviewTransformLabel(schemaColumnOutputName(column), column, draft.transform.steps),
         type: column.type,
       }));
   const sourceSummary = summarizeSourceConfig(request.sourceConfig);

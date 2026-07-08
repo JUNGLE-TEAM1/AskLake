@@ -70,6 +70,15 @@ export type SourceDraft = {
   sourceType: string;
 };
 
+export type TransformChainStepDraft = {
+  display?: string;
+  expression?: string;
+  onError?: string;
+  operation: string;
+  params: string;
+  type?: string;
+};
+
 export type SchemaColumnDraft = {
   confidence?: number;
   included?: boolean;
@@ -77,6 +86,7 @@ export type SchemaColumnDraft = {
   role?: string;
   sourceName: string;
   targetName: string;
+  transformChain?: TransformChainStepDraft[];
   type: string;
 };
 

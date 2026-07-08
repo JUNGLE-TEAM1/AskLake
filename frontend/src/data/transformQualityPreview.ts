@@ -134,6 +134,15 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
   const operation = step.operation.toLowerCase();
 
   try {
+    if (operation.includes("default")) {
+      return { failed: false, value: inputValue.trim() ? inputValue : step.params };
+    }
+    if (operation.includes("null guard") || operation.includes("not null")) {
+      return inputValue.trim() ? { failed: false, value: inputValue } : { failed: true, value: "" };
+    }
+    if (operation.includes("sql expression")) {
+      return { failed: false, value: inputValue };
+    }
     if (operation.includes("json")) {
       return { failed: false, value: readJsonPath(inputValue, step.params) };
     }
@@ -185,7 +194,7 @@ function runQualityRules(rows: TransformQualitySampleRow[], qualityRules: Transf
         column: rule.targetColumn,
         reason,
         ruleId: rule.id,
-        row: `${row.row_id}행`,
+        row: String(row.row_id ?? ""),
         sampleValue: row[rule.targetColumn] ?? "",
       }];
     });
@@ -204,7 +213,7 @@ function runQualityRules(rows: TransformQualitySampleRow[], qualityRules: Transf
     qualityScore,
     sampleRows: rows.length,
     status,
-    summary: `품질 점수 ${qualityScore}% · 통과율 ${passRate}% · 유효하지 않은 행 ${invalidRowCount}개`,
+    summary: `Quality score ${qualityScore}% - pass rate ${passRate}% - invalid rows ${invalidRowCount}`,
   };
 }
 
