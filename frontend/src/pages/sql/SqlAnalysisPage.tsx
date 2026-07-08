@@ -673,6 +673,19 @@ export function SqlAnalysisPage({
     onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
   };
 
+  const applyPreflightAutoFix = () => {
+    if (!preflightResult?.autoFixQuery) return;
+    const nextQuery = preflightResult.autoFixQuery;
+    updateQuery(nextQuery);
+    setCursorIndex(nextQuery.length);
+    onAction("analysis.query.identifier_autofixed", queryContextPath("preflight"), baseDataset?.id ?? "sql-empty");
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
+      syncLineNumberScroll();
+    });
+  };
+
   const downloadCsv = () => {
     if (!resultDraft) return;
     const csv = [
@@ -953,6 +966,11 @@ export function SqlAnalysisPage({
               {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> SQL 초기화</button>
+            {preflightResult?.autoFixQuery && (
+              <button className="secondary-button" type="button" onClick={applyPreflightAutoFix}>
+                식별자 자동 보정
+              </button>
+            )}
           </div>
         </section>
 
