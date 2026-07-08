@@ -870,6 +870,20 @@
   border-collapse: collapse;
 }
 
+.catalog-schema-table-wrap {
+  gap: 0;
+}
+
+.catalog-schema-preview-viewport {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.catalog-schema-table-viewport {
+  border-radius: 8px;
+}
+
 .catalog-schema-preview th,
 .catalog-schema-preview td {
   border-bottom: 1px solid #eef2f7;
@@ -877,6 +891,15 @@
   font-size: 13px;
   padding: 10px 0;
   text-align: left;
+}
+
+.catalog-schema-name-cell span,
+.catalog-schema-description-cell span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .catalog-schema-sort-button {
