@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
+import { deleteDatasetMaterializationRun } from "../services/catalogApi";
 import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
@@ -49,7 +50,76 @@ const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
 
-const initialDraftPipeline: DraftPipeline = {
+function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
+  return {
+    ...draft,
+    id: "",
+    permission: {
+      ...draft.permission,
+      summary: "기본 소유자만 설정되었습니다.",
+    },
+    quality: {
+      ...draft.quality,
+      invalidRows: [],
+      rules: [],
+      score: undefined,
+      status: "idle",
+      summary: "데이터 품질 규칙을 설정하세요.",
+    },
+    schedule: {
+      ...draft.schedule,
+      endDate: "",
+      label: "수동 실행",
+      mode: "manual",
+      nextRun: "-",
+      nextRunUtc: undefined,
+      overlapPolicy: "skip_if_running",
+      startDate: "",
+      summary: "수동 실행 · 저장 후 목록에서 직접 실행",
+      timezone: "(GMT+09:00) Seoul, Tokyo",
+      watermarkPolicy: {
+        column: "updated_at",
+        enabled: false,
+        lookbackMinutes: 5,
+        mode: "full_refresh",
+      },
+    },
+    schema: {
+      ...draft.schema,
+      columns: [],
+      sampleRows: [],
+      summary: "스키마 추론 대기",
+    },
+    source: {
+      ...draft.source,
+      connectionMessage: "소스를 선택하고 연결 테스트를 실행하세요.",
+      connectionStatus: "idle",
+      sourceConfig: [],
+      sourceLabel: "",
+      sourceType: "",
+    },
+    target: {
+      ...draft.target,
+      datasetName: "",
+      description: "",
+      partition: "",
+      partitionColumns: [],
+      rag: false,
+      storagePath: "",
+      tableName: "",
+      tags: [],
+      testStatus: "idle",
+    },
+    transform: {
+      ...draft.transform,
+      outputColumns: [],
+      steps: [],
+      summary: "변환 규칙을 설정하세요.",
+    },
+  };
+}
+
+const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
   id: "pair_a_customer_review_gold",
   permission: {
     owner: "data-team-01",
@@ -114,7 +184,7 @@ const initialDraftPipeline: DraftPipeline = {
     steps: [],
     summary: "변환 규칙과 품질 검사를 설정하세요.",
   },
-};
+});
 
 const emptySelectedDataset: CatalogDataset = {
   description: "생성된 데이터셋이 없습니다. 수집/처리에서 파이프라인을 먼저 생성하고 실행하세요.",
@@ -336,8 +406,37 @@ function normalizeJobRow(job: JobRowData): JobRowData {
 function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
   return {
     ...dataset,
+    materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
   };
+}
+
+function formatStorageSize(sizeBytes: number) {
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function recalculateDatasetFromMaterializationRuns(dataset: CatalogDataset): CatalogDataset {
+  const materializationRuns = dataset.materializationRuns ?? [];
+  const activeRuns = materializationRuns.filter((run) => run.status === "success");
+  const latestRun = activeRuns[0];
+  const rowCount = activeRuns.reduce((total, run) => total + Math.max(run.rowCount || 0, 0), 0);
+  const storageSizeBytes = activeRuns.reduce((total, run) => total + Math.max(run.storageSizeBytes || 0, 0), 0);
+
+  return normalizeDatasetRow({
+    ...dataset,
+    lastUpdated: latestRun?.createdAt ?? dataset.lastUpdated,
+    rows: `${rowCount.toLocaleString()} rows`,
+    size: storageSizeBytes > 0 ? formatStorageSize(storageSizeBytes) : "0B",
+    sourceRunId: latestRun?.runId,
+    storageSizeBytes,
+  });
 }
 
 function upsertRunByRunId(runs: JobRunSummary[], run: JobRunSummary): JobRunSummary[] {
@@ -628,13 +727,14 @@ export function useAskLakeData({
       showToast(normalizedDataset ? "파이프라인 생성 요청이 접수되었습니다." : "파이프라인 생성 요청을 접수했습니다. 실행 성공 후 카탈로그에 등록됩니다.");
       setDraftPipeline(initialDraftPipeline);
       onFlowChange("jobs");
-    } catch {
+    } catch (error) {
       setJobs(previousState.jobs);
       setDatasets(previousState.datasets);
       setSelectedJob(previousState.selectedJob);
       setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("etl.job.create_failed", "/api/etl/jobs", draftPipeline.id, "failed");
-      showToast("파이프라인 생성 요청에 실패했습니다.", "info");
+      const message = error instanceof ApiError ? error.message : "파이프라인 생성 요청에 실패했습니다.";
+      showToast(message, "info");
     } finally {
       createPendingRef.current = false;
       setApiPending(false);
@@ -658,6 +758,43 @@ export function useAskLakeData({
     showToast("SQL 결과 기반 처리 Job 초안을 만들었습니다.");
     onFlowChange("review");
     return true;
+  };
+
+  const deleteMaterializationRun = async (datasetId: string, runId: string) => {
+    const previousState = {
+      datasets,
+      selectedDataset,
+    };
+    const targetDataset = datasets.find((dataset) => dataset.id === datasetId);
+    if (!targetDataset) {
+      showToast("삭제할 append 결과를 찾지 못했습니다.", "info");
+      return;
+    }
+
+    const applyDataset = (dataset: CatalogDataset) => {
+      const normalizedDataset = normalizeDatasetRow(dataset);
+      setDatasets((items) => items.map((item) => (item.id === datasetId ? normalizedDataset : item)));
+      setSelectedDataset((current) => (current.id === datasetId ? normalizedDataset : current));
+      return normalizedDataset;
+    };
+
+    try {
+      const nextDataset = apiConfig.useMock
+        ? recalculateDatasetFromMaterializationRuns({
+            ...targetDataset,
+            materializationRuns: (targetDataset.materializationRuns ?? []).filter((run) => run.runId !== runId),
+          })
+        : normalizeDatasetRow((await deleteDatasetMaterializationRun(datasetId, runId)).dataset);
+
+      applyDataset(nextDataset);
+      writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
+      showToast("데이터셋 append 결과를 삭제했습니다.");
+    } catch {
+      setDatasets(previousState.datasets);
+      setSelectedDataset(previousState.selectedDataset);
+      writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
+      showToast("append 결과 삭제에 실패했습니다.", "info");
+    }
   };
 
   const updateJobState = (jobId: string, updater: (job: JobRowData) => JobRowData) => {
@@ -833,6 +970,7 @@ export function useAskLakeData({
     openJobDetail,
     openJobRuns,
     prepareSqlDatasetJobDraft,
+    deleteMaterializationRun,
     runsByJobId,
     selectedDataset,
     selectedJob,

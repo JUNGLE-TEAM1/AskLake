@@ -7,6 +7,7 @@
     "api": "node server/index.js",
     "dev": "vite --config vite.config.ts --host 127.0.0.1 --port 5174 --strictPort",
     "db:seed": "node server/seed.js",
+    "verify:ui-regressions": "node scripts/verify-ui-regressions.mjs",
     "build": "tsc -b && vite build --config vite.config.ts",
     "preview": "vite preview --config vite.config.ts --host 0.0.0.0"
   },
@@ -17,6 +18,7 @@
     "@mui/material": "^9.2.0",
     "@mui/system": "^9.2.0",
     "@mui/x-tree-view": "^9.8.0",
+    "@tailwindcss/vite": "^4.3.2",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.5",
     "@vitejs/plugin-react": "4.3.4",
@@ -32,6 +34,7 @@
     "react-dom": "latest",
     "react-grid-layout": "^2.2.3",
     "react-resizable": "^4.0.2",
+    "tailwindcss": "^4.3.2",
     "typescript": "5.6.3",
     "vite": "5.4.11"
   },

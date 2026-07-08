@@ -56,9 +56,17 @@ export function ensureMetadataSchema() {
 
 export async function resetMetadata() {
   await ensureMetadataSchema();
-  await pool.query("DELETE FROM sql_runs");
-  await pool.query("DELETE FROM catalog_datasets");
-  await pool.query("DELETE FROM etl_jobs");
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF to_regclass('public.etl_runs') IS NOT NULL THEN
+        DELETE FROM etl_runs;
+      END IF;
+    END $$;
+    DELETE FROM sql_runs;
+    DELETE FROM catalog_datasets;
+    DELETE FROM etl_jobs;
+  `);
 }
 
 export async function countJobs() {

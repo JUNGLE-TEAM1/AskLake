@@ -46,70 +46,53 @@ async function runSmoke() {
   assert(lineage.datasetId === seedDatasetId, "Lineage response should be scoped to the seed dataset.");
   assert(lineage.datasets.length >= 2, "Lineage graph should include upstream and current dataset nodes.");
 
-  const query = "SELECT order_id, customer_id, order_date, total_amount, status FROM orders_clean LIMIT 1";
+  const query = "SELECT order_id, status, total_amount FROM orders_clean WHERE total_amount > 100000 ORDER BY order_id LIMIT 2";
   const previewRun = await post("/api/query/runs", {
     baseDatasetId: seedDatasetId,
     datasetId: seedDatasetId,
-    limit: 1,
+    limit: 100,
     mode: "preview",
     query,
     referenceDatasetIds: [],
     validationKey: `${seedDatasetId}:${query}`,
   });
   assert(previewRun.runId, "SQL preview should return runId.");
-  assert(previewRun.rowCount === 1, "SQL preview should respect the request limit.");
-  assert(previewRun.rows.length === 1, "SQL preview should return one preview row.");
-  assert(
-    JSON.stringify(previewRun.columns) === JSON.stringify(["order_id", "customer_id", "order_date", "total_amount", "status"]),
-    `SQL preview should return projected columns, got ${previewRun.columns.join(", ")}.`,
-  );
+  assert(JSON.stringify(previewRun.columns) === JSON.stringify(["order_id", "status", "total_amount"]), "SQL preview should return projected columns from DuckDB.");
+  assert(previewRun.rowCount === 2, "SQL preview should execute WHERE/ORDER BY/LIMIT in DuckDB.");
+  assert(JSON.stringify(previewRun.rows[0]) === JSON.stringify(["ORD-1001", "paid", "128000"]), "SQL preview should return DuckDB query rows.");
 
-  const filteredProjectionRun = await post("/api/query/runs", {
-    baseDatasetId: seedDatasetId,
-    datasetId: seedDatasetId,
-    limit: 2,
-    mode: "preview",
-    query: "SELECT customer_id FROM orders_clean WHERE status = 'paid' ORDER BY order_id LIMIT 2",
-    referenceDatasetIds: [],
-    validationKey: `${seedDatasetId}:filtered-projection`,
-  });
-  assert(
-    JSON.stringify(filteredProjectionRun.columns) === JSON.stringify(["customer_id"]),
-    `SQL preview should execute projection, got ${filteredProjectionRun.columns.join(", ")}.`,
-  );
-  assert(
-    JSON.stringify(filteredProjectionRun.rows) === JSON.stringify([["CUS-204"], ["CUS-204"]]),
-    `SQL preview should execute WHERE/ORDER/LIMIT, got ${JSON.stringify(filteredProjectionRun.rows)}.`,
-  );
+  const hydratedPreviewRun = await get(`/api/query/runs/${encodeURIComponent(previewRun.runId)}`);
+  assert(hydratedPreviewRun.runId === previewRun.runId, "SQL preview snapshot hydrate should return the requested runId.");
+  assert(hydratedPreviewRun.query === previewRun.query, "SQL preview snapshot hydrate should preserve query text.");
+  assert(JSON.stringify(hydratedPreviewRun.columns) === JSON.stringify(previewRun.columns), "SQL preview snapshot hydrate should preserve columns.");
+  assert(JSON.stringify(hydratedPreviewRun.rows) === JSON.stringify(previewRun.rows), "SQL preview snapshot hydrate should preserve rows.");
 
+  const joinQuery = "SELECT o.order_id, c.segment FROM orders_clean o JOIN customers_clean c ON o.customer_id = c.customer_id WHERE c.is_vip = true ORDER BY o.order_id LIMIT 3";
   const joinRun = await post("/api/query/runs", {
     baseDatasetId: seedDatasetId,
     datasetId: seedDatasetId,
-    limit: 3,
+    limit: 100,
     mode: "preview",
-    query: [
-      "SELECT o.order_id, c.customer_name, c.segment",
-      "FROM orders_clean o",
-      "JOIN customers_clean c ON o.customer_id = c.customer_id",
-      "WHERE c.segment = 'VIP'",
-      "ORDER BY o.order_id",
-      "LIMIT 3",
-    ].join("\n"),
+    query: joinQuery,
     referenceDatasetIds: ["ds_customers_clean"],
-    validationKey: `${seedDatasetId}:join-customers`,
+    validationKey: `${seedDatasetId}:${joinQuery}`,
   });
-  assert(
-    JSON.stringify(joinRun.columns) === JSON.stringify(["order_id", "customer_name", "segment"]),
-    `JOIN preview should return joined projected columns, got ${joinRun.columns.join(", ")}.`,
-  );
-  assert(
-    JSON.stringify(joinRun.rows) === JSON.stringify([
-      ["ORD-1001", "김민준", "VIP"],
-      ["ORD-1003", "김민준", "VIP"],
-      ["ORD-1004", "Haruto Sato", "VIP"],
-    ]),
-    `JOIN preview should execute across selected datasets, got ${JSON.stringify(joinRun.rows)}.`,
-  );
+  assert(JSON.stringify(joinRun.columns) === JSON.stringify(["order_id", "segment"]), "DuckDB join preview should return projected join columns.");
+  assert(joinRun.rowCount === 3, "DuckDB join preview should execute against selected reference datasets.");
+  assert(JSON.stringify(joinRun.rows[0]) === JSON.stringify(["ORD-1001", "VIP"]), "DuckDB join preview should return joined rows.");
+
+  const literalQuery = "SELECT 'from ignored_table' AS note, order_id FROM orders_clean ORDER BY order_id LIMIT 1";
+  const literalRun = await post("/api/query/runs", {
+    baseDatasetId: seedDatasetId,
+    datasetId: seedDatasetId,
+    limit: 10,
+    mode: "preview",
+    query: literalQuery,
+    referenceDatasetIds: [],
+    validationKey: `${seedDatasetId}:${literalQuery}`,
+  });
+  assert(JSON.stringify(literalRun.columns) === JSON.stringify(["note", "order_id"]), "SQL scope validation should ignore FROM text inside string literals.");
+  assert(JSON.stringify(literalRun.rows[0]) === JSON.stringify(["from ignored_table", "ORD-1001"]), "DuckDB preview should execute safe string literal queries.");
 
   const mutationError = await postExpectError("/api/query/runs", {
     datasetId: seedDatasetId,
@@ -117,6 +100,13 @@ async function runSmoke() {
     query: "DROP TABLE orders_clean",
   }, 403);
   assert(mutationError.error?.code === "FORBIDDEN", "SQL mutation should be rejected by backend guard.");
+
+  const fileRelationError = await postExpectError("/api/query/runs", {
+    datasetId: seedDatasetId,
+    mode: "preview",
+    query: "SELECT * FROM 'C:/tmp/not-selected.parquet'",
+  }, 422);
+  assert(fileRelationError.error?.code === "VALIDATION_ERROR", "DuckDB file path relation sources should be rejected by backend guard.");
 
   const derivedName = `orders_clean_smoke_${Date.now()}`;
   const derivedDataset = await post("/api/catalog/derived-datasets", {
@@ -167,7 +157,7 @@ async function runSmoke() {
 function ensureFastApiPythonDependencies() {
   const result = spawnSync(pythonBin, [
     "-c",
-    "import fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn",
+    "import duckdb, fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn",
   ], {
     cwd: backendDir,
     env,

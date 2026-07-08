@@ -16,7 +16,8 @@ type RuntimeStoreEntry = {
 const runtimeStore = new Map<string, RuntimeStoreEntry>();
 
 function shouldUseRuntimeFallback(error: unknown) {
-  return error instanceof ApiError && error.status === 404;
+  if (error instanceof ApiError) return error.status === 404 || error.status >= 500;
+  return error instanceof TypeError;
 }
 
 async function withRuntimeFallback<T>(request: () => Promise<T>, fallback: () => T): Promise<T> {
@@ -246,6 +247,7 @@ export type CreateDraftWidgetInput = {
 
 export type UpdateDraftWidgetInput = {
   config?: Record<string, unknown>;
+  data?: Array<Record<string, unknown>>;
   datasetId?: string | null;
   title?: string | null;
   type?: DashboardRuntimeWidgetType;
@@ -306,6 +308,7 @@ function updateLocalWidget(widget: DashboardRuntimeWidget, input: UpdateDraftWid
   return {
     ...widget,
     config: input.config ?? widget.config,
+    data: input.data ?? widget.data,
     datasetId: input.datasetId ?? widget.datasetId,
     title: input.title ?? widget.title,
     type: input.type ?? widget.type,

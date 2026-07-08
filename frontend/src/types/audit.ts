@@ -13,8 +13,10 @@ export type AuditEntry = {
 };
 
 export type ApiErrorResponse = {
+  detail?: unknown;
   error: {
     code: string;
+    details?: Record<string, unknown> | null;
     message: string;
   };
 };

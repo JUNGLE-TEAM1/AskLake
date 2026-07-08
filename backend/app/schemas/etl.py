@@ -166,7 +166,12 @@ class CatalogDataset(CamelModel):
     sample_rows: list[list[str]]
     upstream: list[str]
     downstream: list[str]
+    source_run_id: str | None = None
+    storage_format: str | None = None
+    storage_location: str | None = None
+    storage_size_bytes: int | None = None
     lineage_graph: dict[str, Any] | None = None
+    materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DerivedDatasetSpec(CamelModel):

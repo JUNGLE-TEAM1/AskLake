@@ -69,6 +69,8 @@ export type DashboardPageResult = {
 };
 
 const mockLatencyMs = 120;
+const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
+const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
 
 function normalizeJob(job: JobRowData): JobRowData {
   return { ...job, status: normalizeJobStatus(job.status) };
@@ -460,16 +462,19 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
     });
   }
 
-  const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows
+  const previewDataset = resolveMockQueryResultDataset(dataset, query);
+  const columns = previewDataset === dataset
+    ? previewDataset.schema.slice(0, 6).map(([name]) => name)
+    : previewDataset.schema.map(([name]) => name);
+  const rows = previewDataset.sampleRows
     .slice(0, options.limit)
     .map((row) => row.slice(0, Math.max(columns.length, 1)));
 
   return resolveMock({
     baseDatasetId: dataset.id,
     columns,
-    datasetId: dataset.id,
-    datasetName: dataset.name,
+    datasetId: previewDataset.id,
+    datasetName: previewDataset.name,
     executedAt: new Date().toISOString(),
     mode: "preview",
     previewLimit: options.limit,
@@ -480,6 +485,26 @@ export async function executeQueryPreview(dataset: CatalogDataset, query: string
     runId: `sql_preview_${Date.now()}`,
     validationKey: options.validationKey,
   });
+}
+
+function resolveMockQueryResultDataset(baseDataset: CatalogDataset, query: string) {
+  const normalizedQuery = normalizeMockSql(query);
+  const isCommerceRoiJoin = commerceRoiJoinTables.every((tableName) => normalizedQuery.includes(tableName))
+    && normalizedQuery.includes(" join ")
+    && (normalizedQuery.includes(" roas") || normalizedQuery.includes("cost_per_order") || normalizedQuery.includes("ad_spend"));
+
+  if (!isCommerceRoiJoin) return baseDataset;
+  return catalogDatasets.find((item) => item.name === commerceRoiResultDatasetName) ?? baseDataset;
+}
+
+function normalizeMockSql(query: string) {
+  return ` ${query
+    .replace(/--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/["`[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .trim()} `;
 }
 
 export async function executeQueryDraft(dataset: CatalogDataset, query: string): Promise<SqlResultDraft> {

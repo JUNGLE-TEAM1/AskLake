@@ -123,8 +123,9 @@ try {
   const completedJob = await waitForJobCompletion(create.job.id, command.run.runId);
   const run = completedJob.runHistory?.find((item) => item.runId === command.run.runId);
   const datasetsAfterRun = await getJson("/api/catalog/datasets");
+  const datasetAfterRun = datasetsAfterRun[0] ?? {};
   const parquetFiles = listParquetFiles(run?.outputPath);
-  const datasetSchema = datasetsAfterRun[0]?.schema ?? [];
+  const datasetSchema = datasetAfterRun.schema ?? [];
   const schemaTypes = new Map(datasetSchema.map(([name, type]) => [name, type]));
   const schemaNames = datasetSchema.map(([name]) => name);
   const result = {
@@ -141,6 +142,8 @@ try {
     parquetFiles: parquetFiles.length,
     runStatus: run?.status,
     schemaNames,
+    storageFormat: datasetAfterRun.storageFormat,
+    storageLocation: datasetAfterRun.storageLocation,
   };
 
   console.log(JSON.stringify(result, null, 2));
@@ -153,6 +156,8 @@ try {
   assert(!schemaNames.includes("price"), `Original source column should have been aliased away: ${schemaNames.join(", ")}`);
   assert(!schemaNames.includes("brand"), `Excluded schema column should not be in output schema: ${schemaNames.join(", ")}`);
   assert(String(schemaTypes.get("item_price") || "").includes("double"), `item_price should be cast to double: ${schemaTypes.get("item_price")}`);
+  assert(datasetAfterRun.storageFormat === "parquet", `Catalog dataset should expose Parquet storageFormat: ${datasetAfterRun.storageFormat}`);
+  assert(datasetAfterRun.storageLocation === run?.outputPath, `Catalog dataset should expose Spark output storageLocation: ${datasetAfterRun.storageLocation}`);
   assert(completedJob.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
   assert(completedJob.dagStepsByRunId?.[run.runId]?.length === completedJob.dagSteps.length, "Job should preserve DAG steps under the server runId.");
   assert(completedJob.permissionRoles?.length === 1, "Job should preserve permissionRoles from the create request.");

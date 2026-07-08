@@ -19,6 +19,8 @@ def ensure_schema(db: Session) -> None:
         Base.metadata.create_all(bind=connection)
         inspector = inspect(connection)
         existing_columns = {column["name"] for column in inspector.get_columns("etl_jobs")}
+        if "payload" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
             "dag_steps": "JSON",
@@ -272,7 +274,12 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             sample_rows=payload.get("sampleRows") or [],
             upstream=payload.get("upstream") or [],
             downstream=payload.get("downstream") or [],
+            source_run_id=payload.get("sourceRunId"),
+            storage_format=payload.get("storageFormat"),
+            storage_location=payload.get("storageLocation"),
+            storage_size_bytes=payload.get("storageSizeBytes"),
             lineage_graph=payload.get("lineageGraph"),
+            materialization_runs=payload.get("materializationRuns") or [],
         )
 
     return CatalogDataset(
@@ -296,6 +303,7 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         upstream=dataset.upstream or [],
         downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
+        materialization_runs=[],
     )
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
@@ -13,6 +13,7 @@ type DatasetSidebarProps = {
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
+  sourceMode?: "dataset" | "sqlResult";
 };
 
 const COLUMN_ITEM_PREFIX = "column:";
@@ -148,7 +149,9 @@ export function DatasetSidebar({
   onSelectColumn,
   onSelectDataset,
   selectedDatasetId,
+  sourceMode = "dataset",
 }: DatasetSidebarProps) {
+  const isSqlResultMode = sourceMode === "sqlResult";
   const totalColumnCount = useMemo(
     () => datasets.reduce((total, dataset) => total + dataset.columns.length, 0),
     [datasets],
@@ -176,47 +179,72 @@ export function DatasetSidebar({
     });
   }, [requiredExpandedItems]);
 
+  const handleActivateTreeItem = (itemId: string | null) => {
+    if (typeof itemId !== "string") return;
+
+    if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
+      setExpandedItems((currentItems) => (
+        currentItems.includes(itemId) ? currentItems : [...currentItems, itemId]
+      ));
+      onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
+      return;
+    }
+
+    const columnItem = parseColumnTreeItemId(itemId);
+    if (!columnItem) return;
+    const dataset = datasets.find((item) => item.id === columnItem.datasetId);
+    const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
+    if (!dataset || !column) return;
+    const parentDatasetItemId = datasetTreeItemId(dataset.id);
+    setExpandedItems((currentItems) => (
+      currentItems.includes(parentDatasetItemId) ? currentItems : [...currentItems, parentDatasetItemId]
+    ));
+    onSelectColumn?.(dataset, column);
+  };
+  const handleTreeMouseDownCapture = (event: MouseEvent<HTMLElement>) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const treeItem = target?.closest('[role="treeitem"]');
+    if (!treeItem || !event.currentTarget.contains(treeItem)) return;
+
+    const domItemId = treeItem.getAttribute("id") ?? "";
+    const columnItemIndex = domItemId.indexOf(COLUMN_ITEM_PREFIX);
+    if (columnItemIndex >= 0) {
+      handleActivateTreeItem(domItemId.slice(columnItemIndex));
+      return;
+    }
+
+    const datasetItemIndex = domItemId.indexOf(DATASET_ITEM_PREFIX);
+    if (datasetItemIndex >= 0) handleActivateTreeItem(domItemId.slice(datasetItemIndex));
+  };
+
   return (
     <aside
       aria-hidden={!isOpen}
-      aria-label="데이터셋"
+      aria-label={isSqlResultMode ? "SQL 실행 결과" : "데이터셋"}
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
+      onMouseDownCapture={handleTreeMouseDownCapture}
     >
       <div className="asklake-dataset-sidebar-header">
-        <h2>데이터셋</h2>
+        <h2>{isSqlResultMode ? "SQL 실행 결과" : "데이터셋"}</h2>
       </div>
 
       {isLoading ? (
-        <div className="asklake-dataset-sidebar-state">데이터셋을 불러오는 중입니다.</div>
+        <div className="asklake-dataset-sidebar-state">{isSqlResultMode ? "SQL 실행 결과를 준비하는 중입니다." : "데이터셋을 불러오는 중입니다."}</div>
       ) : error ? (
         <div className="asklake-dataset-sidebar-state error">
-          데이터셋 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
+          {isSqlResultMode ? "SQL 실행 결과를 불러오지 못했습니다. SQL 분석에서 다시 실행해 주세요." : "데이터셋 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."}
         </div>
       ) : datasets.length === 0 ? (
-        <div className="asklake-dataset-sidebar-state">표시할 데이터셋이 없습니다.</div>
+        <div className="asklake-dataset-sidebar-state">{isSqlResultMode ? "표시할 SQL 실행 결과가 없습니다." : "표시할 데이터셋이 없습니다."}</div>
       ) : (
         <div className="asklake-dataset-tree-wrap">
           <SimpleTreeView
             className="asklake-dataset-tree"
             expandedItems={expandedItems}
             selectedItems={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : null}
-            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => setExpandedItems([...itemIds])}
-            onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-              if (typeof itemId !== "string") return;
-
-              if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
-                onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
-                return;
-              }
-
-              const columnItem = parseColumnTreeItemId(itemId);
-              if (!columnItem) return;
-              const dataset = datasets.find((item) => item.id === columnItem.datasetId);
-              const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
-              if (!dataset || !column) return;
-              onSelectDataset(dataset.id);
-              onSelectColumn?.(dataset, column);
+            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
+              setExpandedItems((currentItems) => Array.from(new Set([...currentItems, ...itemIds])));
             }}
           >
             <TreeItem
@@ -225,18 +253,18 @@ export function DatasetSidebar({
                 <DatasetTreeLabel
                   hoverCard={(
                     <DatasetHoverCard
-                      description="대시보드에서 사용할 수 있는 데이터셋 카탈로그입니다."
+                      description={isSqlResultMode ? "SQL 분석에서 방금 실행한 결과 스냅샷입니다." : "대시보드에서 사용할 수 있는 데이터셋 카탈로그입니다."}
                       icon={<Server size={18} />}
                       rows={[
                         { label: "소유자", value: "System user" },
-                        { label: "업데이트됨", value: "1시간 전" },
-                        { label: "테이블", value: `${datasets.length}개` },
+                        { label: isSqlResultMode ? "결과" : "업데이트됨", value: isSqlResultMode ? `${datasets.length}개` : "1시간 전" },
+                        { label: isSqlResultMode ? "컬럼" : "테이블", value: isSqlResultMode ? `${totalColumnCount}개` : `${datasets.length}개` },
                       ]}
-                      title="system"
+                      title={isSqlResultMode ? "sql" : "system"}
                     />
                   )}
                   icon={<Server size={15} />}
-                  title="system"
+                  title={isSqlResultMode ? "sql" : "system"}
                 />
               )}
             >
@@ -246,19 +274,19 @@ export function DatasetSidebar({
                   <DatasetTreeLabel
                     hoverCard={(
                       <DatasetHoverCard
-                        description="대시보드 위젯 생성에 사용할 수 있는 데이터셋 묶음입니다."
+                        description={isSqlResultMode ? "위젯 생성에 사용할 SQL 실행 결과 컬럼 묶음입니다." : "대시보드 위젯 생성에 사용할 수 있는 데이터셋 묶음입니다."}
                         icon={<Database size={18} />}
                         rows={[
                           { label: "소유자", value: "System user" },
-                          { label: "테이블", value: `${datasets.length}개` },
+                          { label: isSqlResultMode ? "실행 결과" : "테이블", value: `${datasets.length}개` },
                           { label: "컬럼", value: `${totalColumnCount}개` },
                         ]}
-                        subtitle="system"
-                        title="datasets"
+                        subtitle={isSqlResultMode ? "sql" : "system"}
+                        title={isSqlResultMode ? "results" : "datasets"}
                       />
                     )}
                     icon={<Database size={15} />}
-                    title="datasets"
+                    title={isSqlResultMode ? "results" : "datasets"}
                   />
                 )}
               >
@@ -268,19 +296,19 @@ export function DatasetSidebar({
                     <DatasetTreeLabel
                       hoverCard={(
                         <DatasetHoverCard
-                          description="위젯의 원본으로 선택할 수 있는 테이블 목록입니다."
+                          description={isSqlResultMode ? "SQL 실행 결과 하나만 위젯 원본으로 사용할 수 있습니다." : "위젯의 원본으로 선택할 수 있는 테이블 목록입니다."}
                           icon={<Table2 size={18} />}
                           rows={[
-                            { label: "테이블", value: `${datasets.length}개` },
+                            { label: isSqlResultMode ? "결과" : "테이블", value: `${datasets.length}개` },
                             { label: "컬럼", value: `${totalColumnCount}개` },
                             { label: "지표", value: `${totalMetricCount}개` },
                           ]}
-                          subtitle="system.datasets"
-                          title={`테이블(${datasets.length})`}
+                          subtitle={isSqlResultMode ? "sql.results" : "system.datasets"}
+                          title={isSqlResultMode ? `실행 결과(${datasets.length})` : `테이블(${datasets.length})`}
                         />
                       )}
                       icon={<Table2 size={15} />}
-                      title={`테이블(${datasets.length})`}
+                      title={isSqlResultMode ? `실행 결과(${datasets.length})` : `테이블(${datasets.length})`}
                     />
                   )}
                 >
@@ -298,12 +326,12 @@ export function DatasetSidebar({
                                 description={dataset.description ?? "대시보드 위젯에 사용할 수 있는 데이터셋입니다."}
                                 icon={<Table2 size={18} />}
                                 rows={[
-                                  { label: "소유자", value: "System user" },
-                                  { label: "최근 수정 날짜", value: dataset.updatedAt ?? "정보 없음" },
+                                  { label: isSqlResultMode ? "출처" : "소유자", value: isSqlResultMode ? "SQL 분석" : "System user" },
+                                  { label: isSqlResultMode ? "실행 시각" : "최근 수정 날짜", value: dataset.updatedAt ?? "정보 없음" },
                                   { label: "컬럼", value: `${dataset.columns.length}개` },
                                   { label: "지표", value: `${numericColumnCount} metrics` },
                                 ]}
-                                subtitle="system.datasets"
+                                subtitle={isSqlResultMode ? "sql.results" : "system.datasets"}
                                 title={dataset.name}
                               />
                             )}

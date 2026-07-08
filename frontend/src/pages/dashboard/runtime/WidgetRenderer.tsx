@@ -76,7 +76,11 @@ function appendPromptText(currentPrompt: string, nextText: string) {
 
 function placeholderKind(widget: DashboardRuntimeWidget) {
   const kind = (widget.config as { placeholderKind?: unknown }).placeholderKind;
-  return kind === "visualization_request" || kind === "text" ? kind : null;
+  if (kind === "visualization_request" || kind === "text") return kind;
+  if (widget.title === "시각화 요청" && !widget.datasetId && rowsFromWidget(widget).length === 0) {
+    return "visualization_request";
+  }
+  return null;
 }
 
 export function formatCell(value: unknown) {
@@ -625,6 +629,7 @@ function RuntimeApexChart({
   type: RuntimeApexChartType;
   widget: DashboardRuntimeWidget;
 }) {
+  const chartContainerRef = useRef<HTMLDivElement | null>(null);
   const chartOptions = withColorSlotSelection(options, widget, onSelectColorSlot);
   const handleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
     if (!onSelectColorSlot) return;
@@ -637,8 +642,29 @@ function RuntimeApexChart({
     onSelectColorSlot(slotIndex);
   };
 
+  useEffect(() => {
+    const chartContainer = chartContainerRef.current;
+    if (!chartContainer) return undefined;
+
+    const cleanupApexStyleText = () => {
+      chartContainer
+        .querySelectorAll("foreignObject style")
+        .forEach((styleElement) => styleElement.remove());
+    };
+
+    cleanupApexStyleText();
+    const timeoutIds = [0, 50, 250].map((delay) => window.setTimeout(cleanupApexStyleText, delay));
+    const observer = new MutationObserver(cleanupApexStyleText);
+    observer.observe(chartContainer, { childList: true, subtree: true });
+
+    return () => {
+      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      observer.disconnect();
+    };
+  }, [chartOptions, series, type]);
+
   return (
-    <div className="asklake-apex-widget" onClickCapture={handleClickCapture}>
+    <div className="asklake-apex-widget" ref={chartContainerRef} onClickCapture={handleClickCapture}>
       <Chart height="100%" options={chartOptions} series={series} type={type} width="100%" />
     </div>
   );
@@ -666,15 +692,16 @@ function VisualizationRequestWidget({
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isPromptEditing, setIsPromptEditing] = useState(false);
-  const [prompt, setPrompt] = useState(() => configText(widget, "prompt"));
+  const savedPrompt = configText(widget, "prompt");
+  const [prompt, setPrompt] = useState(() => savedPrompt);
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
   const promptInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    setPrompt(configText(widget, "prompt"));
+    setPrompt(savedPrompt);
     setIsPromptEditing(false);
-  }, [widget.id, widget.config]);
+  }, [savedPrompt, widget.id]);
 
   useEffect(() => {
     setMessage(null);
@@ -722,7 +749,26 @@ function VisualizationRequestWidget({
       });
       const widgetPatch = visualizationResponseWidgetPatch(response, widget.id);
       const configPatch = widgetPatch?.config ?? response.configPatch;
+      const isMockFallback = responseUsesMockFallback(response);
       if (widgetPatch && onApplyWidgetPatch) {
+        if (!patchConvertsVisualizationRequest(widget, widgetPatch)) {
+          await onPatchConfig({ prompt: nextPrompt, ...(widgetPatch.config ?? {}) });
+          setRequestTone(isMockFallback ? "info" : "success");
+          setMessage(
+            isMockFallback
+              ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
+              : response.message?.trim() || "요청 내용을 저장했습니다.",
+          );
+          setIsPromptEditing(false);
+          return;
+        }
+        if (!patchCanRenderVisualization(widget, widgetPatch, assistantContext?.activeDatasetId)) {
+          await onPatchConfig({ prompt: nextPrompt });
+          setRequestTone("info");
+          setMessage(response.message?.trim() || "데이터셋이나 필드를 먼저 선택한 뒤 시각화를 요청해 주세요.");
+          setIsPromptEditing(false);
+          return;
+        }
         await onApplyWidgetPatch({
           ...widgetPatch,
           config: {
@@ -733,8 +779,12 @@ function VisualizationRequestWidget({
       } else if (configPatch && Object.keys(configPatch).length > 0) {
         await onPatchConfig({ prompt: nextPrompt, ...configPatch });
       }
-      setRequestTone("success");
-      setMessage(response.message?.trim() || "Assistant 요청을 보냈습니다.");
+      setRequestTone(isMockFallback ? "info" : "success");
+      setMessage(
+        isMockFallback
+          ? "OpenAI 설정이 없어 실제 차트 생성 대신 요청 내용만 저장했습니다."
+          : response.message?.trim() || "Assistant 요청을 보냈습니다.",
+      );
       setIsPromptEditing(false);
     } catch (error) {
       setRequestTone("error");
@@ -753,7 +803,6 @@ function VisualizationRequestWidget({
           className={isPromptEditing ? "widget-control" : undefined}
           placeholder="어시스턴트 Nessie에게 이 차트의 생성을 요청하세요."
           ref={promptInputRef}
-          readOnly={!isPromptEditing}
           value={prompt}
           onBlur={() => setIsPromptEditing(false)}
           onChange={(event) => setPrompt(event.target.value)}
@@ -761,7 +810,7 @@ function VisualizationRequestWidget({
           onFocus={() => setIsPromptEditing(true)}
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
-            setPrompt(configText(widget, "prompt"));
+            setPrompt(savedPrompt);
             setIsPromptEditing(false);
             event.currentTarget.blur();
           }}
@@ -805,6 +854,27 @@ function visualizationResponseWidgetPatch(
     title: createAction.widget.title,
     type: createAction.widget.type,
   };
+}
+
+function patchCanRenderVisualization(
+  widget: DashboardRuntimeWidget,
+  patch: DashboardAssistantWidgetPatch,
+  activeDatasetId?: string | null,
+) {
+  if (widget.config.placeholderKind !== "visualization_request") return true;
+  if (!patch.type || patch.type === "table" || patch.type === "metric") return true;
+  if (patch.datasetId || widget.datasetId || activeDatasetId) return true;
+  return widget.data.length > 0;
+}
+
+function patchConvertsVisualizationRequest(widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) {
+  if (widget.config.placeholderKind !== "visualization_request") return true;
+  return Boolean(patch.type || patch.datasetId);
+}
+
+function responseUsesMockFallback(response: DashboardAssistantResponse) {
+  return response.warnings.some((warning) => warning.toLowerCase().includes("mock fallback"))
+    || response.message.toLowerCase().includes("mock fallback");
 }
 
 function TextPlaceholderWidget({

@@ -561,6 +561,10 @@ async function updateDatasetFromSparkResult(job, result) {
   nextDataset.size = result.outputPath ?? nextDataset.size;
   nextDataset.source = job.name;
   nextDataset.status = "available";
+  if (result.outputPath) {
+    nextDataset.storageFormat = "parquet";
+    nextDataset.storageLocation = result.outputPath;
+  }
   nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
   await saveDataset(nextDataset);
   return nextDataset;
@@ -590,6 +594,8 @@ function datasetFromSuccessfulRun(job, result) {
     source: job.name,
     status: "available",
     tags: ["#실행완료", `#${String(layer).toLowerCase()}`],
+    storageFormat: "parquet",
+    storageLocation: result.outputPath ?? null,
     upstream: Array.from(new Set([job.sourceLabel, job.name, result.sourcePath ?? job.source].filter(Boolean))),
   };
 }

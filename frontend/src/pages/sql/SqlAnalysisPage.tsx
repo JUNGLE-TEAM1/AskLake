@@ -27,6 +27,7 @@ import {
   buildDefaultDerivedDatasetDescription,
   buildDefaultDerivedDatasetName,
   buildDefaultDerivedDatasetTags,
+  buildJoinDraftQuery,
   buildDefaultQuery,
   escapeCsvCell,
   formatDuration,
@@ -139,13 +140,24 @@ export function SqlAnalysisPage({
     () => selectedContextDatasets.find((item) => item.id === openSchemaDatasetId) ?? selectedContextDatasets[0] ?? null,
     [openSchemaDatasetId, selectedContextDatasets],
   );
+  const dashboardBaseDataset = useMemo(() => {
+    if (baseDataset) return baseDataset;
+    if (!resultDraft) return null;
+    const candidateIds = [resultDraft.baseDatasetId, resultDraft.datasetId].filter((id): id is string => Boolean(id));
+    return candidateIds
+      .map((id) => datasets.find((item) => item.id === id) ?? (dataset?.id === id ? dataset : null))
+      .find((item): item is CatalogDataset => Boolean(item)) ?? null;
+  }, [baseDataset, dataset, datasets, resultDraft]);
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
+    baseDatasetId: dashboardBaseDataset?.id,
+    dashboardId: resultDraft && dashboardBaseDataset ? `dash_${dashboardBaseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
+    sqlResultDatasetId: resultDraft?.datasetId,
+    sqlRunId: resultDraft?.runId,
     source: "sql",
     view: "runtime",
     version: dashboardDialogVersion,
-  }), [baseDataset, dashboardDialogVersion, resultDraft]);
+  }), [dashboardBaseDataset, dashboardDialogVersion, resultDraft]);
   const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
@@ -442,11 +454,12 @@ export function SqlAnalysisPage({
       setResultDraft(resultDraft);
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요.";
       setPreflightResult({
         key: queryValidationKey,
         canExecute: false,
-        messages: [{ tone: "error", text: "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요." }],
+        messages: [{ tone: "error", text: message }],
       });
       onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
     } finally {
@@ -570,6 +583,41 @@ export function SqlAnalysisPage({
     );
   };
 
+  const joinSelectedDataset = (targetDataset: CatalogDataset) => {
+    if (!baseDataset || targetDataset.id === baseDataset.id) {
+      selectSchemaDataset(targetDataset);
+      return;
+    }
+    const joinDraft = buildJoinDraftQuery({
+      allDatasets: sqlCandidateDatasets,
+      query,
+      selectedDatasets: selectedContextDatasets.filter((item) => item.id !== targetDataset.id),
+      targetDataset,
+    });
+    setReferenceDatasetIds((ids) => {
+      const nextIds = new Set(ids);
+      nextIds.add(targetDataset.id);
+      joinDraft.addedDatasetIds.forEach((id) => {
+        if (id !== baseDataset.id) nextIds.add(id);
+      });
+      return Array.from(nextIds);
+    });
+    updateQuery(joinDraft.query);
+    setCursorIndex(joinDraft.query.length);
+    setOpenSchemaDatasetId(targetDataset.id);
+    setExpandedDatasetId(null);
+    onAction(
+      joinDraft.joined ? "analysis.context.dataset_joined" : "analysis.context.dataset_selected",
+      `/api/query/context/datasets/${targetDataset.id}/join`,
+      targetDataset.id,
+    );
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(joinDraft.query.length, joinDraft.query.length);
+      syncLineNumberScroll();
+    });
+  };
+
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
     const selectedIds = selectedContextDatasets.map((item) => item.id);
     const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
@@ -669,10 +717,15 @@ export function SqlAnalysisPage({
   };
 
   const openDashboardBuilder = () => {
-    if (!baseDataset || !resultDraft) return;
+    if (!dashboardBaseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
     setDashboardDialogOpen(true);
-    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
+    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${dashboardBaseDataset.id}/draft/ensure`, resultDraft.runId);
+  };
+
+  const handleDashboardBuilderMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    openDashboardBuilder();
   };
 
   return (
@@ -926,7 +979,15 @@ export function SqlAnalysisPage({
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
                   <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>
-                  <button type="button" onClick={openDashboardBuilder}><BarChart3 size={14} /> 대시보드 만들기</button>
+                  <button
+                    disabled={!dashboardBaseDataset}
+                    title={dashboardBaseDataset ? "현재 SQL 실행 결과로 대시보드 초안을 엽니다." : "SQL 실행 결과의 기준 데이터셋을 찾을 수 없습니다."}
+                    type="button"
+                    onClick={openDashboardBuilder}
+                    onMouseDown={handleDashboardBuilderMouseDown}
+                  >
+                    <BarChart3 size={14} /> 대시보드 만들기
+                  </button>
                 </div>
               </div>
               <div className="sql-result-scroll">
@@ -1018,17 +1079,19 @@ export function SqlAnalysisPage({
           </section>
         </div>
       )}
-      {resultDraft && baseDataset && dashboardDialogOpen && (
+      {resultDraft && dashboardBaseDataset && dashboardDialogOpen && (
         <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
           <section className="sql-dashboard-builder-dialog" role="dialog" aria-modal="true" aria-label="SQL 결과 대시보드 만들기" onMouseDown={(event) => event.stopPropagation()}>
             <button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)}>
               닫기
             </button>
             <DashboardPage
-              dataset={baseDataset}
+              dataset={dashboardBaseDataset}
+              datasets={selectedContextDatasets}
               entry={dashboardDialogEntry}
               sqlResult={resultDraft}
               onAction={onAction}
+              onMissingSqlResult={() => setDashboardDialogOpen(false)}
             />
           </section>
         </div>
@@ -1037,6 +1100,7 @@ export function SqlAnalysisPage({
         dataset={schemaDataset}
         selectedDatasets={selectedContextDatasets}
         onColumnClick={insertColumnName}
+        onJoinDataset={joinSelectedDataset}
         onSelectedDatasetRemove={removeSelectedDataset}
         onSchemaSelect={selectSchemaDataset}
       />

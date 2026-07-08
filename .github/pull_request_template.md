@@ -76,7 +76,7 @@
 ## Merge 전 확인
 
 - CI/check가 통과했는지 확인합니다.
-- frontend 변경이 있으면 `cd frontend && npm run build` 통과 여부를 확인합니다.
+- frontend 변경이 있으면 `cd frontend && npm run verify:ui-regressions && npm run build` 통과 여부를 확인합니다.
 - linked issue와 closing keyword가 맞는지 확인합니다.
 - merge 후 issue close와 Project 상태가 맞는지 확인합니다.
 - merge/finalize/cleanup은 사람 확인 후 진행합니다.
