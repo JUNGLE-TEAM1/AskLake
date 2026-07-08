@@ -245,7 +245,7 @@ export function DashboardPage({
     }
   });
   const dashboardList = useDashboardLandingList(savedDashboards, onAction, entry.version + dashboardListRefreshKey);
-  const activeSqlResult = entry.source === "sql" && sqlResult?.datasetId === dataset.id ? sqlResult : null;
+  const activeSqlResult = entry.source === "sql" && (sqlResult?.datasetId === dataset.id || sqlResult?.baseDatasetId === dataset.id) ? sqlResult : null;
   const sqlDashboardDataset = useMemo(
     () => activeSqlResult ? buildSqlDashboardDataset(activeSqlResult) : null,
     [activeSqlResult],
