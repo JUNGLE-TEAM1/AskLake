@@ -142,19 +142,19 @@ export function JobsLandingPage({
           title="수집/처리"
         />
       </div>
-      <div className="content-main jobs-xflow-stack">
-        <section className="jobs-xflow-card jobs-metrics-card">
-          <div className="jobs-xflow-card-header">
-            <span className="jobs-xflow-icon">
+      <div className="content-main jobs-panel-stack">
+        <section className="jobs-panel-card jobs-metrics-card">
+          <div className="jobs-panel-header">
+            <span className="jobs-panel-icon">
               <BarChart3 size={16} />
             </span>
-            <div className="jobs-xflow-heading">
+            <div className="jobs-panel-heading">
               <h2>작업 현황</h2>
               <p>수집/처리 Job의 현재 상태와 확인이 필요한 항목을 요약합니다.</p>
             </div>
-            <span className="jobs-xflow-state">{jobs.length} jobs</span>
+            <span className="jobs-panel-state">{jobs.length} jobs</span>
           </div>
-          <div className="metric-grid jobs-xflow-metrics">
+          <div className="metric-grid jobs-panel-metrics">
             {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
           </div>
         </section>
@@ -189,16 +189,16 @@ function MetricCard({ active, label, tone, value }: JobMetric) {
 
 function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void; onReset: () => void }) {
   return (
-    <section className="jobs-toolbar jobs-xflow-card">
-      <div className="jobs-xflow-card-header">
-        <span className="jobs-xflow-icon">
+    <section className="jobs-toolbar jobs-panel-card">
+      <div className="jobs-panel-header">
+        <span className="jobs-panel-icon">
           <SlidersHorizontal size={16} />
         </span>
-        <div className="jobs-xflow-heading">
+        <div className="jobs-panel-heading">
           <h2>검색 및 필터</h2>
           <p>작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다.</p>
         </div>
-        <span className="jobs-xflow-state">필터</span>
+        <span className="jobs-panel-state">필터</span>
       </div>
       <div className="jobs-toolbar-body">
         <div className="jobs-search">
@@ -480,16 +480,16 @@ function JobsTableSection({
   ], [openJobLog]);
 
   return (
-    <section className="jobs-table-preview-card jobs-xflow-card" aria-label={ariaLabel}>
-      <div className="jobs-table-preview-header jobs-xflow-card-header">
-        <span className="jobs-xflow-icon">
+    <section className="jobs-table-preview-card jobs-panel-card" aria-label={ariaLabel}>
+      <div className="jobs-table-preview-header jobs-panel-header">
+        <span className="jobs-panel-icon">
           <Table2 size={16} />
         </span>
-        <div className="jobs-xflow-heading">
+        <div className="jobs-panel-heading">
           <h2>{title}</h2>
           <p>상태, 타깃, 최근 실행 결과를 한 화면에서 확인하고 필요한 작업을 실행합니다.</p>
         </div>
-        <strong className="jobs-xflow-state">{jobs.length} jobs</strong>
+        <strong className="jobs-panel-state">{jobs.length} jobs</strong>
       </div>
       <DataTable
         className="jobs-data-table"

@@ -37,16 +37,16 @@ export function DashboardListToolbar({
   const activeFilterCount = (ownerFilter === "all" ? 0 : 1) + selectedTags.length;
 
   return (
-    <section className="dashboard-list-toolbar dashboard-xflow-card">
-      <div className="dashboard-xflow-card-header">
-        <span className="dashboard-xflow-icon">
+    <section className="dashboard-list-toolbar dashboard-panel-card">
+      <div className="dashboard-panel-header">
+        <span className="dashboard-panel-icon">
           <SlidersHorizontal size={16} />
         </span>
-        <div className="dashboard-xflow-heading">
+        <div className="dashboard-panel-heading">
           <h2>검색 및 필터</h2>
           <p>이름, 소유자, 태그, 정렬 기준으로 대시보드 목록을 좁혀 봅니다.</p>
         </div>
-        <span className="dashboard-xflow-state">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</span>
+        <span className="dashboard-panel-state">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</span>
       </div>
       <div className="dashboard-list-toolbar-body">
         <div className="dashboard-list-search">

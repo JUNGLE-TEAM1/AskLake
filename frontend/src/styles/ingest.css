@@ -58,11 +58,11 @@
   box-shadow: 0 6px 14px rgba(37, 99, 235, 0.16);
 }
 
-.jobs-xflow-stack {
+.jobs-panel-stack {
   gap: 20px;
 }
 
-.jobs-xflow-card {
+.jobs-panel-card {
   overflow: hidden;
   border: 1px solid #dee4ee;
   border-radius: 8px;
@@ -70,7 +70,7 @@
   box-shadow: 0 1px 2px rgb(15 23 42 / 3%);
 }
 
-.jobs-xflow-card-header {
+.jobs-panel-header {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -81,7 +81,7 @@
   padding: 16px 20px;
 }
 
-.jobs-xflow-icon {
+.jobs-panel-icon {
   display: inline-grid;
   width: 32px;
   height: 32px;
@@ -91,20 +91,20 @@
   color: #2563eb;
 }
 
-.jobs-xflow-heading {
+.jobs-panel-heading {
   display: grid;
   min-width: 0;
   gap: 3px;
 }
 
-.jobs-xflow-heading h2 {
+.jobs-panel-heading h2 {
   color: #111827;
   font-size: 16px;
   font-weight: 850;
   line-height: 1.25;
 }
 
-.jobs-xflow-heading p {
+.jobs-panel-heading p {
   color: #64748b;
   font-size: 12px;
   font-weight: 750;
@@ -112,7 +112,7 @@
   overflow-wrap: anywhere;
 }
 
-.jobs-xflow-state {
+.jobs-panel-state {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -184,7 +184,7 @@
   gap: 12px;
 }
 
-.jobs-xflow-metrics {
+.jobs-panel-metrics {
   padding: 16px 20px 20px;
 }
 

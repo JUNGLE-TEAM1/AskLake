@@ -94,6 +94,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 ## Legacy xflow Naming Gap
 
 `xflow|XFlow|XFLOW` 잔재는 단순 CSS 문제가 아니라 imported 서비스의 흔적을 AskLake 도메인 언어로 바꾸는 cleanup 작업이다.
+이 섹션에 남아 있는 `xflow` 문자열은 cleanup 추적을 위한 문서 기록이며, frontend 코드 식별자/className 잔재가 아니다.
 
 #357 기준 처리 결과:
 
@@ -102,7 +103,14 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - `xflow-adapter.css`는 `schema-transform-adapter.css`로 rename한다.
 - `xflow-source.css`는 Tailwind import 역할을 유지하되 `schema-transform-source.css`로 rename한다.
 - `xflow-review-*`, `schema-xflow-*`, `source-xflow-*`, `schedule-xflow-*`, `target-xflow-*`, `permission-xflow-*`는 ETL 도메인 className으로 rename한다.
-- Catalog/Ingest/Dashboard 쪽 legacy naming은 이번 ETL cleanup 범위 밖이다. 각 담당 화면 작업 또는 별도 service-wide cleanup에서 다룬다.
+
+#361 기준 처리 결과:
+
+- Ingest Jobs shell의 `jobs-xflow-*` className/CSS selector는 `jobs-panel-*`로 rename한다.
+- Catalog card shell의 `catalog-xflow-*` className/CSS selector는 `catalog-panel-*`로 rename한다.
+- Catalog lineage graph의 `xflow-schema-*`, `xflow-column-*` className/CSS selector는 `lineage-schema-*`, `lineage-column-*`로 rename한다.
+- Dashboard list shell의 `dashboard-xflow-*` className/CSS selector는 `dashboard-panel-*`로 rename한다.
+- `rg "xflow|XFlow|XFLOW" frontend` 기준으로 frontend 코드 잔재가 없어야 한다.
 
 후속 component 확장 후보:
 
@@ -120,3 +128,4 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | A03에서 서비스 전체 component gap inventory 초기 생성. ETL에서 발견한 gap을 seed로 기록. |
 | 2026-07-09 | #357에서 ETL 내부 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | Issue #358에서 B02-B04 Dashboard/B 작업 중 공통 primitive로 대체하지 않은 preview, toolbar, widget frame, config panel, color picker, tree, graph/editor gap을 기록. |
+| 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |

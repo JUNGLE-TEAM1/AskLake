@@ -443,16 +443,16 @@ export function CatalogPage({
       <PageTitle title="검색/카탈로그" description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다." />
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <section className="catalog-search-panel catalog-xflow-card">
-            <div className="catalog-xflow-card-header">
-              <span className="catalog-xflow-icon">
+          <section className="catalog-search-panel catalog-panel-card">
+            <div className="catalog-panel-header">
+              <span className="catalog-panel-icon">
                 <Search size={16} />
               </span>
-              <div className="catalog-xflow-heading">
+              <div className="catalog-panel-heading">
                 <h2>검색 조건</h2>
                 <p>테이블명, 컬럼명, 태그, 업무 키워드로 데이터셋을 찾습니다.</p>
               </div>
-              <span className="catalog-xflow-state">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</span>
+              <span className="catalog-panel-state">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</span>
             </div>
             <div className="catalog-search-body">
               <div className="catalog-search-box">
@@ -496,17 +496,17 @@ export function CatalogPage({
             </div>
           </section>
 
-          <section className="catalog-results-section catalog-xflow-card">
+          <section className="catalog-results-section catalog-panel-card">
             <div className="catalog-results-header">
-              <div className="catalog-xflow-card-header">
-                <span className="catalog-xflow-icon">
+              <div className="catalog-panel-header">
+                <span className="catalog-panel-icon">
                   <LayoutGrid size={16} />
                 </span>
-                <div className="catalog-xflow-heading">
+                <div className="catalog-panel-heading">
                   <h2>검색 결과</h2>
                   <p>조건에 맞는 데이터셋을 선택하면 우측에서 상세 정보를 확인합니다.</p>
                 </div>
-                <span className="catalog-xflow-state">{filteredDatasets.length}건</span>
+                <span className="catalog-panel-state">{filteredDatasets.length}건</span>
               </div>
               <div className="catalog-filter-row">
                 <label>
@@ -652,12 +652,12 @@ export function CatalogPage({
         </div>
 
         {hasCatalogResults ? (
-          <aside className="catalog-preview-panel catalog-xflow-card">
-          <div className="catalog-preview-title catalog-xflow-card-header">
-            <span className="catalog-xflow-icon catalog-xflow-icon-dataset">
+          <aside className="catalog-preview-panel catalog-panel-card">
+          <div className="catalog-preview-title catalog-panel-header">
+            <span className="catalog-panel-icon catalog-panel-icon-dataset">
               <LayoutGrid size={16} />
             </span>
-            <div className="catalog-xflow-heading">
+            <div className="catalog-panel-heading">
               <h2>{previewDataset.name}</h2>
               <p>{previewDataset.layer} 데이터셋 · {previewDataset.owner}</p>
             </div>
@@ -1273,25 +1273,25 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
 
   return (
     <article className={[
-      "xflow-schema-node",
+      "lineage-schema-node",
       data.tone,
       data.dimmed ? "dimmed" : "",
       data.highlighted ? "highlighted" : "",
     ].filter(Boolean).join(" ")}>
-      <header className="xflow-schema-header">
-        <div className="xflow-schema-icon">
+      <header className="lineage-schema-header">
+        <div className="lineage-schema-icon">
           <Table2 size={18} />
         </div>
-        <div className="xflow-schema-title">
+        <div className="lineage-schema-title">
           <strong title={data.tableName}>{data.tableName}</strong>
           <span>{data.layerLabel} · {data.engine}</span>
         </div>
       </header>
-      <div className="xflow-column-head">
+      <div className="lineage-column-head">
         <span>컬럼</span>
         <span>타입</span>
       </div>
-      <div className="xflow-schema-columns">
+      <div className="lineage-schema-columns">
         {data.columns.map((column) => (
           <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
@@ -1308,7 +1308,7 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
   return (
     <button
       className={[
-        "xflow-column-row",
+        "lineage-column-row",
         isActive ? "active" : "",
         data.relatedColumnKeys && !isRelated ? "dimmed" : "",
         data.relatedColumnKeys && isRelated ? "related" : "",
@@ -1321,7 +1321,7 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
     >
       {(data.handleMode === "target" || data.handleMode === "both") && (
         <Handle
-          className="xflow-column-handle left target-handle"
+          className="lineage-column-handle left target-handle"
           id={lineageHandleId(data.nodeId, column.name, "target")}
           position={Position.Left}
           type="target"
@@ -1331,7 +1331,7 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
       <b className={`lineage-type-pill ${getColumnTypeTone(column.type)}`}>{column.type}</b>
       {(data.handleMode === "source" || data.handleMode === "both") && (
         <Handle
-          className="xflow-column-handle right source-handle"
+          className="lineage-column-handle right source-handle"
           id={lineageHandleId(data.nodeId, column.name, "source")}
           position={Position.Right}
           type="source"
