@@ -306,16 +306,17 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
 }
 
 function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
-  if (type === "metric" && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  const usesCount = config.aggregation === "count";
+  if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
-  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || !config.yKey)) {
+  if ((type === "bar_chart" || type === "line_chart" || type === "area_chart") && (!config.xKey || (!usesCount && !config.yKey))) {
     return "X축과 Y축 컬럼을 선택해 주세요.";
   }
-  if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || !config.valueKey)) {
+  if ((type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (!config.labelKey || (!usesCount && !config.valueKey))) {
     return "분류와 값 컬럼을 선택해 주세요.";
   }
-  if (type === "radial_bar_chart" && !config.valueKey) return "값 컬럼을 선택해 주세요.";
-  if (type === "heatmap_chart" && (!config.xKey || !config.yKey || !config.valueKey)) {
+  if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
   return null;
@@ -447,6 +448,10 @@ function preserveRuntimeOnlyConfig(
 
 function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null | undefined) {
   return widget ? configRecord(widget.config).placeholderKind === "visualization_request" : false;
+}
+
+function cloneDatasetRows(dataset: DashboardDatasetOption | null | undefined) {
+  return dataset?.rows?.map((row) => ({ ...row }));
 }
 
 export function WidgetConfigPanel({
@@ -689,6 +694,7 @@ export function WidgetConfigPanel({
     if (editingWidget && onUpdateWidget) {
       await onUpdateWidget(editingWidget.id, {
         ...nextInput,
+        data: cloneDatasetRows(selectedDataset),
         datasetId: nextDatasetId,
       });
       return;
@@ -701,7 +707,7 @@ export function WidgetConfigPanel({
 
     await onCreateWidget({
       ...nextInput,
-      data: selectedDataset?.rows,
+      data: cloneDatasetRows(selectedDataset),
       datasetId: selectedDatasetId,
     });
     setTitle("");

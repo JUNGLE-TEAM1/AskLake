@@ -35,6 +35,7 @@ export type UpdateDraftWidgetFormInput = {
 };
 
 export type DashboardAssistantRuntimeContext = {
+  activeDatasetId?: string | null;
   dashboardId?: string;
   onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;

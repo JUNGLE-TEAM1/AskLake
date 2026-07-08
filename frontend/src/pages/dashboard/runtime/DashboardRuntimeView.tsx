@@ -322,7 +322,7 @@ export function DashboardRuntimeView({
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
   const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
-    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? null;
+    const nextDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
     const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
 
     return onUpdateWidget(widget.id, {
@@ -334,6 +334,7 @@ export function DashboardRuntimeView({
     });
   };
   const assistantContext = {
+    activeDatasetId: selectedDatasetId,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
