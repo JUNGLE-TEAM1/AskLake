@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode, type SyntheticEvent } from "react";
+import { useMemo, type ReactNode } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
-import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
-import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 type DatasetSidebarProps = {
@@ -20,6 +19,7 @@ const DATASET_ITEM_PREFIX = "dataset:";
 const systemItemId = "dataset-tree-system";
 const schemaItemId = "dataset-tree-schema";
 const tablesItemId = "dataset-tree-tables";
+const datasetTreeRowHeight = 38;
 const hoverTooltipSlotProps = {
   arrow: { className: "asklake-dataset-hover-arrow" },
   tooltip: { className: "asklake-dataset-hover-tooltip" },
@@ -32,16 +32,6 @@ function datasetTreeItemId(datasetId: string) {
 function columnTreeItemId(datasetId: string, columnName: string) {
   return `${COLUMN_ITEM_PREFIX}${datasetId}:${columnName}`;
 }
-
-function parseColumnTreeItemId(itemId: string) {
-  if (!itemId.startsWith(COLUMN_ITEM_PREFIX)) return null;
-  const columnPath = itemId.slice(COLUMN_ITEM_PREFIX.length);
-  const [datasetId, ...columnNameParts] = columnPath.split(":");
-  const columnName = columnNameParts.join(":");
-  if (!datasetId || !columnName) return null;
-  return { columnName, datasetId };
-}
-
 function columnTypeLabel(type: DashboardDatasetColumn["type"]) {
   if (type === "number") return "number";
   if (type === "date") return "date";
@@ -55,9 +45,9 @@ function ColumnTypeIcon({ type }: { type: DashboardDatasetColumn["type"] }) {
 }
 
 function columnDescription(column: DashboardDatasetColumn) {
-  if (column.type === "number") return "집계, 지표, 차트 값으로 사용할 수 있는 숫자 필드입니다.";
-  if (column.type === "date") return "기간 필터와 시계열 축에 사용할 수 있는 날짜 필드입니다.";
-  return "분류, 이름, 상태처럼 그룹을 나누는 텍스트 필드입니다.";
+  if (column.type === "number") return "Numeric field available for metrics and chart values.";
+  if (column.type === "date") return "Date field available for period filters and time axes.";
+  return "Text field available for labels, groups, and status values.";
 }
 
 function metricCount(dataset: DashboardDatasetOption) {
@@ -140,6 +130,53 @@ function DatasetTreeLabel({
   );
 }
 
+type DatasetTreeNode = {
+  children?: DatasetTreeNode[];
+  columnName?: string;
+  datasetId?: string;
+  hoverCard?: ReactNode;
+  icon: ReactNode;
+  id: string;
+  kind: "column" | "dataset" | "group";
+  meta?: string;
+  selected?: boolean;
+  title: string;
+};
+
+function DatasetTreeNodeRow({ node, style }: NodeRendererProps<DatasetTreeNode>) {
+  return (
+    <div
+      className={[
+        "asklake-dataset-tree-row",
+        node.isSelected ? "selected" : "",
+        node.isInternal ? "branch" : "leaf",
+      ].filter(Boolean).join(" ")}
+      style={style}
+    >
+      <button
+        aria-expanded={node.isInternal ? node.isOpen : undefined}
+        className="asklake-dataset-tree-node"
+        type="button"
+        onClick={() => {
+          if (node.isInternal) node.toggle();
+          node.activate();
+        }}
+      >
+        <span className="asklake-dataset-tree-toggle" aria-hidden="true">
+          {node.isInternal ? (node.isOpen ? "v" : ">") : ""}
+        </span>
+        <DatasetTreeLabel
+          hoverCard={node.data.hoverCard}
+          icon={node.data.icon}
+          meta={node.data.meta}
+          selected={node.data.selected || node.isSelected}
+          title={node.data.title}
+        />
+      </button>
+    </div>
+  );
+}
+
 export function DatasetSidebar({
   datasets,
   error = null,
@@ -157,220 +194,172 @@ export function DatasetSidebar({
     () => datasets.reduce((total, dataset) => total + metricCount(dataset), 0),
     [datasets],
   );
-  const requiredExpandedItems = useMemo(
-    () => [
-      systemItemId,
-      schemaItemId,
-      tablesItemId,
-      ...(selectedDatasetId ? [datasetTreeItemId(selectedDatasetId)] : []),
-    ],
-    [selectedDatasetId],
-  );
-  const [expandedItems, setExpandedItems] = useState(requiredExpandedItems);
+  const treeData = useMemo<DatasetTreeNode[]>(() => [
+    {
+      children: [
+        {
+          children: [
+            {
+              children: datasets.map((dataset) => {
+                const isSelected = dataset.id === selectedDatasetId;
+                const numericColumnCount = metricCount(dataset);
+                return {
+                  children: dataset.columns.map((column) => ({
+                    columnName: column.name,
+                    datasetId: dataset.id,
+                    hoverCard: (
+                      <DatasetHoverCard
+                        description={columnDescription(column)}
+                        icon={<ColumnTypeIcon type={column.type} />}
+                        rows={[
+                          { label: "type", value: columnTypeLabel(column.type) },
+                          { label: "table", value: dataset.name },
+                        ]}
+                        subtitle={`system.datasets.${dataset.name}`}
+                        title={column.name}
+                      />
+                    ),
+                    icon: <ColumnTypeIcon type={column.type} />,
+                    id: columnTreeItemId(dataset.id, column.name),
+                    kind: "column",
+                    meta: columnTypeLabel(column.type),
+                    title: column.name,
+                  })),
+                  datasetId: dataset.id,
+                  hoverCard: (
+                    <DatasetHoverCard
+                      description={dataset.description ?? "Dataset available for dashboard widgets."}
+                      icon={<Table2 size={18} />}
+                      rows={[
+                        { label: "owner", value: "System user" },
+                        { label: "updated", value: dataset.updatedAt ?? "unknown" },
+                        { label: "columns", value: `${dataset.columns.length}` },
+                        { label: "metrics", value: `${numericColumnCount}` },
+                      ]}
+                      subtitle="system.datasets"
+                      title={dataset.name}
+                    />
+                  ),
+                  icon: <Table2 size={15} />,
+                  id: datasetTreeItemId(dataset.id),
+                  kind: "dataset",
+                  meta: `${dataset.columns.length} columns`,
+                  selected: isSelected,
+                  title: dataset.name,
+                };
+              }),
+              hoverCard: (
+                <DatasetHoverCard
+                  description="Tables available as widget sources."
+                  icon={<Table2 size={18} />}
+                  rows={[
+                    { label: "tables", value: `${datasets.length}` },
+                    { label: "columns", value: `${totalColumnCount}` },
+                    { label: "metrics", value: `${totalMetricCount}` },
+                  ]}
+                  subtitle="system.datasets"
+                  title={`tables (${datasets.length})`}
+                />
+              ),
+              icon: <Table2 size={15} />,
+              id: tablesItemId,
+              kind: "group",
+              title: `tables (${datasets.length})`,
+            },
+          ],
+          hoverCard: (
+            <DatasetHoverCard
+              description="Dataset group available for dashboard widget creation."
+              icon={<Database size={18} />}
+              rows={[
+                { label: "owner", value: "System user" },
+                { label: "tables", value: `${datasets.length}` },
+                { label: "columns", value: `${totalColumnCount}` },
+              ]}
+              subtitle="system"
+              title="datasets"
+            />
+          ),
+          icon: <Database size={15} />,
+          id: schemaItemId,
+          kind: "group",
+          title: "datasets",
+        },
+      ],
+      hoverCard: (
+        <DatasetHoverCard
+          description="Dataset catalog available for dashboard widgets."
+          icon={<Server size={18} />}
+          rows={[
+            { label: "owner", value: "System user" },
+            { label: "updated", value: "1 hour ago" },
+            { label: "tables", value: `${datasets.length}` },
+          ]}
+          title="system"
+        />
+      ),
+      icon: <Server size={15} />,
+      id: systemItemId,
+      kind: "group",
+      title: "system",
+    },
+  ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
+  const treeHeight = Math.max(260, Math.min(760, 120 + (totalColumnCount + datasets.length) * datasetTreeRowHeight));
 
-  useEffect(() => {
-    setExpandedItems((currentItems) => {
-      const nextItems = new Set(currentItems);
-      requiredExpandedItems.forEach((itemId) => nextItems.add(itemId));
-      return Array.from(nextItems);
-    });
-  }, [requiredExpandedItems]);
+  const handleActivateTreeItem = (node: NodeApi<DatasetTreeNode>) => {
+    const item = node.data;
 
-  const handleActivateTreeItem = (itemId: string | null) => {
-    if (typeof itemId !== "string") return;
-
-    if (itemId.startsWith(DATASET_ITEM_PREFIX)) {
-      setExpandedItems((currentItems) => (
-        currentItems.includes(itemId) ? currentItems : [...currentItems, itemId]
-      ));
-      onSelectDataset(itemId.slice(DATASET_ITEM_PREFIX.length));
+    if (item.kind === "dataset" && item.datasetId) {
+      onSelectDataset(item.datasetId);
       return;
     }
 
-    const columnItem = parseColumnTreeItemId(itemId);
-    if (!columnItem) return;
-    const dataset = datasets.find((item) => item.id === columnItem.datasetId);
-    const column = dataset?.columns.find((item) => item.name === columnItem.columnName);
+    if (item.kind !== "column" || !item.datasetId || !item.columnName) return;
+    const dataset = datasets.find((entry) => entry.id === item.datasetId);
+    const column = dataset?.columns.find((entry) => entry.name === item.columnName);
     if (!dataset || !column) return;
-    const parentDatasetItemId = datasetTreeItemId(dataset.id);
-    setExpandedItems((currentItems) => (
-      currentItems.includes(parentDatasetItemId) ? currentItems : [...currentItems, parentDatasetItemId]
-    ));
     onSelectColumn?.(dataset, column);
-  };
-  const handleTreeMouseDownCapture = (event: MouseEvent<HTMLElement>) => {
-    const target = event.target instanceof HTMLElement ? event.target : null;
-    const treeItem = target?.closest('[role="treeitem"]');
-    if (!treeItem || !event.currentTarget.contains(treeItem)) return;
-
-    const domItemId = treeItem.getAttribute("id") ?? "";
-    const columnItemIndex = domItemId.indexOf(COLUMN_ITEM_PREFIX);
-    if (columnItemIndex >= 0) {
-      handleActivateTreeItem(domItemId.slice(columnItemIndex));
-      return;
-    }
-
-    const datasetItemIndex = domItemId.indexOf(DATASET_ITEM_PREFIX);
-    if (datasetItemIndex >= 0) handleActivateTreeItem(domItemId.slice(datasetItemIndex));
   };
 
   return (
     <aside
       aria-hidden={!isOpen}
-      aria-label="데이터셋"
+      aria-label="Dataset"
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
-      onMouseDownCapture={handleTreeMouseDownCapture}
     >
       <div className="asklake-dataset-sidebar-header">
-        <h2>데이터셋</h2>
+        <h2>Dataset</h2>
       </div>
 
       {isLoading ? (
-        <div className="asklake-dataset-sidebar-state">데이터셋을 불러오는 중입니다.</div>
+        <div className="asklake-dataset-sidebar-state">Loading datasets...</div>
       ) : error ? (
         <div className="asklake-dataset-sidebar-state error">
-          데이터셋 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.
+          Failed to load datasets. Please try again.
         </div>
       ) : datasets.length === 0 ? (
-        <div className="asklake-dataset-sidebar-state">표시할 데이터셋이 없습니다.</div>
+        <div className="asklake-dataset-sidebar-state">No datasets available.</div>
       ) : (
         <div className="asklake-dataset-tree-wrap">
-          <SimpleTreeView
+          <Tree<DatasetTreeNode>
+            aria-label="Dashboard dataset tree"
             className="asklake-dataset-tree"
-            expandedItems={expandedItems}
-            selectedItems={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : null}
-            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
-              setExpandedItems((currentItems) => Array.from(new Set([...currentItems, ...itemIds])));
-            }}
+            data={treeData}
+            disableDrag
+            disableEdit
+            height={treeHeight}
+            idAccessor="id"
+            indent={18}
+            openByDefault
+            overscanCount={6}
+            rowHeight={datasetTreeRowHeight}
+            selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
+            width="100%"
+            onActivate={handleActivateTreeItem}
           >
-            <TreeItem
-              itemId={systemItemId}
-              label={(
-                <DatasetTreeLabel
-                  hoverCard={(
-                    <DatasetHoverCard
-                      description="대시보드에서 사용할 수 있는 데이터셋 카탈로그입니다."
-                      icon={<Server size={18} />}
-                      rows={[
-                        { label: "소유자", value: "System user" },
-                        { label: "업데이트됨", value: "1시간 전" },
-                        { label: "테이블", value: `${datasets.length}개` },
-                      ]}
-                      title="system"
-                    />
-                  )}
-                  icon={<Server size={15} />}
-                  title="system"
-                />
-              )}
-            >
-              <TreeItem
-                itemId={schemaItemId}
-                label={(
-                  <DatasetTreeLabel
-                    hoverCard={(
-                      <DatasetHoverCard
-                        description="대시보드 위젯 생성에 사용할 수 있는 데이터셋 묶음입니다."
-                        icon={<Database size={18} />}
-                        rows={[
-                          { label: "소유자", value: "System user" },
-                          { label: "테이블", value: `${datasets.length}개` },
-                          { label: "컬럼", value: `${totalColumnCount}개` },
-                        ]}
-                        subtitle="system"
-                        title="datasets"
-                      />
-                    )}
-                    icon={<Database size={15} />}
-                    title="datasets"
-                  />
-                )}
-              >
-                <TreeItem
-                  itemId={tablesItemId}
-                  label={(
-                    <DatasetTreeLabel
-                      hoverCard={(
-                        <DatasetHoverCard
-                          description="위젯의 원본으로 선택할 수 있는 테이블 목록입니다."
-                          icon={<Table2 size={18} />}
-                          rows={[
-                            { label: "테이블", value: `${datasets.length}개` },
-                            { label: "컬럼", value: `${totalColumnCount}개` },
-                            { label: "지표", value: `${totalMetricCount}개` },
-                          ]}
-                          subtitle="system.datasets"
-                          title={`테이블(${datasets.length})`}
-                        />
-                      )}
-                      icon={<Table2 size={15} />}
-                      title={`테이블(${datasets.length})`}
-                    />
-                  )}
-                >
-                  {datasets.map((dataset) => {
-                    const isSelected = dataset.id === selectedDatasetId;
-                    const numericColumnCount = metricCount(dataset);
-                    return (
-                      <TreeItem
-                        itemId={datasetTreeItemId(dataset.id)}
-                        key={dataset.id}
-                        label={(
-                          <DatasetTreeLabel
-                            hoverCard={(
-                              <DatasetHoverCard
-                                description={dataset.description ?? "대시보드 위젯에 사용할 수 있는 데이터셋입니다."}
-                                icon={<Table2 size={18} />}
-                                rows={[
-                                  { label: "소유자", value: "System user" },
-                                  { label: "최근 수정 날짜", value: dataset.updatedAt ?? "정보 없음" },
-                                  { label: "컬럼", value: `${dataset.columns.length}개` },
-                                  { label: "지표", value: `${numericColumnCount} metrics` },
-                                ]}
-                                subtitle="system.datasets"
-                                title={dataset.name}
-                              />
-                            )}
-                            icon={<Table2 size={15} />}
-                            meta={`${dataset.columns.length} columns`}
-                            selected={isSelected}
-                            title={dataset.name}
-                          />
-                        )}
-                      >
-                        {dataset.columns.map((column) => (
-                          <TreeItem
-                            itemId={columnTreeItemId(dataset.id, column.name)}
-                            key={`${dataset.id}-${column.name}`}
-                            label={(
-                              <DatasetTreeLabel
-                                hoverCard={(
-                                  <DatasetHoverCard
-                                    description={columnDescription(column)}
-                                    icon={<ColumnTypeIcon type={column.type} />}
-                                    rows={[
-                                      { label: "유형", value: columnTypeLabel(column.type) },
-                                      { label: "테이블", value: dataset.name },
-                                    ]}
-                                    subtitle={`system.datasets.${dataset.name}`}
-                                    title={column.name}
-                                  />
-                                )}
-                                icon={<ColumnTypeIcon type={column.type} />}
-                                meta={columnTypeLabel(column.type)}
-                                title={column.name}
-                              />
-                            )}
-                          />
-                        ))}
-                      </TreeItem>
-                    );
-                  })}
-                </TreeItem>
-              </TreeItem>
-            </TreeItem>
-          </SimpleTreeView>
+            {DatasetTreeNodeRow}
+          </Tree>
         </div>
       )}
     </aside>

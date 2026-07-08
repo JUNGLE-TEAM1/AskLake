@@ -1,4 +1,8 @@
+import { useMemo } from "react";
+import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
@@ -14,60 +18,89 @@ export function DashboardTable({
   onOpenDetail: (dashboard: SavedDashboardCard) => void;
   onRequestDelete: (dashboard: SavedDashboardCard) => void;
 }) {
+  const columns = useMemo<ColumnDef<SavedDashboardCard>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        cell: ({ row }) => {
+          const dashboard = row.original;
+          return (
+            <>
+              <Button
+                className="dashboard-row-link"
+                type="button"
+                variant="link"
+                onClick={() => onOpenDetail(dashboard)}
+              >
+                {dashboard.name}
+              </Button>
+              <span className="dashboard-row-tags">
+                {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
+                  <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
+                ))}
+              </span>
+            </>
+          );
+        },
+        header: "이름",
+        meta: {
+          widthClassName: "w-[34%]",
+        } as DataTableColumnMeta,
+      },
+      {
+        accessorKey: "owner",
+        header: "소유자",
+        meta: {
+          widthClassName: "w-[18%]",
+        } as DataTableColumnMeta,
+      },
+      {
+        accessorKey: "updated",
+        header: "마지막 수정",
+        meta: {
+          widthClassName: "w-[16%]",
+        } as DataTableColumnMeta,
+      },
+      {
+        accessorFn: (dashboard) => formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt),
+        header: "생성 일시",
+        id: "createdAt",
+        meta: {
+          widthClassName: "w-[24%]",
+        } as DataTableColumnMeta,
+      },
+    ],
+    [onOpenDetail],
+  );
+
   return (
-    <div className="dashboard-table-scroll">
-      <table className="schema-table">
-        <thead>
-          <tr>
-            <th>이름</th>
-            <th>소유자</th>
-            <th>마지막 수정</th>
-            <th>생성 일시</th>
-            <th aria-label="삭제" />
-          </tr>
-        </thead>
-        <tbody>
-          {dashboards.map((dashboard) => (
-            <tr className="dashboard-table-row" key={dashboard.id} onClick={() => onOpenDetail(dashboard)}>
-              <td>
-                <button
-                  className="dashboard-row-link"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onOpenDetail(dashboard);
-                  }}
-                >
-                  {dashboard.name}
-                </button>
-                <span className="dashboard-row-tags">
-                  {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
-                    <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
-                  ))}
-                </span>
-              </td>
-              <td>{dashboard.owner}</td>
-              <td>{dashboard.updated}</td>
-              <td>{formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt)}</td>
-              <td className="dashboard-table-action-cell">
-                <button
-                  className="dashboard-row-delete-button"
-                  type="button"
-                  disabled={deletingDashboardId === dashboard.id}
-                  title="대시보드 삭제"
-                  aria-label={`${dashboard.name} 삭제`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRequestDelete(dashboard);
-                  }}
-                >
-                  <Trash2 size={18} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      className="dashboard-table-scroll"
+      columns={columns}
+      data={dashboards}
+      emptyState={{
+        description: "검색 조건에 맞는 대시보드가 없습니다.",
+        title: "대시보드가 없습니다.",
+      }}
+      getRowId={(dashboard) => dashboard.id}
+      tableClassName="schema-table dashboard-list-data-table"
+      viewportClassName="dashboard-table-viewport"
+      renderRowActions={(row) => (
+        <Button
+          aria-label={`${row.original.name} 삭제`}
+          className="dashboard-row-delete-button"
+          disabled={deletingDashboardId === row.original.id}
+          title="대시보드 삭제"
+          type="button"
+          variant="destructive"
+          size="icon"
+          onClick={() => onRequestDelete(row.original)}
+        >
+          <Trash2 size={18} />
+        </Button>
+      )}
+      rowActionsClassName="dashboard-table-action-cell"
+      rowActionsHeader={<span className="sr-only">삭제</span>}
+    />
   );
 }
