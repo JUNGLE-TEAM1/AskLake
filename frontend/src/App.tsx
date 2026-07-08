@@ -200,7 +200,7 @@ export function App() {
       if (window.location.pathname !== "/dashboards") window.history.pushState(null, "", "/dashboards");
       setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
     } else if (window.location.pathname.startsWith("/dashboards") || window.location.pathname === "/jobs-table-demo") {
-      window.history.pushState(null, "", "/");
+      window.history.pushState(null, "", "/jobs");
     }
     moveToFlow(item.flow);
   };
@@ -213,13 +213,13 @@ export function App() {
 
   const closeJobsTableDemo = () => {
     writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
-    if (window.location.pathname === "/jobs-table-demo") window.history.pushState(null, "", "/");
+    if (window.location.pathname === "/jobs-table-demo") window.history.pushState(null, "", "/jobs");
     moveToFlow("jobs");
   };
 
   const navigateIngestLanding = () => {
     writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
-    if (window.location.pathname !== "/") window.history.pushState(null, "", "/");
+    if (window.location.pathname !== "/jobs") window.history.pushState(null, "", "/jobs");
     setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
     moveToFlow("jobs");
   };
