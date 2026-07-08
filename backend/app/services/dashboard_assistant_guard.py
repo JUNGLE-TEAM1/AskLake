@@ -249,7 +249,8 @@ def _guard_update_widget_action(
                 f"update_widget datasetId {dataset_id!r}는 대시보드에서 사용할 수 있는 데이터셋이 아니어서 제외했습니다. "
                 f"사용 가능한 datasetId: {_available_dataset_ids(datasets)}",
             ]
-        config, warnings = _validate_config(target_type, patch.config, dataset)
+        candidate_config = _merge_config_patch(widget.config, patch.config)
+        config, warnings = _validate_config(target_type, candidate_config, dataset)
         if config is None:
             return None, warnings
         config_payload = config.model_dump(by_alias=True, exclude_none=True, mode="json")
@@ -421,6 +422,29 @@ def _validate_config(
     if warnings:
         return None, warnings
     return parsed_config, []
+
+
+def _merge_config_patch(current_config: dict[str, Any], patch_config: Any) -> dict[str, Any]:
+    next_config = dict(current_config or {})
+    for key, value in _config_to_dict(patch_config).items():
+        if value is None:
+            continue
+        if key == "color":
+            next_color = _merge_color_patch(next_config.get("color"), value)
+            if next_color:
+                next_config["color"] = next_color
+            continue
+        next_config[key] = value
+    return next_config
+
+
+def _merge_color_patch(current_color: Any, patch_color: Any) -> dict[str, Any]:
+    next_color = _config_to_dict(current_color)
+    for key, value in _config_to_dict(patch_color).items():
+        if value is None:
+            continue
+        next_color[key] = value
+    return next_color
 
 
 def _widget_type_enum(value: DashboardRuntimeWidgetType | str) -> DashboardRuntimeWidgetType:

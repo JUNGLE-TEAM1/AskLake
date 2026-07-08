@@ -3,11 +3,13 @@ import { Loader2, Send } from "lucide-react";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
+  type DashboardAssistantMode,
   buildDashboardAssistantWidgetContext,
   dashboardAssistantEndpointLabel,
   type DashboardAssistantReportAction,
   type DashboardAssistantResponse,
   type DashboardAssistantUpdateWidgetAction,
+  type DashboardAssistantWidgetPatch,
   isDashboardAssistantConfigured,
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
@@ -45,6 +47,43 @@ function appendPromptText(currentPrompt: string, nextText: string) {
   if (!next) return currentPrompt;
   if (!current) return next;
   return `${current} ${next}`;
+}
+
+function isWidgetMutationPrompt(prompt: string) {
+  const normalized = prompt.trim().toLowerCase();
+  return [
+    "변경",
+    "바꿔",
+    "바꾸",
+    "수정",
+    "적용",
+    "색",
+    "컬러",
+    "color",
+    "제목",
+    "이름",
+    "막대",
+    "라인",
+    "파이",
+    "테이블",
+    "합계",
+    "평균",
+    "집계",
+    "count",
+    "avg",
+    "sum",
+    "aggregation",
+    "그려",
+    "만들",
+    "생성",
+    "추가",
+  ].some((keyword) => normalized.includes(keyword));
+}
+
+function assistantModeForPrompt(prompt: string, selectedWidget: DashboardRuntimeWidget | null): DashboardAssistantMode {
+  if (selectedWidget && isWidgetMutationPrompt(prompt)) return "visualization_request";
+  if (!selectedWidget && isWidgetMutationPrompt(prompt)) return "visualization_request";
+  return "dashboard_question";
 }
 
 export function DashboardAssistantPanel({
@@ -93,12 +132,14 @@ export function DashboardAssistantPanel({
 
     setIsSubmitting(true);
     try {
+      const assistantMode = assistantModeForPrompt(nextPrompt, selectedWidget);
       const response = await requestDashboardAssistant({
         dashboardId,
-        mode: "dashboard_question",
+        mode: assistantMode,
         pageId,
         prompt: nextPrompt,
         selectedWidgetId: selectedWidget?.id ?? null,
+        widgetId: assistantMode === "visualization_request" ? selectedWidget?.id ?? null : null,
         widgets: targetWidgets.map(buildDashboardAssistantWidgetContext),
       });
       const reportAction = response.actions.find(
@@ -108,6 +149,7 @@ export function DashboardAssistantPanel({
         onCreateWidget,
         onUpdateWidget,
         response,
+        selectedWidget,
         widgets,
       });
       const warningMessage = response.warnings.length > 0
@@ -204,11 +246,13 @@ async function applyAssistantWidgetActions({
   onCreateWidget,
   onUpdateWidget,
   response,
+  selectedWidget,
   widgets,
 }: {
   onCreateWidget?: (input: CreateDraftWidgetFormInput) => Promise<void> | void;
   onUpdateWidget?: (widgetId: string, input: UpdateDraftWidgetFormInput) => Promise<void> | void;
   response: DashboardAssistantResponse;
+  selectedWidget: DashboardRuntimeWidget | null;
   widgets: DashboardRuntimeWidget[];
 }) {
   const messages: string[] = [];
@@ -228,11 +272,29 @@ async function applyAssistantWidgetActions({
     }
   }
 
+  if (!messages.length && selectedWidget) {
+    const directPatch = directWidgetPatchFromResponse(response);
+    if (directPatch) {
+      const result = await applyUpdateWidgetAction(
+        { type: "update_widget", widgetId: selectedWidget.id, patch: directPatch },
+        widgets,
+        onUpdateWidget,
+      );
+      if (result) messages.push(result);
+    }
+  }
+
   if (messages.length === 0 && response.actions.some((action) => action.type !== "report")) {
     messages.push("위젯 변경 action을 받았지만 화면에 적용하지 못했습니다.");
   }
 
   return messages;
+}
+
+function directWidgetPatchFromResponse(response: DashboardAssistantResponse): DashboardAssistantWidgetPatch | null {
+  if (response.widgetPatch) return response.widgetPatch;
+  if (response.configPatch && Object.keys(response.configPatch).length > 0) return { config: response.configPatch };
+  return null;
 }
 
 async function applyCreateWidgetAction(

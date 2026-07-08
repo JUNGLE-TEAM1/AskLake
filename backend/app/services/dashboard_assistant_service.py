@@ -15,6 +15,7 @@ from app.schemas.dashboard import (
     DashboardAssistantUpdateWidgetAction,
     DashboardAssistantWidgetContext,
     DashboardAssistantWidgetPatch,
+    DashboardRuntimeWidgetType,
 )
 from app.services.dashboard_assistant_context import (
     AssistantDashboardContext,
@@ -26,6 +27,37 @@ from app.services.dashboard_assistant_guard import (
 )
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+CHART_COLOR_ROTATION = ["#2563eb", "#16a34a", "#f59e0b", "#dc2626", "#7c3aed", "#0891b2"]
+COLOR_NAME_TO_HEX = {
+    "blue": "#2563eb",
+    "green": "#16a34a",
+    "yellow": "#f59e0b",
+    "orange": "#f97316",
+    "red": "#dc2626",
+    "purple": "#7c3aed",
+    "pink": "#db2777",
+    "cyan": "#0891b2",
+    "black": "#111827",
+    "gray": "#64748b",
+    "grey": "#64748b",
+    "파란": "#2563eb",
+    "파랑": "#2563eb",
+    "초록": "#16a34a",
+    "녹색": "#16a34a",
+    "노란": "#f59e0b",
+    "노랑": "#f59e0b",
+    "주황": "#f97316",
+    "빨간": "#dc2626",
+    "빨강": "#dc2626",
+    "붉은": "#dc2626",
+    "보라": "#7c3aed",
+    "분홍": "#db2777",
+    "핑크": "#db2777",
+    "하늘": "#0891b2",
+    "검정": "#111827",
+    "검은": "#111827",
+    "회색": "#64748b",
+}
 LOW_SIGNAL_PROMPTS = {"ㅋ", "ㅋㅋ", "ㅋㅋㅋ", "ㅎㅎ", "ㅎㅎㅎ", "ㅇㅋ", "ㅇㅇ", "ㄴㄴ", "lol", "haha", "hehe", "ok", "okay"}
 
 
@@ -126,9 +158,13 @@ class DashboardAssistantService:
         context: AssistantDashboardContext,
         warning: str,
     ) -> DashboardAssistantResponse:
+        should_mutate_widget = (
+            request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
+            or _looks_like_widget_mutation_request(request.prompt)
+        )
         response = (
             _build_visualization_mock_fallback(request, context)
-            if request.mode == DashboardAssistantMode.VISUALIZATION_REQUEST
+            if should_mutate_widget
             else _build_dashboard_question_mock_fallback(request, context)
         )
         response.warnings = [*context.warnings, warning, *response.warnings]
@@ -154,6 +190,9 @@ def _assistant_instructions() -> str:
         "If the user prompt is only a casual reaction, laughter, acknowledgement, greeting, or otherwise lacks an analysis or widget-change request, return a short Korean clarification message with no actions. "
         "For dashboard_question, prefer a report action. "
         "For visualization_request, use update_widget when widgetId or selectedWidgetId targets an existing widget; otherwise use create_widget. "
+        "Widget style edits are supported for chart widgets through config.color.colors; if the user asks to change line, bar, pie, or chart colors, return an update_widget action with a config color patch. "
+        "For simple selected-widget edits such as color, title, chart type, aggregation, axis, or table column changes, return update_widget instead of saying the feature is unsupported. "
+        "An update_widget config may include only changed fields; the server will merge it with the current widget config before validation. "
         "For update_widget actions, put changed title, type, datasetId, and config under patch, not widget. "
         "For create_widget and visualization_request update_widget actions, always provide a concise Korean widget title. "
         "Derive the title from the selected dataset name, dataset description, tags, column names, sample rows, and the user's request. "
@@ -174,6 +213,40 @@ def _is_low_signal_prompt(prompt: str) -> bool:
     if re.fullmatch(r"(ha|haha|lol|lmao|rofl)+", compact):
         return True
     return False
+
+
+def _looks_like_widget_mutation_request(prompt: str) -> bool:
+    normalized = prompt.strip().lower()
+    return any(
+        keyword in normalized
+        for keyword in [
+            "변경",
+            "바꿔",
+            "바꾸",
+            "수정",
+            "적용",
+            "색",
+            "컬러",
+            "color",
+            "제목",
+            "이름",
+            "막대",
+            "라인",
+            "파이",
+            "테이블",
+            "합계",
+            "평균",
+            "집계",
+            "count",
+            "avg",
+            "sum",
+            "aggregation",
+            "그려",
+            "만들",
+            "생성",
+            "추가",
+        ]
+    )
 
 
 def _build_low_signal_prompt_response() -> DashboardAssistantResponse:
@@ -393,6 +466,9 @@ def _build_visualization_mock_fallback(
         "description": "mock fallback 응답으로 생성한 시각화 설명입니다.",
         "prompt": request.prompt,
     }
+    color_patch = _color_patch_from_prompt(request.prompt, target_widget)
+    if color_patch:
+        config_patch["color"] = {"colors": color_patch}
     widget_patch = DashboardAssistantWidgetPatch(
         title=target_widget.title or "AI 추천 시각화",
         config=config_patch,
@@ -410,6 +486,63 @@ def _build_visualization_mock_fallback(
         widget_patch=widget_patch,
         warnings=warnings,
     )
+
+
+def _color_patch_from_prompt(
+    prompt: str,
+    target_widget: DashboardAssistantWidgetContext,
+) -> list[str] | None:
+    if target_widget.type in {DashboardRuntimeWidgetType.METRIC, DashboardRuntimeWidgetType.TABLE}:
+        return None
+    normalized = prompt.strip().lower()
+    if "색" not in normalized and "컬러" not in normalized and "color" not in normalized:
+        return None
+
+    requested_color = _requested_color_from_prompt(normalized)
+    current_colors = _current_widget_colors(target_widget)
+    if requested_color:
+        return _replace_first_color(current_colors, requested_color)
+    return _rotate_chart_colors(current_colors)
+
+
+def _requested_color_from_prompt(prompt: str) -> str | None:
+    match = re.search(r"#[0-9a-fA-F]{6}\b", prompt)
+    if match:
+        return match.group(0).lower()
+    for color_name, color_value in COLOR_NAME_TO_HEX.items():
+        if color_name in prompt:
+            return color_value
+    return None
+
+
+def _current_widget_colors(target_widget: DashboardAssistantWidgetContext) -> list[str]:
+    color = target_widget.config.get("color") if isinstance(target_widget.config, dict) else None
+    if isinstance(color, dict):
+        colors = [
+            item
+            for item in color.get("colors", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if colors:
+            return colors
+    return [CHART_COLOR_ROTATION[0]]
+
+
+def _replace_first_color(current_colors: list[str], next_color: str) -> list[str]:
+    colors = list(current_colors) or [CHART_COLOR_ROTATION[0]]
+    colors[0] = next_color
+    return colors
+
+
+def _rotate_chart_colors(current_colors: list[str]) -> list[str]:
+    colors = list(current_colors) or [CHART_COLOR_ROTATION[0]]
+    current_primary = colors[0].lower()
+    next_primary = next(
+        (color for color in CHART_COLOR_ROTATION if color.lower() != current_primary),
+        CHART_COLOR_ROTATION[0],
+    )
+    colors[0] = next_primary
+    return colors
 
 
 def _build_dashboard_question_mock_fallback(
