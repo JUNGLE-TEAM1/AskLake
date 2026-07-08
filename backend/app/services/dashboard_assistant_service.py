@@ -63,6 +63,7 @@ class DashboardAssistantService:
             raw_payload = self._request_openai(request, context)
             coerced_response = coerce_assistant_response(raw_payload)
             guarded_response = guard_assistant_response(coerced_response, context)
+            guarded_response = _prefer_prompt_bound_visualization_action(request, context, guarded_response)
             guarded_response = _with_visualization_fallback_action(request, context, guarded_response)
             guarded_response = _normalize_visualization_success_message(request, guarded_response)
             return self._with_context_warnings(guarded_response, context)
@@ -214,6 +215,36 @@ def _with_visualization_fallback_action(
     return guarded_fallback
 
 
+def _prefer_prompt_bound_visualization_action(
+    request: DashboardAssistantRequest,
+    context: AssistantDashboardContext,
+    response: DashboardAssistantResponse,
+) -> DashboardAssistantResponse:
+    if request.mode != DashboardAssistantMode.VISUALIZATION_REQUEST:
+        return response
+    if not _prompt_has_bound_visualization_intent(request.prompt, context.datasets):
+        return response
+
+    prompt_action = _build_deterministic_visualization_action(request, context)
+    if prompt_action is None:
+        return response
+
+    guarded_prompt_response = guard_assistant_response(
+        DashboardAssistantResponse(
+            message=response.message,
+            actions=[prompt_action],
+            warnings=[
+                *response.warnings,
+                "사용자 프롬프트의 데이터셋/컬럼/집계 의도를 우선 적용했습니다.",
+            ],
+        ),
+        context,
+    )
+    if not guarded_prompt_response.actions:
+        return response
+    return guarded_prompt_response
+
+
 def _normalize_visualization_success_message(
     request: DashboardAssistantRequest,
     response: DashboardAssistantResponse,
@@ -263,13 +294,15 @@ def _select_fallback_dataset(prompt: str, datasets: list[AssistantDatasetContext
         return None
 
     prompt_tokens = _prompt_tokens(prompt)
+    normalized_prompt = _normalize_token(prompt)
 
     def score(dataset: AssistantDatasetContext) -> tuple[int, int, int]:
+        dataset_bonus = _dataset_prompt_match_score(dataset, normalized_prompt)
         column_names = {column.name for column in dataset.columns}
         matched_columns = len(prompt_tokens & {_normalize_token(column_name) for column_name in column_names})
         metric_bonus = 1 if _preferred_metric_column(prompt, dataset) else 0
         default_bonus = 1 if _default_dimension_column(dataset) else 0
-        return (matched_columns, metric_bonus, default_bonus)
+        return (dataset_bonus, matched_columns, metric_bonus + default_bonus)
 
     return max(datasets, key=score)
 
@@ -281,7 +314,7 @@ def _build_fallback_bar_config(prompt: str, dataset: AssistantDatasetContext) ->
         for column in dataset.columns
         if _normalize_token(column.name) in prompt_tokens
     ]
-    metric_column = _preferred_metric_column(prompt, dataset) if _prompt_requests_metric(prompt) or not mentioned_columns else None
+    metric_column = _preferred_metric_column(prompt, dataset) if _prompt_requests_metric(prompt) and not _prompt_requests_count(prompt) else None
     dimension_columns = [
         column_name
         for column_name in mentioned_columns
@@ -326,9 +359,52 @@ def _preferred_metric_column(prompt: str, dataset: AssistantDatasetContext) -> s
     return _first_existing_numeric_column(dataset, candidates) or _first_numeric_column(dataset)
 
 
+def _prompt_has_bound_visualization_intent(prompt: str, datasets: list[AssistantDatasetContext]) -> bool:
+    prompt_tokens = _prompt_tokens(prompt)
+    normalized_prompt = _normalize_token(prompt)
+    if _prompt_requests_count(prompt):
+        return True
+    for dataset in datasets:
+        dataset_terms = [
+            _normalize_token(dataset.id),
+            _normalize_token(dataset.name),
+        ]
+        if any(term and term in normalized_prompt for term in dataset_terms):
+            return True
+        if prompt_tokens & {_normalize_token(column.name) for column in dataset.columns}:
+            return True
+    return False
+
+
+def _dataset_prompt_match_score(dataset: AssistantDatasetContext, normalized_prompt: str) -> int:
+    full_terms = [
+        _normalize_token(dataset.id),
+        _normalize_token(dataset.name),
+    ]
+    if any(term and term in normalized_prompt for term in full_terms):
+        return 6
+
+    split_terms = {
+        _normalize_token(part)
+        for value in [dataset.id, dataset.name]
+        for part in re.split(r"[_\\s-]+", value)
+        if _normalize_token(part)
+    }
+    return min(sum(1 for term in split_terms if term in normalized_prompt), 2)
+
+
 def _prompt_requests_metric(prompt: str) -> bool:
     prompt_text = prompt.lower()
-    return any(token in prompt_text for token in ["매출", "금액", "수량", "건수", "revenue", "sales", "amount", "count", "orders", "customers"])
+    return any(token in prompt_text for token in ["매출", "금액", "수량", "revenue", "sales", "amount"])
+
+
+def _prompt_requests_count(prompt: str) -> bool:
+    normalized = _normalize_token(prompt)
+    prompt_text = prompt.lower()
+    return (
+        any(token in prompt_text for token in ["건수", "개수", "고객 수", "주문 수", "count"])
+        or any(token in normalized for token in ["고객수", "주문수", "rowcount", "count"])
+    )
 
 
 def _preferred_dimension_column(mentioned_columns: list[str], dataset: AssistantDatasetContext) -> str | None:
