@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   ChevronRight,
   ChevronsRight,
-  ChevronLeft,
-  ChevronsLeft,
   ChevronUp,
   ChevronDown,
   Braces,
@@ -11,6 +9,7 @@ import {
   Loader2,
   AlertTriangle,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { API_BASE_URL } from "../../config/api";
 import { schemaTransformApi } from "../../services/schemaTransformApi";
@@ -745,17 +744,19 @@ export default function SchemaTransformEditor({
               onClick={moveSelectedToLeft}
               disabled={selectedAfter.size === 0}
               className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Remove selected"
+              aria-label="Remove selected target columns"
+              title="Remove selected target columns"
             >
-              <ChevronLeft className="w-5 h-5 text-gray-600" />
+              <Trash2 className="w-5 h-5 text-gray-600" />
             </button>
             <button
               onClick={moveAllToLeft}
               disabled={targetSchema.length === 0}
               className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Remove all"
+              aria-label="Remove all target columns"
+              title="Remove all target columns"
             >
-              <ChevronsLeft className="w-6 h-6 text-gray-600" />
+              <Trash2 className="w-6 h-6 text-gray-600" />
             </button>
           </div>
 
