@@ -158,16 +158,17 @@ export function App() {
     updateDraftPipeline,
   } = useAskLakeData({ enabled: Boolean(currentUser), onFlowChange: setActiveFlow, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
+  const canAccessAdmin = currentUser?.role?.toLowerCase() === "admin";
   const activeNavId = useMemo<NavId | null>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
     if (activeFlow === "sql") return "sql";
     if (activeFlow === "dashboard") return "dashboard";
     if (activeFlow === "ai") return "ai";
-    if (activeFlow === "admin") return "admin";
+    if (activeFlow === "admin") return canAccessAdmin ? "admin" : null;
     if (activeFlow === "profile") return null;
     if (activeFlow === "login") return null;
     return "ingest";
-  }, [activeFlow]);
+  }, [activeFlow, canAccessAdmin]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
   const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
@@ -228,6 +229,13 @@ export function App() {
   }, [activeFlow, authChecked, currentUser]);
 
   useEffect(() => {
+    if (!authChecked || !currentUser || activeFlow !== "admin" || canAccessAdmin) return;
+    if (window.location.pathname === "/admin") window.history.replaceState(null, "", "/profile");
+    showToast("관리 메뉴는 운영자 계정에서만 사용할 수 있습니다.", "info");
+    setActiveFlow("profile");
+  }, [activeFlow, authChecked, canAccessAdmin, currentUser, showToast]);
+
+  useEffect(() => {
     if (activeFlow !== "dashboard" || dashboardEntry.source !== "sql" || !dashboardEntry.sqlRunId) return undefined;
     if (sqlResultDraft?.runId === dashboardEntry.sqlRunId) return undefined;
 
@@ -267,7 +275,7 @@ export function App() {
         return;
       }
       if (window.location.pathname === "/admin") {
-        setActiveFlow("admin");
+        setActiveFlow(canAccessAdmin ? "admin" : "profile");
         return;
       }
       if (window.location.pathname === "/login") {
@@ -279,7 +287,7 @@ export function App() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [canAccessAdmin]);
 
   const moveToFlow = (flow: FlowId) => {
     if (flow === "rules") {
@@ -304,6 +312,12 @@ export function App() {
   };
 
   const navigateSidebar = (item: NavItem) => {
+    if (item.id === "admin" && !canAccessAdmin) {
+      showToast("관리 메뉴는 운영자 계정에서만 사용할 수 있습니다.", "info");
+      if (window.location.pathname !== "/profile") window.history.pushState(null, "", "/profile");
+      moveToFlow("profile");
+      return;
+    }
     writeAuditLog("ui.menu.clicked", `/app/${item.id}`, item.label);
     if (item.id === "sql") {
       setSqlInitialDatasetId(null);
@@ -441,6 +455,7 @@ export function App() {
         auditOpen={auditOpen}
         auditLogs={auditLogs}
         auditCount={auditLogs.length}
+        canAccessAdmin={canAccessAdmin}
         onAccount={openProfilePage}
         onAuditToggle={() => setAuditOpen((open) => !open)}
         onDocs={() => {
@@ -495,6 +510,7 @@ export function App() {
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar
         activeNavId={activeNavId}
+        canAccessAdmin={canAccessAdmin}
         onAccount={openProfilePage}
         onBrandClick={navigateIngestLanding}
         onNavigate={navigateSidebar}
@@ -545,7 +561,7 @@ export function App() {
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "login" && <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
-          {activeFlow === "admin" && <AdminConsolePage onAction={writeAuditLog} />}
+          {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} />}
             </>
           )}
         </section>
@@ -559,6 +575,7 @@ function RuleBuilderShell({
   auditCount,
   auditLogs,
   auditOpen,
+  canAccessAdmin,
   children,
   onAccount,
   onAuditToggle,
@@ -571,6 +588,7 @@ function RuleBuilderShell({
   auditCount: number;
   auditLogs: AuditEntry[];
   auditOpen: boolean;
+  canAccessAdmin: boolean;
   children: React.ReactNode;
   onAccount: () => void;
   onAuditToggle: () => void;
@@ -588,7 +606,7 @@ function RuleBuilderShell({
   const managementItems = [
     { icon: ShieldCheck, label: "거버넌스", flow: "permission" as FlowId },
     { icon: Settings, label: "설정", flow: "admin" as FlowId },
-  ];
+  ].filter((item) => canAccessAdmin || item.flow !== "admin");
   const stepItems = [
     ["1", "소스 연결"],
     ["2", "스키마 추론"],
