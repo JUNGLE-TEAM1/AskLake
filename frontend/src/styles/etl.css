@@ -874,28 +874,49 @@
   font-family: inherit;
 }
 
-.source-json-sample-tree .MuiTreeItem-groupTransition {
-  border-left: 1px dashed #cbd5e1;
+.source-json-tree-item {
+  min-width: 0;
+}
+
+.source-json-tree-group {
+  display: grid;
+  gap: 1px;
   margin-left: 13px;
+  border-left: 1px dashed #cbd5e1;
   padding-left: 12px;
 }
 
-.source-json-sample-tree .MuiTreeItem-content {
+.source-json-tree-row {
+  display: grid;
+  width: 100%;
+  min-width: 0;
   min-height: 30px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  border: 0;
   border-radius: 7px;
-  padding: 3px 6px;
+  background: transparent;
   color: #172033;
+  font: inherit;
   font-size: 13px;
   line-height: 1.25;
+  padding: 3px 6px;
+  text-align: left;
 }
 
-.source-json-sample-tree .MuiTreeItem-content:hover {
+.source-json-tree-row:hover,
+.source-json-tree-row:focus-visible {
   background: #f8fafc;
+  outline: 0;
 }
 
-.source-json-sample-tree .MuiTreeItem-label {
-  min-width: 0;
-  font-size: 13px;
+.source-json-disclosure {
+  display: inline-flex;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 950;
 }
 
 .source-json-node-label {
@@ -1710,6 +1731,8 @@
 }
 
 .source-asset-tree {
+  display: grid;
+  gap: 2px;
   max-height: calc(100vh - 390px);
   overflow: auto;
   border: 1px solid #e2e8f0;
@@ -1719,44 +1742,16 @@
   padding: 6px;
 }
 
-.source-asset-tree .MuiTreeItem-content {
-  box-sizing: border-box;
-  width: 100%;
+.source-asset-tree-item {
   min-width: 0;
-  min-height: 32px;
-  border-radius: 7px;
-  padding: 2px 4px;
 }
 
-.source-asset-tree .MuiTreeItem-content:hover {
-  background: #f8fafc;
-}
-
-.source-asset-tree .MuiTreeItem-content:focus-within {
-  background: #eef2ff;
-}
-
-.source-asset-tree .MuiTreeItem-iconContainer {
-  display: none;
-  margin-top: 0;
-  align-self: center;
-  min-width: 22px;
-}
-
-.source-asset-tree .MuiTreeItem-groupTransition {
+.source-asset-tree-group {
+  display: grid;
+  gap: 2px;
   margin-left: 10px;
   border-left: 1px dashed #cbd5e1;
   padding-left: 6px;
-}
-
-.source-asset-tree .MuiTreeItem-content.Mui-selected,
-.source-asset-tree .MuiTreeItem-content.Mui-selected:hover {
-  background: #eef2ff;
-}
-
-.source-asset-tree .MuiTreeItem-label {
-  width: 100%;
-  min-width: 0;
 }
 
 .source-asset-tree-label {
@@ -1781,7 +1776,12 @@
   white-space: nowrap;
 }
 
+.source-asset-tree-label:hover {
+  background: #f8fafc;
+}
+
 .source-asset-tree-label:focus-visible {
+  background: #eef2ff;
   outline: 2px solid #6366f1;
   outline-offset: 2px;
 }
@@ -6973,15 +6973,47 @@
   padding: 8px;
 }
 
-.s3-tree .MuiTreeItem-content {
-  min-height: 32px;
-  border-radius: 6px;
+.s3-tree {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
-.s3-tree .MuiTreeItem-content.Mui-selected,
-.s3-tree .MuiTreeItem-content.Mui-focused,
-.s3-tree .MuiTreeItem-content.Mui-selected.Mui-focused {
+.s3-tree-item {
+  min-width: 0;
+}
+
+.s3-tree-group {
+  display: grid;
+  gap: 2px;
+  margin-left: 13px;
+  border-left: 1px dashed #cbd5e1;
+  padding-left: 10px;
+}
+
+.s3-tree-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  padding: 0 6px;
+  text-align: left;
+}
+
+.s3-tree-row:hover,
+.s3-tree-row:focus-visible,
+.s3-tree-row[data-selected="true"] {
   background: #eff6ff;
+  outline: 0;
+}
+
+.s3-tree-row.state {
+  cursor: default;
 }
 
 .s3-tree-label {
@@ -7004,7 +7036,7 @@
   font-weight: 800;
 }
 
-.s3-tree-retry {
+.s3-tree-retry span {
   display: inline-flex;
   gap: 6px;
   align-items: center;
@@ -8401,17 +8433,18 @@ input.schema-checkbox:checked {
   padding: 5px;
 }
 
-.schema-json-viewer .MuiTreeItem-content {
+.schema-json-viewer .source-json-tree-row {
   min-height: 24px;
   border-radius: 6px;
   padding: 1px 5px;
 }
 
-.schema-json-viewer .MuiTreeItem-content:hover {
+.schema-json-viewer .source-json-tree-row:hover,
+.schema-json-viewer .source-json-tree-row:focus-visible {
   background: #f8fafc;
 }
 
-.schema-json-viewer .MuiTreeItem-label {
+.schema-json-viewer .source-json-node-label {
   min-width: 0;
 }
 

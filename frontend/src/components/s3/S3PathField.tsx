@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search } from "lucide-react";
-import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
-import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import { Button } from "@/components/ui/button";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { PickerDialog } from "@/components/ui/picker-dialog";
 import { TreePanel } from "@/components/ui/tree-panel";
+import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
 import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFolder } from "../../services/s3PathApi";
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
@@ -28,11 +27,6 @@ function listingKey(bucket: string, prefix: string) {
 
 function prefixToItemId(prefix: string) {
   return prefix ? `prefix:${prefix}` : ROOT_PREFIX_ID;
-}
-
-function itemIdToPrefix(itemId: string) {
-  if (itemId === ROOT_PREFIX_ID) return "";
-  return itemId.startsWith("prefix:") ? itemId.slice("prefix:".length) : "";
 }
 
 function hasVisibleMatch(folder: S3PrefixFolder, query: string) {
@@ -179,65 +173,86 @@ function S3PathPicker({
     void loadPrefix("");
   }, [bucket]);
 
-  const renderChildren = (prefix: string) => {
+  const togglePrefix = (prefix: string) => {
+    const itemId = prefixToItemId(prefix);
+    setSelectedPrefix(prefix);
+    setExpandedItems((current) => {
+      const isExpanded = current.includes(itemId);
+      if (!isExpanded) void loadPrefix(prefix);
+      return isExpanded ? current.filter((entry) => entry !== itemId) : [...current, itemId];
+    });
+  };
+
+  const renderChildren = (prefix: string, depth = 1) => {
     const key = listingKey(bucket, prefix);
     const state = listingCache[key];
     const folders = (state?.data?.folders ?? []).filter((folder) => hasVisibleMatch(folder, query));
     const nextContinuationToken = state?.data?.nextContinuationToken ?? null;
 
     if (state?.loading && !state.data) {
-      return <TreeItem itemId={`loading:${prefix || "root"}`} label={<span className="s3-tree-state">불러오는 중...</span>} />;
+      return (
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row state" leaf level={depth}>
+            <span className="s3-tree-state">불러오는 중...</span>
+          </TreeRow>
+        </TreeGroup>
+      );
     }
 
     if (state?.error) {
       return (
-        <TreeItem
-          itemId={`error:${prefix || "root"}`}
-          label={(
-            <button className="s3-tree-retry" type="button" onClick={() => loadPrefix(prefix)}>
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row s3-tree-retry" leaf level={depth} onClick={() => loadPrefix(prefix)}>
+            <span>
               <RefreshCw size={13} />
               다시 시도
-            </button>
-          )}
-        />
+            </span>
+          </TreeRow>
+        </TreeGroup>
       );
     }
 
     if (!state?.data || folders.length === 0) {
-      return <TreeItem itemId={`empty:${prefix || "root"}`} label={<span className="s3-tree-state">하위 폴더가 없습니다.</span>} />;
+      return (
+        <TreeGroup className="s3-tree-group" level={depth}>
+          <TreeRow className="s3-tree-row state" leaf level={depth}>
+            <span className="s3-tree-state">하위 폴더가 없습니다.</span>
+          </TreeRow>
+        </TreeGroup>
+      );
     }
 
     return (
-      <>
+      <TreeGroup className="s3-tree-group" level={depth}>
         {folders.map((folder) => {
           const itemId = prefixToItemId(folder.prefix);
           const expanded = expandedItems.includes(itemId);
           return (
-            <TreeItem
-              itemId={itemId}
-              key={folder.prefix}
-              label={(
+            <div className="s3-tree-item" key={folder.prefix}>
+              <TreeRow
+                className="s3-tree-row"
+                expanded={expanded}
+                level={depth}
+                selected={selectedPrefix === folder.prefix}
+                onClick={() => togglePrefix(folder.prefix)}
+              >
                 <span className={selectedPrefix === folder.prefix ? "s3-tree-label selected" : "s3-tree-label"}>
                   {expanded ? <FolderOpen size={15} /> : <Folder size={15} />}
                   <strong>{folder.name}</strong>
                 </span>
-              )}
-            >
-              {expanded ? renderChildren(folder.prefix) : null}
-            </TreeItem>
+              </TreeRow>
+              {expanded ? renderChildren(folder.prefix, depth + 1) : null}
+            </div>
           );
         })}
         {nextContinuationToken ? (
-          <TreeItem
-            itemId={`more:${prefix || "root"}`}
-            label={(
-              <button className="s3-tree-more" type="button" onClick={() => loadPrefix(prefix, nextContinuationToken)}>
-                더 불러오기
-              </button>
-            )}
-          />
+          <TreeRow className="s3-tree-row s3-tree-more" leaf level={depth} onClick={() => loadPrefix(prefix, nextContinuationToken)}>
+            <span>
+              더 불러오기
+            </span>
+          </TreeRow>
         ) : null}
-      </>
+      </TreeGroup>
     );
   };
 
@@ -288,35 +303,26 @@ function S3PathPicker({
     >
       <div className="s3-picker-body">
         <TreePanel className="s3-tree-panel">
-          <SimpleTreeView
+          <TreeView
             className="s3-tree"
-            expandedItems={expandedItems}
-            selectedItems={prefixToItemId(selectedPrefix)}
-            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
-              setExpandedItems(itemIds);
-              itemIds.forEach((itemId) => {
-                if (itemId.startsWith("prefix:") || itemId === ROOT_PREFIX_ID) {
-                  void loadPrefix(itemIdToPrefix(itemId));
-                }
-              });
-            }}
-            onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-              if (!itemId || itemId.startsWith("loading:") || itemId.startsWith("error:") || itemId.startsWith("empty:") || itemId.startsWith("more:")) return;
-              setSelectedPrefix(itemIdToPrefix(itemId));
-            }}
+            label="S3 prefix tree"
           >
-            <TreeItem
-              itemId={ROOT_PREFIX_ID}
-              label={(
+            <div className="s3-tree-item">
+              <TreeRow
+                className="s3-tree-row"
+                expanded={expandedItems.includes(ROOT_PREFIX_ID)}
+                level={0}
+                selected={selectedPrefix === ""}
+                onClick={() => togglePrefix("")}
+              >
                 <span className={selectedPrefix === "" ? "s3-tree-label selected" : "s3-tree-label"}>
                   <FolderOpen size={15} />
                   <strong>/</strong>
                 </span>
-              )}
-            >
-              {renderChildren("")}
-            </TreeItem>
-          </SimpleTreeView>
+              </TreeRow>
+              {expandedItems.includes(ROOT_PREFIX_ID) ? renderChildren("") : null}
+            </div>
+          </TreeView>
         </TreePanel>
       </div>
     </PickerDialog>
