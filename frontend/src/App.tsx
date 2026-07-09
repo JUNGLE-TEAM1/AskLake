@@ -566,7 +566,7 @@ export function App() {
           {activeFlow === "profile" && <ProfilePage onAction={writeAuditLog} />}
           {activeFlow === "login" && <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />}
           {activeFlow === "ai" && <ModulePlaceholderPage flow="ai" title="AI 활용" owner="확장 예정" description="Lake 데이터를 RAG 데이터셋으로 만들고 권한 기반 자연어 질의를 제공하는 영역입니다." onRequirements={() => recordPlaceholderAction("ai", "requirements")} onStatusRecord={() => recordPlaceholderAction("ai", "status")} onPrimary={() => recordPlaceholderAction("ai", "primary")} />}
-          {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} />}
+          {activeFlow === "admin" && canAccessAdmin && <AdminConsolePage onAction={writeAuditLog} onNotify={showToast} />}
             </>
           )}
         </section>

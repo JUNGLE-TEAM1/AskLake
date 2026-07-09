@@ -131,11 +131,23 @@ def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized_payload["permissions"] = normalized_payload.get("permissions") or resource_permissions(can_query=True)
     materialization_runs = normalized_payload.get("materializationRuns")
     normalized_payload["materializationRuns"] = (
-        materialization_runs
+        normalize_materialization_runs(materialization_runs)
         if isinstance(materialization_runs, list)
         else []
     )
     return normalized_payload
+
+
+def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict[str, Any]]:
+    normalized_runs: list[dict[str, Any]] = []
+    for run in materialization_runs:
+        if not isinstance(run, dict):
+            continue
+        normalized_run = dict(run)
+        if normalized_run.get("sourceKind") not in {"etl", "sql"}:
+            normalized_run["sourceKind"] = "etl"
+        normalized_runs.append(normalized_run)
+    return normalized_runs
 
 
 def dataset_payload_to_model_values(payload: dict[str, Any]) -> dict[str, Any]:

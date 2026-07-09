@@ -27,6 +27,7 @@ type AdminTab = "users" | "groups" | "permissions" | "audit";
 
 type AdminConsolePageProps = {
   onAction: (action: string, apiPath: string, targetId: string, result?: "success" | "failed", options?: { targetType?: "admin_module" }) => void;
+  onNotify: (message: string, tone?: "success" | "info") => void;
 };
 
 const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
@@ -40,7 +41,7 @@ const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "
 const principalTypeOptions: PermissionPrincipalType[] = ["group", "user"];
 const resourceTypeFilters: Array<"all" | AdminResourceType> = ["all", "dataset", "etl_job", "dashboard"];
 
-export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
+export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<IdentityGroup[]>([]);
@@ -55,7 +56,8 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
     resourceKey: "",
   });
   const [permissionPending, setPermissionPending] = useState(false);
-  const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
+  const [deletingGrantId, setDeletingGrantId] = useState<string | null>(null);
+  const [savingGrantId, setSavingGrantId] = useState<string | null>(null);
   const onActionRef = useRef(onAction);
 
   useEffect(() => {
@@ -115,20 +117,19 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
     event.preventDefault();
     const resource = permissions.find((item) => resourceKey(item) === permissionDraft.resourceKey);
     if (!resource) {
-      setPermissionMessage("권한을 추가할 리소스를 선택해주세요.");
+      onNotify("권한을 추가할 리소스를 선택해주세요.", "info");
       return;
     }
     if (permissionDraft.actions.length === 0) {
-      setPermissionMessage("하나 이상의 권한을 선택해주세요.");
+      onNotify("하나 이상의 권한을 선택해주세요.", "info");
       return;
     }
     if (permissionDraft.principalType !== "public" && !permissionDraft.principalId.trim()) {
-      setPermissionMessage("권한을 부여할 대상을 선택해주세요.");
+      onNotify("권한을 부여할 대상을 선택해주세요.", "info");
       return;
     }
 
     setPermissionPending(true);
-    setPermissionMessage(null);
     createAdminPermissionGrant({
       actions: permissionDraft.actions,
       principalId: permissionDraft.principalType === "public" ? "public" : permissionDraft.principalId.trim(),
@@ -138,12 +139,12 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
     })
       .then((response) => {
         setPermissions(response.resources);
-        setPermissionMessage("권한이 추가되었습니다.");
+        onNotify("권한이 추가되었습니다.");
         onActionRef.current("admin.permission_grant.created", "/api/admin/permissions", resource.resourceId, "success", { targetType: "admin_module" });
       })
       .catch((unknownError) => {
         const message = unknownError instanceof ApiError ? unknownError.message : "권한을 추가하지 못했습니다.";
-        setPermissionMessage(message);
+        onNotify(message, "info");
         onActionRef.current("admin.permission_grant.create_failed", "/api/admin/permissions", resource.resourceId, "failed", { targetType: "admin_module" });
       })
       .finally(() => setPermissionPending(false));
@@ -151,48 +152,50 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
 
   const handleUpdateGrant = (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => {
     if (!grant.id) {
-      setPermissionMessage("기본 권한은 직접 수정할 수 없습니다.");
+      onNotify("기본 권한은 직접 수정할 수 없습니다.", "info");
       return;
     }
     if (actions.length === 0) {
-      setPermissionMessage("권한 항목에는 하나 이상의 권한이 필요합니다.");
+      onNotify("권한 항목에는 하나 이상의 권한이 필요합니다.", "info");
       return;
     }
-    setPermissionPending(true);
-    setPermissionMessage(null);
+    setSavingGrantId(grant.id);
     updateAdminPermissionGrant(grant.id, { actions })
       .then((response) => {
         setPermissions(response.resources);
-        setPermissionMessage("권한이 수정되었습니다.");
+        onNotify("권한이 수정되었습니다.");
         onActionRef.current("admin.permission_grant.updated", `/api/admin/permissions/${grant.id}`, resource.resourceId, "success", { targetType: "admin_module" });
       })
       .catch((unknownError) => {
         const message = unknownError instanceof ApiError ? unknownError.message : "권한을 수정하지 못했습니다.";
-        setPermissionMessage(message);
+        onNotify(message, "info");
         onActionRef.current("admin.permission_grant.update_failed", `/api/admin/permissions/${grant.id}`, resource.resourceId, "failed", { targetType: "admin_module" });
       })
-      .finally(() => setPermissionPending(false));
+      .finally(() => setSavingGrantId(null));
   };
 
   const handleDeleteGrant = (resource: AdminPermissionSummary, grant: PermissionGrant) => {
     if (!grant.id) {
-      setPermissionMessage("기본 권한은 직접 삭제할 수 없습니다.");
+      onNotify("기본 권한은 직접 삭제할 수 없습니다.", "info");
       return;
     }
-    setPermissionPending(true);
-    setPermissionMessage(null);
-    deleteAdminPermissionGrant(grant.id)
+    const grantId = grant.id;
+    const previousPermissions = permissions;
+    setDeletingGrantId(grantId);
+    setPermissions((current) => removeGrantFromPermissions(current, grantId));
+    deleteAdminPermissionGrant(grantId)
       .then((response) => {
         setPermissions(response.resources);
-        setPermissionMessage("권한이 삭제되었습니다.");
-        onActionRef.current("admin.permission_grant.deleted", `/api/admin/permissions/${grant.id}`, resource.resourceId, "success", { targetType: "admin_module" });
+        onNotify("권한이 삭제되었습니다.");
+        onActionRef.current("admin.permission_grant.deleted", `/api/admin/permissions/${grantId}`, resource.resourceId, "success", { targetType: "admin_module" });
       })
       .catch((unknownError) => {
         const message = unknownError instanceof ApiError ? unknownError.message : "권한을 삭제하지 못했습니다.";
-        setPermissionMessage(message);
-        onActionRef.current("admin.permission_grant.delete_failed", `/api/admin/permissions/${grant.id}`, resource.resourceId, "failed", { targetType: "admin_module" });
+        setPermissions(previousPermissions);
+        onNotify(message, "info");
+        onActionRef.current("admin.permission_grant.delete_failed", `/api/admin/permissions/${grantId}`, resource.resourceId, "failed", { targetType: "admin_module" });
       })
-      .finally(() => setPermissionPending(false));
+      .finally(() => setDeletingGrantId(null));
   };
 
   return (
@@ -244,10 +247,11 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
               {activeTab === "permissions" && (
                 <PermissionsTable
                   draft={permissionDraft}
+                  deletingGrantId={deletingGrantId}
                   groups={groups}
-                  message={permissionMessage}
                   pending={permissionPending}
                   permissions={permissions}
+                  savingGrantId={savingGrantId}
                   users={users}
                   onCreate={handleCreateGrant}
                   onDelete={handleDeleteGrant}
@@ -340,10 +344,11 @@ type PermissionDraft = {
 
 function PermissionsTable({
   draft,
+  deletingGrantId,
   groups,
-  message,
   pending,
   permissions,
+  savingGrantId,
   users,
   onCreate,
   onDelete,
@@ -352,10 +357,11 @@ function PermissionsTable({
   onUpdate,
 }: {
   draft: PermissionDraft;
+  deletingGrantId: string | null;
   groups: IdentityGroup[];
-  message: string | null;
   pending: boolean;
   permissions: AdminPermissionSummary[];
+  savingGrantId: string | null;
   users: AdminUser[];
   onCreate: (event: React.FormEvent<HTMLFormElement>) => void;
   onDelete: (resource: AdminPermissionSummary, grant: PermissionGrant) => void;
@@ -433,8 +439,6 @@ function PermissionsTable({
           />
         </label>
       </div>
-      {message && <InfoBox title="권한 편집" body={message} />}
-
       <div className="admin-permission-workbench">
         <div className="admin-permission-resource-list" aria-label="권한 리소스 목록">
           {filteredResources.slice(0, 80).map((resource) => (
@@ -536,7 +540,7 @@ function PermissionsTable({
                   <GrantEditor
                     grant={grant}
                     key={`${selectedResource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
-                    pending={pending}
+                    pending={pending || savingGrantId === grant.id || deletingGrantId === grant.id}
                     resource={selectedResource}
                     onDelete={onDelete}
                     onUpdate={onUpdate}
@@ -686,6 +690,13 @@ function canAction(resource: AdminPermissionSummary, action: PermissionAction) {
   if (action === "manage") return permissions.canManage;
   if (action === "delete") return permissions.canDelete;
   return permissions.canShare;
+}
+
+function removeGrantFromPermissions(resources: AdminPermissionSummary[], grantId: string) {
+  return resources.map((resource) => ({
+    ...resource,
+    grants: resource.grants.filter((grant) => grant.id !== grantId),
+  }));
 }
 
 function formatTime(value: string) {
