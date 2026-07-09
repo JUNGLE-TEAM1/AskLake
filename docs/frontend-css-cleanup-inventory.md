@@ -59,7 +59,7 @@
 | 범위 | 관련 파일 | 상태 | 정리 기준 |
 | --- | --- | --- | --- |
 | App Shell / Topbar / Sidebar | `layout.css`, `base.css`, `responsive.css` | `교체 후보` | Router Shell과 layout component 기준으로 active/navigation 스타일을 정리한다. |
-| Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `교체 후보` | `PageHeader` primitive 적용 화면이 늘어난 뒤 중복 title selector를 줄인다. |
+| Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `부분 정리됨` | Jobs/ETL에 이어 #384에서 Catalog/SQL/Dashboard list 상단 헤더를 `PageHeader` 기준으로 맞춤. Module placeholder, ETL schedule standalone, Dashboard runtime/compact header, legacy `.page-title` selector는 후속 QA 후 축소한다. |
 | Legacy button class | `layout.css`, `ingest.css`, `etl.css`, `catalog.css`, `sql.css`, `dashboard.css` | `교체 후보` | `.primary-button`, `.secondary-button`, `.ghost-button`, `.icon-button` 사용처를 `Button`/`IconButton`으로 옮긴 뒤 제거한다. |
 | Jobs 목록 shell / toolbar | `ingest.css`, `responsive.css`, `base.css` | `정리됨` | #367에서 Jobs metrics/filter/table panel shell과 metrics card selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip/reset responsive selector를 `FilterToolbar`로 이동. Jobs table detail selector는 유지. |
 | Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `정리됨` | A02에서 `JobsPages.tsx` 사용처가 제거된 뒤 CSS만 남아 있던 `jobs-table-empty`, `jobs-table-preview-footer` selector를 #364에서 삭제. |
@@ -145,3 +145,4 @@ npm run build
 | 2026-07-09 | #372에서 CSS 관련 PR마다 이 문서를 함께 업데이트하는 운영 규칙을 보강. B02-B04와 #369에서 이미 `DataTable`/primitive/`FilterToolbar`로 전환된 범위와 아직 유지하는 wrapper/menu/runtime CSS를 `부분 정리됨`으로 구분. |
 | 2026-07-09 | component 확장 PR에서 `PaginationBar`, `DialogShell`, `Chip/TagList`, `ValidationList`, `PreviewPanel`, `SettingsPanel`, `TreePanel` 후보별 CSS 기록 기준을 추가. |
 | 2026-07-09 | #375에서 Catalog 검색 box/tag row/filter row shell selector와 SQL 분석 테이블 검색 selector를 `FilterToolbar` 계열로 이동하고, shadcn primitive 전면 적용 원칙을 CSS cleanup 기준에 추가. |
+| 2026-07-09 | #384에서 Catalog/SQL/Dashboard list 상단 헤더를 `PageHeader`로 전환하고, `catalog.css`, `sql.css`, `dashboard.css`의 page title 전용 selector 일부를 축소. |

@@ -125,6 +125,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 
 | 영역 | 패턴 | 상태 | 필요한 컴포넌트 후보 | 메모 |
 | --- | --- | --- | --- | --- |
+| 전체 | 화면 상단 masthead + 아이콘 + 설명 + actions | `부분 해결` | `PageHeader` | Jobs/ETL에 이어 #384에서 Catalog/SQL/Dashboard list 상단 헤더를 `PageHeader`로 맞춤. Module placeholder, ETL schedule standalone, Dashboard runtime/compact header는 route 성격이 달라 후속 판단. |
 | 전체 | 화면 섹션 헤더 + 아이콘 + 상태 pill + actions | `해결됨` | `PanelHeader` | #367에서 Jobs/Catalog/Dashboard list shell에 1차 적용. ETL/SQL/runtime의 특수 header는 후속 PR에서 추가 적용 판단. |
 | 전체 | 강조 패널/작업 패널 | `해결됨` | `Panel` | #367에서 Jobs/Catalog/Dashboard list의 bordered panel shell을 공통화. 화면 고유 body/layout CSS는 유지. |
 | 전체 | 하단 고정/반고정 command 영역 | `관찰됨` | `CommandBar` | ETL schema/rule bottom bar, Dashboard runtime action 영역 등에서 반복 가능성 있음. |
@@ -220,3 +221,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #372에서 B02/B03/B04 완료 범위와 후속 공통화 후보를 구분. `DataTable`/primitive 적용이 끝난 표와 `FilterToolbar` 적용 범위를 기능 미완료가 아닌 `부분 해결`/`해결됨` 상태로 정리. |
 | 2026-07-09 | 코드 스윕으로 버튼/모달/페이지네이션/트리/프리뷰/요약/칩/form/선택형 카드 반복 패턴을 확인하고 component 확장 기록 방식과 권장 순서를 추가. |
 | 2026-07-09 | #375에서 `FilterToolbarInput`, `FilterToolbarFieldGroup`, `FilterToolbarCheckboxGroup`, `FilterToolbarCheckbox`를 추가하고 Catalog/SQL 검색 UI에 적용. 반복되지 않아도 shadcn primitive가 있으면 표준화 후보로 본다는 원칙을 추가. |
+| 2026-07-09 | #384에서 Catalog/SQL/Dashboard list 상단 헤더를 `PageHeader` 기준으로 맞추고, page masthead 공통화 상태를 `부분 해결`로 기록. |

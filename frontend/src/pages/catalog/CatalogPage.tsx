@@ -31,8 +31,8 @@ import {
   FilterToolbarMenu,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
+import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -450,7 +450,12 @@ export function CatalogPage({
 
   return (
     <div className="catalog-page">
-      <PageTitle title="검색/카탈로그" description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다." />
+      <PageHeader
+        className="catalog-page-header"
+        description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다."
+        icon={<Search size={18} />}
+        title="검색/카탈로그"
+      />
       <div className="catalog-content-grid">
         <div className="catalog-main">
           <Panel className="catalog-search-panel">
