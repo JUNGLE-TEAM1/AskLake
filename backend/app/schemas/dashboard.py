@@ -304,6 +304,8 @@ class DashboardMeta(CamelModel):
     id: str
     title: str
     status: DashboardStatus
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     has_published_revision: bool
     updated_at: str
 

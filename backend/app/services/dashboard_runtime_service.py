@@ -3,10 +3,13 @@ from typing import Any
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
+from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.common import ErrorCode
@@ -15,6 +18,7 @@ from app.schemas.dashboard import (
     BarChartWidgetConfig,
     CreateDraftPageRequest,
     CreateDraftWidgetRequest,
+    DashboardCard,
     DashboardMeta,
     DashboardPageResponse,
     DashboardRevision,
@@ -66,26 +70,30 @@ class DashboardRuntimeService:
         self.repository = repository
         self.catalog_repository = catalog_repository
 
-    def get_published_runtime(self, dashboard_id: str) -> DashboardRuntimeResponse:
+    def get_published_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+        actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
             self._raise_dashboard_not_found(dashboard_id)
+        dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "view")
 
         revision = self.repository.get_published_revision(dashboard_id)
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision)
+        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.PUBLISHED, revision, actor_context, dashboard_card)
 
-    def ensure_draft_runtime(self, dashboard_id: str) -> DashboardRuntimeResponse:
+    def ensure_draft_runtime(self, dashboard_id: str, actor: ActorContext | None = None) -> DashboardRuntimeResponse:
+        actor_context = actor or ActorContext()
         dashboard_meta = self.repository.get_dashboard_meta(dashboard_id)
         if dashboard_meta is None:
             self._raise_dashboard_not_found(dashboard_id)
+        dashboard_card = self._require_dashboard_permission(dashboard_id, actor_context, "manage")
 
         revision = self._ensure_draft_revision(dashboard_id)
         self.repository.db.commit()
 
-        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision)
+        return self._build_runtime_response(dashboard_meta, DashboardRuntimeMode.DRAFT, revision, actor_context, dashboard_card)
 
-    def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest) -> DashboardPageResponse:
-        self._require_dashboard(dashboard_id)
+    def create_draft_page(self, dashboard_id: str, request: CreateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._ensure_draft_revision(dashboard_id)
         page = self.repository.create_page(
             revision.id,
@@ -95,14 +103,16 @@ class DashboardRuntimeService:
         self.repository.db.commit()
         return self._page_response(page)
 
-    def update_draft_page(self, dashboard_id: str, page_id: str, request: UpdateDraftPageRequest) -> DashboardPageResponse:
+    def update_draft_page(self, dashboard_id: str, page_id: str, request: UpdateDraftPageRequest, actor: ActorContext | None = None) -> DashboardPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         page = self.repository.update_page_title(page, request.title)
         self.repository.db.commit()
         return self._page_response(page)
 
-    def delete_draft_page(self, dashboard_id: str, page_id: str) -> DeleteDraftPageResponse:
+    def delete_draft_page(self, dashboard_id: str, page_id: str, actor: ActorContext | None = None) -> DeleteDraftPageResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         self.repository.delete_page(page)
@@ -114,7 +124,9 @@ class DashboardRuntimeService:
         dashboard_id: str,
         page_id: str,
         request: CreateDraftWidgetRequest,
+        actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, page_id)
         widget_type = self._widget_type_enum(request.type)
@@ -136,7 +148,9 @@ class DashboardRuntimeService:
         dashboard_id: str,
         widget_id: str,
         request: UpdateDraftWidgetRequest,
+        actor: ActorContext | None = None,
     ) -> DashboardWidgetMutationResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
         current_type = self._widget_type_enum(widget.type)
         next_type = self._widget_type_enum(request.type or current_type)
@@ -166,13 +180,15 @@ class DashboardRuntimeService:
         self.repository.db.commit()
         return DashboardWidgetMutationResponse(id=widget.id)
 
-    def delete_draft_widget(self, dashboard_id: str, widget_id: str) -> DeleteDraftWidgetResponse:
+    def delete_draft_widget(self, dashboard_id: str, widget_id: str, actor: ActorContext | None = None) -> DeleteDraftWidgetResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         widget = self._get_draft_widget_or_raise(dashboard_id, widget_id)
         self.repository.delete_widget(widget)
         self.repository.db.commit()
         return DeleteDraftWidgetResponse(ok=True, deleted_widget_id=widget_id)
 
-    def save_draft_layouts(self, dashboard_id: str, request: SaveDraftLayoutsRequest) -> OkResponse:
+    def save_draft_layouts(self, dashboard_id: str, request: SaveDraftLayoutsRequest, actor: ActorContext | None = None) -> OkResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         revision = self._get_draft_revision_or_raise(dashboard_id)
         page = self._get_draft_page_or_raise(revision, request.page_id)
         for layout in request.layouts:
@@ -183,8 +199,8 @@ class DashboardRuntimeService:
         self.repository.db.commit()
         return OkResponse(ok=True)
 
-    def publish_dashboard(self, dashboard_id: str) -> PublishDashboardResponse:
-        self._require_dashboard(dashboard_id)
+    def publish_dashboard(self, dashboard_id: str, actor: ActorContext | None = None) -> PublishDashboardResponse:
+        self._require_dashboard_permission(dashboard_id, actor or ActorContext(), "manage")
         draft_revision = self._get_draft_revision_or_raise(dashboard_id)
         published_revision = self.repository.copy_revision(draft_revision, DashboardRuntimeMode.PUBLISHED)
         published_revision_id = published_revision.id
@@ -202,6 +218,8 @@ class DashboardRuntimeService:
         dashboard_meta: DashboardRuntimeMetaRecord,
         mode: DashboardRuntimeMode,
         revision: DashboardRevisionModel | None,
+        actor: ActorContext,
+        dashboard_card: DashboardCard,
     ) -> DashboardRuntimeResponse:
         has_published_revision = (
             dashboard_meta.has_published_revision
@@ -210,7 +228,7 @@ class DashboardRuntimeService:
         )
         if revision is None:
             return DashboardRuntimeResponse(
-                dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision),
+                dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
                 mode=mode,
                 revision=None,
                 pages=[],
@@ -222,7 +240,7 @@ class DashboardRuntimeService:
         widgets_by_page_id = self.repository.list_widgets_by_page_ids([page.id for page in pages])
 
         return DashboardRuntimeResponse(
-            dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision),
+            dashboard=self._dashboard_meta_to_schema(dashboard_meta, has_published_revision, actor, dashboard_card),
             mode=mode,
             revision=self._revision_to_schema(revision),
             pages=[self._page_to_schema(page) for page in pages],
@@ -247,6 +265,20 @@ class DashboardRuntimeService:
         if dashboard_meta is None:
             self._raise_dashboard_not_found(dashboard_id)
         return dashboard_meta
+
+    def _require_dashboard_permission(self, dashboard_id: str, actor: ActorContext, action: str) -> DashboardCard:
+        dashboard = get_dashboard_card(self.repository.db, dashboard_id)
+        if dashboard is None:
+            self._raise_dashboard_not_found(dashboard_id)
+        grants = dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "share"])
+        require_permission(
+            actor,
+            action,
+            owner=dashboard.owner,
+            grants=grants,
+            resource_label="dashboard",
+        )
+        return dashboard
 
     def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
         revision = self.repository.get_draft_revision(dashboard_id)
@@ -306,12 +338,20 @@ class DashboardRuntimeService:
         )
 
     @staticmethod
-    def _dashboard_meta_to_schema(record: DashboardRuntimeMetaRecord, has_published_revision: bool) -> DashboardMeta:
+    def _dashboard_meta_to_schema(
+        record: DashboardRuntimeMetaRecord,
+        has_published_revision: bool,
+        actor: ActorContext,
+        dashboard_card: DashboardCard,
+    ) -> DashboardMeta:
         status_value = DashboardStatus.PUBLISHED if has_published_revision else record.status
+        grants = dashboard_card.permission_grants or permission_grants_from_roles(dashboard_card.owner, default_actions=["view", "manage", "share"])
         return DashboardMeta(
             id=record.id,
             title=record.title,
             status=status_value,
+            permission_grants=grants,
+            permissions=permissions_for_actor(actor, owner=dashboard_card.owner, grants=grants, enforced=True),
             has_published_revision=has_published_revision,
             updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
         )

@@ -1,6 +1,6 @@
-import type { CatalogDataset, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
+import type { CatalogDataset, DashboardMeta, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
 
-type PermissionResource = CatalogDataset | JobRowData | SavedDashboardCard;
+type PermissionResource = CatalogDataset | DashboardMeta | JobRowData | SavedDashboardCard;
 
 export function canQueryDataset(dataset: CatalogDataset | null | undefined) {
   return permissionValue(dataset, "canQuery", true);
@@ -8,6 +8,10 @@ export function canQueryDataset(dataset: CatalogDataset | null | undefined) {
 
 export function canManageDataset(dataset: CatalogDataset | null | undefined) {
   return permissionValue(dataset, "canManage", false);
+}
+
+export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard | null | undefined) {
+  return permissionValue(dashboard, "canManage", true);
 }
 
 export function canRunJobCommand(job: JobRowData, command: JobCommand) {

@@ -120,6 +120,9 @@ Phase 4+ enforcement 범위:
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
+| `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
+| `POST /api/dashboards/{dashboardId}/publish` | `manage` | draft snapshot을 published revision으로 승격 |
 | `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
 
 Frontend Phase 5 기준:
@@ -127,6 +130,7 @@ Frontend Phase 5 기준:
 - `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
 - `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
 - `permissions.canManage=false`: Job pause/cancel/stop, dataset materialization-run 삭제 버튼을 비활성화합니다.
+- `permissions.canManage=false`: Dashboard runtime 편집 모드 진입, page/widget/layout 변경, publish 버튼을 비활성화합니다.
 - `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
 - Backend가 `403 FORBIDDEN`을 반환하면 프론트는 일반 실패가 아니라 권한 없음 메시지로 표시합니다.
 
@@ -1724,6 +1728,8 @@ type DashboardRuntimeResponse = {
     id: string;
     title: string;
     status: "draft" | "published";
+    permissionGrants?: PermissionGrant[];
+    permissions?: ResourcePermissions;
     hasPublishedRevision: boolean;
     updatedAt: string;
   };
@@ -1756,6 +1762,7 @@ Response `200 OK`:
 실패:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
+- dashboard `view` 권한이 없으면 `403 FORBIDDEN`.
 
 #### 8.5.2 Draft 조회/생성
 
@@ -1770,6 +1777,7 @@ Response `200 OK`:
 실패:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
+- dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
 #### 8.5.3 Draft page 추가
 
@@ -1988,6 +1996,7 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
+- dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
 ### 8.5.11 Dashboard Assistant UI Hook
 

@@ -198,6 +198,8 @@ export type DashboardEntry = {
 export type DashboardMeta = {
   hasPublishedRevision: boolean;
   id: string;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   status: DashboardStatus;
   title: string;
   updatedAt: string;
