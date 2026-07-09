@@ -44,6 +44,7 @@ cd backend
 $env:ASKLAKE_WITH_KAFKA = "true"
 $env:ASKLAKE_RECREATE_KAFKA = "true"
 npm run sources:fixtures
+npm run kafka:reviews-fixture
 $env:ASKLAKE_VERIFY_KAFKA = "true"
 npm run verify:sources
 npm run minio:prepare-samples

@@ -87,9 +87,12 @@ cd backend
 $env:ASKLAKE_WITH_KAFKA = "true"
 $env:ASKLAKE_RECREATE_KAFKA = "true"
 npm run sources:fixtures
+npm run kafka:reviews-fixture
 $env:ASKLAKE_VERIFY_KAFKA = "true"
 npm run verify:sources
 ```
+
+`npm run kafka:reviews-fixture`는 Amazon review replay/ingest 병렬 개발용 `reviews.raw` topic을 준비한다. 기존 source connector smoke는 기본 `asklake-source-events` topic을 검증한다. review fixture topic을 connector smoke로 확인하려면 `ASKLAKE_KAFKA_TOPIC=reviews.raw`를 함께 지정한다.
 
 Verified source types:
 

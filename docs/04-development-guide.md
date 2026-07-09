@@ -118,6 +118,25 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 MongoDB Source connector는 Node MongoDB driver로 컬렉션 목록과 제한 문서 샘플을 조회한다. backend live mode 환경에는 `backend/package.json`의 `mongodb` dependency가 설치되어 있어야 하며, MongoDB Shell(`mongosh`)은 connector 실행 조건이 아니다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
+### Amazon review Kafka fixture
+
+Kafka replay와 ingest pipeline 작업자는 실제 6.6GB Amazon review replay가 준비되기 전에도 같은 메시지 계약으로 병렬 개발할 수 있다. 로컬 Redpanda를 켠 뒤 review fixture producer를 실행한다.
+
+```bash
+cd backend
+ASKLAKE_WITH_KAFKA=true ASKLAKE_RECREATE_KAFKA=true npm run sources:fixtures
+npm run kafka:reviews-fixture
+```
+
+기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. producer는 `backend/fixtures/kafka/amazon-review-fixture.jsonl`을 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A 작업자는 실제 Amazon review row를 이 표준 메시지로 변환하고, B 작업자는 우선 top-level 표준 필드만 의존한다.
+
+Kafka 없이 fixture 계약만 확인하려면 아래처럼 실행한다.
+
+```bash
+cd backend
+node scripts/seed-kafka-review-fixture.mjs --dry-run
+```
+
 ### FastAPI scaffold
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
