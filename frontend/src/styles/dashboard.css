@@ -1237,6 +1237,15 @@
   padding: 24px;
 }
 
+.dashboard-chart-modal-panel {
+  display: grid;
+  max-height: calc(100vh - 56px);
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(15, 23, 42, 0.28);
+}
+
 .dashboard-chart-modal-header {
   display: flex;
   align-items: flex-start;

@@ -361,7 +361,8 @@
   }
 
   .job-log-modal section,
-  .run-dag-modal > section {
+  .run-dag-modal > section,
+  .run-dag-modal-panel {
     max-height: calc(100vh - 24px);
   }
 

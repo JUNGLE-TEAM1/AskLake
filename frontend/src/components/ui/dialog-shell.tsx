@@ -8,13 +8,14 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-type DialogShellSize = "sm" | "md" | "lg" | "xl" | "fullscreen";
+type DialogShellSize = "sm" | "md" | "lg" | "xl" | "wide" | "fullscreen";
 
 const dialogShellSizeClassName: Record<DialogShellSize, string> = {
   fullscreen: "h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-none",
   lg: "w-[min(calc(100vw-2rem),48rem)]",
   md: "w-[min(calc(100vw-2rem),36rem)]",
   sm: "w-[min(calc(100vw-2rem),28rem)]",
+  wide: "w-[min(calc(100vw-2rem),73.75rem)]",
   xl: "w-[min(calc(100vw-2rem),64rem)]",
 };
 

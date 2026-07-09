@@ -247,3 +247,16 @@ npm run build
 | 2026-07-09 | #395에서 Jobs run history table card/scroll/footer shell을 `DetailTableSection`으로 전환하고 `.runs-table*` density CSS는 route QA 전까지 유지하기로 기록. |
 | 2026-07-09 | #400에서 shadcn replacement inventory를 CSS cleanup 기준에 연결. shadcn으로 흡수 가능한 wrapper는 새 selector를 늘리지 않고 기존 selector를 common variant로 옮기는 방향을 추가. |
 | 2026-07-09 | #401에서 S3/ETL/SQL/Dashboard tree wrapper와 state shell을 `TreePanel`로 전환하고 tree row/hover/외부 라이브러리 selector는 유지하기로 기록. |
+| 2026-07-09 | #410에서 Catalog/DAG/Dashboard chart/ETL transform modal shell을 `DialogShell`로 전환하고 남은 wrapper selector를 route QA 후 삭제 후보로 기록. |
+
+## #410 Modal Shell 꼬리 정리 CSS 기록
+
+이번 PR은 custom modal/backdrop을 바로 삭제하지 않고 `DialogShell`로 사용처를 먼저 옮겼다. 삭제는 각 route QA 뒤 별도 cleanup에서 처리한다.
+
+| 범위 | 변경된 파일 | CSS 판단 |
+| --- | --- | --- |
+| Catalog schema/lineage modal | `frontend/src/pages/catalog/CatalogPage.tsx`, `frontend/src/styles/catalog.css` | `CatalogModal` wrapper를 `DialogShell`로 전환. `.catalog-modal-backdrop`은 사용처가 사라진 삭제 후보이며, `.catalog-modal`, `.catalog-modal-header`, `.catalog-modal-body`, lineage 전용 selector는 내부 밀도/React Flow QA 전까지 유지한다. |
+| Ingest DAG run detail modal | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/styles/ingest-dag.css`, `frontend/src/styles/responsive.css` | `RunDagModal` wrapper를 `DialogShell`로 전환하고 `.run-dag-modal-panel`만 새 content shell로 추가. `.run-dag-modal`, `.run-dag-modal > section`은 삭제 후보지만 DAG graph/canvas route QA 전까지 유지한다. |
+| Dashboard chart expanded modal | `frontend/src/pages/dashboard/DashboardParts.tsx`, `frontend/src/styles/dashboard.css` | chart 확대 modal wrapper를 `DialogShell`로 전환하고 `.dashboard-chart-modal-panel`만 새 content shell로 추가. `.dashboard-chart-modal`, `.dashboard-chart-modal section`은 삭제 후보이며 chart body density selector는 유지한다. |
+| ETL transform function modal | `frontend/src/components/etl/TransformFunctionModal.jsx` | fixed backdrop + card wrapper를 `DialogShell`로 전환. 별도 CSS 파일 selector는 추가하지 않았고, quick function chip/AI button utility class는 후속 form/option cleanup 범위로 남긴다. |
+| DialogShell size | `frontend/src/components/ui/dialog-shell.tsx` | DAG/lineage처럼 넓은 modal을 위해 `wide` size만 추가. route별 custom width selector를 줄이는 목적이며 기존 `sm/md/lg/xl/fullscreen` 사용처에는 영향 없음. |
