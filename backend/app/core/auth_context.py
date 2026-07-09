@@ -6,6 +6,7 @@ from fastapi import status
 
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
+from app.schemas.permissions import ResourcePermissions
 
 
 @dataclass(frozen=True)
@@ -103,14 +104,14 @@ def permissions_for_actor(
     owner: str | None = None,
     grants: list[dict[str, Any]] | None = None,
     enforced: bool = False,
-) -> dict[str, Any]:
-    return {
-        "canView": can(actor, "view", owner=owner, grants=grant_payloads(grants)),
-        "canQuery": can(actor, "query", owner=owner, grants=grant_payloads(grants)),
-        "canRun": can(actor, "run", owner=owner, grants=grant_payloads(grants)),
-        "canManage": can(actor, "manage", owner=owner, grants=grant_payloads(grants)),
-        "canDelete": can(actor, "delete", owner=owner, grants=grant_payloads(grants)),
-        "canShare": can(actor, "share", owner=owner, grants=grant_payloads(grants)),
-        "computedFor": actor.name,
-        "enforced": enforced,
-    }
+) -> ResourcePermissions:
+    return ResourcePermissions(
+        can_view=can(actor, "view", owner=owner, grants=grant_payloads(grants)),
+        can_query=can(actor, "query", owner=owner, grants=grant_payloads(grants)),
+        can_run=can(actor, "run", owner=owner, grants=grant_payloads(grants)),
+        can_manage=can(actor, "manage", owner=owner, grants=grant_payloads(grants)),
+        can_delete=can(actor, "delete", owner=owner, grants=grant_payloads(grants)),
+        can_share=can(actor, "share", owner=owner, grants=grant_payloads(grants)),
+        computed_for=actor.name,
+        enforced=enforced,
+    )
