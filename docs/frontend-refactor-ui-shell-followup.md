@@ -2,7 +2,7 @@
 
 ## 목적
 
-이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393, #395, #401에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
+이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393, #395, #401, #403에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
 
 `docs/frontend-component-gap-inventory.md`는 전체 gap 추적 문서이고, `docs/frontend-css-cleanup-inventory.md`는 CSS 유지/교체 판단 문서다. 이 문서는 두 문서에서 #385 이후 남은 UI shell 후보만 뽑아 적용 순서와 보류 기준을 좁힌다.
 
@@ -64,6 +64,19 @@
 - Dashboard dataset sidebar는 loading/error/empty/body 분기를 `TreePanel` state/body slot으로 모았다.
 - tree row, hover card, 외부 tree library DOM selector는 route QA 전까지 유지한다.
 
+## #403 적용 결과
+
+| 컴포넌트 | 추가 적용 파일 | 남은 범위 |
+| --- | --- | --- |
+| `WidgetShell` | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx` | react-grid-layout resize/drag integration과 selected/editing 상태 CSS |
+| `RuntimeTopbar` | `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx` | publish/share/rename 상태 로직 |
+| `ColorPalettePicker` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | `react-colorful` 세부 selector와 color config 계산 |
+
+- `WidgetFrame`의 outer frame, header, body, AI working overlay shell을 `WidgetShell`로 전환했다.
+- `DashboardTopBar`의 title 영역과 actions 영역을 `RuntimeTopbar` slot으로 전환했다.
+- `WidgetConfigPanel`의 color slot/swatch/custom picker shell을 `ColorPalettePicker`로 전환했다.
+- grid resize/drag, publish/share/rename, color config 계산은 기존 runtime 로직으로 유지한다.
+
 ## 우선 구현 후보
 
 | 순서 | 후보 | 바꿀 수 있는 UI | 대표 사용처 | 이번 판단 |
@@ -78,15 +91,13 @@
 | 8 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | dashboard chart/widget type 선택 UI부터 적용 가능하다. tooltip과 focus 상태를 같이 본다. |
 | 9 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule, #395에서 Jobs run history까지 적용. ETL/SchemaTransformEditor는 후속 설계로 둔다. |
 | 10 | `TreePanel` | dataset/source/path tree shell | `frontend/src/pages/sql/SqlDatasetRow.tsx`, `frontend/src/pages/dashboard/runtime/DatasetSidebar.tsx`, `frontend/src/pages/etl/SourceAssetTree.tsx`, `frontend/src/components/s3/S3PathField.tsx` | #401에서 wrapper/state shell에 1차 적용. row/hover/tree library 통합은 후속 설계로 둔다. |
+| 11 | `WidgetShell` / `RuntimeTopbar` / `ColorPalettePicker` | runtime frame/topbar/color shell | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx`, `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #403에서 wrapper shell에 1차 적용. grid/color/publish 상태 로직은 후속 판단. |
 
 ## 보류 후보
 
 | 후보 | 대표 사용처 | 보류 이유 |
 | --- | --- | --- |
 | `TreeHoverCard` | `frontend/src/pages/sql/SqlDatasetRow.tsx`, `frontend/src/pages/dashboard/runtime/DatasetSidebar.tsx` | hover 위치 계산과 tree library 상태가 먼저 맞아야 한다. |
-| `WidgetShell` | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx`, `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx` | grid, resize, selected/editing state와 강하게 묶여 있다. |
-| `RuntimeTopbar` | `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`, `frontend/src/pages/dashboard/runtime/DashboardRuntimeShell.tsx` | dashboard runtime 전용 publish/share/dirty/title edit 상태가 많다. |
-| `ColorPalettePicker` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | `react-colorful`과 custom color state가 묶여 있어 마지막 단계가 안전하다. |
 
 ## CSS 기록 연결
 
@@ -97,7 +108,7 @@
 | `SegmentedTabs` / `SelectableCard` / `IconOptionGrid` | selected, disabled, focus, tooltip, check indicator selector를 같이 추적한다. |
 | `DetailTableSection` | 작은 table의 title/action/empty state와 overflow wrapper를 table 자체와 분리해 추적한다. |
 | `TreePanel` | wrapper/state shell은 `부분 해결`로 두고, 외부 tree library row/hover selector는 route QA 전 유지한다. |
-| `WidgetShell` / `ColorPalettePicker` | 외부 라이브러리 DOM과 runtime state가 묶인 selector는 route QA 전 `보류`로 둔다. |
+| `WidgetShell` / `RuntimeTopbar` / `ColorPalettePicker` | wrapper shell은 `부분 해결`로 두고, grid resize/publish/color 계산 selector는 route QA 전 유지한다. |
 
 ## 후속 PR 권장 단위
 
@@ -106,6 +117,6 @@
 3. 상세 화면 table section에 `DetailTableSection` 추가 적용
 4. SQL/ETL의 큰 설정 panel shell은 `SettingsPanel` 추가 전에 route QA 후 판단
 5. route QA 후 `dashboard.css`, `dashboard-runtime.css`, `etl.css`, `ingest.css`, `sql.css`의 wrapper selector 축소
-6. 상태 결합이 큰 `TreeHoverCard`, `WidgetShell`, `ColorPalettePicker` 별도 설계
+6. 상태 결합이 큰 `TreeHoverCard`와 runtime 내부 상태 cleanup 별도 설계
 
 각 PR은 구현 파일 변경과 함께 `docs/frontend-component-gap-inventory.md`와 `docs/frontend-css-cleanup-inventory.md`의 상태를 같이 갱신한다.

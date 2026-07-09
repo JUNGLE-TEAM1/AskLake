@@ -86,6 +86,14 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 - Dashboard dataset sidebar의 loading/error/empty/body 분기는 `TreePanel` state slot으로 모았다.
 - MUI TreeView와 react-arborist 자체, row renderer, SQL/Dashboard hover card는 이번 PR에서 통합하지 않고 후속 후보로 유지한다.
 
+## #403 처리 결과
+
+- `WidgetShell`: Dashboard runtime `WidgetFrame`의 outer frame, header, body, AI working overlay shell에 1차 적용.
+- `RuntimeTopbar`: Dashboard runtime `DashboardTopBar`의 title slot과 actions slot shell에 1차 적용.
+- `ColorPalettePicker`: Dashboard runtime `WidgetConfigPanel`의 color slot list, swatch choice, custom color panel shell에 1차 적용.
+- 기존 `.asklake-widget-frame*`, `.asklake-dashboard-topbar`, `.asklake-widget-color-*` className은 유지해 CSS 삭제 없이 route QA 전 스타일 계약을 보존한다.
+- react-grid-layout resize/drag 상태, publish/share/rename 로직, `react-colorful` color 계산은 이번 PR에서 통합하지 않고 화면 전용 로직으로 유지한다.
+
 ## 다음 단계 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 판단 |
@@ -100,15 +108,13 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #389에서 dashboard runtime widget type 선택 UI에 1차 적용. |
 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule table, #395에서 Jobs run history table에 적용. ETL/SchemaTransformEditor는 후속. |
 | `TreePanel` | dataset/source/path tree shell | `frontend/src/pages/sql/SqlDatasetRow.tsx`, `frontend/src/pages/dashboard/runtime/DatasetSidebar.tsx`, `frontend/src/pages/etl/SourceAssetTree.tsx`, `frontend/src/components/s3/S3PathField.tsx` | #401에서 wrapper/state shell에 1차 적용. row renderer/hover card/tree library 통합은 후속. |
+| `WidgetShell` / `RuntimeTopbar` / `ColorPalettePicker` | dashboard runtime frame/topbar/color shell | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx`, `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #403에서 wrapper shell에 1차 적용. grid/color/publish 상태 로직은 후속 판단. |
 
 ## 나중에 분리하는 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 보류 이유 |
 | --- | --- | --- | --- |
 | `TreeHoverCard` | tree row hover detail card | `frontend/src/pages/sql/SqlDatasetRow.tsx`, `frontend/src/pages/dashboard/runtime/DatasetSidebar.tsx` | hover 위치 계산과 tree library 상태를 먼저 맞춰야 한다. |
-| `WidgetShell` | dashboard runtime widget frame | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx`, `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx` | grid, resize, selected/editing state와 강하게 묶여 있다. |
-| `RuntimeTopbar` | runtime title/edit/share/publish topbar | `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`, `frontend/src/pages/dashboard/runtime/DashboardRuntimeShell.tsx` | dashboard runtime 전용 상태가 많아 별도 설계가 필요하다. |
-| `ColorPalettePicker` | color slot/swatches/custom color picker | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | `react-colorful`과 custom color state가 묶여 있어 마지막 단계가 안전하다. |
 
 ## 추천 PR 순서
 
@@ -117,6 +123,6 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 3. `SettingsPanel` 큰 panel 확대
 4. `SelectableCard` 순수 button card 사용처 재검토
 5. `IconOptionGrid`
-6. `TreeHoverCard`, `WidgetShell`, `ColorPalettePicker`
+6. `TreeHoverCard`와 runtime 내부 상태 cleanup
 
-#389에서 위 후보군은 대표 사용처에 1차 적용됐고, #391에서 Form/Settings 계열 field 전환, #393에서 Selection UI 계열 추가 전환, #395에서 Jobs detail table shell 추가 전환, #401에서 Tree wrapper/state shell 전환을 진행했다. 다음 PR은 남은 settings shell cleanup과 ETL/SchemaTransformEditor table section 판단을 이어간다.
+#389에서 위 후보군은 대표 사용처에 1차 적용됐고, #391에서 Form/Settings 계열 field 전환, #393에서 Selection UI 계열 추가 전환, #395에서 Jobs detail table shell 추가 전환, #401에서 Tree wrapper/state shell 전환, #403에서 Dashboard runtime shell 전환을 진행했다. 다음 PR은 남은 settings shell cleanup과 ETL/SchemaTransformEditor table section 판단을 이어간다.

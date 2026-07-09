@@ -6,7 +6,6 @@ import {
   ChartColumn,
   ChartLine,
   ChartPie,
-  Check,
   CircleDot,
   CircleGauge,
   Grid3X3,
@@ -16,6 +15,7 @@ import {
 } from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
+import { ColorPalettePicker } from "@/components/ui/color-palette-picker";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
@@ -812,73 +812,36 @@ export function WidgetConfigPanel({
           />
         </div>
 
-        {colorSlotLabels.length > 0 && (
-          <div className="asklake-widget-palette-field">
-            <span>색상</span>
-            <div className="asklake-widget-color-slots">
-              {colorSlotLabels.map((label, index) => (
-                <Button
-                  key={`${label}-${index}`}
-                  className={`asklake-widget-color-slot${customColorIndex === index ? " selected" : ""}`}
-                  type="button"
-                  onClick={() => setCustomColorIndex(index)}
-                >
-                  <i style={{ backgroundColor: activeColors[index] }} />
-                  <span>{label}</span>
-                </Button>
-              ))}
+        <ColorPalettePicker
+          activeColor={activeCustomColor}
+          choiceListAriaLabel={`${colorSlotLabels[customColorIndex] ?? "선택 색상"} 색상 선택`}
+          choices={dashboardWidgetColorChoices}
+          colors={activeColors}
+          customOpen={customColorOpen}
+          customPanel={(
+            <div className="asklake-widget-custom-color-panel">
+              <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
+              <FormFieldGroup className="asklake-widget-hex-input" label="HEX">
+                <HexColorInput
+                  prefixed
+                  color={activeCustomColor}
+                  onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
+                />
+              </FormFieldGroup>
             </div>
-
-            <div className="asklake-widget-color-choice-panel">
-              <div className="asklake-widget-color-choice-list" aria-label={`${colorSlotLabels[customColorIndex] ?? "선택 색상"} 색상 선택`}>
-                {dashboardWidgetColorChoices.map((choice) => {
-                  const isSelected = activeCustomColor.toLowerCase() === choice.toLowerCase();
-                  return (
-                    <Button
-                      key={choice}
-                      className={`asklake-widget-color-choice${isSelected ? " selected" : ""}`}
-                      style={{ backgroundColor: choice }}
-                      type="button"
-                      onClick={() => {
-                        setCustomColorOpen(false);
-                        updateColorSlot(customColorIndex, choice);
-                      }}
-                    >
-                      {isSelected && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
-                    </Button>
-                  );
-                })}
-                <Button
-                  aria-label="직접 색상 만들기"
-                  className={`asklake-widget-color-choice custom${customColorOpen ? " selected" : ""}`}
-                  type="button"
-                  onClick={() => setCustomColorOpen((open) => !open)}
-                >
-                  {customColorOpen && <Check aria-hidden="true" size={15} strokeWidth={3.5} />}
-                </Button>
-              </div>
-
-              {customColorOpen && (
-                <div className="asklake-widget-custom-color-panel">
-                  <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
-                  <FormFieldGroup className="asklake-widget-hex-input" label="HEX">
-                    <HexColorInput
-                      prefixed
-                      color={activeCustomColor}
-                      onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
-                    />
-                  </FormFieldGroup>
-                </div>
-              )}
-            </div>
-
-            <small>
-              {colorSlotLabels.length === 1
-                ? "선택한 색상 하나가 차트에 적용됩니다."
-                : "위 항목을 하나씩 선택해서 각 요소의 색상을 바꿀 수 있습니다."}
-            </small>
-          </div>
-        )}
+          )}
+          helperText={colorSlotLabels.length === 1
+            ? "선택한 색상 하나가 차트에 적용됩니다."
+            : "위 항목을 하나씩 선택해서 각 요소의 색상을 바꿀 수 있습니다."}
+          selectedSlotIndex={customColorIndex}
+          slotLabels={colorSlotLabels}
+          onSelectChoice={(choice) => {
+            setCustomColorOpen(false);
+            updateColorSlot(customColorIndex, choice);
+          }}
+          onSelectSlot={setCustomColorIndex}
+          onToggleCustom={() => setCustomColorOpen((open) => !open)}
+        />
 
         {type === "metric" && (
           <>
