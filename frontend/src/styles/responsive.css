@@ -313,6 +313,7 @@
   }
 
   .option-grid,
+  .admin-permission-form,
   .admin-console-metric-grid,
   .profile-permission-grid,
   .form-grid,
@@ -335,6 +336,14 @@
   .hegun-rule-builder,
   .hegun-test-strip,
   .hegun-rule-library {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-permission-actions {
+    grid-column: auto;
+  }
+
+  .admin-grant-item {
     grid-template-columns: 1fr;
   }
 

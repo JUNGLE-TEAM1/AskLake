@@ -484,9 +484,78 @@
   padding: 0 20px 20px;
 }
 
+.admin-permission-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-permission-form {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) 128px minmax(180px, 1fr);
+  gap: 12px;
+  border-top: 1px solid #eef2f7;
+  border-bottom: 1px solid #eef2f7;
+  background: #f8fbff;
+  padding: 16px 20px;
+}
+
+.admin-permission-form .field {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-permission-form .field span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.admin-permission-form input,
+.admin-permission-form select {
+  min-height: 38px;
+  width: 100%;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #171a1f;
+  font-size: 13px;
+  font-weight: 650;
+  padding: 0 10px;
+}
+
+.admin-permission-form .primary-button {
+  align-self: end;
+  min-height: 38px;
+}
+
+.admin-permission-actions,
+.admin-grant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-permission-actions {
+  grid-column: 1 / 4;
+}
+
+.admin-permission-actions label,
+.admin-grant-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .admin-console-table {
   min-width: 860px;
   table-layout: fixed;
+}
+
+.admin-permission-table {
+  min-width: 1060px;
 }
 
 .admin-console-table th,
@@ -530,6 +599,53 @@
   line-height: 1.2;
   overflow-wrap: anywhere;
   padding: 5px 8px;
+}
+
+.admin-console-muted {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.admin-grant-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-grant-item {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.9fr) minmax(240px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.admin-grant-item.readonly {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+}
+
+.admin-grant-item strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.admin-grant-item span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.admin-grant-tools {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.icon-button.danger {
+  color: #dc2626;
 }
 
 .admin-console-summary-panel {

@@ -1,6 +1,8 @@
 import type {
   AdminAuditLogsResponse,
   AdminGroupsResponse,
+  AdminPermissionGrantRequest,
+  AdminPermissionGrantUpdateRequest,
   AdminPermissionsResponse,
   AdminUsersResponse,
 } from "../types";
@@ -16,6 +18,18 @@ export async function fetchAdminGroups(): Promise<AdminGroupsResponse> {
 
 export async function fetchAdminPermissions(): Promise<AdminPermissionsResponse> {
   return apiClient.get<AdminPermissionsResponse>("/api/admin/permissions");
+}
+
+export async function createAdminPermissionGrant(payload: AdminPermissionGrantRequest): Promise<AdminPermissionsResponse> {
+  return apiClient.post<AdminPermissionsResponse>("/api/admin/permissions", payload);
+}
+
+export async function updateAdminPermissionGrant(grantId: string, payload: AdminPermissionGrantUpdateRequest): Promise<AdminPermissionsResponse> {
+  return apiClient.patch<AdminPermissionsResponse>(`/api/admin/permissions/${encodeURIComponent(grantId)}`, payload);
+}
+
+export async function deleteAdminPermissionGrant(grantId: string): Promise<AdminPermissionsResponse> {
+  return apiClient.delete<AdminPermissionsResponse>(`/api/admin/permissions/${encodeURIComponent(grantId)}`);
 }
 
 export async function fetchAdminAuditLogs(): Promise<AdminAuditLogsResponse> {

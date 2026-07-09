@@ -1,6 +1,7 @@
 import type { AuditResult, AuditTargetType } from "./audit";
 import type { CurrentUserResponse, IdentityGroup } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
+import type { PermissionAction, PermissionPrincipalType } from "./permissions";
 
 export type AdminUserStatus = "active" | "invited" | "disabled";
 
@@ -31,6 +32,20 @@ export type AdminPermissionSummary = {
 
 export type AdminPermissionsResponse = {
   resources: AdminPermissionSummary[];
+};
+
+export type AdminPermissionGrantRequest = {
+  actions: PermissionAction[];
+  principalId: string;
+  principalType: PermissionPrincipalType;
+  resourceId: string;
+  resourceType: AdminResourceType;
+};
+
+export type AdminPermissionGrantUpdateRequest = {
+  actions?: PermissionAction[];
+  principalId?: string;
+  principalType?: PermissionPrincipalType;
 };
 
 export type AdminAuditLogEntry = {

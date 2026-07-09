@@ -1,8 +1,16 @@
-import { Activity, Boxes, CircleUser, ShieldCheck } from "lucide-react";
+import { Activity, Boxes, CircleUser, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { InfoBox, PageTitle } from "../../components/common";
-import { fetchAdminAuditLogs, fetchAdminGroups, fetchAdminPermissions, fetchAdminUsers } from "../../services/adminApi";
+import {
+  createAdminPermissionGrant,
+  deleteAdminPermissionGrant,
+  fetchAdminAuditLogs,
+  fetchAdminGroups,
+  fetchAdminPermissions,
+  fetchAdminUsers,
+  updateAdminPermissionGrant,
+} from "../../services/adminApi";
 import { ApiError } from "../../types";
 import type {
   AdminAuditLogEntry,
@@ -10,6 +18,8 @@ import type {
   AdminUser,
   IdentityGroup,
   PermissionAction,
+  PermissionGrant,
+  PermissionPrincipalType,
 } from "../../types";
 
 type AdminTab = "users" | "groups" | "permissions" | "audit";
@@ -26,6 +36,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
 ];
 
 const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "delete", "share"];
+const principalTypeOptions: PermissionPrincipalType[] = ["group", "user", "role", "public"];
 
 export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
@@ -35,6 +46,14 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [permissionDraft, setPermissionDraft] = useState({
+    actions: ["view"] as PermissionAction[],
+    principalId: "analytics",
+    principalType: "group" as PermissionPrincipalType,
+    resourceKey: "",
+  });
+  const [permissionPending, setPermissionPending] = useState(false);
+  const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const onActionRef = useRef(onAction);
 
   useEffect(() => {
@@ -55,6 +74,10 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
         setUsers(userResponse.users);
         setGroups(groupResponse.groups);
         setPermissions(permissionResponse.resources);
+        setPermissionDraft((draft) => ({
+          ...draft,
+          resourceKey: draft.resourceKey || resourceKey(permissionResponse.resources[0]),
+        }));
         setAuditLogs(auditResponse.logs);
         setError(null);
         onActionRef.current("admin.console.loaded", "/api/admin", "admin-console", "success", { targetType: "admin_module" });
@@ -76,6 +99,99 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
   }, []);
 
   const totalPermissionGrants = permissions.reduce((sum, resource) => sum + resource.grants.length, 0);
+
+  const handlePermissionDraftActionChange = (action: PermissionAction, checked: boolean) => {
+    setPermissionDraft((draft) => ({
+      ...draft,
+      actions: checked
+        ? [...new Set([...draft.actions, action])]
+        : draft.actions.filter((item) => item !== action),
+    }));
+  };
+
+  const handleCreateGrant = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const resource = permissions.find((item) => resourceKey(item) === permissionDraft.resourceKey);
+    if (!resource) {
+      setPermissionMessage("권한을 추가할 리소스를 선택해주세요.");
+      return;
+    }
+    if (permissionDraft.actions.length === 0) {
+      setPermissionMessage("하나 이상의 action을 선택해주세요.");
+      return;
+    }
+    if (permissionDraft.principalType !== "public" && !permissionDraft.principalId.trim()) {
+      setPermissionMessage("principal ID를 입력해주세요.");
+      return;
+    }
+
+    setPermissionPending(true);
+    setPermissionMessage(null);
+    createAdminPermissionGrant({
+      actions: permissionDraft.actions,
+      principalId: permissionDraft.principalType === "public" ? "public" : permissionDraft.principalId.trim(),
+      principalType: permissionDraft.principalType,
+      resourceId: resource.resourceId,
+      resourceType: resource.resourceType,
+    })
+      .then((response) => {
+        setPermissions(response.resources);
+        setPermissionMessage("권한 grant가 추가되었습니다.");
+        onActionRef.current("admin.permission_grant.created", "/api/admin/permissions", resource.resourceId, "success", { targetType: "admin_module" });
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "권한 grant를 추가하지 못했습니다.";
+        setPermissionMessage(message);
+        onActionRef.current("admin.permission_grant.create_failed", "/api/admin/permissions", resource.resourceId, "failed", { targetType: "admin_module" });
+      })
+      .finally(() => setPermissionPending(false));
+  };
+
+  const handleUpdateGrant = (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => {
+    if (!grant.id) {
+      setPermissionMessage("payload grant는 아직 직접 수정할 수 없습니다. admin API로 생성된 grant만 수정 가능합니다.");
+      return;
+    }
+    if (actions.length === 0) {
+      setPermissionMessage("grant에는 하나 이상의 action이 필요합니다.");
+      return;
+    }
+    setPermissionPending(true);
+    setPermissionMessage(null);
+    updateAdminPermissionGrant(grant.id, { actions })
+      .then((response) => {
+        setPermissions(response.resources);
+        setPermissionMessage("권한 grant가 수정되었습니다.");
+        onActionRef.current("admin.permission_grant.updated", `/api/admin/permissions/${grant.id}`, resource.resourceId, "success", { targetType: "admin_module" });
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "권한 grant를 수정하지 못했습니다.";
+        setPermissionMessage(message);
+        onActionRef.current("admin.permission_grant.update_failed", `/api/admin/permissions/${grant.id}`, resource.resourceId, "failed", { targetType: "admin_module" });
+      })
+      .finally(() => setPermissionPending(false));
+  };
+
+  const handleDeleteGrant = (resource: AdminPermissionSummary, grant: PermissionGrant) => {
+    if (!grant.id) {
+      setPermissionMessage("payload grant는 아직 직접 삭제할 수 없습니다. admin API로 생성된 grant만 삭제 가능합니다.");
+      return;
+    }
+    setPermissionPending(true);
+    setPermissionMessage(null);
+    deleteAdminPermissionGrant(grant.id)
+      .then((response) => {
+        setPermissions(response.resources);
+        setPermissionMessage("권한 grant가 삭제되었습니다.");
+        onActionRef.current("admin.permission_grant.deleted", `/api/admin/permissions/${grant.id}`, resource.resourceId, "success", { targetType: "admin_module" });
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "권한 grant를 삭제하지 못했습니다.";
+        setPermissionMessage(message);
+        onActionRef.current("admin.permission_grant.delete_failed", `/api/admin/permissions/${grant.id}`, resource.resourceId, "failed", { targetType: "admin_module" });
+      })
+      .finally(() => setPermissionPending(false));
+  };
 
   return (
     <div className="content-grid module-page-grid admin-console-page">
@@ -123,7 +239,19 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
             <>
               {activeTab === "users" && <UsersTable users={users} />}
               {activeTab === "groups" && <GroupsTable groups={groups} />}
-              {activeTab === "permissions" && <PermissionsTable permissions={permissions} />}
+              {activeTab === "permissions" && (
+                <PermissionsTable
+                  draft={permissionDraft}
+                  message={permissionMessage}
+                  pending={permissionPending}
+                  permissions={permissions}
+                  onCreate={handleCreateGrant}
+                  onDelete={handleDeleteGrant}
+                  onDraftActionChange={handlePermissionDraftActionChange}
+                  onDraftChange={setPermissionDraft}
+                  onUpdate={handleUpdateGrant}
+                />
+              )}
               {activeTab === "audit" && <AuditLogTable logs={auditLogs} />}
             </>
           )}
@@ -149,7 +277,7 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
           </div>
           <div>
             <dt>범위</dt>
-            <dd>조회형 콘솔</dd>
+            <dd>권한 조회/편집</dd>
           </div>
         </dl>
       </aside>
@@ -223,47 +351,181 @@ function GroupsTable({ groups }: { groups: IdentityGroup[] }) {
   );
 }
 
-function PermissionsTable({ permissions }: { permissions: AdminPermissionSummary[] }) {
+type PermissionDraft = {
+  actions: PermissionAction[];
+  principalId: string;
+  principalType: PermissionPrincipalType;
+  resourceKey: string;
+};
+
+function PermissionsTable({
+  draft,
+  message,
+  pending,
+  permissions,
+  onCreate,
+  onDelete,
+  onDraftActionChange,
+  onDraftChange,
+  onUpdate,
+}: {
+  draft: PermissionDraft;
+  message: string | null;
+  pending: boolean;
+  permissions: AdminPermissionSummary[];
+  onCreate: (event: React.FormEvent<HTMLFormElement>) => void;
+  onDelete: (resource: AdminPermissionSummary, grant: PermissionGrant) => void;
+  onDraftActionChange: (action: PermissionAction, checked: boolean) => void;
+  onDraftChange: React.Dispatch<React.SetStateAction<PermissionDraft>>;
+  onUpdate: (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => void;
+}) {
   return (
-    <div className="admin-console-table-scroll">
-      <table className="schema-table admin-console-table">
-        <thead>
-          <tr>
-            <th>리소스</th>
-            <th>타입</th>
-            <th>Owner</th>
-            <th>Grant</th>
-            <th>현재 권한</th>
-          </tr>
-        </thead>
-        <tbody>
-          {permissions.slice(0, 60).map((resource) => (
-            <tr key={`${resource.resourceType}-${resource.resourceId}`}>
-              <td><strong>{resource.resourceName}</strong><span>{resource.resourceId}</span></td>
-              <td><AdminChip>{resource.resourceType}</AdminChip></td>
-              <td>{resource.owner || resource.createdBy || "-"}</td>
-              <td>
-                <div className="admin-console-chip-row">
-                  {resource.grants.slice(0, 3).map((grant, index) => (
-                    <AdminChip key={`${resource.resourceId}-${grant.principalType}-${grant.principalId}-${index}`}>
-                      {grant.principalType}:{grant.principalId}
-                    </AdminChip>
-                  ))}
-                  {resource.grants.length > 3 && <AdminChip>+{resource.grants.length - 3}</AdminChip>}
-                </div>
-              </td>
-              <td>
-                <div className="admin-console-chip-row">
-                  {permissionOrder.filter((action) => canAction(resource, action)).map((action) => (
-                    <AdminChip key={`${resource.resourceId}-${action}`}>{action}</AdminChip>
-                  ))}
-                </div>
-              </td>
-            </tr>
+    <div className="admin-permission-editor">
+      <form className="admin-permission-form" onSubmit={onCreate}>
+        <label className="field">
+          <span>리소스</span>
+          <select value={draft.resourceKey} onChange={(event) => onDraftChange((current) => ({ ...current, resourceKey: event.target.value }))}>
+            {permissions.map((resource) => (
+              <option key={resourceKey(resource)} value={resourceKey(resource)}>
+                {resource.resourceType} · {resource.resourceName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Principal</span>
+          <select value={draft.principalType} onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value === "public" ? "public" : current.principalId, principalType: event.target.value as PermissionPrincipalType }))}>
+            {principalTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        <label className="field">
+          <span>ID</span>
+          <input
+            disabled={draft.principalType === "public"}
+            value={draft.principalType === "public" ? "public" : draft.principalId}
+            onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value }))}
+          />
+        </label>
+        <div className="admin-permission-actions" aria-label="추가할 권한 action">
+          {permissionOrder.map((action) => (
+            <label key={action}>
+              <input
+                checked={draft.actions.includes(action)}
+                type="checkbox"
+                onChange={(event) => onDraftActionChange(action, event.target.checked)}
+              />
+              <span>{action}</span>
+            </label>
           ))}
-        </tbody>
-      </table>
+        </div>
+        <button className="primary-button" type="submit" disabled={pending || permissions.length === 0}>
+          <Plus size={16} />
+          <span>Grant 추가</span>
+        </button>
+      </form>
+      {message && <InfoBox title="권한 편집" body={message} />}
+
+      <div className="admin-console-table-scroll">
+        <table className="schema-table admin-console-table admin-permission-table">
+          <thead>
+            <tr>
+              <th>리소스</th>
+              <th>Owner</th>
+              <th>Grant</th>
+              <th>현재 권한</th>
+            </tr>
+          </thead>
+          <tbody>
+            {permissions.slice(0, 60).map((resource) => (
+              <tr key={`${resource.resourceType}-${resource.resourceId}`}>
+                <td><strong>{resource.resourceName}</strong><span>{resource.resourceType} · {resource.resourceId}</span></td>
+                <td>{resource.owner || resource.createdBy || "-"}</td>
+                <td>
+                  <div className="admin-grant-list">
+                    {resource.grants.map((grant, index) => (
+                      <GrantEditor
+                        grant={grant}
+                        key={`${resource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
+                        pending={pending}
+                        resource={resource}
+                        onDelete={onDelete}
+                        onUpdate={onUpdate}
+                      />
+                    ))}
+                    {resource.grants.length === 0 && <span className="admin-console-muted">grant 없음</span>}
+                  </div>
+                </td>
+                <td>
+                  <div className="admin-console-chip-row">
+                    {permissionOrder.filter((action) => canAction(resource, action)).map((action) => (
+                      <AdminChip key={`${resource.resourceId}-${action}`}>{action}</AdminChip>
+                    ))}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function GrantEditor({
+  grant,
+  pending,
+  resource,
+  onDelete,
+  onUpdate,
+}: {
+  grant: PermissionGrant;
+  pending: boolean;
+  resource: AdminPermissionSummary;
+  onDelete: (resource: AdminPermissionSummary, grant: PermissionGrant) => void;
+  onUpdate: (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => void;
+}) {
+  const editable = Boolean(grant.id);
+  const [draftActions, setDraftActions] = useState<PermissionAction[]>(grant.actions);
+
+  useEffect(() => {
+    setDraftActions(grant.actions);
+  }, [grant.actions]);
+
+  const toggleAction = (action: PermissionAction, checked: boolean) => {
+    const nextActions = checked
+      ? [...new Set([...draftActions, action])]
+      : draftActions.filter((item) => item !== action);
+    setDraftActions(nextActions);
+  };
+
+  return (
+    <article className={editable ? "admin-grant-item" : "admin-grant-item readonly"}>
+      <div>
+        <strong>{grant.principalType}:{grant.principalId}</strong>
+        <span>{grant.source || "metadata"}</span>
+      </div>
+      <div className="admin-grant-actions" aria-label={`${grant.principalId} action`}>
+        {permissionOrder.map((action) => (
+          <label key={action}>
+            <input
+              checked={draftActions.includes(action)}
+              disabled={!editable || pending}
+              type="checkbox"
+              onChange={(event) => toggleAction(action, event.target.checked)}
+            />
+            <span>{action}</span>
+          </label>
+        ))}
+      </div>
+      <div className="admin-grant-tools">
+        <button className="icon-button" type="button" aria-label="grant 저장" disabled={!editable || pending} onClick={() => onUpdate(resource, grant, draftActions)}>
+          <Save size={16} />
+        </button>
+        <button className="icon-button danger" type="button" aria-label="grant 삭제" disabled={!editable || pending} onClick={() => onDelete(resource, grant)}>
+          <Trash2 size={16} />
+        </button>
+      </div>
+    </article>
   );
 }
 
@@ -298,6 +560,10 @@ function AuditLogTable({ logs }: { logs: AdminAuditLogEntry[] }) {
 
 function AdminChip({ children }: { children: React.ReactNode }) {
   return <span className="admin-console-chip">{children}</span>;
+}
+
+function resourceKey(resource?: AdminPermissionSummary) {
+  return resource ? `${resource.resourceType}:${resource.resourceId}` : "";
 }
 
 function canAction(resource: AdminPermissionSummary, action: PermissionAction) {

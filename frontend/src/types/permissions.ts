@@ -3,6 +3,7 @@ export type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | 
 export type PermissionPrincipalType = "user" | "group" | "role" | "public";
 
 export type PermissionGrant = {
+  id?: string;
   actions: PermissionAction[];
   principalId: string;
   principalType: PermissionPrincipalType;
