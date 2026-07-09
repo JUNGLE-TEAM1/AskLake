@@ -10,12 +10,14 @@ from uuid import uuid4
 import duckdb
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryRunRequest, QueryRunResponse
+from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 DEFAULT_PREVIEW_LIMIT = 100
 MUTATION_KEYWORDS = (
@@ -69,7 +71,8 @@ class SqlService:
         self.repository = repository
         self.catalog_repository = catalog_repository
 
-    def create_query_run(self, request: QueryRunRequest) -> QueryRunResponse:
+    def create_query_run(self, request: QueryRunRequest, actor: ActorContext | None = None) -> QueryRunResponse:
+        actor_context = actor or ActorContext()
         query = request.query
         statement = validate_read_only_query(query)
 
@@ -85,6 +88,14 @@ class SqlService:
             for reference_dataset_id in reference_dataset_ids
         ]
         context_datasets = [base_dataset, *reference_datasets]
+        for dataset in context_datasets:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
         referenced_datasets = resolve_referenced_datasets(
             mask_sql_comments_and_literals(statement),
             context_datasets,
@@ -143,7 +154,10 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return CatalogDatasetResponse.model_validate(payload)
+        return dataset_with_persisted_permission_grants(
+            self.catalog_repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
 
 
 def validate_read_only_query(query: str) -> str:

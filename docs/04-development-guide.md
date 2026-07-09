@@ -283,6 +283,24 @@ pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
+Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:permission-dataset
+```
+
+Job/Dashboard 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:permission-job-dashboard
+```
+
+로컬 auth/session, 프로필, 관리자 권한 fallback을 확인할 때는 아래 smoke를 실행한다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:auth-session
+```
+
 Docker/Spark까지 켜진 환경에서 ETL run -> Catalog payload/storage/lineage 계약을 확인할 때는 아래 smoke를 추가로 실행한다.
 
 ```bash

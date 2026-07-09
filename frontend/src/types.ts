@@ -1,4 +1,6 @@
 export { ApiError } from "./types/audit";
+export type { AuthSessionResponse, AuthUserResponse, LoginRequest, LogoutResponse, SignupRequest } from "./types/auth";
+export type { AdminAuditLogEntry, AdminAuditLogsResponse, AdminGroupsResponse, AdminPermissionGrantRequest, AdminPermissionGrantUpdateRequest, AdminPermissionSummary, AdminPermissionsResponse, AdminResourceType, AdminUser, AdminUsersResponse, AdminUserStatus } from "./types/admin";
 export type { ApiErrorResponse, AuditEntry, AuditResult, AuditTargetType } from "./types/audit";
 export type { CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphColumn, LineageGraphDataset, LineageGraphEdge, LineageLayer } from "./types/catalog";
 export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
@@ -39,4 +41,6 @@ export type {
   WatermarkWindowMode,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
+export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
+export type { PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
 export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

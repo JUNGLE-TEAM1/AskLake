@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel, PageRequest, SortDirection
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 
 class DashboardStatus(str, Enum):
@@ -107,6 +108,10 @@ class DashboardCard(CamelModel):
     id: str
     name: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     meta: str
     status: DashboardStatus
     tags: str
@@ -299,6 +304,8 @@ class DashboardMeta(CamelModel):
     id: str
     title: str
     status: DashboardStatus
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     has_published_revision: bool
     updated_at: str
 

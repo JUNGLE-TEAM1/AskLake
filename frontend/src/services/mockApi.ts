@@ -73,11 +73,62 @@ const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
 const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
 
 function normalizeJob(job: JobRowData): JobRowData {
-  return { ...job, status: normalizeJobStatus(job.status) };
+  const createdBy = job.createdBy?.trim() || job.owner || "demo-user";
+  return {
+    ...job,
+    createdBy,
+    createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
+    permissions: job.permissions ?? buildResourcePermissions({ canManage: true, canRun: true }),
+    status: normalizeJobStatus(job.status),
+  };
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
-  return { ...dataset, status: normalizeDatasetStatus(dataset.status) };
+  const createdBy = dataset.createdBy?.trim() || dataset.owner || "demo-user";
+  return {
+    ...dataset,
+    createdBy,
+    createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canManage: true, canQuery: true }),
+    status: normalizeDatasetStatus(dataset.status),
+  };
+}
+
+function buildIdentityProfile(name: string) {
+  const displayName = name.trim() || "demo-user";
+  const initials = displayName
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("") || displayName.slice(0, 2).toUpperCase();
+  return {
+    avatarInitials: initials.slice(0, 2),
+    displayName,
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset["permissions"]>> = {}) {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
+    ...overrides,
+  };
 }
 
 function normalizePipelineCreationResult(result: PipelineCreationResult): PipelineCreationResult {
@@ -225,6 +276,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: `${draftPipeline.target.datasetName}_pipeline`,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
     owner: draftPipeline.permission.owner,
+    createdBy: "demo-user",
+    createdByProfile: buildIdentityProfile("demo-user"),
     tag: "[리뷰]",
     source: `${draftPipeline.source.sourceType} / ${draftPipeline.source.sourceLabel}`,
     target: draftPipeline.target.datasetName,
@@ -283,6 +336,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
+    createdBy: job.createdBy,
+    createdByProfile: job.createdByProfile,
     quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
     rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
@@ -543,6 +598,8 @@ export async function createDerivedDatasetFromSql({
     name: normalizedName,
     nextRefresh: "수동 갱신",
     owner: sourceDataset.owner,
+    createdBy: "demo-user",
+    createdByProfile: buildIdentityProfile("demo-user"),
     quality: "Preview verified",
     rag: request.dataset.rag,
     rows: `${sqlResult.rowCount.toLocaleString()} preview rows`,

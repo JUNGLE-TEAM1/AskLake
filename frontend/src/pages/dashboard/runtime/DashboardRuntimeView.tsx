@@ -38,6 +38,7 @@ type VisualizationPromptInsertion = {
 };
 
 type DashboardRuntimeState = {
+  canManage: boolean;
   canRedoLayout: boolean;
   canUndoLayout: boolean;
   deletingWidgetId: string | null;
@@ -51,6 +52,7 @@ type DashboardRuntimeState = {
   isPublishing: boolean;
   isRenamingTitle: boolean;
   isRefreshing: boolean;
+  managePermissionMessage: string;
   mode: DashboardRuntimeMode;
   notice: RuntimeNotice | null;
   pages: DashboardRuntimePage[];
@@ -211,6 +213,7 @@ export function DashboardRuntimeView({
   const {
     canRedoLayout,
     canUndoLayout,
+    canManage,
     deletingWidgetId,
     draftError,
     draftLoading,
@@ -222,6 +225,7 @@ export function DashboardRuntimeView({
     isPublishing,
     isRenamingTitle,
     isRefreshing,
+    managePermissionMessage,
     mode,
     notice,
     pages,
@@ -279,8 +283,9 @@ export function DashboardRuntimeView({
     updateWidget: onUpdateWidget,
   } = actions;
   const isDraftMode = mode === "draft";
+  const canEditDraft = isDraftMode && canManage;
   const openDraftAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onOpenDraft}>
+    <button className="asklake-dashboard-empty-action" disabled={!canManage} title={canManage ? "위젯 편집" : managePermissionMessage} type="button" onClick={onOpenDraft}>
       위젯 편집
     </button>
   );
@@ -465,7 +470,7 @@ export function DashboardRuntimeView({
     ) : (
       <DashboardCanvas
         deletingWidgetId={deletingWidgetId}
-        editable
+        editable={canEditDraft}
         selectedWidgetId={selectedWidgetId}
         scrollTargetWidgetId={widgetScrollTargetId}
         widgets={selectedDraftWidgets}
@@ -515,12 +520,13 @@ export function DashboardRuntimeView({
     </div>
   );
 
-  const canShowEditToolbar = isDraftMode && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
+  const canShowEditToolbar = canEditDraft && Boolean(draftRuntime?.revision) && !draftLoading && !draftError;
 
   return (
     <div className="dashboard-page dashboard-runtime-page">
       <DashboardRuntimeShell
-        datasetSidebar={isDraftMode ? (
+        canManage={canManage}
+        datasetSidebar={canEditDraft ? (
           <DatasetSidebar
             datasets={dashboardDatasets}
             error={dashboardDatasetsError}
@@ -532,13 +538,13 @@ export function DashboardRuntimeView({
             onSelectDataset={handleSelectDataset}
           />
         ) : undefined}
-        datasetSidebarOpen={isDraftMode && isDatasetSidebarOpen}
+        datasetSidebarOpen={canEditDraft && isDatasetSidebarOpen}
         hasPublishedRevision={hasPublishedRevision}
         isAddingPage={isAddingPage}
         isPublishing={isPublishing}
         isRenamingTitle={isRenamingTitle}
         isRefreshing={isRefreshing}
-        inspector={isAssistantInspectorOpen ? (
+        inspector={isAssistantInspectorOpen && canEditDraft ? (
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
@@ -551,7 +557,7 @@ export function DashboardRuntimeView({
               onUpdateWidget={onUpdateWidget}
             />
           </aside>
-        ) : isDraftMode && !selectedWidgetHidesInspector ? (
+        ) : canEditDraft && !selectedWidgetHidesInspector ? (
           <aside className="asklake-dashboard-inspector">
             <WidgetConfigPanel
               datasets={dashboardDatasets}
@@ -582,11 +588,11 @@ export function DashboardRuntimeView({
         onOpenPublished={onOpenPublished}
         onPublishDraft={onPublishDraft}
         onRefresh={onRefresh}
-        onRenamePage={isDraftMode ? onRenamePage : undefined}
-        onRenameTitle={isDraftMode ? onRenameTitle : undefined}
+        onRenamePage={canEditDraft ? onRenamePage : undefined}
+        onRenameTitle={canEditDraft ? onRenameTitle : undefined}
         onSelectPage={onSelectPage}
         onShare={onShare}
-        onToggleDatasetSidebar={isDraftMode ? onToggleDatasetSidebar : undefined}
+        onToggleDatasetSidebar={canEditDraft ? onToggleDatasetSidebar : undefined}
       >
         {canShowEditToolbar ? (
           <div className="asklake-dashboard-edit-stage">

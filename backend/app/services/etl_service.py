@@ -9,7 +9,9 @@ from typing import Any
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
@@ -30,6 +32,7 @@ from app.schemas.etl import (
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -37,12 +40,14 @@ ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
+def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
     validate_create_request(request)
+    created_by = identity_name(request.created_by or actor_name or request.owner)
+    created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
-        update_existing_append_job(existing_job, request, dataset_id)
+        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
             catalog_target={
@@ -66,6 +71,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         id=job_id,
         name=request.job_name,
         owner=request.owner,
+        created_by=created_by,
+        created_by_profile=created_by_profile,
         status="scheduled",
         tag="[생성]",
         source=f"{request.source_type} / {request.source_label}",
@@ -121,11 +128,14 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     )
 
 
-def list_jobs(db: Session) -> list[JobRowData]:
-    return etl_repository.list_jobs(db)
+def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
+    return [
+        with_job_permissions(db, job, actor or ActorContext())
+        for job in etl_repository.list_jobs(db)
+    ]
 
 
-def get_job(db: Session, job_id: str) -> JobRowData:
+def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -133,7 +143,7 @@ def get_job(db: Session, job_id: str) -> JobRowData:
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    return job
+    return with_job_permissions(db, job, actor or ActorContext())
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -179,13 +189,25 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
+def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
+    require_permission(
+        actor or ActorContext(),
+        "run" if command in {"run", "retry"} else "manage",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
     if command == "pause" and job.status != "running":
@@ -243,10 +265,26 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         action=action_by_command[command],
         api_path=f"/api/etl/jobs/{job_id}/commands",
         dataset=dataset_schema,
-        job=saved_job,
+        job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
     )
+
+
+def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
+    job_with_grants = job_with_persisted_permission_grants(db, job)
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in job_with_grants.permission_grants
+    ]
+    return job_with_grants.model_copy(update={
+        "permissions": permissions_for_actor(
+            actor,
+            owner=job_with_grants.owner,
+            grants=grant_payloads,
+            enforced=True,
+        ),
+    })
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
@@ -732,6 +770,10 @@ def dataset_payload_from_spark_result(
         "name": job.target,
         "nextRefresh": job.schedule,
         "owner": job.owner,
+        "createdBy": job.created_by or job.owner,
+        "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
+        "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
+        "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),
@@ -752,12 +794,20 @@ def dataset_payload_from_spark_result(
     }
 
 
-def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest, dataset_id: str) -> None:
+def update_existing_append_job(
+    job: ETLJobModel,
+    request: CreatePipelineRequest,
+    dataset_id: str,
+    created_by: str,
+    created_by_profile: dict[str, Any],
+) -> None:
     dataset_schema = dataset_schema_from_request(request)
     sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
     metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
     job.name = request.job_name or job.name
     job.owner = request.owner
+    job.created_by = job.created_by or created_by
+    job.created_by_profile = job.created_by_profile or created_by_profile
     job.tag = "[append]"
     job.source = f"{request.source_type} / {request.source_label}"
     job.target = request.target_dataset
@@ -806,6 +856,20 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     if not run_id:
         return runs
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def identity_name(value: str | None) -> str:
+    return (value or "").strip() or "demo-user"
+
+
+def identity_profile(name: str) -> dict[str, str]:
+    display_name = identity_name(name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:

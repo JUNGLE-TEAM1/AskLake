@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
+import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -80,6 +81,20 @@ function getJobMetrics(jobs: JobRowData[]): JobMetric[] {
     { label: jobStatusMeta.failed.label, tone: "failed", value: String(jobs.filter((job) => job.status === "failed").length) },
     { label: "확인 필요", tone: "attention", value: String(jobs.filter((job) => job.status === "failed" || job.status === "canceled").length) },
   ];
+}
+
+function jobCreatorLabel(job: JobRowData) {
+  return job.createdByProfile?.displayName || job.createdBy || job.owner;
+}
+
+function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
+  if (action === "detail" || action === "runs" || action === "edit" || action === "delete") return false;
+  return !canRunJobCommand(job, action);
+}
+
+function jobActionTitle(job: JobRowData, action: JobListActionKind | JobCommand) {
+  if (!jobActionDisabled(job, action)) return undefined;
+  return permissionDeniedMessage("작업", action === "run" || action === "retry" ? "실행" : "관리");
 }
 
 export function JobsLandingPage({
@@ -254,7 +269,8 @@ function JobsCardSection({
                   <p>{job.id}</p>
                 </div>
                 <div className="job-owner">
-                  <span className="owner-chip">{job.owner}</span>
+                  <span className="owner-chip">Owner: {job.owner}</span>
+                  <span className="owner-chip">Created: {jobCreatorLabel(job)}</span>
                   <span className="tag-chip">{job.tag}</span>
                 </div>
               </div>
@@ -279,7 +295,7 @@ function JobsCardSection({
               </dl>
               <div className="job-row-actions">
                 {getJobListActions(job).map((action) => (
-                  <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind, job)}>
+                  <button className={action.className} disabled={jobActionDisabled(job, action.kind)} key={action.label} title={jobActionTitle(job, action.kind)} type="button" onClick={() => runAction(action.kind, job)}>
                     {action.label}
                   </button>
                 ))}
@@ -389,7 +405,11 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <span className="owner-chip">{row.original.job.owner}</span>,
+      cell: ({ row }) => (
+        <span className="owner-chip" title={`Created by ${jobCreatorLabel(row.original.job)}`}>
+          {row.original.job.owner}
+        </span>
+      ),
       header: "소유자",
       id: "owner",
     },
@@ -437,8 +457,9 @@ function JobsTableSection({
               <button
                 aria-label={action.label}
                 className={`${action.className} icon-only`}
+                disabled={jobActionDisabled(job, action.kind)}
                 key={action.label}
-                title={action.label}
+                title={jobActionTitle(job, action.kind) ?? action.label}
                 type="button"
                 onClick={() => runAction(action.kind, job)}
               >
@@ -932,12 +953,13 @@ function JobDetailHeader({
           <div className="job-detail-meta">
             <StatusPill status={job.status} />
             <span className="owner-chip">Owner: {job.owner}</span>
+            <span className="owner-chip">Created: {jobCreatorLabel(job)}</span>
             <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
           </div>
         </div>
         <div className="job-detail-actions">
           {getJobDetailActions(job).map((action) => (
-            <button className={action.className} key={action.label} type="button" onClick={() => runAction(action.kind)}>{action.label}</button>
+            <button className={action.className} disabled={jobActionDisabled(job, action.kind)} key={action.label} title={jobActionTitle(job, action.kind)} type="button" onClick={() => runAction(action.kind)}>{action.label}</button>
           ))}
         </div>
       </div>
@@ -993,7 +1015,7 @@ export function JobDetailPage({
             </div>
             {showPrimaryAction && (
               <div className="job-next-actions">
-                <button className="job-action-button primary" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</button>
+                <button className="job-action-button primary" disabled={jobActionDisabled(job, primaryAction.kind)} title={jobActionTitle(job, primaryAction.kind)} type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</button>
               </div>
             )}
             <div className="job-summary-stat-grid">
@@ -1127,8 +1149,10 @@ export function JobDetailPage({
             <h3>Permission</h3>
             <div className="detail-kv-grid">
               <Field label="Owner" value={job.owner} />
+              <Field label="Created by" value={jobCreatorLabel(job)} />
               <Field label="접근 그룹" value="Data Platform, Analytics" />
-              <Field label="canRun" value={job.status === "failed" ? "Owner 승인 후 가능" : "true"} />
+              <Field label="canRun" value={job.permissions?.canRun === false ? "false" : "true"} />
+              <Field label="canManage" value={job.permissions?.canManage === true ? "true" : "false"} />
               <Field label="승인 상태" value={job.status === "failed" ? "재실행 승인 필요" : "승인됨"} />
             </div>
           </article>

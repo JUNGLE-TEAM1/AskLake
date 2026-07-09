@@ -15,6 +15,7 @@ import {
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
+import { canQueryDataset, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import type {
   AuditResult,
@@ -399,17 +400,62 @@ function normalizeDraftId(value: string) {
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
+  const createdBy = job.createdBy?.trim() || job.owner || "demo-user";
   return {
     ...job,
+    createdBy,
+    createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
+    permissions: job.permissions ?? buildResourcePermissions({ canManage: true, canRun: true }),
     status: normalizeJobStatus(String(job.status)),
   };
 }
 
 function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
+  const createdBy = dataset.createdBy?.trim() || dataset.owner || "demo-user";
   return {
     ...dataset,
+    createdBy,
+    createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canManage: true, canQuery: true }),
     materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset["permissions"]>> = {}) {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
+    ...overrides,
+  };
+}
+
+function buildIdentityProfile(name: string) {
+  const displayName = name.trim() || "demo-user";
+  const initials = displayName
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("") || displayName.slice(0, 2).toUpperCase();
+  return {
+    avatarInitials: initials.slice(0, 2),
+    displayName,
   };
 }
 
@@ -619,10 +665,12 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
 }
 
 export function useAskLakeData({
+  enabled = true,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
+  enabled?: boolean;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
@@ -680,6 +728,12 @@ export function useAskLakeData({
   };
 
   useEffect(() => {
+    if (!enabled) {
+      setDataLoading(false);
+      setDataError(null);
+      return;
+    }
+
     if (apiConfig.useMock) {
       const hydratedRunState = buildRunStateFromJobs(getInitialJobs());
       setRunsByJobId(hydratedRunState.runsByJobId);
@@ -733,11 +787,11 @@ export function useAskLakeData({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled, showToast]);
 
 
   useEffect(() => {
-    if (apiConfig.useMock || !activePollingKey) return;
+    if (!enabled || apiConfig.useMock || !activePollingKey) return;
 
     let cancelled = false;
     const jobIds = activePollingKey.split("|").filter(Boolean);
@@ -766,7 +820,7 @@ export function useAskLakeData({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activePollingKey, showToast]);
+  }, [activePollingKey, enabled, showToast]);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
@@ -867,11 +921,11 @@ export function useAskLakeData({
       applyDataset(nextDataset);
       writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
       showToast("데이터셋 append 결과를 삭제했습니다.");
-    } catch {
+    } catch (error) {
       setDatasets(previousState.datasets);
       setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
-      showToast("append 결과 삭제에 실패했습니다.", "info");
+      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("데이터셋", "append 결과 삭제") : "append 결과 삭제에 실패했습니다.", "info");
     }
   };
 
@@ -914,6 +968,12 @@ export function useAskLakeData({
         return rest;
       });
       onFlowChange("jobs");
+      return;
+    }
+
+    if (!canRunJobCommand(job, command)) {
+      writeAuditLog("etl.job.command_forbidden", `/api/etl/jobs/${job.id}`, job.id, "failed");
+      showToast(permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리"), "info");
       return;
     }
 
@@ -990,12 +1050,12 @@ export function useAskLakeData({
         setSelectedDataset(normalizedDataset);
       }
       showToast(commandSuccessMessage(command));
-    } catch {
+    } catch (error) {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast("작업 명령 처리에 실패했습니다.", "info");
+      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리") : "작업 명령 처리에 실패했습니다.", "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {
@@ -1025,6 +1085,11 @@ export function useAskLakeData({
   };
 
   const openDatasetInSql = (dataset: CatalogDataset) => {
+    if (!canQueryDataset(dataset)) {
+      writeAuditLog("catalog.open_in_sql.forbidden", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "failed", { targetType: "dataset" });
+      showToast(permissionDeniedMessage("데이터셋", "SQL 실행"), "info");
+      return;
+    }
     setSelectedDataset(dataset);
     setSqlResultDraft(null);
     writeAuditLog("catalog.open_in_sql.clicked", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "success", { targetType: "dataset" });
