@@ -13,6 +13,8 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - 두 화면 이상에서 반복되거나, CSS 삭제를 막는 구조적 패턴만 component gap으로 본다.
 - Backend API, 데이터 계약, 도메인 로직은 이 문서의 범위가 아니다.
 - gap을 기록했다고 해서 즉시 구현한다는 뜻은 아니다. 우선순위와 담당 PR을 따로 정한다.
+- 이미 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input` 같은 공통 컴포넌트로 대체된 작업은 완료 범위로 기록하고, 남은 항목은 "기능 미완료"가 아니라 후속 공통화/CSS 축소 후보로 구분한다.
+- UI 전환이나 CSS cleanup PR에서 "공통 컴포넌트로 아직 대체하지 않은 UI"가 새로 보이면 이 문서와 `docs/frontend-css-cleanup-inventory.md`를 함께 업데이트한다.
 
 ## 상태 값
 
@@ -21,6 +23,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | `관찰됨` | 반복 패턴이 확인되었지만 아직 설계하지 않았다. |
 | `설계 필요` | 공통 컴포넌트 후보가 뚜렷하며 props/variant 설계가 필요하다. |
 | `구현 후보` | 다음 component 확장 PR에서 구현할 수 있다. |
+| `부분 해결` | 현재 공통 컴포넌트로 핵심 표/버튼/패널 전환은 끝났지만, 더 큰 shell이나 layout 공통화 후보가 남아 있다. 기능 미완료를 뜻하지 않는다. |
 | `보류` | 화면 고유성이 크거나 외부 라이브러리/복잡한 상태와 묶여 있어 당장 공통화하지 않는다. |
 | `해결됨` | 공통 컴포넌트가 추가되었고 적용 PR이 진행되었다. |
 
@@ -43,6 +46,18 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - `Table`
 - `DataTable`
 
+## B 작업 반영 기준
+
+현재 B02-B04에서 확인된 적용 범위:
+
+- B02: `DataTable` 기반을 만들고 SQL preview 또는 Dashboard list 같은 표형 화면에 적용할 수 있는 기준을 세웠다.
+- B03: SQL preview table과 Catalog schema table은 `DataTable` 기준으로 전환되었다.
+- B04: Dashboard list table과 dashboard runtime table widget은 `DataTable` 기준으로 전환되었다.
+- Dashboard list toolbar는 `Panel`, `PanelHeader`, `Button`, `Input`을 사용하지만, search body, menu, divider, checkbox filter layout은 아직 화면 전용 구조다.
+- Catalog preview shell은 `Panel`/`PanelHeader`를 사용하지만, schema preview card, lineage teaser, SQL 이동 CTA 조합은 화면 전용 구조다.
+
+따라서 아래 gap은 B02/B03/B04 누락 목록이 아니라, 지금까지 만든 공통 컴포넌트로 대체되지 않은 UI와 후속 공통화 후보를 모아 둔 목록이다.
+
 ## Service-wide Gap 목록
 
 | 영역 | 패턴 | 상태 | 필요한 컴포넌트 후보 | 메모 |
@@ -53,8 +68,8 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 전체 | key-value review summary | `설계 필요` | `ReviewSummary` 또는 `KeyValueList` | ETL Review, Catalog detail, Dashboard metadata에서 반복 가능성 있음. |
 | 전체 | 상태 검증 목록 | `설계 필요` | `ValidationList` | ETL governance/review validation, backend readiness UI 후보에서 반복 가능성 있음. |
 | 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
-| 전체 | filter/search toolbar | `관찰됨` | `FilterToolbar` | Ingest, Catalog, Dashboard list에서 반복됨. |
-| 전체 | preview/result panel | `설계 필요` | `PreviewPanel` 또는 `ResultPanel` | SQL preview, Catalog schema preview, Dashboard widget preview에서 반복됨. |
+| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | Dashboard list는 `Panel`/`PanelHeader`/`Button`/`Input` 적용 완료. Jobs/Dashboard/Catalog의 toolbar body, menu, divider, checkbox filter layout 공통화는 후속 후보. |
+| 전체 | preview/result panel | `부분 해결` | `PreviewPanel` 또는 `ResultPanel` | SQL preview table, Catalog schema table, Dashboard table widget의 표 자체는 `DataTable` 기준으로 전환됨. preview header, empty/loading, CTA, overflow shell은 화면별 CSS가 남아 있음. |
 | 전체 | dense settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup` | Dashboard widget config, ETL rule builder, SQL option form에서 input/select/textarea layout CSS가 계속 남음. |
 | 전체 | icon-only option grid | `관찰됨` | `IconOptionGrid` | Dashboard widget type picker처럼 icon button grid + selected state + tooltip 조합이 반복될 수 있음. |
 | 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
@@ -81,12 +96,12 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 
 | 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 작업 기준 처리 |
 | --- | --- | --- | --- | --- |
-| SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `설계 필요` | `PreviewPanel`, `ResultPanel` | DataTable/Table primitive는 적용 가능하지만 preview header, empty/loading, overflow shell은 화면별 CSS가 남아 있음. |
-| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `관찰됨` | `FilterToolbar` | B04에서 `Button`/`Input`은 적용했지만 toolbar layout, menu, checkbox filtering 구조는 공통화하지 않음. |
+| SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `부분 해결` | `PreviewPanel`, `ResultPanel` | B02/B03/B04에서 SQL preview table, Catalog schema table, Dashboard table widget은 `DataTable` 기준으로 전환됨. 남은 범위는 preview shell/header/CTA/empty/loading/overflow layout 공통화 후보다. |
+| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `부분 해결` | `FilterToolbar` | B04에서 `Panel`, `PanelHeader`, `Button`, `Input` 적용 완료. 남은 범위는 toolbar body/menu/divider/checkbox filter layout을 화면 전용 class에서 공통 shell로 빼는 후속 후보다. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `설계 필요` | `RuntimeTopbar`, `ActionGroup` | B04에서 `Button`/`Input`만 적용. action grouping, dirty state, publish state shell은 화면 전용으로 유지. |
 | Dashboard widget frame | selected/editable frame + delete action + widget chrome | `설계 필요` | `WidgetShell` | B04에서 delete action만 `Button`으로 전환. frame chrome, selected state, resize/grid integration은 유지. |
-| Dashboard table widget | widget 내부 DataTable viewport | `관찰됨` | `EmbeddedDataTablePanel` | B04에서 DataTable로 전환했지만 widget 내부 padding, min width, compact density는 runtime CSS에 남김. |
+| Dashboard table widget | widget 내부 DataTable viewport | `부분 해결` | `EmbeddedDataTablePanel` | B04에서 `DataTable`로 전환됨. widget 내부 padding, min width, compact density를 runtime CSS에 남긴 것은 기능 미완료가 아니라 후속 CSS 축소 후보다. |
 | Dashboard widget config panel | dense chart/table settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | B04에서 text/number input, select, button만 primitive/shadcn-style wrapper로 전환. checkbox, textarea, color picker, layout은 유지. |
 | Dashboard widget type picker | icon-only chart type grid + tooltip | `관찰됨` | `IconOptionGrid` | 선택 state와 tooltip layer가 결합되어 있어 단순 `Button`만으로는 CSS를 제거하기 어려움. |
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
@@ -134,3 +149,4 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거 상태를 반영. TreePanel/TreeHoverCard gap은 유지. |
 | 2026-07-09 | #367에서 `Panel`, `PanelHeader`, `MetricCard`를 추가하고 Jobs/Catalog/Dashboard list shell에 1차 적용. FilterToolbar, PreviewPanel, WidgetShell, TreePanel gap은 유지. |
+| 2026-07-09 | #372에서 B02/B03/B04 완료 범위와 후속 공통화 후보를 구분. `DataTable`/primitive 적용이 끝난 표와 toolbar를 기능 미완료가 아닌 `부분 해결` 상태로 정리. |
