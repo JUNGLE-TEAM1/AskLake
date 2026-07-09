@@ -18,6 +18,7 @@
 - Backend API, 데이터 계약, 도메인 로직은 CSS 정리 범위가 아니다.
 - B가 Catalog/SQL/Dashboard 작업으로 정리하게 될 CSS도 이 문서에서 함께 추적한다.
 - CSS가 남는 이유가 공통 컴포넌트 부재라면 `docs/frontend-component-gap-inventory.md`에도 함께 기록한다.
+- 반복되지 않는 UI라도 shadcn primitive가 제공하는 기본 부품이면 raw HTML과 화면별 CSS를 늘리지 않고 `components/ui` 기준으로 교체하는 것을 우선한다.
 
 ## 상태 값
 
@@ -40,18 +41,18 @@
 
 | 파일 | 줄 수 | 주 담당 | 현재 판단 | 메모 |
 | --- | ---: | --- | --- | --- |
-| `frontend/src/styles/base.css` | 706 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. #369에서 Jobs 전용으로 남아 있던 global `.filter-chip` selector 제거. |
-| `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,760 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동했지만 `.runs-pagination`, `.job-log-modal-header` 등 density/header CSS는 유지. |
-| `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
-| `frontend/src/styles/etl.css` | 9,064 | A | `부분 정리됨` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. #378에서 S3/DB picker shell은 `PickerDialog`, schema/rule bottom bar는 `CommandBar`로 이동했지만 tree/list/form/body selector는 route QA 전 유지. |
-| `frontend/src/styles/responsive.css` | 561 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector 제거. #369에서 Jobs/Dashboard toolbar responsive selector를 `FilterToolbar` responsive utility로 이동. 각 route 모바일 QA 후 추가 정리. |
-| `frontend/src/styles/catalog.css` | 1,527 | B | `부분 정리됨` | Catalog 목록/상세, lineage, schema preview. #361에서 Catalog shell은 `catalog-panel-*`, lineage graph는 `lineage-*` selector로 rename. #367에서 검색/결과/미리보기 panel shell selector를 `Panel`/`PanelHeader`로 이동. Catalog schema table은 `DataTable` 기준으로 전환됐지만 preview card, lineage teaser, result card CSS는 유지. |
-| `frontend/src/styles/sql.css` | 2,603 | B | `부분 정리됨` | SQL panel/editor/preview. B02/B03에서 SQL preview table은 `DataTable` 기준으로 전환됐고 action button/dialog primitive 적용이 진행됨. #378에서 context pagination은 `PaginationBar`, materialize dialog shell은 `DialogShell`로 이동. editor/result shell, 실행 상태, preview wrapper CSS는 유지. |
-| `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
+| `frontend/src/styles/base.css` | 613 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. #369에서 Jobs 전용으로 남아 있던 global `.filter-chip` selector 제거. |
+| `frontend/src/styles/layout.css` | 608 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
+| `frontend/src/styles/ingest.css` | 1,498 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동했지만 `.runs-pagination`, `.job-log-modal-header` 등 density/header CSS는 유지. |
+| `frontend/src/styles/ingest-dag.css` | 468 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
+| `frontend/src/styles/etl.css` | 7,865 | A | `부분 정리됨` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. #378에서 S3/DB picker shell은 `PickerDialog`, schema/rule bottom bar는 `CommandBar`로 이동했지만 tree/list/form/body selector는 route QA 전 유지. |
+| `frontend/src/styles/responsive.css` | 460 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector 제거. #369에서 Jobs/Dashboard toolbar responsive selector를 `FilterToolbar` responsive utility로 이동. 각 route 모바일 QA 후 추가 정리. |
+| `frontend/src/styles/catalog.css` | 1,242 | B | `부분 정리됨` | Catalog 목록/상세, lineage, schema preview. #361에서 Catalog shell은 `catalog-panel-*`, lineage graph는 `lineage-*` selector로 rename. #367에서 검색/결과/미리보기 panel shell selector를 `Panel`/`PanelHeader`로 이동. #375에서 검색 box/tag row/filter row shell selector를 `FilterToolbar` 계열로 이동. Catalog schema table은 `DataTable` 기준으로 전환됐지만 preview card, lineage teaser, result card, sort menu, tag/chip 시각 상태 CSS는 유지. |
+| `frontend/src/styles/sql.css` | 2,248 | B | `부분 정리됨` | SQL panel/editor/preview. B02/B03에서 SQL preview table은 `DataTable` 기준으로 전환됐고 action button/dialog primitive 적용이 진행됨. #375에서 분석 테이블 검색 shell selector를 `FilterToolbarSearch`/`FilterToolbarInput`으로 이동. #378에서 context pagination은 `PaginationBar`, materialize dialog shell은 `DialogShell`로 이동. editor/result shell, 실행 상태, preview wrapper CSS는 유지. |
+| `frontend/src/styles/schema-transform-adapter.css` | 102 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
 | `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
-| `frontend/src/styles/dashboard.css` | 1,286 | B | `부분 정리됨` | Dashboard list가 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input`, `FilterToolbar` 기준으로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. #367에서 list toolbar/table panel shell selector를 `Panel`/`PanelHeader`로 이동. #369에서 list toolbar body/search/actions/divider selector를 `FilterToolbar`로 이동. #378에서 list pagination은 `PaginationBar`, delete confirm dialog는 `DialogShell`로 이동. builder preview, menu option, table density selector는 계속 유지. |
-| `frontend/src/styles/dashboard-runtime.css` | 2,148 | B | `부분 정리됨` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. table widget은 `DataTable` 기준으로 전환됐고 #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. grid/runtime 상태, widget frame, config panel, color picker selector는 삭제 금지. |
+| `frontend/src/styles/dashboard.css` | 1,109 | B | `부분 정리됨` | Dashboard list가 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input`, `FilterToolbar` 기준으로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. #367에서 list toolbar/table panel shell selector를 `Panel`/`PanelHeader`로 이동. #369에서 list toolbar body/search/actions/divider selector를 `FilterToolbar`로 이동. #378에서 list pagination은 `PaginationBar`, delete confirm dialog는 `DialogShell`로 이동. builder preview, menu option, table density selector는 계속 유지. |
+| `frontend/src/styles/dashboard-runtime.css` | 1,867 | B | `부분 정리됨` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. table widget은 `DataTable` 기준으로 전환됐고 #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. grid/runtime 상태, widget frame, config panel, color picker selector는 삭제 금지. |
 
 ## A 작업으로 정리될 CSS
 
@@ -76,7 +77,7 @@
 | DataTable 적용 | `sql.css`, `dashboard.css`, `catalog.css` | `부분 정리됨` | B02-B04에서 SQL preview table, Catalog schema table, Dashboard list table, Dashboard runtime table widget은 `DataTable` 기준으로 전환됨. 남은 것은 table 주변 shell, density, overflow, menu, empty/loading wrapper CSS다. |
 | SQL preview table | `sql.css` | `부분 정리됨` | `SqlPreviewTable`은 공통 `DataTable`로 전환됨. `.sql-preview-table-wrap`, `.sql-preview-table` 같은 wrapper/density class는 `/sql` QA와 result shell 공통화 전까지 유지한다. |
 | SQL editor/action buttons | `sql.css` | `부분 정리됨` | B03에서 editor action button을 `Button` primitive로 옮긴 뒤 `.sql-editor-actions .primary-button` 계열을 축소한다. #378에서 context pagination/materialize dialog shell은 공통화했지만 editor action/result shell selector는 유지한다. |
-| Catalog result/list cards | `catalog.css` | `교체 후보` | #367에서 Catalog search/result/preview panel shell은 `Panel`/`PanelHeader`로 이동. #369에서 Catalog search/tag/filter row는 구조 차이로 강제 통합하지 않음. 결과 card, badge, schema preview, lineage selector는 계속 유지. |
+| Catalog result/list cards | `catalog.css` | `교체 후보` | #367에서 Catalog search/result/preview panel shell은 `Panel`/`PanelHeader`로 이동. #375에서 Catalog search/tag/filter row shell은 `FilterToolbar`로 이동. 결과 card, badge, schema preview, lineage selector와 sort menu는 계속 유지. |
 | Catalog lineage graph | `catalog.css` | `보류` | React Flow node/edge class와 연결되어 있어 lineage QA 전 삭제 금지. #361에서 graph 내부 selector는 `lineage-*` 기준으로 rename. |
 | Dashboard list/table | `dashboard.css` | `부분 정리됨` | B04에서 Dashboard 목록 table이 `DataTable` 기준으로 전환됨. #367에서 list toolbar/table panel shell은 `Panel`/`PanelHeader`로 이동. #369에서 toolbar body/search/actions/divider selector는 `FilterToolbar`로 이동. #378에서 `dashboard-pagination`은 `PaginationBar`, delete confirm shell은 `DialogShell`로 전환. menu option/filter button과 table density selector는 `/dashboards` QA 후 추가 축소한다. |
 | Dashboard builder preview | `dashboard.css` | `보류` | builder canvas, widget preview, draft widget 상태가 많아 B04 QA 후 판단한다. |
@@ -155,3 +156,4 @@ npm run build
 | 2026-07-09 | #372에서 CSS 관련 PR마다 이 문서를 함께 업데이트하는 운영 규칙을 보강. B02-B04와 #369에서 이미 `DataTable`/primitive/`FilterToolbar`로 전환된 범위와 아직 유지하는 wrapper/menu/runtime CSS를 `부분 정리됨`으로 구분. |
 | 2026-07-09 | #378에서 `PaginationBar`, `DialogShell`, `PickerDialog`, `CommandBar` 적용에 따른 CSS 판단을 기록. CSS 파일 삭제는 하지 않고, 사용처가 사라진 backdrop/wrapper selector를 후속 삭제 후보로 분리. |
 | 2026-07-09 | component 확장 PR에서 `PaginationBar`, `DialogShell`, `Chip/TagList`, `ValidationList`, `PreviewPanel`, `SettingsPanel`, `TreePanel` 후보별 CSS 기록 기준을 추가. |
+| 2026-07-09 | #375에서 Catalog 검색 box/tag row/filter row shell selector와 SQL 분석 테이블 검색 selector를 `FilterToolbar` 계열로 이동하고, shadcn primitive 전면 적용 원칙을 CSS cleanup 기준에 추가. |

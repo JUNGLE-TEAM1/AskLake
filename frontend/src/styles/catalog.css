@@ -40,47 +40,6 @@
   gap: 0;
 }
 
-.catalog-search-body {
-  display: grid;
-  gap: 16px;
-  padding: 20px;
-}
-
-.catalog-search-box {
-  display: flex;
-  min-height: 45px;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  color: #64748b;
-  font-size: 15px;
-  padding: 0 16px;
-}
-
-.catalog-search-box input {
-  min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #0f172a;
-  font: inherit;
-  overflow-wrap: anywhere;
-}
-
-.catalog-search-box input::placeholder {
-  color: #64748b;
-}
-
-.catalog-tag-row {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 16px;
-  align-items: center;
-}
-
-.catalog-tag-row > span,
 .catalog-results-header h2,
 .catalog-preview-card h3,
 .catalog-overview-card h2,
@@ -88,20 +47,6 @@
   color: #0f172a;
   font-size: 16px;
   line-height: 1.4;
-}
-
-.catalog-tag-row > span {
-  display: inline-flex;
-  min-height: 38px;
-  align-items: center;
-  font-weight: 700;
-}
-
-.catalog-tag-row > div {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
 }
 
 .catalog-tag,
@@ -141,37 +86,6 @@
   padding: 0;
 }
 
-.catalog-filter-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  border-top: 1px solid #eef2f7;
-  background: #fbfdff;
-  padding: 12px 20px;
-}
-
-.catalog-filter-row label,
-.catalog-filter-row button {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  background: transparent;
-  color: #64748b;
-  font-size: 14px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.catalog-filter-row input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-}
-
 .catalog-sort-control {
   position: relative;
   display: inline-flex;
@@ -179,7 +93,7 @@
   align-items: center;
 }
 
-.catalog-filter-row .catalog-sort-button {
+.catalog-sort-button {
   color: #475569;
 }
 
@@ -197,7 +111,7 @@
   padding: 6px;
 }
 
-.catalog-filter-row .catalog-sort-menu button {
+.catalog-sort-menu button {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   width: 100%;
@@ -209,8 +123,8 @@
   white-space: nowrap;
 }
 
-.catalog-filter-row .catalog-sort-menu button:hover,
-.catalog-filter-row .catalog-sort-menu button.active {
+.catalog-sort-menu button:hover,
+.catalog-sort-menu button.active {
   background: #eff6ff;
   color: #1d4ed8;
 }
