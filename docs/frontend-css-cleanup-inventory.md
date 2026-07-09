@@ -35,7 +35,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401`, #403 `refactor-#403` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -52,7 +52,7 @@
 | `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
 | `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
 | `frontend/src/styles/dashboard.css` | 1,286 | B | `부분 정리됨` | Dashboard list가 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input`, `FilterToolbar` 기준으로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. #367에서 list toolbar/table panel shell selector를 `Panel`/`PanelHeader`로 이동. #369에서 list toolbar body/search/actions/divider selector를 `FilterToolbar`로 이동. #378에서 list pagination은 `PaginationBar`, delete confirm dialog는 `DialogShell`로 이동. #385에서 dashboard header/workspace action row, row tag/status, list status meta는 공통 컴포넌트로 전환. builder preview, menu option, table density selector는 계속 유지. |
-| `frontend/src/styles/dashboard-runtime.css` | 2,148 | B | `부분 정리됨` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. table widget은 `DataTable` 기준으로 전환됐고 #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. #385에서 edit toolbar wrapper는 `ActionGroup`으로 전환. #401에서 dataset sidebar loading/error/empty/body shell은 `TreePanel`로 전환. grid/runtime 상태, widget frame, config panel, color picker selector는 삭제 금지. |
+| `frontend/src/styles/dashboard-runtime.css` | 2,148 | B | `부분 정리됨` | Runtime topbar, widget frame, table widget, config panel, dataset tree가 B04에서 일부 전환됨. table widget은 `DataTable` 기준으로 전환됐고 #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거. #385에서 edit toolbar wrapper는 `ActionGroup`으로 전환. #401에서 dataset sidebar loading/error/empty/body shell은 `TreePanel`로 전환. #403에서 widget frame/topbar/color palette wrapper shell은 `WidgetShell`/`RuntimeTopbar`/`ColorPalettePicker`로 전환. grid/runtime 상태, config panel 세부 field, color 계산 selector는 삭제 금지. |
 
 ## A 작업으로 정리될 CSS
 
@@ -81,9 +81,9 @@
 | Catalog lineage graph | `catalog.css` | `보류` | React Flow node/edge class와 연결되어 있어 lineage QA 전 삭제 금지. #361에서 graph 내부 selector는 `lineage-*` 기준으로 rename. |
 | Dashboard list/table | `dashboard.css` | `부분 정리됨` | B04에서 Dashboard 목록 table이 `DataTable` 기준으로 전환됨. #367에서 list toolbar/table panel shell은 `Panel`/`PanelHeader`로 이동. #369에서 toolbar body/search/actions/divider selector는 `FilterToolbar`로 이동. #378에서 `dashboard-pagination`은 `PaginationBar`, delete confirm shell은 `DialogShell`로 전환. #385에서 header action row, row tag/status, list status meta를 공통 컴포넌트로 전환. menu option/filter button과 table density selector는 `/dashboards` QA 후 추가 축소한다. |
 | Dashboard builder preview | `dashboard.css` | `보류` | builder canvas, widget preview, draft widget 상태가 많아 B04 QA 후 판단한다. |
-| Dashboard runtime canvas/widget | `dashboard-runtime.css` | `보류` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. Table widget은 DataTable 기준으로 전환되어 `.asklake-table-widget*` selector가 새 기준이 됨. #385에서 edit toolbar wrapper만 `ActionGroup`으로 전환했지만 `.asklake-dashboard-edit-toolbar` CSS는 유지. |
+| Dashboard runtime canvas/widget | `dashboard-runtime.css` | `부분 정리됨` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. Table widget은 DataTable 기준으로 전환되어 `.asklake-table-widget*` selector가 새 기준이 됨. #385에서 edit toolbar wrapper를 `ActionGroup`으로, #403에서 widget frame shell을 `WidgetShell`로 전환했지만 grid/resize/selected density CSS는 유지. |
 | Dashboard dataset tree | `dashboard-runtime.css` | `부분 정리됨` | B04에서 runtime dataset tree가 `react-arborist` 기준으로 전환됨. 기존 `.MuiTreeItem-*` selector는 #364에서 삭제. #401에서 state/body wrapper는 `TreePanel`로 전환했고 arborist row/hover card CSS는 후속 `TreeHoverCard` gap 기준으로 유지한다. |
-| Dashboard widget form/buttons | `dashboard-runtime.css` | `교체 후보` | Config panel의 text/number input, select, action/color/type button은 primitive 또는 shadcn-style wrapper로 옮김. checkbox, textarea, color picker, layout selector는 계속 유지한다. |
+| Dashboard widget form/buttons | `dashboard-runtime.css` | `부분 정리됨` | Config panel의 text/number input, select, action/color/type button은 primitive 또는 shadcn-style wrapper로 옮김. #403에서 color palette wrapper shell은 `ColorPalettePicker`로 전환. checkbox, textarea, color 계산, custom picker 세부 selector는 계속 유지한다. |
 
 ## 우선 정리 순서
 
@@ -111,8 +111,9 @@
 | `IconOptionGrid` | icon-only option button grid, selected state, tooltip, keyboard focus selector를 추적한다. |
 | `DetailTableSection` | 작은 detail table 주변 title, action, empty state, overflow shell selector를 추적한다. table 자체보다 section wrapper CSS를 먼저 기록한다. |
 | `TreePanel` | S3/ETL/SQL/Dashboard tree의 outer wrapper와 loading/error/empty shell은 공통 component로 옮기되, MUI TreeView/react-arborist row와 hover card selector는 route QA 전 삭제하지 않고 유지한다. |
+| `WidgetShell` / `RuntimeTopbar` / `ColorPalettePicker` | Dashboard runtime frame/topbar/color wrapper selector는 공통 component로 옮기되, grid resize, selected/editing state, publish/share/rename state, `react-colorful` 세부 selector는 route QA 전 유지한다. |
 
-현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PreviewPanel/ResultPanel` -> `FormFieldGroup/NativeSelectField` -> `SettingsPanel` -> `SegmentedTabs/SelectableCard` -> `IconOptionGrid` -> `DetailTableSection`이다. #401에서 `TreePanel` wrapper/state shell은 1차 적용됐고, `WidgetShell`, `ColorPalettePicker`, `TreeHoverCard`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
+현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PreviewPanel/ResultPanel` -> `FormFieldGroup/NativeSelectField` -> `SettingsPanel` -> `SegmentedTabs/SelectableCard` -> `IconOptionGrid` -> `DetailTableSection`이다. #401에서 `TreePanel` wrapper/state shell, #403에서 Dashboard runtime wrapper shell은 1차 적용됐고, `TreeHoverCard`와 runtime 내부 상태 cleanup은 별도 설계 PR로 분리한다.
 
 ## #387 UI Shell 후보 CSS 기록
 
@@ -186,6 +187,16 @@
 | SQL dataset tree | `.sql-dataset-tree`, `.sql-tree-node`, `.sql-tree-table-node`, `.sql-tree-hover-card` | outer shell만 `TreePanel`로 전환. table/column row와 hover card selector는 유지. |
 | Dashboard dataset sidebar | `.asklake-dataset-sidebar-state`, `.asklake-dataset-tree-wrap`, `.asklake-dataset-tree-row`, `.asklake-dataset-hover-card` | loading/error/empty/body shell을 `TreePanel`로 전환. react-arborist row와 hover card selector는 유지. |
 
+## #403 Dashboard Runtime Shell 적용 CSS 기록
+
+이번 PR은 Dashboard runtime의 frame/topbar/color palette wrapper shell을 공통 컴포넌트로 옮기지만 CSS selector 삭제는 하지 않는다. 기존 className을 그대로 전달해 `/dashboards/:dashboardId`와 `/dashboards/:dashboardId/edit` route QA 전까지 density, selected, resize, color picker 스타일을 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| WidgetShell | `.asklake-widget-frame`, `.asklake-widget-frame.editable`, `.asklake-widget-frame.selected`, `.asklake-widget-frame.ai-working`, `.asklake-widget-frame-body`, `.asklake-ai-working-overlay` | outer/header/body/AI overlay shell을 `WidgetShell`로 전환. grid span, editable/selected/AI 상태 class는 유지. |
+| RuntimeTopbar | `.asklake-dashboard-topbar`, `.asklake-dashboard-title`, `.asklake-dashboard-title-edit`, `.asklake-dashboard-actions`, `.asklake-dashboard-action` | title/action wrapper를 `RuntimeTopbar`로 전환. rename/publish/share/refresh 상태와 button density selector는 유지. |
+| ColorPalettePicker | `.asklake-widget-palette-field`, `.asklake-widget-color-slots`, `.asklake-widget-color-slot`, `.asklake-widget-color-choice-panel`, `.asklake-widget-custom-color-panel`, `.asklake-widget-hex-input` | slot/swatch/custom panel shell을 `ColorPalettePicker`로 전환. `react-colorful` 내부 selector와 color 계산 state는 유지. |
+
 ## #378 Component 확장 CSS 기록
 
 이번 PR은 CSS 파일을 직접 삭제하지 않고, 공통 컴포넌트가 기존 화면 className을 받을 수 있게 만든 뒤 대표 사용처를 전환했다. 따라서 아래 selector는 즉시 삭제가 아니라 route QA 후 후속 cleanup PR에서 정리한다.
@@ -240,3 +251,4 @@ npm run build
 | 2026-07-09 | #393에서 Selection UI 추가 적용에 따른 CSS 판단을 기록. 단순 tab selector는 유지하고 checkbox/radio card 후보는 보류한다. |
 | 2026-07-09 | #395에서 Jobs run history table card/scroll/footer shell을 `DetailTableSection`으로 전환하고 `.runs-table*` density CSS는 route QA 전까지 유지하기로 기록. |
 | 2026-07-09 | #401에서 S3/ETL/SQL/Dashboard tree wrapper와 state shell을 `TreePanel`로 전환하고 tree row/hover/외부 라이브러리 selector는 유지하기로 기록. |
+| 2026-07-09 | #403에서 Dashboard runtime frame/topbar/color palette wrapper shell을 `WidgetShell`/`RuntimeTopbar`/`ColorPalettePicker`로 전환하고 grid/color 내부 상태 selector는 유지하기로 기록. |

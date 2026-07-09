@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Check, Eye, Pencil, RefreshCw, Save, Share2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { RuntimeTopbar } from "@/components/ui/runtime-topbar";
 
 export function DashboardTopBar({
   hasPublishedRevision,
@@ -55,8 +56,7 @@ export function DashboardTopBar({
     setIsEditingTitle(false);
   };
 
-  return (
-    <header className="asklake-dashboard-topbar">
+  const titleSlot = (
       <div className="asklake-dashboard-title">
         <span>{mode === "published" ? "보기 모드" : "편집 모드"}</span>
         {isEditingTitle ? (
@@ -93,50 +93,61 @@ export function DashboardTopBar({
           </div>
         )}
       </div>
-      <div className="asklake-dashboard-actions">
-        {mode === "published" ? (
-          <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
-            <Pencil size={16} />
-            편집 모드
+  );
+
+  const actions = (
+    <>
+      {mode === "published" ? (
+        <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
+          <Pencil size={16} />
+          편집 모드
+        </Button>
+      ) : (
+        <>
+          <Button
+            className="asklake-dashboard-action primary"
+            disabled={isPublishing}
+            type="button"
+            size="sm"
+            variant="primary"
+            onClick={onPublishDraft}
+          >
+            <Save size={16} />
+            {isPublishing ? "저장 중" : "저장"}
           </Button>
-        ) : (
-          <>
-            <Button
-              className="asklake-dashboard-action primary"
-              disabled={isPublishing}
-              type="button"
-              size="sm"
-              variant="primary"
-              onClick={onPublishDraft}
-            >
-              <Save size={16} />
-              {isPublishing ? "저장 중" : "저장"}
+          {hasPublishedRevision && (
+            <Button className="asklake-dashboard-action" type="button" onClick={onOpenPublished} size="sm" variant="outline">
+              <Eye size={16} />
+              보기 모드
             </Button>
-            {hasPublishedRevision && (
-              <Button className="asklake-dashboard-action" type="button" onClick={onOpenPublished} size="sm" variant="outline">
-                <Eye size={16} />
-                보기 모드
-              </Button>
-            )}
-          </>
-        )}
-        <Button
-          aria-label="대시보드 새로고침"
-          className="asklake-dashboard-icon-action"
-          disabled={isRefreshing}
-          title="새로고침"
-          type="button"
-          size="icon"
-          variant="outline"
-          onClick={onRefresh}
-        >
-          <RefreshCw size={17} />
-        </Button>
-        <Button className="asklake-dashboard-action" type="button" aria-label="대시보드 공유" onClick={onShare} size="sm" variant="outline">
-          <Share2 size={16} />
-          공유
-        </Button>
-      </div>
-    </header>
+          )}
+        </>
+      )}
+      <Button
+        aria-label="대시보드 새로고침"
+        className="asklake-dashboard-icon-action"
+        disabled={isRefreshing}
+        title="새로고침"
+        type="button"
+        size="icon"
+        variant="outline"
+        onClick={onRefresh}
+      >
+        <RefreshCw size={17} />
+      </Button>
+      <Button className="asklake-dashboard-action" type="button" aria-label="대시보드 공유" onClick={onShare} size="sm" variant="outline">
+        <Share2 size={16} />
+        공유
+      </Button>
+    </>
+  );
+
+  return (
+    <RuntimeTopbar
+      actions={actions}
+      actionsClassName="asklake-dashboard-actions"
+      className="asklake-dashboard-topbar"
+      titleSlot={titleSlot}
+    />
   );
 }

@@ -104,6 +104,9 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `IconOptionGrid`
 - `DetailTableSection`
 - `TreePanel`
+- `WidgetShell`
+- `RuntimeTopbar`
+- `ColorPalettePicker`
 
 ## 2026-07-09 코드 스윕 결과
 
@@ -164,10 +167,10 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | dense settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 Dashboard config shell을 1차 적용했고, #391에서 WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field까지 확장. ETL rule builder/target/permission form과 color picker 세부 layout은 후속. |
 | 전체 | icon-only option grid | `부분 해결` | `IconOptionGrid` | #389에서 Dashboard runtime widget type icon grid에 1차 적용. tooltip/focus state는 기존 runtime 흐름 유지. |
 | 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell에 적용. ETL detail과 schema transform editor는 후속. |
-| 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
+| 전체 | color palette picker | `부분 해결` | `ColorPalettePicker` | #403에서 Dashboard widget color slot/choice/custom picker shell을 `ColorPalettePicker`로 분리. `react-colorful` 상태와 color config 계산은 `WidgetConfigPanel`에 유지. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
 | 전체 | tree/list hybrid selector | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 S3 picker, ETL source asset tree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell을 `TreePanel`로 분리. row renderer, hover card, MUI TreeView/react-arborist 통합은 후속. |
-| 전체 | runtime/widget frame shell | `설계 필요` | `WidgetShell` 또는 `RuntimeFrame` | Dashboard widget frame, table widget viewport, assistant/loading/error state가 화면 고유 CSS로 남아 있음. |
+| 전체 | runtime/widget frame shell | `부분 해결` | `WidgetShell`, `RuntimeTopbar` | #403에서 Dashboard runtime widget frame outer/header/body/AI overlay shell과 topbar title/action shell을 공통 컴포넌트로 분리. grid resize/drag 상태는 runtime 전용으로 유지. |
 
 ## A03 ETL Seed Gap
 
@@ -194,12 +197,12 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. menu option과 filter button의 화면 고유 스타일은 유지. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard list pagination/delete dialog | list footer pagination + destructive confirm dialog | `부분 해결` | `PaginationBar`, `DialogShell` | #378에서 DashboardPagination과 dashboard/delete widget delete 확인 dialog를 공통 shell로 전환. table density와 builder/chart modal은 유지. |
-| Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `부분 해결` | `RuntimeTopbar`, `ActionGroup` | #385에서 runtime edit toolbar는 `ActionGroup`으로 전환. title/publish/share topbar와 dirty state shell은 화면 전용으로 유지. |
-| Dashboard widget frame | selected/editable frame + delete action + widget chrome | `설계 필요` | `WidgetShell` | B04에서 delete action만 `Button`으로 전환. frame chrome, selected state, resize/grid integration은 유지. |
+| Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `부분 해결` | `RuntimeTopbar`, `ActionGroup` | #385에서 runtime edit toolbar는 `ActionGroup`으로 전환. #403에서 title/action topbar shell은 `RuntimeTopbar`로 전환. publish/share/rename 상태 로직은 화면 전용으로 유지. |
+| Dashboard widget frame | selected/editable frame + delete action + widget chrome | `부분 해결` | `WidgetShell` | #403에서 frame outer/header/body/AI working overlay shell은 `WidgetShell`로 전환. selected/editable className과 resize/grid integration은 유지. |
 | Dashboard table widget | widget 내부 DataTable viewport | `부분 해결` | `EmbeddedDataTablePanel` | B04에서 `DataTable`로 전환됨. widget 내부 padding, min width, compact density를 runtime CSS에 남긴 것은 기능 미완료가 아니라 후속 CSS 축소 후보다. |
 | Dashboard widget config panel | dense chart/table settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 config panel shell과 기본 field를 적용했고, #391에서 chart/table select와 number field를 `WidgetSelectField`/`FormFieldGroup` 기준으로 확장. checkbox와 color picker layout은 유지. |
 | Dashboard widget type picker | icon-only chart type grid + tooltip | `부분 해결` | `IconOptionGrid` | #389에서 `IconOptionGrid`로 전환. 기존 tooltip positioning과 selected state className은 유지. |
-| Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
+| Dashboard color controls | color slot list + swatches + custom color picker | `부분 해결` | `ColorPalettePicker` | #403에서 slot/choice/custom panel shell은 `ColorPalettePicker`로 전환. `react-colorful`과 custom color state 계산은 `WidgetConfigPanel`에 유지. |
 | Dashboard dataset tree | arborist tree row + hover card + type icon | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 loading/error/empty/body wrapper를 `TreePanel`로 전환. arborist row renderer와 hover card primitive는 후속으로 유지. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
 | SQL editor/action surface | editor toolbar + execution status + result shell | `부분 해결` | `QueryActionBar`, `ResultPanel`, `PaginationBar`, `DialogShell`, `ActionGroup` | #378에서 context pagination과 materialize dialog shell을 공통화했고, #385에서 SQL AI/editor/result button rows를 `ActionGroup`으로 전환. execution status와 result shell은 후속 `ResultPanel` 후보로 유지. |
@@ -261,3 +264,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #393에서 Selection UI 계열을 추가 정리. Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 전환하고 checkbox/radio 성격의 card 후보는 보류로 기록. |
 | 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |
 | 2026-07-09 | #401에서 `TreePanel`을 추가하고 S3 picker, ETL SourceAssetTree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell에 적용. row/hover card와 tree library 통합은 후속 gap으로 유지. |
+| 2026-07-09 | #403에서 `WidgetShell`, `RuntimeTopbar`, `ColorPalettePicker`를 추가하고 Dashboard runtime frame/topbar/color palette shell에 적용. runtime 상태와 grid/color 계산은 화면 전용으로 유지. |

@@ -1,5 +1,6 @@
 import { Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WidgetShell, WidgetShellHeader } from "@/components/ui/widget-shell";
 import type { DashboardRuntimeWidget } from "../../../types";
 import { dashboardWidgetDefinitions } from "./widgetDefinitions";
 import { WidgetRenderer } from "./WidgetRenderer";
@@ -59,9 +60,41 @@ export function WidgetFrame({
   const isAiWorking = assistantContext?.workingWidgetId === widget.id;
 
   return (
-    <article
+    <WidgetShell
       aria-busy={isAiWorking || undefined}
+      bodyClassName="asklake-widget-frame-body"
       className={cx("asklake-widget-frame", editable && "editable", selected && "selected", isAiWorking && "ai-working")}
+      header={(
+        <WidgetShellHeader
+          eyebrow={widgetTypeLabel(widget)}
+          title={widget.title || "제목 없는 위젯"}
+          action={editable && selected ? (
+            <Button
+              aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
+              className="asklake-widget-delete-button widget-control"
+              disabled={deleteDisabled}
+              title="위젯 삭제"
+              type="button"
+              size="icon"
+              variant="destructive"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete?.(widget.id);
+              }}
+            >
+              <Trash2 size={16} />
+            </Button>
+          ) : null}
+        />
+      )}
+      overlay={isAiWorking ? (
+        <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
+          <span aria-hidden="true" className="asklake-ai-working-icon">
+            <Sparkles size={16} />
+          </span>
+          <strong>AI 시각화 작업중</strong>
+        </div>
+      ) : null}
       style={{
         gridColumn: editable ? undefined : `span ${columnSpan}`,
         minHeight: editable ? undefined : `${Math.max(160, rowSpan * 56)}px`,
@@ -73,46 +106,13 @@ export function WidgetFrame({
         onSelect?.(widget.id);
       }}
     >
-      <header>
-        <div>
-          <span>{widgetTypeLabel(widget)}</span>
-          <h2>{widget.title || "제목 없는 위젯"}</h2>
-        </div>
-        {editable && selected && (
-          <Button
-            aria-label={`${widget.title || "제목 없는 위젯"} 삭제`}
-            className="asklake-widget-delete-button widget-control"
-            disabled={deleteDisabled}
-            title="위젯 삭제"
-            type="button"
-            size="icon"
-            variant="destructive"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete?.(widget.id);
-            }}
-          >
-            <Trash2 size={16} />
-          </Button>
-        )}
-      </header>
-      <div className="asklake-widget-frame-body">
-        <WidgetRenderer
-          assistantContext={assistantContext}
-          widget={widget}
-          onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
-          onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
-          onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
-        />
-      </div>
-      {isAiWorking && (
-        <div className="asklake-ai-working-overlay" role="status" aria-live="polite">
-          <span aria-hidden="true" className="asklake-ai-working-icon">
-            <Sparkles size={16} />
-          </span>
-          <strong>AI 시각화 작업중</strong>
-        </div>
-      )}
-    </article>
+      <WidgetRenderer
+        assistantContext={assistantContext}
+        widget={widget}
+        onApplyWidgetPatch={onApplyWidgetPatch ? (patch) => onApplyWidgetPatch(widget, patch) : undefined}
+        onPatchConfig={onPatchConfig ? (patch) => onPatchConfig(widget, patch) : undefined}
+        onSelectColorSlot={onSelectColorSlot ? (slotIndex) => onSelectColorSlot(widget.id, slotIndex) : undefined}
+      />
+    </WidgetShell>
   );
 }
