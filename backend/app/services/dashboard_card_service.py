@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, can, permissions_for_actor
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.dashboard_card_repository import (
@@ -94,8 +95,9 @@ def _filter_options(cards: list[DashboardCard]) -> DashboardListFilterOptions:
     return DashboardListFilterOptions(owners=owners, tags=tags)
 
 
-def query_dashboard_cards(db: Session, query: DashboardListQuery) -> DashboardListResponse:
-    source_cards = [with_dashboard_permissions(card) for card in list_dashboard_cards(db)]
+def query_dashboard_cards(db: Session, query: DashboardListQuery, actor: ActorContext | None = None) -> DashboardListResponse:
+    actor_context = actor or ActorContext()
+    source_cards = [with_dashboard_permissions(card, actor_context) for card in list_dashboard_cards(db)]
     filtered_cards = [card for card in source_cards if _matches_query(card, query)]
     sorted_cards = _sort_dashboard_cards(filtered_cards, query.sort)
     page_size = query.page_size
@@ -145,10 +147,13 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
     return dashboard
 
 
-def with_dashboard_permissions(card: DashboardCard, actor_name: str = "demo-user") -> DashboardCard:
+def with_dashboard_permissions(card: DashboardCard, actor: ActorContext | None = None) -> DashboardCard:
+    actor_context = actor or ActorContext()
+    grants = card.permission_grants or permission_grants_from_roles(card.owner, default_actions=["view", "manage", "share"])
+    grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in grants]
     return card.model_copy(update={
-        "permission_grants": card.permission_grants or permission_grants_from_roles(card.owner, default_actions=["view", "manage", "share"]),
-        "permissions": card.permissions or resource_permissions(actor=actor_name),
+        "permission_grants": grants,
+        "permissions": permissions_for_actor(actor_context, owner=card.owner, grants=grant_payloads, enforced=bool(card.permissions.enforced)),
     })
 
 
@@ -187,14 +192,15 @@ def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateD
 def delete_dashboard_card_with_permission(
     db: Session,
     dashboard_id: str,
-    actor_name: str,
-    actor_role: str,
+    actor: ActorContext,
 ) -> str:
     dashboard = get_dashboard_card(db, dashboard_id)
     if dashboard is None:
         raise ApiError(ErrorCode.NOT_FOUND, "Dashboard not found", status.HTTP_404_NOT_FOUND)
 
-    if actor_role.lower() != "admin" and dashboard.owner != actor_name:
+    grants = dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "delete", "share"])
+    grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in grants]
+    if not can(actor, "delete", owner=dashboard.owner, grants=grant_payloads):
         raise ApiError(
             ErrorCode.FORBIDDEN,
             "Only the dashboard owner or an admin can delete this dashboard",

@@ -101,6 +101,14 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 
 Phase 2 기준 `permissionGrants`와 `permissions`는 UI 표시와 후속 enforcement 준비를 위한 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다.
 
+Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. 현재 이 공통 판정기를 실제 차단에 사용하는 endpoint는 Dashboard 삭제이며, Catalog/SQL/Job 차단은 후속 단계에서 붙입니다.
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 요청 사용자 표시 이름 |
+| `X-AskLake-Role` | `admin` | `admin`이면 모든 action 허용 |
+| `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
+
 ```ts
 type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
 type PermissionPrincipalType = "user" | "group" | "role" | "public";
@@ -1405,7 +1413,7 @@ type DashboardListResponse = {
 };
 ```
 
-`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장하되, 삭제 권한 검사는 아직 dashboard 전용 owner/admin 임시 규칙을 사용합니다.
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장합니다. Dashboard 삭제 권한 검사는 Phase 3부터 공통 `ActorContext`/`can()` 코어를 사용하되, 현재 호환성을 위해 admin 또는 dashboard owner면 삭제할 수 있습니다.
 
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
@@ -1428,7 +1436,7 @@ Request body는 없습니다.
 | `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
 | `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
 
-이 검사는 dashboard 삭제에 한정된 임시 보호 장치입니다. 후속 공통 권한 모델에서는 request actor, resource grant, action을 기준으로 동일한 permission check를 재사용해야 합니다.
+이 검사는 dashboard 삭제에 한정된 보호 장치입니다. Phase 3부터 request actor, resource grant, action을 기준으로 하는 공통 permission check를 사용합니다.
 
 Response `200 OK`:
 
