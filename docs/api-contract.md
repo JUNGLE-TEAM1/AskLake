@@ -97,11 +97,11 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | actor/group/role별 resource action 허용 목록 |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
-현재 Catalog 목록/상세, SQL preview, ETL job 생성/실행 API는 `permissionSummary`나 `permissionRoles`로 접근 권한을 판정하지 않습니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 dashboard 삭제 전용 임시 입력이며, 플랫폼 공통 권한 모델이 아닙니다.
+Catalog 목록/상세, SQL preview, Query AI, ETL job command API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
 
 Phase 2 기준 `permissionGrants`와 `permissions`는 UI 표시와 후속 enforcement 준비를 위한 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다.
 
-Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. Phase 4부터 이 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command에도 사용됩니다.
+Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. Phase 4부터 이 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command에도 사용됩니다. Phase 6부터 Query AI 생성도 선택 dataset 전체에 대해 같은 `query` permission check를 사용합니다.
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
@@ -109,7 +109,7 @@ Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로
 | `X-AskLake-Role` | `admin` | `admin`이면 모든 action 허용 |
 | `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
 
-Phase 4 enforcement 범위:
+Phase 4+ enforcement 범위:
 
 | Endpoint | 필요 action | 비고 |
 | --- | --- | --- |
@@ -118,12 +118,13 @@ Phase 4 enforcement 범위:
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
 | `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` | materialization metadata 수정으로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
 | `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
 
 Frontend Phase 5 기준:
 
-- `permissions.canQuery=false`: SQL Preview 실행, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
+- `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
 - `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
 - `permissions.canManage=false`: Job pause/cancel/stop, dataset materialization-run 삭제 버튼을 비활성화합니다.
 - `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
@@ -1095,6 +1096,7 @@ Validation:
 - backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
 - frontend는 live 응답이 선택 reference JOIN을 포함하지 않는 경우 동일한 선택 metadata로 JOIN SQL 초안 fallback을 적용할 수 있습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.

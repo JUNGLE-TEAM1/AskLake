@@ -53,5 +53,6 @@ def get_query_run(
 def create_query_ai_suggestion(
     request: QueryAiSuggestionRequest,
     service: Annotated[QueryAiService, Depends(get_query_ai_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> QueryAiSuggestionResponse:
-    return service.create_suggestion(request)
+    return service.create_suggestion(request, actor)

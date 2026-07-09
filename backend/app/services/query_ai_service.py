@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, require_permission
 from app.core.config import settings
 from app.core.errors import ApiError
 from app.repositories.catalog_repository import CatalogRepository
@@ -32,7 +33,9 @@ class QueryAiService:
     def create_suggestion(
         self,
         request: QueryAiSuggestionRequest,
+        actor: ActorContext | None = None,
     ) -> QueryAiSuggestionResponse:
+        actor_context = actor or ActorContext()
         if request.mode != "draft_sql":
             raise ApiError(
                 ErrorCode.VALIDATION_ERROR,
@@ -66,6 +69,14 @@ class QueryAiService:
             self.get_catalog_dataset(dataset_id)
             for dataset_id in context_dataset_ids
         ]
+        for dataset in datasets:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
         base_dataset = self.pick_base_dataset(datasets, request.base_dataset_id)
         client = OpenAiResponsesClient(
             api_key=settings.openai_api_key,

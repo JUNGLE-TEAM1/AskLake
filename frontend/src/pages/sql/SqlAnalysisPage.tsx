@@ -16,6 +16,7 @@ import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
+import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
@@ -493,6 +494,12 @@ export function SqlAnalysisPage({
       return;
     }
 
+    if (!hasQueryPermission) {
+      setQueryAiSuggestion(null);
+      setQueryAiError(queryPermissionMessage);
+      return;
+    }
+
     if (queryAiPrompt.trim().length === 0) {
       setQueryAiSuggestion(null);
       setQueryAiError("만들고 싶은 분석을 자연어로 입력해 주세요.");
@@ -513,8 +520,8 @@ export function SqlAnalysisPage({
       });
       setQueryAiSuggestion(suggestion);
       onAction("analysis.ai.suggestion_created", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id);
-    } catch {
-      setQueryAiError("AI 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch (error) {
+      setQueryAiError(error instanceof ApiError && error.status === 403 ? queryPermissionMessage : "AI 제안을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.");
       onAction("analysis.ai.suggestion_failed", "/api/query/ai-suggestions?mode=draft_sql", baseDataset.id, "failed");
     } finally {
       setQueryAiPending(false);
@@ -888,7 +895,7 @@ export function SqlAnalysisPage({
                         />
                       </label>
                       <div className="sql-ai-actions">
-                        <button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button">
+                        <button className="secondary-button" disabled={queryAiPending || !hasQueryPermission} title={hasQueryPermission ? "Query AI 초안을 생성합니다." : queryPermissionMessage} onClick={requestQueryAiSuggestion} type="button">
                           <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
                         </button>
                       </div>
@@ -905,7 +912,7 @@ export function SqlAnalysisPage({
                         )}
                       </>
                     ) : (
-                      <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
+                      <span>{queryAiError ?? (!hasQueryPermission ? queryPermissionMessage : baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
                     )}
                   </div>
                 </div>
