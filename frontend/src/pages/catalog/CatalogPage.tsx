@@ -21,6 +21,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { DialogShell } from "@/components/ui/dialog-shell";
 import {
   FilterToolbar,
   FilterToolbarActions,
@@ -775,21 +776,22 @@ function CatalogModal({
   variant: "lineage" | "schema";
 }) {
   return (
-    <div className="catalog-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`} role="dialog" aria-modal="true" aria-label={`${dataset.name} ${title}`} onClick={(event) => event.stopPropagation()}>
-        <header className="catalog-modal-header">
-          <div>
-            <span>{dataset.layer} 데이터셋</span>
-            <h2>{dataset.name}</h2>
-            <p>{title}</p>
-          </div>
-          <Button type="button" onClick={onClose} size="sm" variant="outline">닫기</Button>
-        </header>
-        <div className="catalog-modal-body">
-          {children}
-        </div>
-      </section>
-    </div>
+    <DialogShell
+      aria-label={`${dataset.name} ${title}`}
+      bodyClassName="catalog-modal-body"
+      closeLabel="닫기"
+      contentClassName={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`}
+      description={title}
+      eyebrow={`${dataset.layer} 데이터셋`}
+      headerActions={<Button type="button" onClick={onClose} size="sm" variant="outline">닫기</Button>}
+      headerClassName="catalog-modal-header"
+      onClose={onClose}
+      showCloseButton={false}
+      size={variant === "lineage" ? "wide" : "xl"}
+      title={dataset.name}
+    >
+      {children}
+    </DialogShell>
   );
 }
 

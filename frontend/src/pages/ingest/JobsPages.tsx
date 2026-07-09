@@ -1451,59 +1451,60 @@ function RunDagModal({
   );
 
   return (
-    <div className="run-dag-modal" role="dialog" aria-modal="true" aria-label={`${currentRun.runId} 실행 상세`} onClick={onClose}>
-      <section onClick={(event) => event.stopPropagation()}>
-        <header className="run-dag-modal-header">
-          <div>
-            <span>{job.name}</span>
-            <h2>{currentRun.runId} 실행 상세</h2>
-            <p>{currentRun.startedAt} · {runStatusMeta[currentRun.status].label}</p>
-          </div>
-          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-        </header>
-        <div className="run-dag-modal-body">
-          <section className="dag-body-content">
-            <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-              {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
-              <span>▾</span>
-            </button>
+    <DialogShell
+      aria-label={`${currentRun.runId} 실행 상세`}
+      bodyClassName="run-dag-modal-body"
+      closeLabel="닫기"
+      contentClassName="run-dag-modal-panel"
+      description={`${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`}
+      eyebrow={job.name}
+      headerActions={<Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>}
+      headerClassName="run-dag-modal-header"
+      onClose={onClose}
+      showCloseButton={false}
+      size="wide"
+      title={`${currentRun.runId} 실행 상세`}
+    >
+      <section className="dag-body-content">
+        <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
+          {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
+          <span>▾</span>
+        </button>
 
-            <div className="dag-summary-grid">
-              <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
-              <DagSummaryCard label="소요 시간" value={currentRun.duration} />
-              <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
-              <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
-              <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
-            </div>
-
-            <article className="dag-flow-card">
-              <div className="dag-flow-topbar">
-                <h2>작업 진행 순서 / 실행 단계</h2>
-                <div className="dag-flow-controls">
-                  <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
-                </div>
-              </div>
-              {dagSearchOpen && (
-                <div className="dag-search-panel">
-                  <Search size={15} />
-                  <input aria-label="실행 단계 검색" defaultValue="변환 규칙" />
-                  <span>1개 단계 발견</span>
-                </div>
-              )}
-
-              <div className="dag-canvas-scroll">
-                {dagCanvas}
-              </div>
-
-              <div className="dag-selected-strip">
-                <span>선택: 실행 단계 노드를 클릭하면 단계 상세 패널이 열립니다 · ETL 작업 수정 링크는 상세 패널에서 제공합니다</span>
-                <strong>선택</strong>
-              </div>
-            </article>
-          </section>
+        <div className="dag-summary-grid">
+          <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
+          <DagSummaryCard label="소요 시간" value={currentRun.duration} />
+          <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
+          <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
+          <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
         </div>
+
+        <article className="dag-flow-card">
+          <div className="dag-flow-topbar">
+            <h2>작업 진행 순서 / 실행 단계</h2>
+            <div className="dag-flow-controls">
+              <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
+            </div>
+          </div>
+          {dagSearchOpen && (
+            <div className="dag-search-panel">
+              <Search size={15} />
+              <input aria-label="실행 단계 검색" defaultValue="변환 규칙" />
+              <span>1개 단계 발견</span>
+            </div>
+          )}
+
+          <div className="dag-canvas-scroll">
+            {dagCanvas}
+          </div>
+
+          <div className="dag-selected-strip">
+            <span>선택: 실행 단계 노드를 클릭하면 단계 상세 패널이 열립니다 · ETL 작업 수정 링크는 상세 패널에서 제공합니다</span>
+            <strong>선택</strong>
+          </div>
+        </article>
       </section>
-    </div>
+    </DialogShell>
   );
 }
 

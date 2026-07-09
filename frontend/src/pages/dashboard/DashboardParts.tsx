@@ -156,21 +156,22 @@ export function DashboardDeleteModal({ onCancel, onDelete }: { onCancel: () => v
 
 export function DashboardChartModal({ chart, children, onClose }: { chart: ExpandedChart; children: React.ReactNode; onClose: () => void }) {
   return (
-    <div className="dashboard-chart-modal" role="dialog" aria-modal="true" aria-label={`${chart.title} 확대 보기`}>
-      <section>
-        <div className="dashboard-chart-modal-header">
-          <div>
-            <span>EXPANDED CHART</span>
-            <h2>{chart.title}</h2>
-            <p>{chart.subtitle}</p>
-          </div>
-          <button type="button" onClick={onClose}>닫기</button>
-        </div>
-        <div className="dashboard-chart-modal-body">
-          {children}
-        </div>
-      </section>
-    </div>
+    <DialogShell
+      aria-label={`${chart.title} 확대 보기`}
+      bodyClassName="dashboard-chart-modal-body"
+      closeLabel="닫기"
+      contentClassName="dashboard-chart-modal-panel"
+      description={chart.subtitle}
+      eyebrow="EXPANDED CHART"
+      headerActions={<Button type="button" onClick={onClose} size="sm" variant="outline">닫기</Button>}
+      headerClassName="dashboard-chart-modal-header"
+      onClose={onClose}
+      showCloseButton={false}
+      size="xl"
+      title={chart.title}
+    >
+      {children}
+    </DialogShell>
   );
 }
 

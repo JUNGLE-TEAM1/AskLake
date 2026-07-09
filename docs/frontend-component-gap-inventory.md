@@ -269,3 +269,17 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |
 | 2026-07-09 | #400에서 shadcn replacement inventory를 추가하고, shadcn primitive로 대체 가능한 wrapper와 유지할 AskLake composition component를 구분하는 기준을 연결. |
 | 2026-07-09 | #401에서 `TreePanel`을 추가하고 S3 picker, ETL SourceAssetTree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell에 적용. row/hover card와 tree library 통합은 후속 gap으로 유지. |
+| 2026-07-09 | #410에서 Catalog schema/lineage modal, Ingest DAG run detail modal, Dashboard chart expanded modal, ETL TransformFunctionModal shell을 `DialogShell` 기준으로 전환. menu/popover, DAG graph/canvas, quick function chip/form layout은 후속 gap으로 유지. |
+
+## #410 Modal Shell 꼬리 정리 반영
+
+`DialogShell` 적용 범위를 한 번 더 넓혔다. 이번 PR은 3단계 꼬리 정리 stack의 첫 번째이며, modal/backdrop 계열만 다룬다.
+
+| 영역 | 이번에 공통화한 UI | 사용한 공통 컴포넌트 | 남은 gap |
+| --- | --- | --- | --- |
+| Catalog | schema 전체 보기 modal, lineage modal | `DialogShell` | sort menu, result card 내부 chip/status, React Flow lineage canvas는 별도 후보로 유지 |
+| Ingest | DAG run detail modal shell | `DialogShell` | DAG graph/canvas, node row, run selector button은 runtime/special UI 후보로 유지 |
+| Dashboard | chart expanded modal shell | `DialogShell` | list/custom menu, chart body density, builder/runtime 특수 상태는 별도 후보로 유지 |
+| ETL | `TransformFunctionModal` fixed backdrop/card shell | `DialogShell`, `ActionGroup`, `Button` | quick function chip, AI toggle button, expression field layout은 form/option cleanup 후보로 유지 |
+
+이번 반영 뒤 `custom modal/dialog` gap은 `부분 해결` 상태를 유지한다. 직접 만든 backdrop wrapper는 줄었지만, menu/popover와 graph/runtime 특수 UI는 다음 stack PR에서 따로 다룬다.
