@@ -10,6 +10,10 @@ export function canManageDataset(dataset: CatalogDataset | null | undefined) {
   return permissionValue(dataset, "canManage", false);
 }
 
+export function canDeleteDatasetMaterializationRun(dataset: CatalogDataset | null | undefined) {
+  return canManageDataset(dataset) || permissionValue(dataset, "canDelete", false);
+}
+
 export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard | null | undefined) {
   return permissionValue(dashboard, "canManage", true);
 }

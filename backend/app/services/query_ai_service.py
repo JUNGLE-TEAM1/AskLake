@@ -13,6 +13,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
+from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
     build_dataset_context_map,
     extract_cte_names,
@@ -115,7 +116,10 @@ class QueryAiService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return CatalogDatasetResponse.model_validate(payload)
+        return dataset_with_persisted_permission_grants(
+            self.catalog_repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
 
     def pick_base_dataset(
         self,

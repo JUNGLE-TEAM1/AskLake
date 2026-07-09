@@ -17,6 +17,7 @@ from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryRunRequest, QueryRunResponse
+from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 
 DEFAULT_PREVIEW_LIMIT = 100
 MUTATION_KEYWORDS = (
@@ -153,7 +154,10 @@ class SqlService:
                 status.HTTP_404_NOT_FOUND,
                 {"datasetId": dataset_id},
             )
-        return CatalogDatasetResponse.model_validate(payload)
+        return dataset_with_persisted_permission_grants(
+            self.catalog_repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
 
 
 def validate_read_only_query(query: str) -> str:

@@ -283,6 +283,12 @@ pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
+Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:permission-dataset
+```
+
 로컬 auth/session, 프로필, 관리자 권한 fallback을 확인할 때는 아래 smoke를 실행한다.
 
 ```bash

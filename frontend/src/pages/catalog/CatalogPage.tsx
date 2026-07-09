@@ -47,7 +47,7 @@ import {
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
-import { canManageDataset, canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
+import { canDeleteDatasetMaterializationRun, canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -937,8 +937,8 @@ function CatalogMaterializationRuns({
               <button
                 aria-label={`${run.runId} append 결과 삭제`}
                 className="catalog-materialization-delete"
-                disabled={!canManageDataset(dataset)}
-                title={canManageDataset(dataset) ? "append 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "append 결과 삭제")}
+                disabled={!canDeleteDatasetMaterializationRun(dataset)}
+                title={canDeleteDatasetMaterializationRun(dataset) ? "append 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "append 결과 삭제")}
                 type="button"
                 onClick={(event) => {
                   if (window.confirm("이 append 결과를 데이터셋에서 삭제할까요?")) {

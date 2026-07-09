@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import status
 
-from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
+from app.core.auth_context import ActorContext, permissions_for_actor, require_any_permission, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -25,6 +25,10 @@ from app.services.lake_storage_service import (
     LocalLakeStorageService,
     MaterializedDatasetResult,
 )
+from app.services.resource_permission_service import (
+    dataset_with_persisted_permission_grants,
+    datasets_with_persisted_permission_grants,
+)
 
 
 class CatalogService:
@@ -40,9 +44,16 @@ class CatalogService:
 
     def list_datasets(self, actor: ActorContext | None = None) -> CatalogDatasetListResponse:
         actor_context = actor or ActorContext()
+        datasets = datasets_with_persisted_permission_grants(
+            self.repository.db,
+            [
+                CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
+                for model in self.repository.list_dataset_models()
+            ],
+        )
         datasets = [
-            with_dataset_permissions(CatalogDatasetResponse.model_validate(dataset_model_to_payload(model)), actor_context)
-            for model in self.repository.list_dataset_models()
+            with_dataset_permissions(dataset, actor_context)
+            for dataset in datasets
         ]
         datasets = [dataset for dataset in datasets if dataset.permissions.can_view]
         return CatalogDatasetListResponse(
@@ -54,7 +65,10 @@ class CatalogService:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
-        dataset = CatalogDatasetResponse.model_validate(payload)
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
         require_permission(
             actor or ActorContext(),
             "view",
@@ -80,10 +94,13 @@ class CatalogService:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
-        dataset = CatalogDatasetResponse.model_validate(payload)
-        require_permission(
+        dataset = dataset_with_persisted_permission_grants(
+            self.repository.db,
+            CatalogDatasetResponse.model_validate(payload),
+        )
+        require_any_permission(
             actor or ActorContext(),
-            "manage",
+            ("manage", "delete"),
             owner=dataset.owner,
             grants=dataset.permission_grants,
             resource_label="dataset",

@@ -117,6 +117,26 @@ def require_permission(
     )
 
 
+def require_any_permission(
+    actor: ActorContext,
+    actions: list[str] | tuple[str, ...],
+    *,
+    owner: str | None = None,
+    grants: list[Any] | None = None,
+    resource_label: str = "resource",
+) -> None:
+    grant_payload_list = grant_payloads(grants)
+    for action in actions:
+        if can(actor, action, owner=owner, grants=grant_payload_list):
+            return
+    action_label = "/".join(actions) or "access"
+    raise ApiError(
+        ErrorCode.FORBIDDEN,
+        f"Actor {actor.name} is not allowed to {action_label} this {resource_label}",
+        status.HTTP_403_FORBIDDEN,
+    )
+
+
 def permissions_for_actor(
     actor: ActorContext,
     *,

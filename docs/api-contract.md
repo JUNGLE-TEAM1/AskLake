@@ -126,7 +126,7 @@ Resource/action 기준:
 | --- | --- | --- |
 | `dataset` | `view` | Catalog 목록/상세/lineage에서 조회 가능 |
 | `dataset` | `query` | SQL Preview, Query AI, SQL 결과 기반 후속 작업에서 dataset 사용 가능 |
-| `dataset` | `manage` | materialization-run 삭제 등 dataset metadata 변경 가능 |
+| `dataset` | `manage`, `delete` | materialization-run 삭제 등 dataset metadata 변경 가능 |
 | `dataset` | `delete` | dataset 삭제 가능. 별도 삭제 API 도입 시 사용 |
 | `etl_job` | `view` | Job 목록/상세 조회 가능 |
 | `etl_job` | `run` | Job run/retry 실행 가능 |
@@ -143,7 +143,7 @@ Resource/action 기준:
 | `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
 | `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
 | `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
-| `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` | materialization metadata 수정으로 간주 |
+| `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
@@ -156,7 +156,7 @@ Frontend 기준:
 
 - `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
 - `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
-- `permissions.canManage=false`: Job pause/cancel/stop, dataset materialization-run 삭제 버튼을 비활성화합니다.
+- `permissions.canManage=false`: Job pause/cancel/stop 버튼을 비활성화합니다. Dataset materialization-run 삭제 버튼은 `canManage` 또는 `canDelete` 중 하나가 없으면 비활성화합니다.
 - `permissions.canManage=false`: Dashboard runtime 편집 모드 진입, page/widget/layout 변경, publish 버튼을 비활성화합니다.
 - `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
 - Backend가 `403 FORBIDDEN`을 반환하면 프론트는 일반 실패가 아니라 권한 없음 메시지로 표시합니다.
