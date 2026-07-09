@@ -43,6 +43,7 @@ import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { CheckableOption } from "@/components/ui/checkable-option";
 import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
@@ -3839,53 +3840,61 @@ function RuleStepBuilder({
         <>
           <div className="hegun-rule-builder">
             {!isEditing && (
-              <label className="hegun-rule-field wide">
-                <span>{isTransform ? "추천 변환 규칙 불러오기" : "추천 품질 규칙 불러오기"}</span>
-                <select className="input control-input" value={selectedPresetId} onChange={(event) => setSelectedPresetId(event.target.value)}>
-                  {presetOptions.map((option) => (
-                    <option key={option.id} value={option.id}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "입력 컬럼" : "대상 컬럼"}</span>
-              <select
+              <NativeSelectField
                 className="input control-input"
-                value={isTransform ? selectedInputColumn : selectedTargetColumn}
-                onChange={(event) => {
-                  if (isTransform) {
-                    selectTransformInputColumn(event.target.value);
-                    return;
-                  }
-                  setSelectedTargetColumn(event.target.value);
-                }}
+                fieldClassName="hegun-rule-field wide"
+                label={isTransform ? "추천 변환 규칙 불러오기" : "추천 품질 규칙 불러오기"}
+                value={selectedPresetId}
+                onChange={(event) => setSelectedPresetId(event.target.value)}
               >
-                {workingColumns.map((column) => (
-                  <option key={column} value={column}>
-                    {baseColumnSet.has(column) ? column : `${column} (파생)`}
-                  </option>
+                {presetOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
                 ))}
-              </select>
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "처리 작업" : "검증 규칙"}</span>
+              </NativeSelectField>
+            )}
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="hegun-rule-field"
+              label={isTransform ? "입력 컬럼" : "대상 컬럼"}
+              value={isTransform ? selectedInputColumn : selectedTargetColumn}
+              onChange={(event) => {
+                if (isTransform) {
+                  selectTransformInputColumn(event.target.value);
+                  return;
+                }
+                setSelectedTargetColumn(event.target.value);
+              }}
+            >
+              {workingColumns.map((column) => (
+                <option key={column} value={column}>
+                  {baseColumnSet.has(column) ? column : `${column} (파생)`}
+                </option>
+              ))}
+            </NativeSelectField>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "처리 작업" : "검증 규칙"}>
               {isTransform ? (
-                <select className="input control-input" value={selectedOperation} onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}>
+                <select
+                  className="input control-input"
+                  value={selectedOperation}
+                  onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}
+                >
                   {TRANSFORM_OPERATION_OPTIONS.map((operation) => (
                     <option key={operation} value={operation}>{transformOperationLabel(operation)}</option>
                   ))}
                 </select>
               ) : (
-                <select className="input control-input" value={selectedValidationType} onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}>
+                <select
+                  className="input control-input"
+                  value={selectedValidationType}
+                  onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}
+                >
                   {QUALITY_VALIDATION_OPTIONS.map((validationType) => (
                     <option key={validationType} value={validationType}>{qualityValidationLabel(validationType)}</option>
                   ))}
                 </select>
               )}
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "출력 컬럼" : "심각도"}</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "출력 컬럼" : "심각도"}>
               {isTransform ? (
                 <div className="hegun-rule-control-stack">
                   <input
@@ -3906,15 +3915,18 @@ function RuleStepBuilder({
                   </em>
                 </div>
               ) : (
-                <select className="input control-input" value={selectedSeverity} onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}>
+                <select
+                  className="input control-input"
+                  value={selectedSeverity}
+                  onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}
+                >
                   {QUALITY_SEVERITY_OPTIONS.map((severity) => (
                     <option key={severity} value={severity}>{qualitySeverityLabel(severity)}</option>
                   ))}
                 </select>
               )}
-            </label>
-            <label className="hegun-rule-field">
-              <span>{isTransform ? "옵션" : "실패 처리"}</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="hegun-rule-field" label={isTransform ? "옵션" : "실패 처리"}>
               {isTransform ? (
                 <TransformParameterControl
                   decimalFormat={decimalFormat}
@@ -3928,22 +3940,29 @@ function RuleStepBuilder({
                   onTimestampFormatChange={setTimestampFormat}
                 />
               ) : (
-                <select className="input control-input" value={selectedFailureAction} onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}>
+                <select
+                  className="input control-input"
+                  value={selectedFailureAction}
+                  onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}
+                >
                   {QUALITY_FAILURE_ACTION_OPTIONS.map((failureAction) => (
                     <option key={failureAction} value={failureAction}>{failureActionLabel(failureAction)}</option>
                   ))}
                 </select>
               )}
-            </label>
+            </FormFieldGroup>
             {isTransform && (
-              <label className="hegun-rule-field">
-                <span>오류 처리</span>
-                <select className="input control-input" value={onError} onChange={(event) => setOnError(event.target.value as TransformFailurePolicy)}>
-                  {TRANSFORM_FAILURE_POLICY_OPTIONS.map((policy) => (
-                    <option key={policy} value={policy}>{failureActionLabel(policy)}</option>
-                  ))}
-                </select>
-              </label>
+              <NativeSelectField
+                className="input control-input"
+                fieldClassName="hegun-rule-field"
+                label="오류 처리"
+                value={onError}
+                onChange={(event) => setOnError(event.target.value as TransformFailurePolicy)}
+              >
+                {TRANSFORM_FAILURE_POLICY_OPTIONS.map((policy) => (
+                  <option key={policy} value={policy}>{failureActionLabel(policy)}</option>
+                ))}
+              </NativeSelectField>
             )}
           </div>
           <ActionGroup className="hegun-rule-form-actions" density="compact">
@@ -4795,11 +4814,18 @@ export function TargetPage({
     const selected = filteredPartitionColumns[0] === rule.name;
     const disabled = !rule.use;
     return (
-      <label className={["target-partition-option", selected ? "active" : "", disabled ? "disabled" : ""].filter(Boolean).join(" ")} key={rule.name}>
-        <input checked={selected} disabled={disabled} name="target-partition-column" type="radio" onChange={() => togglePartitionColumn(rule.name)} />
+      <CheckableOption
+        checked={selected}
+        className="target-partition-option"
+        disabled={disabled}
+        inputName="target-partition-column"
+        inputType="radio"
+        key={rule.name}
+        onCheckedChange={() => togglePartitionColumn(rule.name)}
+      >
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
-      </label>
+      </CheckableOption>
     );
   };
 
@@ -4826,22 +4852,18 @@ export function TargetPage({
             </div>
           </div>
           <div className="target-config-form-grid basic">
-            <label className="field wide">
-              <span>데이터셋명</span>
+            <FormFieldGroup className="field wide" label="데이터셋명">
               <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>오너</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="오너">
               <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>담당자</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="field" label="담당자">
               <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
-            </label>
-            <label className="field wide">
-              <span>설명</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide" label="설명">
               <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
-            </label>
+            </FormFieldGroup>
           </div>
         </section>
 
@@ -4854,12 +4876,10 @@ export function TargetPage({
             </div>
           </div>
           <div className="target-config-form-grid destination">
-            <label className="field target-db-field">
-              <span>DB 선택</span>
+            <FormFieldGroup className="field target-db-field" label="DB 선택">
               <DatabaseField value={databaseName} onChange={setDatabaseName} />
-            </label>
-            <label className="field target-format-field">
-              <span>포맷</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="field target-format-field" label="포맷">
               <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
                 <button
                   aria-expanded={formatOptionsOpen}
@@ -4889,11 +4909,10 @@ export function TargetPage({
                   </div>
                 ) : null}
               </div>
-            </label>
-            <label className="field wide target-storage-field">
-              <span>저장경로</span>
+            </FormFieldGroup>
+            <FormFieldGroup className="field wide target-storage-field" label="저장경로">
               <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
-            </label>
+            </FormFieldGroup>
           </div>
         </section>
         <section className="etl-review-card target-config-card">
@@ -5047,45 +5066,53 @@ export function PermissionPage({
           </div>
           <InfoBox title="추천 권한 템플릿" body="유사 데이터셋의 접근 권한과 조직 정책을 기반으로 추천되었습니다." />
           <div className="target-config-form-grid permission-config-form-grid">
-            <label className="field">
-              <span>권한 템플릿</span>
-              <select className="input control-input" value={permissionTemplate} onChange={(event) => {
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="권한 템플릿"
+              value={permissionTemplate}
+              onChange={(event) => {
                 const nextPermissionTemplate = getKnownOption(event.target.value, PERMISSION_TEMPLATES, DEFAULT_PERMISSION_TEMPLATE);
                 setPermissionTemplate(nextPermissionTemplate);
                 setRoleChecks((checks) => ({ ...checks, [nextPermissionTemplate]: true }));
                 applyPermissionDraft({ permissionTemplate: nextPermissionTemplate });
-              }}>
-                {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>공개 범위</span>
-              <select className="input control-input" value={visibility} onChange={(event) => {
+              }}
+            >
+              {PERMISSION_TEMPLATES.map((template) => <option key={template}>{template}</option>)}
+            </NativeSelectField>
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="공개 범위"
+              value={visibility}
+              onChange={(event) => {
                 const nextVisibility = getKnownOption(event.target.value, VISIBILITY_OPTIONS, DEFAULT_VISIBILITY);
                 setVisibility(nextVisibility);
                 applyPermissionDraft({ visibility: nextVisibility });
-              }}>
-                {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
-            <label className="field">
-              <span>데이터 오너</span>
+              }}
+            >
+              {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+            </NativeSelectField>
+            <FormFieldGroup className="field" label="데이터 오너">
               <input className="input control-input" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
                 setDataOwner(nextOwner);
                 applyPermissionDraft({ owner: nextOwner });
               }} />
-            </label>
-            <label className="field">
-              <span>승인 상태</span>
-              <select className="input control-input" value={approvalStatus} onChange={(event) => {
+            </FormFieldGroup>
+            <NativeSelectField
+              className="input control-input"
+              fieldClassName="field"
+              label="승인 상태"
+              value={approvalStatus}
+              onChange={(event) => {
                 const nextApprovalStatus = getKnownOption(event.target.value, APPROVAL_STATUS_OPTIONS, DEFAULT_APPROVAL_STATUS);
                 setApprovalStatus(nextApprovalStatus);
                 applyPermissionDraft({ approvalStatus: nextApprovalStatus });
-              }}>
-                {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
-              </select>
-            </label>
+              }}
+            >
+              {APPROVAL_STATUS_OPTIONS.map((option) => <option key={option}>{option}</option>)}
+            </NativeSelectField>
           </div>
         </section>
 
@@ -5102,8 +5129,12 @@ export function PermissionPage({
               const selected = Boolean(roleChecks[role.name]);
               const recommended = role.name === permissionTemplate;
               return (
-                <label className={["permission-config-role", selected ? "active" : "", recommended ? "recommended" : ""].filter(Boolean).join(" ")} key={role.name}>
-                  <input type="checkbox" checked={selected} onChange={(event) => setRoleChecks((checks) => ({ ...checks, [role.name]: event.target.checked }))} />
+                <CheckableOption
+                  checked={selected}
+                  className={recommended ? "permission-config-role recommended" : "permission-config-role"}
+                  key={role.name}
+                  onCheckedChange={(checked) => setRoleChecks((checks) => ({ ...checks, [role.name]: checked }))}
+                >
                   <span className="permission-config-role-body">
                     <span className="permission-config-role-title">
                       <strong>{role.name}</strong>
@@ -5116,7 +5147,7 @@ export function PermissionPage({
                       <em className={selected && role.access.includes(item) ? "allowed" : ""} key={item}>{item}</em>
                     ))}
                   </div>
-                </label>
+                </CheckableOption>
               );
             })}
           </div>

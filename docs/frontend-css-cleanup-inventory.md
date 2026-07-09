@@ -169,7 +169,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | --- | --- | --- |
 | Jobs view/detail tabs | `.jobs-view-switch`, `.job-detail-tabs` | Jobs 목록 보기 전환과 상세 탭을 `SegmentedTabs`로 전환. button density/active selector는 유지. |
 | ETL rule category tabs | `.hegun-rule-category-list`, `.hegun-rule-category`, `.hegun-rule-category-icon` | rule mode tablist를 `SegmentedTabs`로 전환. icon/copy/active selector는 유지. |
-| 보류 Selection card | `.permission-config-role`, `.target-partition-option` | checkbox/radio 의미가 있는 선택 UI라 `SelectableCard`로 억지 전환하지 않는다. |
+| checkbox/radio option card | `.permission-config-role`, `.target-partition-option` | #393에서는 button 기반 `SelectableCard` 전환을 보류했고, #414에서 label+input 기반 `CheckableOption`으로 shell만 전환했다. |
 
 ## #395 Detail Table Section 적용 CSS 기록
 
@@ -248,6 +248,7 @@ npm run build
 | 2026-07-09 | #400에서 shadcn replacement inventory를 CSS cleanup 기준에 연결. shadcn으로 흡수 가능한 wrapper는 새 selector를 늘리지 않고 기존 selector를 common variant로 옮기는 방향을 추가. |
 | 2026-07-09 | #401에서 S3/ETL/SQL/Dashboard tree wrapper와 state shell을 `TreePanel`로 전환하고 tree row/hover/외부 라이브러리 selector는 유지하기로 기록. |
 | 2026-07-09 | #410에서 Catalog/DAG/Dashboard chart/ETL transform modal shell을 `DialogShell`로 전환하고 남은 wrapper selector를 route QA 후 삭제 후보로 기록. |
+| 2026-07-09 | #414에서 ETL rule builder/target/permission form wrapper와 checkbox/radio option shell을 공통 컴포넌트로 전환하고 관련 selector 유지 기준을 기록. |
 
 ## #410 Modal Shell 꼬리 정리 CSS 기록
 
@@ -260,3 +261,15 @@ npm run build
 | Dashboard chart expanded modal | `frontend/src/pages/dashboard/DashboardParts.tsx`, `frontend/src/styles/dashboard.css` | chart 확대 modal wrapper를 `DialogShell`로 전환하고 `.dashboard-chart-modal-panel`만 새 content shell로 추가. `.dashboard-chart-modal`, `.dashboard-chart-modal section`은 삭제 후보이며 chart body density selector는 유지한다. |
 | ETL transform function modal | `frontend/src/components/etl/TransformFunctionModal.jsx` | fixed backdrop + card wrapper를 `DialogShell`로 전환. 별도 CSS 파일 selector는 추가하지 않았고, quick function chip/AI button utility class는 후속 form/option cleanup 범위로 남긴다. |
 | DialogShell size | `frontend/src/components/ui/dialog-shell.tsx` | DAG/lineage처럼 넓은 modal을 위해 `wide` size만 추가. route별 custom width selector를 줄이는 목적이며 기존 `sm/md/lg/xl/fullscreen` 사용처에는 영향 없음. |
+
+## #414 Form/Option 꼬리 정리 CSS 기록
+
+이번 PR은 form/option markup을 공통 컴포넌트로 옮기지만 route QA 전 CSS selector는 삭제하지 않는다. 기존 className을 공통 컴포넌트에 전달해 화면 밀도와 active/disabled 상태를 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| ETL rule builder fields | `.hegun-rule-field`, `.hegun-rule-field.wide`, `.hegun-rule-control-stack`, `.input.control-input` | label/select/input wrapper를 `FormFieldGroup`/`NativeSelectField`로 전환. builder grid, hint, control stack selector는 유지한다. |
+| Target config fields | `.target-config-form-grid`, `.field`, `.field.wide`, `.target-db-field`, `.target-format-field`, `.target-storage-field` | basic/destination label wrapper를 `FormFieldGroup`으로 전환. format dropdown menu와 S3/DB picker 내부 selector는 유지한다. |
+| Target partition option | `.target-partition-option`, `.target-partition-name`, `.target-partition-type` | radio label/input shell을 `CheckableOption`으로 전환. active/disabled/density selector는 유지한다. |
+| Permission policy fields | `.permission-config-form-grid`, `.field`, `.input.control-input` | select/input field wrapper를 `FormFieldGroup`/`NativeSelectField`로 전환. policy card/grid selector는 유지한다. |
+| Permission role grants | `.permission-config-role`, `.permission-config-role-body`, `.permission-config-access-row` | checkbox label/input shell을 `CheckableOption`으로 전환. recommended/active/access chip row selector는 유지한다. |
