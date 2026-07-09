@@ -121,6 +121,14 @@ Phase 4 enforcement 범위:
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
 | `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
 
+Frontend Phase 5 기준:
+
+- `permissions.canQuery=false`: SQL Preview 실행, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
+- `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
+- `permissions.canManage=false`: Job pause/cancel/stop, dataset materialization-run 삭제 버튼을 비활성화합니다.
+- `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
+- Backend가 `403 FORBIDDEN`을 반환하면 프론트는 일반 실패가 아니라 권한 없음 메시지로 표시합니다.
+
 ```ts
 type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
 type PermissionPrincipalType = "user" | "group" | "role" | "public";

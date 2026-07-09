@@ -94,13 +94,13 @@ function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | 
 
 function buildResourcePermissions() {
   return {
-    canDelete: false,
-    canManage: false,
+    canDelete: true,
+    canManage: true,
     canQuery: false,
     canRun: false,
-    canShare: false,
+    canShare: true,
     canView: true,
-    computedFor: "demo-user",
+    computedFor: "Admin User",
     enforced: false,
   };
 }

@@ -47,6 +47,7 @@ import {
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import { canManageDataset, canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -442,7 +443,7 @@ export function CatalogPage({
 
   const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
     event.stopPropagation();
-    if (run.status !== "success") return;
+    if (run.status !== "success" || !canQueryDataset(dataset)) return;
     setPreviewDataset(dataset);
     setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
     onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
@@ -455,7 +456,7 @@ export function CatalogPage({
   };
 
   const openSelectedSqlDataset = () => {
-    if (!selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
+    if (!canQueryDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
     onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
     onOpenSql(previewDataset);
   };
@@ -724,15 +725,17 @@ export function CatalogPage({
 
           <button
             className="primary-button catalog-wide-button"
-            disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-            title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+            disabled={!canQueryDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+            title={!canQueryDataset(previewDataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
             type="button"
             onClick={openSelectedSqlDataset}
           >
             <ExternalLink size={16} /> SQL 분석에서 열기
           </button>
           <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
-            {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
+            {!canQueryDataset(previewDataset)
+              ? permissionDeniedMessage("데이터셋", "SQL 실행")
+              : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
               ? `선택된 결과: ${selectedSqlRunTarget.runId}`
               : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
           </p>
@@ -827,7 +830,7 @@ export function CatalogDetailPage({
             </div>
           </div>
           <div className="job-detail-actions">
-            <button className="job-action-button primary" type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
+            <button className="job-action-button primary" disabled={!canQueryDataset(dataset)} title={canQueryDataset(dataset) ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")} type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
             <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
@@ -905,7 +908,7 @@ function CatalogMaterializationRuns({
       {visibleRuns.length > 0 ? (
         <div className="catalog-materialization-list">
           {visibleRuns.map((run) => {
-            const isSelectable = run.status === "success";
+            const isSelectable = run.status === "success" && canQueryDataset(dataset);
             const isSelected = run.runId === selectedRunId;
 
             return (
@@ -916,7 +919,7 @@ function CatalogMaterializationRuns({
               key={run.runId}
               role="button"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDataset(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -934,6 +937,8 @@ function CatalogMaterializationRuns({
               <button
                 aria-label={`${run.runId} append 결과 삭제`}
                 className="catalog-materialization-delete"
+                disabled={!canManageDataset(dataset)}
+                title={canManageDataset(dataset) ? "append 결과를 삭제합니다." : permissionDeniedMessage("데이터셋", "append 결과 삭제")}
                 type="button"
                 onClick={(event) => {
                   if (window.confirm("이 append 결과를 데이터셋에서 삭제할까요?")) {

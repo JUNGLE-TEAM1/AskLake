@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
+import { permissionDeniedMessage } from "../../../utils/permissions";
 
 export function DashboardTable({
   dashboards,
@@ -27,7 +28,10 @@ export function DashboardTable({
           </tr>
         </thead>
         <tbody>
-          {dashboards.map((dashboard) => (
+          {dashboards.map((dashboard) => {
+            const canDeleteDashboard = dashboard.permissions?.canDelete !== false;
+
+            return (
             <tr className="dashboard-table-row" key={dashboard.id} onClick={() => onOpenDetail(dashboard)}>
               <td>
                 <button
@@ -58,8 +62,8 @@ export function DashboardTable({
                 <button
                   className="dashboard-row-delete-button"
                   type="button"
-                  disabled={deletingDashboardId === dashboard.id}
-                  title="대시보드 삭제"
+                  disabled={deletingDashboardId === dashboard.id || !canDeleteDashboard}
+                  title={canDeleteDashboard ? "대시보드 삭제" : permissionDeniedMessage("대시보드", "삭제")}
                   aria-label={`${dashboard.name} 삭제`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -70,7 +74,8 @@ export function DashboardTable({
                 </button>
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>

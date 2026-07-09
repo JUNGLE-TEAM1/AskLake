@@ -148,6 +148,8 @@ FastAPI가 현재 소유하는 책임:
 
 권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Phase 2부터 Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Phase 3부터 backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, Dashboard 삭제는 이 공통 코어를 사용한다. Phase 4부터 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command는 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
 
+Phase 5부터 frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Job command, Dataset materialization-run 삭제, Dashboard 삭제 버튼을 비활성화하고, backend `403`은 권한 안내 toast/preflight message로 표시한다. 프론트의 비활성화는 사용성 보조이며 보안 근거는 backend enforcement다.
+
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
 대시보드에서 사용할 수 있는 available catalog dataset과 현재 page widget, 지원 가능한 widget type/config option을 OpenAI에 전달한다.

@@ -15,6 +15,7 @@ import {
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
+import { canQueryDataset, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import type {
   AuditResult,
@@ -405,7 +406,7 @@ function normalizeJobRow(job: JobRowData): JobRowData {
     createdBy,
     createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
     permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
-    permissions: job.permissions ?? buildResourcePermissions({ canRun: true }),
+    permissions: job.permissions ?? buildResourcePermissions({ canManage: true, canRun: true }),
     status: normalizeJobStatus(String(job.status)),
   };
 }
@@ -417,7 +418,7 @@ function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
     createdBy,
     createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
     permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
-    permissions: dataset.permissions ?? buildResourcePermissions({ canQuery: true }),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canManage: true, canQuery: true }),
     materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
   };
@@ -912,11 +913,11 @@ export function useAskLakeData({
       applyDataset(nextDataset);
       writeAuditLog("catalog.dataset.materialization_run_deleted", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "success", { targetType: "dataset" });
       showToast("데이터셋 append 결과를 삭제했습니다.");
-    } catch {
+    } catch (error) {
       setDatasets(previousState.datasets);
       setSelectedDataset(previousState.selectedDataset);
       writeAuditLog("catalog.dataset.materialization_run_delete_failed", `/api/catalog/datasets/${datasetId}/materialization-runs/${runId}`, runId, "failed", { targetType: "dataset" });
-      showToast("append 결과 삭제에 실패했습니다.", "info");
+      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("데이터셋", "append 결과 삭제") : "append 결과 삭제에 실패했습니다.", "info");
     }
   };
 
@@ -959,6 +960,12 @@ export function useAskLakeData({
         return rest;
       });
       onFlowChange("jobs");
+      return;
+    }
+
+    if (!canRunJobCommand(job, command)) {
+      writeAuditLog("etl.job.command_forbidden", `/api/etl/jobs/${job.id}`, job.id, "failed");
+      showToast(permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리"), "info");
       return;
     }
 
@@ -1035,12 +1042,12 @@ export function useAskLakeData({
         setSelectedDataset(normalizedDataset);
       }
       showToast(commandSuccessMessage(command));
-    } catch {
+    } catch (error) {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast("작업 명령 처리에 실패했습니다.", "info");
+      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리") : "작업 명령 처리에 실패했습니다.", "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {
@@ -1070,6 +1077,11 @@ export function useAskLakeData({
   };
 
   const openDatasetInSql = (dataset: CatalogDataset) => {
+    if (!canQueryDataset(dataset)) {
+      writeAuditLog("catalog.open_in_sql.forbidden", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "failed", { targetType: "dataset" });
+      showToast(permissionDeniedMessage("데이터셋", "SQL 실행"), "info");
+      return;
+    }
     setSelectedDataset(dataset);
     setSqlResultDraft(null);
     writeAuditLog("catalog.open_in_sql.clicked", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "success", { targetType: "dataset" });

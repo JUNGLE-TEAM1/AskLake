@@ -17,6 +17,7 @@ import {
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
+import { canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import { SqlPreviewTable } from "./SqlPreviewTable";
@@ -158,7 +159,13 @@ export function SqlAnalysisPage({
     view: "runtime",
     version: dashboardDialogVersion,
   }), [dashboardBaseDataset, dashboardDialogVersion, resultDraft]);
-  const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  const selectedReferenceDatasets = useMemo(
+    () => datasets.filter((item) => referenceDatasetIdSet.has(item.id)),
+    [datasets, referenceDatasetIdSet],
+  );
+  const hasQueryPermission = Boolean(baseDataset && canQueryDataset(baseDataset) && selectedReferenceDatasets.every(canQueryDataset));
+  const queryPermissionMessage = hasQueryPermission ? "" : permissionDeniedMessage("선택 데이터셋", "SQL 실행");
+  const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -358,9 +365,16 @@ export function SqlAnalysisPage({
       setPreflightResult(null);
       return;
     }
-    const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
-    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey));
-  }, [baseDataset, datasets, query, queryValidationKey, referenceDatasetIdSet]);
+    if (!hasQueryPermission) {
+      setPreflightResult({
+        key: queryValidationKey,
+        canExecute: false,
+        messages: [{ tone: "error", text: queryPermissionMessage }],
+      });
+      return;
+    }
+    setPreflightResult(runSqlPreflight(query, baseDataset, selectedReferenceDatasets, queryValidationKey));
+  }, [baseDataset, hasQueryPermission, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets]);
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => {
     if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
@@ -908,7 +922,7 @@ export function SqlAnalysisPage({
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+              <button className="primary-button" title={hasQueryPermission ? "SQL Preview를 실행합니다." : queryPermissionMessage} type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
                 <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
               </button>
             </div>
@@ -1084,8 +1098,9 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
+                disabled={!hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
                 onClick={prepareDerivedDatasetJob}
+                title={hasQueryPermission ? "처리 Job 생성 검토로 이동합니다." : queryPermissionMessage}
                 type="button"
               >
                 <Database size={15} /> Job 생성 검토로 이동

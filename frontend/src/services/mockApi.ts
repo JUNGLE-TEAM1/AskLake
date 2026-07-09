@@ -79,7 +79,7 @@ function normalizeJob(job: JobRowData): JobRowData {
     createdBy,
     createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
     permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
-    permissions: job.permissions ?? buildResourcePermissions({ canRun: true }),
+    permissions: job.permissions ?? buildResourcePermissions({ canManage: true, canRun: true }),
     status: normalizeJobStatus(job.status),
   };
 }
@@ -91,7 +91,7 @@ function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
     createdBy,
     createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
     permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
-    permissions: dataset.permissions ?? buildResourcePermissions({ canQuery: true }),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canManage: true, canQuery: true }),
     status: normalizeDatasetStatus(dataset.status),
   };
 }
