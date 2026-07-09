@@ -48,6 +48,7 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { TagList } from "@/components/ui/tag-list";
 import { Field } from "../../components/common";
@@ -270,16 +271,19 @@ function JobsToolbar({
 
 function JobViewSwitch({ activeView, onCards, onTable }: { activeView: "cards" | "table"; onCards: () => void; onTable: () => void }) {
   return (
-    <div className="jobs-view-switch" aria-label="작업 목록 보기 방식">
-      <button className={activeView === "cards" ? "active" : ""} type="button" onClick={onCards} aria-pressed={activeView === "cards"}>
-        <LayoutGrid size={15} />
-        카드
-      </button>
-      <button className={activeView === "table" ? "active" : ""} type="button" onClick={onTable} aria-pressed={activeView === "table"}>
-        <Table2 size={15} />
-        TanStack Table
-      </button>
-    </div>
+    <SegmentedTabs
+      ariaLabel="작업 목록 보기 방식"
+      className="jobs-view-switch"
+      items={[
+        { icon: <LayoutGrid size={15} />, label: "카드", value: "cards" },
+        { icon: <Table2 size={15} />, label: "TanStack Table", value: "table" },
+      ]}
+      value={activeView}
+      onValueChange={(value) => {
+        if (value === "cards") onCards();
+        else onTable();
+      }}
+    />
   );
 }
 
@@ -1018,10 +1022,19 @@ function JobDetailHeader({
           ))}
         </ActionGroup>
       </div>
-      <nav className="job-detail-tabs" aria-label="작업 상세 탭">
-        <button className={activeTab === "detail" ? "active" : ""} type="button" onClick={onDetail}>작업 상세 정보</button>
-        <button className={activeTab === "runs" ? "active" : ""} type="button" onClick={onRuns}>실행 이력</button>
-      </nav>
+      <SegmentedTabs
+        ariaLabel="작업 상세 탭"
+        className="job-detail-tabs"
+        items={[
+          { label: "작업 상세 정보", value: "detail" },
+          { label: "실행 이력", value: "runs" },
+        ]}
+        value={activeTab}
+        onValueChange={(value) => {
+          if (value === "detail") onDetail();
+          else onRuns();
+        }}
+      />
     </header>
   );
 }

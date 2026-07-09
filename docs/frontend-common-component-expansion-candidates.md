@@ -60,6 +60,18 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 - `DetailTableSection`: Ingest Jobs detail의 schema/rule 작은 table section에 1차 적용.
 - CSS selector 삭제는 하지 않고 기존 className을 공통 컴포넌트에 전달해 route QA 전까지 스타일 계약을 유지한다.
 
+## #391 처리 결과
+
+- `FormFieldGroup` / `NativeSelectField`: Dashboard runtime `WidgetConfigPanel`의 chart/table select와 number/HEX field, S3/DB picker toolbar field, ETL source/schedule field, SQL materialize field까지 추가 적용.
+- `SettingsPanel`: 신규 panel 확대는 하지 않고 기존 Dashboard config shell을 유지했다. ETL/SQL의 큰 settings panel shell은 상태 결합이 커서 후속 판단으로 남긴다.
+- ETL rule builder, target/permission form, color picker 세부 layout, route QA 전 CSS selector 삭제는 보류한다.
+
+## #393 처리 결과
+
+- `SegmentedTabs`: Jobs 목록 보기 전환, Jobs 상세 탭, ETL rule category tabs에 추가 적용.
+- `SelectableCard`: ETL permission role과 partition option은 checkbox/radio 의미가 있어 이번 PR에서는 전환하지 않는다.
+- Dashboard runtime page tabs는 rename/delete/edit 상태가 섞여 있어 계속 보류한다.
+
 ## #395 처리 결과
 
 - `DetailTableSection`: Jobs run history table card와 horizontal scroll shell에 추가 적용.
@@ -73,11 +85,11 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 | --- | --- | --- | --- |
 | `PreviewPanel` | preview header + body + empty/loading/action shell | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | #389에서 builder preview에 1차 적용. ETL final preview와 Catalog preview는 후속 판단. |
 | `ResultPanel` | 실행 결과, row count, status, CTA shell | `frontend/src/pages/sql/SqlAnalysisPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx` | #389에서 SQL result와 dashboard runtime table widget에 1차 적용. |
-| `SettingsPanel` | 설정 panel header/body/footer | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | #389에서 Dashboard widget config panel에 1차 적용. ETL/SQL form panel은 후속 판단. |
-| `FormFieldGroup` | label + control + hint/error layout | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/components/target/DatabaseField.tsx` | #389에서 Dashboard widget title/description field에 1차 적용. S3/DB picker와 ETL form은 후속. |
-| `NativeSelectField` | native select + label + tone | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | #389에서 Dashboard widget dataset select에 1차 적용. 나머지 native select 반복은 단계적으로 전환. |
-| `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | #389에서 Dashboard 기간 필터와 ETL source stage tabs에 1차 적용. rename/edit 상태가 있는 탭은 보류한다. |
-| `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | #389에서 source connector, schedule mode, dashboard widget type card에 1차 적용. |
+| `SettingsPanel` | 설정 panel header/body/footer | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | #389에서 Dashboard widget config panel에 1차 적용. #391에서는 큰 panel 확대 없이 field 전환을 우선했다. |
+| `FormFieldGroup` | label + control + hint/error layout | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/components/target/DatabaseField.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | #391에서 WidgetConfigPanel chart/table field, S3/DB picker, ETL source/schedule, SQL materialize form에 추가 적용. ETL rule builder/target/permission form은 후속. |
+| `NativeSelectField` | native select + label + tone | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | #391에서 Dashboard chart/table select, S3 bucket select, ETL schedule select, SQL materialize layer select까지 추가 전환. |
+| `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | #393에서 Jobs 보기 전환/상세 탭과 ETL rule category tabs까지 추가 적용. rename/edit 상태가 있는 탭은 보류한다. |
+| `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | #389에서 source connector, schedule mode, dashboard widget type card에 1차 적용. checkbox/radio 의미가 있는 permission/partition option은 보류한다. |
 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #389에서 dashboard runtime widget type 선택 UI에 1차 적용. |
 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule table, #395에서 Jobs run history table에 적용. ETL/SchemaTransformEditor는 후속. |
 
@@ -94,11 +106,10 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 ## 추천 PR 순서
 
 1. `PreviewPanel` + `ResultPanel`
-2. `FormFieldGroup` + `NativeSelectField`
-3. `SettingsPanel`
-4. `SegmentedTabs` + `SelectableCard`
+2. `DetailTableSection`
+3. `SettingsPanel` 큰 panel 확대
+4. `SelectableCard` 순수 button card 사용처 재검토
 5. `IconOptionGrid`
-6. `DetailTableSection`
-7. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
+6. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
 
-#389와 #395에서 위 후보군은 대표 사용처에 1차 적용됐다. 다음 PR은 남은 ETL/SQL/S3/DB picker form 전환과 route QA 후 CSS selector 축소를 이어간다.
+#389에서 위 후보군은 대표 사용처에 1차 적용됐고, #391에서 Form/Settings 계열 field 전환, #393에서 Selection UI 계열 추가 전환, #395에서 Jobs detail table shell 추가 전환을 진행했다. 다음 PR은 남은 settings shell cleanup과 ETL/SchemaTransformEditor table section 판단을 이어간다.

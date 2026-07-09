@@ -15,6 +15,7 @@ import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { ResultPanel } from "@/components/ui/preview-panel";
@@ -997,17 +998,15 @@ export function SqlAnalysisPage({
           onClose={() => setMaterializeDialogOpen(false)}
           title="SQL 결과 처리 Job 생성"
         >
-              <label>
-                <span>데이터셋 이름</span>
+              <FormFieldGroup label="데이터셋 이름">
                 <Input
                   onChange={(event) => {
                     setDerivedDatasetName(event.target.value);
                   }}
                   value={derivedDatasetName}
                 />
-              </label>
-              <label className="wide">
-                <span>설명</span>
+              </FormFieldGroup>
+              <FormFieldGroup className="wide" label="설명">
                 <textarea
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
@@ -1015,9 +1014,8 @@ export function SqlAnalysisPage({
                   rows={2}
                   value={derivedDatasetDescription}
                 />
-              </label>
-              <label className="wide">
-                <span>태그</span>
+              </FormFieldGroup>
+              <FormFieldGroup className="wide" label="태그">
                 <Input
                   onChange={(event) => {
                     setDerivedDatasetTags(event.target.value);
@@ -1025,19 +1023,17 @@ export function SqlAnalysisPage({
                   placeholder="#sql-derived #analysis"
                   value={derivedDatasetTags}
                 />
-              </label>
-              <label>
-                <span>레이어</span>
-                <select
-                  onChange={(event) => {
-                    setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
-                  }}
-                  value={derivedDatasetLayer}
-                >
-                  <option value="SILVER">SILVER</option>
-                  <option value="GOLD">GOLD</option>
-                </select>
-              </label>
+              </FormFieldGroup>
+              <NativeSelectField
+                label="레이어"
+                value={derivedDatasetLayer}
+                onChange={(event) => {
+                  setDerivedDatasetLayer(event.target.value as DerivedDatasetLayer);
+                }}
+              >
+                <option value="SILVER">SILVER</option>
+                <option value="GOLD">GOLD</option>
+              </NativeSelectField>
               <label className="sql-materialize-checkbox">
                 <input
                   checked={derivedDatasetRag}
