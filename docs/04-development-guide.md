@@ -129,7 +129,7 @@ ASKLAKE_WITH_KAFKA=true ASKLAKE_RECREATE_KAFKA=true npm run sources:fixtures
 npm run kafka:reviews-fixture
 ```
 
-기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. 기본 fixture는 `backend/fixtures/kafka/amazon-review-fixture.jsonl`에 100건 mock review로 유지한다. producer는 이 fixture 또는 실제 Amazon review JSONL/JSONL.gz 파일을 스트리밍으로 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A 작업자는 실제 Amazon review row를 이 표준 메시지로 변환하고, B 작업자는 우선 top-level 표준 필드만 의존한다.
+기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. 기본 fixture는 `backend/fixtures/kafka/amazon-review-fixture.jsonl`에 100건 mock review로 유지한다. producer는 이 fixture 또는 실제 Amazon review JSONL/JSONL.gz 파일을 스트리밍으로 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A/B 최소 필수 필드는 `event_id`, `review`, `offset`, `created_at`이며, B ingest는 빠진 `schema_version`, `source`, `raw`를 표준 shape로 보강한다.
 
 Kafka 없이 fixture 계약만 확인하려면 아래처럼 실행한다.
 
@@ -157,6 +157,13 @@ npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit
 --batch-size <count>    Kafka send batch 크기, 기본값 100
 --dry-run               Kafka 전송 없이 메시지 계약만 검증
 --no-recreate-topic     기존 topic을 삭제하지 않고 사용
+```
+
+Kafka Source -> MinIO landing -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest
 ```
 
 ### FastAPI scaffold

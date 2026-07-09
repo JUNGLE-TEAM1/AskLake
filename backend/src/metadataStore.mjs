@@ -37,6 +37,13 @@ export function ensureMetadataSchema() {
         created_at timestamptz NOT NULL DEFAULT now()
       );
 
+      ALTER TABLE etl_jobs
+        ADD COLUMN IF NOT EXISTS payload jsonb;
+      ALTER TABLE catalog_datasets
+        ADD COLUMN IF NOT EXISTS payload jsonb;
+      ALTER TABLE sql_runs
+        ADD COLUMN IF NOT EXISTS payload jsonb;
+
       CREATE INDEX IF NOT EXISTS etl_jobs_status_idx
         ON etl_jobs ((payload->>'status'));
       CREATE INDEX IF NOT EXISTS etl_jobs_owner_idx
@@ -189,4 +196,8 @@ export async function saveSqlRun(run) {
     [run.runId, run.datasetId, run.query, JSON.stringify(run)],
   );
   return run;
+}
+
+export async function closeMetadataStore() {
+  await pool.end();
 }
