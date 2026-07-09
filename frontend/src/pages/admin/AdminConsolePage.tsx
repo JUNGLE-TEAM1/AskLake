@@ -365,9 +365,14 @@ function PermissionsTable({
 }) {
   const [resourceSearch, setResourceSearch] = useState("");
   const [resourceTypeFilter, setResourceTypeFilter] = useState<"all" | AdminResourceType>("all");
+  const grantableUsers = users.filter((user) => user.role.toLowerCase() !== "admin");
   const principalOptions = draft.principalType === "group"
     ? groups.map((group) => ({ label: group.name, value: group.id }))
-    : users.map((user) => ({ label: user.displayName, value: user.email || user.id }));
+    : grantableUsers.map((user) => ({ label: user.displayName, value: user.email || user.id }));
+  const hasPrincipalOptions = principalOptions.length > 0;
+  const principalEmptyMessage = draft.principalType === "group"
+    ? "권한을 부여할 그룹이 없습니다."
+    : "권한을 부여할 일반 사용자가 없습니다.";
   const normalizedSearch = resourceSearch.trim().toLowerCase();
   const filteredResources = permissions.filter((resource) => {
     const matchesType = resourceTypeFilter === "all" || resource.resourceType === resourceTypeFilter;
@@ -381,6 +386,25 @@ function PermissionsTable({
   const selectResource = (resource: AdminPermissionSummary) => {
     onDraftChange((current) => ({ ...current, resourceKey: resourceKey(resource) }));
   };
+
+  useEffect(() => {
+    if (!principalTypeOptions.includes(draft.principalType)) {
+      onDraftChange((current) => ({
+        ...current,
+        principalId: groups[0]?.id || "",
+        principalType: "group",
+      }));
+      return;
+    }
+    const hasCurrentPrincipal = principalOptions.some((option) => option.value === draft.principalId);
+    if (hasCurrentPrincipal) return;
+    const nextPrincipalId = principalOptions[0]?.value || "";
+    if (draft.principalId === nextPrincipalId) return;
+    onDraftChange((current) => ({
+      ...current,
+      principalId: nextPrincipalId,
+    }));
+  }, [draft.principalId, draft.principalType, groups, onDraftChange, principalOptions]);
 
   return (
     <div className="admin-permission-editor">
@@ -418,8 +442,8 @@ function PermissionsTable({
               onClick={() => selectResource(resource)}
             >
               <div>
-                <strong>{resource.resourceName}</strong>
-                <span>{resource.resourceType} · {resource.resourceId}</span>
+                <span className="admin-resource-type-badge">{resourceTypeLabel(resource.resourceType)}</span>
+                <strong title={resource.resourceId}>{resource.resourceName}</strong>
               </div>
               <em>권한 {resource.grants.length}개</em>
             </button>
@@ -432,9 +456,8 @@ function PermissionsTable({
             <>
               <header>
                 <div>
-                  <span>{resourceTypeLabel(selectedResource.resourceType)}</span>
-                  <h3>{selectedResource.resourceName}</h3>
-                  <p>{selectedResource.resourceId}</p>
+                  <h3 title={selectedResource.resourceId}>{selectedResource.resourceName}</h3>
+                  <p>{resourceTypeLabel(selectedResource.resourceType)} · 소유자 {selectedResource.owner || selectedResource.createdBy || "-"} · 권한 {selectedResource.grants.length}개</p>
                 </div>
                 <div className="admin-console-chip-row">
                   {permissionOrder.filter((action) => canAction(selectedResource, action)).map((action) => (
@@ -442,17 +465,6 @@ function PermissionsTable({
                   ))}
                 </div>
               </header>
-
-              <dl className="admin-permission-resource-meta">
-                <div>
-                  <dt>소유자</dt>
-                  <dd>{selectedResource.owner || selectedResource.createdBy || "-"}</dd>
-                </div>
-                <div>
-                  <dt>권한 항목</dt>
-                  <dd>{selectedResource.grants.length}개</dd>
-                </div>
-              </dl>
 
               <form className="admin-permission-form compact" onSubmit={onCreate}>
                 <div className="admin-permission-form-title">
@@ -464,7 +476,7 @@ function PermissionsTable({
                     const nextType = event.target.value as PermissionPrincipalType;
                     const nextOptions = nextType === "group"
                       ? groups.map((group) => group.id)
-                      : users.map((user) => user.email || user.id);
+                      : grantableUsers.map((user) => user.email || user.id);
                     onDraftChange((current) => ({
                       ...current,
                       principalId: nextOptions[0] || "",
@@ -477,12 +489,16 @@ function PermissionsTable({
                 </label>
                 <label className="field">
                   <span>대상</span>
-                  <select
-                    value={draft.principalId}
-                    onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
-                  >
-                    {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
+                  {hasPrincipalOptions ? (
+                    <select
+                      value={draft.principalId}
+                      onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
+                    >
+                      {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  ) : (
+                    <span className="admin-permission-empty-target">{principalEmptyMessage}</span>
+                  )}
                 </label>
                 <div className="admin-permission-action-group">
                   <span>권한</span>
@@ -499,7 +515,7 @@ function PermissionsTable({
                     ))}
                   </div>
                 </div>
-                <button className="primary-button admin-grant-create-button" type="submit" disabled={pending || permissions.length === 0} onClick={() => selectResource(selectedResource)}>
+                <button className="primary-button admin-grant-create-button" type="submit" disabled={pending || permissions.length === 0 || !hasPrincipalOptions} onClick={() => selectResource(selectedResource)}>
                   <Plus size={16} />
                   <span>권한 추가</span>
                 </button>
