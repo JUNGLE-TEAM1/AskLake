@@ -314,6 +314,9 @@
 
   .option-grid,
   .admin-permission-form,
+  .admin-permission-form.compact,
+  .admin-permission-toolbar,
+  .admin-permission-workbench,
   .admin-console-metric-grid,
   .profile-permission-grid,
   .form-grid,

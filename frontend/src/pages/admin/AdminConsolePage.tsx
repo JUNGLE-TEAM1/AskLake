@@ -15,6 +15,7 @@ import { ApiError } from "../../types";
 import type {
   AdminAuditLogEntry,
   AdminPermissionSummary,
+  AdminResourceType,
   AdminUser,
   IdentityGroup,
   PermissionAction,
@@ -37,6 +38,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
 
 const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "delete", "share"];
 const principalTypeOptions: PermissionPrincipalType[] = ["group", "user", "role", "public"];
+const resourceTypeFilters: Array<"all" | AdminResourceType> = ["all", "dataset", "etl_job", "dashboard"];
 
 export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
@@ -385,6 +387,8 @@ function PermissionsTable({
   onDraftChange: React.Dispatch<React.SetStateAction<PermissionDraft>>;
   onUpdate: (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => void;
 }) {
+  const [resourceSearch, setResourceSearch] = useState("");
+  const [resourceTypeFilter, setResourceTypeFilter] = useState<"all" | AdminResourceType>("all");
   const principalSuggestions = draft.principalType === "group"
     ? groups.map((group) => group.id)
     : draft.principalType === "user"
@@ -392,96 +396,147 @@ function PermissionsTable({
       : draft.principalType === "role"
         ? ["admin", "viewer"]
         : ["public"];
+  const normalizedSearch = resourceSearch.trim().toLowerCase();
+  const filteredResources = permissions.filter((resource) => {
+    const matchesType = resourceTypeFilter === "all" || resource.resourceType === resourceTypeFilter;
+    const searchTarget = `${resource.resourceName} ${resource.resourceId} ${resource.owner ?? ""} ${resource.createdBy ?? ""}`.toLowerCase();
+    return matchesType && (!normalizedSearch || searchTarget.includes(normalizedSearch));
+  });
+  const selectedResource = filteredResources.find((resource) => resourceKey(resource) === draft.resourceKey)
+    ?? filteredResources[0]
+    ?? permissions.find((resource) => resourceKey(resource) === draft.resourceKey);
+
+  const selectResource = (resource: AdminPermissionSummary) => {
+    onDraftChange((current) => ({ ...current, resourceKey: resourceKey(resource) }));
+  };
 
   return (
     <div className="admin-permission-editor">
-      <form className="admin-permission-form" onSubmit={onCreate}>
-        <label className="field">
-          <span>리소스</span>
-          <select value={draft.resourceKey} onChange={(event) => onDraftChange((current) => ({ ...current, resourceKey: event.target.value }))}>
-            {permissions.map((resource) => (
-              <option key={resourceKey(resource)} value={resourceKey(resource)}>
-                {resource.resourceType} · {resource.resourceName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Principal</span>
-          <select value={draft.principalType} onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value === "public" ? "public" : current.principalId, principalType: event.target.value as PermissionPrincipalType }))}>
-            {principalTypeOptions.map((type) => <option key={type} value={type}>{type}</option>)}
-          </select>
-        </label>
-        <label className="field">
-          <span>ID</span>
-          <input
-            list="admin-principal-suggestions"
-            disabled={draft.principalType === "public"}
-            value={draft.principalType === "public" ? "public" : draft.principalId}
-            onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value }))}
-          />
-          <datalist id="admin-principal-suggestions">
-            {principalSuggestions.map((value) => <option key={value} value={value} />)}
-          </datalist>
-        </label>
-        <div className="admin-permission-actions" aria-label="추가할 권한 action">
-          {permissionOrder.map((action) => (
-            <label key={action}>
-              <input
-                checked={draft.actions.includes(action)}
-                type="checkbox"
-                onChange={(event) => onDraftActionChange(action, event.target.checked)}
-              />
-              <span>{action}</span>
-            </label>
+      <div className="admin-permission-toolbar">
+        <div className="admin-permission-filter-tabs" aria-label="리소스 유형 필터">
+          {resourceTypeFilters.map((type) => (
+            <button
+              className={resourceTypeFilter === type ? "active" : ""}
+              key={type}
+              type="button"
+              onClick={() => setResourceTypeFilter(type)}
+            >
+              {type === "all" ? "전체" : resourceTypeLabel(type)}
+            </button>
           ))}
         </div>
-        <button className="primary-button" type="submit" disabled={pending || permissions.length === 0}>
-          <Plus size={16} />
-          <span>Grant 추가</span>
-        </button>
-      </form>
+        <label className="admin-permission-search">
+          <span>리소스 검색</span>
+          <input
+            placeholder="이름, ID, owner 검색"
+            value={resourceSearch}
+            onChange={(event) => setResourceSearch(event.target.value)}
+          />
+        </label>
+      </div>
       {message && <InfoBox title="권한 편집" body={message} />}
 
-      <div className="admin-permission-resource-list">
-        {permissions.slice(0, 60).map((resource) => (
-          <article className="admin-permission-resource-card" key={`${resource.resourceType}-${resource.resourceId}`}>
-            <header>
+      <div className="admin-permission-workbench">
+        <div className="admin-permission-resource-list" aria-label="권한 리소스 목록">
+          {filteredResources.slice(0, 80).map((resource) => (
+            <button
+              className={resourceKey(resource) === resourceKey(selectedResource) ? "admin-permission-resource-row active" : "admin-permission-resource-row"}
+              key={`${resource.resourceType}-${resource.resourceId}`}
+              type="button"
+              onClick={() => selectResource(resource)}
+            >
               <div>
                 <strong>{resource.resourceName}</strong>
                 <span>{resource.resourceType} · {resource.resourceId}</span>
               </div>
-              <div className="admin-console-chip-row">
-                {permissionOrder.filter((action) => canAction(resource, action)).map((action) => (
-                  <AdminChip key={`${resource.resourceId}-${action}`}>{action}</AdminChip>
+              <em>{resource.grants.length} grants</em>
+            </button>
+          ))}
+          {filteredResources.length === 0 && <span className="admin-console-muted">조건에 맞는 리소스가 없습니다.</span>}
+        </div>
+
+        <section className="admin-permission-detail" aria-label="선택 리소스 권한 상세">
+          {selectedResource ? (
+            <>
+              <header>
+                <div>
+                  <span>{resourceTypeLabel(selectedResource.resourceType)}</span>
+                  <h3>{selectedResource.resourceName}</h3>
+                  <p>{selectedResource.resourceId}</p>
+                </div>
+                <div className="admin-console-chip-row">
+                  {permissionOrder.filter((action) => canAction(selectedResource, action)).map((action) => (
+                    <AdminChip key={`${selectedResource.resourceId}-${action}`}>{actionLabel(action)}</AdminChip>
+                  ))}
+                </div>
+              </header>
+
+              <dl className="admin-permission-resource-meta">
+                <div>
+                  <dt>Owner</dt>
+                  <dd>{selectedResource.owner || selectedResource.createdBy || "-"}</dd>
+                </div>
+                <div>
+                  <dt>Grant</dt>
+                  <dd>{selectedResource.grants.length}개</dd>
+                </div>
+              </dl>
+
+              <form className="admin-permission-form compact" onSubmit={onCreate}>
+                <label className="field">
+                  <span>Principal</span>
+                  <select value={draft.principalType} onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value === "public" ? "public" : current.principalId, principalType: event.target.value as PermissionPrincipalType, resourceKey: resourceKey(selectedResource) }))}>
+                    {principalTypeOptions.map((type) => <option key={type} value={type}>{principalTypeLabel(type)}</option>)}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>ID</span>
+                  <input
+                    list="admin-principal-suggestions"
+                    disabled={draft.principalType === "public"}
+                    value={draft.principalType === "public" ? "public" : draft.principalId}
+                    onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
+                  />
+                  <datalist id="admin-principal-suggestions">
+                    {principalSuggestions.map((value) => <option key={value} value={value} />)}
+                  </datalist>
+                </label>
+                <div className="admin-permission-actions" aria-label="추가할 권한 action">
+                  {permissionOrder.map((action) => (
+                    <label key={action}>
+                      <input
+                        checked={draft.actions.includes(action)}
+                        type="checkbox"
+                        onChange={(event) => onDraftActionChange(action, event.target.checked)}
+                      />
+                      <span>{actionLabel(action)}</span>
+                    </label>
+                  ))}
+                </div>
+                <button className="primary-button" type="submit" disabled={pending || permissions.length === 0} onClick={() => selectResource(selectedResource)}>
+                  <Plus size={16} />
+                  <span>Grant</span>
+                </button>
+              </form>
+
+              <div className="admin-grant-list">
+                {selectedResource.grants.map((grant, index) => (
+                  <GrantEditor
+                    grant={grant}
+                    key={`${selectedResource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
+                    pending={pending}
+                    resource={selectedResource}
+                    onDelete={onDelete}
+                    onUpdate={onUpdate}
+                  />
                 ))}
+                {selectedResource.grants.length === 0 && <span className="admin-console-muted">grant 없음</span>}
               </div>
-            </header>
-            <dl className="admin-permission-resource-meta">
-              <div>
-                <dt>Owner</dt>
-                <dd>{resource.owner || resource.createdBy || "-"}</dd>
-              </div>
-              <div>
-                <dt>Grant</dt>
-                <dd>{resource.grants.length}개</dd>
-              </div>
-            </dl>
-            <div className="admin-grant-list">
-              {resource.grants.map((grant, index) => (
-                <GrantEditor
-                  grant={grant}
-                  key={`${resource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
-                  pending={pending}
-                  resource={resource}
-                  onDelete={onDelete}
-                  onUpdate={onUpdate}
-                />
-              ))}
-              {resource.grants.length === 0 && <span className="admin-console-muted">grant 없음</span>}
-            </div>
-          </article>
-        ))}
+            </>
+          ) : (
+            <InfoBox title="선택된 리소스 없음" body="권한을 관리할 리소스를 선택해주세요." />
+          )}
+        </section>
       </div>
     </div>
   );
@@ -529,7 +584,7 @@ function GrantEditor({
               type="checkbox"
               onChange={(event) => toggleAction(action, event.target.checked)}
             />
-            <span>{action}</span>
+            <span>{actionLabel(action)}</span>
           </label>
         ))}
       </div>
@@ -586,6 +641,28 @@ function AdminChip({ children }: { children: React.ReactNode }) {
 
 function resourceKey(resource?: AdminPermissionSummary) {
   return resource ? `${resource.resourceType}:${resource.resourceId}` : "";
+}
+
+function resourceTypeLabel(type: AdminResourceType) {
+  if (type === "dataset") return "Dataset";
+  if (type === "etl_job") return "Job";
+  return "Dashboard";
+}
+
+function principalTypeLabel(type: PermissionPrincipalType) {
+  if (type === "group") return "그룹";
+  if (type === "user") return "사용자";
+  if (type === "role") return "역할";
+  return "공개";
+}
+
+function actionLabel(action: PermissionAction) {
+  if (action === "view") return "조회";
+  if (action === "query") return "쿼리";
+  if (action === "run") return "실행";
+  if (action === "manage") return "관리";
+  if (action === "delete") return "삭제";
+  return "공유";
 }
 
 function canAction(resource: AdminPermissionSummary, action: PermissionAction) {
