@@ -16,10 +16,12 @@ import {
 } from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
 import { SettingsPanel } from "@/components/ui/settings-panel";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
   DashboardRuntimeWidget,
@@ -729,6 +731,7 @@ export function WidgetConfigPanel({
       <SettingsPanel
         className="asklake-widget-config-panel empty"
         description="왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다."
+        headerClassName="asklake-widget-config-heading asklake-widget-config-empty-heading"
         title="데이터셋을 선택해 주세요"
       />
     );
@@ -776,7 +779,7 @@ export function WidgetConfigPanel({
         </FormFieldGroup>
 
         <FormFieldGroup label="설명">
-          <textarea
+          <Textarea
             placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
             rows={3}
             value={description}
@@ -906,10 +909,9 @@ export function WidgetConfigPanel({
               <legend>컬럼</legend>
               {columnGroups.allColumns.map((column) => (
                 <label key={column.name}>
-                  <input
+                  <Checkbox
                     checked={(currentConfig.columns ?? []).includes(column.name)}
-                    type="checkbox"
-                    onChange={() => toggleTableColumn(column.name)}
+                    onCheckedChange={() => toggleTableColumn(column.name)}
                   />
                   <span>{column.name}</span>
                 </label>
@@ -993,10 +995,9 @@ export function WidgetConfigPanel({
             )}
             {type === "area_chart" && (
               <label className="asklake-widget-checkbox-row">
-                <input
+                <Checkbox
                   checked={currentConfig.stacked ?? false}
-                  type="checkbox"
-                  onChange={(event) => patchCurrentConfig({ stacked: event.target.checked })}
+                  onCheckedChange={(checked) => patchCurrentConfig({ stacked: checked === true })}
                 />
                 <span>누적 영역으로 표시</span>
               </label>

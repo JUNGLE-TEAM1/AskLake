@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -185,7 +187,7 @@ export function DashboardAssistantPanel({
       )}
 
       <form className="asklake-assistant-form" onSubmit={(event) => void submitQuestion(event)}>
-        <textarea
+        <Textarea
           aria-label="AskLake 질문"
           placeholder="AskLake에게 질문하세요."
           ref={promptInputRef}
@@ -193,9 +195,9 @@ export function DashboardAssistantPanel({
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
         />
-        <button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
+        <Button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
           {isSubmitting ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-        </button>
+        </Button>
       </form>
 
       {error && <span className="asklake-assistant-error">{error}</span>}

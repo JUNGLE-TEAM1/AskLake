@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { ResultPanel } from "@/components/ui/preview-panel";
+import { Textarea } from "@/components/ui/textarea";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
@@ -830,7 +832,7 @@ export function SqlAnalysisPage({
                     <div className="sql-ai-input-row">
                       <label className="sql-ai-prompt">
                         <span>요청</span>
-                        <textarea
+                        <Textarea
                           ref={queryAiPromptRef}
                           onChange={(event) => {
                             setQueryAiPrompt(event.target.value);
@@ -890,7 +892,7 @@ export function SqlAnalysisPage({
             <div className={baseDataset ? "sql-editor-surface" : "sql-editor-surface empty"}>
               <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
               <div className="sql-editor-input-wrap">
-                <textarea
+                <Textarea
                   ref={textareaRef}
                   disabled={!baseDataset}
                   placeholder={baseDataset ? "SQL을 입력하세요." : "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다."}
@@ -1008,7 +1010,7 @@ export function SqlAnalysisPage({
                 />
               </FormFieldGroup>
               <FormFieldGroup className="wide" label="설명">
-                <textarea
+                <Textarea
                   onChange={(event) => {
                     setDerivedDatasetDescription(event.target.value);
                   }}
@@ -1036,12 +1038,11 @@ export function SqlAnalysisPage({
                 <option value="GOLD">GOLD</option>
               </NativeSelectField>
               <label className="sql-materialize-checkbox">
-                <input
+                <Checkbox
                   checked={derivedDatasetRag}
-                  onChange={(event) => {
-                    setDerivedDatasetRag(event.target.checked);
+                  onCheckedChange={(checked) => {
+                    setDerivedDatasetRag(checked === true);
                   }}
-                  type="checkbox"
                 />
                 <span>RAG 사용 가능</span>
               </label>
