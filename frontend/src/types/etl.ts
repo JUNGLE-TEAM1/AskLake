@@ -84,6 +84,7 @@ export type SchemaColumnDraft = {
   confidence?: number;
   included?: boolean;
   nullable: boolean;
+  reviewAnalysisMethod?: string;
   role?: string;
   sourceName: string;
   targetName: string;

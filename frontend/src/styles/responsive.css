@@ -231,6 +231,24 @@
     grid-template-columns: 1fr 1fr;
   }
 
+  .review-analysis-topline,
+  .review-analysis-layout,
+  .review-analysis-result-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .review-analysis-controls {
+    justify-content: flex-start;
+  }
+
+  .review-analysis-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-analysis-step:nth-child(2) {
+    border-right: 0;
+  }
+
   .jobs-search,
   .reset-filter {
     grid-column: 1 / -1;
@@ -332,6 +350,8 @@
   .hegun-field-grid,
   .hegun-rule-builder,
   .hegun-test-strip,
+  .review-analysis-flow,
+  .review-analysis-metrics,
   .hegun-rule-library {
     grid-template-columns: 1fr;
   }
@@ -362,6 +382,24 @@
   .jobs-view-switch,
   .create-job-button {
     width: 100%;
+  }
+
+  .review-analysis-workspace {
+    padding: 16px;
+  }
+
+  .review-analysis-controls,
+  .review-analysis-controls button {
+    width: 100%;
+  }
+
+  .review-analysis-step {
+    border-right: 0;
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .review-analysis-step:last-child {
+    border-bottom: 0;
   }
 
   .job-title-row,

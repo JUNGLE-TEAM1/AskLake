@@ -29,6 +29,13 @@ export function runSparkPipeline(job, command, runId) {
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
   const packageArgs = sparkPackageArgs(source, output);
+  const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
+    || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
+    || "http://host.docker.internal:1234/v1/chat/completions";
+  const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
+  const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
+    || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
+  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "local_llm";
   const dockerArgs = [
     "run",
     "--rm",
@@ -73,6 +80,16 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
     "-e",
+    `ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
+    "-e",
+    `ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
+    "-e",
+    `ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
+    "-e",
+    `ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
+    "-e",
+    `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
+    "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
     "/opt/spark/bin/spark-submit",
@@ -80,6 +97,16 @@ export function runSparkPipeline(job, command, runId) {
     process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077",
     "--conf",
     "spark.jars.ivy=/tmp/.ivy2",
+    "--conf",
+    `spark.executorEnv.ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MODEL=${localLlmModel}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS=${localLlmTimeoutSeconds}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
