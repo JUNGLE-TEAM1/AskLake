@@ -13,6 +13,11 @@ const viewerHeaders = {
   "X-AskLake-Role": "viewer",
   "X-AskLake-User": "Blocked Dataset Viewer",
 };
+const groupViewerHeaders = {
+  "X-AskLake-Groups": "phase6-smoke-group",
+  "X-AskLake-Role": "viewer",
+  "X-AskLake-User": "Blocked Dataset Group Viewer",
+};
 const env = {
   ...process.env,
   LOCAL_LAKE_STORAGE_DIR: process.env.LOCAL_LAKE_STORAGE_DIR || path.join(backendDir, "tmp", "permission-dataset-lake"),
@@ -109,6 +114,25 @@ async function runSmoke() {
   const runId = derivedDataset.materializationRuns?.[0]?.runId;
   assert(runId, "Derived dataset should include a materialization run for delete permission smoke.");
 
+  const blockedGroupDetail = await getExpectError(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}`, 403, groupViewerHeaders);
+  assert(blockedGroupDetail.error?.code === "FORBIDDEN", "Viewer group without grant should be denied from derived dataset detail.");
+
+  const groupGrantResponse = await post("/api/admin/permissions", {
+    actions: ["view"],
+    principalId: "phase6-smoke-group",
+    principalType: "group",
+    resourceId: derivedDataset.id,
+    resourceType: "dataset",
+  });
+  const groupGrant = findGrant(groupGrantResponse, {
+    resourceId: derivedDataset.id,
+    resourceType: "dataset",
+  }, "phase6-smoke-group");
+  assert(groupGrant?.id, "Group view grant should be persisted for derived dataset.");
+
+  const groupVisibleDetail = await get(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}`, groupViewerHeaders);
+  assert(groupVisibleDetail.id === derivedDataset.id, "Viewer with matching group grant should hydrate derived dataset detail.");
+
   const deleteGrantResponse = await post("/api/admin/permissions", {
     actions: ["delete"],
     principalId: viewerHeaders["X-AskLake-User"],
@@ -124,6 +148,7 @@ async function runSmoke() {
   assert(deleteResponse.deletedRunId === runId, "Viewer with delete grant should delete the materialization run.");
 
   await del(`/api/admin/permissions/${viewGrant.id}`);
+  await del(`/api/admin/permissions/${groupGrant.id}`);
   await del(`/api/admin/permissions/${deleteGrant.id}`);
 
   console.log("verify-permission-dataset-access: ok");
