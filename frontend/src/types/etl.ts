@@ -263,9 +263,13 @@ export type CreatePipelineRequest = {
   permissionRoles?: PermissionDraft["roles"];
   storageType?: "S3" | "Local" | "HDFS";
   partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   compression?: "Snappy" | "Gzip" | "None";
   storagePath?: string;
   targetDataset: string;
+  targetDescription?: string;
+  targetTags?: string[];
   targetLayer: TargetLayer;
   targetFormat: string;
   owner: string;
