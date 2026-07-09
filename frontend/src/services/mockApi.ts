@@ -74,12 +74,26 @@ const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spen
 
 function normalizeJob(job: JobRowData): JobRowData {
   const createdBy = job.createdBy?.trim() || job.owner || "demo-user";
-  return { ...job, createdBy, createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy), status: normalizeJobStatus(job.status) };
+  return {
+    ...job,
+    createdBy,
+    createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
+    permissions: job.permissions ?? buildResourcePermissions({ canRun: true }),
+    status: normalizeJobStatus(job.status),
+  };
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
   const createdBy = dataset.createdBy?.trim() || dataset.owner || "demo-user";
-  return { ...dataset, createdBy, createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy), status: normalizeDatasetStatus(dataset.status) };
+  return {
+    ...dataset,
+    createdBy,
+    createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canQuery: true }),
+    status: normalizeDatasetStatus(dataset.status),
+  };
 }
 
 function buildIdentityProfile(name: string) {
@@ -94,6 +108,26 @@ function buildIdentityProfile(name: string) {
   return {
     avatarInitials: initials.slice(0, 2),
     displayName,
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset["permissions"]>> = {}) {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
+    ...overrides,
   };
 }
 

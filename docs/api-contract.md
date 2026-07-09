@@ -94,10 +94,35 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
 | `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
 | `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
-| `permissionGrants` | 아직 공통 API 계약 없음 | actor/group/role별 resource action 허용 목록 |
-| `permissions` | 아직 공통 response 필드 없음 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
+| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | actor/group/role별 resource action 허용 목록 |
+| `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
 현재 Catalog 목록/상세, SQL preview, ETL job 생성/실행 API는 `permissionSummary`나 `permissionRoles`로 접근 권한을 판정하지 않습니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 dashboard 삭제 전용 임시 입력이며, 플랫폼 공통 권한 모델이 아닙니다.
+
+Phase 2 기준 `permissionGrants`와 `permissions`는 UI 표시와 후속 enforcement 준비를 위한 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다.
+
+```ts
+type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
+type PermissionPrincipalType = "user" | "group" | "role" | "public";
+
+type PermissionGrant = {
+  principalType: PermissionPrincipalType;
+  principalId: string;
+  actions: PermissionAction[];
+  source?: string;
+};
+
+type ResourcePermissions = {
+  canView: boolean;
+  canQuery: boolean;
+  canRun: boolean;
+  canManage: boolean;
+  canDelete: boolean;
+  canShare: boolean;
+  computedFor?: string;
+  enforced?: boolean;
+};
+```
 
 ### Success Envelope
 
@@ -227,6 +252,8 @@ type JobRowData = {
     email?: string;
     role?: string;
   };
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   status: JobStatus;
   tag: string;
   source: string;
@@ -298,6 +325,8 @@ type CatalogDataset = {
     email?: string;
     role?: string;
   };
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
@@ -575,6 +604,7 @@ type CreatePipelineRequest = {
   timezone: string;
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
+  permissionGrants?: PermissionGrant[];
   createdBy?: string;
   createdByProfile?: {
     avatarInitials?: string;
@@ -594,7 +624,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. 인증이 붙기 전까지 backend는 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. 인증이 붙기 전까지 backend는 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Request 예시:
 
@@ -1375,7 +1405,7 @@ type DashboardListResponse = {
 };
 ```
 
-`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`을 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장하되, 삭제 권한 검사는 아직 dashboard 전용 owner/admin 임시 규칙을 사용합니다.
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장하되, 삭제 권한 검사는 아직 dashboard 전용 owner/admin 임시 규칙을 사용합니다.
 
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
@@ -2104,7 +2134,7 @@ Response `201 Created`:
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
 - 인증 방식: JWT, 세션, 또는 임시 demo actor.
-- 권한 모델: Phase 0 기준처럼 identity metadata와 `permissionGrants`를 분리하고, backend가 actor별 `permissions`를 계산해 내려줄지 여부.
+- 권한 모델: Phase 2 계약의 `permissionGrants`/`permissions`를 실제 backend enforcement로 승격할 endpoint와 action 범위.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.

@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel, CursorPageMeta
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 CatalogLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 DatasetFreshness = Literal["latest", "stale", "approval"]
@@ -56,6 +57,8 @@ class DatasetMaterializationRun(CamelModel):
 class CatalogDatasetResponse(CamelModel):
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     description: str
     downstream: list[str] = Field(default_factory=list)
     freshness: DatasetFreshness

@@ -7,6 +7,7 @@ from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.dashboard_card_repository import (
     delete_dashboard_card,
     get_dashboard_card,
@@ -94,7 +95,7 @@ def _filter_options(cards: list[DashboardCard]) -> DashboardListFilterOptions:
 
 
 def query_dashboard_cards(db: Session, query: DashboardListQuery) -> DashboardListResponse:
-    source_cards = list_dashboard_cards(db)
+    source_cards = [with_dashboard_permissions(card) for card in list_dashboard_cards(db)]
     filtered_cards = [card for card in source_cards if _matches_query(card, query)]
     sorted_cards = _sort_dashboard_cards(filtered_cards, query.sort)
     page_size = query.page_size
@@ -124,6 +125,8 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
         createdAtValue=_iso_timestamp(created_at),
         createdBy=created_by,
         createdByProfile=identity_profile(created_by),
+        permissionGrants=permission_grants_from_roles(owner, default_actions=["view", "manage", "share"]),
+        permissions=resource_permissions(actor=created_by, can_manage=True, can_delete=True, can_share=True),
         datasetId=request.dataset_id,
         hasPublishedRevision=False,
         id=_dashboard_id(),
@@ -140,6 +143,13 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
     save_dashboard_card(db, dashboard)
     db.commit()
     return dashboard
+
+
+def with_dashboard_permissions(card: DashboardCard, actor_name: str = "demo-user") -> DashboardCard:
+    return card.model_copy(update={
+        "permission_grants": card.permission_grants or permission_grants_from_roles(card.owner, default_actions=["view", "manage", "share"]),
+        "permissions": card.permissions or resource_permissions(actor=actor_name),
+    })
 
 
 def identity_profile(name: str) -> dict[str, str]:

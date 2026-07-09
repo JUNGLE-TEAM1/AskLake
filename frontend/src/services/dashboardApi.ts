@@ -65,6 +65,8 @@ function normalizeDashboardCard(card: SavedDashboardCard): SavedDashboardCard {
     ...card,
     createdBy,
     createdByProfile: card.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: card.permissionGrants ?? buildPermissionGrants(card.owner, ["view", "manage", "share"]),
+    permissions: card.permissions ?? buildResourcePermissions(),
     status: normalizeDashboardStatus(card.status),
   };
 }
@@ -81,6 +83,25 @@ function buildIdentityProfile(name: string) {
   return {
     avatarInitials: initials.slice(0, 2),
     displayName,
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions() {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
   };
 }
 

@@ -1,4 +1,5 @@
 import type { IdentityProfile } from "./identity";
+import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
@@ -43,6 +44,8 @@ export type CatalogDataset = {
   owner: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   quality: string;
   rag: boolean;
   rows: string;

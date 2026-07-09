@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -119,6 +120,8 @@ class JobRowData(CamelModel):
     owner: str
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     tag: str
     source: str
     target: str
@@ -162,6 +165,8 @@ class CatalogDataset(CamelModel):
     owner: str
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
     status: Literal["available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
@@ -234,6 +239,7 @@ class CreatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    permission_grants: list[PermissionGrant] | None = None
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
     storage_type: str | None = None

@@ -1,4 +1,5 @@
 import type { IdentityProfile } from "./identity";
+import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
@@ -13,6 +14,8 @@ export type JobRowData = {
   owner: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   tag: string;
   source: string;
   target: string;
@@ -265,6 +268,7 @@ export type CreatePipelineRequest = {
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   permissionRoles?: PermissionDraft["roles"];
+  permissionGrants?: PermissionGrant[];
   createdBy?: string;
   createdByProfile?: IdentityProfile;
   storageType?: "S3" | "Local" | "HDFS";

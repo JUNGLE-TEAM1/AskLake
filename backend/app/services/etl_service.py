@@ -10,6 +10,7 @@ from fastapi import status
 from sqlalchemy.orm import Session
 
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
@@ -721,6 +722,8 @@ def dataset_payload_from_spark_result(
         "owner": job.owner,
         "createdBy": job.created_by or job.owner,
         "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
+        "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
+        "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),

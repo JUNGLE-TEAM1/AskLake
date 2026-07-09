@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import status
 
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.sql_repository import SqlRepository
 from app.schemas.catalog import (
@@ -267,6 +268,8 @@ def build_derived_dataset_payload(
         "owner": result_source_dataset.owner,
         "createdBy": created_by_from_payload(previous_payload, actor_name),
         "createdByProfile": created_by_profile_from_payload(previous_payload, actor_name),
+        "permissionGrants": permission_grants_from_roles(result_source_dataset.owner, default_actions=["view", "query"]),
+        "permissions": resource_permissions(actor=actor_name, can_query=True),
         "quality": "SQL materialized",
         "rag": request.dataset.rag,
         "rows": f"{aggregate['rowCount']:,} rows",

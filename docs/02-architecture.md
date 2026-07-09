@@ -146,7 +146,7 @@ FastAPI가 현재 소유하는 책임:
 
 현재 backend는 공통 permission engine을 갖고 있지 않다. Catalog 목록/상세, SQL preview, ETL job 생성/실행은 dataset별 grant를 검사하지 않고, request와 dataset context의 유효성만 확인한다. Dashboard 삭제만 `X-AskLake-User`, `X-AskLake-Role` 임시 header를 이용해 owner/admin 삭제를 막는 dashboard 전용 보호 장치를 둔다.
 
-권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. 후속 구현은 `permissionGrants`를 resource에 저장하고, backend가 `canView`, `canQuery`, `canManage` 같은 계산된 권한을 내려주는 방향을 기준으로 한다.
+권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Phase 2부터 Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. 다만 현재 `permissions.enforced=false`이며, Catalog/SQL/Job API 차단은 후속 backend permission check 단계에서 적용한다.
 
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
@@ -171,7 +171,7 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
 | Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
-| Permission Grant | Permission step metadata | future backend-enforced access control resource |
+| Permission Grant | optional `permissionGrants`/`permissions` response metadata | future backend-enforced access control resource |
 
 Catalog dataset은 `materializationRuns` append history를 가질 수 있다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run history를 기준으로 계산한다. 마지막 append 결과를 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 append 결과 삭제는 별도 UX/API로 분리한다.
 

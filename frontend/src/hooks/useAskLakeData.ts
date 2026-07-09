@@ -404,6 +404,8 @@ function normalizeJobRow(job: JobRowData): JobRowData {
     ...job,
     createdBy,
     createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
+    permissions: job.permissions ?? buildResourcePermissions({ canRun: true }),
     status: normalizeJobStatus(String(job.status)),
   };
 }
@@ -414,8 +416,30 @@ function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
     ...dataset,
     createdBy,
     createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canQuery: true }),
     materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset["permissions"]>> = {}) {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
+    ...overrides,
   };
 }
 

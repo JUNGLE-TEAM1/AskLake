@@ -1,4 +1,5 @@
 import type { IdentityProfile } from "./identity";
+import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type DashboardRuntimeMode = "published" | "draft";
 export type DashboardView = "list" | "builder" | "detail" | "runtime";
@@ -143,6 +144,8 @@ export type SavedDashboardCard = {
   owner: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   createdAt?: string;
   createdAtValue?: string;
   sourceRunId?: string;
