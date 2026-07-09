@@ -5,12 +5,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const panelVariants = cva(
-  "overflow-hidden rounded-lg border border-slate-200 bg-white text-slate-950 shadow-[0_1px_2px_rgb(15_23_42_/_3%)]",
+  "rounded-lg border border-slate-200 bg-white text-slate-950 shadow-[0_1px_2px_rgb(15_23_42_/_3%)]",
   {
     defaultVariants: {
+      overflow: "hidden",
       variant: "default",
     },
     variants: {
+      overflow: {
+        hidden: "overflow-hidden",
+        visible: "overflow-visible",
+      },
       variant: {
         default: "",
         muted: "bg-slate-50",
@@ -27,12 +32,12 @@ export interface PanelProps
 }
 
 export const Panel = React.forwardRef<HTMLElement, PanelProps>(
-  ({ asChild = false, className, variant, ...props }, ref) => {
+  ({ asChild = false, className, overflow, variant, ...props }, ref) => {
     const Comp = asChild ? Slot : "section";
 
     return (
       <Comp
-        className={cn(panelVariants({ className, variant }))}
+        className={cn(panelVariants({ className, overflow, variant }))}
         ref={ref}
         {...props}
       />

@@ -36,6 +36,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FilterToolbar, FilterToolbarSearch, FilterToolbarSearchText } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
@@ -176,23 +177,22 @@ export function JobsLandingPage({
 
 function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void; onReset: () => void }) {
   return (
-    <Panel className="jobs-toolbar">
+    <Panel>
       <PanelHeader
         description="작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다."
         icon={<SlidersHorizontal size={16} />}
         meta={<Badge size="sm">필터</Badge>}
         title="검색 및 필터"
       />
-      <div className="jobs-toolbar-body">
-        <div className="jobs-search">
-          <Search size={16} />
-          <span>작업명, 소스명, 타깃 데이터셋명 검색</span>
-        </div>
+      <FilterToolbar layout="filters">
+        <FilterToolbarSearch icon={<Search size={16} />} size="compact">
+          <FilterToolbarSearchText>작업명, 소스명, 타깃 데이터셋명 검색</FilterToolbarSearchText>
+        </FilterToolbarSearch>
         {["상태", "소스", "Owner", "태그"].map((filter) => (
-          <Button className="filter-chip jobs-filter" key={filter} size="sm" type="button" variant="outline" onClick={() => onFilter(filter)}>{filter} ▾</Button>
+          <Button className="min-w-[74px] rounded-[7px]" key={filter} size="sm" type="button" variant="outline" onClick={() => onFilter(filter)}>{filter} ▾</Button>
         ))}
-        <Button className="ghost-link reset-filter" size="sm" type="button" variant="ghost" onClick={onReset}>↺ 필터 초기화</Button>
-      </div>
+        <Button className="ghost-link justify-self-end whitespace-nowrap max-xl:justify-self-stretch" size="sm" type="button" variant="ghost" onClick={onReset}>↺ 필터 초기화</Button>
+      </FilterToolbar>
     </Panel>
   );
 }
