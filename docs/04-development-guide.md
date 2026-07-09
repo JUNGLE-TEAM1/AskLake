@@ -56,6 +56,29 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
+### Local Airflow smoke runtime
+
+Airflow run polling을 실제로 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local smoke 전용 `airflow` / `airflow`다.
+
+```bash
+docker compose up airflow-init
+docker compose up -d airflow-apiserver airflow-scheduler airflow-dag-processor
+curl -u airflow:airflow http://127.0.0.1:8081/api/v2/monitor/health
+```
+
+FastAPI backend는 아래 환경변수를 준 뒤 재시작한다.
+
+```bash
+AIRFLOW_API_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_USERNAME=airflow
+AIRFLOW_PASSWORD=airflow
+```
+
+그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Run History와 DAG modal이 `GET /api/etl/jobs/{jobId}` polling으로 Airflow DAG Run/Task Instance 상태를 반영한다.
+
+
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
 설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.

@@ -52,6 +52,7 @@ export type JobStats = {
   averageDuration: string;
   currentStage: string;
   inputRows: string;
+  lastSyncedAt?: string;
   lastSuccess: string;
   outputRows: string;
   outputPath?: string;
@@ -285,6 +286,10 @@ export type DraftPipelineSlicePatch = {
 export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;
 
 export type JobRunSummary = {
+  airflowDagId?: string;
+  airflowDagRunId?: string;
+  airflowRunUrl?: string;
+  airflowState?: string;
   duration: string;
   endedAt: string;
   errorSummary: string;
@@ -295,6 +300,8 @@ export type JobRunSummary = {
   runId: string;
   startedAt: string;
   status: JobRunStatus;
+  syncError?: string;
+  taskStates?: Record<string, unknown>;
 };
 
 export type JobDagStep = {
