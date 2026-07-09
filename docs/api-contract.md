@@ -101,13 +101,25 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 
 Phase 2 기준 `permissionGrants`와 `permissions`는 UI 표시와 후속 enforcement 준비를 위한 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다.
 
-Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. 현재 이 공통 판정기를 실제 차단에 사용하는 endpoint는 Dashboard 삭제이며, Catalog/SQL/Job 차단은 후속 단계에서 붙입니다.
+Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. Phase 4부터 이 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command에도 사용됩니다.
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
 | `X-AskLake-User` | `Admin User` | 요청 사용자 표시 이름 |
 | `X-AskLake-Role` | `admin` | `admin`이면 모든 action 허용 |
 | `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
+
+Phase 4 enforcement 범위:
+
+| Endpoint | 필요 action | 비고 |
+| --- | --- | --- |
+| `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
+| `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
+| `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
+| `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` | materialization metadata 수정으로 간주 |
+| `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
 
 ```ts
 type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
@@ -2142,7 +2154,7 @@ Response `201 Created`:
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
 - 인증 방식: JWT, 세션, 또는 임시 demo actor.
-- 권한 모델: Phase 2 계약의 `permissionGrants`/`permissions`를 실제 backend enforcement로 승격할 endpoint와 action 범위.
+- 권한 모델: Phase 4 enforcement 범위를 Dashboard runtime 편집, Query AI, dataset 생성/삭제 전체로 확장할지 여부.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.

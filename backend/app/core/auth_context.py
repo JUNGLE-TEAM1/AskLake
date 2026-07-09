@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from fastapi import Header
+from fastapi import status
+
+from app.core.errors import ApiError
+from app.schemas.common import ErrorCode
 
 
 @dataclass(frozen=True)
@@ -68,6 +72,31 @@ def can(
     return False
 
 
+def grant_payloads(grants: list[Any] | None) -> list[dict[str, Any]]:
+    return [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in (grants or [])
+        if isinstance(grant, dict) or hasattr(grant, "model_dump")
+    ]
+
+
+def require_permission(
+    actor: ActorContext,
+    action: str,
+    *,
+    owner: str | None = None,
+    grants: list[Any] | None = None,
+    resource_label: str = "resource",
+) -> None:
+    if can(actor, action, owner=owner, grants=grant_payloads(grants)):
+        return
+    raise ApiError(
+        ErrorCode.FORBIDDEN,
+        f"Actor {actor.name} is not allowed to {action} this {resource_label}",
+        status.HTTP_403_FORBIDDEN,
+    )
+
+
 def permissions_for_actor(
     actor: ActorContext,
     *,
@@ -76,12 +105,12 @@ def permissions_for_actor(
     enforced: bool = False,
 ) -> dict[str, Any]:
     return {
-        "canView": can(actor, "view", owner=owner, grants=grants),
-        "canQuery": can(actor, "query", owner=owner, grants=grants),
-        "canRun": can(actor, "run", owner=owner, grants=grants),
-        "canManage": can(actor, "manage", owner=owner, grants=grants),
-        "canDelete": can(actor, "delete", owner=owner, grants=grants),
-        "canShare": can(actor, "share", owner=owner, grants=grants),
+        "canView": can(actor, "view", owner=owner, grants=grant_payloads(grants)),
+        "canQuery": can(actor, "query", owner=owner, grants=grant_payloads(grants)),
+        "canRun": can(actor, "run", owner=owner, grants=grant_payloads(grants)),
+        "canManage": can(actor, "manage", owner=owner, grants=grant_payloads(grants)),
+        "canDelete": can(actor, "delete", owner=owner, grants=grant_payloads(grants)),
+        "canShare": can(actor, "share", owner=owner, grants=grant_payloads(grants)),
         "computedFor": actor.name,
         "enforced": enforced,
     }

@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
@@ -35,8 +36,9 @@ def get_query_ai_service(db: Annotated[Session, Depends(get_db)]) -> QueryAiServ
 def create_query_run(
     request: QueryRunRequest,
     service: Annotated[SqlService, Depends(get_sql_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> QueryRunResponse:
-    return service.create_query_run(request)
+    return service.create_query_run(request, actor)
 
 
 @router.get("/runs/{run_id}", response_model=QueryRunResponse)

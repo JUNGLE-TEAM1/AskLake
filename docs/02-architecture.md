@@ -146,7 +146,7 @@ FastAPI가 현재 소유하는 책임:
 
 현재 backend는 공통 permission engine을 갖고 있지 않다. Catalog 목록/상세, SQL preview, ETL job 생성/실행은 dataset별 grant를 검사하지 않고, request와 dataset context의 유효성만 확인한다. Dashboard 삭제만 `X-AskLake-User`, `X-AskLake-Role` 임시 header를 이용해 owner/admin 삭제를 막는 dashboard 전용 보호 장치를 둔다.
 
-권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Phase 2부터 Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Phase 3부터 backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, Dashboard 삭제는 이 공통 코어를 사용한다. Catalog/SQL/Job API 차단은 후속 backend permission check 단계에서 적용한다.
+권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Phase 2부터 Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Phase 3부터 backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, Dashboard 삭제는 이 공통 코어를 사용한다. Phase 4부터 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command는 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
 
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,

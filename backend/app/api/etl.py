@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
 from app.schemas.etl import (
     CreatePipelineRequest,
@@ -54,5 +55,10 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobRowData:
 
 
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)
-def command_job(job_id: str, request: JobCommandRequest, db: Session = Depends(get_db)) -> JobCommandResponse:
-    return etl_service.command_job(db, job_id, request.command)
+def command_job(
+    job_id: str,
+    request: JobCommandRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobCommandResponse:
+    return etl_service.command_job(db, job_id, request.command, actor)

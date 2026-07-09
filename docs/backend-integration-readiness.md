@@ -20,7 +20,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
-| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `X-AskLake-User`/`X-AskLake-Role`/`X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. Dashboard 삭제는 공통 판정기를 사용함. Catalog/SQL/Job API는 아직 grant 기반 접근 제어를 하지 않음 | dataset/SQL/job 공통 permission check, `permissions.enforced=true` 전환 |
+| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `X-AskLake-User`/`X-AskLake-Role`/`X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. Dashboard 삭제, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command는 공통 판정기를 사용함 | Dashboard runtime 편집, Query AI, dataset 생성/삭제 전체로 permission check 확대 |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.

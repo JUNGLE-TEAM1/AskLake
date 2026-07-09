@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from fastapi import status
 
+from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
@@ -37,24 +38,34 @@ class CatalogService:
         self.repository = repository
         self.sql_repository = sql_repository
 
-    def list_datasets(self) -> CatalogDatasetListResponse:
+    def list_datasets(self, actor: ActorContext | None = None) -> CatalogDatasetListResponse:
+        actor_context = actor or ActorContext()
         datasets = [
-            CatalogDatasetResponse.model_validate(dataset_model_to_payload(model))
+            with_dataset_permissions(CatalogDatasetResponse.model_validate(dataset_model_to_payload(model)), actor_context)
             for model in self.repository.list_dataset_models()
         ]
+        datasets = [dataset for dataset in datasets if dataset.permissions.can_view]
         return CatalogDatasetListResponse(
             datasets=datasets,
             page=CursorPageMeta(cursor=None, has_next=False),
         )
 
-    def get_dataset(self, dataset_id: str) -> CatalogDatasetResponse:
+    def get_dataset(self, dataset_id: str, actor: ActorContext | None = None) -> CatalogDatasetResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
-        return CatalogDatasetResponse.model_validate(payload)
+        dataset = CatalogDatasetResponse.model_validate(payload)
+        require_permission(
+            actor or ActorContext(),
+            "view",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
+        return with_dataset_permissions(dataset, actor or ActorContext())
 
-    def get_dataset_lineage(self, dataset_id: str) -> LineageGraphResponse:
-        dataset = self.get_dataset(dataset_id)
+    def get_dataset_lineage(self, dataset_id: str, actor: ActorContext | None = None) -> LineageGraphResponse:
+        dataset = self.get_dataset(dataset_id, actor)
         lineage_payload = self.repository.get_lineage_payload(dataset_id)
         if lineage_payload is not None:
             return LineageGraphResponse.model_validate(lineage_payload)
@@ -64,10 +75,19 @@ class CatalogService:
         self,
         dataset_id: str,
         run_id: str,
+        actor: ActorContext | None = None,
     ) -> DeleteMaterializationRunResponse:
         payload = self.repository.get_dataset_payload(dataset_id)
         if payload is None:
             raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+        dataset = CatalogDatasetResponse.model_validate(payload)
+        require_permission(
+            actor or ActorContext(),
+            "manage",
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            resource_label="dataset",
+        )
 
         runs = payload.get("materializationRuns")
         materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
@@ -91,24 +111,40 @@ class CatalogService:
             })
         )
         return DeleteMaterializationRunResponse(
-            dataset=CatalogDatasetResponse.model_validate(saved_payload),
+            dataset=with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor or ActorContext()),
             deleted_run_id=run_id,
         )
 
     def create_derived_dataset(
         self,
         request: CreateDerivedDatasetRequest,
-        actor_name: str = "demo-user",
+        actor: ActorContext | None = None,
     ) -> CatalogDatasetResponse:
-        request_source_dataset = self.get_dataset(request.source_dataset_id)
+        actor_context = actor or ActorContext()
+        request_source_dataset = self.get_dataset(request.source_dataset_id, actor_context)
         sql_result = self.get_sql_result(request.source_run_id)
         validate_derived_dataset_request(request, sql_result)
-        result_source_dataset = self.get_dataset(sql_result.dataset_id)
+        result_source_dataset = self.get_dataset(sql_result.dataset_id, actor_context)
+        require_permission(
+            actor_context,
+            "query",
+            owner=result_source_dataset.owner,
+            grants=result_source_dataset.permission_grants,
+            resource_label="dataset",
+        )
 
         reference_datasets = [
-            self.get_dataset(reference_dataset_id)
+            self.get_dataset(reference_dataset_id, actor_context)
             for reference_dataset_id in unique_values(request.reference_dataset_ids)
         ]
+        for dataset in reference_datasets:
+            require_permission(
+                actor_context,
+                "query",
+                owner=dataset.owner,
+                grants=dataset.permission_grants,
+                resource_label="dataset",
+            )
         schema_source_datasets = unique_datasets_by_id([
             result_source_dataset,
             *reference_datasets,
@@ -132,7 +168,7 @@ class CatalogService:
             result_source_dataset,
             sql_result,
             schema_source_datasets,
-            actor_name,
+            actor_context.name,
             previous_payload,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
@@ -146,7 +182,7 @@ class CatalogService:
         )
 
         saved_payload = self.repository.save_dataset_payload(dataset_payload)
-        return CatalogDatasetResponse.model_validate(saved_payload)
+        return with_dataset_permissions(CatalogDatasetResponse.model_validate(saved_payload), actor_context)
 
     def get_sql_result(self, run_id: str) -> QueryRunResponse:
         payload = self.sql_repository.get_run_payload(run_id)
@@ -292,6 +328,17 @@ def build_derived_dataset_payload(
             request.source_run_id,
         ],
     }
+
+
+def with_dataset_permissions(dataset: CatalogDatasetResponse, actor: ActorContext) -> CatalogDatasetResponse:
+    return dataset.model_copy(update={
+        "permissions": permissions_for_actor(
+            actor,
+            owner=dataset.owner,
+            grants=dataset.permission_grants,
+            enforced=True,
+        ),
+    })
 
 
 def build_derived_dataset_name(
