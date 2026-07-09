@@ -1,7 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 
-import { Input, type InputProps } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export const filterToolbarVariants = cva(
@@ -70,12 +69,14 @@ export const FilterToolbarSearch = React.forwardRef<HTMLDivElement, FilterToolba
 );
 FilterToolbarSearch.displayName = "FilterToolbarSearch";
 
-export const FilterToolbarInput = React.forwardRef<HTMLInputElement, InputProps>(
+export interface FilterToolbarInputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, "size"> {}
+
+export const FilterToolbarInput = React.forwardRef<HTMLInputElement, FilterToolbarInputProps>(
   ({ className, ...props }, ref) => (
-    <Input
-      className={cn("h-auto min-w-0 border-0 bg-transparent px-0 py-0 text-sm font-semibold shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0", className)}
+    <input
+      className={cn("min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:outline-none", className)}
       ref={ref}
-      variant="ghost"
       {...props}
     />
   ),
