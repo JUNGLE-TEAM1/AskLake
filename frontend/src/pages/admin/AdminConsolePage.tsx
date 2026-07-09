@@ -242,9 +242,11 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
               {activeTab === "permissions" && (
                 <PermissionsTable
                   draft={permissionDraft}
+                  groups={groups}
                   message={permissionMessage}
                   pending={permissionPending}
                   permissions={permissions}
+                  users={users}
                   onCreate={handleCreateGrant}
                   onDelete={handleDeleteGrant}
                   onDraftActionChange={handlePermissionDraftActionChange}
@@ -360,9 +362,11 @@ type PermissionDraft = {
 
 function PermissionsTable({
   draft,
+  groups,
   message,
   pending,
   permissions,
+  users,
   onCreate,
   onDelete,
   onDraftActionChange,
@@ -370,15 +374,25 @@ function PermissionsTable({
   onUpdate,
 }: {
   draft: PermissionDraft;
+  groups: IdentityGroup[];
   message: string | null;
   pending: boolean;
   permissions: AdminPermissionSummary[];
+  users: AdminUser[];
   onCreate: (event: React.FormEvent<HTMLFormElement>) => void;
   onDelete: (resource: AdminPermissionSummary, grant: PermissionGrant) => void;
   onDraftActionChange: (action: PermissionAction, checked: boolean) => void;
   onDraftChange: React.Dispatch<React.SetStateAction<PermissionDraft>>;
   onUpdate: (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => void;
 }) {
+  const principalSuggestions = draft.principalType === "group"
+    ? groups.map((group) => group.id)
+    : draft.principalType === "user"
+      ? users.flatMap((user) => [user.displayName, user.email].filter(Boolean))
+      : draft.principalType === "role"
+        ? ["admin", "viewer"]
+        : ["public"];
+
   return (
     <div className="admin-permission-editor">
       <form className="admin-permission-form" onSubmit={onCreate}>
@@ -401,10 +415,14 @@ function PermissionsTable({
         <label className="field">
           <span>ID</span>
           <input
+            list="admin-principal-suggestions"
             disabled={draft.principalType === "public"}
             value={draft.principalType === "public" ? "public" : draft.principalId}
             onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value }))}
           />
+          <datalist id="admin-principal-suggestions">
+            {principalSuggestions.map((value) => <option key={value} value={value} />)}
+          </datalist>
         </label>
         <div className="admin-permission-actions" aria-label="추가할 권한 action">
           {permissionOrder.map((action) => (
@@ -425,47 +443,45 @@ function PermissionsTable({
       </form>
       {message && <InfoBox title="권한 편집" body={message} />}
 
-      <div className="admin-console-table-scroll">
-        <table className="schema-table admin-console-table admin-permission-table">
-          <thead>
-            <tr>
-              <th>리소스</th>
-              <th>Owner</th>
-              <th>Grant</th>
-              <th>현재 권한</th>
-            </tr>
-          </thead>
-          <tbody>
-            {permissions.slice(0, 60).map((resource) => (
-              <tr key={`${resource.resourceType}-${resource.resourceId}`}>
-                <td><strong>{resource.resourceName}</strong><span>{resource.resourceType} · {resource.resourceId}</span></td>
-                <td>{resource.owner || resource.createdBy || "-"}</td>
-                <td>
-                  <div className="admin-grant-list">
-                    {resource.grants.map((grant, index) => (
-                      <GrantEditor
-                        grant={grant}
-                        key={`${resource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
-                        pending={pending}
-                        resource={resource}
-                        onDelete={onDelete}
-                        onUpdate={onUpdate}
-                      />
-                    ))}
-                    {resource.grants.length === 0 && <span className="admin-console-muted">grant 없음</span>}
-                  </div>
-                </td>
-                <td>
-                  <div className="admin-console-chip-row">
-                    {permissionOrder.filter((action) => canAction(resource, action)).map((action) => (
-                      <AdminChip key={`${resource.resourceId}-${action}`}>{action}</AdminChip>
-                    ))}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="admin-permission-resource-list">
+        {permissions.slice(0, 60).map((resource) => (
+          <article className="admin-permission-resource-card" key={`${resource.resourceType}-${resource.resourceId}`}>
+            <header>
+              <div>
+                <strong>{resource.resourceName}</strong>
+                <span>{resource.resourceType} · {resource.resourceId}</span>
+              </div>
+              <div className="admin-console-chip-row">
+                {permissionOrder.filter((action) => canAction(resource, action)).map((action) => (
+                  <AdminChip key={`${resource.resourceId}-${action}`}>{action}</AdminChip>
+                ))}
+              </div>
+            </header>
+            <dl className="admin-permission-resource-meta">
+              <div>
+                <dt>Owner</dt>
+                <dd>{resource.owner || resource.createdBy || "-"}</dd>
+              </div>
+              <div>
+                <dt>Grant</dt>
+                <dd>{resource.grants.length}개</dd>
+              </div>
+            </dl>
+            <div className="admin-grant-list">
+              {resource.grants.map((grant, index) => (
+                <GrantEditor
+                  grant={grant}
+                  key={`${resource.resourceId}-${grant.id ?? grant.principalType}-${grant.principalId}-${index}`}
+                  pending={pending}
+                  resource={resource}
+                  onDelete={onDelete}
+                  onUpdate={onUpdate}
+                />
+              ))}
+              {resource.grants.length === 0 && <span className="admin-console-muted">grant 없음</span>}
+            </div>
+          </article>
+        ))}
       </div>
     </div>
   );
@@ -518,12 +534,18 @@ function GrantEditor({
         ))}
       </div>
       <div className="admin-grant-tools">
-        <button className="icon-button" type="button" aria-label="grant 저장" disabled={!editable || pending} onClick={() => onUpdate(resource, grant, draftActions)}>
-          <Save size={16} />
-        </button>
-        <button className="icon-button danger" type="button" aria-label="grant 삭제" disabled={!editable || pending} onClick={() => onDelete(resource, grant)}>
-          <Trash2 size={16} />
-        </button>
+        {editable ? (
+          <>
+            <button className="icon-button" type="button" aria-label="grant 저장" disabled={pending} onClick={() => onUpdate(resource, grant, draftActions)}>
+              <Save size={16} />
+            </button>
+            <button className="icon-button danger" type="button" aria-label="grant 삭제" disabled={pending} onClick={() => onDelete(resource, grant)}>
+              <Trash2 size={16} />
+            </button>
+          </>
+        ) : (
+          <span className="admin-console-readonly-badge">읽기 전용</span>
+        )}
       </div>
     </article>
   );

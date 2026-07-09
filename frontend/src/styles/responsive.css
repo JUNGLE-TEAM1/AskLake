@@ -343,6 +343,13 @@
     grid-column: auto;
   }
 
+  .admin-permission-form .primary-button {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: stretch;
+    width: 100%;
+  }
+
   .admin-grant-item {
     grid-template-columns: 1fr;
   }

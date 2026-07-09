@@ -11,6 +11,10 @@
   max-width: none;
 }
 
+.content-grid.module-page-grid.admin-console-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .content-grid.single {
   grid-template-columns: minmax(0, 960px);
 }
@@ -491,7 +495,8 @@
 
 .admin-permission-form {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 128px minmax(180px, 1fr);
+  grid-template-columns: minmax(240px, 1.2fr) minmax(128px, 0.4fr) minmax(180px, 0.8fr) auto;
+  align-items: end;
   gap: 12px;
   border-top: 1px solid #eef2f7;
   border-bottom: 1px solid #eef2f7;
@@ -525,7 +530,12 @@
 
 .admin-permission-form .primary-button {
   align-self: end;
+  grid-column: 4;
+  grid-row: 2;
+  justify-self: end;
   min-height: 38px;
+  min-width: 164px;
+  width: auto;
 }
 
 .admin-permission-actions,
@@ -536,6 +546,7 @@
 }
 
 .admin-permission-actions {
+  align-self: center;
   grid-column: 1 / 4;
 }
 
@@ -556,6 +567,75 @@
 
 .admin-permission-table {
   min-width: 1060px;
+}
+
+.admin-permission-resource-list {
+  display: grid;
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+
+.admin-permission-resource-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.admin-permission-resource-card header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.admin-permission-resource-card header strong {
+  display: block;
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.admin-permission-resource-card header span {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.admin-permission-resource-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.admin-permission-resource-meta div {
+  min-width: 0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 9px 10px;
+}
+
+.admin-permission-resource-meta dt {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.admin-permission-resource-meta dd {
+  margin: 3px 0 0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .admin-console-table th,
@@ -614,8 +694,8 @@
 
 .admin-grant-item {
   display: grid;
-  grid-template-columns: minmax(180px, 0.9fr) minmax(240px, 1fr) auto;
-  align-items: center;
+  grid-template-columns: minmax(170px, 0.8fr) minmax(260px, 1fr) auto;
+  align-items: start;
   gap: 10px;
   border: 1px solid #dbeafe;
   border-radius: 8px;
@@ -629,23 +709,42 @@
 }
 
 .admin-grant-item strong {
+  display: block;
   color: #0f172a;
   font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .admin-grant-item span {
+  display: block;
   color: #64748b;
   font-size: 11px;
   font-weight: 750;
+  margin-top: 2px;
 }
 
 .admin-grant-tools {
   display: inline-flex;
+  align-items: center;
   gap: 4px;
+  justify-content: flex-end;
 }
 
 .icon-button.danger {
   color: #dc2626;
+}
+
+.admin-console-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .admin-console-summary-panel {
