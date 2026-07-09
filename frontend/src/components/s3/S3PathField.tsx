@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type SyntheticEvent } from "react";
-import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search, X } from "lucide-react";
+import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search } from "lucide-react";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { Button } from "@/components/ui/button";
+import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFolder } from "../../services/s3PathApi";
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
@@ -238,18 +240,21 @@ function S3PathPicker({
   };
 
   return (
-    <div className="s3-picker-backdrop" role="presentation" onMouseDown={onCancel}>
-      <section aria-label="S3 경로 선택" aria-modal="true" className="s3-picker-dialog" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="s3-picker-header">
-          <div>
-            <h2>S3 경로 선택</h2>
-            <p>버킷과 주소를 선택하면 저장경로에 반영됩니다.</p>
-          </div>
-          <button className="s3-picker-close" type="button" onClick={onCancel} aria-label="S3 경로 선택 닫기">
-            <X size={16} />
-          </button>
-        </header>
-
+    <PickerDialog
+      contentClassName="s3-picker-dialog"
+      description="버킷과 주소를 선택하면 저장경로에 반영됩니다."
+      footer={(
+        <>
+          <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
+          <Button className="secondary-button" type="button" variant="outline" onClick={onCancel}>취소</Button>
+          <Button className="primary-button" disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
+        </>
+      )}
+      footerClassName="s3-picker-footer"
+      headerClassName="s3-picker-header"
+      onClose={onCancel}
+      title="S3 경로 선택"
+      toolbar={(
         <div className="s3-picker-toolbar">
           <label className="field">
             <span>Bucket</span>
@@ -268,15 +273,15 @@ function S3PathPicker({
             </div>
           </label>
         </div>
-
-        {bucketError ? (
-          <div className="s3-picker-error">
-            <span>{bucketError}</span>
-            <button type="button" onClick={loadBuckets}>다시 시도</button>
-          </div>
-        ) : null}
-
-        <div className="s3-picker-body">
+      )}
+      error={bucketError ? (
+        <div className="s3-picker-error">
+          <span>{bucketError}</span>
+          <button type="button" onClick={loadBuckets}>다시 시도</button>
+        </div>
+      ) : null}
+    >
+      <div className="s3-picker-body">
           <div className="s3-tree-panel">
             <SimpleTreeView
               className="s3-tree"
@@ -309,13 +314,6 @@ function S3PathPicker({
             </SimpleTreeView>
           </div>
         </div>
-
-        <footer className="s3-picker-footer">
-          <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
-          <button className="secondary-button" type="button" onClick={onCancel}>취소</button>
-          <button className="primary-button" disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</button>
-        </footer>
-      </section>
-    </div>
+    </PickerDialog>
   );
 }

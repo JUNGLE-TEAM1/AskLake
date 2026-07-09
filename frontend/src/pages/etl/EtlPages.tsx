@@ -42,6 +42,7 @@ import {
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { Button } from "@/components/ui/button";
+import { CommandBar } from "@/components/ui/command-bar";
 import { PageHeader } from "@/components/ui/page-header";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
@@ -2446,13 +2447,13 @@ export function SchemaInferencePage({
         }}
       />
 
-      <section className="schema-bottom-bar">
+      <CommandBar className="schema-bottom-bar" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>이전: 데이터 탐색</Button>
         <Button className="secondary-button" type="button" variant="outline" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</Button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
         <Button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</Button>
         <Button className="ghost-button" type="button" variant="ghost" onClick={saveSchemaDraft}>설정 저장</Button>
-      </section>
+      </CommandBar>
     </div>
   );
 }
@@ -4024,7 +4025,7 @@ function RuleBottomBar({
   onTest: () => void;
 }) {
   return (
-    <div className="hegun-rule-bottom-bar">
+    <CommandBar className="hegun-rule-bottom-bar" layout="sticky">
       <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>스키마로 돌아가기</Button>
       <Button className="ghost-button hegun-bottom-command" type="button" variant="ghost" onClick={onTest}>
         <Search size={16} />
@@ -4037,7 +4038,7 @@ function RuleBottomBar({
       <span className="hegun-target-engine">실행 엔진<br /><strong>Spark</strong></span>
       <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>임시 저장</Button>
       <Button className="primary-button" type="button" onClick={onNext}>실행 준비 완료</Button>
-    </div>
+    </CommandBar>
   );
 }
 

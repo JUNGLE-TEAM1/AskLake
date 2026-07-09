@@ -35,11 +35,13 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { DialogShell } from "@/components/ui/dialog-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarSearch, FilterToolbarSearchText } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
@@ -678,19 +680,20 @@ function JobLogModal({ job, onClose }: { job: JobRowData; onClose: () => void })
   const failedRun = getLatestProblemRun(job);
 
   return (
-    <div className="job-log-modal" role="dialog" aria-modal="true" aria-label={`${job.name} 원문 로그`} onClick={onClose}>
-      <section onClick={(event) => event.stopPropagation()}>
-        <header className="job-log-modal-header">
-          <div>
-            <span>{failedRun?.runId ?? job.id}</span>
-            <h2>{job.name}</h2>
-            <p>{executionDisplay.stage} · {executionDisplay.summary}</p>
-          </div>
-          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-        </header>
-        <pre>{executionDisplay.raw}</pre>
-      </section>
-    </div>
+    <DialogShell
+      bodyClassName="p-0"
+      contentClassName="w-[min(920px,calc(100vw-2rem))] max-h-[min(720px,calc(100vh-2rem))] overflow-hidden"
+      description={`${executionDisplay.stage} · ${executionDisplay.summary}`}
+      eyebrow={failedRun?.runId ?? job.id}
+      headerActions={(
+        <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
+      )}
+      headerClassName="job-log-modal-header"
+      onClose={onClose}
+      title={job.name}
+    >
+      <pre className="m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words bg-slate-900 px-5 py-4 font-mono text-xs leading-6 text-blue-100">{executionDisplay.raw}</pre>
+    </DialogShell>
   );
 }
 
@@ -1220,13 +1223,15 @@ export function JobRunsPage({
             </tbody>
           </table>
           </div>
-          <div className="runs-pagination">
-            <span>Showing {runs.length ? `1-${runs.length}` : "0"} of {runs.length}</span>
-            <div>
-              <IconButton label="이전 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</IconButton>
-              <IconButton label="다음 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</IconButton>
-            </div>
-          </div>
+          <PaginationBar
+            buttonSize="icon"
+            className="runs-pagination"
+            nextLabel="›"
+            onNext={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}
+            onPrevious={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}
+            previousLabel="‹"
+            rangeLabel={`Showing ${runs.length ? `1-${runs.length}` : "0"} of ${runs.length}`}
+          />
         </article>
       </section>
       {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
@@ -1259,19 +1264,20 @@ function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => vo
   const logBody = normalizeWhitespace(run.errorSummary) || "표시할 로그가 없습니다.";
 
   return (
-    <div className="job-log-modal" role="dialog" aria-modal="true" aria-label={`${run.runId} 로그`} onClick={onClose}>
-      <section onClick={(event) => event.stopPropagation()}>
-        <header className="job-log-modal-header">
-          <div>
-            <span>{run.runId} · {runStatusMeta[run.status].label}</span>
-            <h2>{job.name}</h2>
-            <p>{run.failedStage} · {formatCompactDateTime(run.startedAt)} - {formatCompactDateTime(run.endedAt)}</p>
-          </div>
-          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-        </header>
-        <pre>{logBody}</pre>
-      </section>
-    </div>
+    <DialogShell
+      bodyClassName="p-0"
+      contentClassName="w-[min(920px,calc(100vw-2rem))] max-h-[min(720px,calc(100vh-2rem))] overflow-hidden"
+      description={`${run.failedStage} · ${formatCompactDateTime(run.startedAt)} - ${formatCompactDateTime(run.endedAt)}`}
+      eyebrow={`${run.runId} · ${runStatusMeta[run.status].label}`}
+      headerActions={(
+        <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
+      )}
+      headerClassName="job-log-modal-header"
+      onClose={onClose}
+      title={job.name}
+    >
+      <pre className="m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words bg-slate-900 px-5 py-4 font-mono text-xs leading-6 text-blue-100">{logBody}</pre>
+    </DialogShell>
   );
 }
 

@@ -1,5 +1,7 @@
 import type React from "react";
 import { Download, Maximize2, Save, Share2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DialogShell } from "@/components/ui/dialog-shell";
 import type { DashboardWidgetType } from "../../types";
 
 export type ExpandedChart = {
@@ -133,16 +135,21 @@ export function DashboardWidgetPreview({
 
 export function DashboardDeleteModal({ onCancel, onDelete }: { onCancel: () => void; onDelete: () => void }) {
   return (
-    <div className="dashboard-delete-modal" role="dialog" aria-modal="true" aria-label="위젯 삭제">
-      <section>
-        <h2>위젯 삭제</h2>
-        <p>정말로 이 위젯을 대시보드에서 삭제하시겠습니까? 이 작업은 대시보드 레이아웃에서만 해당 요소를 제거하며, 원본 데이터 소스에는 영향을 주지 않습니다. 삭제 후에는 다시 추가해야 합니다.</p>
-        <div className="form-actions inline">
-          <button className="secondary-button" type="button" onClick={onCancel}>취소</button>
-          <button className="primary-button" type="button" onClick={onDelete}>삭제</button>
-        </div>
-      </section>
-    </div>
+    <DialogShell
+      footer={(
+        <>
+          <Button className="secondary-button" type="button" onClick={onCancel} size="sm" variant="outline">취소</Button>
+          <Button className="primary-button" type="button" onClick={onDelete} size="sm" variant="destructive">삭제</Button>
+        </>
+      )}
+      onClose={onCancel}
+      size="sm"
+      title="위젯 삭제"
+    >
+      <p className="m-0 text-sm font-semibold leading-6 text-slate-600">
+        정말로 이 위젯을 대시보드에서 삭제하시겠습니까? 이 작업은 대시보드 레이아웃에서만 해당 요소를 제거하며, 원본 데이터 소스에는 영향을 주지 않습니다. 삭제 후에는 다시 추가해야 합니다.
+      </p>
+    </DialogShell>
   );
 }
 
