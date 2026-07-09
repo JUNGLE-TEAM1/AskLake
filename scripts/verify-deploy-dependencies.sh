@@ -4,9 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${ASKLAKE_COMPOSE_FILE:-deploy/docker-compose.prod.yml}"
 COMPOSE_ENV_FILE="${ASKLAKE_COMPOSE_ENV_FILE:-deploy/.env.example}"
+LOCAL_COMPOSE_FILE="${ASKLAKE_LOCAL_COMPOSE_FILE:-docker-compose.yml}"
 BACKEND_IMAGE="${ASKLAKE_VERIFY_BACKEND_IMAGE:-asklake-backend-deploy-check:local}"
 FRONTEND_IMAGE="${ASKLAKE_VERIFY_FRONTEND_IMAGE:-asklake-frontend-deploy-check:local}"
 SPARK_IMAGE="${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}"
+AIRFLOW_IMAGE="${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}"
 
 cd "$ROOT_DIR"
 
@@ -21,6 +23,9 @@ need_command docker
 
 echo "Checking production Compose dependency graph..."
 docker compose --env-file "$COMPOSE_ENV_FILE" -f "$COMPOSE_FILE" config >/dev/null
+
+echo "Checking local Airflow orchestration Compose graph..."
+docker compose -f "$LOCAL_COMPOSE_FILE" config >/dev/null
 
 echo "Building backend deploy image..."
 docker build -t "$BACKEND_IMAGE" backend
@@ -39,6 +44,11 @@ docker run --rm "$BACKEND_IMAGE" docker --version >/dev/null
 echo "Checking Spark runtime image availability..."
 if ! docker image inspect "$SPARK_IMAGE" >/dev/null 2>&1; then
   docker pull "$SPARK_IMAGE"
+fi
+
+echo "Checking Airflow runtime image availability..."
+if ! docker image inspect "$AIRFLOW_IMAGE" >/dev/null 2>&1; then
+  docker pull "$AIRFLOW_IMAGE"
 fi
 
 echo "Building frontend deploy image..."

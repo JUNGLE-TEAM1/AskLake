@@ -67,6 +67,51 @@ def ensure_schema(db: Session) -> None:
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
                 connection.execute(text(f"ALTER TABLE etl_jobs ADD COLUMN {column_name} {column_type}"))
+
+        job_defaults = {
+            "dag_steps": "[]",
+            "last_run": "-",
+            "last_state": "대기",
+            "name": "Untitled ETL Job",
+            "next_run": "-",
+            "owner": "AskLake",
+            "quality_invalid_rows": "[]",
+            "quality_rules": "[]",
+            "rag": False,
+            "schedule": "수동",
+            "schema_columns": "[]",
+            "schema_sample_rows": "[]",
+            "source": "unknown",
+            "source_config": "[]",
+            "source_label": "Unknown source",
+            "source_type": "unknown",
+            "stats": "{}",
+            "status": "scheduled",
+            "tag": "[생성]",
+            "target": "unknown",
+            "target_format": "parquet",
+            "target_layer": "RAW",
+            "transform_output_columns": "[]",
+            "transform_steps": "[]",
+        }
+        for column_name, default_value in job_defaults.items():
+            if isinstance(default_value, bool):
+                sql_value = "true" if default_value else "false"
+            elif column_name in {
+                "dag_steps",
+                "quality_invalid_rows",
+                "quality_rules",
+                "schema_columns",
+                "schema_sample_rows",
+                "source_config",
+                "stats",
+                "transform_output_columns",
+                "transform_steps",
+            } and connection.dialect.name != "sqlite":
+                sql_value = f"'{default_value}'::json"
+            else:
+                sql_value = f"'{default_value}'"
+            connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
         if "schema_fingerprint" in existing_columns:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
         if "last_state" in existing_columns:
@@ -77,6 +122,21 @@ def ensure_schema(db: Session) -> None:
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
         if "error_summary" in existing_run_columns:
             connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
+
+
+        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
+        run_column_defs = {
+            "airflow_dag_id": "VARCHAR(255)",
+            "airflow_dag_run_id": "VARCHAR(255)",
+            "airflow_run_url": "VARCHAR(1024)",
+            "airflow_state": "VARCHAR(64)",
+            "last_synced_at": "VARCHAR(64)",
+            "sync_error": "VARCHAR(512)",
+            "task_states": "JSON",
+        }
+        for column_name, column_type in run_column_defs.items():
+            if column_name not in existing_run_columns:
+                connection.execute(text(f"ALTER TABLE etl_runs ADD COLUMN {column_name} {column_type}"))
 
     ensure_catalog_schema(db)
     _schema_ready_bind_ids.add(bind_key)
@@ -216,6 +276,16 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     return [run_to_schema(run) for run in runs]
 
 
+
+def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
+    ensure_schema(db)
+    return db.scalars(
+        select(ETLRunModel)
+        .where(ETLRunModel.job_id == job_id)
+        .order_by(ETLRunModel.created_at.desc())
+    ).all()
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         id=job.id,
@@ -327,4 +397,11 @@ def run_to_schema(run: ETLRunModel) -> JobRunSummary:
         output_path=run.output_path,
         failed_stage=run.failed_stage,
         error_summary=run.error_summary,
+        airflow_dag_id=run.airflow_dag_id,
+        airflow_dag_run_id=run.airflow_dag_run_id,
+        airflow_run_url=run.airflow_run_url,
+        airflow_state=run.airflow_state,
+        task_states=run.task_states,
+        last_synced_at=run.last_synced_at,
+        sync_error=run.sync_error,
     )

@@ -15,8 +15,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
-| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry 접수 직후 `running` job/run을 저장하고 즉시 응답 | pause/cancel의 실제 Spark job interrupt |
-| Run/DAG | 백그라운드 Spark 완료 후 `GET /api/etl/jobs/{jobId}` polling으로 job payload의 runHistory, dagSteps, catalog dataset payload 갱신 확인 | run detail table과 Spark log object storage 분리 |
+| Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
+| Run/DAG | `GET /api/etl/jobs/{jobId}`가 active Airflow DAG Run과 Task Instance를 polling/sync해 runHistory, dagSteps, `dagStepsByRunId`를 갱신 | local Airflow compose/runtime wiring, run detail table과 Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
@@ -93,9 +93,21 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - 샘플 범위 변경 재호출도 같은 credential을 유지해야 한다.
 - PR 본문, 로그, 문서에는 실제 credential 값을 쓰지 않는다.
 
-## 5. Spark Run Path
+## 5. Airflow-Orchestrated Run Path
 
-`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 `running` 상태로 먼저 저장하고 응답한 뒤 Spark runner를 백그라운드로 호출한다. 프론트는 명령 응답을 즉시 표시하고 `GET /api/etl/jobs/{jobId}`를 polling해 최종 상태를 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
+
+현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. smoke DAG는 `airflow/dags/asklake_etl_job.py`이며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+
+필수 Airflow 환경변수:
+
+- `AIRFLOW_API_BASE_URL`: Airflow public API base URL, 예: `http://127.0.0.1:8081`
+- `AIRFLOW_DAG_ID`: stable DAG id, 기본값 `asklake_etl_job`
+- `AIRFLOW_UI_BASE_URL`: Airflow UI link 생성용 optional base URL
+- `AIRFLOW_API_TOKEN` 또는 `AIRFLOW_USERNAME`/`AIRFLOW_PASSWORD`: Airflow API 인증
+- `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: API timeout, 기본값 `10`
+
+Airflow DAG task는 기존 Spark runner를 호출하는 orchestration boundary로 둔다.
 
 Spark runner 입력:
 
@@ -116,6 +128,12 @@ Spark runner 결과:
 - quality summary
 - run status
 - DAG step status
+
+Airflow sync 결과:
+
+- `JobRunSummary.airflowDagId`, `airflowDagRunId`, `airflowRunUrl`, `airflowState`
+- `JobRunSummary.taskStates`, `lastSyncedAt`, `syncError`
+- selected run 기준 `dagStepsByRunId`
 
 ## 6. 검증 명령
 
@@ -151,7 +169,18 @@ Browser smoke:
 - frontend dev server를 켠다.
 - 수집/처리 목록이 처음에는 비어 있는지 확인한다.
 - 새 수집/처리 생성에서 Source 연결, Schema 확인, Rule 적용, Review, Create를 진행한다.
-- 생성된 Job을 실행하고 Run history 안의 선택 Run 실행 흐름이 Spark 결과를 반영하는지 확인한다.
+- Airflow API가 연결된 상태에서 생성된 Job을 실행한다.
+- Run History에 새 run이 즉시 보이고, 선택 Run 실행 흐름이 Airflow DAG Run/Task Instance 상태를 반영하는지 확인한다.
+- Airflow terminal 상태 도달 후 polling이 멈추는지 확인한다.
+
+Phase 7 local verification on 2026-07-09:
+
+- `npm run verify`: pass
+- Airflow mapping/config smoke: pass, missing API URL returns `AIRFLOW_CONFIG_MISSING`
+- FastAPI import smoke: pass
+- `npm run build`: pass
+- live `GET /api/health`, `GET /api/etl/jobs`, browser load at `http://127.0.0.1:5174/`: pass
+- live Airflow DAG smoke: available through repo-local `airflow-apiserver`, `airflow-scheduler`, `airflow-dag-processor`, and `asklake_etl_job`; requires Docker services plus backend restart with Airflow env
 
 ## 7. 완료 기준
 
@@ -159,7 +188,7 @@ Browser smoke:
 - Source/Schema/Create/Run 흐름에서 seed나 fixture job을 사용자 화면에 표시하지 않는다.
 - Source credential은 connector 응답의 redacted config로 덮어쓰이지 않는다.
 - Transform/Quality는 summary 문자열만이 아니라 실행 가능한 payload로 create request에 들어간다.
-- Spark run 후 선택 Run 실행 흐름은 Source, Schema, Spark Source read, Transform, Quality, Parquet write, Catalog update 단계를 표시한다.
+- Airflow run 후 선택 Run 실행 흐름은 Airflow DAG Run 접수와 Task Instance 상태를 selected run 기준으로 표시한다.
 - 실패 상태는 실제 실패 단계와 원인을 표시하고, 고정된 fake failed flow를 보여주지 않는다.
 
 ## 8. Catalog/SQL 연결 범위
@@ -191,6 +220,8 @@ Browser smoke:
 | CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
 | 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 SQL Result source의 `DraftPipeline`을 만들고 Review에서 기존 Job 생성 경로를 사용한다. direct materialize API 응답을 Catalog에 반영하는 경로는 backend 호환으로 유지 | `POST /api/etl/jobs` 또는 `POST /api/catalog/derived-datasets` |
+
+한국어 identifier UX는 frontend에서 먼저 방어한다. Dataset/column 표시명은 한국어와 공백을 허용하되, 기본 쿼리·자동완성·컬럼 삽입·JOIN 초안은 double-quoted identifier를 사용한다. 사용자가 따옴표 없이 한글/공백 table reference를 입력하면 preflight가 실행 전에 감지하고 자동 보정 액션을 제공한다. Backend는 이후에도 selected dataset id context를 기준으로 SQL table scope를 재검증한다.
 
 Mock mode에서는 수집/처리 pipeline 생성 dataset과 backend direct SQL derived dataset이 같은 stored catalog dataset fallback(`asklake.catalogDatasets`)을 사용합니다. 현재 SQL 화면의 처리 Job 생성 UI는 direct dataset write 대신 ETL Review draft를 만들고, Review 생성 이후 pipeline 생성 dataset 경로를 사용합니다. SQL Result source로 생성된 mock dataset은 Preview schema, sample rows, sourceRunId, query summary를 Catalog metadata에 보존합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다. Live API mode에서는 localStorage fallback을 쓰지 않고 backend catalog persistence와 `GET /api/catalog/datasets` hydrate를 source of truth로 둡니다. SQL Result 처리 Job은 생성 직후 Job 목록에 먼저 반영되고, run 성공 후 backend가 반환/저장한 Catalog dataset이 hydrate됩니다.
 
