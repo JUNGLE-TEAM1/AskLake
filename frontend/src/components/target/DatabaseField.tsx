@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Database, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { FormFieldGroup } from "@/components/ui/form-field-group";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
@@ -31,10 +32,10 @@ export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
       <div className="database-display" title={value}>
         {value.trim() ? <span>{value}</span> : <em>DB를 선택하세요</em>}
       </div>
-      <button className="secondary-button database-field-action" type="button" onClick={() => setPickerOpen(true)}>
+      <Button className="secondary-button database-field-action" type="button" variant="outline" onClick={() => setPickerOpen(true)}>
         <Database size={14} />
         찾아보기
-      </button>
+      </Button>
       {pickerOpen ? (
         <DatabasePicker
           value={value}
@@ -110,12 +111,15 @@ function DatabasePicker({
       title="DB 선택"
       toolbar={(
         <div className="s3-picker-toolbar database-picker-toolbar">
-          <FormFieldGroup className="field" label="DB 검색">
-            <div className="s3-picker-search">
-              <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="데이터베이스 검색" />
-            </div>
-          </FormFieldGroup>
+          <Field className="field">
+            <FieldLabel>DB 검색</FieldLabel>
+            <InputGroup className="s3-picker-search">
+              <InputGroupAddon>
+                <Search size={14} />
+              </InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="데이터베이스 검색" />
+            </InputGroup>
+          </Field>
         </div>
       )}
       error={error ? (

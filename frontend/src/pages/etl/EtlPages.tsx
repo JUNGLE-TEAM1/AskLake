@@ -47,7 +47,9 @@ import { CheckableOption } from "@/components/ui/checkable-option";
 import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { Input } from "@/components/ui/input";
 import { KeyValueList } from "@/components/ui/key-value-list";
+import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { SelectableCard } from "@/components/ui/selectable-card";
@@ -1614,7 +1616,7 @@ export function SourceConnectionPage({
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <FormFieldGroup className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`} label={sourceFieldLabel(label)}>
-                      <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                      <Input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                     </FormFieldGroup>
                   ))}
                 </div>
@@ -3873,7 +3875,7 @@ function RuleStepBuilder({
             </NativeSelectField>
             <FormFieldGroup className="hegun-rule-field" label={isTransform ? "처리 작업" : "검증 규칙"}>
               {isTransform ? (
-                <select
+                <NativeSelect
                   className="input control-input"
                   value={selectedOperation}
                   onChange={(event) => selectTransformOperation(event.target.value as TransformOperation)}
@@ -3881,9 +3883,9 @@ function RuleStepBuilder({
                   {TRANSFORM_OPERATION_OPTIONS.map((operation) => (
                     <option key={operation} value={operation}>{transformOperationLabel(operation)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               ) : (
-                <select
+                <NativeSelect
                   className="input control-input"
                   value={selectedValidationType}
                   onChange={(event) => setSelectedValidationType(event.target.value as QualityRule["validationType"])}
@@ -3891,13 +3893,13 @@ function RuleStepBuilder({
                   {QUALITY_VALIDATION_OPTIONS.map((validationType) => (
                     <option key={validationType} value={validationType}>{qualityValidationLabel(validationType)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
             </FormFieldGroup>
             <FormFieldGroup className="hegun-rule-field" label={isTransform ? "출력 컬럼" : "심각도"}>
               {isTransform ? (
                 <div className="hegun-rule-control-stack">
-                  <input
+                  <Input
                     className="input control-input"
                     type="text"
                     value={outputColumn}
@@ -3915,7 +3917,7 @@ function RuleStepBuilder({
                   </em>
                 </div>
               ) : (
-                <select
+                <NativeSelect
                   className="input control-input"
                   value={selectedSeverity}
                   onChange={(event) => setSelectedSeverity(event.target.value as QualityRule["severity"])}
@@ -3923,7 +3925,7 @@ function RuleStepBuilder({
                   {QUALITY_SEVERITY_OPTIONS.map((severity) => (
                     <option key={severity} value={severity}>{qualitySeverityLabel(severity)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
             </FormFieldGroup>
             <FormFieldGroup className="hegun-rule-field" label={isTransform ? "옵션" : "실패 처리"}>
@@ -3940,7 +3942,7 @@ function RuleStepBuilder({
                   onTimestampFormatChange={setTimestampFormat}
                 />
               ) : (
-                <select
+                <NativeSelect
                   className="input control-input"
                   value={selectedFailureAction}
                   onChange={(event) => setSelectedFailureAction(event.target.value as QualityRule["failureAction"])}
@@ -3948,7 +3950,7 @@ function RuleStepBuilder({
                   {QUALITY_FAILURE_ACTION_OPTIONS.map((failureAction) => (
                     <option key={failureAction} value={failureAction}>{failureActionLabel(failureAction)}</option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
             </FormFieldGroup>
             {isTransform && (
@@ -4009,7 +4011,7 @@ function TransformParameterControl({
   if (operation === "Extract JSONPath") {
     return (
       <div className="hegun-rule-control-stack">
-        <input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
+        <Input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
         <em>JSON 컬럼에서 꺼낼 경로</em>
       </div>
     );
@@ -4018,7 +4020,7 @@ function TransformParameterControl({
   if (operation === "Cast Decimal") {
     return (
       <div className="hegun-rule-control-stack">
-        <input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
+        <Input className="input control-input" type="text" value={decimalFormat} onChange={(event) => onDecimalFormatChange(event.target.value)} />
         <em>숫자 변환 형식</em>
       </div>
     );
@@ -4027,10 +4029,10 @@ function TransformParameterControl({
   if (operation === "Parse Timestamp") {
     return (
       <div className="hegun-rule-control-stack">
-        <select className="input control-input" value={timestampFormat} onChange={(event) => onTimestampFormatChange(event.target.value)}>
+        <NativeSelect className="input control-input" value={timestampFormat} onChange={(event) => onTimestampFormatChange(event.target.value)}>
           <option value="UTC">UTC</option>
           <option value="string to UTC">string to UTC</option>
-        </select>
+        </NativeSelect>
         <em>목표 시간대 / 변환 형식</em>
       </div>
     );
@@ -4038,10 +4040,10 @@ function TransformParameterControl({
 
   return (
     <div className="hegun-rule-control-stack">
-      <select className="input control-input" value={maskPolicy} onChange={(event) => onMaskPolicyChange(event.target.value)}>
+      <NativeSelect className="input control-input" value={maskPolicy} onChange={(event) => onMaskPolicyChange(event.target.value)}>
         <option value="keep first 3 digits">앞 3자리 유지</option>
         <option value="keep last 4 digits">뒤 4자리 유지</option>
-      </select>
+      </NativeSelect>
       <em>마스킹 정책</em>
     </div>
   );
@@ -4550,7 +4552,7 @@ function RepeatSettings({
           )}
           {frequency === "daily" && (
             <FormFieldGroup className="field" label="실행 시간">
-              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
             </FormFieldGroup>
           )}
           {frequency === "weekly" && (
@@ -4567,12 +4569,12 @@ function RepeatSettings({
           )}
           {frequency === "weekly" && (
             <FormFieldGroup className="field" label="실행 시간">
-              <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+              <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
             </FormFieldGroup>
           )}
           {frequency === "custom" && (
             <FormFieldGroup className="field wide" label="Cron 표현식">
-              <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+              <Input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
             </FormFieldGroup>
           )}
           <NativeSelectField
@@ -4853,16 +4855,16 @@ export function TargetPage({
           </div>
           <div className="target-config-form-grid basic">
             <FormFieldGroup className="field wide" label="데이터셋명">
-              <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+              <Input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field" label="오너">
-              <input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
+              <Input className="input control-input" value={targetOwner} onChange={(event) => setTargetOwner(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field" label="담당자">
-              <input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
+              <Input className="input control-input" value={targetManager} onChange={(event) => setTargetManager(event.target.value)} />
             </FormFieldGroup>
             <FormFieldGroup className="field wide" label="설명">
-              <input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
+              <Input className="input control-input" value={targetDescription} onChange={(event) => setTargetDescription(event.target.value)} />
             </FormFieldGroup>
           </div>
         </section>
@@ -4941,7 +4943,7 @@ export function TargetPage({
                 </TagList>
               ) : null}
               <div className="target-inline-controls">
-                <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
+                <Input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
                     addCustomTag();
@@ -5094,7 +5096,7 @@ export function PermissionPage({
               {VISIBILITY_OPTIONS.map((option) => <option key={option}>{option}</option>)}
             </NativeSelectField>
             <FormFieldGroup className="field" label="데이터 오너">
-              <input className="input control-input" value={dataOwner} onChange={(event) => {
+              <Input className="input control-input" value={dataOwner} onChange={(event) => {
                 const nextOwner = event.target.value;
                 setDataOwner(nextOwner);
                 applyPermissionDraft({ owner: nextOwner });

@@ -142,6 +142,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | --- | --- |
 | 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
+| 2026-07-09 | #418에서 ETL/Schedule/S3/DB picker의 대표 form control을 `Input`, `NativeSelect`, `InputGroup`, `Checkbox` 기준으로 1차 교체했다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 
@@ -164,3 +165,26 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 검증:
 
 - `cd frontend && npm run build` 통과.
+
+## #418 Forms/Controls Primitive 1차 반영
+
+이번 PR은 foundation에서 추가된 primitive를 실제 ETL 계열 화면에 적용하는 첫 replacement 작업이다. Backend API, 데이터 계약, React Router 구조, ETL draft 상태 로직은 변경하지 않는다.
+
+적용 범위:
+
+- `frontend/src/pages/etl/EtlPages.tsx`
+  - Source 연결 입력, Rule builder의 operation/validation/severity/failure select, transform parameter 입력, Schedule 반복 시간/Cron 입력, Target 기본 정보/태그 입력, Permission owner 입력을 `Input`/`NativeSelect`로 교체했다.
+  - `FormFieldGroup`과 `NativeSelectField`는 기존 grid/density CSS와 label 구조를 보존하기 위해 compatibility wrapper로 유지했다.
+- `frontend/src/components/s3/S3PathField.tsx`
+  - S3 path action button은 `Button`으로 교체했다.
+  - Bucket select는 `Field` + `FieldLabel` + `NativeSelect`, 주소 검색은 `InputGroup` + `InputGroupInput`으로 교체했다.
+- `frontend/src/components/target/DatabaseField.tsx`
+  - DB picker action button은 `Button`, 검색 입력은 `Field` + `InputGroup`으로 교체했다.
+- `frontend/src/pages/etl/schedule/SchedulePage.tsx`
+  - 현재 App Router에서 직접 import되지는 않지만, 이슈 범위에 포함된 legacy schedule 파일의 input/select/checkbox를 `Input`/`NativeSelect`/`Checkbox`로 맞췄다.
+
+유지/보류:
+
+- `FormFieldGroup`/`NativeSelectField`는 즉시 삭제하지 않는다. 여러 ETL grid와 legacy `.field` selector가 label/density를 공유하므로, wrapper 제거는 route QA와 CSS cleanup 이후 단계에서 진행한다.
+- `CheckableOption` 내부 radio/checkbox, target format custom menu, MUI TreeView row/button은 이번 Forms/Controls 1차 범위가 아니다.
+- 화면별 CSS는 삭제하지 않는다. 교체가 끝난 selector의 삭제 판단은 `docs/frontend-css-cleanup-inventory.md`에서 추적한다.
