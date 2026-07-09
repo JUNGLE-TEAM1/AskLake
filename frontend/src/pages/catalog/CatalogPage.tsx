@@ -820,7 +820,8 @@ export function CatalogDetailPage({
             <h1>{dataset.name}</h1>
             <div className="job-detail-meta">
               <DatasetStatusBadge dataset={dataset} />
-              <span className="owner-chip">{dataset.owner}</span>
+              <span className="owner-chip">Owner: {dataset.owner}</span>
+              <span className="owner-chip">Created: {dataset.createdByProfile?.displayName || dataset.createdBy || dataset.owner}</span>
               <span className="tag-chip">{dataset.layer} 레이어</span>
               {dataset.tags.map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)}
             </div>

@@ -10,6 +10,8 @@ class ETLJobModel(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(64), nullable=False, default="scheduled")
     tag: Mapped[str] = mapped_column(String(64), nullable=False, default="[생성]")
     source: Mapped[str] = mapped_column(String(255), nullable=False)

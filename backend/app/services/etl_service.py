@@ -37,12 +37,14 @@ ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
+def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
     validate_create_request(request)
+    created_by = identity_name(request.created_by or actor_name or request.owner)
+    created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
-        update_existing_append_job(existing_job, request, dataset_id)
+        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
             catalog_target={
@@ -66,6 +68,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         id=job_id,
         name=request.job_name,
         owner=request.owner,
+        created_by=created_by,
+        created_by_profile=created_by_profile,
         status="scheduled",
         tag="[생성]",
         source=f"{request.source_type} / {request.source_label}",
@@ -715,6 +719,8 @@ def dataset_payload_from_spark_result(
         "name": job.target,
         "nextRefresh": job.schedule,
         "owner": job.owner,
+        "createdBy": job.created_by or job.owner,
+        "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),
@@ -732,12 +738,20 @@ def dataset_payload_from_spark_result(
     }
 
 
-def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest, dataset_id: str) -> None:
+def update_existing_append_job(
+    job: ETLJobModel,
+    request: CreatePipelineRequest,
+    dataset_id: str,
+    created_by: str,
+    created_by_profile: dict[str, Any],
+) -> None:
     dataset_schema = dataset_schema_from_request(request)
     sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
     metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
     job.name = request.job_name or job.name
     job.owner = request.owner
+    job.created_by = job.created_by or created_by
+    job.created_by_profile = job.created_by_profile or created_by_profile
     job.tag = "[append]"
     job.source = f"{request.source_type} / {request.source_label}"
     job.target = request.target_dataset
@@ -782,6 +796,20 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     if not run_id:
         return runs
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def identity_name(value: str | None) -> str:
+    return (value or "").strip() or "demo-user"
+
+
+def identity_profile(name: str) -> dict[str, str]:
+    display_name = identity_name(name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:

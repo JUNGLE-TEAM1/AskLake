@@ -1,3 +1,5 @@
+import type { IdentityProfile } from "./identity";
+
 export type DashboardRuntimeMode = "published" | "draft";
 export type DashboardView = "list" | "builder" | "detail" | "runtime";
 export type DashboardStatus = "draft" | "published";
@@ -139,6 +141,8 @@ export type SavedDashboardCard = {
   meta: string;
   name: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
   createdAt?: string;
   createdAtValue?: string;
   sourceRunId?: string;

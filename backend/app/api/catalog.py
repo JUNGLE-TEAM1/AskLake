@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -71,5 +71,6 @@ def delete_materialization_run(
 def create_derived_dataset(
     request: CreateDerivedDatasetRequest,
     service: Annotated[CatalogService, Depends(get_catalog_service)],
+    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
 ) -> CatalogDatasetResponse:
-    return service.create_derived_dataset(request)
+    return service.create_derived_dataset(request, actor_name)

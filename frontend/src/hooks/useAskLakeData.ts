@@ -399,17 +399,38 @@ function normalizeDraftId(value: string) {
 }
 
 function normalizeJobRow(job: JobRowData): JobRowData {
+  const createdBy = job.createdBy?.trim() || job.owner || "demo-user";
   return {
     ...job,
+    createdBy,
+    createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
     status: normalizeJobStatus(String(job.status)),
   };
 }
 
 function normalizeDatasetRow(dataset: CatalogDataset): CatalogDataset {
+  const createdBy = dataset.createdBy?.trim() || dataset.owner || "demo-user";
   return {
     ...dataset,
+    createdBy,
+    createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
     materializationRuns: dataset.materializationRuns ?? [],
     status: normalizeDatasetStatus(String(dataset.status)),
+  };
+}
+
+function buildIdentityProfile(name: string) {
+  const displayName = name.trim() || "demo-user";
+  const initials = displayName
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("") || displayName.slice(0, 2).toUpperCase();
+  return {
+    avatarInitials: initials.slice(0, 2),
+    displayName,
   };
 }
 

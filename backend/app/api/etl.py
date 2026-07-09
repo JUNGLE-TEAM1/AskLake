@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -35,8 +35,12 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 
 
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
-def create_job(request: CreatePipelineRequest, db: Session = Depends(get_db)) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request)
+def create_job(
+    request: CreatePipelineRequest,
+    db: Session = Depends(get_db),
+    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+) -> CreatePipelineResponse:
+    return etl_service.create_pipeline(db, request, actor_name)
 
 
 @router.get("/jobs", response_model=list[JobRowData])

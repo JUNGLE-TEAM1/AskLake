@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -54,6 +54,8 @@ class DatasetMaterializationRun(CamelModel):
 
 
 class CatalogDatasetResponse(CamelModel):
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     description: str
     downstream: list[str] = Field(default_factory=list)
     freshness: DatasetFreshness

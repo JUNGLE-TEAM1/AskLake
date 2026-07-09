@@ -82,6 +82,10 @@ function getJobMetrics(jobs: JobRowData[]): JobMetric[] {
   ];
 }
 
+function jobCreatorLabel(job: JobRowData) {
+  return job.createdByProfile?.displayName || job.createdBy || job.owner;
+}
+
 export function JobsLandingPage({
   jobs,
   onAction,
@@ -254,7 +258,8 @@ function JobsCardSection({
                   <p>{job.id}</p>
                 </div>
                 <div className="job-owner">
-                  <span className="owner-chip">{job.owner}</span>
+                  <span className="owner-chip">Owner: {job.owner}</span>
+                  <span className="owner-chip">Created: {jobCreatorLabel(job)}</span>
                   <span className="tag-chip">{job.tag}</span>
                 </div>
               </div>
@@ -389,7 +394,11 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <span className="owner-chip">{row.original.job.owner}</span>,
+      cell: ({ row }) => (
+        <span className="owner-chip" title={`Created by ${jobCreatorLabel(row.original.job)}`}>
+          {row.original.job.owner}
+        </span>
+      ),
       header: "소유자",
       id: "owner",
     },
@@ -932,6 +941,7 @@ function JobDetailHeader({
           <div className="job-detail-meta">
             <StatusPill status={job.status} />
             <span className="owner-chip">Owner: {job.owner}</span>
+            <span className="owner-chip">Created: {jobCreatorLabel(job)}</span>
             <span className="tag-chip">{job.tag.replace("[", "").replace("]", "")}</span>
           </div>
         </div>
@@ -1127,6 +1137,7 @@ export function JobDetailPage({
             <h3>Permission</h3>
             <div className="detail-kv-grid">
               <Field label="Owner" value={job.owner} />
+              <Field label="Created by" value={jobCreatorLabel(job)} />
               <Field label="접근 그룹" value="Data Platform, Analytics" />
               <Field label="canRun" value={job.status === "failed" ? "Owner 승인 후 가능" : "true"} />
               <Field label="승인 상태" value={job.status === "failed" ? "재실행 승인 필요" : "승인됨"} />

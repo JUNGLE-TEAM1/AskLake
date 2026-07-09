@@ -39,4 +39,5 @@ export type {
   WatermarkWindowMode,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
+export type { IdentityProfile } from "./types/identity";
 export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

@@ -107,6 +107,8 @@ class DashboardCard(CamelModel):
     id: str
     name: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     meta: str
     status: DashboardStatus
     tags: str

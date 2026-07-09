@@ -88,9 +88,10 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 
 | 용어 | 현재 의미 | 후속 방향 |
 | --- | --- | --- |
-| `createdBy` | 아직 공통 필드로 정착되지 않음 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
+| `createdBy` | Job/Dataset/Dashboard에 optional 표시 metadata로 제공 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
+| `createdByProfile` | `displayName`, `avatarInitials` 중심의 optional 표시 metadata | profile/avatar 표시용으로 확장 가능 |
 | `owner` | Job/Dataset/Dashboard 화면에 표시되는 소유자 문자열 | 표시/책임자 metadata로 유지하고 권한 판정의 단일 근거로 쓰지 않음 |
-| profile/avatar | 아직 공통 API 계약 없음 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
+| profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
 | `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
 | `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
 | `permissionGrants` | 아직 공통 API 계약 없음 | actor/group/role별 resource action 허용 목록 |
@@ -219,6 +220,13 @@ type JobRowData = {
   id: string;
   name: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
   status: JobStatus;
   tag: string;
   source: string;
@@ -283,6 +291,13 @@ type CatalogDataset = {
   name: string;
   description: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
@@ -560,6 +575,13 @@ type CreatePipelineRequest = {
   timezone: string;
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
   storageType: "S3" | "Local" | "HDFS";
   partition: string;
   compression: "Snappy" | "Gzip" | "None";
@@ -572,7 +594,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `owner`는 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다.
+`permissionSummary`, `permissionRoles`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. 인증이 붙기 전까지 backend는 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Request 예시:
 
@@ -1352,6 +1374,8 @@ type DashboardListResponse = {
   };
 };
 ```
+
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`을 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장하되, 삭제 권한 검사는 아직 dashboard 전용 owner/admin 임시 규칙을 사용합니다.
 
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.

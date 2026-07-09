@@ -170,7 +170,7 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | SQL Run | `SqlResultDraft` | FastAPI query preview resource |
 | Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
-| Identity Metadata | `owner` 중심 표시 값 | future `createdBy`/profile display metadata |
+| Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
 | Permission Grant | Permission step metadata | future backend-enforced access control resource |
 
 Catalog dataset은 `materializationRuns` append history를 가질 수 있다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run history를 기준으로 계산한다. 마지막 append 결과를 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 append 결과 삭제는 별도 UX/API로 분리한다.

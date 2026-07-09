@@ -60,9 +60,27 @@ function normalizePageSize(value: number) {
 }
 
 function normalizeDashboardCard(card: SavedDashboardCard): SavedDashboardCard {
+  const createdBy = card.createdBy?.trim() || card.owner || "Admin User";
   return {
     ...card,
+    createdBy,
+    createdByProfile: card.createdByProfile ?? buildIdentityProfile(createdBy),
     status: normalizeDashboardStatus(card.status),
+  };
+}
+
+function buildIdentityProfile(name: string) {
+  const displayName = name.trim() || "Admin User";
+  const initials = displayName
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("") || displayName.slice(0, 2).toUpperCase();
+  return {
+    avatarInitials: initials.slice(0, 2),
+    displayName,
   };
 }
 

@@ -46,7 +46,12 @@ export function DashboardTable({
                   ))}
                 </span>
               </td>
-              <td>{dashboard.owner}</td>
+              <td>
+                <div className="dashboard-owner-stack">
+                  <span>{dashboard.owner}</span>
+                  <small>Created: {dashboard.createdByProfile?.displayName || dashboard.createdBy || dashboard.owner}</small>
+                </div>
+              </td>
               <td>{dashboard.updated}</td>
               <td>{formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt)}</td>
               <td className="dashboard-table-action-cell">

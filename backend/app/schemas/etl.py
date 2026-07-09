@@ -117,6 +117,8 @@ class JobRowData(CamelModel):
     name: str
     id: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     tag: str
     source: str
     target: str
@@ -158,6 +160,8 @@ class CatalogDataset(CamelModel):
     name: str
     description: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     layer: TargetLayer
     status: Literal["available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
@@ -230,6 +234,8 @@ class CreatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     storage_type: str | None = None
     partition: str | None = None
     compression: str | None = None

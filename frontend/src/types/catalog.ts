@@ -1,3 +1,5 @@
+import type { IdentityProfile } from "./identity";
+
 export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
 export type LineageGraphColumn = {
@@ -39,6 +41,8 @@ export type CatalogDataset = {
   name: string;
   nextRefresh: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
   quality: string;
   rag: boolean;
   rows: string;

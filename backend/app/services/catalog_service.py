@@ -97,6 +97,7 @@ class CatalogService:
     def create_derived_dataset(
         self,
         request: CreateDerivedDatasetRequest,
+        actor_name: str = "demo-user",
     ) -> CatalogDatasetResponse:
         request_source_dataset = self.get_dataset(request.source_dataset_id)
         sql_result = self.get_sql_result(request.source_run_id)
@@ -130,6 +131,7 @@ class CatalogService:
             result_source_dataset,
             sql_result,
             schema_source_datasets,
+            actor_name,
             previous_payload,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
@@ -224,6 +226,7 @@ def build_derived_dataset_payload(
     result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
+    actor_name: str,
     previous_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     dataset_description = (
@@ -262,6 +265,8 @@ def build_derived_dataset_payload(
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
         "owner": result_source_dataset.owner,
+        "createdBy": created_by_from_payload(previous_payload, actor_name),
+        "createdByProfile": created_by_profile_from_payload(previous_payload, actor_name),
         "quality": "SQL materialized",
         "rag": request.dataset.rag,
         "rows": f"{aggregate['rowCount']:,} rows",
@@ -322,6 +327,24 @@ def normalize_derived_dataset_tags(tags: list[str]) -> list[str]:
         if tag
     ]
     return unique_values(normalized_tags or ["#sql-derived"])
+
+
+def created_by_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> str:
+    previous_created_by = previous_payload.get("createdBy") if previous_payload else None
+    return str(previous_created_by or actor_name or "demo-user").strip() or "demo-user"
+
+
+def created_by_profile_from_payload(previous_payload: dict[str, object] | None, actor_name: str) -> dict[str, str]:
+    previous_profile = previous_payload.get("createdByProfile") if previous_payload else None
+    if isinstance(previous_profile, dict):
+        return {str(key): str(value) for key, value in previous_profile.items()}
+    display_name = created_by_from_payload(previous_payload, actor_name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def infer_column_type(

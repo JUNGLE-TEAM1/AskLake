@@ -155,6 +155,8 @@ function SqlDatasetHoverCard({ info }: { info: HoverInfo }) {
               <dd>{info.dataset.schema.length}개</dd>
               <dt>담당자</dt>
               <dd>{info.dataset.owner}</dd>
+              <dt>만든 사람</dt>
+              <dd>{info.dataset.createdByProfile?.displayName || info.dataset.createdBy || info.dataset.owner}</dd>
             </>
           ) : (
             <>

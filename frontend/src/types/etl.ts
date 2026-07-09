@@ -1,3 +1,5 @@
+import type { IdentityProfile } from "./identity";
+
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -9,6 +11,8 @@ export type JobRowData = {
   name: string;
   id: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
   tag: string;
   source: string;
   target: string;
@@ -261,6 +265,8 @@ export type CreatePipelineRequest = {
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   permissionRoles?: PermissionDraft["roles"];
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
   storageType?: "S3" | "Local" | "HDFS";
   partition?: string;
   compression?: "Snappy" | "Gzip" | "None";

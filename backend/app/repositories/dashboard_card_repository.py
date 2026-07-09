@@ -103,6 +103,8 @@ def _row_to_dashboard_card(row: Any) -> DashboardCard:
         **payload,
         "createdAt": _payload_value(payload, "createdAt") or _format_timestamp(created_at),
         "createdAtValue": _payload_value(payload, "createdAtValue") or _iso_timestamp(created_at),
+        "createdBy": _payload_value(payload, "createdBy") or _payload_value(payload, "created_by") or getattr(row, "owner", None) or "Admin User",
+        "createdByProfile": _payload_value(payload, "createdByProfile") or _payload_value(payload, "created_by_profile"),
         "datasetId": getattr(row, "dataset_id", None) or _payload_value(payload, "datasetId"),
         "hasPublishedRevision": has_published_revision,
         "id": getattr(row, "id", None) or payload.get("id"),

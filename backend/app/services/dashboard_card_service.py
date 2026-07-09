@@ -117,10 +117,13 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
     title = (request.title or "").strip() or f"새 대시보드 {_format_dashboard_timestamp(created_at)}"
     source = request.source.value if hasattr(request.source, "value") else str(request.source)
     owner = (request.owner or "").strip() or actor_name
+    created_by = (actor_name or "").strip() or "Admin User"
 
     dashboard = DashboardCard(
         createdAt=_format_dashboard_timestamp(created_at),
         createdAtValue=_iso_timestamp(created_at),
+        createdBy=created_by,
+        createdByProfile=identity_profile(created_by),
         datasetId=request.dataset_id,
         hasPublishedRevision=False,
         id=_dashboard_id(),
@@ -137,6 +140,16 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
     save_dashboard_card(db, dashboard)
     db.commit()
     return dashboard
+
+
+def identity_profile(name: str) -> dict[str, str]:
+    display_name = (name or "").strip() or "Admin User"
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateDashboardRequest) -> DashboardCard:
