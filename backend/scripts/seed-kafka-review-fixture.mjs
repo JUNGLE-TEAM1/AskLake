@@ -1,74 +1,184 @@
-import { readFileSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
+import { createInterface } from "node:readline";
 import path from "node:path";
+import { createGunzip } from "node:zlib";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
-const args = new Set(process.argv.slice(2));
-const dryRun = args.has("--dry-run");
-const broker = process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
-const topic = process.env.ASKLAKE_REVIEW_KAFKA_TOPIC || "reviews.raw";
-const fixturePath = process.env.ASKLAKE_REVIEW_FIXTURE_PATH || defaultFixturePath;
-const recreateTopic = process.env.ASKLAKE_RECREATE_REVIEW_TOPIC !== "false";
 
-const records = loadFixtureRecords(fixturePath);
+const options = parseArgs(process.argv.slice(2));
+const dryRun = options.dryRun;
+const broker = options.broker || process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
+const topic = options.topic || process.env.ASKLAKE_REVIEW_KAFKA_TOPIC || "reviews.raw";
+const inputPath = path.resolve(
+  process.cwd(),
+  options.input || process.env.ASKLAKE_REVIEW_FIXTURE_PATH || defaultFixturePath,
+);
+const sourceName = options.source || process.env.ASKLAKE_REVIEW_SOURCE || "amazon-review-dataset";
+const eventPrefix = options.eventPrefix || process.env.ASKLAKE_REVIEW_EVENT_PREFIX || "amazon-review";
+const recreateTopic = options.recreateTopic ?? process.env.ASKLAKE_RECREATE_REVIEW_TOPIC !== "false";
+const limit = positiveInteger(options.limit ?? process.env.ASKLAKE_REVIEW_REPLAY_LIMIT, "limit");
+const rate = positiveInteger(options.rate ?? process.env.ASKLAKE_REVIEW_REPLAY_RATE, "rate");
+const batchSize = positiveInteger(options.batchSize ?? process.env.ASKLAKE_REVIEW_REPLAY_BATCH_SIZE, "batch-size") || 100;
+const progressEvery = positiveInteger(options.progressEvery ?? process.env.ASKLAKE_REVIEW_REPLAY_PROGRESS_EVERY, "progress-every") || 1000;
+
+if (!existsSync(inputPath)) {
+  throw new Error(`Review replay input does not exist: ${inputPath}`);
+}
 
 if (dryRun) {
-  console.log(`Review Kafka fixture valid: ${records.length} messages from ${fixturePath}`);
+  const stats = await inspectInput();
+  console.log(`Review Kafka replay input valid: ${stats.validRecords} messages from ${inputPath}`);
   console.log(`Target topic: ${topic}`);
+  console.log(`Broker: ${broker}`);
+  console.log(`Limit: ${limit || "all"}`);
+  console.log(`Rate: ${rate || "unlimited"} messages/sec`);
   process.exit(0);
 }
 
-const { Kafka } = await import("kafkajs");
+const { Kafka, Partitioners } = await import("kafkajs");
 const kafka = new Kafka({
   brokers: [broker],
-  clientId: "asklake-review-fixture-producer",
+  clientId: "asklake-review-replay-producer",
   retry: { retries: 2 },
 });
 const admin = kafka.admin();
-const producer = kafka.producer();
+const producer = kafka.producer({ createPartitioner: Partitioners.LegacyPartitioner });
 
 try {
   await admin.connect();
   await ensureTopic(admin, topic);
   await producer.connect();
-  await producer.send({
-    topic,
-    messages: records.map((record) => ({
-      key: record.event_id,
-      value: JSON.stringify(record),
-    })),
-  });
-  console.log(`Review Kafka fixture produced: ${records.length} messages to ${topic} at ${broker}`);
+  const stats = await produceRecords(producer);
+  console.log(`Review Kafka replay produced: ${stats.sentRecords} messages to ${topic} at ${broker}`);
 } finally {
   await producer.disconnect().catch(() => {});
   await admin.disconnect().catch(() => {});
 }
 
-function loadFixtureRecords(targetPath) {
-  const lines = readFileSync(targetPath, "utf8")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) throw new Error(`Review fixture is empty: ${targetPath}`);
-  return lines.map((line, index) => validateRecord(JSON.parse(line), index + 1));
+async function inspectInput() {
+  let validRecords = 0;
+  for await (const _record of readStandardReviewRecords()) {
+    validRecords += 1;
+  }
+  if (validRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
+  return { validRecords };
+}
+
+async function produceRecords(producerClient) {
+  let batch = [];
+  let sentRecords = 0;
+  let lastProgressAt = 0;
+
+  for await (const record of readStandardReviewRecords()) {
+    batch.push({ key: record.event_id, value: JSON.stringify(record) });
+    if (batch.length >= batchSize) {
+      sentRecords += await sendBatch(producerClient, batch);
+      lastProgressAt = logProgress(sentRecords, lastProgressAt);
+      batch = [];
+    }
+  }
+
+  if (batch.length > 0) {
+    sentRecords += await sendBatch(producerClient, batch);
+    logProgress(sentRecords, lastProgressAt, true);
+  }
+
+  if (sentRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
+  return { sentRecords };
+}
+
+async function sendBatch(producerClient, messages) {
+  const startedAt = Date.now();
+  await producerClient.send({ topic, messages });
+  if (rate) {
+    const targetMs = Math.ceil((messages.length / rate) * 1000);
+    const elapsedMs = Date.now() - startedAt;
+    if (targetMs > elapsedMs) await sleep(targetMs - elapsedMs);
+  }
+  return messages.length;
+}
+
+function logProgress(sentRecords, lastProgressAt, force = false) {
+  if (!force && sentRecords - lastProgressAt < progressEvery) return lastProgressAt;
+  console.log(`Review Kafka replay progress: ${sentRecords.toLocaleString()} messages sent`);
+  return sentRecords;
+}
+
+async function* readStandardReviewRecords() {
+  let offset = 0;
+  let emitted = 0;
+  for await (const line of readJsonLines(inputPath)) {
+    offset += 1;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const rawRecord = parseJsonLine(trimmed, offset);
+    const record = toStandardReviewRecord(rawRecord, offset);
+    validateRecord(record, offset);
+    yield record;
+    emitted += 1;
+    if (limit && emitted >= limit) return;
+  }
+}
+
+async function* readJsonLines(targetPath) {
+  const input = createReadStream(targetPath);
+  const source = targetPath.endsWith(".gz") ? input.pipe(createGunzip()) : input;
+  const reader = createInterface({ input: source, crlfDelay: Infinity });
+
+  try {
+    for await (const line of reader) {
+      yield line;
+    }
+  } finally {
+    reader.close();
+    source.destroy?.();
+    input.destroy?.();
+  }
+}
+
+function parseJsonLine(line, lineNumber) {
+  try {
+    return JSON.parse(line);
+  } catch (error) {
+    throw new Error(`Invalid JSON on review replay line ${lineNumber}: ${error.message}`);
+  }
+}
+
+function toStandardReviewRecord(rawRecord, lineNumber) {
+  const review = firstPresent(rawRecord.review, rawRecord.reviewText, rawRecord.text, rawRecord.content, rawRecord.body);
+  const rawPayload = objectOrNull(rawRecord.raw) || rawRecord;
+
+  return {
+    schema_version: "1.0",
+    event_id: firstPresent(rawRecord.event_id, rawRecord.eventId) || `${eventPrefix}-${String(lineNumber).padStart(6, "0")}`,
+    source: firstPresent(rawRecord.source) || sourceName,
+    offset: Number.isFinite(Number(rawRecord.offset)) ? Number(rawRecord.offset) : lineNumber,
+    review,
+    created_at: normalizeCreatedAt(rawRecord, lineNumber),
+    raw: rawPayload,
+  };
 }
 
 function validateRecord(record, lineNumber) {
   const required = ["schema_version", "event_id", "source", "offset", "review", "created_at", "raw"];
   for (const field of required) {
     if (record[field] === undefined || record[field] === null || record[field] === "") {
-      throw new Error(`Invalid review fixture line ${lineNumber}: missing ${field}`);
+      throw new Error(`Invalid review replay line ${lineNumber}: missing ${field}`);
     }
   }
   if (record.schema_version !== "1.0") {
-    throw new Error(`Invalid review fixture line ${lineNumber}: schema_version must be 1.0`);
+    throw new Error(`Invalid review replay line ${lineNumber}: schema_version must be 1.0`);
+  }
+  if (!Number.isInteger(record.offset) || record.offset < 1) {
+    throw new Error(`Invalid review replay line ${lineNumber}: offset must be a positive integer`);
   }
   if (typeof record.raw !== "object" || Array.isArray(record.raw)) {
-    throw new Error(`Invalid review fixture line ${lineNumber}: raw must be an object`);
+    throw new Error(`Invalid review replay line ${lineNumber}: raw must be an object`);
   }
   if (Number.isNaN(Date.parse(record.created_at))) {
-    throw new Error(`Invalid review fixture line ${lineNumber}: created_at must be ISO-like datetime`);
+    throw new Error(`Invalid review replay line ${lineNumber}: created_at must be ISO-like datetime`);
   }
   return record;
 }
@@ -87,6 +197,84 @@ async function ensureTopic(adminClient, targetTopic) {
   }).catch((error) => {
     if (!String(error?.message || error).includes("already exists")) throw error;
   });
+}
+
+function normalizeCreatedAt(rawRecord, lineNumber) {
+  const explicit = firstPresent(rawRecord.created_at, rawRecord.createdAt, rawRecord.review_created_at);
+  if (explicit && !Number.isNaN(Date.parse(explicit))) return new Date(explicit).toISOString();
+
+  const unixReviewTime = Number(rawRecord.unixReviewTime ?? rawRecord.unix_review_time);
+  if (Number.isFinite(unixReviewTime) && unixReviewTime > 0) {
+    return new Date(unixReviewTime * 1000).toISOString();
+  }
+
+  const reviewTime = firstPresent(rawRecord.reviewTime, rawRecord.review_time);
+  const parsedReviewTime = parseAmazonReviewTime(reviewTime);
+  if (parsedReviewTime) return parsedReviewTime;
+
+  const fallbackBase = Date.UTC(2026, 6, 9, 0, 0, 0, 0);
+  return new Date(fallbackBase + (lineNumber - 1) * 60_000).toISOString();
+}
+
+function parseAmazonReviewTime(value) {
+  if (!value) return null;
+  const match = String(value).trim().match(/^(\d{1,2})\s+(\d{1,2}),\s*(\d{4})$/);
+  if (!match) {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+  }
+  const [, month, day, year] = match;
+  return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0)).toISOString();
+}
+
+function parseArgs(argv) {
+  const parsed = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--dry-run") {
+      parsed.dryRun = true;
+      continue;
+    }
+    if (arg === "--no-recreate-topic") {
+      parsed.recreateTopic = false;
+      continue;
+    }
+    if (!arg.startsWith("--")) {
+      throw new Error(`Unknown positional argument: ${arg}`);
+    }
+    const equalsIndex = arg.indexOf("=");
+    const rawKey = equalsIndex === -1 ? arg.slice(2) : arg.slice(2, equalsIndex);
+    const inlineValue = equalsIndex === -1 ? undefined : arg.slice(equalsIndex + 1);
+    const key = camelCase(rawKey);
+    const value = inlineValue ?? argv[index + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`Missing value for --${rawKey}`);
+    }
+    parsed[key] = value;
+    if (inlineValue === undefined) index += 1;
+  }
+  return parsed;
+}
+
+function positiveInteger(value, label) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 1) {
+    throw new Error(`--${label} must be a positive integer`);
+  }
+  return number;
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function objectOrNull(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function camelCase(value) {
+  return value.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
 }
 
 function sleep(ms) {

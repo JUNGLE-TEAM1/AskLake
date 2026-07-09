@@ -13,6 +13,7 @@ const topic = process.env.ASKLAKE_KAFKA_SCHEDULE_VERIFY_TOPIC || `reviews.raw.ve
 const minimalTopic = `reviews.raw.minimal.${suffix}`;
 const groupId = `asklake-verify-${suffix}`;
 const targetDataset = `reviews_raw_verify_${suffix}`;
+const fixtureMessageCount = 100;
 const env = {
   ...process.env,
   ASKLAKE_KAFKA_BROKER: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
@@ -61,7 +62,7 @@ async function verifyScheduledKafkaIngest() {
   const item = tick.items?.[0];
   assert(item.reason === "due", `Schedule tick reason should be due: ${item?.reason}`);
   assert(item.response?.run?.status === "success", "Scheduled Kafka run should succeed.");
-  assert(item.response?.run?.inputRows === "25행", `Scheduled Kafka run should consume 25 rows: ${item.response?.run?.inputRows}`);
+  assert(item.response?.run?.inputRows === `${fixtureMessageCount}행`, `Scheduled Kafka run should consume ${fixtureMessageCount} rows: ${item.response?.run?.inputRows}`);
   assert(item.response?.dataset?.storageFormat === "jsonl", "Catalog dataset should expose jsonl storage format.");
   assert(item.response?.dataset?.storageLocation === item.response?.run?.outputPath, "Catalog storageLocation should match run outputPath.");
 
