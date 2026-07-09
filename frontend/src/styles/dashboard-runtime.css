@@ -173,7 +173,7 @@
 .asklake-assistant-form textarea:focus-visible,
 .asklake-assistant-form select:focus-visible,
 .asklake-assistant-form button:focus-visible,
-.asklake-dashboard-share-panel button:focus-visible {
+.asklake-dashboard-share-sheet button:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.25);
   outline-offset: 2px;
 }
@@ -226,47 +226,33 @@
   color: #b91c1c;
 }
 
-.asklake-dashboard-share-panel {
+.asklake-dashboard-share-sheet {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  border-bottom: 1px solid var(--dash-border);
-  background: #ffffff;
-  padding: 14px 24px;
+  width: min(26rem, calc(100vw - 2rem));
+  flex-direction: column;
+  gap: 20px;
 }
 
-.asklake-dashboard-share-panel div {
+.asklake-dashboard-share-sheet-body {
   display: grid;
   min-width: 0;
-  gap: 5px;
+  gap: 10px;
 }
 
-.asklake-dashboard-share-panel strong {
-  color: var(--dash-text);
-  font-size: 14px;
-}
-
-.asklake-dashboard-share-panel span {
-  color: var(--dash-text-muted);
-  font-size: 13px;
-}
-
-.asklake-dashboard-share-panel code {
+.asklake-dashboard-share-link {
+  display: block;
+  border: 1px solid var(--dash-border);
+  border-radius: 8px;
+  background: #f8fafc;
   color: #1d4ed8;
   font-size: 12px;
+  line-height: 1.6;
   overflow-wrap: anywhere;
+  padding: 12px;
 }
 
-.asklake-dashboard-share-panel button {
-  height: 32px;
-  border: 1px solid var(--dash-border-strong);
-  border-radius: 6px;
-  background: #ffffff;
-  color: var(--dash-text);
-  font-size: 12px;
-  font-weight: 800;
-  padding: 0 12px;
+.asklake-dashboard-share-sheet-footer {
+  margin-top: auto;
 }
 
 .asklake-dashboard-data-tab {
@@ -2098,13 +2084,6 @@
     width: 100%;
     justify-content: flex-start;
     overflow-x: auto;
-  }
-
-  .asklake-dashboard-share-panel {
-    align-items: flex-start;
-    flex-direction: column;
-    padding-right: 16px;
-    padding-left: 16px;
   }
 
   .asklake-dashboard-title h1 {

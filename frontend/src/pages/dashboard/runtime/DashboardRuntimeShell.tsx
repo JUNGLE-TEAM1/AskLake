@@ -1,4 +1,13 @@
 import type React from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 
@@ -101,16 +110,29 @@ export function DashboardRuntimeShell({
           {notice.message}
         </div>
       )}
-      {shareLink && (
-        <div className="asklake-dashboard-share-panel" role="dialog" aria-label="대시보드 공유">
-          <div>
-            <strong>대시보드 공유</strong>
-            <span>현재 대시보드 링크를 복사했습니다.</span>
-            <code>{shareLink}</code>
-          </div>
-          <button type="button" onClick={onCloseSharePanel}>닫기</button>
-        </div>
-      )}
+      <Sheet
+        open={Boolean(shareLink)}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) onCloseSharePanel?.();
+        }}
+      >
+        <SheetContent className="asklake-dashboard-share-sheet" closeLabel="공유 패널 닫기" side="right">
+          <SheetHeader>
+            <SheetTitle>대시보드 공유</SheetTitle>
+            <SheetDescription>현재 대시보드 링크를 복사했습니다.</SheetDescription>
+          </SheetHeader>
+          {shareLink && (
+            <div className="asklake-dashboard-share-sheet-body">
+              <code className="asklake-dashboard-share-link">{shareLink}</code>
+            </div>
+          )}
+          <SheetFooter className="asklake-dashboard-share-sheet-footer">
+            <Button type="button" variant="outline" onClick={onCloseSharePanel}>
+              닫기
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
       <div className="asklake-dashboard-subnav">
         {canToggleDatasetSidebar && (
           <button
