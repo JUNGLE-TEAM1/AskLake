@@ -519,12 +519,34 @@ p {
 }
 
 .avatar {
+  display: grid;
   width: 36px;
   height: 36px;
+  place-items: center;
   border-radius: 50%;
   background:
     radial-gradient(circle at 70% 70%, #13a16c 0 18%, transparent 19%),
     linear-gradient(135deg, #262e40, #dee1e6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.avatar-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  padding: 0;
+}
+
+.avatar-button:hover,
+.avatar-button:focus-visible {
+  outline: 2px solid #bfdbfe;
+  outline-offset: 2px;
 }
 
 .stepper {

@@ -1,12 +1,15 @@
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
-from fastapi import Header
+from fastapi import Cookie, Depends, Header
 from fastapi import status
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
 from app.core.errors import ApiError
 from app.schemas.common import ErrorCode
 from app.schemas.permissions import ResourcePermissions
+from app.services.auth_service import SESSION_COOKIE_NAME, load_session_actor
 
 
 @dataclass(frozen=True)
@@ -14,6 +17,9 @@ class ActorContext:
     name: str = "demo-user"
     role: str = "viewer"
     groups: tuple[str, ...] = field(default_factory=tuple)
+    id: str | None = None
+    email: str | None = None
+    title: str | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -30,7 +36,20 @@ def get_actor_context(
     actor_name: Annotated[str, Header(alias="X-AskLake-User")] = "Admin User",
     actor_role: Annotated[str, Header(alias="X-AskLake-Role")] = "admin",
     actor_groups: Annotated[str | None, Header(alias="X-AskLake-Groups")] = None,
+    session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
+    db: Annotated[Session, Depends(get_db)] = None,
 ) -> ActorContext:
+    if session_token and db is not None:
+        session_actor = load_session_actor(db, session_token)
+        if session_actor is not None:
+            return ActorContext(
+                name=str(session_actor.get("name") or "demo-user"),
+                role=str(session_actor.get("role") or "viewer"),
+                groups=tuple(str(group) for group in session_actor.get("groups") or []),
+                id=str(session_actor.get("id") or "") or None,
+                email=str(session_actor.get("email") or "") or None,
+                title=str(session_actor.get("title") or "") or None,
+            )
     return ActorContext(
         name=(actor_name or "").strip() or "demo-user",
         role=(actor_role or "").strip() or "viewer",

@@ -283,6 +283,12 @@ pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
+로컬 auth/session, 프로필, 관리자 권한 fallback을 확인할 때는 아래 smoke를 실행한다.
+
+```bash
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:auth-session
+```
+
 Docker/Spark까지 켜진 환경에서 ETL run -> Catalog payload/storage/lineage 계약을 확인할 때는 아래 smoke를 추가로 실행한다.
 
 ```bash

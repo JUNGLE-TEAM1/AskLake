@@ -313,6 +313,8 @@
   }
 
   .option-grid,
+  .admin-console-metric-grid,
+  .profile-permission-grid,
   .form-grid,
   .form-grid.compact,
   .creation-validation-list,

@@ -150,6 +150,8 @@ FastAPI가 현재 소유하는 책임:
 
 Phase 5부터 frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query AI 생성, Job command, Dataset materialization-run 삭제, Dashboard 삭제/편집 버튼을 비활성화하고, backend `403`은 권한 안내 toast/preflight message로 표시한다. 프론트의 비활성화는 사용성 보조이며 보안 근거는 backend enforcement다. Phase 6부터 Query AI 생성도 선택 dataset 전체에 대해 backend `query` permission check를 통과해야 하며, 권한 없는 dataset metadata는 AI 프롬프트 context로 전달하지 않는다. Phase 7부터 Dashboard runtime draft 생성, page/widget/layout 변경, publish는 dashboard `manage` permission check를 통과해야 한다.
 
+프로필/관리 화면은 Phase 0 기준에서 별도 Identity/Admin resource로 취급한다. 프로필 페이지는 `GET /api/users/me`로 현재 actor의 표시 프로필, role, group, 권한 요약을 읽고, 관리 페이지는 `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/audit-logs` 조회 API를 사용한다. 로그인/회원가입은 `/api/auth/login`, `/api/auth/signup`, `/api/auth/session`, `/api/auth/logout`의 로컬 session API로 제공하며, backend는 httpOnly `asklake_session` 쿠키를 actor context로 변환한다. 기존 smoke와 수동 검증 호환을 위해 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback을 유지한다. `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 1차 관리 콘솔은 사용자/그룹/권한 수정이 아니라 조회형 운영 콘솔로 구현한다.
+
 Dashboard Assistant는 `POST /api/dashboards/assistant`를 FastAPI가 소유한다.
 이 endpoint는 요청의 `dashboardId`/`pageId`를 기준으로 DB에서 draft 우선, 없으면 published runtime을 읽고,
 대시보드에서 사용할 수 있는 available catalog dataset과 현재 page widget, 지원 가능한 widget type/config option을 OpenAI에 전달한다.
@@ -173,6 +175,9 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
 | Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
+| Auth Session | local auth user/session rows + httpOnly cookie | FastAPI `/api/auth/*` local session resource |
+| Identity Profile | session actor 또는 current actor header + demo identity catalog | FastAPI `/api/users/me` profile resource |
+| Admin Console | placeholder module | FastAPI admin users/groups/permissions/audit 조회 resource |
 | Permission Grant | optional `permissionGrants`/`permissions` response metadata | future backend-enforced access control resource |
 
 Catalog dataset은 `materializationRuns` append history를 가질 수 있다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run history를 기준으로 계산한다. 마지막 append 결과를 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 append 결과 삭제는 별도 UX/API로 분리한다.
@@ -194,6 +199,15 @@ Live mode 진입:
 FastAPI 현재 구현 범위:
 
 - `GET /api/health`
+- `POST /api/auth/login`
+- `POST /api/auth/signup`
+- `GET /api/auth/session`
+- `POST /api/auth/logout`
+- `GET /api/users/me`
+- `GET /api/admin/users`
+- `GET /api/admin/groups`
+- `GET /api/admin/permissions`
+- `GET /api/admin/audit-logs`
 - `POST /api/etl/sources/test`
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/jobs`

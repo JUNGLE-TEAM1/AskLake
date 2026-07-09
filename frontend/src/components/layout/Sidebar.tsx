@@ -9,7 +9,7 @@ export function Sidebar({
   onBrandClick,
   onNavigate,
 }: {
-  activeNavId: NavId;
+  activeNavId: NavId | null;
   onAccount: () => void;
   onBrandClick: () => void;
   onNavigate: (item: NavItem) => void;

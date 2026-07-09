@@ -68,7 +68,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 모든 response body는 JSON입니다.
 - 날짜/시간은 ISO 8601 문자열을 사용합니다.
 - ID는 문자열입니다.
-- 프론트는 현재 `credentials`를 포함하지 않고 `fetch`를 호출합니다.
+- 프론트는 세션 쿠키 기반 endpoint를 위해 `credentials: "include"`로 `fetch`를 호출합니다.
 
 권장 header:
 
@@ -79,8 +79,7 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 데모 프론트에는 로그인/토큰 저장이 아직 없으므로, 인증이 붙기 전까지는 백엔드에서 임시 actor를 `demo-user`로 처리해도 됩니다.
-인증을 붙일 때는 `frontend/src/services/apiClient.ts`에서 `Authorization` 헤더 주입 지점을 추가하면 됩니다.
+현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO는 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
 
 ### Permission/Governance Phase 0 용어
 
@@ -134,6 +133,15 @@ Frontend Phase 5 기준:
 - `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
 - Backend가 `403 FORBIDDEN`을 반환하면 프론트는 일반 실패가 아니라 권한 없음 메시지로 표시합니다.
 
+Profile/Admin Console Phase 0 기준:
+
+- 프로필 페이지와 관리 페이지는 세션 쿠키가 있으면 해당 계정 actor를 우선 사용하고, 세션이 없으면 기존 demo actor header fallback을 사용합니다.
+- `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
+- `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
+- `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
+- 1차 관리 콘솔은 조회 중심입니다. 사용자/그룹/권한 정책 수정 API는 별도 후속 계약으로 분리합니다.
+- 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
+
 ```ts
 type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
 type PermissionPrincipalType = "user" | "group" | "role" | "public";
@@ -154,6 +162,53 @@ type ResourcePermissions = {
   canShare: boolean;
   computedFor?: string;
   enforced?: boolean;
+};
+```
+
+```ts
+type IdentityProfile = {
+  displayName: string;
+  avatarInitials?: string;
+  email?: string;
+  title?: string;
+};
+
+type IdentityGroup = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type CurrentUserResponse = {
+  id: string;
+  displayName: string;
+  email: string;
+  role: "admin" | "editor" | "viewer" | string;
+  groups: IdentityGroup[];
+  profile: IdentityProfile;
+  permissionsSummary: {
+    canView: number;
+    canQuery: number;
+    canRun: number;
+    canManage: number;
+    canDelete: number;
+    canShare: number;
+  };
+};
+
+type AdminUser = CurrentUserResponse & {
+  status: "active" | "invited" | "disabled";
+  lastActiveAt?: string;
+};
+
+type AdminPermissionSummary = {
+  resourceType: "dataset" | "etl_job" | "dashboard";
+  resourceId: string;
+  resourceName: string;
+  owner?: string;
+  createdBy?: string;
+  grants: PermissionGrant[];
+  currentActorPermissions?: ResourcePermissions;
 };
 ```
 
@@ -2093,7 +2148,279 @@ Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema
 
 ## 9. P2 API
 
-### 9.1 감사 로그 저장
+### 9.1 인증 세션
+
+`POST /api/auth/login`
+
+Request:
+
+```json
+{
+  "email": "admin.user@asklake.local",
+  "password": "asklake-admin"
+}
+```
+
+Response `200 OK`:
+
+- `Set-Cookie: asklake_session=...; HttpOnly; Max-Age=604800; Path=/; SameSite=lax`
+- body는 `{ "user": CurrentUserResponse }`
+
+`POST /api/auth/signup`
+
+Request:
+
+```json
+{
+  "displayName": "Kim Analyst",
+  "email": "kim.analyst@example.com",
+  "password": "minimum8"
+}
+```
+
+Response `201 Created`:
+
+- 새 viewer 계정을 만들고 로그인과 동일하게 `asklake_session` 쿠키를 발급합니다.
+- body는 `{ "user": CurrentUserResponse }`
+
+`GET /api/auth/session`
+
+Response:
+
+```json
+{
+  "authenticated": true,
+  "user": {
+    "id": "admin-user",
+    "displayName": "Admin User",
+    "email": "admin.user@asklake.local",
+    "role": "admin",
+    "groups": [],
+    "profile": {
+      "displayName": "Admin User",
+      "avatarInitials": "AU",
+      "email": "admin.user@asklake.local"
+    },
+    "permissionsSummary": {
+      "canView": 0,
+      "canQuery": 0,
+      "canRun": 0,
+      "canManage": 0,
+      "canDelete": 0,
+      "canShare": 0
+    }
+  }
+}
+```
+
+세션 쿠키가 없거나 만료되면 `{ "authenticated": false, "user": null }`을 반환합니다.
+
+`POST /api/auth/logout`
+
+Response `200 OK`:
+
+```json
+{
+  "ok": true
+}
+```
+
+서버 session row를 삭제하고 `asklake_session` 쿠키를 제거합니다.
+
+### 9.2 현재 사용자 프로필 조회
+
+`GET /api/users/me`
+
+Actor 결정 순서:
+
+1. `asklake_session` 쿠키가 유효하면 session user를 actor로 사용합니다.
+2. 세션이 없으면 아래 임시 actor header를 사용합니다.
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 현재 actor 표시 이름 |
+| `X-AskLake-Role` | `admin` | 현재 actor role |
+| `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
+
+Response `200 OK`:
+
+```json
+{
+  "id": "admin-user",
+  "displayName": "Admin User",
+  "email": "admin.user@asklake.local",
+  "role": "admin",
+  "groups": [
+    {
+      "id": "data-platform",
+      "name": "Data Platform Team",
+      "description": "Lake platform administrators"
+    }
+  ],
+  "profile": {
+    "displayName": "Admin User",
+    "avatarInitials": "AU",
+    "email": "admin.user@asklake.local",
+    "title": "Platform Admin"
+  },
+  "permissionsSummary": {
+    "canView": 12,
+    "canQuery": 8,
+    "canRun": 5,
+    "canManage": 7,
+    "canDelete": 4,
+    "canShare": 6
+  }
+}
+```
+
+프로필 API는 session actor 또는 header actor를 demo identity로 정규화해 반환합니다. 사용자를 찾을 수 없으면 actor 값에서 deterministic fallback profile을 생성할 수 있습니다.
+
+### 9.3 관리자 사용자 목록 조회
+
+`GET /api/admin/users`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "users": [
+    {
+      "id": "admin-user",
+      "displayName": "Admin User",
+      "email": "admin.user@asklake.local",
+      "role": "admin",
+      "status": "active",
+      "lastActiveAt": "2026-07-09T06:30:00.000Z",
+      "groups": [
+        {
+          "id": "data-platform",
+          "name": "Data Platform Team"
+        }
+      ],
+      "profile": {
+        "displayName": "Admin User",
+        "avatarInitials": "AU",
+        "email": "admin.user@asklake.local"
+      },
+      "permissionsSummary": {
+        "canView": 12,
+        "canQuery": 8,
+        "canRun": 5,
+        "canManage": 7,
+        "canDelete": 4,
+        "canShare": 6
+      }
+    }
+  ]
+}
+```
+
+### 9.3 관리자 그룹 목록 조회
+
+`GET /api/admin/groups`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "groups": [
+    {
+      "id": "data-platform",
+      "name": "Data Platform Team",
+      "description": "Lake platform administrators",
+      "memberCount": 2
+    }
+  ]
+}
+```
+
+### 9.4 관리자 권한 요약 조회
+
+`GET /api/admin/permissions`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "resources": [
+    {
+      "resourceType": "dataset",
+      "resourceId": "ds_customer_orders_gold",
+      "resourceName": "Customer Orders Gold",
+      "owner": "Data Platform Team",
+      "createdBy": "Admin User",
+      "grants": [
+        {
+          "principalType": "group",
+          "principalId": "data-platform",
+          "actions": ["view", "query", "manage"],
+          "source": "owner"
+        }
+      ],
+      "currentActorPermissions": {
+        "canView": true,
+        "canQuery": true,
+        "canRun": true,
+        "canManage": true,
+        "canDelete": true,
+        "canShare": true,
+        "computedFor": "Admin User",
+        "enforced": true
+      }
+    }
+  ]
+}
+```
+
+Phase 0 관리 콘솔은 권한을 수정하지 않고 resource별 grant와 현재 actor 권한을 설명하는 조회형 화면입니다. 권한 변경은 후속 `PATCH /api/admin/permissions` 계약에서 별도로 정의합니다.
+
+### 9.5 관리자 감사 로그 조회
+
+`GET /api/admin/audit-logs`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "logs": [
+    {
+      "action": "etl.job.command_requested",
+      "actor_id": "Admin User",
+      "api_path": "/api/etl/jobs/JOB-001/commands",
+      "created_at": "2026-07-09T06:30:00.000Z",
+      "request_id": "req_demo_001",
+      "result": "success",
+      "target_id": "JOB-001",
+      "target_type": "etl_job"
+    }
+  ]
+}
+```
+
+초기 구현은 frontend local audit log와 backend demo audit snapshot을 합치지 않습니다. 서버 API는 backend가 알고 있는 demo log만 반환하고, Topbar의 local audit log는 별도 UI 상태로 유지합니다.
+
+### 9.6 감사 로그 저장
 
 `POST /api/audit-logs`
 
