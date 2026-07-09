@@ -819,7 +819,7 @@
   border-style: solid;
 }
 
-.dashboard-widget-preview-panel > .primary-button {
+.dashboard-widget-preview-panel .primary-button {
   justify-self: start;
 }
 

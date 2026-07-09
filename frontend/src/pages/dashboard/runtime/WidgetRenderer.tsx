@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import Chart from "react-apexcharts";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { ResultPanel } from "@/components/ui/preview-panel";
 import type {
   DashboardRuntimeWidget,
   DashboardWidgetAggregation,
@@ -992,20 +993,25 @@ function TableWidget({ widget }: { widget: RuntimeWidgetByType<"table"> }) {
   if (!rows.length || !columns.length) return <EmptyWidgetData />;
 
   return (
-    <DataTable
+    <ResultPanel
       className="asklake-table-widget"
-      columns={tableColumns}
-      data={tableRows}
-      emptyState={{
-        title: "표시할 행이 없습니다.",
-        description: "선택한 데이터셋과 컬럼 조건으로 표시할 table row가 없습니다.",
-      }}
-      getRowId={(_row, index) => `${widget.id}-${index}`}
-      initialSorting={defaultSorting}
-      key={`${widget.id}:${widget.config.sortKey ?? ""}:${widget.config.sortDirection ?? ""}:${columns.join("|")}`}
-      tableClassName="asklake-widget-data-table"
-      viewportClassName="asklake-table-widget-viewport"
-    />
+      headerClassName="sr-only"
+      title={widget.title}
+    >
+      <DataTable
+        columns={tableColumns}
+        data={tableRows}
+        emptyState={{
+          title: "표시할 행이 없습니다.",
+          description: "선택한 데이터셋과 컬럼 조건으로 표시할 table row가 없습니다.",
+        }}
+        getRowId={(_row, index) => `${widget.id}-${index}`}
+        initialSorting={defaultSorting}
+        key={`${widget.id}:${widget.config.sortKey ?? ""}:${widget.config.sortDirection ?? ""}:${columns.join("|")}`}
+        tableClassName="asklake-widget-data-table"
+        viewportClassName="asklake-table-widget-viewport"
+      />
+    </ResultPanel>
   );
 }
 

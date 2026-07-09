@@ -47,6 +47,8 @@ import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { PageHeader } from "@/components/ui/page-header";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { SelectableCard } from "@/components/ui/selectable-card";
 import { TagList } from "@/components/ui/tag-list";
 import { ValidationList } from "@/components/ui/validation-list";
 import { S3PathField } from "../../components/s3/S3PathField";
@@ -179,14 +181,16 @@ export function SchedulePage({
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "schedule-config-mode-card active" : "schedule-config-mode-card"} type="button" onClick={onClick}>
-      {active && <span className="run-selected-dot" />}
-      <span className="schedule-config-mode-icon">{icon}</span>
-      <span>
-        <strong>{title}</strong>
-        <small>{desc}</small>
-      </span>
-    </button>
+    <SelectableCard
+      className="schedule-config-mode-card"
+      contentClassName="schedule-config-mode-copy"
+      description={<small>{desc}</small>}
+      icon={<span className="schedule-config-mode-icon">{icon}</span>}
+      selected={active}
+      selectedIndicator={<span className="run-selected-dot" />}
+      title={title}
+      onClick={onClick}
+    />
   );
 }
 
@@ -1551,11 +1555,17 @@ export function SourceConnectionPage({
           title="소스 연결"
         />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
-            <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
-            <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
-            <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
-          </div>
+          <SegmentedTabs
+            ariaLabel="소스 연결 단계"
+            className="source-stage-tabs"
+            items={[
+              { label: "1. 소스 선택", value: "choose" },
+              { disabled: !hasSelectedSource, label: "2. 연결 설정", value: "connect" },
+              { disabled: connectionStatus !== "success" || !hasDetectedAssets, label: "3. 데이터 탐색", value: "browse" },
+            ]}
+            value={sourceStage}
+            onValueChange={setSourceStage}
+          />
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
@@ -1567,12 +1577,17 @@ export function SourceConnectionPage({
                 {sourceChoiceConnectors.map((connector) => {
                   const meta = connectorMeta[connector];
                   return (
-                    <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "source-choice-card active" : "source-choice-card"} key={connector} type="button" onClick={() => selectSource(connector)}>
-                      <span className="source-choice-icon">{meta.icon}</span>
-                      <strong>{meta.label}</strong>
-                      <span>{meta.desc}</span>
-                      {sourceType === connector && <span className="source-choice-check"><Check size={18} /></span>}
-                    </button>
+                    <SelectableCard
+                      aria-label={`${meta.label} ${meta.desc}`}
+                      className="source-choice-card"
+                      description={meta.desc}
+                      icon={<span className="source-choice-icon">{meta.icon}</span>}
+                      key={connector}
+                      selected={sourceType === connector}
+                      selectedIndicator={<span className="source-choice-check"><Check size={18} /></span>}
+                      title={meta.label}
+                      onClick={() => selectSource(connector)}
+                    />
                   );
                 })}
               </div>

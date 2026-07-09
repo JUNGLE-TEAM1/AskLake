@@ -148,11 +148,11 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. DataTable 내부 pagination과 Catalog 전용 pagination은 이번 범위에서 제외. |
 | 전체 | modal/backdrop/dialog shell | `부분 해결` | `DialogShell` | #378에서 SQL materialize dialog, Ingest job/run log dialog, Dashboard delete dialog 대표 사용처에 적용. Catalog modal, Dashboard chart/runtime dialog, DAG modal은 후속 QA 범위. |
 | 전체 | picker dialog shell | `부분 해결` | `PickerDialog` | #378에서 S3 path picker와 DB picker의 backdrop/header/footer shell을 공통화. 내부 MUI tree/list/body CSS는 유지. |
-| 전체 | segmented tabs/selectable card | `설계 필요` | `SegmentedTabs`, `SelectableCard` | ETL source stage/source card/schedule card, Dashboard widget type picker, target chip grid에서 선택 상태 패턴이 반복된다. 단순 tab부터 적용하고 rename/edit 상태가 있는 탭은 보류한다. |
-| 전체 | preview/result panel | `부분 해결` | `PreviewPanel` 또는 `ResultPanel` | SQL preview table, Catalog schema table, Dashboard table widget의 표 자체는 `DataTable` 기준으로 전환됨. preview header, empty/loading, CTA, overflow shell은 화면별 CSS가 남아 있음. |
-| 전체 | dense settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | Dashboard widget config, ETL rule builder, SQL option form, S3/DB picker form에서 input/select/textarea layout CSS가 계속 남음. form group과 native select 기준을 먼저 잡고 panel shell은 후속으로 둔다. |
-| 전체 | icon-only option grid | `구현 후보` | `IconOptionGrid` | Dashboard chart/widget type picker처럼 icon button grid + selected state + tooltip 조합이 반복된다. dashboard chart/widget type 선택 UI부터 적용 가능하다. |
-| 전체 | detail table section | `구현 후보` | `DetailTableSection` | Jobs detail, ETL detail, schema transform editor의 작은 table은 `DataTable`보다 title/action/empty state shell을 같이 잡는 편이 안전하다. |
+| 전체 | segmented tabs/selectable card | `부분 해결` | `SegmentedTabs`, `SelectableCard` | #389에서 ETL source stage/source card, schedule run type card, Dashboard period/widget type card에 1차 적용. rename/edit 상태가 있는 탭은 보류한다. |
+| 전체 | preview/result panel | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result, Dashboard builder preview, dashboard runtime table widget에 1차 적용. ETL final preview와 Catalog preview shell은 후속 판단. |
+| 전체 | dense settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 Dashboard widget config panel, title/description field, dataset native select에 1차 적용. ETL rule builder, SQL option form, S3/DB picker form은 후속. |
+| 전체 | icon-only option grid | `부분 해결` | `IconOptionGrid` | #389에서 Dashboard runtime widget type icon grid에 1차 적용. tooltip/focus state는 기존 runtime 흐름 유지. |
+| 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section에 1차 적용. ETL detail과 schema transform editor는 후속. |
 | 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
 | 전체 | tree/list hybrid selector | `보류` | `TreePanel` | react-arborist 도입 이후 Source tree/Dataset tree 기준을 다시 잡아야 함. Dashboard dataset tree는 B04에서 arborist로 전환됐지만 공통 wrapper는 아직 없음. |
@@ -163,11 +163,11 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | ETL 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 PR 처리 |
 | --- | --- | --- | --- | --- |
 | Source/Target/Permission/Review card | `etl-review-card`, `target-config-card`, `permission-config-card` | `설계 필요` | `Panel` | Naming cleanup 완료. 후속 component 확장 후보로 유지. |
-| Source stage tabs | `source-stage-tabs` | `관찰됨` | `SegmentedTabs` | custom stage state가 있어 이번 PR에서는 유지. |
-| Source connector cards | `source-choice-card` | `보류` | `SelectableCard` | 선택 상태, 아이콘, 설명, check 표시를 포함해 설계 필요. |
-| Schedule run type cards | `schedule-config-mode-card` | `보류` | `SelectableCard` | Source connector card와 함께 설계 가능. |
+| Source stage tabs | `source-stage-tabs` | `부분 해결` | `SegmentedTabs` | #389에서 `SegmentedTabs`로 1차 전환. 기존 className은 route QA 전까지 유지. |
+| Source connector cards | `source-choice-card` | `부분 해결` | `SelectableCard` | #389에서 `SelectableCard`로 1차 전환. 선택 상태, 아이콘, 설명, check 표시 className은 유지. |
+| Schedule run type cards | `schedule-config-mode-card`, `run-card` | `부분 해결` | `SelectableCard` | #389에서 ETL 내부 schedule config card와 schedule page run type card를 `SelectableCard`로 전환. target chip grid는 후속. |
 | Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
-| Detail table section | run/detail/history와 transform preview의 작은 table section | `구현 후보` | `DetailTableSection` | 단순 table 전환보다 title, empty state, action shell을 같이 묶는 후보로 유지. |
+| Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section에 1차 적용. run history와 transform preview는 후속. |
 | Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. form/select 구조는 유지. |
 | Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
 | Target tags | `target-chip-grid`, `target-chip` | `부분 해결` | `TagList`, `Chip` | #385에서 target tag row와 clickable chip을 공통 컴포넌트로 전환. partition chip grid는 유지. |
@@ -179,15 +179,15 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 
 | 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 작업 기준 처리 |
 | --- | --- | --- | --- | --- |
-| SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `부분 해결` | `PreviewPanel`, `ResultPanel` | B02/B03/B04에서 SQL preview table, Catalog schema table, Dashboard table widget은 `DataTable` 기준으로 전환됨. 남은 범위는 preview shell/header/CTA/empty/loading/overflow layout 공통화 후보다. |
+| SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result card, Dashboard builder preview, dashboard runtime table widget shell에 1차 적용. Catalog schema preview와 ETL final preview는 후속 판단. |
 | Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. menu option과 filter button의 화면 고유 스타일은 유지. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard list pagination/delete dialog | list footer pagination + destructive confirm dialog | `부분 해결` | `PaginationBar`, `DialogShell` | #378에서 DashboardPagination과 dashboard/delete widget delete 확인 dialog를 공통 shell로 전환. table density와 builder/chart modal은 유지. |
 | Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `부분 해결` | `RuntimeTopbar`, `ActionGroup` | #385에서 runtime edit toolbar는 `ActionGroup`으로 전환. title/publish/share topbar와 dirty state shell은 화면 전용으로 유지. |
 | Dashboard widget frame | selected/editable frame + delete action + widget chrome | `설계 필요` | `WidgetShell` | B04에서 delete action만 `Button`으로 전환. frame chrome, selected state, resize/grid integration은 유지. |
 | Dashboard table widget | widget 내부 DataTable viewport | `부분 해결` | `EmbeddedDataTablePanel` | B04에서 `DataTable`로 전환됨. widget 내부 padding, min width, compact density를 runtime CSS에 남긴 것은 기능 미완료가 아니라 후속 CSS 축소 후보다. |
-| Dashboard widget config panel | dense chart/table settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | B04에서 text/number input, select, button만 primitive/shadcn-style wrapper로 전환. checkbox, textarea, color picker, layout은 유지. |
-| Dashboard widget type picker | icon-only chart type grid + tooltip | `구현 후보` | `IconOptionGrid` | 선택 state와 tooltip layer가 결합되어 있어 단순 `Button`만으로는 CSS를 제거하기 어려움. chart/widget type 선택 UI부터 적용 가능하다. |
+| Dashboard widget config panel | dense chart/table settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 config panel shell, title/description field, dataset native select에 1차 적용. chart-specific select/checkbox/color picker layout은 유지. |
+| Dashboard widget type picker | icon-only chart type grid + tooltip | `부분 해결` | `IconOptionGrid` | #389에서 `IconOptionGrid`로 전환. 기존 tooltip positioning과 selected state className은 유지. |
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
 | Dashboard dataset tree | arborist tree row + hover card + type icon | `보류` | `TreePanel`, `TreeHoverCard` | B04에서 `react-arborist`로 전환했고 #364에서 legacy MUI TreeItem selector는 제거. 공통 tree wrapper/hover card primitive는 아직 없음. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
@@ -245,3 +245,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #375에서 `FilterToolbarInput`, `FilterToolbarFieldGroup`, `FilterToolbarCheckboxGroup`, `FilterToolbarCheckbox`를 추가하고 Catalog/SQL 검색 UI에 적용. 반복되지 않아도 shadcn primitive가 있으면 표준화 후보로 본다는 원칙을 추가. |
 | 2026-07-09 | #385에서 `ActionGroup`, `Chip`, `TagList`, `StatusBadge`, `KeyValueList`, `ValidationList`를 추가하고 Jobs/ETL/Dashboard/SQL/Creation 대표 사용처에 적용. Catalog와 preview/result shell은 후속 후보로 유지. |
 | 2026-07-09 | #387에서 `PreviewPanel`, `ResultPanel`, `SettingsPanel`, `FormFieldGroup`, `NativeSelectField`, `SegmentedTabs`, `SelectableCard`, `IconOptionGrid`, `DetailTableSection` 후보의 적용 순서와 보류 기준을 문서화. |
+| 2026-07-09 | #389에서 UI shell 컴포넌트 8종을 추가하고 SQL/Dashboard/ETL/Ingest 대표 사용처에 1차 적용. CSS 삭제는 route QA 후 후속 cleanup으로 분리. |

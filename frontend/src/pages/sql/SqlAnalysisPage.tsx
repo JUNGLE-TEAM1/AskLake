@@ -17,6 +17,7 @@ import { DialogShell } from "@/components/ui/dialog-shell";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import { ResultPanel } from "@/components/ui/preview-panel";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
@@ -939,17 +940,20 @@ export function SqlAnalysisPage({
           </div>
         </section>
 
-        <section className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}>
-          <div className="sql-result-header">
-            <div>
-              <span>실행 결과</span>
-              <h2>{resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}</h2>
-            </div>
-            <div className="sql-result-status">
+        <ResultPanel
+          className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}
+          eyebrow="실행 결과"
+          headerClassName="sql-result-header"
+          isEmpty={!resultDraft}
+          status={(
+            <>
               <span>{queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
-            </div>
-          </div>
+            </>
+          )}
+          statusClassName="sql-result-status"
+          title={resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}
+        >
           {resultDraft ? (
             <>
               <div className="sql-result-toolbar">
@@ -975,7 +979,7 @@ export function SqlAnalysisPage({
               <span>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</span>
             </div>
           )}
-        </section>
+        </ResultPanel>
       </main>
       {resultDraft && materializeDialogOpen && (
         <DialogShell
