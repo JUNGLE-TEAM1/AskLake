@@ -389,13 +389,13 @@ function PermissionsTable({
 }) {
   const [resourceSearch, setResourceSearch] = useState("");
   const [resourceTypeFilter, setResourceTypeFilter] = useState<"all" | AdminResourceType>("all");
-  const principalSuggestions = draft.principalType === "group"
-    ? groups.map((group) => group.id)
+  const principalOptions = draft.principalType === "group"
+    ? groups.map((group) => ({ label: group.name, value: group.id }))
     : draft.principalType === "user"
-      ? users.flatMap((user) => [user.displayName, user.email].filter(Boolean))
+      ? users.map((user) => ({ label: user.displayName, value: user.email || user.id }))
       : draft.principalType === "role"
-        ? ["admin", "viewer"]
-        : ["public"];
+        ? ["admin", "viewer"].map((role) => ({ label: role, value: role }))
+        : [{ label: "public", value: "public" }];
   const normalizedSearch = resourceSearch.trim().toLowerCase();
   const filteredResources = permissions.filter((resource) => {
     const matchesType = resourceTypeFilter === "all" || resource.resourceType === resourceTypeFilter;
@@ -485,21 +485,45 @@ function PermissionsTable({
               <form className="admin-permission-form compact" onSubmit={onCreate}>
                 <label className="field">
                   <span>Principal</span>
-                  <select value={draft.principalType} onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value === "public" ? "public" : current.principalId, principalType: event.target.value as PermissionPrincipalType, resourceKey: resourceKey(selectedResource) }))}>
+                  <select value={draft.principalType} onChange={(event) => {
+                    const nextType = event.target.value as PermissionPrincipalType;
+                    const nextOptions = nextType === "group"
+                      ? groups.map((group) => group.id)
+                      : nextType === "user"
+                        ? users.map((user) => user.email || user.id)
+                        : nextType === "role"
+                          ? ["admin", "viewer"]
+                          : ["public"];
+                    onDraftChange((current) => ({
+                      ...current,
+                      principalId: nextOptions[0] || "",
+                      principalType: nextType,
+                      resourceKey: resourceKey(selectedResource),
+                    }));
+                  }}>
                     {principalTypeOptions.map((type) => <option key={type} value={type}>{principalTypeLabel(type)}</option>)}
                   </select>
                 </label>
                 <label className="field">
-                  <span>ID</span>
+                  <span>대상 ID</span>
+                  {draft.principalType === "public" ? (
+                    <input readOnly value="public" />
+                  ) : (
+                    <select
+                      value={draft.principalId}
+                      onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
+                    >
+                      {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  )}
+                </label>
+                <label className="field admin-permission-id-field">
+                  <span>ID 값</span>
                   <input
-                    list="admin-principal-suggestions"
-                    disabled={draft.principalType === "public"}
+                    aria-label="선택된 principal ID"
+                    readOnly
                     value={draft.principalType === "public" ? "public" : draft.principalId}
-                    onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
                   />
-                  <datalist id="admin-principal-suggestions">
-                    {principalSuggestions.map((value) => <option key={value} value={value} />)}
-                  </datalist>
                 </label>
                 <div className="admin-permission-actions" aria-label="추가할 권한 action">
                   {permissionOrder.map((action) => (
@@ -513,9 +537,9 @@ function PermissionsTable({
                     </label>
                   ))}
                 </div>
-                <button className="primary-button" type="submit" disabled={pending || permissions.length === 0} onClick={() => selectResource(selectedResource)}>
+                <button className="primary-button admin-grant-create-button" type="submit" disabled={pending || permissions.length === 0} onClick={() => selectResource(selectedResource)}>
                   <Plus size={16} />
-                  <span>Grant</span>
+                  <span>권한 추가</span>
                 </button>
               </form>
 
