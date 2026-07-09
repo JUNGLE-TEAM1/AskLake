@@ -24,13 +24,14 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 export interface DialogContentProps
   extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
+  closeLabel?: string;
   showCloseButton?: boolean;
 }
 
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ children, className, showCloseButton = true, ...props }, ref) => (
+>(({ children, className, closeLabel = "Close dialog", showCloseButton = true, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -46,7 +47,7 @@ export const DialogContent = React.forwardRef<
         <DialogPrimitive.Close asChild>
           <IconButton
             className="absolute right-4 top-4"
-            label="Close dialog"
+            label={closeLabel}
             size="sm"
             variant="ghost"
           >

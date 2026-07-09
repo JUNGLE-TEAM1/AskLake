@@ -12,8 +12,10 @@ import {
   Table2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { DialogShell } from "@/components/ui/dialog-shell";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
@@ -793,26 +795,17 @@ export function SqlAnalysisPage({
                   )}
                 </div>
                 {filteredDatasets.length > contextPageSize && (
-                  <div className="sql-context-pagination" aria-label="테이블 검색 결과 페이지" ref={contextPaginationRef}>
-                    <span>{contextPageStartIndex + 1}-{contextPageStartIndex + paginatedContextDatasets.length} / {filteredDatasets.length}</span>
-                    <div>
-                      <button
-                        type="button"
-                        disabled={currentContextPage === 1}
-                        onClick={() => setContextPage((page) => Math.max(1, page - 1))}
-                      >
-                        이전
-                      </button>
-                      <strong>{currentContextPage} / {totalContextPages}</strong>
-                      <button
-                        type="button"
-                        disabled={currentContextPage === totalContextPages}
-                        onClick={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
-                      >
-                        다음
-                      </button>
-                    </div>
-                  </div>
+                  <PaginationBar
+                    aria-label="테이블 검색 결과 페이지"
+                    buttonSize="sm"
+                    className="sql-context-pagination"
+                    currentPage={currentContextPage}
+                    onNext={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
+                    onPrevious={() => setContextPage((page) => Math.max(1, page - 1))}
+                    rangeLabel={`${contextPageStartIndex + 1}-${contextPageStartIndex + paginatedContextDatasets.length} / ${filteredDatasets.length}`}
+                    ref={contextPaginationRef}
+                    totalPages={totalContextPages}
+                  />
                 )}
               </section>
             </div>
@@ -984,16 +977,21 @@ export function SqlAnalysisPage({
         </section>
       </main>
       {resultDraft && materializeDialogOpen && (
-        <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setMaterializeDialogOpen(false)}>
-          <section className="sql-materialize-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-materialize-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header className="sql-materialize-dialog-header">
-              <div>
-                <span>처리 작업</span>
-                <h2 id="sql-materialize-dialog-title">SQL 결과 처리 Job 생성</h2>
-              </div>
-              <Button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기" size="sm" variant="outline">닫기</Button>
-            </header>
-            <div className="sql-materialize-form">
+        <DialogShell
+          bodyClassName="sql-materialize-form"
+          contentClassName="sql-materialize-dialog"
+          eyebrow="처리 작업"
+          footer={(
+            <span>실행 {resultDraft.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {resultDraft.columns.length}개 · 검토 단계에서 생성 요청</span>
+          )}
+          footerClassName="sql-materialize-summary"
+          headerActions={(
+            <Button type="button" onClick={() => setMaterializeDialogOpen(false)} aria-label="저장 설정 닫기" size="sm" variant="outline">닫기</Button>
+          )}
+          headerClassName="sql-materialize-dialog-header"
+          onClose={() => setMaterializeDialogOpen(false)}
+          title="SQL 결과 처리 Job 생성"
+        >
               <label>
                 <span>데이터셋 이름</span>
                 <Input
@@ -1055,12 +1053,7 @@ export function SqlAnalysisPage({
               >
                 <Database size={15} /> Job 생성 검토로 이동
               </Button>
-            </div>
-            <div className="sql-materialize-summary">
-              <span>실행 {resultDraft.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {resultDraft.columns.length}개 · 검토 단계에서 생성 요청</span>
-            </div>
-          </section>
-        </div>
+        </DialogShell>
       )}
       {resultDraft && baseDataset && dashboardDialogOpen && (
         <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>

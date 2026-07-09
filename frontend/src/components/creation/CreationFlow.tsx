@@ -1,6 +1,7 @@
 import type React from "react";
 import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CommandBar } from "@/components/ui/command-bar";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
@@ -44,10 +45,10 @@ export function CreationTopActions({
   prevLabel?: string;
 }) {
   return (
-    <div className="creation-top-actions">
+    <CommandBar className="creation-top-actions" density="compact">
       <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
       <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
-    </div>
+    </CommandBar>
   );
 }
 
@@ -71,11 +72,11 @@ export function CreationPanelActions({
   withDivider?: boolean;
 }) {
   return (
-    <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
+    <CommandBar className={withDivider ? "summary-actions permission-actions" : "summary-actions"} density="compact">
       <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
       <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>{saveLabel}</Button>
       <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
-    </div>
+    </CommandBar>
   );
 }
 
