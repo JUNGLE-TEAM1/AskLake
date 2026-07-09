@@ -1,5 +1,6 @@
 import type React from "react";
 import { Download, Maximize2, Save, Share2 } from "lucide-react";
+import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import type { DashboardWidgetType } from "../../types";
@@ -41,7 +42,7 @@ export function DashboardWorkspaceHeader({
         <span className={isPublished ? "dashboard-publish-state published" : "dashboard-publish-state"}>{primaryTitle}</span>
         <h1>{title}</h1>
       </div>
-      <div className="dashboard-header-actions dashboard-workspace-actions">
+      <ActionGroup className="dashboard-header-actions dashboard-workspace-actions" density="compact">
         <button className="secondary-button" type="button" onClick={onBackToList}>목록으로</button>
         {onDraftEdit && <button className="secondary-button" type="button" onClick={onDraftEdit}>초안 수정</button>}
         <button className="secondary-button" type="button" onClick={onSave}><Save size={16} /> 저장</button>
@@ -50,7 +51,7 @@ export function DashboardWorkspaceHeader({
         <button className="secondary-button" type="button" onClick={onExport}><Download size={16} /> 내보내기</button>
         <button className="secondary-button" type="button" onClick={onFullscreen}>전체화면</button>
         <button className="primary-button" type="button" onClick={onViewPublished}>게시된 대시보드 보기</button>
-      </div>
+      </ActionGroup>
     </header>
   );
 }
@@ -137,10 +138,10 @@ export function DashboardDeleteModal({ onCancel, onDelete }: { onCancel: () => v
   return (
     <DialogShell
       footer={(
-        <>
+        <ActionGroup className="form-actions inline" density="compact">
           <Button className="secondary-button" type="button" onClick={onCancel} size="sm" variant="outline">취소</Button>
           <Button className="primary-button" type="button" onClick={onDelete} size="sm" variant="destructive">삭제</Button>
-        </>
+        </ActionGroup>
       )}
       onClose={onCancel}
       size="sm"

@@ -85,13 +85,19 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `DialogShell`
 - `PickerDialog`
 - `CommandBar`
+- `ActionGroup`
+- `Chip`
+- `TagList`
+- `StatusBadge`
+- `KeyValueList`
+- `ValidationList`
 - `EmptyState`
 - `Table`
 - `DataTable`
 
 ## 2026-07-09 코드 스윕 결과
 
-`frontend/src/components/ui`에는 현재 14개 파일 기준으로 primitive와 table/toolbar 계열이 있다. 실제 화면 사용처는 Jobs/Catalog/Dashboard/SQL 일부에 집중되어 있고, ETL과 runtime 복합 UI에는 아직 화면 전용 구조가 많이 남아 있다.
+`frontend/src/components/ui`에는 현재 20개 파일 기준으로 primitive, table/toolbar, action/chip/status/summary 계열이 있다. 실제 화면 사용처는 Jobs/Catalog/Dashboard/SQL 일부에 집중되어 있고, ETL과 runtime 복합 UI에는 아직 화면 전용 구조가 남아 있다.
 
 | 반복 패턴 | 확인된 코드 증거 | 판단 | 우선 컴포넌트 후보 |
 | --- | --- | --- | --- |
@@ -131,15 +137,16 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | --- | --- | --- | --- | --- |
 | 전체 | 화면 섹션 헤더 + 아이콘 + 상태 pill + actions | `해결됨` | `PanelHeader` | #367에서 Jobs/Catalog/Dashboard list shell에 1차 적용. ETL/SQL/runtime의 특수 header는 후속 PR에서 추가 적용 판단. |
 | 전체 | 강조 패널/작업 패널 | `해결됨` | `Panel` | #367에서 Jobs/Catalog/Dashboard list의 bordered panel shell을 공통화. 화면 고유 body/layout CSS는 유지. |
-| 전체 | 하단 고정/반고정 command 영역 | `부분 해결` | `CommandBar` | #378에서 `CommandBar`를 추가하고 Creation top/panel actions, ETL schema/rule bottom bar 대표 사용처에 적용. Dashboard runtime topbar/action grouping은 후속 판단. |
-| 전체 | key-value review summary | `설계 필요` | `ReviewSummary` 또는 `KeyValueList` | ETL Review, Catalog detail, Dashboard metadata에서 반복 가능성 있음. |
-| 전체 | 상태 검증 목록 | `설계 필요` | `ValidationList` | ETL governance/review validation, backend readiness UI 후보에서 반복 가능성 있음. |
+| 전체 | header/action row 버튼 묶음 | `부분 해결` | `ActionGroup` | #385에서 SQL AI/editor/result actions, Dashboard list/workspace/runtime toolbar, Jobs card/detail actions, ETL rule action footer에 대표 적용. 버튼 자체와 화면별 density CSS는 유지. |
+| 전체 | key-value review summary | `부분 해결` | `KeyValueList` | #385에서 Creation summary, Jobs detail metadata, ETL Review basic/destination/permission 요약에 적용. Catalog detail과 Dashboard metadata는 후속 판단. |
+| 전체 | 상태 검증 목록 | `부분 해결` | `ValidationList` | #385에서 ETL Permission governance check와 Review validation rows에 적용. backend readiness UI 후보는 유지. |
 | 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
 | 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. #375에서 Catalog 검색/태그/checkbox filter와 SQL 분석 테이블 검색까지 `FilterToolbar` 계열로 확장. Catalog sort menu와 tag/chip 시각 상태는 후속 `DropdownMenu`/`Chip`/`TagList` 후보로 유지. |
+| 전체 | tag/chip/status row | `부분 해결` | `Chip`, `TagList`, `StatusBadge` | #385에서 Jobs status/owner/tag, ETL target tag, Dashboard row tags/status, Dashboard list 상태 meta에 적용. Catalog tag/status와 일부 ETL data chip은 후속 판단. |
+| 전체 | 하단 고정/반고정 command 영역 | `부분 해결` | `CommandBar` | #378에서 `CommandBar`를 추가하고 Creation top/panel actions, ETL schema/rule bottom bar 대표 사용처에 적용. Dashboard runtime topbar/action grouping은 후속 판단. |
 | 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. DataTable 내부 pagination과 Catalog 전용 pagination은 이번 범위에서 제외. |
 | 전체 | modal/backdrop/dialog shell | `부분 해결` | `DialogShell` | #378에서 SQL materialize dialog, Ingest job/run log dialog, Dashboard delete dialog 대표 사용처에 적용. Catalog modal, Dashboard chart/runtime dialog, DAG modal은 후속 QA 범위. |
 | 전체 | picker dialog shell | `부분 해결` | `PickerDialog` | #378에서 S3 path picker와 DB picker의 backdrop/header/footer shell을 공통화. 내부 MUI tree/list/body CSS는 유지. |
-| 전체 | tag/chip/status row | `구현 후보` | `Chip`, `TagList`, `StatusBadge` | `Badge` primitive는 있지만 interactive tag, owner chip, type pill, status pill이 화면별 CSS로 남아 있다. |
 | 전체 | segmented tabs/selectable card | `설계 필요` | `SegmentedTabs`, `SelectableCard` | ETL source stage/source card/schedule card, Dashboard widget type picker, target chip grid에서 선택 상태 패턴이 반복된다. |
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel` 또는 `ResultPanel` | SQL preview table, Catalog schema table, Dashboard table widget의 표 자체는 `DataTable` 기준으로 전환됨. preview header, empty/loading, CTA, overflow shell은 화면별 CSS가 남아 있음. |
 | 전체 | dense settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup` | Dashboard widget config, ETL rule builder, SQL option form에서 input/select/textarea layout CSS가 계속 남음. |
@@ -158,10 +165,11 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Source connector cards | `source-choice-card` | `보류` | `SelectableCard` | 선택 상태, 아이콘, 설명, check 표시를 포함해 설계 필요. |
 | Schedule run type cards | `schedule-config-mode-card` | `보류` | `SelectableCard` | Source connector card와 함께 설계 가능. |
 | Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
-| Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `설계 필요` | `RuleBuilderPanel`, `FormFieldGroup` | Button 전환만 진행. form/select 구조는 유지. |
+| Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. form/select 구조는 유지. |
 | Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
-| Validation rows | `etl-review-validation`, `permission-config-validation` | `설계 필요` | `ValidationList` | Naming cleanup 완료. 후속 component 확장 후보. |
-| Review key-value rows | `etl-review-kv` | `설계 필요` | `KeyValueList` | Naming cleanup 완료. 후속 component 확장 후보. |
+| Target tags | `target-chip-grid`, `target-chip` | `부분 해결` | `TagList`, `Chip` | #385에서 target tag row와 clickable chip을 공통 컴포넌트로 전환. partition chip grid는 유지. |
+| Validation rows | `etl-review-validation`, `permission-config-validation` | `부분 해결` | `ValidationList` | #385에서 Permission governance check와 Review validation rows를 `ValidationList`로 전환. schedule validation rows는 유지. |
+| Review key-value rows | `etl-review-kv` | `부분 해결` | `KeyValueList` | #385에서 Review basic/destination/permission summary를 `KeyValueList`로 전환. |
 | Bottom command bar | `schema-bottom-bar`, `hegun-rule-bottom-bar` | `부분 해결` | `CommandBar` | #378에서 `CommandBar` wrapper로 전환. layout/density CSS는 route QA 전까지 유지. |
 
 ## B02-B04 Dashboard/B Seed Gap
@@ -172,7 +180,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. menu option과 filter button의 화면 고유 스타일은 유지. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard list pagination/delete dialog | list footer pagination + destructive confirm dialog | `부분 해결` | `PaginationBar`, `DialogShell` | #378에서 DashboardPagination과 dashboard/delete widget delete 확인 dialog를 공통 shell로 전환. table density와 builder/chart modal은 유지. |
-| Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `설계 필요` | `RuntimeTopbar`, `ActionGroup` | B04에서 `Button`/`Input`만 적용. action grouping, dirty state, publish state shell은 화면 전용으로 유지. |
+| Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `부분 해결` | `RuntimeTopbar`, `ActionGroup` | #385에서 runtime edit toolbar는 `ActionGroup`으로 전환. title/publish/share topbar와 dirty state shell은 화면 전용으로 유지. |
 | Dashboard widget frame | selected/editable frame + delete action + widget chrome | `설계 필요` | `WidgetShell` | B04에서 delete action만 `Button`으로 전환. frame chrome, selected state, resize/grid integration은 유지. |
 | Dashboard table widget | widget 내부 DataTable viewport | `부분 해결` | `EmbeddedDataTablePanel` | B04에서 `DataTable`로 전환됨. widget 내부 padding, min width, compact density를 runtime CSS에 남긴 것은 기능 미완료가 아니라 후속 CSS 축소 후보다. |
 | Dashboard widget config panel | dense chart/table settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | B04에서 text/number input, select, button만 primitive/shadcn-style wrapper로 전환. checkbox, textarea, color picker, layout은 유지. |
@@ -180,7 +188,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
 | Dashboard dataset tree | arborist tree row + hover card + type icon | `보류` | `TreePanel`, `TreeHoverCard` | B04에서 `react-arborist`로 전환했고 #364에서 legacy MUI TreeItem selector는 제거. 공통 tree wrapper/hover card primitive는 아직 없음. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
-| SQL editor/action surface | editor toolbar + execution status + result shell | `부분 해결` | `QueryActionBar`, `ResultPanel`, `PaginationBar`, `DialogShell` | #378에서 context pagination과 materialize dialog shell은 공통화. editor action grouping/result shell은 화면 전용으로 유지. |
+| SQL editor/action surface | editor toolbar + execution status + result shell | `부분 해결` | `QueryActionBar`, `ResultPanel`, `PaginationBar`, `DialogShell`, `ActionGroup` | #378에서 context pagination과 materialize dialog shell을 공통화했고, #385에서 SQL AI/editor/result button rows를 `ActionGroup`으로 전환. execution status와 result shell은 후속 `ResultPanel` 후보로 유지. |
 
 ## Legacy xflow Naming Gap
 
@@ -209,8 +217,10 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `SegmentedTabs`
 - `SelectableCard`
 - `TransformWorkbench`
-- `ValidationList`
-- `KeyValueList`
+- `PreviewPanel`
+- `ResultPanel`
+- `SettingsPanel`
+- `FormFieldGroup`
 
 ## 업데이트 로그
 
@@ -227,3 +237,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #378에서 `PaginationBar`, `DialogShell`, `PickerDialog`, `CommandBar`를 추가하고 SQL/Dashboard/Ingest/Creation/ETL/S3/DB picker 대표 사용처에 1차 적용. Catalog와 검색바/FilterToolbar 계열은 제외. |
 | 2026-07-09 | 코드 스윕으로 버튼/모달/페이지네이션/트리/프리뷰/요약/칩/form/선택형 카드 반복 패턴을 확인하고 component 확장 기록 방식과 권장 순서를 추가. |
 | 2026-07-09 | #375에서 `FilterToolbarInput`, `FilterToolbarFieldGroup`, `FilterToolbarCheckboxGroup`, `FilterToolbarCheckbox`를 추가하고 Catalog/SQL 검색 UI에 적용. 반복되지 않아도 shadcn primitive가 있으면 표준화 후보로 본다는 원칙을 추가. |
+| 2026-07-09 | #385에서 `ActionGroup`, `Chip`, `TagList`, `StatusBadge`, `KeyValueList`, `ValidationList`를 추가하고 Jobs/ETL/Dashboard/SQL/Creation 대표 사용처에 적용. Catalog와 preview/result shell은 후속 후보로 유지. |
