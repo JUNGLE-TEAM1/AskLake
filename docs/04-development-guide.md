@@ -118,6 +118,54 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 MongoDB Source connector는 Node MongoDB driver로 컬렉션 목록과 제한 문서 샘플을 조회한다. backend live mode 환경에는 `backend/package.json`의 `mongodb` dependency가 설치되어 있어야 하며, MongoDB Shell(`mongosh`)은 connector 실행 조건이 아니다.
 Job 실행 중 새로고침했을 때 수집/처리 목록 대신 `DB 데이터를 불러오는 중입니다` 화면이 오래 남는 증상은 [job-refresh-loading-incident-analysis.md](./job-refresh-loading-incident-analysis.md)를 참고한다.
 
+### Amazon review Kafka fixture
+
+Kafka replay와 ingest pipeline 작업자는 실제 6.6GB Amazon review replay가 준비되기 전에도 같은 메시지 계약으로 병렬 개발할 수 있다. 로컬 Redpanda를 켠 뒤 review fixture producer를 실행한다.
+
+```bash
+cd backend
+npm run kafka:reviews-fixture:generate -- --count 100
+ASKLAKE_WITH_KAFKA=true ASKLAKE_RECREATE_KAFKA=true npm run sources:fixtures
+npm run kafka:reviews-fixture
+```
+
+기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. 기본 fixture는 `backend/fixtures/kafka/amazon-review-fixture.jsonl`에 100건 mock review로 유지한다. producer는 이 fixture 또는 실제 Amazon review JSONL/JSONL.gz 파일을 스트리밍으로 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A/B 최소 필수 필드는 `event_id`, `review`, `offset`, `created_at`이며, B ingest는 빠진 `schema_version`, `source`, `raw`를 표준 shape로 보강한다.
+
+Kafka 없이 fixture 계약만 확인하려면 아래처럼 실행한다.
+
+```bash
+cd backend
+node scripts/seed-kafka-review-fixture.mjs --dry-run
+npm run kafka:reviews-replay -- --dry-run --limit 100
+```
+
+실제 replay 입력 파일을 지정할 때는 `--input`을 사용한다. Amazon review 원본 row는 `reviewText`, `unixReviewTime`, `reviewTime`을 표준 필드로 정규화하며, 원본 row 전체는 `raw`에 보존한다.
+
+```bash
+cd backend
+npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit 100 --rate 100
+```
+
+주요 옵션:
+
+```txt
+--input <path>          기본 fixture 대신 사용할 JSONL 또는 JSONL.gz 파일
+--topic <topic>         기본값 reviews.raw
+--broker <host:port>    기본값 127.0.0.1:19092
+--limit <count>         생략하면 전체 replay
+--rate <count>          초당 전송 메시지 수 제한
+--batch-size <count>    Kafka send batch 크기, 기본값 100
+--dry-run               Kafka 전송 없이 메시지 계약만 검증
+--no-recreate-topic     기존 topic을 삭제하지 않고 사용
+```
+
+Kafka Source -> MinIO landing -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest
+```
+
 ### FastAPI scaffold
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.

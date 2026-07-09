@@ -147,6 +147,11 @@ def list_jobs(db: Session) -> list[JobRowData]:
     return [job_to_schema(db, job) for job in jobs]
 
 
+def list_job_models(db: Session) -> list[ETLJobModel]:
+    ensure_schema(db)
+    return db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
+
+
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
     ensure_schema(db)
     return db.get(ETLJobModel, job_id)

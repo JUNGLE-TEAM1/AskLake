@@ -12,7 +12,7 @@ DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
-MaterializationSourceKind = Literal["etl", "sql"]
+MaterializationSourceKind = Literal["etl", "sql", "kafka"]
 
 
 class LineageGraphColumn(CamelModel):
