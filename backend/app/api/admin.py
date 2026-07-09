@@ -8,6 +8,8 @@ from app.core.database import get_db
 from app.schemas.identity import (
     AdminAuditLogsResponse,
     AdminGroupsResponse,
+    AdminPermissionGrantRequest,
+    AdminPermissionGrantUpdateRequest,
     AdminPermissionsResponse,
     AdminUsersResponse,
 )
@@ -42,6 +44,34 @@ def list_admin_permissions(
     actor: Annotated[ActorContext, Depends(get_actor_context)],
 ) -> AdminPermissionsResponse:
     return service.list_admin_permissions(actor)
+
+
+@router.post("/permissions", response_model=AdminPermissionsResponse, status_code=201)
+def create_admin_permission_grant(
+    request: AdminPermissionGrantRequest,
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> AdminPermissionsResponse:
+    return service.create_admin_permission_grant(actor, request)
+
+
+@router.patch("/permissions/{grant_id}", response_model=AdminPermissionsResponse)
+def update_admin_permission_grant(
+    grant_id: str,
+    request: AdminPermissionGrantUpdateRequest,
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> AdminPermissionsResponse:
+    return service.update_admin_permission_grant(actor, grant_id, request)
+
+
+@router.delete("/permissions/{grant_id}", response_model=AdminPermissionsResponse)
+def delete_admin_permission_grant(
+    grant_id: str,
+    service: Annotated[IdentityService, Depends(get_identity_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> AdminPermissionsResponse:
+    return service.delete_admin_permission_grant(actor, grant_id)
 
 
 @router.get("/audit-logs", response_model=AdminAuditLogsResponse)

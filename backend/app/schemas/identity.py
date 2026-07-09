@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel
-from app.schemas.permissions import PermissionGrant, ResourcePermissions
+from app.schemas.permissions import PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions
 
 AdminUserStatus = Literal["active", "invited", "disabled"]
 AdminResourceType = Literal["dataset", "etl_job", "dashboard"]
@@ -67,6 +67,20 @@ class AdminPermissionSummary(CamelModel):
 
 class AdminPermissionsResponse(CamelModel):
     resources: list[AdminPermissionSummary] = Field(default_factory=list)
+
+
+class AdminPermissionGrantRequest(CamelModel):
+    resource_type: AdminResourceType
+    resource_id: str
+    principal_type: PermissionPrincipalType
+    principal_id: str
+    actions: list[PermissionAction] = Field(default_factory=list)
+
+
+class AdminPermissionGrantUpdateRequest(CamelModel):
+    principal_type: PermissionPrincipalType | None = None
+    principal_id: str | None = None
+    actions: list[PermissionAction] | None = None
 
 
 class AdminAuditLogEntry(CamelModel):

@@ -9,6 +9,7 @@ PermissionPrincipalType = Literal["user", "group", "role", "public"]
 
 
 class PermissionGrant(CamelModel):
+    id: str | None = None
     actions: list[PermissionAction] = Field(default_factory=list)
     principal_id: str
     principal_type: PermissionPrincipalType

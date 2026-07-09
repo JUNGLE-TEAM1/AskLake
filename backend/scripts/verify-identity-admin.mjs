@@ -53,6 +53,40 @@ async function runSmoke() {
     adminPermissions.resources.some((resource) => resource.grants.some((grant) => grant.source === "admin_seed")),
     "Admin permissions should merge persisted permission_grants rows.",
   );
+  const editableResource = adminPermissions.resources.find((resource) => resource.resourceType === "dataset")
+    || adminPermissions.resources.find((resource) => resource.resourceType === "etl_job")
+    || adminPermissions.resources[0];
+  assert(editableResource, "Admin permissions should include at least one editable resource.");
+
+  const createdPermissions = await post("/api/admin/permissions", {
+    resourceType: editableResource.resourceType,
+    resourceId: editableResource.resourceId,
+    principalType: "user",
+    principalId: "temporary.editor@asklake.local",
+    actions: ["view"],
+  });
+  const createdGrant = findGrant(createdPermissions, editableResource, "temporary.editor@asklake.local");
+  assert(createdGrant?.id, "Created permission grant should include id.");
+  assert(createdGrant.source === "admin", "Created permission grant should use admin source.");
+
+  const patchedPermissions = await patch(`/api/admin/permissions/${createdGrant.id}`, {
+    actions: ["view", "query"],
+  });
+  const patchedGrant = findGrant(patchedPermissions, editableResource, "temporary.editor@asklake.local");
+  assert(patchedGrant.actions.includes("query"), "Patched permission grant should include query action.");
+
+  const deletedPermissions = await del(`/api/admin/permissions/${createdGrant.id}`);
+  const deletedGrant = findGrant(deletedPermissions, editableResource, "temporary.editor@asklake.local");
+  assert(!deletedGrant, "Deleted permission grant should be removed from admin permission response.");
+
+  const forbiddenEdit = await postExpectError("/api/admin/permissions", {
+    resourceType: editableResource.resourceType,
+    resourceId: editableResource.resourceId,
+    principalType: "user",
+    principalId: "blocked.user@asklake.local",
+    actions: ["view"],
+  }, 403, { "X-AskLake-Role": "viewer" });
+  assert(forbiddenEdit.error?.code === "FORBIDDEN", "Non-admin actor should not create permission grants.");
 
   const adminAuditLogs = await get("/api/admin/audit-logs");
   assert(Array.isArray(adminAuditLogs.logs), "Admin audit log response should include logs array.");
@@ -116,11 +150,51 @@ async function get(route, headers = {}) {
   return readResponse(response);
 }
 
+async function post(route, body, headers = {}) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  return readResponse(response);
+}
+
+async function patch(route, body, headers = {}) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  return readResponse(response);
+}
+
+async function del(route, headers = {}) {
+  const response = await fetch(`${baseUrl}${route}`, { method: "DELETE", headers });
+  return readResponse(response);
+}
+
 async function getExpectError(route, statusCode, headers = {}) {
   const response = await fetch(`${baseUrl}${route}`, { headers });
   const payload = await readPayload(response);
   assert(response.status === statusCode, `${route} expected ${statusCode}, got ${response.status}: ${JSON.stringify(payload)}`);
   return payload;
+}
+
+async function postExpectError(route, body, statusCode, headers = {}) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  const payload = await readPayload(response);
+  assert(response.status === statusCode, `${route} expected ${statusCode}, got ${response.status}: ${JSON.stringify(payload)}`);
+  return payload;
+}
+
+function findGrant(permissions, resource, principalId) {
+  return permissions.resources
+    .find((item) => item.resourceType === resource.resourceType && item.resourceId === resource.resourceId)
+    ?.grants.find((grant) => grant.principalId === principalId);
 }
 
 async function readResponse(response) {

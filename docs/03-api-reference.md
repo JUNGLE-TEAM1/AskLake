@@ -124,12 +124,15 @@ Canonical status values:
 | `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
 | `GET` | `/api/admin/permissions` | resource별 permission grant/현재 actor 권한 요약 조회. admin role 필요 |
+| `POST` | `/api/admin/permissions` | permission grant 생성. admin role 필요 |
+| `PATCH` | `/api/admin/permissions/{grantId}` | permission grant principal/actions 수정. admin role 필요 |
+| `DELETE` | `/api/admin/permissions/{grantId}` | permission grant 삭제. admin role 필요 |
 | `GET` | `/api/admin/audit-logs` | 관리자 감사 로그 조회. admin role 필요 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
-Profile/Admin Console Phase 0 API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 1차 관리 콘솔은 조회형이며 사용자/그룹 권한 편집 API는 후속 계약으로 분리한다. 후속 편집 API는 group grant 중심, user grant 예외 흐름을 기본 운영 모델로 둔다.
+Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 group grant 중심, user grant 예외 흐름을 기본 운영 모델로 둔다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 

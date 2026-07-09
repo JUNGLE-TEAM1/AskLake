@@ -2,14 +2,20 @@ from collections import defaultdict
 from typing import Iterable
 from uuid import uuid4
 
+from fastapi import status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import PermissionGrantModel
+from app.schemas.common import ErrorCode
 from app.schemas.permissions import PermissionGrant
 
 PermissionResourceKey = tuple[str, str]
+ALLOWED_ACTIONS = {"view", "query", "run", "manage", "delete", "share"}
+ALLOWED_PRINCIPAL_TYPES = {"user", "group", "role", "public"}
+ALLOWED_RESOURCE_TYPES = {"dataset", "etl_job", "dashboard"}
 
 
 def ensure_permission_grant_table(db: Session) -> None:
@@ -83,6 +89,72 @@ def seed_permission_grants_if_empty(
     return len(rows)
 
 
+def create_permission_grant(
+    db: Session,
+    *,
+    resource_type: str,
+    resource_id: str,
+    principal_type: str,
+    principal_id: str,
+    actions: list[str],
+    created_by: str | None,
+) -> PermissionGrantModel:
+    ensure_permission_grant_table(db)
+    normalized_principal_type = validate_principal_type(principal_type)
+    row = PermissionGrantModel(
+        id=f"grant_{uuid4().hex}",
+        resource_type=validate_resource_type(resource_type),
+        resource_id=validate_required(resource_id, "resourceId"),
+        principal_type=normalized_principal_type,
+        principal_id=validate_required(principal_id, "principalId") if normalized_principal_type != "public" else "public",
+        actions=validate_actions(actions),
+        source="admin",
+        created_by=created_by,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def update_permission_grant(
+    db: Session,
+    grant_id: str,
+    *,
+    principal_type: str | None = None,
+    principal_id: str | None = None,
+    actions: list[str] | None = None,
+) -> PermissionGrantModel:
+    ensure_permission_grant_table(db)
+    row = get_permission_grant_or_404(db, grant_id)
+    if principal_type is not None:
+        normalized_principal_type = validate_principal_type(principal_type)
+        if normalized_principal_type != "public" and row.principal_type == "public" and principal_id is None:
+            raise ApiError(
+                ErrorCode.VALIDATION_ERROR,
+                "principalId is required when changing a public grant to a user, group, or role grant",
+                status.HTTP_400_BAD_REQUEST,
+            )
+        row.principal_type = normalized_principal_type
+    if principal_id is not None:
+        row.principal_id = validate_required(principal_id, "principalId")
+    if actions is not None:
+        row.actions = validate_actions(actions)
+    if row.principal_type == "public":
+        row.principal_id = "public"
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def delete_permission_grant(db: Session, grant_id: str) -> PermissionGrantModel:
+    ensure_permission_grant_table(db)
+    row = get_permission_grant_or_404(db, grant_id)
+    db.delete(row)
+    db.commit()
+    return row
+
+
 def build_grant_row(
     *,
     resource_type: str,
@@ -105,8 +177,47 @@ def build_grant_row(
 
 def row_to_permission_grant(row: PermissionGrantModel) -> PermissionGrant:
     return PermissionGrant(
+        id=row.id,
         principal_type=row.principal_type,
         principal_id=row.principal_id,
         actions=row.actions or [],
         source=row.source,
     )
+
+
+def get_permission_grant_or_404(db: Session, grant_id: str) -> PermissionGrantModel:
+    row = db.get(PermissionGrantModel, grant_id)
+    if row is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Permission grant {grant_id} was not found", status.HTTP_404_NOT_FOUND)
+    return row
+
+
+def validate_resource_type(value: str) -> str:
+    normalized = value.strip()
+    if normalized in ALLOWED_RESOURCE_TYPES:
+        return normalized
+    raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported resourceType: {value}", status.HTTP_400_BAD_REQUEST)
+
+
+def validate_principal_type(value: str) -> str:
+    normalized = value.strip()
+    if normalized in ALLOWED_PRINCIPAL_TYPES:
+        return normalized
+    raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported principalType: {value}", status.HTTP_400_BAD_REQUEST)
+
+
+def validate_actions(values: list[str]) -> list[str]:
+    actions = sorted({value.strip() for value in values if value.strip()})
+    if not actions:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "At least one permission action is required", status.HTTP_400_BAD_REQUEST)
+    unsupported = [action for action in actions if action not in ALLOWED_ACTIONS]
+    if unsupported:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported permission actions: {', '.join(unsupported)}", status.HTTP_400_BAD_REQUEST)
+    return actions
+
+
+def validate_required(value: str, label: str) -> str:
+    normalized = value.strip()
+    if normalized:
+        return normalized
+    raise ApiError(ErrorCode.VALIDATION_ERROR, f"{label} is required", status.HTTP_400_BAD_REQUEST)

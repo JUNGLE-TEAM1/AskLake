@@ -2401,6 +2401,7 @@ Response `200 OK`:
       "createdBy": "Admin User",
       "grants": [
         {
+          "id": "grant_abc123",
           "principalType": "group",
           "principalId": "data-platform",
           "actions": ["view", "query", "manage"],
@@ -2422,7 +2423,7 @@ Response `200 OK`:
 }
 ```
 
-Phase 0 관리 콘솔은 권한을 수정하지 않고 resource별 grant와 현재 actor 권한을 설명하는 조회형 화면입니다. 권한 변경은 후속 `PATCH /api/admin/permissions` 계약에서 별도로 정의합니다.
+관리 콘솔은 resource별 grant와 현재 actor 권한을 설명하며, admin actor는 별도 편집 endpoint로 `permission_grants` table row를 생성/수정/삭제할 수 있습니다.
 
 Backend 저장 기준:
 
@@ -2430,6 +2431,55 @@ Backend 저장 기준:
 - 새 `permission_grants` table은 `resource_type`, `resource_id`, `principal_type`, `principal_id`, `actions`, `source`, `created_by`를 저장합니다.
 - `GET /api/admin/permissions`는 payload grant와 table grant를 합산해 반환합니다.
 - 로컬 demo seed는 table이 비어 있을 때 대표 dataset/job/dashboard에 `source="admin_seed"` grant를 생성할 수 있습니다.
+
+`POST /api/admin/permissions`
+
+권한:
+
+- admin role 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Request:
+
+```json
+{
+  "resourceType": "dataset",
+  "resourceId": "ds_customer_orders_gold",
+  "principalType": "group",
+  "principalId": "analytics",
+  "actions": ["view", "query"]
+}
+```
+
+Response `201 Created`:
+
+- 수정 후 `GET /api/admin/permissions`와 같은 `AdminPermissionsResponse`를 반환합니다.
+- 없는 resource면 `404 NOT_FOUND`.
+- action이 비어 있거나 지원하지 않는 값이면 `400 VALIDATION_ERROR`.
+
+`PATCH /api/admin/permissions/{grantId}`
+
+Request:
+
+```json
+{
+  "principalType": "user",
+  "principalId": "kim.analyst@asklake.local",
+  "actions": ["view"]
+}
+```
+
+Response `200 OK`:
+
+- 수정 후 `AdminPermissionsResponse`를 반환합니다.
+- 없는 grant면 `404 NOT_FOUND`.
+
+`DELETE /api/admin/permissions/{grantId}`
+
+Response `200 OK`:
+
+- 삭제 후 `AdminPermissionsResponse`를 반환합니다.
+- 없는 grant면 `404 NOT_FOUND`.
 
 ### 9.5 관리자 감사 로그 조회
 

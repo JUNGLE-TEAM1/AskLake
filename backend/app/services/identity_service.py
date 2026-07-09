@@ -10,12 +10,20 @@ from app.core.permission_metadata import dedupe_grants
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_card_repository import list_dashboard_cards
 from app.repositories.etl_repository import list_jobs
-from app.repositories.permission_repository import list_permission_grants_by_resource, seed_permission_grants_if_empty
+from app.repositories.permission_repository import (
+    create_permission_grant,
+    delete_permission_grant,
+    list_permission_grants_by_resource,
+    seed_permission_grants_if_empty,
+    update_permission_grant,
+)
 from app.schemas.common import ErrorCode
 from app.schemas.identity import (
     AdminAuditLogEntry,
     AdminAuditLogsResponse,
     AdminGroupsResponse,
+    AdminPermissionGrantRequest,
+    AdminPermissionGrantUpdateRequest,
     AdminPermissionSummary,
     AdminPermissionsResponse,
     AdminUser,
@@ -97,6 +105,66 @@ class IdentityService:
         resources.extend(self._job_permission_summaries(actor))
         resources.extend(self._dashboard_permission_summaries(actor))
         return AdminPermissionsResponse(resources=resources)
+
+    def create_admin_permission_grant(
+        self,
+        actor: ActorContext,
+        request: AdminPermissionGrantRequest,
+    ) -> AdminPermissionsResponse:
+        self._require_admin(actor)
+        self._require_resource_exists(request.resource_type, request.resource_id)
+        create_permission_grant(
+            self.db,
+            resource_type=request.resource_type,
+            resource_id=request.resource_id,
+            principal_type=request.principal_type,
+            principal_id=request.principal_id,
+            actions=list(request.actions),
+            created_by=actor.name,
+        )
+        return self.list_admin_permissions(actor)
+
+    def update_admin_permission_grant(
+        self,
+        actor: ActorContext,
+        grant_id: str,
+        request: AdminPermissionGrantUpdateRequest,
+    ) -> AdminPermissionsResponse:
+        self._require_admin(actor)
+        update_permission_grant(
+            self.db,
+            grant_id,
+            principal_type=request.principal_type,
+            principal_id=request.principal_id,
+            actions=list(request.actions) if request.actions is not None else None,
+        )
+        return self.list_admin_permissions(actor)
+
+    def delete_admin_permission_grant(
+        self,
+        actor: ActorContext,
+        grant_id: str,
+    ) -> AdminPermissionsResponse:
+        self._require_admin(actor)
+        delete_permission_grant(self.db, grant_id)
+        return self.list_admin_permissions(actor)
+
+    def _require_resource_exists(self, resource_type: str, resource_id: str) -> None:
+        if resource_type == "dataset":
+            exists = any(model.id == resource_id for model in CatalogRepository(self.db).list_dataset_models())
+        elif resource_type == "etl_job":
+            exists = any(job.id == resource_id for job in list_jobs(self.db))
+        elif resource_type == "dashboard":
+            exists = any(dashboard.id == resource_id for dashboard in list_dashboard_cards(self.db))
+        else:
+            exists = False
+        if exists:
+            return
+        raise ApiError(
+            ErrorCode.NOT_FOUND,
+            f"Permission resource {resource_type}:{resource_id} was not found",
+            status.HTTP_404_NOT_FOUND,
+        )
 
     def list_admin_audit_logs(self, actor: ActorContext) -> AdminAuditLogsResponse:
         self._require_admin(actor)
