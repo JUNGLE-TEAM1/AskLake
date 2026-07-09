@@ -20,6 +20,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지 | 권한/공유 API, export API, cross-pair E2E QA |
+| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Catalog/SQL/Job API는 아직 grant 기반 접근 제어를 하지 않음. Dashboard 삭제만 owner/admin 임시 header 검사 | `createdBy`/profile metadata, `permissionGrants`, actor context, dataset/SQL/job/dashboard 공통 permission check |
 | Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
@@ -308,6 +309,8 @@ Catalog dataset append 보완 기준:
 | SQL | 쿼리 저장, CSV 다운로드 |
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
+
+Permission/Governance Phase 0 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 별도 permission grant 작업이다. `owner` 문자열만으로 권한을 판단하면 이름 변경, 그룹 소유, 대리 생성, 외부 공유 같은 edge case가 생기므로 후속 구현에서는 actor context와 resource별 grant를 기준으로 판정한다.
 
 ## 11. 백엔드 팀에 넘길 최소 구현 범위
 

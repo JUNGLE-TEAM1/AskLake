@@ -95,6 +95,8 @@ Canonical status values:
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
+현재 P1 API의 `Auth` 값은 계약상 TBD다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, Catalog/SQL/Job API의 실제 접근 제어로 해석하지 않는다. Dashboard 삭제 API의 owner/admin 검사는 dashboard 전용 임시 보호 장치이고, 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance Phase 0 용어를 따른다.
+
 ## 6) P2 / 확장 API
 
 | Method | Endpoint | 설명 |

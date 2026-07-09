@@ -69,6 +69,12 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 - production-grade scheduler
 - 실제 RAG indexing/runtime
 
+### Permission/Governance Phase 0 기준
+
+현재 Create flow의 Permission 단계는 실제 접근 제어가 아니라 governance metadata 입력 단계다. `owner`, `permissionSummary`, `permissionRoles`는 누가 만들었는지, 어느 조직/역할에 공유할 의도인지 보여주는 설명 값이며, Catalog/SQL/Job API에서 접근 허용 여부를 판정하는 권한 모델로 사용하지 않는다.
+
+Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 후속 단계의 `permissionGrants`와 backend permission check로 다룬다. 현재 Dashboard 삭제 API에 있는 owner/admin 검사는 dashboard 전용 임시 보호 장치이며, 플랫폼 공통 권한 시스템으로 보지 않는다.
+
 ## 6) 핵심 사용자 흐름
 
 ### Flow A. 수집/처리 생성
@@ -135,5 +141,5 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 ## 10) 오픈 질문
 
 - Dashboard FastAPI 구현은 Pair3에서 Node demo API를 옮겨올지, 새 SQLAlchemy 모델로 다시 만들지 결정해야 한다.
-- 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다.
+- 인증/권한은 MVP에 포함할지, demo actor로 둘지 결정해야 한다. 단, Phase 0 기준으로는 표시용 identity metadata와 실제 permission grant를 분리한다.
 - Audit log는 product feature인지 operational evidence인지 먼저 정해야 한다.

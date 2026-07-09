@@ -82,6 +82,22 @@ X-Request-Id: req_20260703_000001
 현재 데모 프론트에는 로그인/토큰 저장이 아직 없으므로, 인증이 붙기 전까지는 백엔드에서 임시 actor를 `demo-user`로 처리해도 됩니다.
 인증을 붙일 때는 `frontend/src/services/apiClient.ts`에서 `Authorization` 헤더 주입 지점을 추가하면 됩니다.
 
+### Permission/Governance Phase 0 용어
+
+Phase 0 기준에서 identity metadata와 access control은 별도 개념입니다.
+
+| 용어 | 현재 의미 | 후속 방향 |
+| --- | --- | --- |
+| `createdBy` | 아직 공통 필드로 정착되지 않음 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
+| `owner` | Job/Dataset/Dashboard 화면에 표시되는 소유자 문자열 | 표시/책임자 metadata로 유지하고 권한 판정의 단일 근거로 쓰지 않음 |
+| profile/avatar | 아직 공통 API 계약 없음 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
+| `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
+| `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
+| `permissionGrants` | 아직 공통 API 계약 없음 | actor/group/role별 resource action 허용 목록 |
+| `permissions` | 아직 공통 response 필드 없음 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
+
+현재 Catalog 목록/상세, SQL preview, ETL job 생성/실행 API는 `permissionSummary`나 `permissionRoles`로 접근 권한을 판정하지 않습니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 dashboard 삭제 전용 임시 입력이며, 플랫폼 공통 권한 모델이 아닙니다.
+
 ### Success Envelope
 
 P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 response shape 그대로 반환합니다.
@@ -555,6 +571,8 @@ type CreatePipelineRequest = {
   rag: boolean;
 };
 ```
+
+`permissionSummary`, `permissionRoles`, `owner`는 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다.
 
 Request 예시:
 
@@ -1356,6 +1374,8 @@ Request body는 없습니다.
 | `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
 | `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
 
+이 검사는 dashboard 삭제에 한정된 임시 보호 장치입니다. 후속 공통 권한 모델에서는 request actor, resource grant, action을 기준으로 동일한 permission check를 재사용해야 합니다.
+
 Response `200 OK`:
 
 ```json
@@ -2060,6 +2080,7 @@ Response `201 Created`:
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
 - 인증 방식: JWT, 세션, 또는 임시 demo actor.
+- 권한 모델: Phase 0 기준처럼 identity metadata와 `permissionGrants`를 분리하고, backend가 actor별 `permissions`를 계산해 내려줄지 여부.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
