@@ -148,7 +148,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. DataTable 내부 pagination과 Catalog 전용 pagination은 이번 범위에서 제외. |
 | 전체 | modal/backdrop/dialog shell | `부분 해결` | `DialogShell` | #378에서 SQL materialize dialog, Ingest job/run log dialog, Dashboard delete dialog 대표 사용처에 적용. Catalog modal, Dashboard chart/runtime dialog, DAG modal은 후속 QA 범위. |
 | 전체 | picker dialog shell | `부분 해결` | `PickerDialog` | #378에서 S3 path picker와 DB picker의 backdrop/header/footer shell을 공통화. 내부 MUI tree/list/body CSS는 유지. |
-| 전체 | segmented tabs/selectable card | `부분 해결` | `SegmentedTabs`, `SelectableCard` | #389에서 ETL source stage/source card, schedule run type card, Dashboard period/widget type card에 1차 적용. rename/edit 상태가 있는 탭은 보류한다. |
+| 전체 | segmented tabs/selectable card | `부분 해결` | `SegmentedTabs`, `SelectableCard` | #389에서 ETL source stage/source card, schedule run type card, Dashboard period/widget type card에 1차 적용. #393에서 Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 추가 전환. rename/edit tab과 checkbox/radio card는 보류한다. |
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result, Dashboard builder preview, dashboard runtime table widget에 1차 적용. ETL final preview와 Catalog preview shell은 후속 판단. |
 | 전체 | dense settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 Dashboard config shell을 1차 적용했고, #391에서 WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field까지 확장. ETL rule builder/target/permission form과 color picker 세부 layout은 후속. |
 | 전체 | icon-only option grid | `부분 해결` | `IconOptionGrid` | #389에서 Dashboard runtime widget type icon grid에 1차 적용. tooltip/focus state는 기존 runtime 흐름 유지. |
@@ -168,7 +168,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Schedule run type cards | `schedule-config-mode-card`, `run-card` | `부분 해결` | `SelectableCard` | #389에서 ETL 내부 schedule config card와 schedule page run type card를 `SelectableCard`로 전환. target chip grid는 후속. |
 | Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
 | Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section에 1차 적용. run history와 transform preview는 후속. |
-| Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. #391에서는 source/schedule field까지만 전환하고 rule builder form/select 구조는 보류. |
+| Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup`, `SegmentedTabs` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. #391에서는 source/schedule field까지만 전환했고, #393에서 rule category tabs를 `SegmentedTabs`로 전환. form/select 구조는 보류. |
 | Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
 | Target tags | `target-chip-grid`, `target-chip` | `부분 해결` | `TagList`, `Chip` | #385에서 target tag row와 clickable chip을 공통 컴포넌트로 전환. partition chip grid는 유지. |
 | Validation rows | `etl-review-validation`, `permission-config-validation` | `부분 해결` | `ValidationList` | #385에서 Permission governance check와 Review validation rows를 `ValidationList`로 전환. schedule validation rows는 유지. |
@@ -247,3 +247,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #387에서 `PreviewPanel`, `ResultPanel`, `SettingsPanel`, `FormFieldGroup`, `NativeSelectField`, `SegmentedTabs`, `SelectableCard`, `IconOptionGrid`, `DetailTableSection` 후보의 적용 순서와 보류 기준을 문서화. |
 | 2026-07-09 | #389에서 UI shell 컴포넌트 8종을 추가하고 SQL/Dashboard/ETL/Ingest 대표 사용처에 1차 적용. CSS 삭제는 route QA 후 후속 cleanup으로 분리. |
 | 2026-07-09 | #391에서 Form/Settings 계열 적용 범위를 확장. WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field를 공통 field component로 전환하고 보류 범위를 기록. |
+| 2026-07-09 | #393에서 Selection UI 계열을 추가 정리. Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 전환하고 checkbox/radio 성격의 card 후보는 보류로 기록. |

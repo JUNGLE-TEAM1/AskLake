@@ -155,6 +155,16 @@
 | ETL source/schedule field | `.source-flow-fields`, `.schedule-config-form-grid`, `.field`, `.field.wide`, `.input.control-input` | source 연결 입력과 schedule 반복 설정 field를 공통 field component로 전환. rule builder/target/permission form selector는 유지. |
 | SQL materialize form | `.sql-materialize-form`, `.wide`, `.sql-materialize-checkbox` | materialize dialog의 text/select field를 공통 field component로 전환. checkbox row는 유지. |
 
+## #393 Selection UI 적용 CSS 기록
+
+이번 PR은 단순 tab/segmented 사용처를 `SegmentedTabs`로 추가 전환하지만 CSS selector 삭제는 하지 않는다. 기존 wrapper className을 유지해 route QA 전까지 스타일을 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| Jobs view/detail tabs | `.jobs-view-switch`, `.job-detail-tabs` | Jobs 목록 보기 전환과 상세 탭을 `SegmentedTabs`로 전환. button density/active selector는 유지. |
+| ETL rule category tabs | `.hegun-rule-category-list`, `.hegun-rule-category`, `.hegun-rule-category-icon` | rule mode tablist를 `SegmentedTabs`로 전환. icon/copy/active selector는 유지. |
+| 보류 Selection card | `.permission-config-role`, `.target-partition-option` | checkbox/radio 의미가 있는 선택 UI라 `SelectableCard`로 억지 전환하지 않는다. |
+
 ## #378 Component 확장 CSS 기록
 
 이번 PR은 CSS 파일을 직접 삭제하지 않고, 공통 컴포넌트가 기존 화면 className을 받을 수 있게 만든 뒤 대표 사용처를 전환했다. 따라서 아래 selector는 즉시 삭제가 아니라 route QA 후 후속 cleanup PR에서 정리한다.
@@ -206,3 +216,4 @@ npm run build
 | 2026-07-09 | #387에서 preview/result/settings/form/select/tab/card/icon option/detail table shell 후보별 CSS 추적 기준과 다음 정리 순서를 갱신. |
 | 2026-07-09 | #389에서 UI shell component 8종 적용에 따른 CSS 판단을 기록. 기존 selector 삭제 없이 className 전달 방식으로 route QA 전 스타일을 유지한다. |
 | 2026-07-09 | #391에서 Form/Settings 계열 추가 적용에 따른 CSS 판단을 기록. 기존 field/select selector는 삭제하지 않고 route QA 후 축소한다. |
+| 2026-07-09 | #393에서 Selection UI 추가 적용에 따른 CSS 판단을 기록. 단순 tab selector는 유지하고 checkbox/radio card 후보는 보류한다. |
