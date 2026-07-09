@@ -365,17 +365,16 @@ function PermissionsTable({
 }) {
   const [resourceSearch, setResourceSearch] = useState("");
   const [resourceTypeFilter, setResourceTypeFilter] = useState<"all" | AdminResourceType>("all");
-  const grantableUsers = users.filter((user) => user.role.toLowerCase() !== "admin");
-  const principalOptions = draft.principalType === "group"
-    ? groups.map((group) => ({ label: group.name, value: group.id }))
-    : grantableUsers.map((user) => ({
-      label: user.email ? `${user.displayName} · ${user.email}` : user.displayName,
-      value: user.displayName,
-    }));
-  const hasPrincipalOptions = principalOptions.length > 0;
-  const principalEmptyMessage = draft.principalType === "group"
-    ? "권한을 부여할 그룹이 없습니다."
-    : "권한을 부여할 일반 사용자가 없습니다.";
+  const principalOptions = groups.map((group) => ({ label: group.name, value: group.id }));
+  const hasPrincipalOptions = draft.principalType === "user" || principalOptions.length > 0;
+  const normalizedPrincipalInput = draft.principalId.trim().toLowerCase();
+  const isAdminUserPrincipalInput = draft.principalType === "user" && users.some((user) => (
+    user.role.toLowerCase() === "admin"
+    && [user.displayName, user.email, user.id].some((value) => value.toLowerCase() === normalizedPrincipalInput)
+  ));
+  const canCreateGrant = hasPrincipalOptions
+    && (draft.principalType !== "user" || Boolean(draft.principalId.trim()))
+    && !isAdminUserPrincipalInput;
   const normalizedSearch = resourceSearch.trim().toLowerCase();
   const filteredResources = permissions.filter((resource) => {
     const matchesType = resourceTypeFilter === "all" || resource.resourceType === resourceTypeFilter;
@@ -399,6 +398,7 @@ function PermissionsTable({
       }));
       return;
     }
+    if (draft.principalType === "user") return;
     const hasCurrentPrincipal = principalOptions.some((option) => option.value === draft.principalId);
     if (hasCurrentPrincipal) return;
     const nextPrincipalId = principalOptions[0]?.value || "";
@@ -477,12 +477,10 @@ function PermissionsTable({
                   <span>대상 유형</span>
                   <select value={draft.principalType} onChange={(event) => {
                     const nextType = event.target.value as PermissionPrincipalType;
-                    const nextOptions = nextType === "group"
-                      ? groups.map((group) => group.id)
-                      : grantableUsers.map((user) => user.displayName);
+                    const nextPrincipalId = nextType === "group" ? groups[0]?.id || "" : "";
                     onDraftChange((current) => ({
                       ...current,
-                      principalId: nextOptions[0] || "",
+                      principalId: nextPrincipalId,
                       principalType: nextType,
                       resourceKey: resourceKey(selectedResource),
                     }));
@@ -492,7 +490,16 @@ function PermissionsTable({
                 </label>
                 <label className="field">
                   <span>대상</span>
-                  {hasPrincipalOptions ? (
+                  {draft.principalType === "user" ? (
+                    <>
+                      <input
+                        placeholder="사용자 ID 입력"
+                        value={draft.principalId}
+                        onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
+                      />
+                      {isAdminUserPrincipalInput && <small className="admin-permission-field-hint danger">운영자 계정에는 개별 권한을 추가할 수 없습니다.</small>}
+                    </>
+                  ) : hasPrincipalOptions ? (
                     <select
                       value={draft.principalId}
                       onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
@@ -500,7 +507,7 @@ function PermissionsTable({
                       {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   ) : (
-                    <span className="admin-permission-empty-target">{principalEmptyMessage}</span>
+                    <span className="admin-permission-empty-target">권한을 부여할 그룹이 없습니다.</span>
                   )}
                 </label>
                 <div className="admin-permission-action-group">
@@ -518,7 +525,7 @@ function PermissionsTable({
                     ))}
                   </div>
                 </div>
-                <button className="primary-button admin-grant-create-button" type="submit" disabled={pending || permissions.length === 0 || !hasPrincipalOptions} onClick={() => selectResource(selectedResource)}>
+                <button className="primary-button admin-grant-create-button" type="submit" disabled={pending || permissions.length === 0 || !canCreateGrant} onClick={() => selectResource(selectedResource)}>
                   <Plus size={16} />
                   <span>권한 추가</span>
                 </button>
