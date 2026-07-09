@@ -3,6 +3,7 @@ import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search }
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import { Button } from "@/components/ui/button";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFolder } from "../../services/s3PathApi";
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
@@ -256,22 +257,25 @@ function S3PathPicker({
       title="S3 경로 선택"
       toolbar={(
         <div className="s3-picker-toolbar">
-          <label className="field">
-            <span>Bucket</span>
-            <select className="input control-input" disabled={bucketsLoading || buckets.length === 0} value={bucket} onChange={(event) => {
+          <NativeSelectField
+            fieldClassName="field"
+            label="Bucket"
+            selectClassName="input control-input"
+            disabled={bucketsLoading || buckets.length === 0}
+            value={bucket}
+            onChange={(event) => {
               setBucket(event.target.value);
               setSelectedPrefix("");
-            }}>
-              {buckets.map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </label>
-          <label className="field">
-            <span>주소 필터</span>
+            }}
+          >
+            {buckets.map((item) => <option key={item}>{item}</option>)}
+          </NativeSelectField>
+          <FormFieldGroup className="field" label="주소 필터">
             <div className="s3-picker-search">
               <Search size={14} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
             </div>
-          </label>
+          </FormFieldGroup>
         </div>
       )}
       error={bucketError ? (
