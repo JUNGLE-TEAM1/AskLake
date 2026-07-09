@@ -44,6 +44,9 @@ export type CatalogDataset = {
   owner: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
+  partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   permissionGrants?: PermissionGrant[];
   permissions?: ResourcePermissions;
   quality: string;

@@ -92,8 +92,12 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
         partition=request.partition,
+        partition_columns=normalize_string_list(request.partition_columns),
+        index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        target_description=normalize_optional_text(request.target_description),
+        target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
         target_layer=request.target_layer,
         rag=request.rag,
@@ -388,9 +392,17 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "sourceType": job.source_type,
         "stats": job.stats or {},
         "target": job.target,
+        "targetDescription": job.target_description,
         "targetFormat": job.target_format,
         "targetLayer": job.target_layer,
         "targetPath": job.target_path,
+        "targetTags": job.target_tags or [],
+        "storagePath": job.storage_path,
+        "storageType": job.storage_type,
+        "partition": job.partition,
+        "partitionColumns": job.partition_columns or [],
+        "indexColumns": job.index_columns or [],
+        "compression": job.compression,
         "transformOutputColumns": job.transform_output_columns or [],
         "transformSteps": job.transform_steps or [],
     }
@@ -690,11 +702,13 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    target_description = target_dataset_description(job)
+    target_tags = target_dataset_tags(job)
     return CatalogDatasetModel(
         id=dataset_id,
         payload=dataset_payload,
         name=job.target,
-        description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        description=target_description,
         owner=job.owner,
         layer=job.target_layer,
         status="available",
@@ -706,7 +720,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         last_updated=now,
         next_refresh=job.schedule,
         rag=job.rag,
-        tags=["#생성", f"#{str(job.target_layer).lower()}"],
+        tags=target_tags,
         schema_json=schema_json,
         sample_rows=job.schema_sample_rows or [],
         upstream=[job.source_label, job.name],
@@ -726,6 +740,9 @@ def dataset_payload_from_spark_result(
     storage_size_bytes = dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    partition_columns = normalize_string_list(job.partition_columns)
+    index_columns = normalize_string_list(job.index_columns)
+    partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
@@ -742,7 +759,7 @@ def dataset_payload_from_spark_result(
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
     return {
-        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "description": target_dataset_description(job),
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
@@ -769,7 +786,10 @@ def dataset_payload_from_spark_result(
         "storageFormat": "parquet",
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
-        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "partition": partition,
+        "partitionColumns": partition_columns,
+        "indexColumns": index_columns,
+        "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
     }
 
@@ -806,8 +826,12 @@ def update_existing_append_job(
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
     job.partition = request.partition
+    job.partition_columns = normalize_string_list(request.partition_columns)
+    job.index_columns = normalize_string_list(request.index_columns)
     job.compression = request.compression
     job.storage_path = request.storage_path
+    job.target_description = normalize_optional_text(request.target_description)
+    job.target_tags = normalize_target_tags(request.target_tags)
     job.target_format = request.target_format
     job.target_layer = request.target_layer
     job.rag = request.rag
@@ -1428,6 +1452,41 @@ def normalize_lineage_id(value: str) -> str:
 
 def tuple_rows_to_lists(rows: list[tuple[str, str]]) -> list[list[str]]:
     return [[str(key), str(value)] for key, value in rows]
+
+
+def normalize_string_list(values: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values or []:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def normalize_target_tags(values: list[str] | None) -> list[str]:
+    normalized = []
+    for value in normalize_string_list(values):
+        normalized.append(value if value.startswith("#") else f"#{value}")
+    return normalized
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def target_dataset_description(job: ETLJobModel) -> str:
+    return (
+        normalize_optional_text(job.target_description)
+        or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋"
+    )
+
+
+def target_dataset_tags(job: ETLJobModel) -> list[str]:
+    return normalize_target_tags(job.target_tags) or ["#생성", f"#{str(job.target_layer).lower()}"]
 
 
 def parse_positive_integer(value: str) -> int:
