@@ -29,7 +29,7 @@
 | 분류 | 의미 | 후속 처리 |
 | --- | --- | --- |
 | `shadcn primitive 유지` | 현재 구현이 shadcn-style primitive 역할을 한다. | variant/API만 정리하며 계속 사용한다. |
-| `shadcn primitive 추가 필요` | 공식 shadcn에 있지만 아직 로컬 `components/ui`에 없다. | foundation PR에서 추가하고 화면 교체는 후속 PR로 나눈다. |
+| `shadcn primitive 추가 필요` | 공식 shadcn에 있지만 아직 로컬 `components/ui`에 없거나, #417에서 추가되었지만 화면 적용이 남아 있다. | foundation PR에서 추가하고 화면 교체는 후속 PR로 나눈다. |
 | `AskLake composition 유지` | shadcn 1개 컴포넌트로 대체되지 않는 서비스 업무 패턴이다. | 내부를 shadcn primitive로 정리하고 props를 줄인다. |
 | `shadcn으로 교체/흡수` | 임시 wrapper 성격이 강하거나 shadcn primitive 조합으로 표현 가능하다. | 후속 PR에서 deprecated 후보로 표시하고 점진적으로 제거한다. |
 
@@ -49,29 +49,29 @@
 
 ### shadcn primitive 추가 필요
 
-| 추가할 primitive | 우선 사용처 | 메모 |
+| primitive | foundation 상태 | 우선 사용처 / 메모 |
 | --- | --- | --- |
-| `Label` | ETL/SQL/Dashboard form label | `FormFieldGroup` 축소의 기반이다. |
-| `Field` | label/control/hint/error 조합 | shadcn field 기준으로 form layout을 통일한다. |
-| `Input Group` | 검색창, prefix/suffix icon input | `FilterToolbarInput`, Catalog/SQL 검색 UI의 내부 box 중복을 줄인다. |
-| `Native Select` | browser native select 유지 영역 | `NativeSelectField` 흡수 대상이다. |
-| `Checkbox` | filter, permission role, config toggle | raw `type="checkbox"` 제거 기준이다. |
-| `Radio Group` | partition option, exclusive card selection | raw radio와 selectable card 기준을 나눈다. |
-| `Switch` | on/off setting | dashboard/ETL 설정성 boolean에 적용한다. |
-| `Tabs` | sidebar/tool tabs, detail tabs | `SegmentedTabs` 대체 후보의 기본값이다. |
-| `Toggle Group` | segmented view switch, compact mode switch | 단순 선택 버튼 묶음에 적용한다. |
-| `Dropdown Menu` | sort/filter/action menu | Catalog sort, Dashboard filter/action menu 대체 기준이다. |
-| `Tooltip` | icon-only action, chart/widget option | icon button accessibility 기준과 함께 적용한다. |
-| `Popover` | lightweight picker/filter panel | menu보다 상태가 많은 filter/picker에 적용한다. |
-| `Alert Dialog` | delete/destructive confirm | `DialogShell` destructive 사용처를 분리한다. |
-| `Sheet` | share panel, side config panel | dashboard runtime side panel 후보와 분리해 판단한다. |
-| `Textarea` | SQL/editor assistant, widget text | raw `<textarea>` 제거 기준이다. |
-| `Separator` | toolbar/menu/panel divider | 화면별 divider CSS 축소 기준이다. |
-| `Skeleton` | loading state | table/panel loading placeholder를 통일한다. |
-| `Scroll Area` | dataset tree/list/result overflow | browser scrollbar CSS를 줄일 수 있는 영역에만 적용한다. |
-| `Pagination` | DataTable 밖 pagination | `PaginationBar` 재구성 기준이다. |
-| `Button Group` | action cluster | `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. |
-| `Empty` | empty state | `EmptyState`를 shadcn `Empty` 기준으로 정렬한다. |
+| `Label` | #417 추가 | ETL/SQL/Dashboard form label. `FormFieldGroup` 축소의 기반이다. |
+| `Field` | #417 추가 | label/control/hint/error 조합. shadcn field 기준으로 form layout을 통일한다. |
+| `Input Group` | #417 추가 | 검색창, prefix/suffix icon input. `FilterToolbarInput`, Catalog/SQL 검색 UI의 내부 box 중복을 줄인다. |
+| `Native Select` | #417 추가 | browser native select 유지 영역. `NativeSelectField` 흡수 대상이다. |
+| `Checkbox` | #417 추가 | filter, permission role, config toggle. raw `type="checkbox"` 제거 기준이다. |
+| `Radio Group` | #417 추가 | partition option, exclusive card selection. raw radio와 selectable card 기준을 나눈다. |
+| `Switch` | #417 추가 | on/off setting. dashboard/ETL 설정성 boolean에 적용한다. |
+| `Tabs` | #417 추가 | sidebar/tool tabs, detail tabs. `SegmentedTabs` 대체 후보의 기본값이다. |
+| `Toggle Group` | #417 추가 | segmented view switch, compact mode switch. 단순 선택 버튼 묶음에 적용한다. |
+| `Dropdown Menu` | #417 추가 | sort/filter/action menu. Catalog sort, Dashboard filter/action menu 대체 기준이다. |
+| `Tooltip` | #417 추가 | icon-only action, chart/widget option. icon button accessibility 기준과 함께 적용한다. |
+| `Popover` | #417 추가 | lightweight picker/filter panel. menu보다 상태가 많은 filter/picker에 적용한다. |
+| `Alert Dialog` | #417 추가 | delete/destructive confirm. `DialogShell` destructive 사용처를 분리한다. |
+| `Sheet` | #417 추가 | share panel, side config panel. dashboard runtime side panel 후보와 분리해 판단한다. |
+| `Textarea` | #417 추가 | SQL/editor assistant, widget text. raw `<textarea>` 제거 기준이다. |
+| `Separator` | #417 추가 | toolbar/menu/panel divider. 화면별 divider CSS 축소 기준이다. |
+| `Skeleton` | #417 추가 | loading state. table/panel loading placeholder를 통일한다. |
+| `Scroll Area` | #417 추가 | dataset tree/list/result overflow. browser scrollbar CSS를 줄일 수 있는 영역에만 적용한다. |
+| `Pagination` | #417 추가 | DataTable 밖 pagination. `PaginationBar` 재구성 기준이다. |
+| `Button Group` | 후속 판단 | action cluster. `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. #417 범위에서는 추가하지 않았다. |
+| `Empty` | #417 추가 | empty state. `EmptyState`를 shadcn `Empty` 기준으로 정렬한다. |
 
 ### AskLake composition 유지
 
@@ -142,3 +142,4 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | --- | --- |
 | 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
+| 2026-07-09 | #417에서 `components.json`과 shadcn-style primitive foundation을 추가했다. 화면 교체는 하지 않았고, `Button Group`은 후속 판단으로 남겼다. |

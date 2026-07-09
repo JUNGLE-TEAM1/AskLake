@@ -66,6 +66,41 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 
 현재 사용 가능한 primitive:
 
+- `Label`
+- `Field`
+- `FieldLabel`
+- `FieldContent`
+- `FieldDescription`
+- `FieldError`
+- `FieldGroup`
+- `FieldLegend`
+- `InputGroup`
+- `InputGroupAddon`
+- `InputGroupInput`
+- `InputGroupText`
+- `InputGroupButton`
+- `NativeSelect`
+- `Checkbox`
+- `RadioGroup`
+- `RadioGroupItem`
+- `Switch`
+- `Tabs`
+- `TabsList`
+- `TabsTrigger`
+- `TabsContent`
+- `ToggleGroup`
+- `ToggleGroupItem`
+- `DropdownMenu`
+- `Tooltip`
+- `Popover`
+- `AlertDialog`
+- `Sheet`
+- `Textarea`
+- `Separator`
+- `Skeleton`
+- `ScrollArea`
+- `Pagination`
+- `Empty`
 - `Button`
 - `IconButton`
 - `Badge`
@@ -111,6 +146,22 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `DetailTableSection`
 - `TreePanel`
 - `TreeHoverCard`
+
+## #417 Shadcn Primitive Foundation 반영
+
+#417은 화면 교체 PR이 아니라 후속 교체 작업의 기반을 추가하는 PR이다. 따라서 아래 primitive는 `frontend/src/components/ui`에서 import 가능하지만, 기존 화면의 raw input/select/checkbox/textarea/tab/menu를 즉시 모두 교체하지는 않았다.
+
+추가된 foundation:
+
+- form/control: `Label`, `Field`, `InputGroup`, `NativeSelect`, `Checkbox`, `RadioGroup`, `Switch`, `Textarea`
+- navigation/menu/overlay: `Tabs`, `ToggleGroup`, `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet`
+- layout/state: `Separator`, `Skeleton`, `ScrollArea`, `Pagination`, `Empty`
+
+후속 적용 기준:
+
+- `FormFieldGroup`, `NativeSelectField`, `CheckableOption`, `SegmentedTabs`, `PaginationBar`, `DialogShell`, `PickerDialog`, `EmptyState`는 당장 삭제하지 않는다.
+- 위 wrapper들은 후속 replacement PR에서 shadcn primitive 내부 구성으로 흡수하거나, AskLake composition으로 남길지 사용처별로 판단한다.
+- CSS selector 삭제는 primitive 교체와 route QA 이후 `docs/frontend-css-cleanup-inventory.md` 기준으로 진행한다.
 
 ## 2026-07-09 코드 스윕 결과
 

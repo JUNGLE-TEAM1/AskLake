@@ -39,7 +39,7 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401`, #417 `refactor-#417` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -119,6 +119,16 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | `TreePanel` | S3/ETL/SQL/Dashboard tree의 outer wrapper와 loading/error/empty shell은 공통 component로 옮기되, MUI TreeView/react-arborist row와 hover card selector는 route QA 전 삭제하지 않고 유지한다. |
 
 현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PreviewPanel/ResultPanel` -> `FormFieldGroup/NativeSelectField` -> `SettingsPanel` -> `SegmentedTabs/SelectableCard` -> `IconOptionGrid` -> `DetailTableSection`이다. #401에서 `TreePanel` wrapper/state shell은 1차 적용됐고, `WidgetShell`, `ColorPalettePicker`, `TreeHoverCard`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
+
+## #417 Shadcn Primitive Foundation CSS 기록
+
+#417은 `components.json`, Radix dependency, shadcn-style primitive 파일을 추가하는 foundation 작업이다. 화면 사용처를 교체하지 않았으므로 CSS selector를 삭제하거나 상태를 `정리됨`으로 바꾸지 않는다.
+
+| 범위 | 추가된 기준 | CSS 판단 |
+| --- | --- | --- |
+| form/control primitive | `Label`, `Field`, `InputGroup`, `NativeSelect`, `Checkbox`, `RadioGroup`, `Switch`, `Textarea` | ETL/SQL/Dashboard/S3/DB picker의 raw form selector는 후속 Forms/Controls PR에서 교체한 뒤 상태를 갱신한다. |
+| menu/overlay primitive | `Tabs`, `ToggleGroup`, `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet` | `SegmentedTabs`, `DialogShell`, `PickerDialog`, menu/popover 관련 화면 selector는 후속 Navigation/Menu/Overlay PR에서 교체한 뒤 판단한다. |
+| layout/state primitive | `Separator`, `Skeleton`, `ScrollArea`, `Pagination`, `Empty` | divider/loading/overflow/pagination/empty selector는 후속 Table/List/Search 또는 Visual QA PR에서 route별로 축소한다. |
 
 ## #387 UI Shell 후보 CSS 기록
 
