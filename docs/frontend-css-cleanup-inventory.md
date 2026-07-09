@@ -144,6 +144,17 @@
 | IconOptionGrid | `.asklake-widget-type-grid`, `.asklake-widget-type-button`, `.asklake-widget-type-tooltip-layer` | runtime widget type grid를 공통 component로 전환. tooltip 위치 계산과 selected CSS는 유지. |
 | DetailTableSection | `.detail-table-card`, `.detail-table-header` | Jobs detail schema/rule table section을 공통 component로 전환. table density/row state CSS는 유지. |
 
+## #391 Form Settings 적용 CSS 기록
+
+이번 PR은 Form/Settings 계열 사용처를 추가 전환하지만 CSS selector 삭제는 하지 않는다. 기존 className을 `FormFieldGroup`/`NativeSelectField`에 전달해 route QA 전까지 density와 layout을 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| WidgetConfigPanel field/select | `.asklake-widget-config-form`, `.asklake-widget-select`, `.asklake-widget-hex-input` | chart/table select와 number/HEX field를 공통 field component로 전환. checkbox와 color picker 세부 selector는 유지. |
+| S3/DB picker toolbar | `.s3-picker-toolbar`, `.database-picker-toolbar`, `.field`, `.input.control-input`, `.s3-picker-search` | toolbar label/control shell을 공통 field component로 전환. picker body/tree/list selector는 유지. |
+| ETL source/schedule field | `.source-flow-fields`, `.schedule-config-form-grid`, `.field`, `.field.wide`, `.input.control-input` | source 연결 입력과 schedule 반복 설정 field를 공통 field component로 전환. rule builder/target/permission form selector는 유지. |
+| SQL materialize form | `.sql-materialize-form`, `.wide`, `.sql-materialize-checkbox` | materialize dialog의 text/select field를 공통 field component로 전환. checkbox row는 유지. |
+
 ## #393 Selection UI 적용 CSS 기록
 
 이번 PR은 단순 tab/segmented 사용처를 `SegmentedTabs`로 추가 전환하지만 CSS selector 삭제는 하지 않는다. 기존 wrapper className을 유지해 route QA 전까지 스타일을 유지한다.
@@ -204,4 +215,5 @@ npm run build
 | 2026-07-09 | #385에서 `ActionGroup`, `Chip`, `TagList`, `StatusBadge`, `KeyValueList`, `ValidationList` 적용에 따른 CSS 판단을 기록. CSS 삭제는 하지 않고 wrapper/density/status selector를 route QA 전까지 유지한다. |
 | 2026-07-09 | #387에서 preview/result/settings/form/select/tab/card/icon option/detail table shell 후보별 CSS 추적 기준과 다음 정리 순서를 갱신. |
 | 2026-07-09 | #389에서 UI shell component 8종 적용에 따른 CSS 판단을 기록. 기존 selector 삭제 없이 className 전달 방식으로 route QA 전 스타일을 유지한다. |
+| 2026-07-09 | #391에서 Form/Settings 계열 추가 적용에 따른 CSS 판단을 기록. 기존 field/select selector는 삭제하지 않고 route QA 후 축소한다. |
 | 2026-07-09 | #393에서 Selection UI 추가 적용에 따른 CSS 판단을 기록. 단순 tab selector는 유지하고 checkbox/radio card 후보는 보류한다. |

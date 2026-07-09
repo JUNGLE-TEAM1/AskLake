@@ -45,6 +45,7 @@ import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { PageHeader } from "@/components/ui/page-header";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
@@ -1611,10 +1612,9 @@ export function SourceConnectionPage({
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
-                    <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
-                      <span>{sourceFieldLabel(label)}</span>
+                    <FormFieldGroup className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`} label={sourceFieldLabel(label)}>
                       <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
-                    </label>
+                    </FormFieldGroup>
                   ))}
                 </div>
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
@@ -4505,29 +4505,34 @@ function RepeatSettings({
           <h3>실행 일정</h3>
         </div>
         <div className="schedule-config-form-grid">
-          <label className="field">
-            <span>반복 주기</span>
-            <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+          <NativeSelectField
+            fieldClassName="field"
+            label="반복 주기"
+            selectClassName="input control-input"
+            value={frequency}
+            onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}
+          >
               {visibleRepeatFrequencyOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </select>
-          </label>
+          </NativeSelectField>
           {frequency === "hourly" && (
-            <label className="field">
-              <span>실행 분</span>
-              <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+            <NativeSelectField
+              fieldClassName="field"
+              label="실행 분"
+              selectClassName="input control-input"
+              value={minute}
+              onChange={(event) => onMinuteChange(event.target.value)}
+            >
                 {validRepeatMinutes.map((value) => (
                   <option key={value} value={value}>{value}분</option>
                 ))}
-              </select>
-            </label>
+            </NativeSelectField>
           )}
           {frequency === "daily" && (
-            <label className="field">
-              <span>실행 시간</span>
+            <FormFieldGroup className="field" label="실행 시간">
               <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </label>
+            </FormFieldGroup>
           )}
           {frequency === "weekly" && (
             <div className="field wide">
@@ -4542,25 +4547,26 @@ function RepeatSettings({
             </div>
           )}
           {frequency === "weekly" && (
-            <label className="field">
-              <span>실행 시간</span>
+            <FormFieldGroup className="field" label="실행 시간">
               <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
-            </label>
+            </FormFieldGroup>
           )}
           {frequency === "custom" && (
-            <label className="field wide">
-              <span>Cron 표현식</span>
+            <FormFieldGroup className="field wide" label="Cron 표현식">
               <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
-            </label>
+            </FormFieldGroup>
           )}
-          <label className="field">
-            <span>시간대</span>
-            <select className="input control-input" value={timezone} onChange={(event) => onTimezoneChange(event.target.value)}>
+          <NativeSelectField
+            fieldClassName="field"
+            label="시간대"
+            selectClassName="input control-input"
+            value={timezone}
+            onChange={(event) => onTimezoneChange(event.target.value)}
+          >
               {timezoneOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
-            </select>
-          </label>
+          </NativeSelectField>
         </div>
         <div className="schedule-config-preview">
           <InfoBox title="실행 미리보기" body={preview} />
