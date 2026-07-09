@@ -9,12 +9,22 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 ## 운영 규칙
 
 - UI 전환 PR마다 새 gap을 발견하면 이 문서에 추가한다.
-- 하나의 화면에서만 쓰이는 일회성 UI는 바로 공통 컴포넌트로 만들지 않는다.
+- 하나의 화면에서만 쓰이는 일회성 UI는 바로 AskLake 조합 컴포넌트로 만들지 않는다.
+- 단, 반복되지 않는 UI라도 shadcn primitive가 이미 제공하는 기본 부품이면 `components/ui` 표준 부품으로 교체할 수 있는 후보로 본다.
 - 두 화면 이상에서 반복되거나, CSS 삭제를 막는 구조적 패턴만 component gap으로 본다.
 - Backend API, 데이터 계약, 도메인 로직은 이 문서의 범위가 아니다.
 - gap을 기록했다고 해서 즉시 구현한다는 뜻은 아니다. 우선순위와 담당 PR을 따로 정한다.
 - 이미 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input` 같은 공통 컴포넌트로 대체된 작업은 완료 범위로 기록하고, 남은 항목은 "기능 미완료"가 아니라 후속 공통화/CSS 축소 후보로 구분한다.
 - UI 전환이나 CSS cleanup PR에서 "공통 컴포넌트로 아직 대체하지 않은 UI"가 새로 보이면 이 문서와 `docs/frontend-css-cleanup-inventory.md`를 함께 업데이트한다.
+
+## shadcn primitive 표준화 원칙
+
+AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 단위이고, shadcn primitive는 기본 UI를 표준화하기 위한 단위다.
+
+- 반복되는 UI는 `FilterToolbar`, `DataTable`, `Panel`, `PaginationBar`처럼 AskLake 조합 컴포넌트로 묶는다.
+- 반복되지 않는 UI라도 `Textarea`, `Checkbox`, `Tabs`, `Tooltip`, `DropdownMenu`, `Select`, `Popover`, `Command`, `AlertDialog`처럼 shadcn에 검증된 primitive가 있으면 교체 후보로 본다.
+- 화면 고유 상태가 복잡한 경우에도 raw HTML과 화면별 CSS를 계속 늘리기보다, 우선 shadcn primitive를 적용하고 조합 컴포넌트 분리는 후속 PR로 판단한다.
+- Tree, React Flow, dashboard grid처럼 외부 라이브러리 DOM과 강하게 묶인 UI는 shadcn primitive만으로 해결하지 않고 별도 설계 PR에서 다룬다.
 
 ## 공통 컴포넌트 확장 기록 방식
 
@@ -64,6 +74,10 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - `MetricCard`
 - `FilterToolbar`
 - `FilterToolbarSearch`
+- `FilterToolbarInput`
+- `FilterToolbarFieldGroup`
+- `FilterToolbarCheckboxGroup`
+- `FilterToolbarCheckbox`
 - `FilterToolbarActions`
 - `FilterToolbarMenu`
 - `FilterToolbarDivider`
@@ -117,7 +131,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 전체 | key-value review summary | `설계 필요` | `ReviewSummary` 또는 `KeyValueList` | ETL Review, Catalog detail, Dashboard metadata에서 반복 가능성 있음. |
 | 전체 | 상태 검증 목록 | `설계 필요` | `ValidationList` | ETL governance/review validation, backend readiness UI 후보에서 반복 가능성 있음. |
 | 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
-| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. Catalog는 tag row, checkbox filter, sort menu가 결합되어 있어 후속 판단으로 유지. |
+| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. #375에서 Catalog 검색/태그/checkbox filter와 SQL 분석 테이블 검색까지 `FilterToolbar` 계열로 확장. Catalog sort menu와 tag/chip 시각 상태는 후속 `DropdownMenu`/`Chip`/`TagList` 후보로 유지. |
 | 전체 | DataTable 밖 pagination/footer | `구현 후보` | `PaginationBar` | Catalog search/materialization, SQL context, Dashboard list, Ingest runs에서 반복된다. `DataTable` 내부 pagination은 그대로 두고 외부 list pagination만 먼저 묶는다. |
 | 전체 | modal/backdrop/dialog shell | `구현 후보` | `DialogShell`, `PickerDialog` | Catalog/SQL/Jobs/Dashboard/S3/DB picker에 custom role dialog가 남아 있다. 기존 `Dialog` primitive를 화면 shell로 확장하는 방향이 우선이다. |
 | 전체 | tag/chip/status row | `구현 후보` | `Chip`, `TagList`, `StatusBadge` | `Badge` primitive는 있지만 interactive tag, owner chip, type pill, status pill이 화면별 CSS로 남아 있다. |
@@ -205,3 +219,4 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | #369에서 `FilterToolbar` 계열 컴포넌트를 추가하고 Jobs/Dashboard list에 1차 적용. Catalog 검색/필터는 구조 차이로 후속 판단. |
 | 2026-07-09 | #372에서 B02/B03/B04 완료 범위와 후속 공통화 후보를 구분. `DataTable`/primitive 적용이 끝난 표와 `FilterToolbar` 적용 범위를 기능 미완료가 아닌 `부분 해결`/`해결됨` 상태로 정리. |
 | 2026-07-09 | 코드 스윕으로 버튼/모달/페이지네이션/트리/프리뷰/요약/칩/form/선택형 카드 반복 패턴을 확인하고 component 확장 기록 방식과 권장 순서를 추가. |
+| 2026-07-09 | #375에서 `FilterToolbarInput`, `FilterToolbarFieldGroup`, `FilterToolbarCheckboxGroup`, `FilterToolbarCheckbox`를 추가하고 Catalog/SQL 검색 UI에 적용. 반복되지 않아도 shadcn primitive가 있으면 표준화 후보로 본다는 원칙을 추가. |

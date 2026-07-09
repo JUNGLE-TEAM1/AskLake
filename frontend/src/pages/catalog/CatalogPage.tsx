@@ -21,7 +21,16 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
-import { Input } from "@/components/ui/input";
+import {
+  FilterToolbar,
+  FilterToolbarActions,
+  FilterToolbarCheckbox,
+  FilterToolbarCheckboxGroup,
+  FilterToolbarFieldGroup,
+  FilterToolbarInput,
+  FilterToolbarMenu,
+  FilterToolbarSearch,
+} from "@/components/ui/filter-toolbar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { PageTitle } from "../../components/common";
 import { getDatasetLineageGraph } from "../../services/mockApi";
@@ -451,11 +460,9 @@ export function CatalogPage({
               meta={<Badge size="sm">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</Badge>}
               title="검색 조건"
             />
-            <div className="catalog-search-body">
-              <div className="catalog-search-box">
-                <Search size={18} />
-                <Input
-                  className="catalog-search-input"
+            <FilterToolbar layout="stacked">
+              <FilterToolbarSearch icon={<Search size={18} />}>
+                <FilterToolbarInput
                   aria-label="카탈로그 검색"
                   onChange={(event) => setSearchText(event.target.value)}
                   onKeyDown={(event) => {
@@ -467,30 +474,27 @@ export function CatalogPage({
                   type="search"
                   value={searchText}
                 />
-              </div>
-              <div className="catalog-tag-row">
-                <span>태그</span>
-                <div>
-                  {topTags.map((tag) => {
-                    const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
+              </FilterToolbarSearch>
+              <FilterToolbarFieldGroup label="태그">
+                {topTags.map((tag) => {
+                  const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
 
-                    return (
-                      <Button
-                        aria-pressed={isTagInSearch}
-                        className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
-                        key={tag}
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => addTagToSearch(tag)}
-                      >
-                        {tag}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+                  return (
+                    <Button
+                      aria-pressed={isTagInSearch}
+                      className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                      key={tag}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => addTagToSearch(tag)}
+                    >
+                      {tag}
+                    </Button>
+                  );
+                })}
+              </FilterToolbarFieldGroup>
+            </FilterToolbar>
           </Panel>
 
           <Panel className="catalog-results-section">
@@ -502,55 +506,59 @@ export function CatalogPage({
                 meta={<Badge size="sm">{filteredDatasets.length}건</Badge>}
                 title="검색 결과"
               />
-              <div className="catalog-filter-row">
-                <label>
-                  <input checked={filterState.available} type="checkbox" onChange={(event) => updateFilter("available", event.target.checked)} />
-                  사용 가능
-                </label>
-                <label>
-                  <input checked={filterState.approvalRequired} type="checkbox" onChange={(event) => updateFilter("approvalRequired", event.target.checked)} />
-                  승인 필요
-                </label>
-                <label>
-                  <input checked={filterState.rag} type="checkbox" onChange={(event) => updateFilter("rag", event.target.checked)} />
-                  RAG 여부
-                </label>
-                <div className="catalog-sort-control" ref={sortMenuRef}>
-                  <Button
-                    aria-expanded={isSortMenuOpen}
-                    aria-haspopup="menu"
-                    className="catalog-sort-button"
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setIsSortMenuOpen((isOpen) => !isOpen);
-                      onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                    }}
-                  >
-                    정렬: {selectedSortOption.label} ▾
-                  </Button>
-                  {isSortMenuOpen && (
-                    <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
-                      {catalogSortOptions.map((option) => (
-                        <Button
-                          aria-checked={sortMode === option.mode}
-                          className={sortMode === option.mode ? "active" : ""}
-                          key={option.mode}
-                          role="menuitemradio"
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => updateSortMode(option.mode)}
-                        >
-                          <span>{sortMode === option.mode ? "✓" : ""}</span>
-                          {option.label}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <FilterToolbar
+                className="grid-cols-[minmax(0,1fr)_max-content] gap-3 py-3 max-xl:grid-cols-1"
+                layout="actions"
+              >
+                <FilterToolbarCheckboxGroup>
+                  <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
+                    사용 가능
+                  </FilterToolbarCheckbox>
+                  <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
+                    승인 필요
+                  </FilterToolbarCheckbox>
+                  <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
+                    RAG 여부
+                  </FilterToolbarCheckbox>
+                </FilterToolbarCheckboxGroup>
+                <FilterToolbarActions>
+                  <FilterToolbarMenu className="catalog-sort-control" ref={sortMenuRef}>
+                    <Button
+                      aria-expanded={isSortMenuOpen}
+                      aria-haspopup="menu"
+                      className="catalog-sort-button"
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setIsSortMenuOpen((isOpen) => !isOpen);
+                        onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                      }}
+                    >
+                      정렬: {selectedSortOption.label} ▾
+                    </Button>
+                    {isSortMenuOpen && (
+                      <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
+                        {catalogSortOptions.map((option) => (
+                          <Button
+                            aria-checked={sortMode === option.mode}
+                            className={sortMode === option.mode ? "active" : ""}
+                            key={option.mode}
+                            role="menuitemradio"
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => updateSortMode(option.mode)}
+                          >
+                            <span>{sortMode === option.mode ? "✓" : ""}</span>
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                  </FilterToolbarMenu>
+                </FilterToolbarActions>
+              </FilterToolbar>
             </div>
 
             <div className="catalog-result-list">
