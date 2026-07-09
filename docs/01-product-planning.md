@@ -73,7 +73,7 @@ FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 
 현재 Create flow의 Permission 단계는 실제 접근 제어가 아니라 governance metadata 입력 단계다. `owner`, `permissionSummary`, `permissionRoles`는 누가 만들었는지, 어느 조직/역할에 공유할 의도인지 보여주는 설명 값이며, Catalog/SQL/Job API에서 접근 허용 여부를 판정하는 권한 모델로 사용하지 않는다.
 
-Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 후속 단계의 `permissionGrants`와 backend permission check로 다룬다. 현재 Dashboard 삭제 API에 있는 owner/admin 검사는 dashboard 전용 임시 보호 장치이며, 플랫폼 공통 권한 시스템으로 보지 않는다.
+Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, profile/avatar 같은 값은 표시용 identity metadata로 분리하고, 실제 접근 제어는 `ActorContext`, resource별 `permissionGrants`, backend permission check로 다룬다. 현재 기준 권한 판정은 allow-only 모델이며, `admin`은 전체 허용되고, owner fallback과 user/group/role/public grant 중 하나가 맞으면 허용된다. 관리자 권한 편집 기능은 이 기준을 바탕으로 후속 단계에서 추가한다.
 
 ## 6) 핵심 사용자 흐름
 

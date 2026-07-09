@@ -93,14 +93,14 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
 | `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
 | `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
-| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | actor/group/role별 resource action 허용 목록 |
+| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
 Catalog 목록/상세, SQL preview, Query AI, ETL job command API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
 
-Phase 2 기준 `permissionGrants`와 `permissions`는 UI 표시와 후속 enforcement 준비를 위한 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다.
+`permissionGrants`와 `permissions`는 UI 표시와 backend enforcement를 함께 설명하는 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다. `permissions.enforced=true`이면 같은 기준으로 backend가 `403 FORBIDDEN`을 반환할 수 있습니다.
 
-Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로 해석할 수 있습니다. Phase 4부터 이 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Job command에도 사용됩니다. Phase 6부터 Query AI 생성도 선택 dataset 전체에 대해 같은 `query` permission check를 사용합니다.
+Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하고, 세션이 없을 때만 아래 임시 actor header를 공통 `ActorContext` fallback으로 해석할 수 있습니다. 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command, Dashboard runtime 편집에도 사용됩니다.
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
@@ -108,7 +108,35 @@ Phase 3 기준 backend는 아래 임시 actor header를 공통 `ActorContext`로
 | `X-AskLake-Role` | `admin` | `admin`이면 모든 action 허용 |
 | `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
 
-Phase 4+ enforcement 범위:
+권한 판정은 현재 allow-only 모델입니다. 명시적 deny는 아직 계약에 없고, 여러 grant는 합산됩니다.
+
+권한 허용 우선순위:
+
+1. `actor.role === "admin"`이면 모든 resource/action 허용
+2. resource `owner`가 actor name과 같으면 허용하는 local fallback 유지
+3. actor의 user principal, group principal, role principal 중 하나와 grant가 일치하고 해당 action이 포함되어 있으면 허용
+4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
+5. 위 조건이 모두 아니면 `403 FORBIDDEN`
+
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 `permissionGrants`를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다.
+
+Resource/action 기준:
+
+| Resource type | 주요 action | 의미 |
+| --- | --- | --- |
+| `dataset` | `view` | Catalog 목록/상세/lineage에서 조회 가능 |
+| `dataset` | `query` | SQL Preview, Query AI, SQL 결과 기반 후속 작업에서 dataset 사용 가능 |
+| `dataset` | `manage` | materialization-run 삭제 등 dataset metadata 변경 가능 |
+| `dataset` | `delete` | dataset 삭제 가능. 별도 삭제 API 도입 시 사용 |
+| `etl_job` | `view` | Job 목록/상세 조회 가능 |
+| `etl_job` | `run` | Job run/retry 실행 가능 |
+| `etl_job` | `manage` | Job pause/cancel/stop 등 운영 상태 변경 가능 |
+| `dashboard` | `view` | Dashboard card/runtime 조회 가능 |
+| `dashboard` | `manage` | draft 생성, page/widget/layout 변경, publish 가능 |
+| `dashboard` | `delete` | Dashboard 삭제 가능 |
+| `dashboard` | `share` | Dashboard 공유/권한 위임 UI 도입 시 사용 |
+
+공통 enforcement 범위:
 
 | Endpoint | 필요 action | 비고 |
 | --- | --- | --- |
@@ -124,7 +152,7 @@ Phase 4+ enforcement 범위:
 | `POST /api/dashboards/{dashboardId}/publish` | `manage` | draft snapshot을 published revision으로 승격 |
 | `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
 
-Frontend Phase 5 기준:
+Frontend 기준:
 
 - `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
 - `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
@@ -140,6 +168,7 @@ Profile/Admin Console Phase 0 기준:
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 1차 관리 콘솔은 조회 중심입니다. 사용자/그룹/권한 정책 수정 API는 별도 후속 계약으로 분리합니다.
+- 후속 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공해야 합니다. role/public grant는 운영 위험이 크므로 별도 확인 UI 없이 자동 생성하지 않습니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
@@ -1495,7 +1524,7 @@ type DashboardListResponse = {
 };
 ```
 
-`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 `X-AskLake-User`를 만든 사람 metadata로 저장합니다. Dashboard 삭제 권한 검사는 Phase 3부터 공통 `ActorContext`/`can()` 코어를 사용하되, 현재 호환성을 위해 admin 또는 dashboard owner면 삭제할 수 있습니다.
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 현재 actor를 만든 사람 metadata로 저장합니다. Dashboard 삭제 권한 검사는 공통 `ActorContext`/`can()` 코어를 사용하며, 현재 호환성을 위해 admin 또는 dashboard owner fallback이면 삭제할 수 있습니다.
 
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
@@ -1506,19 +1535,21 @@ type DashboardListResponse = {
 `DELETE /api/dashboards/{dashboardId}`
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
-서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 공통 permission check로 `delete` 권한을 검사합니다.
 삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
-로컬 API 서버의 임시 권한 입력:
+Actor 입력:
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
-| `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
-| `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
+| `asklake_session` cookie | 없음 | 세션이 있으면 session user를 actor로 우선 사용 |
+| `X-AskLake-User` | `Admin User` | 세션이 없을 때 fallback 요청 사용자 이름 |
+| `X-AskLake-Role` | `admin` | 세션이 없을 때 fallback role. `admin`이면 모든 dashboard 삭제 가능 |
+| `X-AskLake-Groups` | 빈 값 | 세션이 없을 때 fallback group 목록 |
 
-이 검사는 dashboard 삭제에 한정된 보호 장치입니다. Phase 3부터 request actor, resource grant, action을 기준으로 하는 공통 permission check를 사용합니다.
+권한 허용 기준은 `admin 전체 허용 -> owner fallback -> permissionGrants delete action -> 403` 순서입니다.
 
 Response `200 OK`:
 
