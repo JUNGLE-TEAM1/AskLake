@@ -23,13 +23,19 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   FilterToolbar,
   FilterToolbarActions,
   FilterToolbarCheckbox,
   FilterToolbarCheckboxGroup,
   FilterToolbarFieldGroup,
   FilterToolbarInput,
-  FilterToolbarMenu,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
 import { PageHeader } from "@/components/ui/page-header";
@@ -279,11 +285,9 @@ export function CatalogPage({
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
-  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
-  const sortMenuRef = useRef<HTMLDivElement>(null);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const topTags = useMemo(() => tags.slice(0, 10), [tags]);
   const inputSearchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
@@ -341,18 +345,6 @@ export function CatalogPage({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
-    if (!isSortMenuOpen) return undefined;
-
-    const closeSortMenu = (event: MouseEvent) => {
-      if (sortMenuRef.current?.contains(event.target as Node)) return;
-      setIsSortMenuOpen(false);
-    };
-
-    document.addEventListener("mousedown", closeSortMenu);
-    return () => document.removeEventListener("mousedown", closeSortMenu);
-  }, [isSortMenuOpen]);
-
-  useEffect(() => {
     if (!hasCatalogResults || paginatedDatasets.length === 0) return;
 
     const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
@@ -396,7 +388,6 @@ export function CatalogPage({
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
     setSortMode(nextSortMode);
-    setIsSortMenuOpen(false);
     onAction("catalog.sort_changed", `/api/catalog/search/sort?sort=${nextSortMode}`, nextSortMode);
   };
 
@@ -528,41 +519,34 @@ export function CatalogPage({
                   </FilterToolbarCheckbox>
                 </FilterToolbarCheckboxGroup>
                 <FilterToolbarActions>
-                  <FilterToolbarMenu className="catalog-sort-control" ref={sortMenuRef}>
-                    <Button
-                      aria-expanded={isSortMenuOpen}
-                      aria-haspopup="menu"
-                      className="catalog-sort-button"
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setIsSortMenuOpen((isOpen) => !isOpen);
-                        onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                      }}
-                    >
-                      정렬: {selectedSortOption.label} ▾
-                    </Button>
-                    {isSortMenuOpen && (
-                      <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
+                  <DropdownMenu
+                    onOpenChange={(isOpen) => {
+                      if (isOpen) onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                    }}
+                  >
+                    <DropdownMenuTrigger asChild>
+                      <Button className="catalog-sort-button" type="button" size="sm" variant="outline">
+                        정렬: {selectedSortOption.label}
+                        <ChevronDown size={14} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="catalog-sort-menu" aria-label="정렬 기준">
+                      <DropdownMenuRadioGroup
+                        value={sortMode}
+                        onValueChange={(value) => updateSortMode(value as CatalogSortMode)}
+                      >
                         {catalogSortOptions.map((option) => (
-                          <Button
-                            aria-checked={sortMode === option.mode}
-                            className={sortMode === option.mode ? "active" : ""}
+                          <DropdownMenuRadioItem
+                            className="catalog-sort-option"
                             key={option.mode}
-                            role="menuitemradio"
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => updateSortMode(option.mode)}
+                            value={option.mode}
                           >
-                            <span>{sortMode === option.mode ? "✓" : ""}</span>
                             {option.label}
-                          </Button>
+                          </DropdownMenuRadioItem>
                         ))}
-                      </div>
-                    )}
-                  </FilterToolbarMenu>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>

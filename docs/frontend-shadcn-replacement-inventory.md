@@ -60,11 +60,11 @@
 | `Switch` | on/off setting | dashboard/ETL 설정성 boolean에 적용한다. |
 | `Tabs` | sidebar/tool tabs, detail tabs | `SegmentedTabs` 대체 후보의 기본값이다. |
 | `Toggle Group` | segmented view switch, compact mode switch | 단순 선택 버튼 묶음에 적용한다. |
-| `Dropdown Menu` | sort/filter/action menu | Catalog sort, Dashboard filter/action menu 대체 기준이다. |
+| `Dropdown Menu` | sort/filter/action menu | #420에서 Catalog sort menu에 1차 적용. Dashboard filter/action menu는 후속. |
 | `Tooltip` | icon-only action, chart/widget option | icon button accessibility 기준과 함께 적용한다. |
 | `Popover` | lightweight picker/filter panel | menu보다 상태가 많은 filter/picker에 적용한다. |
 | `Alert Dialog` | delete/destructive confirm | `DialogShell` destructive 사용처를 분리한다. |
-| `Sheet` | share panel, side config panel | dashboard runtime side panel 후보와 분리해 판단한다. |
+| `Sheet` | share panel, side config panel | #420에서 Dashboard runtime share panel에 1차 적용. side config panel은 후속 판단. |
 | `Textarea` | SQL/editor assistant, widget text | raw `<textarea>` 제거 기준이다. |
 | `Separator` | toolbar/menu/panel divider | 화면별 divider CSS 축소 기준이다. |
 | `Skeleton` | loading state | table/panel loading placeholder를 통일한다. |
@@ -144,6 +144,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
 | 2026-07-09 | #418에서 ETL/Schedule/S3/DB picker의 대표 form control을 `Input`, `NativeSelect`, `InputGroup`, `Checkbox` 기준으로 1차 교체했다. |
 | 2026-07-09 | #419에서 SQL/Dashboard runtime/config의 대표 form control을 `Textarea`, `Input`, `Checkbox`, `Button` 기준으로 2차 교체하고 Dashboard runtime compact 보정을 추가했다. |
+| 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard runtime share panel을 `Sheet`로 교체했다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 
@@ -166,6 +167,30 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 검증:
 
 - `cd frontend && npm run build` 통과.
+
+## #420 Navigation/Menu/Overlay Primitive 1차 반영
+
+이번 PR은 #419 Forms/Controls 작업과 겹치지 않는 navigation/menu/overlay 표면만 먼저 교체한다. 화면 데이터, API, dashboard page tab rename/delete 상태는 변경하지 않는다.
+
+적용 범위:
+
+- `frontend/src/pages/catalog/CatalogPage.tsx`
+  - custom sort menu state, document outside-click listener, button-based `role="menuitemradio"`를 제거했다.
+  - `DropdownMenu`, `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuRadioGroup`, `DropdownMenuRadioItem`으로 정렬 메뉴를 전환했다.
+- `frontend/src/pages/dashboard/runtime/DashboardRuntimeShell.tsx`
+  - inline custom `role="dialog"` share panel을 `Sheet`/`SheetContent`/`SheetHeader`/`SheetFooter`로 전환했다.
+  - 공유 링크 표시와 닫기 동작은 기존 prop 흐름을 유지한다.
+- `frontend/src/components/ui/dropdown-menu.tsx`
+  - vendored lucide export와 맞지 않던 radio indicator icon을 `CircleDot`으로 정리했다.
+
+유지/보류:
+
+- SQL autocomplete popover, Dashboard filter/action menu, audit popover, destructive confirm은 후속 #420 확장 또는 별도 PR 범위로 둔다.
+- `DashboardPageTabs`는 rename/delete/edit 상태가 섞여 있어 이번 PR에서 `Tabs`로 억지 전환하지 않는다.
+
+검증:
+
+- `cd frontend && npm run build` 통과. Vite chunk size warning은 기존 번들 크기 이슈로 유지.
 
 ## #418 Forms/Controls Primitive 1차 반영
 
