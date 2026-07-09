@@ -3,6 +3,9 @@ import type React from "react";
 import { Calendar, Clock3, PlayCircle, Repeat2 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy } from "../../../components/common";
 import { CreationFlowLayout, CreationSummaryPanel } from "../../../components/creation/CreationFlow";
+import { Checkbox } from "../../../components/ui/checkbox";
+import { Input } from "../../../components/ui/input";
+import { NativeSelect } from "../../../components/ui/native-select";
 import { SelectableCard } from "../../../components/ui/selectable-card";
 import type { DraftPipelinePatch, ScheduleFlowId } from "../../../types";
 import type { RetryPolicyDraft } from "../../../types/etl";
@@ -277,26 +280,26 @@ function RepeatSettings({
       <div className="form-grid">
         <label className="field">
           <span>반복 주기</span>
-          <select className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
+          <NativeSelect className="input control-input" value={frequency} onChange={(event) => onFrequencyChange(event.target.value as RepeatFrequency)}>
             {Object.entries(repeatFrequencyLabels).map(([value, label]) => (
               <option key={value} value={value}>{label}</option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         {frequency === "hourly" && (
           <label className="field">
             <span>실행 분</span>
-            <select className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
+            <NativeSelect className="input control-input" value={minute} onChange={(event) => onMinuteChange(event.target.value)}>
               {validRepeatMinutes.map((value) => (
                 <option key={value} value={value}>{value}분</option>
               ))}
-            </select>
+            </NativeSelect>
           </label>
         )}
         {frequency === "daily" && (
           <label className="field">
             <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
           </label>
         )}
         {frequency === "weekly" && (
@@ -314,13 +317,13 @@ function RepeatSettings({
         {frequency === "weekly" && (
           <label className="field">
             <span>실행 시간</span>
-            <input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
+            <Input className="input control-input" max="23:59" min="00:00" step="60" type="time" value={normalizeTimeValue(time)} onBlur={onTimeCommit} onChange={(event) => onTimeChange(event.target.value)} onInput={(event) => onTimeChange(event.currentTarget.value)} />
           </label>
         )}
         {frequency === "custom" && (
           <label className="field wide">
             <span>Cron 표현식</span>
-            <input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
+            <Input className="input control-input" inputMode="numeric" pattern="[0-9*,/\\-\\s]+" value={customCron} onBlur={onCronCommit} onChange={(event) => onCronChange(event.target.value)} onInput={(event) => onCronChange(event.currentTarget.value)} />
           </label>
         )}
         <Field label="시간대" value="(GMT+09:00) Seoul, Tokyo" />
@@ -330,7 +333,7 @@ function RepeatSettings({
       <InfoBox title="실행 미리보기" body={preview} />
       {frequency === "custom" && !cronIsValid && <InfoBox title="Cron 형식 확인" body="5개 필드 형식만 저장합니다. 예: 0 10 * * 1-5" />}
       <label className="policy-check-row">
-        <input type="checkbox" defaultChecked />
+        <Checkbox defaultChecked />
         <span>
           <strong>과거 데이터 소급 (Backfill)</strong>
           <small>파이프라인 생성 시점 이전의 누락된 구간 데이터를 자동으로 처리합니다.</small>
@@ -352,7 +355,7 @@ function ManualSettings({ onRetryPolicyChange, retryPolicy }: { onRetryPolicyCha
       <div className="policy-section">
         <h3>실행 정책</h3>
         <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
+          <Checkbox defaultChecked />
           <span>
             <strong>실패 시 재시도 활성화</strong>
             <small>수동 실행 중 오류가 발생하면 지정한 정책에 따라 자동 재시도합니다.</small>
@@ -387,7 +390,7 @@ function OnceSettings({
       <div className="form-grid">
         <label className="field">
           <span>실행 예정 일시</span>
-          <input className="input control-input" min="2026-07-04T00:00" type="datetime-local" value={normalizeDateTimeLocal(dateTime)} onBlur={onDateTimeCommit} onChange={(event) => onDateTimeChange(event.target.value)} onInput={(event) => onDateTimeChange(event.currentTarget.value)} />
+          <Input className="input control-input" min="2026-07-04T00:00" type="datetime-local" value={normalizeDateTimeLocal(dateTime)} onBlur={onDateTimeCommit} onChange={(event) => onDateTimeChange(event.target.value)} onInput={(event) => onDateTimeChange(event.currentTarget.value)} />
         </label>
         <Field label="시간대" value="Asia/Seoul (GMT+09:00)" icon={<Clock3 size={16} />} />
       </div>
@@ -395,7 +398,7 @@ function OnceSettings({
       <div className="policy-section">
         <h3>실행 정책</h3>
         <label className="policy-check-row compact">
-          <input type="checkbox" defaultChecked />
+          <Checkbox defaultChecked />
           <span>
             <strong>실패 시 재시도</strong>
             <small>예약 실행 실패 시 재시도 정책을 적용합니다.</small>
