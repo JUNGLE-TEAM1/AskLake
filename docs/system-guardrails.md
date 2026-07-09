@@ -28,6 +28,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
+| Airflow DAG deployment check | CI/deploy workflow candidate running DAG import/parse validation and a staging smoke DAG Run before prod deploy | `planned` | block or halt DAG deploy when Airflow cannot import the DAG or smoke run state cannot be observed | maintainer | Issue #383. Local volume mount is allowed for dev only; staging/prod must deploy reviewed DAG versions with rollback notes |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
@@ -71,6 +72,7 @@
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
+| Airflow DAG deploy failed | DAG import error, Airflow API health, scheduler health, DAG Run 생성, Task Instance 상태, 이전 DAG version rollback 경로를 순서대로 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 | EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
@@ -90,6 +92,7 @@
 - Repository admin이 secret scanning 상태를 확인한다.
 - Repository admin이 `Frontend UI Checks / frontend-ui-checks`를 required check로 등록한다.
 - 배포 workflow가 추가되면 prod compose config check를 required pre-deploy check 후보로 등록한다.
+- Airflow가 staging/prod compose에 포함되면 DAG import check와 smoke DAG Run check를 pre-deploy 후보로 등록한다.
 - 백엔드 scaffold가 생기면 backend test/build check를 추가한다.
 - API adapter가 늘어나면 contract drift check script를 검토한다.
 

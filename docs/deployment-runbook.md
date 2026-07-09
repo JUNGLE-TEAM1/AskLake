@@ -114,6 +114,37 @@ EC2 running 보장
 
 `git pull --ff-only`가 실패하면 서버 작업 tree가 배포 branch와 다르다는 뜻이므로 자동으로 덮어쓰지 않고 실패시킨다.
 
+### Airflow DAG 배포 확인
+
+Airflow DAG는 애플리케이션 코드와 같은 변경 관리 대상으로 본다. 서버에서 `airflow/dags` 파일을 직접 수정하거나 수동 복사해서 운영 상태를 바꾸지 않는다.
+
+현재 local/dev smoke DAG는 `airflow/dags/asklake_etl_job.py`다. staging/prod 배포에서는 아래 중 하나의 방식을 선택하고 같은 방식을 반복 가능하게 유지한다.
+
+```text
+1. 서버 checkout의 reviewed branch에서 airflow/dags를 읽는다.
+2. Airflow image에 DAG 파일을 포함하고 image tag 단위로 배포한다.
+3. Airflow Git Sync가 reviewed branch 또는 tag에서 DAG를 가져온다.
+```
+
+초기 EC2 demo 배포에서는 서버 checkout 기반 방식을 사용할 수 있다. 단, 아래 조건을 지킨다.
+
+- `scripts/deploy.sh deploy`가 `git pull --ff-only`로 reviewed branch를 가져온 뒤 compose를 재기동한다.
+- 서버의 DAG 파일을 직접 hot-edit하지 않는다.
+- DAG 변경 배포 전후로 Airflow DAG import error를 확인한다.
+- 배포한 DAG 버전과 rollback할 이전 commit 또는 image tag를 기록한다.
+
+Airflow가 prod compose에 포함된 뒤에는 health check에 아래 항목을 추가한다.
+
+```text
+Airflow API health
+Airflow scheduler health
+asklake_etl_job DAG import 상태
+smoke DAG Run 생성 및 terminal 상태
+AskLake Run History와 Airflow DAG Run 상태 일치
+```
+
+문제가 생기면 먼저 이전 reviewed DAG version으로 되돌린다. 실패한 DAG 파일을 운영 컨테이너 안에서 직접 고치지 않는다.
+
 ## 5. Compose만 재시작
 
 코드 pull 없이 서버 `.env` 변경이나 컨테이너 재기동만 필요할 때 사용한다.

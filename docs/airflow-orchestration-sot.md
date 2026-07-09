@@ -338,3 +338,131 @@ Split commits by stable review boundary:
 - Runtime/verification docs and scripts.
 
 Do not stage unrelated local files when committing a phase.
+
+## 8. DAG Deployment Strategy
+
+Status: documented for issue #383.
+
+The current `asklake_etl_job` DAG is a local smoke DAG. It proves that AskLake
+can submit a DAG Run, poll Airflow DAG Run and Task Instance state, and reflect
+the same run in the Jobs list, Run History, and DAG modal. It is not yet the
+production ETL DAG deployment model.
+
+### 8.1 Current local development mode
+
+Local development uses a repository volume mount:
+
+```text
+./airflow/dags
+  -> /opt/airflow/dags
+```
+
+This is acceptable for local and dev smoke work because a developer can edit a
+DAG file and let the local Airflow DAG processor pick it up quickly. It is not
+acceptable as the only production deployment mechanism because a manual file
+copy or mutable server checkout can introduce unreviewed DAG code, DAG import
+errors, and unclear rollback state.
+
+### 8.2 Recommended first production shape
+
+AskLake should start with one stable DAG, `asklake_etl_job`, rather than
+generating one Airflow DAG file for every AskLake job. Job-specific settings
+should be passed through `dag_run.conf`.
+
+Recommended `dag_run.conf` boundary:
+
+```json
+{
+  "command": "run",
+  "jobId": "JOB-...",
+  "runId": "run_...",
+  "submittedAt": "2026-07-09T00:00:00Z",
+  "job": {
+    "sourceType": "MongoDB",
+    "sourceConfig": [],
+    "targetPath": "s3://...",
+    "transformSteps": [],
+    "qualityRules": []
+  }
+}
+```
+
+This keeps Airflow responsible for orchestration and AskLake responsible for job
+definition, validation, and UI state.
+
+### 8.3 Target DAG shape
+
+The smoke DAG can evolve into the production ETL DAG with these stable task
+boundaries:
+
+```text
+validate_run_conf
+  -> prepare_source_input
+  -> submit_spark_job
+  -> collect_spark_result
+  -> run_quality_checks
+  -> publish_output_dataset
+  -> update_catalog
+  -> record_lineage
+```
+
+Rules:
+
+- Use XCom only for small metadata such as row counts, output paths, error
+  summaries, and run ids. Do not pass datasets through XCom.
+- Write output paths with `runId` or another idempotency key so retries do not
+  overwrite unrelated runs.
+- Keep source credentials, Spark connection details, and catalog credentials in
+  Airflow Connections, Variables, or deployment secrets instead of DAG code.
+- Keep task ids stable because AskLake maps Airflow Task Instance state back
+  into DAG modal steps.
+
+### 8.4 Environment deployment levels
+
+| Environment | Deployment mode | Purpose |
+| --- | --- | --- |
+| local/dev | repo volume mount from `airflow/dags` | fast smoke and UI polling verification |
+| staging | Git-based deploy or CI copy of reviewed DAG files | verify DAG import, smoke runs, and AskLake/Airflow state consistency before prod |
+| production | Airflow image with DAGs included, or Airflow Git Sync pinned to a reviewed branch/tag | reproducible DAG version, rollback, and multi-service consistency |
+
+### 8.5 Deployment options
+
+Option A. Server Git pull
+
+- The server checkout is updated through `git fetch`, `git checkout`, and
+  `git pull --ff-only`.
+- Airflow reads `airflow/dags` from that checkout.
+- This is simplest for staging but needs a strict clean-worktree and rollback
+  checklist before production use.
+
+Option B. Airflow image includes DAGs
+
+- Build an Airflow image that copies `airflow/dags` into the image.
+- Deploy image tags to staging/prod.
+- This gives the clearest rollback story because the DAG version is tied to an
+  immutable image tag.
+
+Option C. Airflow Git Sync
+
+- Airflow syncs DAG files from a Git branch or tag.
+- This is production-friendly when credentials, sync interval, branch pinning,
+  and rollback rules are managed carefully.
+
+### 8.6 Required gates before staging/prod
+
+Every staging/prod DAG deployment should pass:
+
+1. DAG import/parse check with no import errors.
+2. Compose or deployment manifest config render check.
+3. Smoke DAG Run trigger against the target Airflow API.
+4. Task Instance status check for every mapped AskLake step.
+5. AskLake `GET /api/etl/jobs/{jobId}` polling check against the same run id.
+6. Rollback note that identifies the previous DAG version or image tag.
+
+### 8.7 Rollback rule
+
+If a deployed DAG fails to import or produces incorrect orchestration behavior,
+rollback must restore the previous reviewed DAG version before retrying user
+jobs. Do not hot-edit files inside a running Airflow container or mutable
+production DAG folder without recording the source commit, reason, and follow-up
+PR.

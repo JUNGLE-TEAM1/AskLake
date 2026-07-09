@@ -78,6 +78,43 @@ AIRFLOW_PASSWORD=airflow
 
 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Run History와 DAG modal이 `GET /api/etl/jobs/{jobId}` polling으로 Airflow DAG Run/Task Instance 상태를 반영한다.
 
+### Airflow DAG 배포 개발 기준
+
+현재 `airflow/dags/asklake_etl_job.py`는 local smoke DAG다. 로컬에서는 `docker-compose.yml`의 volume mount로 `./airflow/dags`를 Airflow 컨테이너의 `/opt/airflow/dags`에 연결한다. 이 방식은 개발과 smoke 검증 전용이다.
+
+운영 배포 전에는 `docs/airflow-orchestration-sot.md`의 DAG 배포 전략을 따른다. 기본 원칙은 아래와 같다.
+
+- local/dev에서는 repo volume mount를 허용한다.
+- staging/prod에서는 DAG 파일을 수동 복사하지 않는다.
+- DAG 변경 PR은 DAG import/parse 확인과 smoke DAG Run 확인을 남긴다.
+- 초기 운영 형태는 `asklake_etl_job` 단일 static DAG를 유지하고, Job별 설정은 `dag_run.conf`로 전달한다.
+- 실제 ETL 확장 시에도 task id는 안정적으로 유지한다. AskLake DAG modal이 Task Instance 상태를 task id로 매핑하기 때문이다.
+
+로컬 DAG 변경 후 최소 확인:
+
+```bash
+docker compose up airflow-init
+docker compose up -d airflow-apiserver airflow-scheduler airflow-dag-processor
+curl http://127.0.0.1:8081/api/v2/monitor/health
+```
+
+백엔드가 Airflow에 submit할 수 있는지 확인한다.
+
+```bash
+AIRFLOW_API_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_USERNAME=airflow
+AIRFLOW_PASSWORD=airflow
+```
+
+staging/prod DAG 배포 후보는 아래를 통과해야 한다.
+
+- Airflow DAG import error 없음
+- target Airflow API health 정상
+- smoke DAG Run 생성 가능
+- Task Instance 상태가 AskLake Run History와 DAG modal에 반영됨
+- 문제가 생겼을 때 이전 DAG 버전으로 되돌릴 방법이 문서화됨
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
