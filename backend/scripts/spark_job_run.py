@@ -2,10 +2,33 @@ import json
 import os
 import sys
 import time
+import hashlib
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
+
+
+REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD = 0.75
+REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
+    "copy_or_extract_field",
+    "one_of_values",
+    "sentiment_3way",
+    "issue_category",
+    "issue_subcategory",
+    "severity_4level",
+    "boolean_y_n",
+    "extractive_summary",
+    "evidence_span",
+}
+REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
+    "custom_instruction": "one_of_values",
+    "issue_taxonomy": "issue_category",
+}
+REVIEW_ROW_ANALYSIS_LLM_CACHE = {}
 
 
 def main():
@@ -31,9 +54,17 @@ def main():
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
-        contracted_df = apply_schema_contract(normalized_df, schema_columns)
+        contracted_df = apply_schema_contract(normalized_df, schema_columns, transform_steps)
         transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
-        quality = evaluate_quality_rules(transformed_df, quality_rules)
+        output_frame = select_final_schema_columns(transformed_df, schema_columns).cache()
+        output_frame.count()
+        quality = evaluate_quality_rules(output_frame, quality_rules)
+        classifier_checks = evaluate_custom_csv_classifier_checks(output_frame, transform_steps)
+        if classifier_checks:
+            quality["classifierChecks"] = classifier_checks
+        review_analysis_checks = evaluate_review_row_analysis_checks(output_frame, transform_steps)
+        if review_analysis_checks:
+            quality["reviewRowAnalysisChecks"] = review_analysis_checks
         if quality["status"] == "fail":
             ended_at = now_iso()
             result = {
@@ -55,7 +86,7 @@ def main():
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
 
-        output_df = transformed_df.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
+        output_df = output_frame.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
             "_asklake_ingested_at",
             F.current_timestamp(),
         )
@@ -150,7 +181,7 @@ def read_source(spark, source_format, source_path, schema_columns):
     raise ValueError(f"Unsupported Spark source format: {source_format}")
 
 
-def apply_schema_contract(frame, schema_columns):
+def apply_schema_contract(frame, schema_columns, transform_steps=None):
     if not schema_columns:
         return frame
 
@@ -178,6 +209,14 @@ def apply_schema_contract(frame, schema_columns):
             required_targets.append(target_name)
         expressions.append(cast_for_schema(frame, resolved, logical_type).alias(target_name))
 
+    for source_name in transform_input_column_names(transform_steps or []):
+        resolved = resolve_column_name(frame, source_name)
+        target_name = normalize_column_name(source_name)
+        if not resolved or not target_name or target_name in used_names:
+            continue
+        used_names.add(target_name)
+        expressions.append(F.col(quote_identifier(resolved)).alias(target_name))
+
     if missing_required:
         raise ValueError(f"Approved schema required columns missing from Spark input: {', '.join(missing_required)}")
     if not expressions:
@@ -191,6 +230,63 @@ def apply_schema_contract(frame, schema_columns):
     if null_required:
         raise ValueError(f"Approved schema required columns produced null values after casting: {', '.join(null_required)}")
     return contracted
+
+
+def transform_input_column_names(steps):
+    names = []
+    for step in steps:
+        if not step or step.get("enabled") is False:
+            continue
+        raw_inputs = [
+            str(step.get("input") or ""),
+            str(step.get("params") or ""),
+        ]
+        for raw in raw_inputs:
+            if not raw:
+                continue
+            names.extend(review_analyze_source_fields(raw))
+            if "," in raw and "review_analyze(" not in raw.lower():
+                names.extend(part.strip() for part in raw.split(",") if part.strip())
+            elif raw and "review_analyze(" not in raw.lower() and "=" not in raw:
+                names.append(raw.strip())
+    seen = set()
+    output = []
+    for name in names:
+        normalized = normalize_column_name(name)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        output.append(normalized)
+    return output
+
+
+def review_analyze_source_fields(text):
+    source = str(text or "")
+    lowered = source.lower()
+    if "review_analyze(" not in lowered or ")" not in source:
+        return []
+    inner = source.split("review_analyze(", 1)[1].split(")", 1)[0]
+    return [part.strip() for part in inner.split(",") if part.strip()]
+
+
+def select_final_schema_columns(frame, schema_columns):
+    if not schema_columns:
+        return frame
+    expressions = []
+    used_names = set()
+    for index, column in enumerate(schema_columns):
+        if not schema_column_included(column):
+            continue
+        target_name = unique_column_name(
+            normalize_column_name(column.get("targetName") or column.get("sourceName") or f"column_{index + 1}"),
+            used_names,
+        )
+        resolved = resolve_column_name(frame, target_name) or resolve_column_name(frame, column.get("sourceName") or "")
+        if not resolved:
+            expressions.append(F.lit(None).cast(spark_sql_type(column.get("type") or "String")).alias(target_name))
+            continue
+        expressions.append(cast_for_schema(frame, resolved, column.get("type") or "String").alias(target_name))
+    return frame.select(*expressions) if expressions else frame
 
 
 def schema_column_included(column):
@@ -247,14 +343,18 @@ def spark_sql_type(logical_type):
 
 def apply_transform_steps(spark, frame, steps):
     current = frame
-    for step in steps:
+    index = 0
+    while index < len(steps):
+        step = steps[index]
         if not step or step.get("enabled") is False:
+            index += 1
             continue
         input_column = str(step.get("input") or "").strip()
         output_column = normalize_column_name(step.get("output") or input_column)
         operation = str(step.get("operation") or step.get("kind") or "").lower()
         params = str(step.get("params") or "")
         if not input_column or not output_column:
+            index += 1
             continue
         source = safe_col(current, input_column)
         if "default" in operation:
@@ -266,13 +366,24 @@ def apply_transform_steps(spark, frame, steps):
             current = current.filter(source.isNotNull() & (F.length(F.trim(source.cast("string"))) > 0))
             if output_column != normalize_column_name(input_column):
                 current = current.withColumn(output_column, source)
+            index += 1
             continue
         elif "sql expression" in operation and params.strip().lower().startswith("select"):
             current.createOrReplaceTempView("input")
             current = spark.sql(params)
+            index += 1
             continue
         elif "sql expression" in operation and params.strip():
             expression = F.expr(params)
+        elif "review row analysis" in operation or "review_analyze" in operation:
+            if review_row_analysis_uses_local_llm():
+                group = contiguous_review_row_analysis_group(steps, index)
+                current = apply_review_row_analysis_group(current, group)
+                index += len(group)
+                continue
+            expression = review_row_analysis_expression(current, output_column, params)
+        elif "custom csv classifier" in operation or "csv classifier" in operation:
+            expression = custom_csv_classifier_expression(source, params)
         elif "json" in operation:
             expression = F.get_json_object(source.cast("string"), params or "$.value")
         elif "lower" in operation or "trim" in operation:
@@ -286,7 +397,861 @@ def apply_transform_steps(spark, frame, steps):
         else:
             expression = source
         current = current.withColumn(output_column, expression)
+        index += 1
     return current
+
+
+def contiguous_review_row_analysis_group(steps, start_index):
+    first = steps[start_index]
+    first_input = str(first.get("input") or "")
+    first_params = str(first.get("params") or "")
+    group = []
+    for step in steps[start_index:]:
+        if not step or step.get("enabled") is False or not is_review_row_analysis_step(step):
+            break
+        if str(step.get("input") or "") != first_input or str(step.get("params") or "") != first_params:
+            break
+        group.append(step)
+    return group or [first]
+
+
+def apply_review_row_analysis_group(frame, group):
+    first = group[0]
+    config = parse_review_row_analysis_config(str(first.get("params") or ""))
+    columns = review_row_analysis_group_columns(group, config)
+    payload_column = unique_temp_column(frame, "__asklake_review_analysis_payload")
+    current = frame.withColumn(payload_column, local_llm_review_row_analysis_payload_expression(frame, config, columns))
+    for step in group:
+        output_column = normalize_column_name(step.get("output") or "")
+        if not output_column:
+            continue
+        current = current.withColumn(
+            output_column,
+            F.get_json_object(F.col(quote_identifier(payload_column)), f"$.{output_column}"),
+        )
+    return current.drop(payload_column)
+
+
+def review_row_analysis_group_columns(group, config):
+    raw_columns = config.get("columns")
+    columns = []
+    seen = set()
+    if isinstance(raw_columns, list):
+        for raw_column in raw_columns:
+            if not isinstance(raw_column, dict):
+                continue
+            target = normalize_column_name(raw_column.get("targetName") or raw_column.get("name") or "")
+            if not target or target in seen:
+                continue
+            method = normalize_review_row_analysis_method(raw_column.get("method") or raw_column.get("analysisMethod")) or "copy_or_extract_field"
+            seen.add(target)
+            columns.append({
+                "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(raw_column, config)),
+                "method": method,
+                "targetName": target,
+                "type": str(raw_column.get("type") or "String"),
+            })
+    for step in group:
+        target = normalize_column_name(step.get("output") or "")
+        if not target or target in seen:
+            continue
+        seen.add(target)
+        columns.append({
+            "allowedValues": [],
+            "method": "copy_or_extract_field",
+            "targetName": target,
+            "type": "String",
+        })
+    return columns
+
+
+def unique_temp_column(frame, prefix):
+    candidate = prefix
+    suffix = 2
+    existing = set(frame.columns)
+    while candidate in existing:
+        candidate = f"{prefix}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def review_row_analysis_expression(frame, output_column, params):
+    config = parse_review_row_analysis_config(params)
+    target = normalize_column_name(config.get("outputColumn") or output_column)
+    column_config = review_row_analysis_column_config(config, target)
+    method = review_row_analysis_method(column_config, config)
+    source_field = column_config.get("sourceField") or config.get("sourceField") or "text"
+    if review_row_analysis_uses_local_llm():
+        return local_llm_review_row_analysis_expression(frame, target, config, column_config, source_field, method)
+    rating = try_cast_double(frame, config.get("ratingField") or "rating")
+    asin = safe_col(frame, config.get("asinField") or "asin").cast("string")
+    parent_asin = safe_col(frame, config.get("parentAsinField") or "parent_asin").cast("string")
+    user_id = safe_col(frame, config.get("userField") or "user_id").cast("string")
+    verified_purchase = safe_col(frame, config.get("verifiedPurchaseField") or "verified_purchase").cast("string")
+    helpful_vote = safe_col(frame, config.get("helpfulVoteField") or "helpful_vote").cast("string")
+    timestamp = safe_col(frame, config.get("timestampField") or "timestamp").cast("string")
+    title = safe_col(frame, config.get("titleField") or "title").cast("string")
+    text = safe_col(frame, config.get("textField") or source_field).cast("string")
+    haystack = F.lower(F.concat_ws(" ", title, text))
+    negative_signal = haystack.rlike("bad|broken|defective|refund|return|stopped|dead|disappointed|waste|not working")
+    safety_signal = haystack.rlike("fire|smoke|explode|burn|hot|overheat|unsafe|danger|battery")
+    charging_signal = haystack.rlike("charge|charging|charger|power|cable|usb|plug")
+    screen_signal = haystack.rlike("screen|display|glass|crack|touch|protector")
+    shipping_signal = haystack.rlike("shipping|delivery|package|arrived|late|box")
+    listing_signal = haystack.rlike("fake|wrong|not as described|different|missing")
+    boolean_signal = haystack.rlike("click|clicked|tap|tapped|pressed|selected|subscribe|subscribed|buy|bought|purchase|purchased")
+
+    if method == "copy_or_extract_field":
+        return review_copy_or_extract_field_expression(
+            frame,
+            target,
+            source_field,
+            {
+                "asin": asin,
+                "helpful_vote": helpful_vote,
+                "parent_asin": parent_asin,
+                "rating": rating,
+                "text": text,
+                "timestamp": timestamp,
+                "title": title,
+                "user_id": user_id,
+                "verified_purchase": verified_purchase,
+            },
+        )
+    if method == "one_of_values":
+        return review_one_of_values_expression(
+            frame,
+            target,
+            review_row_analysis_allowed_values(column_config, config),
+            rating,
+            haystack,
+            {
+                "boolean": boolean_signal,
+                "charging": charging_signal,
+                "listing": listing_signal,
+                "negative": negative_signal,
+                "safety": safety_signal,
+                "screen": screen_signal,
+                "shipping": shipping_signal,
+            },
+        )
+    if method == "sentiment_3way":
+        return (
+            F.when(rating <= 2, F.lit("negative"))
+            .when((rating == 3) | negative_signal, F.lit("mixed"))
+            .otherwise(F.lit("positive"))
+        )
+    if method == "issue_category":
+        return (
+            F.when(safety_signal, F.lit("safety_battery"))
+            .when(charging_signal, F.lit("charging_power"))
+            .when(screen_signal, F.lit("screen_display"))
+            .when(shipping_signal, F.lit("shipping_delivery"))
+            .when(listing_signal, F.lit("listing_accuracy"))
+            .when((rating >= 4) & ~negative_signal, F.lit("positive_value"))
+            .otherwise(F.lit("general_negative"))
+        )
+    if method == "issue_subcategory":
+        return (
+            F.when(safety_signal, F.lit("battery_or_safety"))
+            .when(charging_signal, F.lit("charging_or_power"))
+            .when(screen_signal, F.lit("screen_or_display"))
+            .when(shipping_signal, F.lit("shipping_or_package"))
+            .when(listing_signal, F.lit("listing_mismatch"))
+            .when((rating >= 4) & ~negative_signal, F.lit("positive_feedback"))
+            .otherwise(F.lit("unspecified_complaint"))
+        )
+    if method == "severity_4level":
+        return (
+            F.when(safety_signal, F.lit("critical"))
+            .when((rating <= 2) | negative_signal, F.lit("high"))
+            .when(rating == 3, F.lit("medium"))
+            .otherwise(F.lit("low"))
+        )
+    if method == "boolean_y_n":
+        return F.when(boolean_signal, F.lit("Y")).otherwise(F.lit("N"))
+    if method == "extractive_summary":
+        return F.concat(
+            F.lit("Review signal: "),
+            F.substring(F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " "), 1, 180),
+        )
+    if method == "evidence_span":
+        return F.substring(F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " "), 1, 240)
+    return F.lit("")
+
+
+def review_row_analysis_uses_local_llm():
+    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "local_llm").strip().lower() not in {
+        "rule",
+        "rules",
+        "baseline",
+        "off",
+    }
+
+
+def local_llm_review_row_analysis_expression(frame, target, config, column_config, source_field, method):
+    columns = normalize_review_analysis_llm_columns(config, target, column_config, method)
+    schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
+    row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
+
+    def analyze_target(raw_row_json):
+        return local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
+
+    return F.udf(analyze_target, T.StringType())(row_json)
+
+
+def local_llm_review_row_analysis_payload_expression(frame, config, columns):
+    schema_json = json.dumps(columns, ensure_ascii=False, sort_keys=True)
+    row_json = F.to_json(F.struct(*[F.col(quote_identifier(column)).alias(column) for column in frame.columns]))
+
+    def analyze_payload(raw_row_json):
+        row = parse_json_object(raw_row_json)
+        cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
+        if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
+            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, parse_json_array(schema_json))
+        analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
+        payload = {}
+        for column in parse_json_array(schema_json):
+            target = column.get("targetName") or ""
+            value = analyzed.get(target)
+            if value in (None, "") and column.get("method") == "copy_or_extract_field":
+                value = local_copy_or_extract_value(row, target, config.get("sourceField") or "text")
+            allowed_values = column.get("allowedValues") or []
+            if allowed_values:
+                value = canonical_allowed_value(value, allowed_values)
+            payload[target] = "" if value is None else value
+        return json.dumps(payload, ensure_ascii=False)
+
+    return F.udf(analyze_payload, T.StringType())(row_json)
+
+
+def normalize_review_analysis_llm_columns(config, target, column_config, method):
+    raw_columns = config.get("columns")
+    if not isinstance(raw_columns, list) or not raw_columns:
+        raw_columns = [{**column_config, "targetName": target, "method": method}]
+    columns = []
+    seen = set()
+    for raw_column in raw_columns:
+        if not isinstance(raw_column, dict):
+            continue
+        target_name = normalize_column_name(raw_column.get("targetName") or raw_column.get("name") or "")
+        if not target_name or target_name in seen:
+            continue
+        seen.add(target_name)
+        column_method = normalize_review_row_analysis_method(
+            raw_column.get("method") or raw_column.get("analysisMethod") or method
+        ) or "copy_or_extract_field"
+        columns.append({
+            "allowedValues": review_row_analysis_expected_values(
+                column_method,
+                review_row_analysis_allowed_values(raw_column, config),
+            ),
+            "method": column_method,
+            "targetName": target_name,
+            "type": str(raw_column.get("type") or "String"),
+        })
+    if target not in {column["targetName"] for column in columns}:
+        columns.append({
+            "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(column_config, config)),
+            "method": method or "copy_or_extract_field",
+            "targetName": target,
+            "type": str(column_config.get("type") or "String"),
+        })
+    return columns
+
+
+def local_llm_review_row_target(raw_row_json, target, schema_json, source_field):
+    row = parse_json_object(raw_row_json)
+    columns = parse_json_array(schema_json)
+    cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
+    if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
+        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, columns)
+    analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
+    column = next((item for item in columns if item.get("targetName") == target), {})
+    value = analyzed.get(target)
+    if value in (None, "") and column.get("method") == "copy_or_extract_field":
+        value = local_copy_or_extract_value(row, target, source_field)
+    allowed_values = column.get("allowedValues") or []
+    if allowed_values:
+        value = canonical_allowed_value(value, allowed_values)
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def call_local_review_llm(row, columns):
+    endpoint = os.environ.get("ASKLAKE_LOCAL_LLM_ENDPOINT") or "http://host.docker.internal:1234/v1/chat/completions"
+    model = os.environ.get("ASKLAKE_LOCAL_LLM_MODEL") or "local-review-analyzer"
+    timeout_seconds = int(os.environ.get("ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS", "120") or "120")
+    max_chars = int(os.environ.get("ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS", "9000") or "9000")
+    prompt = "\n".join([
+        "Analyze this one ecommerce product review row into one final CSV output row.",
+        "Return one minified JSON object only. No markdown, comments, or prose.",
+        "Keys must exactly match requestedColumns.targetName.",
+        "For columns with allowedValues, choose exactly one value from allowedValues.",
+        "For issue fields, use concise snake_case labels.",
+        "For summary and evidence, use only facts present in the row.",
+        f"requestedColumns: {json.dumps(columns, ensure_ascii=False)}",
+        f"sourceRow: {truncate_text(json.dumps(row, ensure_ascii=False), max_chars)}",
+    ])
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a strict JSON review-row analyzer for Spark ETL."},
+            {"role": "user", "content": prompt},
+        ],
+        "model": model,
+        "temperature": 0,
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read().decode("utf-8", "replace")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Local LLM review row analysis failed: {exc}") from exc
+    parsed = parse_json_object(body)
+    content = (((parsed.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+    output = parse_json_object(content)
+    if not output:
+        raise RuntimeError("Local LLM review row analysis returned no JSON object.")
+    return output
+
+
+def parse_json_object(value):
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value or "{}")
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        text = str(value or "")
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(text[start:end + 1])
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+    return {}
+
+
+def parse_json_array(value):
+    try:
+        parsed = json.loads(value or "[]")
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+def canonical_allowed_value(value, allowed_values):
+    normalized_value = str(value or "").strip().lower()
+    for allowed_value in allowed_values:
+        if str(allowed_value).strip().lower() == normalized_value:
+            return str(allowed_value)
+    return ""
+
+
+def local_copy_or_extract_value(row, target, source_field):
+    normalized_target = normalize_column_name(target)
+    normalized_source = normalize_column_name(source_field)
+    for key, value in row.items():
+        if normalize_column_name(key) in {normalized_target, normalized_source} and value is not None:
+            return value
+    if normalized_target in {"review_id", "id"}:
+        seed = "|".join(str(row.get(key, "")) for key in ["asin", "parent_asin", "user_id", "timestamp", "title", "text"])
+        return hashlib.sha1(seed.encode("utf-8", "ignore")).hexdigest()[:16]
+    aliases = {
+        "event_time": "timestamp",
+        "helpful": "helpful_vote",
+        "review_text": "text",
+        "score": "rating",
+        "user": "user_id",
+    }
+    alias = aliases.get(normalized_target)
+    if alias:
+        for key, value in row.items():
+            if normalize_column_name(key) == alias and value is not None:
+                return value
+    return ""
+
+
+def review_row_analysis_method(column_config, config):
+    raw_method = (
+        column_config.get("method")
+        or column_config.get("analysisMethod")
+        or config.get("method")
+        or config.get("analysisMethod")
+        or ""
+    )
+    return normalize_review_row_analysis_method(raw_method)
+
+
+def normalize_review_row_analysis_method(value):
+    raw = str(value or "").split(":", 1)[0].strip().lower()
+    normalized = REVIEW_ROW_ANALYSIS_METHOD_ALIASES.get(raw, raw)
+    return normalized if normalized in REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS else ""
+
+
+def review_row_analysis_allowed_values(column_config, config):
+    raw_values = None
+    for source in (column_config, config):
+        for key in ("allowedValues", "allowed_values", "values"):
+            if isinstance(source, dict) and source.get(key) is not None:
+                raw_values = source.get(key)
+                break
+        if raw_values is not None:
+            break
+    if isinstance(raw_values, list):
+        values = raw_values
+    else:
+        values = str(raw_values or "").replace("\r", "\n").replace(",", "\n").split("\n")
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def review_copy_or_extract_field_expression(frame, target, source_field, field_expressions):
+    raw_target = first_matching_column(frame, target)
+    if raw_target:
+        return safe_col(frame, raw_target)
+    normalized_source = normalize_column_name(source_field)
+    if target == normalized_source:
+        return safe_col(frame, source_field)
+    if target in {"review_id", "id"}:
+        return F.sha2(
+            F.concat_ws(
+                "|",
+                field_expressions["asin"].cast("string"),
+                field_expressions["parent_asin"].cast("string"),
+                field_expressions["user_id"].cast("string"),
+                field_expressions["timestamp"].cast("string"),
+                field_expressions["title"].cast("string"),
+                field_expressions["text"].cast("string"),
+            ),
+            256,
+        )
+    aliases = {
+        "event_time": "timestamp",
+        "helpful": "helpful_vote",
+        "review_text": "text",
+        "score": "rating",
+        "user": "user_id",
+    }
+    field_key = aliases.get(target, target)
+    return field_expressions.get(field_key, F.lit(""))
+
+
+def review_one_of_values_expression(frame, target, allowed_values, rating, haystack, signals):
+    if not allowed_values:
+        return F.lit("")
+    fallback = allowed_values[0]
+    expression = None
+    for allowed_value in allowed_values:
+        condition = review_allowed_value_condition(allowed_value, rating, haystack, signals)
+        if condition is None:
+            continue
+        expression = F.when(condition, F.lit(allowed_value)) if expression is None else expression.when(condition, F.lit(allowed_value))
+    classified = expression.otherwise(F.lit(fallback)) if expression is not None else F.lit(fallback)
+    raw_target = first_matching_column(frame, target)
+    if not raw_target:
+        return classified
+    raw_value = safe_col(frame, raw_target).cast("string")
+    return F.when(raw_value.isin(*allowed_values), raw_value).otherwise(classified)
+
+
+def review_allowed_value_condition(value, rating, haystack, signals):
+    key = normalize_column_name(value)
+    if not key:
+        return None
+    positive_signal = (rating >= 4) & ~signals["negative"]
+    if key in {"y", "yes", "true"}:
+        return signals["boolean"]
+    if key in {"n", "no", "false"}:
+        return ~signals["boolean"]
+    if "negative" in key or key == "neg":
+        return (rating <= 2) | signals["negative"]
+    if "mixed" in key or "neutral" in key:
+        return rating == 3
+    if "positive" in key:
+        return positive_signal
+    if "critical" in key:
+        return signals["safety"]
+    if "high" in key:
+        return (rating <= 2) | signals["negative"]
+    if "medium" in key:
+        return rating == 3
+    if "low" in key:
+        return positive_signal
+    if any(token in key for token in ["battery", "safety", "fire", "smoke", "overheat"]):
+        return signals["safety"] | signals["charging"]
+    if any(token in key for token in ["charge", "charging", "charger", "power", "cable", "usb", "plug"]):
+        return signals["charging"]
+    if any(token in key for token in ["screen", "display", "glass", "touch"]):
+        return signals["screen"]
+    if any(token in key for token in ["shipping", "delivery", "package", "arrived", "box"]):
+        return signals["shipping"]
+    if any(token in key for token in ["listing", "mismatch", "accuracy", "description", "wrong", "missing"]):
+        return signals["listing"]
+    if any(token in key for token in ["durability", "quality", "defective", "broken", "general_issue"]):
+        return signals["negative"]
+    tokens = [
+        token
+        for token in key.split("_")
+        if len(token) > 2 and token not in {"and", "for", "from", "not", "one", "the", "with"}
+    ]
+    condition = None
+    for token in tokens:
+        token_condition = haystack.contains(token)
+        condition = token_condition if condition is None else condition | token_condition
+    return condition
+
+
+def review_row_analysis_column_config(config, target):
+    columns = config.get("columns")
+    if isinstance(columns, list):
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            candidate = normalize_column_name(column.get("targetName") or column.get("value") or "")
+            if candidate == target:
+                return column
+    return {}
+
+
+def first_matching_column(frame, target):
+    normalized = {normalize_column_name(column): column for column in frame.columns}
+    return normalized.get(target)
+
+
+def parse_review_row_analysis_config(params):
+    if not params:
+        return {}
+    try:
+        parsed = json.loads(params)
+        if isinstance(parsed, dict):
+            output = parsed.get("outputColumn")
+            columns = parsed.get("columns")
+            if not output and isinstance(columns, list) and len(columns) == 1 and isinstance(columns[0], dict):
+                output = columns[0].get("targetName")
+            return {
+                **parsed,
+                "outputColumn": output or parsed.get("targetName") or "",
+            }
+    except Exception:
+        pass
+    text = str(params)
+    output = text.split("=", 1)[0].strip() if "=" in text else ""
+    fields = {}
+    if "review_analyze(" in text and ")" in text:
+        inner = text.split("review_analyze(", 1)[1].split(")", 1)[0]
+        parts = [part.strip() for part in inner.split(",") if part.strip()]
+        for key, value in zip(["ratingField", "titleField", "textField", "asinField"], parts):
+            fields[key] = value
+    return {"outputColumn": output, **fields}
+
+
+def evaluate_review_row_analysis_checks(frame, steps):
+    review_steps = [
+        step
+        for step in steps
+        if step
+        and step.get("enabled") is not False
+        and is_review_row_analysis_step(step)
+    ]
+    if not review_steps:
+        return []
+
+    checks = []
+    total_rows = frame.count()
+    for step in review_steps:
+        step_output = normalize_column_name(step.get("output") or "")
+        config = parse_review_row_analysis_config(str(step.get("params") or ""))
+        target = normalize_column_name(config.get("outputColumn") or step_output)
+        column_config = review_row_analysis_column_config(config, target)
+        raw_method = str(
+            column_config.get("method")
+            or column_config.get("analysisMethod")
+            or config.get("method")
+            or config.get("analysisMethod")
+            or ""
+        )
+        method = review_row_analysis_method(column_config, config)
+        allowed_values = review_row_analysis_allowed_values(column_config, config)
+        resolved_output = resolve_column_name(frame, step_output or target)
+        check = {
+            "allowedValues": allowed_values if method == "one_of_values" else [],
+            "id": str(step.get("id") or target or step_output),
+            "method": method,
+            "output": step_output or target,
+            "qualityThreshold": REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD,
+            "rawMethod": raw_method,
+            "runtimeStatus": "recorded",
+            "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS),
+            "target": target,
+            "totalRows": total_rows,
+        }
+        if not method:
+            check.update({
+                "invalidRows": total_rows,
+                "runtimeStatus": "unsupported_method",
+                "score": 0.0 if total_rows else 1.0,
+                "validRows": 0,
+            })
+            checks.append(check)
+            continue
+        if method == "one_of_values" and not allowed_values:
+            check.update({
+                "invalidRows": total_rows,
+                "runtimeStatus": "missing_allowed_values",
+                "score": 0.0 if total_rows else 1.0,
+                "validRows": 0,
+            })
+            checks.append(check)
+            continue
+        if not resolved_output:
+            check.update({
+                "invalidRows": total_rows,
+                "runtimeStatus": "missing_output_column",
+                "score": 0.0 if total_rows else 1.0,
+                "validRows": 0,
+            })
+            checks.append(check)
+            continue
+
+        output_value = F.col(quote_identifier(resolved_output)).cast("string")
+        expected_values = review_row_analysis_expected_values(method, allowed_values)
+        if expected_values:
+            valid_condition = output_value.isin(*expected_values)
+        else:
+            valid_condition = output_value.isNotNull() & (F.length(F.trim(output_value)) > 0)
+        valid_rows = frame.filter(valid_condition).count()
+        score = round(valid_rows / total_rows, 4) if total_rows else 1.0
+        check.update({
+            "expectedValues": expected_values,
+            "invalidRows": max(total_rows - valid_rows, 0),
+            "runtimeStatus": "pass" if score >= REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD else "below_threshold",
+            "score": score,
+            "validRows": valid_rows,
+        })
+        checks.append(check)
+    return checks
+
+
+def is_review_row_analysis_step(step):
+    operation = str(step.get("operation") or step.get("kind") or "").lower()
+    return "review row analysis" in operation or "review_analyze" in operation
+
+
+def review_row_analysis_expected_values(method, allowed_values):
+    if method == "one_of_values":
+        return allowed_values
+    if method == "sentiment_3way":
+        return ["positive", "mixed", "negative"]
+    if method == "issue_category":
+        return [
+            "safety_battery",
+            "charging_power",
+            "screen_display",
+            "shipping_delivery",
+            "listing_accuracy",
+            "positive_value",
+            "general_negative",
+        ]
+    if method == "issue_subcategory":
+        return [
+            "battery_or_safety",
+            "charging_or_power",
+            "screen_or_display",
+            "shipping_or_package",
+            "listing_mismatch",
+            "positive_feedback",
+            "unspecified_complaint",
+        ]
+    if method == "severity_4level":
+        return ["critical", "high", "medium", "low"]
+    if method == "boolean_y_n":
+        return ["Y", "N"]
+    return []
+
+
+def custom_csv_classifier_expression(source, params):
+    config = parse_custom_csv_classifier_config(params)
+    rules = config.get("rules") or []
+    fallback = next((rule.get("value") for rule in rules if rule.get("condition") == "else"), None)
+    fallback = fallback or config.get("fallbackValue") or (rules[-1].get("value") if rules else "")
+    expression = None
+    for rule in rules:
+        if rule.get("condition") == "else":
+            continue
+        condition = custom_csv_classifier_condition(source, rule)
+        if condition is None:
+            continue
+        value = F.lit(str(rule.get("value") or ""))
+        expression = F.when(condition, value) if expression is None else expression.when(condition, value)
+    if expression is None:
+        return F.lit(str(fallback))
+    return expression.otherwise(F.lit(str(fallback)))
+
+
+def parse_custom_csv_classifier_config(params):
+    try:
+        parsed = json.loads(params or "{}")
+    except Exception:
+        parsed = {}
+    raw_rules = parsed.get("rules") if isinstance(parsed, dict) else []
+    rules = []
+    if isinstance(raw_rules, list):
+        for rule in raw_rules:
+            if not isinstance(rule, dict):
+                continue
+            value = str(rule.get("value") or "").strip()
+            if not value:
+                continue
+            rules.append({
+                "condition": str(rule.get("condition") or "keyword_any"),
+                "pattern": str(rule.get("pattern") or ""),
+                "value": value,
+            })
+    return {
+        "fallbackValue": str(parsed.get("fallbackValue") or "") if isinstance(parsed, dict) else "",
+        "rules": rules,
+    }
+
+
+def custom_csv_classifier_condition(source, rule):
+    condition = str(rule.get("condition") or "keyword_any")
+    pattern = str(rule.get("pattern") or "")
+    text_value = source.cast("string")
+    lowered = F.lower(text_value)
+    if condition == "empty":
+        return source.isNull() | (F.length(F.trim(text_value)) == 0)
+    if condition == "not_empty":
+        return source.isNotNull() & (F.length(F.trim(text_value)) > 0)
+    if condition == "numeric_lte":
+        return source.cast("double") <= safe_float(pattern)
+    if condition == "numeric_gte":
+        return source.cast("double") >= safe_float(pattern)
+    keywords = [item.strip().lower() for item in pattern.split(",") if item.strip()]
+    if not keywords:
+        return None
+    checks = [lowered.contains(keyword) for keyword in keywords]
+    current = checks[0]
+    for check in checks[1:]:
+        current = current & check if condition == "keyword_all" else current | check
+    return current
+
+
+def evaluate_custom_csv_classifier_checks(frame, steps):
+    classifier_steps = [
+        step
+        for step in steps
+        if step
+        and step.get("enabled") is not False
+        and is_custom_csv_classifier_step(step)
+    ]
+    if not classifier_steps:
+        return []
+
+    checks = []
+    total_rows = frame.count()
+    for step in classifier_steps:
+        input_column = str(step.get("input") or "").strip()
+        output_column = normalize_column_name(step.get("output") or input_column)
+        config = parse_custom_csv_classifier_config(str(step.get("params") or ""))
+        rules = config.get("rules") or []
+        fallback = custom_csv_classifier_fallback(config)
+        resolved_output = resolve_column_name(frame, output_column)
+        blank_pattern_rules = [
+            rule
+            for rule in rules
+            if classifier_condition_needs_pattern(rule.get("condition")) and not str(rule.get("pattern") or "").strip()
+        ]
+        invalid_numeric_rules = [
+            rule
+            for rule in rules
+            if classifier_numeric_condition(rule.get("condition")) and not classifier_pattern_is_number(rule.get("pattern"))
+        ]
+
+        check = {
+            "blankPatternRules": len(blank_pattern_rules),
+            "fallbackValue": fallback,
+            "id": str(step.get("id") or output_column),
+            "input": input_column,
+            "invalidNumericRules": len(invalid_numeric_rules),
+            "output": output_column,
+            "rules": len(rules),
+            "runtimeStatus": "recorded",
+            "totalRows": total_rows,
+        }
+        if not resolved_output:
+            check["runtimeStatus"] = "missing_output_column"
+            checks.append(check)
+            continue
+
+        output_value = F.col(quote_identifier(resolved_output)).cast("string")
+        fallback_rows = frame.filter(output_value == F.lit(str(fallback))).count() if fallback != "" else 0
+        distribution_rows = (
+            frame.select(output_value.alias("__classifier_value"))
+            .groupBy("__classifier_value")
+            .count()
+            .orderBy(F.desc("count"))
+            .limit(20)
+            .collect()
+        )
+        check.update({
+            "explicitRows": max(total_rows - fallback_rows, 0),
+            "fallbackRows": fallback_rows,
+            "outputDistribution": [
+                {
+                    "count": int(row["count"]),
+                    "value": "" if row["__classifier_value"] is None else str(row["__classifier_value"]),
+                }
+                for row in distribution_rows
+            ],
+        })
+        if blank_pattern_rules or invalid_numeric_rules:
+            check["runtimeStatus"] = "rules_need_attention"
+        checks.append(check)
+    return checks
+
+
+def is_custom_csv_classifier_step(step):
+    operation = str(step.get("operation") or step.get("kind") or "").lower()
+    return "custom csv classifier" in operation or "csv classifier" in operation
+
+
+def custom_csv_classifier_fallback(config):
+    rules = config.get("rules") or []
+    fallback = next((rule.get("value") for rule in rules if rule.get("condition") == "else"), None)
+    return str(fallback or config.get("fallbackValue") or (rules[-1].get("value") if rules else ""))
+
+
+def classifier_condition_needs_pattern(condition):
+    return str(condition or "keyword_any") not in {"else", "empty", "not_empty"}
+
+
+def classifier_numeric_condition(condition):
+    return str(condition or "") in {"numeric_lte", "numeric_gte"}
+
+
+def classifier_pattern_is_number(pattern):
+    try:
+        float(str(pattern or "").strip())
+        return True
+    except Exception:
+        return False
+
+
+def safe_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
 
 
 def evaluate_quality_rules(frame, rules):
@@ -392,6 +1357,13 @@ def normalize_column_name(value):
     while "__" in text:
         text = text.replace("__", "_")
     return text.strip("_")
+
+
+def truncate_text(value, length):
+    text = str(value or "")
+    if len(text) <= length:
+        return text
+    return text[: max(length - 1, 0)] + "..."
 
 
 def required_env(name):

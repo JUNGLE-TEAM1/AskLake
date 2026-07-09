@@ -282,12 +282,14 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - `postgres:16-alpine`
 - `mongo:7`
 - `minio/minio:RELEASE.2025-07-23T15-54-02Z`
+- `apache/airflow:3.3.0`
+- Airflow metadata `postgres:16-alpine`
 
 Airflow orchestration dependencies:
 
-- Local orchestration compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.
+- Production compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.
 - The backend deploy container reads `AIRFLOW_API_BASE_URL`, `AIRFLOW_DAG_ID`, `AIRFLOW_UI_BASE_URL`, `AIRFLOW_API_TOKEN`, `AIRFLOW_USERNAME`, `AIRFLOW_PASSWORD`, and `AIRFLOW_REQUEST_TIMEOUT_SECONDS`.
-- ETL `run` and `retry` commands require a reachable Airflow API. If `AIRFLOW_API_BASE_URL` is empty, the backend returns `AIRFLOW_CONFIG_MISSING` instead of silently falling back.
+- ETL `run` and `retry` commands require a reachable Airflow API. The default prod value is `http://airflow-apiserver:8080`, the internal Compose service URL.
 - The smoke DAG is committed at `airflow/dags/asklake_etl_job.py`; it uses only packages included in the Airflow image.
 
 Backend deploy image dependencies:
@@ -315,4 +317,4 @@ Local deploy dependency verification:
 scripts/verify-deploy-dependencies.sh
 ```
 
-This renders the production Compose config, renders the local Airflow orchestration Compose config, builds backend/frontend deploy images, checks backend Python and Node imports, checks Docker CLI availability in the backend image, and verifies that the Spark and Airflow images are available.
+This renders the production Compose config, renders the local Airflow orchestration Compose config, builds backend/frontend deploy images, checks backend Python and Node imports, checks Docker CLI availability in the backend image, verifies that the Spark and Airflow images are available, and imports the Airflow DAG inside the Airflow image.

@@ -103,7 +103,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Frontend UI checks | yes on matching PR paths | `frontend` | UI regression contracts and TypeScript/Vite build pass |
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
 | Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
-| Deploy dependency verification | manual | deploy Compose, local Airflow Compose, backend image, frontend image, Spark image, Airflow image | `scripts/verify-deploy-dependencies.sh` passes before deploy |
+| Deploy dependency verification | manual | deploy Compose, local Airflow Compose, backend image, frontend image, Spark image, Airflow image, Airflow DAG import | `scripts/verify-deploy-dependencies.sh` passes before deploy |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

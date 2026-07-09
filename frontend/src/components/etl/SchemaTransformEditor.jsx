@@ -347,6 +347,49 @@ export default function SchemaTransformEditor({
     if (editingColumn) {
       const next = [...targetSchema];
       const existing = next[editingColumn.index];
+      if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
+        const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
+        const outputColumns = transformMeta.columns
+          .map((column, columnIndex) => ({
+            allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
+            instruction: column.instruction || "",
+            method: column.method || "copy_or_extract_field",
+            nullable: column.nullable !== false,
+            targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
+            type: column.type || "String",
+          }))
+          .filter((column, columnIndex, columns) => column.targetName && columns.findIndex((item) => item.targetName === column.targetName) === columnIndex);
+        if (outputColumns.length > 0) {
+          const params = JSON.stringify({ columns: outputColumns, sourceField, version: 1 });
+          const generated = outputColumns.map((column) => ({
+            included: true,
+            name: column.targetName,
+            nullable: column.nullable,
+            role: `review-row-analysis:${column.instruction || column.targetName}`,
+            sourceName: `__review_analysis.${column.targetName}`,
+            targetName: column.targetName,
+            reviewAnalysisMethod: column.method,
+            transform: `REVIEW_ANALYZE(${sourceField}).${column.targetName}`,
+            transformChain: [{
+              display: `Review row -> ${column.targetName}`,
+              expression: `REVIEW_ANALYZE(${sourceField}).${column.targetName}`,
+              onError: transformMeta.onError || "Warn",
+              operation: "Review Row Analysis",
+              params,
+              type: column.type,
+            }],
+            transformDisplay: `Review row -> ${column.targetName}`,
+            transformOperation: "Review Row Analysis",
+            transformParams: params,
+            type: column.type,
+          }));
+          onSchemaChange(generated);
+          if (onTestStatusChange) onTestStatusChange(false);
+          setShowFunctionModal(false);
+          setEditingColumn(null);
+          return;
+        }
+      }
       const fallbackOperation = transformMeta.operation || "SQL Expression";
       const fallbackParams = transformMeta.params ?? (fallbackOperation === "SQL Expression" ? transformExpr : "");
       const fallbackStep = {

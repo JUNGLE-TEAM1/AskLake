@@ -36,10 +36,24 @@ type XFlowSchemaTransformEditorProps = {
   onTransformStepsChange?: (steps: TransformStepDraft[]) => void;
 };
 
+type CsvClassifierRule = {
+  condition: string;
+  pattern: string;
+  value: string;
+};
+
+type CsvClassifierConfig = {
+  fallbackValue: string;
+  rules: CsvClassifierRule[];
+  sourceField: string;
+};
+
 const XFLOW_SOURCE_ID = "asklake-source";
 const XFLOW_DATASET_ID = "asklake-draft-source";
 const XFLOW_COLUMN_STEP_PREFIX = "xflow-col-";
 const XFLOW_SQL_STEP_ID = "xflow-sql-transform";
+const CUSTOM_CSV_CLASSIFIER = "Custom CSV Classifier";
+const REVIEW_ROW_ANALYSIS = "Review Row Analysis";
 const FIELD_ONLY_OPERATIONS = new Set(["Default Value", "Null Guard"]);
 
 export function XFlowSchemaTransformEditor({
@@ -52,11 +66,13 @@ export function XFlowSchemaTransformEditor({
   onSelectedIndexChange,
   onTransformStepsChange,
 }: XFlowSchemaTransformEditorProps) {
-  const sourceSchema = useMemo(() => columns.map((column) => ({
-    field: column.sourceName,
-    name: column.sourceName,
-    type: toXFlowType(column.type),
-  })), [columns]);
+  const sourceSchema = useMemo(() => columns
+    .filter((column) => !isInternalDerivedColumn(column))
+    .map((column) => ({
+      field: column.sourceName,
+      name: column.sourceName,
+      type: toXFlowType(column.type),
+    })), [columns]);
 
   const targetSchema = useMemo(
     () => columns
@@ -336,7 +352,11 @@ function normalizeChainStep(step: TransformChainStepDraft, fallbackType: string)
 
 function transformStepToChainStep(step: TransformStepDraft, fallbackType: string): TransformChainStepDraft {
   return normalizeChainStep({
-    display: `${step.operation}${step.params ? `: ${step.params}` : ""}`,
+    display: step.operation === CUSTOM_CSV_CLASSIFIER
+      ? formatCsvClassifierDisplay(step.params)
+      : step.operation === REVIEW_ROW_ANALYSIS
+        ? formatReviewRowAnalysisDisplay(step.params, step.output)
+      : `${step.operation}${step.params ? `: ${step.params}` : ""}`,
     expression: step.operation === "SQL Expression"
       ? step.params
       : expressionForOperation(step.operation, step.input || step.output, step.params),
@@ -370,6 +390,10 @@ function buildSourceIndex(columns: SchemaColumnDraft[]) {
 
 function expressionForOperation(operation: string, input: string, params = "") {
   switch (operation) {
+    case REVIEW_ROW_ANALYSIS:
+      return `REVIEW_ANALYZE(${quoteSqlIdentifier(input)})`;
+    case CUSTOM_CSV_CLASSIFIER:
+      return buildCsvClassifierSql(params, input);
     case "Extract JSONPath":
       return `get_json_object(CAST(${quoteSqlIdentifier(input)} AS STRING), '${params || "$.value"}')`;
     case "Lowercase + Trim":
@@ -421,8 +445,88 @@ function safeId(value: string) {
   return normalizeSourceName(value).replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "step";
 }
 
+function isInternalDerivedColumn(column: SchemaColumnDraft) {
+  return column.sourceName.startsWith("__review_analysis.");
+}
+
+function parseCsvClassifierConfig(params: string, input: string) {
+  try {
+    const parsed = JSON.parse(params);
+    const rules: CsvClassifierRule[] = Array.isArray(parsed.rules)
+      ? parsed.rules
+        .map((rule: Record<string, unknown>) => ({
+          condition: String(rule.condition || "keyword_any"),
+          pattern: String(rule.pattern || ""),
+          value: String(rule.value || "").trim(),
+        }))
+        .filter((rule: { value: string }) => rule.value)
+      : [];
+    return {
+      fallbackValue: String(parsed.fallbackValue || rules.find((rule: { condition: string }) => rule.condition === "else")?.value || rules.at(-1)?.value || ""),
+      rules,
+      sourceField: String(parsed.sourceField || input),
+    } satisfies CsvClassifierConfig;
+  } catch {
+    return { fallbackValue: "", rules: [], sourceField: input } satisfies CsvClassifierConfig;
+  }
+}
+
+function formatCsvClassifierDisplay(params: string) {
+  const config = parseCsvClassifierConfig(params, "");
+  const values = config.rules.map((rule) => rule.value).join(" / ");
+  return values ? `CSV classify: ${values}` : "CSV classify";
+}
+
+function formatReviewRowAnalysisDisplay(params: string, output: string) {
+  try {
+    const parsed = JSON.parse(params);
+    const columns = Array.isArray(parsed.columns) ? parsed.columns : [];
+    const label = columns.find((column: Record<string, unknown>) => column.targetName === output)?.instruction;
+    return `Review row -> ${output}${label ? ` (${label})` : ""}`;
+  } catch {
+    return `Review row -> ${output}`;
+  }
+}
+
+function buildCsvClassifierSql(params: string, input: string) {
+  const config = parseCsvClassifierConfig(params, input);
+  const sourceField = input || config.sourceField;
+  const fallback = config.rules.find((rule) => rule.condition === "else")?.value
+    || config.fallbackValue
+    || config.rules.at(-1)?.value
+    || "";
+  const whenClauses = config.rules
+    .filter((rule) => rule.condition !== "else")
+    .map((rule) => `WHEN ${csvClassifierConditionSql(rule, sourceField)} THEN ${quoteSqlString(rule.value)}`);
+  if (whenClauses.length === 0) return quoteSqlString(fallback);
+  return `CASE ${whenClauses.join(" ")} ELSE ${quoteSqlString(fallback)} END`;
+}
+
+function csvClassifierConditionSql(rule: CsvClassifierRule, sourceField: string) {
+  const source = quoteSqlIdentifier(sourceField);
+  const lowered = `LOWER(CAST(${source} AS STRING))`;
+  if (rule.condition === "empty") return `(${source} IS NULL OR LENGTH(TRIM(CAST(${source} AS STRING))) = 0)`;
+  if (rule.condition === "not_empty") return `(${source} IS NOT NULL AND LENGTH(TRIM(CAST(${source} AS STRING))) > 0)`;
+  if (rule.condition === "numeric_lte") return `CAST(${source} AS DOUBLE) <= ${Number(rule.pattern) || 0}`;
+  if (rule.condition === "numeric_gte") return `CAST(${source} AS DOUBLE) >= ${Number(rule.pattern) || 0}`;
+  const keywords = String(rule.pattern || "").split(",").map((item) => item.trim()).filter(Boolean);
+  if (keywords.length === 0) return "FALSE";
+  if (rule.condition === "keyword_all") {
+    return keywords.map((keyword) => `${lowered} RLIKE ${quoteSqlString(escapeRegex(keyword.toLowerCase()))}`).join(" AND ");
+  }
+  return `${lowered} RLIKE ${quoteSqlString(keywords.map((keyword) => escapeRegex(keyword.toLowerCase())).join("|"))}`;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function quoteSqlIdentifier(value: string) {
   return `\`${value.replace(/`/g, "``")}\``;
+}
+
+function quoteSqlString(value: string) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
 }
 
 function toXFlowType(type: string) {
