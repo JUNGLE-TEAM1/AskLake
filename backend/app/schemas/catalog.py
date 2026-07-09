@@ -77,6 +77,9 @@ class CatalogDatasetResponse(CamelModel):
     storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)
 

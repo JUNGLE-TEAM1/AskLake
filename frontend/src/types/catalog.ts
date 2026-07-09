@@ -39,6 +39,9 @@ export type CatalogDataset = {
   name: string;
   nextRefresh: string;
   owner: string;
+  partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   quality: string;
   rag: boolean;
   rows: string;

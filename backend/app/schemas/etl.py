@@ -132,8 +132,12 @@ class JobRowData(CamelModel):
     permission_roles: list[dict[str, Any]] | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    target_description: str | None = None
+    target_tags: list[str] | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
@@ -177,6 +181,9 @@ class CatalogDataset(CamelModel):
     storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -232,9 +239,13 @@ class CreatePipelineRequest(CamelModel):
     permission_roles: list[dict[str, Any]] | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
+    target_description: str | None = None
+    target_tags: list[str] = Field(default_factory=list)
     target_layer: TargetLayer
     target_format: str
     owner: str

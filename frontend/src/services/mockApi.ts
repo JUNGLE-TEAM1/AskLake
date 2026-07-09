@@ -259,16 +259,22 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   const sampleRows = draftPipeline.schema.sampleRows.length > 0
     ? draftPipeline.schema.sampleRows.map((row) => row.slice(0, Math.max(schema.length, 1)))
     : [["-", "-", "-", "-", "Pipeline queued"]];
-  const normalizedTags = normalizeDerivedDatasetTags(
-    isSqlResultSource
-      ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
-      : ["#customer", "#RAG", "#리뷰"],
-  );
+  const targetTags = normalizeCatalogTags(draftPipeline.target.tags ?? []);
+  const normalizedTags = targetTags.length > 0
+    ? targetTags
+    : normalizeDerivedDatasetTags(
+      isSqlResultSource
+        ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
+        : ["#customer", "#RAG", "#리뷰"],
+    );
+  const partitionColumns = normalizeStringList(draftPipeline.target.partitionColumns);
+  const indexColumns = normalizeStringList(draftPipeline.target.indexColumns);
+  const partition = partitionColumns.length > 0 ? partitionColumns.join("/") : draftPipeline.target.partition;
 
   const dataset: CatalogDataset = {
-    description: isSqlResultSource
+    description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
-      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -287,6 +293,9 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
+    partition,
+    partitionColumns,
+    indexColumns,
     tags: normalizedTags,
     upstream: [
       draftPipeline.source.sourceLabel,
@@ -555,12 +564,20 @@ function inferColumnType(dataset: CatalogDataset, columnName: string) {
 }
 
 function normalizeDerivedDatasetTags(tags: string[]) {
-  const normalizedTags = tags
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`);
+  const normalizedTags = normalizeCatalogTags(tags);
 
   return Array.from(new Set(normalizedTags.length > 0 ? normalizedTags : ["#sql-derived"]));
+}
+
+function normalizeCatalogTags(tags: string[]) {
+  return Array.from(new Set(tags
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`)));
+}
+
+function normalizeStringList(values: string[] | undefined) {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
 }
 
 function normalizeDerivedDatasetId(name: string) {
