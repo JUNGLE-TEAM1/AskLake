@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Database, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FormFieldGroup } from "@/components/ui/form-field-group";
 import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
@@ -109,13 +110,12 @@ function DatabasePicker({
       title="DB 선택"
       toolbar={(
         <div className="s3-picker-toolbar database-picker-toolbar">
-          <label className="field">
-            <span>DB 검색</span>
+          <FormFieldGroup className="field" label="DB 검색">
             <div className="s3-picker-search">
               <Search size={14} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="데이터베이스 검색" />
             </div>
-          </label>
+          </FormFieldGroup>
         </div>
       )}
       error={error ? (

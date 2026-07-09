@@ -2,7 +2,7 @@
 
 ## 목적
 
-이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
+이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
 
 `docs/frontend-component-gap-inventory.md`는 전체 gap 추적 문서이고, `docs/frontend-css-cleanup-inventory.md`는 CSS 유지/교체 판단 문서다. 이 문서는 두 문서에서 #385 이후 남은 UI shell 후보만 뽑아 적용 순서와 보류 기준을 좁힌다.
 
@@ -26,6 +26,14 @@
 | `SelectableCard` | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | target chip grid와 runtime-specific card |
 | `IconOptionGrid` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | 다른 icon-only option grid가 생기면 재사용 |
 | `DetailTableSection` | `frontend/src/pages/ingest/JobsPages.tsx` | ETL detail, SchemaTransformEditor detail table |
+
+## #391 적용 결과
+
+| 컴포넌트 | 추가 적용 파일 | 남은 범위 |
+| --- | --- | --- |
+| `FormFieldGroup` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/components/target/DatabaseField.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | ETL rule builder, target/permission form, color picker 세부 layout |
+| `NativeSelectField` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | ETL rule builder select, permission select |
+| `SettingsPanel` | 추가 신규 사용처 없음 | ETL/SQL의 큰 설정 panel shell은 상태 결합이 있어 후속 판단 |
 
 ## 우선 구현 후보
 
@@ -64,8 +72,8 @@
 ## 후속 PR 권장 단위
 
 1. ETL final preview와 Catalog preview shell에 `PreviewPanel` 추가 적용
-2. ETL/S3/DB picker form에 `FormFieldGroup` / `NativeSelectField` 추가 적용
-3. SQL materialize form과 ETL rule builder에 `SettingsPanel` 추가 적용
+2. ETL rule builder, target/permission form에 `FormFieldGroup` / `NativeSelectField` 추가 적용
+3. SQL/ETL의 큰 설정 panel shell은 `SettingsPanel` 추가 전에 route QA 후 판단
 4. route QA 후 `dashboard.css`, `dashboard-runtime.css`, `etl.css`, `ingest.css`, `sql.css`의 wrapper selector 축소
 5. 상태 결합이 큰 `TreePanel`, `WidgetShell`, `ColorPalettePicker` 별도 설계
 
