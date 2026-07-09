@@ -1,9 +1,10 @@
 import { useMemo, type ReactNode } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
-import Tooltip from "@mui/material/Tooltip";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
+import { TreeRow } from "@/components/ui/tree-view";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 type DatasetSidebarProps = {
@@ -22,10 +23,6 @@ const systemItemId = "dataset-tree-system";
 const schemaItemId = "dataset-tree-schema";
 const tablesItemId = "dataset-tree-tables";
 const datasetTreeRowHeight = 38;
-const hoverTooltipSlotProps = {
-  arrow: { className: "asklake-dataset-hover-arrow" },
-  tooltip: { className: "asklake-dataset-hover-tooltip" },
-};
 
 function datasetTreeItemId(datasetId: string) {
   return `${DATASET_ITEM_PREFIX}${datasetId}`;
@@ -110,16 +107,12 @@ function DatasetTreeLabel({
 
   return (
     <Tooltip
-      arrow
-      describeChild
-      enterDelay={250}
-      enterNextDelay={120}
-      leaveDelay={80}
-      placement="right-start"
-      slotProps={hoverTooltipSlotProps}
-      title={hoverCard}
+      delayDuration={250}
     >
-      {label}
+      <TooltipTrigger asChild>{label}</TooltipTrigger>
+      <TooltipContent align="start" className="asklake-dataset-hover-tooltip" side="right" sideOffset={12}>
+        {hoverCard}
+      </TooltipContent>
     </Tooltip>
   );
 }
@@ -147,9 +140,12 @@ function DatasetTreeNodeRow({ node, style }: NodeRendererProps<DatasetTreeNode>)
       ].filter(Boolean).join(" ")}
       style={style}
     >
-      <button
+      <TreeRow
         aria-expanded={node.isInternal ? node.isOpen : undefined}
         className="asklake-dataset-tree-node"
+        expanded={node.isInternal ? node.isOpen : undefined}
+        leaf={!node.isInternal}
+        selected={node.data.selected || node.isSelected}
         type="button"
         onClick={() => {
           if (node.isInternal) node.toggle();
@@ -166,7 +162,7 @@ function DatasetTreeNodeRow({ node, style }: NodeRendererProps<DatasetTreeNode>)
           selected={node.data.selected || node.isSelected}
           title={node.data.title}
         />
-      </button>
+      </TreeRow>
     </div>
   );
 }
@@ -326,35 +322,37 @@ export function DatasetSidebar({
         <h2>Dataset</h2>
       </div>
 
-      <TreePanel
-        bodyClassName="asklake-dataset-tree-wrap"
-        emptyState="No datasets available."
-        errorState="Failed to load datasets. Please try again."
-        isEmpty={datasets.length === 0}
-        isError={Boolean(error)}
-        isLoading={isLoading}
-        loadingState="Loading datasets..."
-        stateClassName={error && !isLoading ? "asklake-dataset-sidebar-state error" : "asklake-dataset-sidebar-state"}
-      >
-        <Tree<DatasetTreeNode>
-          aria-label="Dashboard dataset tree"
-          className="asklake-dataset-tree"
-          data={treeData}
-          disableDrag
-          disableEdit
-          height={treeHeight}
-          idAccessor="id"
-          indent={18}
-          openByDefault
-          overscanCount={6}
-          rowHeight={datasetTreeRowHeight}
-          selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
-          width="100%"
-          onActivate={handleActivateTreeItem}
+      <TooltipProvider delayDuration={250}>
+        <TreePanel
+          bodyClassName="asklake-dataset-tree-wrap"
+          emptyState="No datasets available."
+          errorState="Failed to load datasets. Please try again."
+          isEmpty={datasets.length === 0}
+          isError={Boolean(error)}
+          isLoading={isLoading}
+          loadingState="Loading datasets..."
+          stateClassName={error && !isLoading ? "asklake-dataset-sidebar-state error" : "asklake-dataset-sidebar-state"}
         >
-          {DatasetTreeNodeRow}
-        </Tree>
-      </TreePanel>
+          <Tree<DatasetTreeNode>
+            aria-label="Dashboard dataset tree"
+            className="asklake-dataset-tree"
+            data={treeData}
+            disableDrag
+            disableEdit
+            height={treeHeight}
+            idAccessor="id"
+            indent={18}
+            openByDefault
+            overscanCount={6}
+            rowHeight={datasetTreeRowHeight}
+            selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
+            width="100%"
+            onActivate={handleActivateTreeItem}
+          >
+            {DatasetTreeNodeRow}
+          </Tree>
+        </TreePanel>
+      </TooltipProvider>
     </aside>
   );
 }
