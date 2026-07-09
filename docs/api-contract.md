@@ -79,7 +79,7 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO는 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
+현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
 
 ### Permission/Governance Phase 0 용어
 
@@ -141,6 +141,7 @@ Profile/Admin Console Phase 0 기준:
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 1차 관리 콘솔은 조회 중심입니다. 사용자/그룹/권한 정책 수정 API는 별도 후속 계약으로 분리합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
+- Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
 ```ts
 type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
@@ -2227,6 +2228,8 @@ Response `200 OK`:
 
 서버 session row를 삭제하고 `asklake_session` 쿠키를 제거합니다.
 
+현재 session token은 서버 DB에 저장된 opaque token이며 bearer/JWT가 아닙니다. 비밀번호는 plaintext로 저장하지 않고 salt + PBKDF2 hash로 저장합니다. 이 구현은 로컬 데모 세션 범위이며 운영 인증 전 단계입니다.
+
 ### 9.2 현재 사용자 프로필 조회
 
 `GET /api/users/me`
@@ -2499,7 +2502,8 @@ Response `201 Created`:
 
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
-- 인증 방식: JWT, 세션, 또는 임시 demo actor.
+- 인증 방식: 운영 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증.
+- Auth/session table의 Alembic migration.
 - 권한 모델: Phase 4 enforcement 범위를 Dashboard runtime 편집, Query AI, dataset 생성/삭제 전체로 확장할지 여부.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.

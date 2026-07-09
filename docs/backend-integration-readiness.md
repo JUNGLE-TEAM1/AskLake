@@ -310,7 +310,7 @@ Catalog dataset append 보완 기준:
 | 대시보드 | 권한 기반 공유, 내보내기 API, 장기 운영용 권한/감사 로그 |
 | 공통 | 감사 로그 서버 저장, 사용자 인증/권한 |
 
-Permission/Governance Phase 0 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 별도 permission grant 작업이다. 현재 로컬 auth/session은 계정 actor를 결정하기 위한 demo-grade 구현이며, 외부 IdP/SSO와 권한 정책 수정 UI는 후속 범위다. `owner` 문자열만으로 권한을 판단하면 이름 변경, 그룹 소유, 대리 생성, 외부 공유 같은 edge case가 생기므로 후속 구현에서는 actor context와 resource별 grant를 기준으로 판정한다.
+Permission/Governance Phase 0 기준으로, 프로필/만든 사람 표시는 identity metadata 작업이고 실제 권한 판정은 별도 permission grant 작업이다. 현재 로컬 auth/session은 계정 actor를 결정하기 위한 demo-grade 구현이며, 외부 IdP/SSO, refresh token, 비밀번호 재설정, 이메일 인증, 권한 정책 수정 UI, auth table Alembic migration은 후속 범위다. `owner` 문자열만으로 권한을 판단하면 이름 변경, 그룹 소유, 대리 생성, 외부 공유 같은 edge case가 생기므로 후속 구현에서는 actor context와 resource별 grant를 기준으로 판정한다.
 
 ## 11. 백엔드 팀에 넘길 최소 구현 범위
 

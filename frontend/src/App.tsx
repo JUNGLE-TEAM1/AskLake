@@ -125,6 +125,7 @@ export function App() {
   const initialLoginRoute = window.location.pathname === "/login";
   const [activeFlow, setActiveFlow] = useState<FlowId>(initialDashboardRoute ? "dashboard" : initialJobsTableDemoRoute ? "jobsTableDemo" : initialProfileRoute ? "profile" : initialAdminRoute ? "admin" : initialLoginRoute ? "login" : "jobs");
   const [currentUser, setCurrentUser] = useState<CurrentUserResponse | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [lastScheduleFlow, setLastScheduleFlow] = useState<ScheduleFlowId>("repeat");
   const [dashboardEntry, setDashboardEntry] = useState<DashboardEntry>(() => (
     initialDashboardRoute ? dashboardEntryFromRoute(initialDashboardRoute, 0) : { source: "sidebar", view: "list", version: 0 }
@@ -184,6 +185,9 @@ export function App() {
     [datasets, selectedDataset, sqlInitialDatasetId],
   );
   const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow;
+  const isAuthProtectedFlow = activeFlow === "profile" || activeFlow === "admin";
+  const shouldBlockForAuthCheck = isAuthProtectedFlow && !authChecked;
+  const shouldShowAuthGate = isAuthProtectedFlow && authChecked && !currentUser;
   const wizardStepFlows = useMemo<FlowId[]>(
     () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
     [lastScheduleFlow],
@@ -202,6 +206,9 @@ export function App() {
       })
       .catch(() => {
         if (active) setCurrentUser(null);
+      })
+      .finally(() => {
+        if (active) setAuthChecked(true);
       });
     return () => {
       active = false;
@@ -436,28 +443,38 @@ export function App() {
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
-          {shouldBlockForInitialData && (
+          {shouldBlockForAuthCheck && (
+            <div className="module-placeholder-page">
+              <span>SESSION</span>
+              <h1>세션을 확인하는 중입니다</h1>
+              <p>로그인 상태를 확인한 뒤 계정 화면을 표시합니다.</p>
+            </div>
+          )}
+          {shouldShowAuthGate && (
+            <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
+          )}
+          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldBlockForInitialData && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
               <h1>DB 데이터를 불러오는 중입니다</h1>
               <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
             </div>
           )}
-          {shouldBlockForInitialError && (
+          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldBlockForInitialError && (
             <div className="module-placeholder-page">
               <span>POSTGRES ERROR</span>
               <h1>DB API 연결을 확인해주세요</h1>
               <p>{dataError}</p>
             </div>
           )}
-          {!dataLoading && !dataError && !canRenderActiveFlow && (
+          {!shouldBlockForAuthCheck && !shouldShowAuthGate && !dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
               <span>EMPTY STATE</span>
               <h1>먼저 실제 데이터를 선택해주세요</h1>
               <p>목록에서 Job 또는 Dataset을 선택하거나, 새 파이프라인을 생성하고 실행해 주세요.</p>
             </div>
           )}
-          {shouldRenderAppContent && (
+          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldRenderAppContent && (
             <>
           {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
           {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}

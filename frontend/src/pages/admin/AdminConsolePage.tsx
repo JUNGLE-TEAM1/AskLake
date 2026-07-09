@@ -61,7 +61,9 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
       })
       .catch((unknownError) => {
         if (!active) return;
-        const message = unknownError instanceof ApiError ? unknownError.message : "관리 데이터를 불러오지 못했습니다.";
+        const message = unknownError instanceof ApiError && unknownError.status === 403
+          ? "관리자 권한이 필요합니다. admin 계정으로 로그인한 뒤 다시 시도해주세요."
+          : unknownError instanceof ApiError ? unknownError.message : "관리 데이터를 불러오지 못했습니다.";
         setError(message);
         onActionRef.current("admin.console.load_failed", "/api/admin", "admin-console", "failed", { targetType: "admin_module" });
       })
@@ -109,7 +111,7 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
           </div>
 
           {loading && <InfoBox title="관리 데이터 로딩 중" body="관리 API에서 사용자, 그룹, 권한, 감사 로그를 가져오고 있습니다." />}
-          {!loading && error && <InfoBox title="관리 API 요청 실패" body={error} />}
+          {!loading && error && <InfoBox title={error.includes("관리자 권한") ? "관리자 권한 필요" : "관리 API 요청 실패"} body={error} />}
           {!loading && !error && (
             <>
               {activeTab === "users" && <UsersTable users={users} />}
@@ -126,11 +128,11 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
         <dl>
           <div>
             <dt>인증</dt>
-            <dd>Demo actor header</dd>
+            <dd>Session cookie 우선</dd>
           </div>
           <div>
             <dt>관리 접근</dt>
-            <dd>X-AskLake-Role=admin</dd>
+            <dd>admin role 필요</dd>
           </div>
           <div>
             <dt>범위</dt>
