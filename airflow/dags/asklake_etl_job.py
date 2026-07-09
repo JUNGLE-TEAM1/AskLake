@@ -4,7 +4,11 @@ import time
 from typing import Any
 
 import pendulum
-from airflow.decorators import dag, task
+
+try:
+    from airflow.sdk import dag, task
+except ImportError:  # Airflow 2 compatibility for local fallback environments.
+    from airflow.decorators import dag, task
 
 
 def sleep_seconds(conf: dict[str, Any], key: str, default: int) -> int:

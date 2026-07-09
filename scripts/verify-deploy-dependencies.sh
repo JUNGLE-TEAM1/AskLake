@@ -51,6 +51,16 @@ if ! docker image inspect "$AIRFLOW_IMAGE" >/dev/null 2>&1; then
   docker pull "$AIRFLOW_IMAGE"
 fi
 
+echo "Checking Airflow DAG import dependencies..."
+DAG_SOURCE="$ROOT_DIR/airflow/dags"
+if command -v cygpath >/dev/null 2>&1; then
+  DAG_SOURCE="$(cygpath -m "$DAG_SOURCE")"
+fi
+MSYS_NO_PATHCONV=1 docker run --rm \
+  --mount "type=bind,source=$DAG_SOURCE,target=/opt/airflow/dags,readonly" \
+  "$AIRFLOW_IMAGE" \
+  python -c "import importlib.util; spec = importlib.util.spec_from_file_location('asklake_etl_job', '/opt/airflow/dags/asklake_etl_job.py'); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)"
+
 echo "Building frontend deploy image..."
 docker build \
   --build-arg VITE_API_BASE_URL="${VITE_API_BASE_URL:-http://localhost:8080}" \

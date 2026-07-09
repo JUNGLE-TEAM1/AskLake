@@ -1,5 +1,33 @@
 name: ${COMPOSE_PROJECT_NAME:-asklake}
 
+x-airflow-common:
+  &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}
+  restart: unless-stopped
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_METADATA_DB_USER:-airflow}:${AIRFLOW_METADATA_DB_PASSWORD:?AIRFLOW_METADATA_DB_PASSWORD is required}@airflow-postgres/${AIRFLOW_METADATA_DB_NAME:-airflow}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_API_AUTH_JWT_SECRET:?AIRFLOW_API_AUTH_JWT_SECRET is required}
+    AIRFLOW__API_AUTH__JWT_ISSUER: ${AIRFLOW_API_AUTH_JWT_ISSUER:-asklake}
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW_CONFIG: /opt/airflow/config/airflow.cfg
+    _PIP_ADDITIONAL_REQUIREMENTS: ""
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-../airflow}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-../airflow}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-../airflow}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-../airflow}/plugins:/opt/airflow/plugins
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
 services:
   caddy:
     image: caddy:2.8-alpine
@@ -45,6 +73,8 @@ services:
       context: ../backend
     restart: unless-stopped
     depends_on:
+      airflow-apiserver:
+        condition: service_healthy
       minio:
         condition: service_healthy
       postgres:
@@ -62,12 +92,12 @@ services:
       OPENAI_ASSISTANT_MAX_SAMPLE_ROWS: ${OPENAI_ASSISTANT_MAX_SAMPLE_ROWS:-5}
       OPENAI_ASSISTANT_TIMEOUT_SECONDS: ${OPENAI_ASSISTANT_TIMEOUT_SECONDS:-20}
       OPENAI_QUERY_AI_MODEL: ${OPENAI_QUERY_AI_MODEL:-gpt-4.1-mini}
-      AIRFLOW_API_BASE_URL: ${AIRFLOW_API_BASE_URL:-}
+      AIRFLOW_API_BASE_URL: ${AIRFLOW_API_BASE_URL:-http://airflow-apiserver:8080}
       AIRFLOW_DAG_ID: ${AIRFLOW_DAG_ID:-asklake_etl_job}
       AIRFLOW_UI_BASE_URL: ${AIRFLOW_UI_BASE_URL:-}
       AIRFLOW_API_TOKEN: ${AIRFLOW_API_TOKEN:-}
-      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-}
-      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:-}
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-airflow}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:?AIRFLOW_PASSWORD is required}
       AIRFLOW_REQUEST_TIMEOUT_SECONDS: ${AIRFLOW_REQUEST_TIMEOUT_SECONDS:-10}
       ASKLAKE_MONGO_HOST: ${ASKLAKE_MONGO_HOST:-mongo}
       ASKLAKE_MONGO_PORT: ${ASKLAKE_MONGO_PORT:-27017}
@@ -118,6 +148,88 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  airflow-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AIRFLOW_METADATA_DB_NAME:-airflow}
+      POSTGRES_USER: ${AIRFLOW_METADATA_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_METADATA_DB_PASSWORD:?AIRFLOW_METADATA_DB_PASSWORD is required}
+    expose:
+      - "5432"
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  airflow-init:
+    <<: *airflow-common
+    restart: "no"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /opt/airflow/{logs,dags,plugins,config}
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/{logs,dags,plugins,config}
+        /entrypoint airflow version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:?AIRFLOW_PASSWORD is required}
+    user: "0:0"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type DagProcessorJob"]
+      interval: 30s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
 
   postgres:
     image: postgres:16-alpine
@@ -176,6 +288,7 @@ volumes:
   caddy_data:
   caddy_config:
   postgres_data:
+  airflow_postgres_data:
   mongo_data:
   minio_data:
   lake_data:
