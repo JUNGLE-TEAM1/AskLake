@@ -420,33 +420,6 @@
   min-width: 0;
 }
 
-.sql-context-search {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #f8fafc;
-  color: #64748b;
-  padding: 0 12px;
-}
-
-.sql-context-search input {
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #0f172a;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.sql-context-search input::placeholder {
-  color: #94a3b8;
-}
-
 .sql-dataset-search-results h2,
 .sql-section-heading h2 {
   color: #0f172a;

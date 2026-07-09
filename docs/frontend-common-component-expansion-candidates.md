@@ -16,6 +16,8 @@
 
 Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보는 포함하되, 적용 예시에서는 Catalog 사용처를 제외한다.
 
+단, 이 제외 범위는 "다음 AskLake 조합 컴포넌트 후보"를 고르기 위한 제한이다. 반복되지 않는 화면이라도 shadcn primitive가 제공하는 기본 UI(`Textarea`, `Checkbox`, `Tabs`, `Tooltip`, `DropdownMenu`, `Select`, `Popover`, `Command`, `AlertDialog` 등)는 별도 표준화 작업에서 교체 후보로 본다.
+
 ## 바로 확장하기 좋은 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 판단 |

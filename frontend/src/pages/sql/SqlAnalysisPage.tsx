@@ -12,6 +12,7 @@ import {
   Table2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
@@ -765,14 +766,16 @@ export function SqlAnalysisPage({
           </div>
           {contextPanelTab === "tables" ? (
             <div className="sql-sidebar-tab-panel tables">
-              <label className="sql-context-search">
-                <Search size={15} />
-                <Input
+              <FilterToolbarSearch icon={<Search size={15} />} size="compact">
+                <FilterToolbarInput
+                  aria-label="분석 테이블 검색"
+                  className="text-xs font-bold"
                   value={datasetSearch}
                   onChange={(event) => setDatasetSearch(event.target.value)}
                   placeholder="데이터셋, 컬럼, 태그 검색"
+                  type="search"
                 />
-              </label>
+              </FilterToolbarSearch>
               <section className="sql-dataset-search-results">
                 <div className="sql-section-heading">
                   <h2>데이터셋</h2>
