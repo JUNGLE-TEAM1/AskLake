@@ -93,6 +93,22 @@
 5. primitive로 커버하지 못하는 반복 UI는 `docs/frontend-component-gap-inventory.md`에 기록한다.
 6. `etl.css`와 `dashboard-runtime.css`는 가장 늦게 건드린다.
 
+## Component 확장 PR 기록 방식
+
+공통 컴포넌트 확장 PR에서는 CSS를 바로 삭제하지 않더라도 아래 기준으로 이 문서를 갱신한다.
+
+| 컴포넌트 후보 | CSS 기록 기준 |
+| --- | --- |
+| `PaginationBar` | DataTable 밖 pagination selector를 `교체 후보` 또는 `부분 정리됨`으로 갱신한다. 예: `catalog-pagination`, `catalog-materialization-pagination`, `sql-context-pagination`, `dashboard-pagination`, `runs-pagination`. |
+| `DialogShell` / `PickerDialog` | custom backdrop/dialog selector를 route QA 전까지 `부분 정리됨` 또는 `보류`로 남긴다. 예: `catalog-modal-*`, `sql-materialize-dialog-*`, `job-log-modal`, `run-dag-modal`, `s3-picker-*`, `dashboard-*-modal`. |
+| `Chip` / `TagList` / `StatusBadge` | 기존 `Badge`로 대체된 범위와 interactive chip으로 유지한 범위를 분리한다. 예: `status-pill`, `run-status-pill`, `owner-chip`, `tag-chip`, `target-chip`, `*-type-pill`. |
+| `KeyValueList` / `ValidationList` | ETL/Creation/Catalog/Jobs detail의 summary/validation row selector를 화면별로 유지할지, 공통 row로 옮길지 기록한다. |
+| `PreviewPanel` / `ResultPanel` | `DataTable` 적용이 끝난 표 주변의 header, empty/loading, CTA, overflow shell selector를 추적한다. |
+| `SettingsPanel` / `FormFieldGroup` | input/select primitive 적용 후에도 남은 label/grid/textarea/checkbox/color picker selector를 유지 사유와 함께 적는다. |
+| `TreePanel` / `SelectableCard` | MUI TreeView, react-arborist, React Flow처럼 외부 라이브러리 class와 묶인 selector는 route QA 전 삭제하지 않고 `보류`로 유지한다. |
+
+현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PaginationBar` -> `DialogShell` -> `Chip/TagList/StatusBadge` -> `KeyValueList/ValidationList` -> `PreviewPanel/ResultPanel` -> `SettingsPanel/FormFieldGroup`이다. `TreePanel`과 `SelectableCard`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
+
 ## #378 Component 확장 CSS 기록
 
 이번 PR은 CSS 파일을 직접 삭제하지 않고, 공통 컴포넌트가 기존 화면 className을 받을 수 있게 만든 뒤 대표 사용처를 전환했다. 따라서 아래 selector는 즉시 삭제가 아니라 route QA 후 후속 cleanup PR에서 정리한다.
@@ -138,3 +154,4 @@ npm run build
 | 2026-07-09 | #369에서 `FilterToolbar` 계열 컴포넌트를 추가하고 Jobs/Dashboard list toolbar body/search/actions selector를 제거. Catalog toolbar는 구조 차이로 후속 판단. |
 | 2026-07-09 | #372에서 CSS 관련 PR마다 이 문서를 함께 업데이트하는 운영 규칙을 보강. B02-B04와 #369에서 이미 `DataTable`/primitive/`FilterToolbar`로 전환된 범위와 아직 유지하는 wrapper/menu/runtime CSS를 `부분 정리됨`으로 구분. |
 | 2026-07-09 | #378에서 `PaginationBar`, `DialogShell`, `PickerDialog`, `CommandBar` 적용에 따른 CSS 판단을 기록. CSS 파일 삭제는 하지 않고, 사용처가 사라진 backdrop/wrapper selector를 후속 삭제 후보로 분리. |
+| 2026-07-09 | component 확장 PR에서 `PaginationBar`, `DialogShell`, `Chip/TagList`, `ValidationList`, `PreviewPanel`, `SettingsPanel`, `TreePanel` 후보별 CSS 기록 기준을 추가. |

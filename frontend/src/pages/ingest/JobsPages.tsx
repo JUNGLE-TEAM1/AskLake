@@ -37,8 +37,9 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FilterToolbar, FilterToolbarSearch, FilterToolbarSearchText } from "@/components/ui/filter-toolbar";
+import { FilterToolbar, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
+import { Input } from "@/components/ui/input";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
@@ -113,6 +114,39 @@ function getJobMetrics(jobs: JobRowData[]): JobMetric[] {
   ];
 }
 
+function normalizeJobSearchText(value: string) {
+  return value.trim().toLocaleLowerCase();
+}
+
+function getJobSearchFields(job: JobRowData) {
+  return [
+    job.name,
+    job.id,
+    job.owner,
+    job.tag,
+    job.source,
+    job.target,
+    job.sourceLabel,
+    job.sourceType,
+    job.targetLayer,
+    job.targetPath,
+    job.storagePath,
+    job.schedule,
+    job.lastState,
+  ];
+}
+
+function filterJobsBySearch(jobs: JobRowData[], searchQuery: string) {
+  const normalizedQuery = normalizeJobSearchText(searchQuery);
+  if (!normalizedQuery) return jobs;
+
+  return jobs.filter((job) => (
+    getJobSearchFields(job)
+      .filter((value): value is string => Boolean(value))
+      .some((value) => normalizeJobSearchText(value).includes(normalizedQuery))
+  ));
+}
+
 export function JobsLandingPage({
   jobs,
   onAction,
@@ -129,7 +163,10 @@ export function JobsLandingPage({
   onRuns: (job: JobRowData) => void;
   onTableDemo?: () => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const metrics = getJobMetrics(jobs);
+  const filteredJobs = useMemo(() => filterJobsBySearch(jobs, searchQuery), [jobs, searchQuery]);
+  const hasSearchQuery = searchQuery.trim().length > 0;
 
   return (
     <div className="jobs-landing">
@@ -159,11 +196,19 @@ export function JobsLandingPage({
             {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
           </div>
         </Panel>
-        <JobsToolbar onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters")} />
+        <JobsToolbar
+          searchQuery={searchQuery}
+          onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)}
+          onReset={() => {
+            setSearchQuery("");
+            onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters");
+          }}
+          onSearchQueryChange={setSearchQuery}
+        />
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
-          emptyBody="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
-          jobs={jobs}
+          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
+          jobs={filteredJobs}
           logAction="etl.job.log_opened"
           onAction={onAction}
           onCommand={onCommand}
@@ -177,7 +222,17 @@ export function JobsLandingPage({
   );
 }
 
-function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void; onReset: () => void }) {
+function JobsToolbar({
+  onFilter,
+  onReset,
+  onSearchQueryChange,
+  searchQuery,
+}: {
+  onFilter: (filter: string) => void;
+  onReset: () => void;
+  onSearchQueryChange: (value: string) => void;
+  searchQuery: string;
+}) {
   return (
     <Panel>
       <PanelHeader
@@ -188,7 +243,16 @@ function JobsToolbar({ onFilter, onReset }: { onFilter: (filter: string) => void
       />
       <FilterToolbar layout="filters">
         <FilterToolbarSearch icon={<Search size={16} />} size="compact">
-          <FilterToolbarSearchText>작업명, 소스명, 타깃 데이터셋명 검색</FilterToolbarSearchText>
+          <Input
+            aria-label="수집/처리 작업 검색"
+            autoComplete="off"
+            className="h-auto border-0 bg-transparent px-0 py-0 text-[13px] font-medium text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+            placeholder="작업명, 소스명, 타깃 데이터셋명 검색"
+            type="search"
+            value={searchQuery}
+            variant="ghost"
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+          />
         </FilterToolbarSearch>
         {["상태", "소스", "Owner", "태그"].map((filter) => (
           <Button className="min-w-[74px] rounded-[7px]" key={filter} size="sm" type="button" variant="outline" onClick={() => onFilter(filter)}>{filter} ▾</Button>
@@ -616,7 +680,10 @@ export function JobsTableDemoPage({
   onDetail: (job: JobRowData) => void;
   onRuns: (job: JobRowData) => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const metrics = getJobMetrics(jobs);
+  const filteredJobs = useMemo(() => filterJobsBySearch(jobs, searchQuery), [jobs, searchQuery]);
+  const hasSearchQuery = searchQuery.trim().length > 0;
 
   return (
     <div className="jobs-table-demo-page">
@@ -642,11 +709,19 @@ export function JobsTableDemoPage({
         <div className="metric-grid">
           {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
         </div>
-        <JobsToolbar onFilter={(filter) => onAction("etl.jobs.table_demo_filter_opened", `/api/etl/jobs/filters/${filter}`, filter)} onReset={() => onAction("etl.jobs.table_demo_filter_reset", "/api/etl/jobs", "filters")} />
+        <JobsToolbar
+          searchQuery={searchQuery}
+          onFilter={(filter) => onAction("etl.jobs.table_demo_filter_opened", `/api/etl/jobs/filters/${filter}`, filter)}
+          onReset={() => {
+            setSearchQuery("");
+            onAction("etl.jobs.table_demo_filter_reset", "/api/etl/jobs", "filters");
+          }}
+          onSearchQueryChange={setSearchQuery}
+        />
         <JobsTableSection
           ariaLabel="ETL 작업 표형 데모"
-          emptyBody="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
-          jobs={jobs}
+          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
+          jobs={filteredJobs}
           logAction="etl.job.table_demo_log_opened"
           onAction={onAction}
           onCommand={onCommand}
