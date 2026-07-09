@@ -97,7 +97,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 `POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
 
-현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. smoke DAG는 `airflow/dags/asklake_etl_job.py`이며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. DAG는 `airflow/dags/asklake_etl_job.py`이며, 현재 구현은 production ETL skeleton task id를 사용하되 각 task 내부는 smoke-safe metadata 작업만 수행한다. Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
 
 필수 Airflow 환경변수:
 
@@ -107,7 +107,16 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_API_TOKEN` 또는 `AIRFLOW_USERNAME`/`AIRFLOW_PASSWORD`: Airflow API 인증
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: API timeout, 기본값 `10`
 
-Airflow DAG task는 기존 Spark runner를 호출하는 orchestration boundary로 둔다.
+Airflow DAG task는 기존 Spark runner를 호출하는 orchestration boundary로 둔다. 현재 #411 skeleton에서는 아래 task id를 안정적인 UI mapping 기준으로 먼저 고정한다.
+
+- `validate_run_conf`
+- `prepare_source_input`
+- `submit_spark_job`
+- `collect_spark_result`
+- `run_quality_checks`
+- `publish_output_dataset`
+- `update_catalog`
+- `record_lineage`
 
 Spark runner 입력:
 

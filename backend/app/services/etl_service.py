@@ -302,6 +302,7 @@ def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
     dag_run = airflow_client.trigger_dag_run(
         dag_run_id=run_id,
         conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        logical_date=submitted_at,
         note=f"AskLake {command} command for {job.id}",
     )
     if not dag_run.dag_run_id:
@@ -528,10 +529,14 @@ def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -
 
 
 AIRFLOW_TASK_TITLES = {
-    "receive_asklake_run": "1. Airflow DAG Run 접수",
-    "spark_source_read": "2. Spark 소스 읽기",
-    "transform_quality_write": "3. 처리/품질/적재",
-    "catalog_update": "4. 카탈로그 갱신",
+    "validate_run_conf": "1. Run 설정 검증",
+    "prepare_source_input": "2. 소스 입력 준비",
+    "submit_spark_job": "3. Spark 작업 제출",
+    "collect_spark_result": "4. Spark 결과 수집",
+    "run_quality_checks": "5. 품질 검증",
+    "publish_output_dataset": "6. 결과 데이터셋 발행",
+    "update_catalog": "7. 카탈로그 갱신",
+    "record_lineage": "8. Lineage 기록",
 }
 
 

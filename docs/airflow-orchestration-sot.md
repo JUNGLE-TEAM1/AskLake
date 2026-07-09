@@ -184,15 +184,16 @@ Phase 6 output:
 
 ### Phase 7. Local Runtime And Verification
 
-Status: implemented. Local Airflow compose wiring and the smoke DAG are now
-available; live smoke still requires running Docker services and restarting the
-backend with Airflow env.
+Status: implemented. Local Airflow compose wiring and the
+`asklake_etl_job` production ETL skeleton DAG are now available; live smoke
+still requires running Docker services and restarting the backend with Airflow
+env.
 
 Scope:
 
 - Add local Airflow runtime instructions or compose wiring.
-- Add smoke verification for trigger, poll, DAG task mapping, and final catalog
-  update.
+- Add smoke verification for trigger, poll, DAG task mapping, and final
+  skeleton task completion.
 - Run relevant backend and frontend checks.
 
 Acceptance criteria:
@@ -208,7 +209,7 @@ Phase 7 output:
 
 - The local `docker-compose.yml` includes an Airflow API server, scheduler,
   DAG processor, Airflow metadata Postgres, and the stable `asklake_etl_job`
-  smoke DAG under `airflow/dags/`.
+  production ETL skeleton DAG under `airflow/dags/`.
 - Backend Airflow configuration fails clearly with `AIRFLOW_CONFIG_MISSING`
   when `AIRFLOW_API_BASE_URL` is not set.
 - Verified checks on 2026-07-09:
@@ -341,12 +342,15 @@ Do not stage unrelated local files when committing a phase.
 
 ## 8. DAG Deployment Strategy
 
-Status: documented for issue #383.
+Status: documented for issue #383 and skeleton implementation started in issue
+#411.
 
-The current `asklake_etl_job` DAG is a local smoke DAG. It proves that AskLake
-can submit a DAG Run, poll Airflow DAG Run and Task Instance state, and reflect
-the same run in the Jobs list, Run History, and DAG modal. It is not yet the
-production ETL DAG deployment model.
+The current `asklake_etl_job` DAG is a production ETL skeleton. It keeps the
+production-facing task ids stable while each task still performs smoke-safe
+metadata work instead of calling the real Spark cluster, storage layer, catalog,
+or lineage backend. It proves that AskLake can submit a DAG Run, poll Airflow
+DAG Run and Task Instance state, and reflect the same run in the Jobs list, Run
+History, and DAG modal.
 
 ### 8.1 Current local development mode
 
@@ -390,10 +394,9 @@ Recommended `dag_run.conf` boundary:
 This keeps Airflow responsible for orchestration and AskLake responsible for job
 definition, validation, and UI state.
 
-### 8.3 Target DAG shape
+### 8.3 Current skeleton DAG shape
 
-The smoke DAG can evolve into the production ETL DAG with these stable task
-boundaries:
+The DAG uses these stable task boundaries:
 
 ```text
 validate_run_conf
@@ -410,6 +413,8 @@ Rules:
 
 - Use XCom only for small metadata such as row counts, output paths, error
   summaries, and run ids. Do not pass datasets through XCom.
+- The issue #411 skeleton keeps these tasks as smoke-safe metadata tasks. The
+  follow-up real ETL work should replace task internals, not task ids.
 - Write output paths with `runId` or another idempotency key so retries do not
   overwrite unrelated runs.
 - Keep source credentials, Spark connection details, and catalog credentials in

@@ -118,7 +118,7 @@ EC2 running 보장
 
 Airflow DAG는 애플리케이션 코드와 같은 변경 관리 대상으로 본다. 서버에서 `airflow/dags` 파일을 직접 수정하거나 수동 복사해서 운영 상태를 바꾸지 않는다.
 
-현재 local/dev smoke DAG는 `airflow/dags/asklake_etl_job.py`다. staging/prod 배포에서는 아래 중 하나의 방식을 선택하고 같은 방식을 반복 가능하게 유지한다.
+현재 local/dev DAG는 `airflow/dags/asklake_etl_job.py`다. 이 DAG는 production ETL skeleton task id를 사용하지만, 아직 task 내부는 smoke-safe metadata 작업이다. staging/prod 배포에서는 아래 중 하나의 방식을 선택하고 같은 방식을 반복 가능하게 유지한다.
 
 ```text
 1. 서버 checkout의 reviewed branch에서 airflow/dags를 읽는다.
@@ -139,7 +139,7 @@ Airflow가 prod compose에 포함된 뒤에는 health check에 아래 항목을 
 Airflow API health
 Airflow scheduler health
 asklake_etl_job DAG import 상태
-smoke DAG Run 생성 및 terminal 상태
+production ETL skeleton DAG Run 생성 및 terminal 상태
 AskLake Run History와 Airflow DAG Run 상태 일치
 ```
 

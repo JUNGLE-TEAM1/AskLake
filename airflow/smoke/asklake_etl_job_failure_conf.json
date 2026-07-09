@@ -1,0 +1,43 @@
+{
+  "command": "run",
+  "jobId": "JOB-SMOKE-0002",
+  "runId": "run_smoke_failure_0001",
+  "submittedAt": "2026-07-09T00:00:00Z",
+  "forceFailTask": "run_quality_checks",
+  "job": {
+    "id": "JOB-SMOKE-0002",
+    "name": "AskLake failed smoke ETL job",
+    "owner": "AskLake",
+    "source": "smoke_source",
+    "sourceType": "fixture",
+    "sourceConfig": [],
+    "target": "smoke_dataset_failed",
+    "targetFormat": "parquet",
+    "targetLayer": "RAW",
+    "targetPath": "airflow-smoke://JOB-SMOKE-0002/run_smoke_failure_0001/dataset.parquet",
+    "schemaColumns": [
+      {
+        "name": "id",
+        "type": "string"
+      }
+    ],
+    "schemaSampleRows": [
+      {
+        "id": "row-1"
+      }
+    ],
+    "transformSteps": [],
+    "qualityRules": [
+      {
+        "id": "forced_failure",
+        "type": "smoke"
+      }
+    ],
+    "qualityInvalidRows": []
+  },
+  "smokeValidateSeconds": 0,
+  "smokePrepareSeconds": 0,
+  "smokeSubmitSeconds": 0,
+  "smokeCollectSeconds": 0,
+  "smokeQualitySeconds": 0
+}
