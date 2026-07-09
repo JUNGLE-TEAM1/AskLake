@@ -60,11 +60,11 @@
 | `Switch` | on/off setting | dashboard/ETL 설정성 boolean에 적용한다. |
 | `Tabs` | sidebar/tool tabs, detail tabs | `SegmentedTabs` 대체 후보의 기본값이다. |
 | `Toggle Group` | segmented view switch, compact mode switch | 단순 선택 버튼 묶음에 적용한다. |
-| `Dropdown Menu` | sort/filter/action menu | Catalog sort, Dashboard filter/action menu 대체 기준이다. |
+| `Dropdown Menu` | sort/filter/action menu | #420에서 Catalog sort menu에 1차 적용. Dashboard filter/action menu는 후속. |
 | `Tooltip` | icon-only action, chart/widget option | icon button accessibility 기준과 함께 적용한다. |
 | `Popover` | lightweight picker/filter panel | menu보다 상태가 많은 filter/picker에 적용한다. |
 | `Alert Dialog` | delete/destructive confirm | `DialogShell` destructive 사용처를 분리한다. |
-| `Sheet` | share panel, side config panel | dashboard runtime side panel 후보와 분리해 판단한다. |
+| `Sheet` | share panel, side config panel | #420에서 Dashboard runtime share panel에 1차 적용. side config panel은 후속 판단. |
 | `Textarea` | SQL/editor assistant, widget text | raw `<textarea>` 제거 기준이다. |
 | `Separator` | toolbar/menu/panel divider | 화면별 divider CSS 축소 기준이다. |
 | `Skeleton` | loading state | table/panel loading placeholder를 통일한다. |
@@ -143,6 +143,8 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
 | 2026-07-09 | #418에서 ETL/Schedule/S3/DB picker의 대표 form control을 `Input`, `NativeSelect`, `InputGroup`, `Checkbox` 기준으로 1차 교체했다. |
+| 2026-07-09 | #419에서 SQL/Dashboard runtime/config의 대표 form control을 `Textarea`, `Input`, `Checkbox`, `Button` 기준으로 2차 교체하고 Dashboard runtime compact 보정을 추가했다. |
+| 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard runtime share panel을 `Sheet`로 교체했다. |
 | 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
 
 ## #417 Shadcn Primitive Foundation 반영
@@ -167,6 +169,30 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 
 - `cd frontend && npm run build` 통과.
 
+## #420 Navigation/Menu/Overlay Primitive 1차 반영
+
+이번 PR은 #419 Forms/Controls 작업과 겹치지 않는 navigation/menu/overlay 표면만 먼저 교체한다. 화면 데이터, API, dashboard page tab rename/delete 상태는 변경하지 않는다.
+
+적용 범위:
+
+- `frontend/src/pages/catalog/CatalogPage.tsx`
+  - custom sort menu state, document outside-click listener, button-based `role="menuitemradio"`를 제거했다.
+  - `DropdownMenu`, `DropdownMenuTrigger`, `DropdownMenuContent`, `DropdownMenuRadioGroup`, `DropdownMenuRadioItem`으로 정렬 메뉴를 전환했다.
+- `frontend/src/pages/dashboard/runtime/DashboardRuntimeShell.tsx`
+  - inline custom `role="dialog"` share panel을 `Sheet`/`SheetContent`/`SheetHeader`/`SheetFooter`로 전환했다.
+  - 공유 링크 표시와 닫기 동작은 기존 prop 흐름을 유지한다.
+- `frontend/src/components/ui/dropdown-menu.tsx`
+  - vendored lucide export와 맞지 않던 radio indicator icon을 `CircleDot`으로 정리했다.
+
+유지/보류:
+
+- SQL autocomplete popover, Dashboard filter/action menu, audit popover, destructive confirm은 후속 #420 확장 또는 별도 PR 범위로 둔다.
+- `DashboardPageTabs`는 rename/delete/edit 상태가 섞여 있어 이번 PR에서 `Tabs`로 억지 전환하지 않는다.
+
+검증:
+
+- `cd frontend && npm run build` 통과. Vite chunk size warning은 기존 번들 크기 이슈로 유지.
+
 ## #418 Forms/Controls Primitive 1차 반영
 
 이번 PR은 foundation에서 추가된 primitive를 실제 ETL 계열 화면에 적용하는 첫 replacement 작업이다. Backend API, 데이터 계약, React Router 구조, ETL draft 상태 로직은 변경하지 않는다.
@@ -190,6 +216,36 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - `CheckableOption` 내부 radio/checkbox, target format custom menu, MUI TreeView row/button은 이번 Forms/Controls 1차 범위가 아니다.
 - 화면별 CSS는 삭제하지 않는다. 교체가 끝난 selector의 삭제 판단은 `docs/frontend-css-cleanup-inventory.md`에서 추적한다.
 
+## #419 Forms/Controls Primitive 2차 반영
+
+이번 PR은 #418에서 다루지 않은 SQL/Dashboard runtime/config 사용처의 대표 raw form control을 shadcn-style primitive로 교체한다. Backend API, 데이터 계약, Dashboard runtime 저장 로직, SQL 실행 로직은 변경하지 않는다.
+
+적용 범위:
+
+- `frontend/src/pages/sql/SqlAnalysisPage.tsx`
+  - Query AI prompt, SQL editor, SQL materialize description을 `Textarea`로 교체했다.
+  - SQL materialize RAG toggle을 `Checkbox`로 교체했다.
+- `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`
+  - widget description을 `Textarea`로 교체했다.
+  - table column picker와 area chart stacked toggle을 `Checkbox`로 교체했다.
+- `frontend/src/pages/dashboard/runtime/DashboardAssistantPanel.tsx`
+  - assistant prompt input을 `Textarea`, submit control을 `Button`으로 교체했다.
+- `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx`
+  - visualization request input을 `Input`, inline text widget body를 `Textarea`, submit controls를 `Button`으로 교체했다.
+- `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx`
+  - page rename input과 tab action buttons를 `Input`/`Button`으로 교체했다.
+  - Shadcn 기본 크기가 tab strip에는 커서 `size`/`variant`와 dashboard 전용 compact class를 함께 적용했다.
+- `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`
+  - title rename input은 기존 `Input`/`Button` 유지 기준으로 두되, 긴 자동 생성 제목이 과하게 커지지 않도록 compact edit 스타일을 보정했다.
+
+유지/보류:
+
+- `FormFieldGroup`/`NativeSelectField`는 SQL materialize form과 WidgetConfigPanel의 compatibility wrapper로 유지한다.
+- `HexColorInput`, `HexColorPicker` 기반 color picker는 Complex Surface Polish에서 별도 설계한다.
+- SQL autocomplete popover, dashboard share panel, tree UI는 이번 Forms/Controls 2차 범위가 아니다.
+- 화면별 CSS는 삭제하지 않는다. 기존 selector는 route QA와 cleanup PR 전까지 유지한다.
+- Dashboard runtime tab/title edit처럼 좁은 복합 UI는 primitive만 교체하면 충분하지 않다. Shadcn primitive를 유지하되 compact composition style을 같이 관리한다.
+
 ## #422 Table/List/Search Primitive 반영
 
 이번 PR은 목록/검색/표 footer에서 이미 만든 AskLake composition component를 유지하되, 내부 구현을 shadcn-style primitive로 줄이는 작업이다. Backend API, route 구조, table engine 교체는 포함하지 않는다.
@@ -205,11 +261,11 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - `FilterToolbar`
   - 검색 wrapper는 `InputGroup`, 입력 control은 `InputGroupInput`, checkbox control은 `Checkbox` primitive를 사용한다.
 - Catalog/Dashboard menu
-  - Catalog sort menu는 `DropdownMenuRadioGroup`/`DropdownMenuRadioItem`로 전환했다.
+  - Catalog sort menu는 #420에서 `DropdownMenuRadioGroup`/`DropdownMenuRadioItem` 기준으로 먼저 전환됐다.
   - Dashboard owner/tag/sort menu는 `DropdownMenuItem`/`DropdownMenuCheckboxItem`/`DropdownMenuRadioItem` 기준으로 전환했다.
 
 유지/보류:
 
 - Catalog result card 자체, tag/status visual state, lineage/schema preview shell은 후속 list/card cleanup 후보로 유지한다.
 - Dashboard menu option/filter button/table density CSS는 route QA 전까지 유지한다.
-- `frontend/src/vendor/lucide.ts`에는 이번에 실제로 쓰기 시작한 `MoreHorizontal`, `Circle` 아이콘 export만 추가했다.
+- `frontend/src/vendor/lucide.ts`에는 이번에 실제로 쓰기 시작한 `MoreHorizontal` 아이콘 export만 추가했다.

@@ -36,7 +36,6 @@ export { default as ChevronRight } from "lucide-react/dist/esm/icons/chevron-rig
 export { default as ChevronUp } from "lucide-react/dist/esm/icons/chevron-up.mjs";
 export { default as ChevronsLeft } from "lucide-react/dist/esm/icons/chevrons-left.mjs";
 export { default as ChevronsRight } from "lucide-react/dist/esm/icons/chevrons-right.mjs";
-export { default as Circle } from "lucide-react/dist/esm/icons/circle.mjs";
 export { default as CircleDot } from "lucide-react/dist/esm/icons/circle-dot.mjs";
 export { default as CircleGauge } from "lucide-react/dist/esm/icons/circle-gauge.mjs";
 export { default as CircleHelp } from "lucide-react/dist/esm/icons/circle-help.mjs";

@@ -3,8 +3,11 @@ import type { ApexOptions } from "apexcharts";
 import type { ColumnDef } from "@tanstack/react-table";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import Chart from "react-apexcharts";
+import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { Input } from "@/components/ui/input";
 import { ResultPanel } from "@/components/ui/preview-panel";
+import { Textarea } from "@/components/ui/textarea";
 import type {
   DashboardRuntimeWidget,
   DashboardWidgetAggregation,
@@ -800,7 +803,7 @@ function VisualizationRequestWidget({
   return (
     <div className="asklake-visualization-request-widget">
       <form className="asklake-visualization-request-form" onSubmit={(event) => void savePrompt(event)}>
-        <input
+        <Input
           aria-label="시각화 요청"
           className={isPromptEditing ? "widget-control" : undefined}
           placeholder="어시스턴트 Nessie에게 이 차트의 생성을 요청하세요."
@@ -817,9 +820,9 @@ function VisualizationRequestWidget({
             event.currentTarget.blur();
           }}
         />
-        <button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
+        <Button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
           {isSaving ? <Loader2 className="spin" size={18} /> : <img alt="" aria-hidden="true" className="asklake-visualization-request-nessi-icon" src={askLakeNessiIconUrl} />}
-        </button>
+        </Button>
       </form>
       <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
       {message && (
@@ -909,7 +912,7 @@ function TextPlaceholderWidget({
 
   return (
     <form className="asklake-text-placeholder-widget" onSubmit={(event) => void saveBody(event)}>
-      <textarea
+      <Textarea
         aria-label="텍스트 위젯 내용"
         className={isBodyEditing ? "widget-control" : undefined}
         placeholder="편집을 시작하려면 텍스트를 입력하세요."
@@ -926,7 +929,7 @@ function TextPlaceholderWidget({
         }}
       />
       <div className="asklake-text-placeholder-actions">
-        <button disabled={!onPatchConfig || isSaving} type="submit">저장</button>
+        <Button disabled={!onPatchConfig || isSaving} type="submit">저장</Button>
       </div>
     </form>
   );

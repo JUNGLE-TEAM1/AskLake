@@ -25,7 +25,6 @@ import { DialogShell } from "@/components/ui/dialog-shell";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
@@ -520,22 +519,22 @@ export function CatalogPage({
                   </FilterToolbarCheckbox>
                 </FilterToolbarCheckboxGroup>
                 <FilterToolbarActions>
-                  <DropdownMenu onOpenChange={(open) => {
-                    if (open) onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                  }}>
+                  <DropdownMenu
+                    onOpenChange={(isOpen) => {
+                      if (isOpen) onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                    }}
+                  >
                     <DropdownMenuTrigger asChild>
-                      <Button
-                        className="catalog-sort-button"
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                      >
-                        정렬: {selectedSortOption.label} <ChevronDown size={14} />
+                      <Button className="catalog-sort-button" type="button" size="sm" variant="outline">
+                        정렬: {selectedSortOption.label}
+                        <ChevronDown size={14} />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="catalog-sort-menu">
-                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
-                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
+                    <DropdownMenuContent align="end" className="catalog-sort-menu" aria-label="정렬 기준">
+                      <DropdownMenuRadioGroup
+                        value={sortMode}
+                        onValueChange={(value) => updateSortMode(value as CatalogSortMode)}
+                      >
                         {catalogSortOptions.map((option) => (
                           <DropdownMenuRadioItem
                             className="catalog-sort-option"

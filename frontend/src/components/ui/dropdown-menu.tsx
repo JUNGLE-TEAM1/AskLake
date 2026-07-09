@@ -1,6 +1,6 @@
 import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
-import { Check, ChevronRight, Circle } from "lucide-react";
+import { Check, ChevronRight, CircleDot } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -120,7 +120,7 @@ export const DropdownMenuRadioItem = React.forwardRef<
   >
     <span className="absolute left-2 flex size-3.5 items-center justify-center">
       <DropdownMenuPrimitive.ItemIndicator>
-        <Circle className="size-2 fill-current" />
+        <CircleDot className="size-2 fill-current" />
       </DropdownMenuPrimitive.ItemIndicator>
     </span>
     {children}
@@ -164,4 +164,3 @@ export const DropdownMenuShortcut = ({
   />
 );
 DropdownMenuShortcut.displayName = "DropdownMenuShortcut";
-
