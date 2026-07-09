@@ -285,3 +285,28 @@ npm run build
 | SQL dataset tree hover card | `.sql-tree-hover-card`, `.sql-tree-hover-icon`, `.sql-tree-hover-body` | card shell을 `TreeHoverCard`로 전환. fixed position, arrow pseudo-element, icon tone, body typography selector는 유지한다. |
 | Dashboard dataset sidebar hover card | `.asklake-dataset-hover-card`, `.asklake-dataset-hover-card-head`, `.asklake-dataset-hover-card-icon` | tooltip 내부 card shell을 `TreeHoverCard`로 전환. MUI Tooltip wrapper/arrow selector는 유지한다. |
 | 보류 tree row/runtime selector | `.sql-tree-node`, `.sql-tree-column-row`, `.asklake-dataset-tree-row`, `.asklake-dataset-tree-node` | row renderer와 tree library interaction selector는 이번 PR에서 건드리지 않는다. |
+
+## #417 Shadcn Primitive Foundation CSS 기록
+
+이번 PR은 `frontend/src/components/ui` foundation 추가가 목적이라 CSS 파일을 직접 삭제하지 않았다. 대신 후속 cleanup 기준을 아래처럼 갱신한다.
+
+추가된 CSS 대체 기준:
+
+- raw `<input>` 주변 prefix/suffix/search wrapper: `InputGroup` 적용 후보
+- raw `<select>` 또는 native select wrapper: `NativeSelect` 적용 후보
+- raw `<textarea>`: `Textarea` 적용 후보
+- raw `type="checkbox"` / `type="radio"` / boolean toggle: `Checkbox`, `RadioGroup`, `Switch` 적용 후보
+- custom tablist/segmented view: `Tabs` 또는 `ToggleGroup` 적용 후보
+- custom menu/tooltip/popover/destructive confirm/side panel: `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet` 적용 후보
+- loading/empty/overflow/divider/pagination shell: `Skeleton`, `Empty`, `ScrollArea`, `Separator`, `Pagination` 적용 후보
+
+이번 PR의 CSS 판단:
+
+- `frontend/src/styles/*.css` 삭제 없음.
+- 기존 selector는 route QA 전까지 유지한다.
+- `NativeSelectField`는 내부적으로 새 `NativeSelect`를 사용하지만 기존 `fieldClassName`, `selectClassName`, 화면별 className 전달은 유지했다.
+- 다음 Forms/Controls PR에서 실제 사용처를 교체한 뒤 관련 selector를 `교체 후보` 또는 `삭제 후보`로 다시 분류한다.
+
+검증:
+
+- `cd frontend && npm run build` 통과.
