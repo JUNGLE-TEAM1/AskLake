@@ -64,7 +64,9 @@ export function DashboardTopBar({
             <Input
               aria-label="대시보드 제목"
               autoFocus
+              className="asklake-dashboard-title-edit-input"
               maxLength={80}
+              size="sm"
               value={draftTitle}
               onChange={(event) => setDraftTitle(event.target.value)}
             />
