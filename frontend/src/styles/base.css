@@ -704,14 +704,3 @@ p {
   background: #eff6ff;
   color: #2563eb;
 }
-
-.filter-chip {
-  height: 34px;
-  border: 1px solid #dee1e6;
-  border-radius: 999px;
-  background: #fff;
-  color: #565d6d;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 650;
-}

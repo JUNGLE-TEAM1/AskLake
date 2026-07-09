@@ -42,6 +42,11 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - `Panel`
 - `PanelHeader`
 - `MetricCard`
+- `FilterToolbar`
+- `FilterToolbarSearch`
+- `FilterToolbarActions`
+- `FilterToolbarMenu`
+- `FilterToolbarDivider`
 - `EmptyState`
 - `Table`
 - `DataTable`
@@ -53,7 +58,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 - B02: `DataTable` 기반을 만들고 SQL preview 또는 Dashboard list 같은 표형 화면에 적용할 수 있는 기준을 세웠다.
 - B03: SQL preview table과 Catalog schema table은 `DataTable` 기준으로 전환되었다.
 - B04: Dashboard list table과 dashboard runtime table widget은 `DataTable` 기준으로 전환되었다.
-- Dashboard list toolbar는 `Panel`, `PanelHeader`, `Button`, `Input`을 사용하지만, search body, menu, divider, checkbox filter layout은 아직 화면 전용 구조다.
+- #369에서 Jobs/Dashboard list toolbar body/search/actions/menu/divider shell은 `FilterToolbar` 기준으로 전환되었다.
 - Catalog preview shell은 `Panel`/`PanelHeader`를 사용하지만, schema preview card, lineage teaser, SQL 이동 CTA 조합은 화면 전용 구조다.
 
 따라서 아래 gap은 B02/B03/B04 누락 목록이 아니라, 지금까지 만든 공통 컴포넌트로 대체되지 않은 UI와 후속 공통화 후보를 모아 둔 목록이다.
@@ -68,7 +73,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 전체 | key-value review summary | `설계 필요` | `ReviewSummary` 또는 `KeyValueList` | ETL Review, Catalog detail, Dashboard metadata에서 반복 가능성 있음. |
 | 전체 | 상태 검증 목록 | `설계 필요` | `ValidationList` | ETL governance/review validation, backend readiness UI 후보에서 반복 가능성 있음. |
 | 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
-| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | Dashboard list는 `Panel`/`PanelHeader`/`Button`/`Input` 적용 완료. Jobs/Dashboard/Catalog의 toolbar body, menu, divider, checkbox filter layout 공통화는 후속 후보. |
+| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. Catalog는 tag row, checkbox filter, sort menu가 결합되어 있어 후속 판단으로 유지. |
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel` 또는 `ResultPanel` | SQL preview table, Catalog schema table, Dashboard table widget의 표 자체는 `DataTable` 기준으로 전환됨. preview header, empty/loading, CTA, overflow shell은 화면별 CSS가 남아 있음. |
 | 전체 | dense settings form | `설계 필요` | `SettingsPanel`, `FormFieldGroup` | Dashboard widget config, ETL rule builder, SQL option form에서 input/select/textarea layout CSS가 계속 남음. |
 | 전체 | icon-only option grid | `관찰됨` | `IconOptionGrid` | Dashboard widget type picker처럼 icon button grid + selected state + tooltip 조합이 반복될 수 있음. |
@@ -97,7 +102,7 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 작업 기준 처리 |
 | --- | --- | --- | --- | --- |
 | SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `부분 해결` | `PreviewPanel`, `ResultPanel` | B02/B03/B04에서 SQL preview table, Catalog schema table, Dashboard table widget은 `DataTable` 기준으로 전환됨. 남은 범위는 preview shell/header/CTA/empty/loading/overflow layout 공통화 후보다. |
-| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `부분 해결` | `FilterToolbar` | B04에서 `Panel`, `PanelHeader`, `Button`, `Input` 적용 완료. 남은 범위는 toolbar body/menu/divider/checkbox filter layout을 화면 전용 class에서 공통 shell로 빼는 후속 후보다. |
+| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. menu option과 filter button의 화면 고유 스타일은 유지. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `설계 필요` | `RuntimeTopbar`, `ActionGroup` | B04에서 `Button`/`Input`만 적용. action grouping, dirty state, publish state shell은 화면 전용으로 유지. |
 | Dashboard widget frame | selected/editable frame + delete action + widget chrome | `설계 필요` | `WidgetShell` | B04에서 delete action만 `Button`으로 전환. frame chrome, selected state, resize/grid integration은 유지. |
@@ -149,4 +154,5 @@ CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보�
 | 2026-07-09 | #361에서 Ingest/Catalog/Dashboard까지 남은 legacy xflow naming을 AskLake 도메인 이름으로 rename한 상태를 반영. |
 | 2026-07-09 | #364에서 Dashboard dataset tree의 legacy MUI TreeItem selector 제거 상태를 반영. TreePanel/TreeHoverCard gap은 유지. |
 | 2026-07-09 | #367에서 `Panel`, `PanelHeader`, `MetricCard`를 추가하고 Jobs/Catalog/Dashboard list shell에 1차 적용. FilterToolbar, PreviewPanel, WidgetShell, TreePanel gap은 유지. |
-| 2026-07-09 | #372에서 B02/B03/B04 완료 범위와 후속 공통화 후보를 구분. `DataTable`/primitive 적용이 끝난 표와 toolbar를 기능 미완료가 아닌 `부분 해결` 상태로 정리. |
+| 2026-07-09 | #369에서 `FilterToolbar` 계열 컴포넌트를 추가하고 Jobs/Dashboard list에 1차 적용. Catalog 검색/필터는 구조 차이로 후속 판단. |
+| 2026-07-09 | #372에서 B02/B03/B04 완료 범위와 후속 공통화 후보를 구분. `DataTable`/primitive 적용이 끝난 표와 `FilterToolbar` 적용 범위를 기능 미완료가 아닌 `부분 해결`/`해결됨` 상태로 정리. |
