@@ -2,6 +2,11 @@ import * as React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+} from "@/components/ui/pagination";
 import { cn } from "@/lib/utils";
 
 export interface PaginationBarProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -62,47 +67,64 @@ export const PaginationBar = React.forwardRef<HTMLDivElement, PaginationBarProps
         {...props}
       >
         {rangeLabel ? (
-          <span className={cn("min-w-0 text-xs font-bold text-slate-500", summaryClassName)}>
+          <div
+            className={cn("min-w-0 text-xs font-bold text-slate-500", summaryClassName)}
+            data-slot="pagination-summary"
+          >
             {rangeLabel}
-          </span>
+          </div>
         ) : null}
-        <div className={cn("inline-flex shrink-0 items-center justify-end gap-2", actionsClassName)}>
-          <Button
-            aria-label={previousAriaLabel}
-            disabled={resolvedPreviousDisabled}
-            onClick={onPrevious}
-            size={buttonSize}
-            type="button"
-            variant={buttonVariant}
-          >
-            {previousLabel ?? (
-              <>
-                <ChevronLeft aria-hidden="true" />
-                이전
-              </>
-            )}
-          </Button>
-          {resolvedPageLabel ? (
-            <strong className="whitespace-nowrap text-xs font-black text-slate-500">
-              {resolvedPageLabel}
-            </strong>
-          ) : null}
-          <Button
-            aria-label={nextAriaLabel}
-            disabled={resolvedNextDisabled}
-            onClick={onNext}
-            size={buttonSize}
-            type="button"
-            variant={buttonVariant}
-          >
-            {nextLabel ?? (
-              <>
-                다음
-                <ChevronRight aria-hidden="true" />
-              </>
-            )}
-          </Button>
-        </div>
+        <Pagination
+          className={cn("mx-0 w-auto shrink-0 justify-end", actionsClassName)}
+          data-slot="pagination-actions"
+        >
+          <PaginationContent className="flex-wrap justify-end gap-2">
+            <PaginationItem>
+              <Button
+                aria-label={previousAriaLabel}
+                disabled={resolvedPreviousDisabled}
+                onClick={onPrevious}
+                size={buttonSize}
+                type="button"
+                variant={buttonVariant}
+              >
+                {previousLabel ?? (
+                  <>
+                    <ChevronLeft aria-hidden="true" />
+                    이전
+                  </>
+                )}
+              </Button>
+            </PaginationItem>
+            {resolvedPageLabel ? (
+              <PaginationItem>
+                <strong
+                  className="inline-flex min-h-8 items-center whitespace-nowrap px-1 text-xs font-black text-slate-500"
+                  data-slot="pagination-page-label"
+                >
+                  {resolvedPageLabel}
+                </strong>
+              </PaginationItem>
+            ) : null}
+            <PaginationItem>
+              <Button
+                aria-label={nextAriaLabel}
+                disabled={resolvedNextDisabled}
+                onClick={onNext}
+                size={buttonSize}
+                type="button"
+                variant={buttonVariant}
+              >
+                {nextLabel ?? (
+                  <>
+                    다음
+                    <ChevronRight aria-hidden="true" />
+                  </>
+                )}
+              </Button>
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
       </div>
     );
   },

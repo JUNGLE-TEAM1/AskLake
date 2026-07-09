@@ -1,8 +1,18 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FilterToolbar, FilterToolbarActions, FilterToolbarDivider, FilterToolbarMenu, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
-import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { FilterToolbar, FilterToolbarActions, FilterToolbarDivider, FilterToolbarInput, FilterToolbarMenu, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { dashboardSortOptions, getDashboardSortLabel } from "../dashboardListUtils";
 import type { DashboardListControl, DashboardSortOption } from "../dashboardListUtils";
@@ -38,6 +48,9 @@ export function DashboardListToolbar({
 }) {
   const activeSortLabel = getDashboardSortLabel(sortOption);
   const activeFilterCount = (ownerFilter === "all" ? 0 : 1) + selectedTags.length;
+  const setControlOpen = (control: DashboardListControl, open: boolean) => {
+    if ((openControl === control) !== open) onToggleControl(control);
+  };
 
   return (
     <Panel className="dashboard-list-toolbar" overflow="visible">
@@ -49,64 +62,89 @@ export function DashboardListToolbar({
       />
       <FilterToolbar layout="actions">
         <FilterToolbarSearch icon={<Search size={16} />}>
-          <Input
-            className="h-auto border-0 bg-transparent px-0 py-0 font-bold shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          <FilterToolbarInput
             aria-label="대시보드 검색"
-            type="search"
             placeholder="대시보드 검색..."
-            variant="ghost"
+            type="search"
             value={searchQuery}
             onChange={(event) => onSearchQueryChange(event.target.value)}
           />
         </FilterToolbarSearch>
         <FilterToolbarActions>
           <FilterToolbarMenu>
-            <Button className="dashboard-filter-button" type="button" aria-expanded={openControl === "owner"} aria-haspopup="menu" onClick={() => onToggleControl("owner")} size="sm" variant="outline">
-              <Filter size={22} />
-              <span>{ownerFilter === "all" ? "모든 소유자" : ownerFilter}</span>
-              <ChevronDown size={18} />
-            </Button>
-            {openControl === "owner" && (
-              <div className="dashboard-list-menu" role="menu">
-                <Button className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} type="button" role="menuitem" onClick={() => onSelectOwner("all")} size="sm" variant="ghost">모든 소유자</Button>
+            <DropdownMenu open={openControl === "owner"} onOpenChange={(open) => setControlOpen("owner", open)}>
+              <DropdownMenuTrigger asChild>
+                <Button className="dashboard-filter-button" type="button" size="sm" variant="outline">
+                  <Filter size={22} />
+                  <span>{ownerFilter === "all" ? "모든 소유자" : ownerFilter}</span>
+                  <ChevronDown size={18} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="dashboard-list-menu">
+                <DropdownMenuLabel>소유자</DropdownMenuLabel>
+                <DropdownMenuItem className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} onSelect={() => onSelectOwner("all")}>
+                  모든 소유자
+                </DropdownMenuItem>
                 {owners.map((owner) => (
-                  <Button className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"} key={owner} type="button" role="menuitem" onClick={() => onSelectOwner(owner)} size="sm" variant="ghost">{owner}</Button>
+                  <DropdownMenuItem
+                    className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"}
+                    key={owner}
+                    onSelect={() => onSelectOwner(owner)}
+                  >
+                    {owner}
+                  </DropdownMenuItem>
                 ))}
-              </div>
-            )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </FilterToolbarMenu>
           <FilterToolbarMenu>
-            <Button className="dashboard-filter-button" type="button" aria-expanded={openControl === "tag"} aria-haspopup="menu" onClick={() => onToggleControl("tag")} size="sm" variant="outline">
-              <span>{selectedTags.length ? `태그 ${selectedTags.length}개` : "태그 필터"}</span>
-              <ChevronRight size={18} />
-            </Button>
-            {openControl === "tag" && (
-              <div className="dashboard-list-menu" role="menu">
-                <Button className="dashboard-menu-option" type="button" role="menuitem" onClick={onClearTags} size="sm" variant="ghost">전체 태그</Button>
+            <DropdownMenu open={openControl === "tag"} onOpenChange={(open) => setControlOpen("tag", open)}>
+              <DropdownMenuTrigger asChild>
+                <Button className="dashboard-filter-button" type="button" size="sm" variant="outline">
+                  <span>{selectedTags.length ? `태그 ${selectedTags.length}개` : "태그 필터"}</span>
+                  <ChevronRight size={18} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="dashboard-list-menu">
+                <DropdownMenuLabel>태그</DropdownMenuLabel>
+                <DropdownMenuItem className="dashboard-menu-option" onSelect={onClearTags}>
+                  전체 태그
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 {tags.map((tag) => (
-                  <label className="dashboard-menu-option checkbox" key={tag}>
-                    <input type="checkbox" checked={selectedTags.includes(tag)} onChange={() => onToggleTag(tag)} />
-                    <span>{tag}</span>
-                  </label>
+                  <DropdownMenuCheckboxItem
+                    checked={selectedTags.includes(tag)}
+                    className="dashboard-menu-option checkbox"
+                    key={tag}
+                    onCheckedChange={() => onToggleTag(tag)}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    {tag}
+                  </DropdownMenuCheckboxItem>
                 ))}
-              </div>
-            )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </FilterToolbarMenu>
           <FilterToolbarDivider aria-hidden="true" />
           <FilterToolbarMenu>
-            <Button className="dashboard-sort-button" type="button" aria-label={`정렬 기준: ${activeSortLabel}`} aria-expanded={openControl === "sort"} aria-haspopup="menu" title={activeSortLabel} onClick={() => onToggleControl("sort")} size="icon" variant="outline">
-              <ArrowUpDown size={24} />
-            </Button>
-            {openControl === "sort" && (
-              <div className="dashboard-list-menu sort" role="menu">
-                {dashboardSortOptions.map((option) => (
-                  <Button className={sortOption === option.id ? "dashboard-menu-option active" : "dashboard-menu-option"} key={option.id} type="button" role="menuitem" aria-label={option.ariaLabel} onClick={() => onSelectSort(option.id)} size="sm" variant="ghost">
-                    <span>{option.label}</span>
-                    {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
-                  </Button>
-                ))}
-              </div>
-            )}
+            <DropdownMenu open={openControl === "sort"} onOpenChange={(open) => setControlOpen("sort", open)}>
+              <DropdownMenuTrigger asChild>
+                <Button className="dashboard-sort-button" type="button" aria-label={`정렬 기준: ${activeSortLabel}`} title={activeSortLabel} size="icon" variant="outline">
+                  <ArrowUpDown size={24} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="dashboard-list-menu sort">
+                <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={sortOption} onValueChange={(value) => onSelectSort(value as DashboardSortOption)}>
+                  {dashboardSortOptions.map((option) => (
+                    <DropdownMenuRadioItem className="dashboard-menu-option" key={option.id} value={option.id} aria-label={option.ariaLabel}>
+                      <span>{option.label}</span>
+                      {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </FilterToolbarMenu>
         </FilterToolbarActions>
       </FilterToolbar>

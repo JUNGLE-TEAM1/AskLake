@@ -39,6 +39,7 @@ import {
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
 import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
@@ -409,8 +410,7 @@ export function CatalogPage({
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
   };
 
-  const updateMaterializationRunPage = (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => {
-    event.stopPropagation();
+  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
     const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
     const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
     setMaterializationRunPageByDatasetId((state) => ({
@@ -615,30 +615,15 @@ export function CatalogPage({
             </div>
 
             {hasCatalogResults && (
-              <div className="catalog-pagination" aria-label="검색 결과 페이지">
-                <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
-                <div>
-                  <Button
-                    type="button"
-                    disabled={currentCatalogPage === 1}
-                    onClick={() => updateResultPage(currentCatalogPage - 1)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    이전
-                  </Button>
-                  <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
-                  <Button
-                    type="button"
-                    disabled={currentCatalogPage === totalCatalogPages}
-                    onClick={() => updateResultPage(currentCatalogPage + 1)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    다음
-                  </Button>
-                </div>
-              </div>
+              <PaginationBar
+                aria-label="검색 결과 페이지"
+                className="catalog-pagination"
+                currentPage={currentCatalogPage}
+                onNext={() => updateResultPage(currentCatalogPage + 1)}
+                onPrevious={() => updateResultPage(currentCatalogPage - 1)}
+                rangeLabel={`${currentPageStartIndex + 1}-${currentPageEndIndex} / ${filteredDatasets.length}`}
+                totalPages={totalCatalogPages}
+              />
             )}
           </Panel>
         </div>
@@ -872,7 +857,7 @@ function CatalogMaterializationRuns({
 }: {
   dataset: CatalogDataset;
   onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
-  onPageChange: (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => void;
+  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
   onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
   page: number;
   selectedRunId: string | null;
@@ -942,14 +927,14 @@ function CatalogMaterializationRuns({
         <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
       )}
       {runs.length > materializationRunPageSize && (
-        <div className="catalog-materialization-pagination">
-          <span>{pageStartIndex + 1}-{Math.min(pageStartIndex + visibleRuns.length, runs.length)} / {runs.length}</span>
-          <div>
-            <Button disabled={currentPage === 1} type="button" onClick={(event) => onPageChange(event, dataset, currentPage - 1)} size="sm" variant="outline">이전</Button>
-            <strong>{currentPage} / {totalPages}</strong>
-            <Button disabled={currentPage === totalPages} type="button" onClick={(event) => onPageChange(event, dataset, currentPage + 1)} size="sm" variant="outline">다음</Button>
-          </div>
-        </div>
+        <PaginationBar
+          className="catalog-materialization-pagination"
+          currentPage={currentPage}
+          onNext={() => onPageChange(dataset, currentPage + 1)}
+          onPrevious={() => onPageChange(dataset, currentPage - 1)}
+          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
+          totalPages={totalPages}
+        />
       )}
     </div>
   );

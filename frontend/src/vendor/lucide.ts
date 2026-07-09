@@ -63,6 +63,7 @@ export { default as Loader2 } from "lucide-react/dist/esm/icons/loader-circle.mj
 export { default as LogOut } from "lucide-react/dist/esm/icons/log-out.mjs";
 export { default as Maximize2 } from "lucide-react/dist/esm/icons/maximize-2.mjs";
 export { default as Minus } from "lucide-react/dist/esm/icons/minus.mjs";
+export { default as MoreHorizontal } from "lucide-react/dist/esm/icons/ellipsis.mjs";
 export { default as MousePointer2 } from "lucide-react/dist/esm/icons/mouse-pointer-2.mjs";
 export { default as PanelLeftClose } from "lucide-react/dist/esm/icons/panel-left-close.mjs";
 export { default as PanelLeftOpen } from "lucide-react/dist/esm/icons/panel-left-open.mjs";
