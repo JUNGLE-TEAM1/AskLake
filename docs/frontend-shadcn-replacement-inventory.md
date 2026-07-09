@@ -131,7 +131,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 2. Foundation PR: `components.json`과 빠진 shadcn primitive를 추가한다. 화면 교체는 최소화한다.
 3. Forms/Controls PR: ETL/SQL/Dashboard/S3/DB picker의 input/select/textarea/checkbox/radio를 교체한다.
 4. Navigation/Menu/Overlay PR: tabs, toggle group, dropdown menu, alert dialog, sheet를 적용한다.
-5. Table/List/Search PR: Catalog result를 `DataTable`로 전환하고 `PaginationBar`/`FilterToolbar` 내부를 shadcn primitive로 정리한다.
+5. Table/List/Search PR: `DataTable` footer, `PaginationBar`, `FilterToolbar` 내부와 Catalog/Dashboard menu를 shadcn primitive 기준으로 정리한다. Catalog result card 자체는 별도 list/card cleanup 후보로 둔다.
 6. Tree Standardization PR: S3/ETL/SQL의 MUI/custom tree를 `react-arborist`로 교체하고 ReUI File Explorer Tree 스타일의 shadcn-style row UI를 적용한다.
 7. Complex Surface Polish PR: dashboard runtime, ETL rule builder, SQL result/editor shell을 화면별로 폴리싱한다.
 8. CSS Cleanup + Visual QA PR: 교체 완료 selector만 삭제하고 주요 route를 검증한다.
@@ -143,6 +143,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
 | 2026-07-09 | #418에서 ETL/Schedule/S3/DB picker의 대표 form control을 `Input`, `NativeSelect`, `InputGroup`, `Checkbox` 기준으로 1차 교체했다. |
+| 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 
@@ -188,3 +189,27 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - `FormFieldGroup`/`NativeSelectField`는 즉시 삭제하지 않는다. 여러 ETL grid와 legacy `.field` selector가 label/density를 공유하므로, wrapper 제거는 route QA와 CSS cleanup 이후 단계에서 진행한다.
 - `CheckableOption` 내부 radio/checkbox, target format custom menu, MUI TreeView row/button은 이번 Forms/Controls 1차 범위가 아니다.
 - 화면별 CSS는 삭제하지 않는다. 교체가 끝난 selector의 삭제 판단은 `docs/frontend-css-cleanup-inventory.md`에서 추적한다.
+
+## #422 Table/List/Search Primitive 반영
+
+이번 PR은 목록/검색/표 footer에서 이미 만든 AskLake composition component를 유지하되, 내부 구현을 shadcn-style primitive로 줄이는 작업이다. Backend API, route 구조, table engine 교체는 포함하지 않는다.
+
+적용 범위:
+
+- `PaginationBar`
+  - 내부 markup을 shadcn `Pagination`/`PaginationContent`/`PaginationItem` 기준으로 재구성했다.
+  - Catalog 검색 결과 footer와 materialization run footer도 `PaginationBar`로 연결했다.
+- `DataTable`
+  - 내부 pagination footer를 `PaginationBar`로 연결하고 page size select는 `NativeSelect`로 교체했다.
+  - TanStack sorting/loading/empty/table API는 유지했다.
+- `FilterToolbar`
+  - 검색 wrapper는 `InputGroup`, 입력 control은 `InputGroupInput`, checkbox control은 `Checkbox` primitive를 사용한다.
+- Catalog/Dashboard menu
+  - Catalog sort menu는 `DropdownMenuRadioGroup`/`DropdownMenuRadioItem`로 전환했다.
+  - Dashboard owner/tag/sort menu는 `DropdownMenuItem`/`DropdownMenuCheckboxItem`/`DropdownMenuRadioItem` 기준으로 전환했다.
+
+유지/보류:
+
+- Catalog result card 자체, tag/status visual state, lineage/schema preview shell은 후속 list/card cleanup 후보로 유지한다.
+- Dashboard menu option/filter button/table density CSS는 route QA 전까지 유지한다.
+- `frontend/src/vendor/lucide.ts`에는 이번에 실제로 쓰기 시작한 `MoreHorizontal`, `Circle` 아이콘 export만 추가했다.

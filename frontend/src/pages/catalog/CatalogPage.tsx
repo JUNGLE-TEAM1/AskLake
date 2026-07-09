@@ -23,16 +23,24 @@ import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   FilterToolbar,
   FilterToolbarActions,
   FilterToolbarCheckbox,
   FilterToolbarCheckboxGroup,
   FilterToolbarFieldGroup,
   FilterToolbarInput,
-  FilterToolbarMenu,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
 import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
@@ -279,11 +287,9 @@ export function CatalogPage({
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
-  const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
-  const sortMenuRef = useRef<HTMLDivElement>(null);
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const topTags = useMemo(() => tags.slice(0, 10), [tags]);
   const inputSearchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
@@ -341,18 +347,6 @@ export function CatalogPage({
   }, [currentCatalogPage, currentPage]);
 
   useEffect(() => {
-    if (!isSortMenuOpen) return undefined;
-
-    const closeSortMenu = (event: MouseEvent) => {
-      if (sortMenuRef.current?.contains(event.target as Node)) return;
-      setIsSortMenuOpen(false);
-    };
-
-    document.addEventListener("mousedown", closeSortMenu);
-    return () => document.removeEventListener("mousedown", closeSortMenu);
-  }, [isSortMenuOpen]);
-
-  useEffect(() => {
     if (!hasCatalogResults || paginatedDatasets.length === 0) return;
 
     const selectedInResults = paginatedDatasets.find((dataset) => dataset.id === selectedDataset.id);
@@ -396,7 +390,6 @@ export function CatalogPage({
 
   const updateSortMode = (nextSortMode: CatalogSortMode) => {
     setSortMode(nextSortMode);
-    setIsSortMenuOpen(false);
     onAction("catalog.sort_changed", `/api/catalog/search/sort?sort=${nextSortMode}`, nextSortMode);
   };
 
@@ -418,8 +411,7 @@ export function CatalogPage({
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
   };
 
-  const updateMaterializationRunPage = (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => {
-    event.stopPropagation();
+  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
     const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
     const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
     setMaterializationRunPageByDatasetId((state) => ({
@@ -528,41 +520,34 @@ export function CatalogPage({
                   </FilterToolbarCheckbox>
                 </FilterToolbarCheckboxGroup>
                 <FilterToolbarActions>
-                  <FilterToolbarMenu className="catalog-sort-control" ref={sortMenuRef}>
-                    <Button
-                      aria-expanded={isSortMenuOpen}
-                      aria-haspopup="menu"
-                      className="catalog-sort-button"
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setIsSortMenuOpen((isOpen) => !isOpen);
-                        onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                      }}
-                    >
-                      정렬: {selectedSortOption.label} ▾
-                    </Button>
-                    {isSortMenuOpen && (
-                      <div className="catalog-sort-menu" role="menu" aria-label="정렬 기준">
+                  <DropdownMenu onOpenChange={(open) => {
+                    if (open) onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
+                  }}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        className="catalog-sort-button"
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                      >
+                        정렬: {selectedSortOption.label} <ChevronDown size={14} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="catalog-sort-menu">
+                      <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                      <DropdownMenuRadioGroup value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
                         {catalogSortOptions.map((option) => (
-                          <Button
-                            aria-checked={sortMode === option.mode}
-                            className={sortMode === option.mode ? "active" : ""}
+                          <DropdownMenuRadioItem
+                            className="catalog-sort-option"
                             key={option.mode}
-                            role="menuitemradio"
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => updateSortMode(option.mode)}
+                            value={option.mode}
                           >
-                            <span>{sortMode === option.mode ? "✓" : ""}</span>
                             {option.label}
-                          </Button>
+                          </DropdownMenuRadioItem>
                         ))}
-                      </div>
-                    )}
-                  </FilterToolbarMenu>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>
@@ -631,30 +616,15 @@ export function CatalogPage({
             </div>
 
             {hasCatalogResults && (
-              <div className="catalog-pagination" aria-label="검색 결과 페이지">
-                <span>{currentPageStartIndex + 1}-{currentPageEndIndex} / {filteredDatasets.length}</span>
-                <div>
-                  <Button
-                    type="button"
-                    disabled={currentCatalogPage === 1}
-                    onClick={() => updateResultPage(currentCatalogPage - 1)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    이전
-                  </Button>
-                  <strong>{currentCatalogPage} / {totalCatalogPages}</strong>
-                  <Button
-                    type="button"
-                    disabled={currentCatalogPage === totalCatalogPages}
-                    onClick={() => updateResultPage(currentCatalogPage + 1)}
-                    size="sm"
-                    variant="outline"
-                  >
-                    다음
-                  </Button>
-                </div>
-              </div>
+              <PaginationBar
+                aria-label="검색 결과 페이지"
+                className="catalog-pagination"
+                currentPage={currentCatalogPage}
+                onNext={() => updateResultPage(currentCatalogPage + 1)}
+                onPrevious={() => updateResultPage(currentCatalogPage - 1)}
+                rangeLabel={`${currentPageStartIndex + 1}-${currentPageEndIndex} / ${filteredDatasets.length}`}
+                totalPages={totalCatalogPages}
+              />
             )}
           </Panel>
         </div>
@@ -888,7 +858,7 @@ function CatalogMaterializationRuns({
 }: {
   dataset: CatalogDataset;
   onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
-  onPageChange: (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => void;
+  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
   onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
   page: number;
   selectedRunId: string | null;
@@ -958,14 +928,14 @@ function CatalogMaterializationRuns({
         <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
       )}
       {runs.length > materializationRunPageSize && (
-        <div className="catalog-materialization-pagination">
-          <span>{pageStartIndex + 1}-{Math.min(pageStartIndex + visibleRuns.length, runs.length)} / {runs.length}</span>
-          <div>
-            <Button disabled={currentPage === 1} type="button" onClick={(event) => onPageChange(event, dataset, currentPage - 1)} size="sm" variant="outline">이전</Button>
-            <strong>{currentPage} / {totalPages}</strong>
-            <Button disabled={currentPage === totalPages} type="button" onClick={(event) => onPageChange(event, dataset, currentPage + 1)} size="sm" variant="outline">다음</Button>
-          </div>
-        </div>
+        <PaginationBar
+          className="catalog-materialization-pagination"
+          currentPage={currentPage}
+          onNext={() => onPageChange(dataset, currentPage + 1)}
+          onPrevious={() => onPageChange(dataset, currentPage - 1)}
+          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
+          totalPages={totalPages}
+        />
       )}
     </div>
   );

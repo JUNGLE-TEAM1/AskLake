@@ -36,6 +36,7 @@ export { default as ChevronRight } from "lucide-react/dist/esm/icons/chevron-rig
 export { default as ChevronUp } from "lucide-react/dist/esm/icons/chevron-up.mjs";
 export { default as ChevronsLeft } from "lucide-react/dist/esm/icons/chevrons-left.mjs";
 export { default as ChevronsRight } from "lucide-react/dist/esm/icons/chevrons-right.mjs";
+export { default as Circle } from "lucide-react/dist/esm/icons/circle.mjs";
 export { default as CircleDot } from "lucide-react/dist/esm/icons/circle-dot.mjs";
 export { default as CircleGauge } from "lucide-react/dist/esm/icons/circle-gauge.mjs";
 export { default as CircleHelp } from "lucide-react/dist/esm/icons/circle-help.mjs";
@@ -63,6 +64,7 @@ export { default as Loader2 } from "lucide-react/dist/esm/icons/loader-circle.mj
 export { default as LogOut } from "lucide-react/dist/esm/icons/log-out.mjs";
 export { default as Maximize2 } from "lucide-react/dist/esm/icons/maximize-2.mjs";
 export { default as Minus } from "lucide-react/dist/esm/icons/minus.mjs";
+export { default as MoreHorizontal } from "lucide-react/dist/esm/icons/ellipsis.mjs";
 export { default as MousePointer2 } from "lucide-react/dist/esm/icons/mouse-pointer-2.mjs";
 export { default as PanelLeftClose } from "lucide-react/dist/esm/icons/panel-left-close.mjs";
 export { default as PanelLeftOpen } from "lucide-react/dist/esm/icons/panel-left-open.mjs";

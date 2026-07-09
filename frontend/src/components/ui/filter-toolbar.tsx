@@ -1,6 +1,8 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 
+import { Checkbox } from "@/components/ui/checkbox";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { cn } from "@/lib/utils";
 
 export const filterToolbarVariants = cva(
@@ -57,14 +59,14 @@ export interface FilterToolbarSearchProps
 
 export const FilterToolbarSearch = React.forwardRef<HTMLDivElement, FilterToolbarSearchProps>(
   ({ children, className, icon, size, ...props }, ref) => (
-    <div
+    <InputGroup
       className={cn(filterToolbarSearchVariants({ className, size }))}
       ref={ref}
       {...props}
     >
-      {icon ? <span className="inline-flex shrink-0 text-current">{icon}</span> : null}
+      {icon ? <InputGroupAddon className="px-0 text-current">{icon}</InputGroupAddon> : null}
       {children}
-    </div>
+    </InputGroup>
   ),
 );
 FilterToolbarSearch.displayName = "FilterToolbarSearch";
@@ -74,9 +76,10 @@ export interface FilterToolbarInputProps
 
 export const FilterToolbarInput = React.forwardRef<HTMLInputElement, FilterToolbarInputProps>(
   ({ className, ...props }, ref) => (
-    <input
-      className={cn("min-w-0 flex-1 appearance-none border-0 bg-transparent p-0 text-sm font-semibold text-slate-900 outline-none placeholder:text-slate-400 focus:outline-none", className)}
+    <InputGroupInput
+      className={cn("h-auto min-w-0 flex-1 px-0 py-0 text-sm font-semibold text-slate-900 placeholder:text-slate-400", className)}
       ref={ref}
+      variant="ghost"
       {...props}
     />
   ),
@@ -154,12 +157,11 @@ export const FilterToolbarCheckbox = React.forwardRef<HTMLLabelElement, FilterTo
       ref={ref}
       {...props}
     >
-      <input
+      <Checkbox
         checked={checked}
-        className="size-[18px] rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+        className="size-[18px]"
         disabled={disabled}
-        type="checkbox"
-        onChange={(event) => onCheckedChange(event.target.checked)}
+        onCheckedChange={(value) => onCheckedChange(Boolean(value))}
       />
       <span>{children}</span>
     </label>

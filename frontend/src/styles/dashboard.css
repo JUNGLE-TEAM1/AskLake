@@ -560,9 +560,6 @@
 }
 
 .dashboard-list-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
   z-index: 20;
   display: grid;
   width: 240px;
@@ -579,7 +576,7 @@
   width: 260px;
 }
 
-.dashboard-list-toolbar .dashboard-menu-option {
+.dashboard-menu-option {
   display: flex;
   width: 100%;
   min-height: 38px;
@@ -596,28 +593,26 @@
   text-align: left;
 }
 
-.dashboard-list-toolbar .dashboard-menu-option span {
+.dashboard-menu-option span {
   min-width: 0;
 }
 
-.dashboard-list-toolbar .dashboard-menu-option svg {
+.dashboard-menu-option svg {
   flex: 0 0 auto;
 }
 
-.dashboard-list-toolbar .dashboard-menu-option.checkbox {
+.dashboard-menu-option.checkbox {
   justify-content: flex-start;
+  padding-left: 32px;
 }
 
-.dashboard-list-toolbar .dashboard-menu-option:hover,
-.dashboard-list-toolbar .dashboard-menu-option.active {
+.dashboard-menu-option:hover,
+.dashboard-menu-option:focus-visible,
+.dashboard-menu-option[data-highlighted],
+.dashboard-menu-option[data-state="checked"],
+.dashboard-menu-option.active {
   background: #eff6ff;
   color: #2563eb;
-}
-
-.dashboard-menu-option.checkbox input {
-  width: 15px;
-  height: 15px;
-  accent-color: #2563eb;
 }
 
 .dashboard-table-list {

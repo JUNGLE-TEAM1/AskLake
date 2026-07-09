@@ -98,12 +98,9 @@
 }
 
 .catalog-sort-menu {
-  position: absolute;
   z-index: 12;
-  top: calc(100% + 8px);
-  right: 0;
   display: grid;
-  min-width: 150px;
+  min-width: 170px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #fff;
@@ -111,20 +108,24 @@
   padding: 6px;
 }
 
-.catalog-sort-menu button {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+.catalog-sort-option {
+  display: flex;
   width: 100%;
+  min-height: 36px;
   align-items: center;
   border-radius: 6px;
   color: #475569;
+  font-size: 13px;
+  font-weight: 800;
   padding: 8px 10px;
   text-align: left;
   white-space: nowrap;
 }
 
-.catalog-sort-menu button:hover,
-.catalog-sort-menu button.active {
+.catalog-sort-option:hover,
+.catalog-sort-option:focus-visible,
+.catalog-sort-option[data-highlighted],
+.catalog-sort-option[data-state="checked"] {
   background: #eff6ff;
   color: #1d4ed8;
 }
@@ -145,43 +146,24 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  border: 0;
   border-top: 1px solid #e2e8f0;
+  border-radius: 0;
+  background: #fff;
   padding: 0 20px;
 }
 
-.catalog-pagination span,
-.catalog-pagination strong {
+.catalog-pagination [data-slot="pagination-summary"],
+.catalog-pagination [data-slot="pagination-page-label"] {
   color: #64748b;
   font-size: 13px;
   font-weight: 800;
 }
 
-.catalog-pagination div {
+.catalog-pagination [data-slot="pagination-actions"] {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-}
-
-.catalog-pagination button {
-  min-width: 58px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
-  color: #475569;
-  font-size: 13px;
-  font-weight: 800;
-  padding: 7px 10px;
-}
-
-.catalog-pagination button:not(:disabled):hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.catalog-pagination button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .catalog-result-item {
@@ -482,36 +464,17 @@
 }
 
 .catalog-materialization-pagination {
+  border: 0;
   border-top: 1px solid #eef2f7;
+  border-radius: 0;
+  box-shadow: none;
   padding-top: 8px;
 }
 
-.catalog-materialization-pagination div {
+.catalog-materialization-pagination [data-slot="pagination-actions"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-}
-
-.catalog-materialization-pagination button {
-  min-height: 28px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #fff;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 8px;
-}
-
-.catalog-materialization-pagination button:not(:disabled):hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.catalog-materialization-pagination button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
 }
 
 .catalog-help-text,

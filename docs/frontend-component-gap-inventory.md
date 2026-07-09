@@ -165,10 +165,10 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | key-value review summary | `부분 해결` | `KeyValueList` | #385에서 Creation summary, Jobs detail metadata, ETL Review basic/destination/permission 요약에 적용. Catalog detail과 Dashboard metadata는 후속 판단. |
 | 전체 | 상태 검증 목록 | `부분 해결` | `ValidationList` | #385에서 ETL Permission governance check와 Review validation rows에 적용. backend readiness UI 후보는 유지. |
 | 전체 | metric summary card grid | `해결됨` | `MetricCard` | #367에서 Ingest Jobs metrics에 1차 적용. Dashboard runtime/ETL detail metric류는 화면별 상태가 달라 후속 적용 판단. |
-| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. #375에서 Catalog 검색/태그/checkbox filter와 SQL 분석 테이블 검색까지 `FilterToolbar` 계열로 확장. Catalog sort menu와 tag/chip 시각 상태는 후속 `DropdownMenu`/`Chip`/`TagList` 후보로 유지. |
+| 전체 | filter/search toolbar | `부분 해결` | `FilterToolbar` | #369에서 Jobs/Dashboard list의 toolbar body/search/actions를 1차 공통화. #375에서 Catalog 검색/태그/checkbox filter와 SQL 분석 테이블 검색까지 `FilterToolbar` 계열로 확장. #422에서 `FilterToolbarSearch`/`FilterToolbarInput`/`FilterToolbarCheckbox` 내부를 `InputGroup`/`Checkbox` primitive로 바꾸고, Catalog/Dashboard sort/filter menu는 `DropdownMenu` 기준으로 전환. Catalog tag/chip 시각 상태는 후속 `Chip`/`TagList` 후보로 유지. |
 | 전체 | tag/chip/status row | `부분 해결` | `Chip`, `TagList`, `StatusBadge` | #385에서 Jobs status/owner/tag, ETL target tag, Dashboard row tags/status, Dashboard list 상태 meta에 적용. Catalog tag/status와 일부 ETL data chip은 후속 판단. |
 | 전체 | 하단 고정/반고정 command 영역 | `부분 해결` | `CommandBar` | #378에서 `CommandBar`를 추가하고 Creation top/panel actions, ETL schema/rule bottom bar 대표 사용처에 적용. Dashboard runtime topbar/action grouping은 후속 판단. |
-| 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. DataTable 내부 pagination과 Catalog 전용 pagination은 이번 범위에서 제외. |
+| 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. #422에서 DataTable 내부 footer와 Catalog 검색 결과/materialization run pagination도 `PaginationBar` 기준으로 연결. 화면별 footer density CSS는 route QA 전까지 유지. |
 | 전체 | modal/backdrop/dialog shell | `부분 해결` | `DialogShell` | #378에서 SQL materialize dialog, Ingest job/run log dialog, Dashboard delete dialog 대표 사용처에 적용. Catalog modal, Dashboard chart/runtime dialog, DAG modal은 후속 QA 범위. |
 | 전체 | picker dialog shell | `부분 해결` | `PickerDialog` | #378에서 S3 path picker와 DB picker의 backdrop/header/footer shell을 공통화. S3 내부 MUI tree는 #421에서 제거했고, DB list/body CSS는 유지. |
 | 전체 | segmented tabs/selectable card | `부분 해결` | `SegmentedTabs`, `SelectableCard`, `CheckableOption` | #389에서 ETL source stage/source card, schedule run type card, Dashboard period/widget type card에 1차 적용. #393에서 Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 추가 전환. #414에서 checkbox/radio 의미가 있는 Target partition과 Permission role option은 `CheckableOption`으로 분리. rename/edit tab은 보류한다. |
@@ -204,7 +204,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 위치 | 현재 패턴 | 상태 | 필요한 컴포넌트 후보 | 이번 작업 기준 처리 |
 | --- | --- | --- | --- | --- |
 | SQL/Catalog/Dashboard preview | SQL result preview, Catalog schema preview, Dashboard widget preview | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result card, Dashboard builder preview, dashboard runtime table widget shell에 1차 적용. Catalog schema preview와 ETL final preview는 후속 판단. |
-| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. menu option과 filter button의 화면 고유 스타일은 유지. |
+| Dashboard list toolbar | search input + owner/tag/sort/action cluster | `해결됨` | `FilterToolbar`, `DropdownMenu` | #369에서 toolbar body/search/actions/menu/divider shell을 공통 컴포넌트로 이동. #422에서 검색 input은 `FilterToolbarInput`/`InputGroup`, owner/tag/sort menu는 `DropdownMenu` item/radio/checkbox 기준으로 전환. menu option과 filter button의 화면 고유 스타일은 유지. |
 | Dashboard table action slot | row action icon button column | `구현 후보` | `RowActionCell` | B04에서 DataTable `renderRowActions`를 사용함. 반복되면 row action sizing/label/disabled 패턴을 분리할 수 있음. |
 | Dashboard list pagination/delete dialog | list footer pagination + destructive confirm dialog | `부분 해결` | `PaginationBar`, `DialogShell` | #378에서 DashboardPagination과 dashboard/delete widget delete 확인 dialog를 공통 shell로 전환. table density와 builder/chart modal은 유지. |
 | Dashboard runtime topbar | title edit + publish/draft/share/refresh actions | `부분 해결` | `RuntimeTopbar`, `ActionGroup` | #385에서 runtime edit toolbar는 `ActionGroup`으로 전환. title/publish/share topbar와 dirty state shell은 화면 전용으로 유지. |
@@ -280,6 +280,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #414에서 `CheckableOption`을 추가하고 ETL rule builder/target/permission form과 option card wrapper를 공통화. 기존 CSS selector는 route QA 전까지 유지. |
 | 2026-07-09 | #416에서 `TreeHoverCard`를 추가하고 SQL dataset tree hover card와 Dashboard dataset sidebar hover card shell을 공통화. tree row renderer와 외부 tree library 통합은 후속으로 유지. |
 | 2026-07-09 | #421에서 `TreeView`, `TreeGroup`, `TreeRow`, `TreeStaticRow`를 추가하고 S3/ETL JSON/ETL asset/SQL/Dashboard tree row shell을 표준화. MUI TreeView/Tooltip과 MUI/Emotion package 의존을 제거. |
+| 2026-07-09 | #422에서 `PaginationBar`, `FilterToolbar`, `DataTable`, Catalog/Dashboard `DropdownMenu` 내부를 shadcn-style primitive 기준으로 보강. Catalog tag/status/result card 시각 상태는 후속 chip/list cleanup 후보로 유지. |
 
 ## #410 Modal Shell 꼬리 정리 반영
 

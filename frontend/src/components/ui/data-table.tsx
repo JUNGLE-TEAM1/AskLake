@@ -11,10 +11,11 @@ import {
   type Row,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2 } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { NativeSelect } from "@/components/ui/native-select";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import {
   Table,
   TableBody,
@@ -111,7 +112,7 @@ function renderEmptyState(emptyState: DataTableProps<unknown, unknown>["emptySta
 function getPaginationOptions(pagination: DataTableProps<unknown, unknown>["pagination"]) {
   if (!pagination) return null;
   return {
-    label: pagination?.label ?? "표",
+    label: pagination?.label ?? "table",
     pageSize: pagination?.pageSize ?? 25,
     pageSizeOptions: pagination?.pageSizeOptions ?? [10, 25, 50, 100],
     showPageSize: pagination?.showPageSize ?? false,
@@ -316,52 +317,44 @@ export function DataTable<TData, TValue>({
       </div>
 
       {paginationOptions && (
-        <div
+        <PaginationBar
           aria-label={`${paginationOptions.label} 페이지`}
-          className="flex min-h-10 min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
-        >
-          <span className="min-w-0 text-xs font-semibold text-slate-500">
-            {pageStart}-{pageEnd} / {totalRows} rows · {paginationState.pageIndex + 1} / {pageCount} pages
-          </span>
-          <div className="inline-flex flex-wrap items-center justify-end gap-2">
-            {paginationOptions.showPageSize && (
-              <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500">
-                Rows
-                <select
-                  className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
-                  onChange={(event) => table.setPageSize(Number(event.target.value))}
-                  value={paginationState.pageSize}
-                >
-                  {paginationOptions.pageSizeOptions.map((pageSize) => (
-                    <option key={pageSize} value={pageSize}>
-                      {pageSize}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <Button
-              disabled={!table.getCanPreviousPage()}
-              onClick={() => table.previousPage()}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <ChevronLeft aria-hidden="true" className="size-4" />
-              Prev
-            </Button>
-            <Button
-              disabled={!table.getCanNextPage()}
-              onClick={() => table.nextPage()}
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              Next
-              <ChevronRight aria-hidden="true" className="size-4" />
-            </Button>
-          </div>
-        </div>
+          className="min-h-10"
+          currentPage={paginationState.pageIndex + 1}
+          nextDisabled={!table.getCanNextPage()}
+          onNext={() => table.nextPage()}
+          onPrevious={() => table.previousPage()}
+          previousDisabled={!table.getCanPreviousPage()}
+          rangeLabel={(
+            <span className="flex min-w-0 flex-wrap items-center gap-3">
+              <span className="min-w-0">
+                {pageStart}-{pageEnd} / {totalRows} rows
+              </span>
+              <span className="text-slate-400" aria-hidden="true">·</span>
+              <span className="whitespace-nowrap">{paginationState.pageIndex + 1} / {pageCount} pages</span>
+              {paginationOptions.showPageSize ? (
+                <span className="inline-flex items-center gap-2">
+                  Rows
+                  <NativeSelect
+                    className="h-8 rounded-md px-2 pr-7 text-xs font-semibold text-slate-700"
+                    onChange={(event) => table.setPageSize(Number(event.target.value))}
+                    size="sm"
+                    value={paginationState.pageSize}
+                    wrapperClassName="w-[74px]"
+                  >
+                    {paginationOptions.pageSizeOptions.map((pageSize) => (
+                      <option key={pageSize} value={pageSize}>
+                        {pageSize}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </span>
+              ) : null}
+            </span>
+          )}
+          summaryClassName="flex min-w-0 flex-wrap items-center gap-3 text-xs font-semibold text-slate-500"
+          totalPages={pageCount}
+        />
       )}
     </div>
   );
