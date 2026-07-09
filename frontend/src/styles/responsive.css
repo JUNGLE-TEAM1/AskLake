@@ -347,6 +347,11 @@
     grid-row: auto;
   }
 
+  .admin-permission-action-group {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
   .admin-permission-form .primary-button {
     grid-column: auto;
     grid-row: auto;
