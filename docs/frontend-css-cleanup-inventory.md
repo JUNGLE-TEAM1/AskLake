@@ -249,6 +249,7 @@ npm run build
 | 2026-07-09 | #401에서 S3/ETL/SQL/Dashboard tree wrapper와 state shell을 `TreePanel`로 전환하고 tree row/hover/외부 라이브러리 selector는 유지하기로 기록. |
 | 2026-07-09 | #410에서 Catalog/DAG/Dashboard chart/ETL transform modal shell을 `DialogShell`로 전환하고 남은 wrapper selector를 route QA 후 삭제 후보로 기록. |
 | 2026-07-09 | #414에서 ETL rule builder/target/permission form wrapper와 checkbox/radio option shell을 공통 컴포넌트로 전환하고 관련 selector 유지 기준을 기록. |
+| 2026-07-09 | #416에서 SQL/Dashboard dataset tree hover card shell을 `TreeHoverCard`로 전환하고 fixed tooltip/row/tree-library selector는 유지하기로 기록. |
 
 ## #410 Modal Shell 꼬리 정리 CSS 기록
 
@@ -273,3 +274,13 @@ npm run build
 | Target partition option | `.target-partition-option`, `.target-partition-name`, `.target-partition-type` | radio label/input shell을 `CheckableOption`으로 전환. active/disabled/density selector는 유지한다. |
 | Permission policy fields | `.permission-config-form-grid`, `.field`, `.input.control-input` | select/input field wrapper를 `FormFieldGroup`/`NativeSelectField`로 전환. policy card/grid selector는 유지한다. |
 | Permission role grants | `.permission-config-role`, `.permission-config-role-body`, `.permission-config-access-row` | checkbox label/input shell을 `CheckableOption`으로 전환. recommended/active/access chip row selector는 유지한다. |
+
+## #416 Tree Hover Card 꼬리 정리 CSS 기록
+
+이번 PR은 hover card의 React markup shell을 공통화하지만 CSS selector 삭제는 하지 않는다. SQL은 fixed 위치 계산이 있고 Dashboard는 MUI Tooltip과 react-arborist가 묶여 있어 route QA 전까지 기존 selector를 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| SQL dataset tree hover card | `.sql-tree-hover-card`, `.sql-tree-hover-icon`, `.sql-tree-hover-body` | card shell을 `TreeHoverCard`로 전환. fixed position, arrow pseudo-element, icon tone, body typography selector는 유지한다. |
+| Dashboard dataset sidebar hover card | `.asklake-dataset-hover-card`, `.asklake-dataset-hover-card-head`, `.asklake-dataset-hover-card-icon` | tooltip 내부 card shell을 `TreeHoverCard`로 전환. MUI Tooltip wrapper/arrow selector는 유지한다. |
+| 보류 tree row/runtime selector | `.sql-tree-node`, `.sql-tree-column-row`, `.asklake-dataset-tree-row`, `.asklake-dataset-tree-node` | row renderer와 tree library interaction selector는 이번 PR에서 건드리지 않는다. |

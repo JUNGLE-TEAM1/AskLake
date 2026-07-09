@@ -110,6 +110,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `IconOptionGrid`
 - `DetailTableSection`
 - `TreePanel`
+- `TreeHoverCard`
 
 ## 2026-07-09 코드 스윕 결과
 
@@ -120,7 +121,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 버튼/액션 묶음 | `EtlPages.tsx`, `DashboardPage.tsx`, `DashboardParts.tsx`, `SqlAnalysisPage.tsx`, `S3PathField.tsx`, `DatabaseField.tsx`에 raw `<button>` 또는 legacy button class가 남아 있음 | 단순 `Button` 교체보다 action grouping, icon-only, bottom command까지 나누는 편이 안전함 | `ActionGroup`, `CommandBar`, `IconOptionGrid` |
 | custom modal/dialog | `CatalogPage.tsx`, `SqlAnalysisPage.tsx`, `JobsPages.tsx`, `DashboardParts.tsx`, `S3PathField.tsx`, `DatabaseField.tsx`에서 role dialog/backdrop/modal class 반복 | 이미 `Dialog` primitive가 있으므로 shell 적용 우선순위가 높음 | `DialogShell`, `PickerDialog` |
 | non-table pagination | Catalog search/materialization, SQL context, Dashboard list, Ingest runs가 DataTable 밖에서 별도 pagination 사용 | `DataTable` 내부 pagination과 분리된 list/page pagination 필요 | `PaginationBar` |
-| tree/list selector | S3 picker, ETL source asset/json tree, SQL dataset tree, Dashboard dataset tree가 서로 다른 구현으로 존재 | 라이브러리 상태가 달라 바로 통합하지 말고 row/empty/loading shell부터 분리 | `TreePanel`, `PickerTree`, `TreeHoverCard` |
+| tree/list selector | S3 picker, ETL source asset/json tree, SQL dataset tree, Dashboard dataset tree가 서로 다른 구현으로 존재 | 라이브러리 상태가 달라 바로 통합하지 말고 row/empty/loading/hover shell부터 분리 | `TreePanel`, `PickerTree`, `TreeHoverCard` |
 | preview/result shell | Catalog schema preview, SQL result preview, Dashboard widget preview, ETL final preview가 panel/header/empty/CTA 조합을 반복 | 표 자체는 `DataTable`로 일부 해결됐고, 주변 shell이 다음 후보 | `PreviewPanel`, `ResultPanel` |
 | key-value/validation summary | `CreationFlow.tsx`, ETL review/permission, Catalog detail, Jobs detail에서 요약/검증 row 반복 | 화면별 문구는 다르지만 레이아웃은 공통화 가능 | `KeyValueList`, `ValidationList` |
 | chip/tag/status | Catalog tag/status/type pill, Ingest status/owner/tag, ETL data/target/permission chip, Dashboard row tag가 남아 있음 | `Badge`는 있지만 list/interactive chip 패턴이 별도로 필요 | `Chip`, `TagList`, `StatusBadge` |
@@ -172,7 +173,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell에 적용. ETL detail과 schema transform editor는 후속. |
 | 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
-| 전체 | tree/list hybrid selector | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 S3 picker, ETL source asset tree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell을 `TreePanel`로 분리. row renderer, hover card, MUI TreeView/react-arborist 통합은 후속. |
+| 전체 | tree/list hybrid selector | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 S3 picker, ETL source asset tree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell을 `TreePanel`로 분리. #416에서 SQL/Dashboard dataset tree hover card shell을 `TreeHoverCard`로 분리. row renderer와 MUI TreeView/react-arborist 통합은 후속. |
 | 전체 | runtime/widget frame shell | `설계 필요` | `WidgetShell` 또는 `RuntimeFrame` | Dashboard widget frame, table widget viewport, assistant/loading/error state가 화면 고유 CSS로 남아 있음. |
 
 ## A03 ETL Seed Gap
@@ -270,6 +271,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #401에서 `TreePanel`을 추가하고 S3 picker, ETL SourceAssetTree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell에 적용. row/hover card와 tree library 통합은 후속 gap으로 유지. |
 | 2026-07-09 | #410에서 Catalog schema/lineage modal, Ingest DAG run detail modal, Dashboard chart expanded modal, ETL TransformFunctionModal shell을 `DialogShell` 기준으로 전환. menu/popover, DAG graph/canvas, quick function chip/form layout은 후속 gap으로 유지. |
 | 2026-07-09 | #414에서 `CheckableOption`을 추가하고 ETL rule builder/target/permission form과 option card wrapper를 공통화. 기존 CSS selector는 route QA 전까지 유지. |
+| 2026-07-09 | #416에서 `TreeHoverCard`를 추가하고 SQL dataset tree hover card와 Dashboard dataset sidebar hover card shell을 공통화. tree row renderer와 외부 tree library 통합은 후속으로 유지. |
 
 ## #410 Modal Shell 꼬리 정리 반영
 
@@ -295,3 +297,13 @@ Form/Option 계열은 input/select wrapper와 checkbox/radio option shell을 분
 | Target partition | radio option card shell | `CheckableOption` | partition grid density와 disabled/active CSS는 route QA 전까지 유지 |
 | Permission policy | select/input field wrapper | `FormFieldGroup`, `NativeSelectField` | permission card shell은 유지 |
 | Permission role grants | checkbox option card shell | `CheckableOption` | access chip row density CSS는 유지 |
+
+## #416 Tree Hover Card 꼬리 정리 반영
+
+Tree 계열은 wrapper/state shell 다음으로 hover card shell만 공통화했다. tree row renderer 자체는 SQL DOM tree와 Dashboard `react-arborist` 구현 차이가 있어 이번 PR에서 합치지 않는다.
+
+| 영역 | 이번에 공통화한 UI | 사용한 공통 컴포넌트 | 남은 gap |
+| --- | --- | --- | --- |
+| SQL dataset tree | table/column hover card shell | `TreeHoverCard` | fixed position 계산과 row hover event는 SQL 전용으로 유지 |
+| Dashboard dataset sidebar | dataset/group/column tooltip card shell | `TreeHoverCard` | MUI Tooltip wrapper와 react-arborist row renderer는 유지 |
+| Tree UI 전체 | icon/title/subtitle/detail rows/description 구조 | `TreeHoverCard` | S3 picker, ETL source tree, JSON sample tree hover/row 통합은 후속 판단 |

@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
@@ -69,24 +70,16 @@ function DatasetHoverCard({
   title: string;
 }) {
   return (
-    <div className="asklake-dataset-hover-card">
-      <div className="asklake-dataset-hover-card-head">
-        <span className="asklake-dataset-hover-card-icon" aria-hidden="true">{icon}</span>
-        <div>
-          <strong>{title}</strong>
-          {subtitle && <span>{subtitle}</span>}
-        </div>
-      </div>
-      <dl>
-        {rows.map((row) => (
-          <div key={row.label}>
-            <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
-          </div>
-        ))}
-      </dl>
-      <p>{description}</p>
-    </div>
+    <TreeHoverCard
+      className="asklake-dataset-hover-card"
+      description={description}
+      headerClassName="asklake-dataset-hover-card-head"
+      icon={icon}
+      iconClassName="asklake-dataset-hover-card-icon"
+      rows={rows}
+      subtitle={subtitle}
+      title={title}
+    />
   );
 }
 

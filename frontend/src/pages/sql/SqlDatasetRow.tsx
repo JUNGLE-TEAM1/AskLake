@@ -1,5 +1,6 @@
 import { Calendar, ChevronDown, ChevronRight, Database, Hash, Plus, Server, Table2, Type } from "lucide-react";
 import { useState } from "react";
+import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
 import type { CatalogDataset } from "../../types";
 
@@ -138,37 +139,31 @@ function SqlDatasetTreeRow({
 
 function SqlDatasetHoverCard({ info }: { info: HoverInfo }) {
   const iconClassName = info.kind === "column" ? getColumnKind(info.columnType) : "table";
+  const rows = info.kind === "table"
+    ? [
+      { label: "레이어", value: info.dataset.layer },
+      { label: "컬럼", value: `${info.dataset.schema.length}개` },
+      { label: "담당자", value: info.dataset.owner },
+    ]
+    : [
+      { label: "유형", value: formatColumnType(info.columnType) },
+      { label: "테이블", value: info.dataset.name },
+    ];
 
   return (
-    <aside className="sql-tree-hover-card" style={{ left: info.position.left, top: info.position.top }}>
-      <div className={`sql-tree-hover-icon ${iconClassName}`}>
-        {info.kind === "table" ? <Table2 size={22} /> : renderColumnIcon(info.columnType)}
-      </div>
-      <div className="sql-tree-hover-body">
-        <strong>{info.kind === "table" ? info.dataset.name : info.columnName}</strong>
-        <span>system.datasets.{info.dataset.name}</span>
-        <dl>
-          {info.kind === "table" ? (
-            <>
-              <dt>레이어</dt>
-              <dd>{info.dataset.layer}</dd>
-              <dt>컬럼</dt>
-              <dd>{info.dataset.schema.length}개</dd>
-              <dt>담당자</dt>
-              <dd>{info.dataset.owner}</dd>
-            </>
-          ) : (
-            <>
-              <dt>유형</dt>
-              <dd>{formatColumnType(info.columnType)}</dd>
-              <dt>테이블</dt>
-              <dd>{info.dataset.name}</dd>
-            </>
-          )}
-        </dl>
-        <p>{info.kind === "table" ? info.dataset.description : getColumnDescription(info.columnType)}</p>
-      </div>
-    </aside>
+    <TreeHoverCard
+      as="aside"
+      bodyClassName="sql-tree-hover-body"
+      className="sql-tree-hover-card"
+      description={info.kind === "table" ? info.dataset.description : getColumnDescription(info.columnType)}
+      icon={info.kind === "table" ? <Table2 size={22} /> : renderColumnIcon(info.columnType)}
+      iconClassName={`sql-tree-hover-icon ${iconClassName}`}
+      rowLayout="flat"
+      rows={rows}
+      style={{ left: info.position.left, top: info.position.top }}
+      subtitle={`system.datasets.${info.dataset.name}`}
+      title={info.kind === "table" ? info.dataset.name : info.columnName}
+    />
   );
 }
 
