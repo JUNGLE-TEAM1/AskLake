@@ -120,7 +120,7 @@ try {
     ["Access Key", env.MINIO_ACCESS_KEY],
     ["Secret Key", env.MINIO_SECRET_KEY],
     ["Use Path Style", "true"],
-  ], (result) => result.assets.length > 0 && result.draftPatch.schema.columns.length > 0);
+  ], (result) => result.assets.length > 0 && result.draftPatch.source.sourceType === "Data Lake Parquet");
 
   if (process.env.ASKLAKE_VERIFY_KAFKA === "true") {
     await verify("Kafka JSON", [

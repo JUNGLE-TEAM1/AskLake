@@ -140,13 +140,24 @@ export function SqlAnalysisPage({
     () => selectedContextDatasets.find((item) => item.id === openSchemaDatasetId) ?? selectedContextDatasets[0] ?? null,
     [openSchemaDatasetId, selectedContextDatasets],
   );
+  const dashboardBaseDataset = useMemo(() => {
+    if (baseDataset) return baseDataset;
+    if (!resultDraft) return null;
+    const candidateIds = [resultDraft.baseDatasetId, resultDraft.datasetId].filter((id): id is string => Boolean(id));
+    return candidateIds
+      .map((id) => datasets.find((item) => item.id === id) ?? (dataset?.id === id ? dataset : null))
+      .find((item): item is CatalogDataset => Boolean(item)) ?? null;
+  }, [baseDataset, dataset, datasets, resultDraft]);
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
+    baseDatasetId: dashboardBaseDataset?.id,
+    dashboardId: resultDraft && dashboardBaseDataset ? `dash_${dashboardBaseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
+    sqlResultDatasetId: resultDraft?.datasetId,
+    sqlRunId: resultDraft?.runId,
     source: "sql",
     view: "runtime",
     version: dashboardDialogVersion,
-  }), [baseDataset, dashboardDialogVersion, resultDraft]);
+  }), [dashboardBaseDataset, dashboardDialogVersion, resultDraft]);
   const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
@@ -662,6 +673,19 @@ export function SqlAnalysisPage({
     onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
   };
 
+  const applyPreflightAutoFix = () => {
+    if (!preflightResult?.autoFixQuery) return;
+    const nextQuery = preflightResult.autoFixQuery;
+    updateQuery(nextQuery);
+    setCursorIndex(nextQuery.length);
+    onAction("analysis.query.identifier_autofixed", queryContextPath("preflight"), baseDataset?.id ?? "sql-empty");
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextQuery.length, nextQuery.length);
+      syncLineNumberScroll();
+    });
+  };
+
   const downloadCsv = () => {
     if (!resultDraft) return;
     const csv = [
@@ -706,10 +730,15 @@ export function SqlAnalysisPage({
   };
 
   const openDashboardBuilder = () => {
-    if (!baseDataset || !resultDraft) return;
+    if (!dashboardBaseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
     setDashboardDialogOpen(true);
-    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
+    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${dashboardBaseDataset.id}/draft/ensure`, resultDraft.runId);
+  };
+
+  const handleDashboardBuilderMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    openDashboardBuilder();
   };
 
   return (
@@ -937,6 +966,11 @@ export function SqlAnalysisPage({
               {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
             <button className="secondary-button" type="button" onClick={resetQuery}><RotateCcw size={14} /> SQL 초기화</button>
+            {preflightResult?.autoFixQuery && (
+              <button className="secondary-button" type="button" onClick={applyPreflightAutoFix}>
+                식별자 자동 보정
+              </button>
+            )}
           </div>
         </section>
 
@@ -963,7 +997,15 @@ export function SqlAnalysisPage({
                 <div className="sql-result-actions">
                   <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
                   <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>
-                  <button type="button" onClick={openDashboardBuilder}><BarChart3 size={14} /> 대시보드 만들기</button>
+                  <button
+                    disabled={!dashboardBaseDataset}
+                    title={dashboardBaseDataset ? "현재 SQL 실행 결과로 대시보드 초안을 엽니다." : "SQL 실행 결과의 기준 데이터셋을 찾을 수 없습니다."}
+                    type="button"
+                    onClick={openDashboardBuilder}
+                    onMouseDown={handleDashboardBuilderMouseDown}
+                  >
+                    <BarChart3 size={14} /> 대시보드 만들기
+                  </button>
                 </div>
               </div>
               <div className="sql-result-scroll">
@@ -1055,18 +1097,19 @@ export function SqlAnalysisPage({
           </section>
         </div>
       )}
-      {resultDraft && baseDataset && dashboardDialogOpen && (
+      {resultDraft && dashboardBaseDataset && dashboardDialogOpen && (
         <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
           <section className="sql-dashboard-builder-dialog" role="dialog" aria-modal="true" aria-label="SQL 결과 대시보드 만들기" onMouseDown={(event) => event.stopPropagation()}>
             <button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)}>
               닫기
             </button>
             <DashboardPage
-              dataset={baseDataset}
+              dataset={dashboardBaseDataset}
               datasets={selectedContextDatasets}
               entry={dashboardDialogEntry}
               sqlResult={resultDraft}
               onAction={onAction}
+              onMissingSqlResult={() => setDashboardDialogOpen(false)}
             />
           </section>
         </div>

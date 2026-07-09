@@ -146,7 +146,10 @@ class DashboardRuntimeService:
             next_config = self._config_to_json(next_type, request.config)
         next_data = None
         update_data = False
-        if "dataset_id" in request.model_fields_set:
+        if "data" in request.model_fields_set:
+            next_data = self._resolve_widget_data(request.data, request.dataset_id)
+            update_data = True
+        elif "dataset_id" in request.model_fields_set:
             next_data = self._resolve_widget_data(None, request.dataset_id)
             update_data = True
         widget = self.repository.update_widget(

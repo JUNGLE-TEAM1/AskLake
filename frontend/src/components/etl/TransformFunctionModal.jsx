@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Sparkles, X } from "lucide-react";
-import InlineAIInput from "../ai/InlineAIInput";
+import { X } from "lucide-react";
 
 const SQL_EXPRESSION = "SQL Expression";
 const FIELD_ONLY_OPERATIONS = new Set(["Default Value", "Null Guard"]);
@@ -69,7 +68,6 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   );
   const [chain, setChain] = useState(initialChain);
   const [selectedFunction, setSelectedFunction] = useState(initialChain[initialChain.length - 1]?.operation || "");
-  const [showAI, setShowAI] = useState(false);
 
   const functions = [
     { name: "UPPER", group: "SQL", desc: "Convert to uppercase", build: (base) => `UPPER(CAST(${base} AS STRING))` },
@@ -331,37 +329,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
           )}
 
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-gray-700">Transform Expression (SQL)</label>
-              <button
-                onClick={() => setShowAI(!showAI)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600 hover:from-indigo-100 hover:to-purple-100 transition-all border border-indigo-200/50"
-                title="AI Assistant"
-                type="button"
-              >
-                <Sparkles size={14} />
-                <span>AI</span>
-              </button>
-            </div>
-
-            {showAI && (
-              <InlineAIInput
-                promptType="field_transform"
-                metadata={{
-                  column_name: sourceField,
-                  column_type: column.type,
-                }}
-                placeholder="e.g., convert to uppercase, extract first 3 characters..."
-                onApply={(suggestion) => {
-                  updateExpression(suggestion);
-                  setShowAI(false);
-                  if (editorRef.current) {
-                    setTimeout(() => editorRef.current.focus(), 0);
-                  }
-                }}
-                onCancel={() => setShowAI(false)}
-              />
-            )}
+            <label className="block text-sm font-medium text-gray-700 mb-2">Transform Expression (SQL)</label>
 
             <textarea
               ref={editorRef}

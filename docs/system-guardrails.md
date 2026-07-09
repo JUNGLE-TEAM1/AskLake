@@ -26,7 +26,7 @@
 
 | Guardrail | Enforced By | Current Status | Failure Behavior | Owner | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Frontend build before merge | CI workflow candidate running `cd frontend && npm run build` | `planned` | block merge when build fails | maintainer | CI가 생기면 first required check 후보 |
+| Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
@@ -53,7 +53,7 @@
 | Rule | What it means for people |
 | --- | --- |
 | API contract drift | endpoint, response shape, env var가 바뀌면 docs를 같이 고친다. |
-| Frontend build risk | UI/API adapter 변경 후 `npm run build`를 실행한다. |
+| Frontend build risk | UI/API adapter 변경 후 `npm run verify:ui-regressions`와 `npm run build`를 실행한다. |
 | PR/Issue template completion | GitHub 기본 템플릿을 채워 scope, 검증, 영향도, 완료 기준을 남긴다. |
 
 ### What Is Deferred
@@ -67,6 +67,7 @@
 
 | Failure | How to fix |
 | --- | --- |
+| `npm run verify:ui-regressions` failed | SQL 분석 탭, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
@@ -80,14 +81,14 @@
 | --- | --- | --- | --- |
 | Branch/workspace start | developer | branch naming check | task notes or PR description |
 | PR open | developer / GitHub | PR checklist, linked issue candidate | PR body |
-| PR review/merge readiness | CI / reviewer | frontend build, API contract checks | PR checks and docs updates |
+| PR review/merge readiness | CI / reviewer | frontend UI checks, API contract checks | PR checks and docs updates |
 | PR merge/finalize | maintainer | protected branch ruleset, PR source branch policy, required checks when available | merge summary |
 | Drift recovery | maintainer | read-only audit or manual review | follow-up issue or docs update |
 
 ## 5) Follow-Up Candidates
 
 - Repository admin이 secret scanning 상태를 확인한다.
-- CI가 추가되면 `frontend build`를 required check 후보로 등록한다.
+- Repository admin이 `Frontend UI Checks / frontend-ui-checks`를 required check로 등록한다.
 - 배포 workflow가 추가되면 prod compose config check를 required pre-deploy check 후보로 등록한다.
 - 백엔드 scaffold가 생기면 backend test/build check를 추가한다.
 - API adapter가 늘어나면 contract drift check script를 검토한다.
@@ -99,7 +100,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 
 | Test Layer | Runs By Default | Scope | Expected Result |
 | --- | --- | --- | --- |
-| Frontend build | no, local/manual until CI exists | `frontend` | TypeScript and Vite build pass |
+| Frontend UI checks | yes on matching PR paths | `frontend` | UI regression contracts and TypeScript/Vite build pass |
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
 | Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |

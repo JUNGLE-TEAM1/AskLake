@@ -22,6 +22,7 @@ class JobStats(CamelModel):
     average_duration: str
     current_stage: str
     input_rows: str
+    last_synced_at: str | None = None
     last_success: str
     output_rows: str
     output_path: str | None = None
@@ -83,6 +84,10 @@ class WatermarkPolicyDraft(CamelModel):
 
 
 class JobRunSummary(CamelModel):
+    airflow_dag_id: str | None = None
+    airflow_dag_run_id: str | None = None
+    airflow_run_url: str | None = None
+    airflow_state: str | None = None
     duration: str
     ended_at: str
     error_summary: str
@@ -93,6 +98,8 @@ class JobRunSummary(CamelModel):
     run_id: str
     started_at: str
     status: JobRunStatus
+    sync_error: str | None = None
+    task_states: dict[str, Any] | None = None
 
 
 class JobDagStep(CamelModel):
@@ -147,6 +154,34 @@ class JobRowData(CamelModel):
 
 
 class CatalogDataset(CamelModel):
+    id: str
+    name: str
+    description: str
+    owner: str
+    layer: TargetLayer
+    status: Literal["available", "approval_required"]
+    freshness: Literal["latest", "stale", "approval"]
+    source: str
+    rows: str
+    size: str
+    quality: str
+    last_updated: str
+    next_refresh: str
+    rag: bool
+    tags: list[str]
+    schema_: SourceFieldRows = Field(alias="schema")
+    sample_rows: list[list[str]]
+    upstream: list[str]
+    downstream: list[str]
+    source_run_id: str | None = None
+    storage_format: str | None = None
+    storage_location: str | None = None
+    storage_size_bytes: int | None = None
+    lineage_graph: dict[str, Any] | None = None
+    materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CommandCatalogDataset(CamelModel):
     id: str
     name: str
     description: str
@@ -241,7 +276,7 @@ class JobCommandRequest(CamelModel):
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str
-    dataset: CatalogDataset | None = None
+    dataset: CommandCatalogDataset | None = None
     job: JobRowData | None = None
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None

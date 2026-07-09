@@ -10,6 +10,8 @@ DatasetStatus = Literal["available", "approval_required"]
 DerivedDatasetLayer = Literal["SILVER", "GOLD"]
 LineageLayer = Literal["SOURCE", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
+MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
+MaterializationSourceKind = Literal["etl", "sql"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -39,6 +41,18 @@ class LineageGraphResponse(CamelModel):
     edges: list[LineageGraphEdge]
 
 
+class DatasetMaterializationRun(CamelModel):
+    created_at: str
+    job_id: str
+    row_count: int = 0
+    run_id: str
+    source_kind: MaterializationSourceKind = "etl"
+    source_label: str
+    status: MaterializationRunStatus
+    storage_location: str | None = None
+    storage_size_bytes: int = 0
+
+
 class CatalogDatasetResponse(CamelModel):
     description: str
     downstream: list[str] = Field(default_factory=list)
@@ -47,6 +61,7 @@ class CatalogDatasetResponse(CamelModel):
     layer: CatalogLayer
     last_updated: str
     lineage_graph: LineageGraphResponse | None = None
+    materialization_runs: list[DatasetMaterializationRun] = Field(default_factory=list)
     name: str
     next_refresh: str
     owner: str
@@ -69,6 +84,11 @@ class CatalogDatasetResponse(CamelModel):
 class CatalogDatasetListResponse(CamelModel):
     datasets: list[CatalogDatasetResponse]
     page: CursorPageMeta = Field(default_factory=CursorPageMeta)
+
+
+class DeleteMaterializationRunResponse(CamelModel):
+    dataset: CatalogDatasetResponse
+    deleted_run_id: str
 
 
 class CreateDerivedDatasetMetadata(CamelModel):

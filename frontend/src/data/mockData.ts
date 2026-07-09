@@ -90,7 +90,349 @@ export const etlJobs: JobRowData[] = [
   },
 ];
 
+const commerceOrdersDatasetId = "ds_commerce_orders_daily";
+const commerceMarketingDatasetId = "ds_commerce_marketing_spend_daily";
+const commerceChannelRoiDatasetId = "ds_gold_commerce_channel_roi";
+
+const commerceOrdersSchema: Array<[string, string]> = [
+  ["order_date", "date"],
+  ["channel", "string"],
+  ["category", "string"],
+  ["orders", "integer"],
+  ["gross_revenue", "decimal"],
+  ["refund_amount", "decimal"],
+  ["net_revenue", "decimal"],
+  ["conversion_rate", "decimal"],
+];
+
+const commerceMarketingSchema: Array<[string, string]> = [
+  ["spend_date", "date"],
+  ["channel", "string"],
+  ["campaign", "string"],
+  ["impressions", "integer"],
+  ["clicks", "integer"],
+  ["ad_spend", "decimal"],
+  ["cpc", "decimal"],
+];
+
+const commerceChannelRoiSchema: Array<[string, string]> = [
+  ["order_date", "date"],
+  ["channel", "string"],
+  ["category", "string"],
+  ["net_revenue", "decimal"],
+  ["ad_spend", "decimal"],
+  ["roas", "decimal"],
+  ["orders", "integer"],
+  ["cost_per_order", "decimal"],
+];
+
+const commerceChannelConfig = [
+  {
+    adSpend: 1460000,
+    aov: 76000,
+    campaign: "brand_search_efficiency",
+    category: "electronics",
+    channel: "paid_search",
+    conversion: 4.7,
+    orders: 118,
+    refund: 0.032,
+    traffic: 18400,
+  },
+  {
+    adSpend: 980000,
+    aov: 52000,
+    campaign: "social_new_arrivals",
+    category: "beauty",
+    channel: "social",
+    conversion: 3.1,
+    orders: 96,
+    refund: 0.041,
+    traffic: 31600,
+  },
+  {
+    adSpend: 640000,
+    aov: 68000,
+    campaign: "crm_weekly_offer",
+    category: "home",
+    channel: "email",
+    conversion: 6.3,
+    orders: 84,
+    refund: 0.025,
+    traffic: 8200,
+  },
+  {
+    adSpend: 1180000,
+    aov: 41000,
+    campaign: "affiliate_summer_pick",
+    category: "sports",
+    channel: "affiliate",
+    conversion: 2.8,
+    orders: 142,
+    refund: 0.037,
+    traffic: 22400,
+  },
+];
+
+function buildCommerceOrdersRows() {
+  return Array.from({ length: 15 }, (_, dayIndex) => (
+    commerceChannelConfig.map((config, channelIndex) => {
+      const orders = config.orders + dayIndex * (5 + channelIndex) + channelIndex * 7;
+      const grossRevenue = orders * config.aov;
+      const refundAmount = Math.round(grossRevenue * config.refund);
+      const netRevenue = grossRevenue - refundAmount;
+      const conversionRate = config.conversion + dayIndex * 0.03 - channelIndex * 0.04;
+      return [
+        `2026-06-${String(dayIndex + 16).padStart(2, "0")}`,
+        config.channel,
+        config.category,
+        String(orders),
+        String(grossRevenue),
+        String(refundAmount),
+        String(netRevenue),
+        conversionRate.toFixed(2),
+      ];
+    })
+  )).flat();
+}
+
+function buildCommerceMarketingRows() {
+  return Array.from({ length: 15 }, (_, dayIndex) => (
+    commerceChannelConfig.map((config, channelIndex) => {
+      const impressions = config.traffic + dayIndex * (480 + channelIndex * 70);
+      const clicks = Math.round(impressions * (0.045 + channelIndex * 0.006));
+      const adSpend = config.adSpend + dayIndex * (42000 + channelIndex * 8500);
+      const cpc = adSpend / Math.max(clicks, 1);
+      return [
+        `2026-06-${String(dayIndex + 16).padStart(2, "0")}`,
+        config.channel,
+        config.campaign,
+        String(impressions),
+        String(clicks),
+        String(adSpend),
+        cpc.toFixed(2),
+      ];
+    })
+  )).flat();
+}
+
+function buildCommerceChannelRoiRows() {
+  const orderRows = buildCommerceOrdersRows();
+  const marketingRows = buildCommerceMarketingRows();
+  return orderRows.map((orderRow, index) => {
+    const marketingRow = marketingRows[index];
+    const netRevenue = Number(orderRow[6]);
+    const orders = Number(orderRow[3]);
+    const adSpend = Number(marketingRow[5]);
+    return [
+      orderRow[0],
+      orderRow[1],
+      orderRow[2],
+      String(netRevenue),
+      String(adSpend),
+      (netRevenue / adSpend).toFixed(2),
+      String(orders),
+      (adSpend / Math.max(orders, 1)).toFixed(2),
+    ];
+  });
+}
+
+function lineageColumns(datasetId: string, schema: Array<[string, string]>) {
+  return schema.map(([name, type]) => ({
+    id: `${datasetId}-${name}`.replaceAll("_", "-"),
+    name,
+    type,
+  }));
+}
+
+function simpleLineageGraph({
+  datasetId,
+  schema,
+  sourceName,
+  sourceNodeId,
+  targetName,
+}: {
+  datasetId: string;
+  schema: Array<[string, string]>;
+  sourceName: string;
+  sourceNodeId: string;
+  targetName: string;
+}) {
+  const sourceColumns = lineageColumns(sourceNodeId, schema);
+  const targetColumns = lineageColumns(datasetId, schema);
+  return {
+    datasetId,
+    datasets: [
+      {
+        columns: sourceColumns,
+        engine: "POSTGRESQL",
+        id: sourceNodeId,
+        layer: "SOURCE" as const,
+        name: sourceName,
+      },
+      {
+        columns: targetColumns,
+        engine: "ICEBERG",
+        id: datasetId,
+        layer: "GOLD" as const,
+        name: targetName,
+      },
+    ],
+    edges: targetColumns.map((targetColumn, index) => ({
+      fromColumnId: sourceColumns[index].id,
+      fromDatasetId: sourceNodeId,
+      toColumnId: targetColumn.id,
+      toDatasetId: datasetId,
+    })),
+  };
+}
+
+function commerceChannelRoiLineageGraph() {
+  const orderColumns = lineageColumns(commerceOrdersDatasetId, commerceOrdersSchema);
+  const marketingColumns = lineageColumns(commerceMarketingDatasetId, commerceMarketingSchema);
+  const targetColumns = lineageColumns(commerceChannelRoiDatasetId, commerceChannelRoiSchema);
+  const ordersByName = new Map(orderColumns.map((column) => [column.name, column]));
+  const marketingByName = new Map(marketingColumns.map((column) => [column.name, column]));
+  const targetByName = new Map(targetColumns.map((column) => [column.name, column]));
+  const edge = (sourceColumn: { id: string }, targetName: string, sourceDatasetId: string) => ({
+    fromColumnId: sourceColumn.id,
+    fromDatasetId: sourceDatasetId,
+    toColumnId: targetByName.get(targetName)?.id ?? targetName,
+    toDatasetId: commerceChannelRoiDatasetId,
+  });
+
+  return {
+    datasetId: commerceChannelRoiDatasetId,
+    datasets: [
+      {
+        columns: orderColumns,
+        engine: "ICEBERG",
+        id: commerceOrdersDatasetId,
+        layer: "SILVER" as const,
+        name: "commerce_orders_daily",
+      },
+      {
+        columns: marketingColumns,
+        engine: "ICEBERG",
+        id: commerceMarketingDatasetId,
+        layer: "SILVER" as const,
+        name: "commerce_marketing_spend_daily",
+      },
+      {
+        columns: targetColumns,
+        engine: "ICEBERG",
+        id: commerceChannelRoiDatasetId,
+        layer: "GOLD" as const,
+        name: "gold_commerce_channel_roi",
+      },
+    ],
+    edges: [
+      edge(ordersByName.get("order_date")!, "order_date", commerceOrdersDatasetId),
+      edge(marketingByName.get("spend_date")!, "order_date", commerceMarketingDatasetId),
+      edge(ordersByName.get("channel")!, "channel", commerceOrdersDatasetId),
+      edge(marketingByName.get("channel")!, "channel", commerceMarketingDatasetId),
+      edge(ordersByName.get("category")!, "category", commerceOrdersDatasetId),
+      edge(ordersByName.get("net_revenue")!, "net_revenue", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "ad_spend", commerceMarketingDatasetId),
+      edge(ordersByName.get("net_revenue")!, "roas", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "roas", commerceMarketingDatasetId),
+      edge(ordersByName.get("orders")!, "orders", commerceOrdersDatasetId),
+      edge(marketingByName.get("ad_spend")!, "cost_per_order", commerceMarketingDatasetId),
+      edge(ordersByName.get("orders")!, "cost_per_order", commerceOrdersDatasetId),
+    ],
+  };
+}
+
+const commerceDemoDatasets: CatalogDataset[] = [
+  {
+    description: "채널/카테고리/일자 기준 주문 수, 순매출, 환불 금액을 담은 커머스 주문 분석 원본 데이터셋",
+    downstream: ["SQL 분석", "gold_commerce_channel_roi"],
+    freshness: "latest",
+    id: commerceOrdersDatasetId,
+    layer: "SILVER",
+    lastUpdated: "2026-06-30T23:40:00.000Z",
+    lineageGraph: simpleLineageGraph({
+      datasetId: commerceOrdersDatasetId,
+      schema: commerceOrdersSchema,
+      sourceName: "PostgreSQL commerce.orders_daily",
+      sourceNodeId: "source-commerce-orders-daily",
+      targetName: "commerce_orders_daily",
+    }),
+    name: "commerce_orders_daily",
+    nextRefresh: "매일 00:10",
+    owner: "growth-analytics",
+    quality: "98% (Demo verified)",
+    rag: false,
+    rows: "32,400 rows",
+    sampleRows: buildCommerceOrdersRows(),
+    schema: commerceOrdersSchema,
+    size: "1.4MB",
+    source: "commerce_orders_daily_ingest",
+    status: "available",
+    tags: ["#commerce", "#orders", "#silver", "#demo"],
+    upstream: ["PostgreSQL commerce.orders_daily", "commerce_orders_daily_ingest"],
+  },
+  {
+    description: "채널/캠페인/일자 기준 노출, 클릭, 광고비를 담은 커머스 마케팅 비용 원본 데이터셋",
+    downstream: ["SQL 분석", "gold_commerce_channel_roi"],
+    freshness: "latest",
+    id: commerceMarketingDatasetId,
+    layer: "SILVER",
+    lastUpdated: "2026-06-30T23:45:00.000Z",
+    lineageGraph: simpleLineageGraph({
+      datasetId: commerceMarketingDatasetId,
+      schema: commerceMarketingSchema,
+      sourceName: "PostgreSQL marketing.channel_spend_daily",
+      sourceNodeId: "source-marketing-channel-spend-daily",
+      targetName: "commerce_marketing_spend_daily",
+    }),
+    name: "commerce_marketing_spend_daily",
+    nextRefresh: "매일 00:20",
+    owner: "growth-analytics",
+    quality: "97% (Demo verified)",
+    rag: false,
+    rows: "2,160 rows",
+    sampleRows: buildCommerceMarketingRows(),
+    schema: commerceMarketingSchema,
+    size: "720KB",
+    source: "commerce_marketing_spend_ingest",
+    status: "available",
+    tags: ["#commerce", "#marketing", "#silver", "#demo"],
+    upstream: ["PostgreSQL marketing.channel_spend_daily", "commerce_marketing_spend_ingest"],
+  },
+  {
+    description: "주문 데이터와 마케팅 비용 데이터를 일자+채널 기준으로 조인해 만든 채널별 ROAS/주문당 비용 분석 골드 데이터셋",
+    downstream: ["SQL 분석", "대시보드", "Growth weekly business review"],
+    freshness: "latest",
+    id: commerceChannelRoiDatasetId,
+    layer: "GOLD",
+    lastUpdated: "2026-06-30T23:55:00.000Z",
+    lineageGraph: commerceChannelRoiLineageGraph(),
+    name: "gold_commerce_channel_roi",
+    nextRefresh: "수동 갱신",
+    owner: "growth-analytics",
+    quality: "SQL Preview verified",
+    rag: false,
+    rows: "1,080 rows",
+    sampleRows: buildCommerceChannelRoiRows(),
+    schema: commerceChannelRoiSchema,
+    size: "1.1MB",
+    source: "commerce_channel_roi_gold_pipeline",
+    sourceRunId: "sql_demo_commerce_channel_roi",
+    status: "available",
+    storageFormat: "parquet",
+    storageLocation: "s3a://asklake-demo/gold/commerce_channel_roi/",
+    storageSizeBytes: 1146880,
+    tags: ["#commerce", "#marketing", "#roi", "#gold", "#demo"],
+    upstream: [
+      "commerce_orders_daily",
+      "commerce_marketing_spend_daily",
+      "SQL: orders.order_date = spend.spend_date AND orders.channel = spend.channel",
+    ],
+  },
+];
+
 export const catalogDatasets: CatalogDataset[] = [
+  ...commerceDemoDatasets,
   {
     description: "전체 채널 통합 고객 주문 정제 데이터",
     downstream: ["SQL 분석", "주문 대시보드", "customer_ltv_mart"],
@@ -263,6 +605,31 @@ export const catalogDatasets: CatalogDataset[] = [
     status: "available",
     tags: ["#sales", "#dw", "#daily"],
     upstream: ["Lake orders_clean", "daily_sales_aggregation"],
+  },
+  {
+    description: "한국어 테이블명과 컬럼명 SQL 입력 UX를 확인하기 위한 월별 매출 집계 데이터셋",
+    downstream: ["SQL 분석", "경영 대시보드"],
+    freshness: "latest",
+    id: "ds_korean_monthly_sales",
+    layer: "GOLD",
+    lastUpdated: "2026-07-09 09:00",
+    name: "월별 매출 데이터",
+    nextRefresh: "2026-08-01 02:00",
+    owner: "analytics",
+    quality: "97% (Excellent)",
+    rag: false,
+    rows: "36 rows",
+    sampleRows: [
+      ["2026-01", "한국", "서울", "128000000", "18420"],
+      ["2026-02", "한국", "부산", "112500000", "16310"],
+      ["2026-03", "일본", "도쿄", "98400000", "14220"],
+    ],
+    schema: [["월", "string"], ["국가", "string"], ["지역", "string"], ["매출 금액", "decimal"], ["주문 수", "integer"]],
+    size: "84KB",
+    source: "monthly_sales_korean_fixture",
+    status: "available",
+    tags: ["#sales", "#korean-identifier", "#demo"],
+    upstream: ["sales_daily_summary", "monthly_sales_korean_fixture"],
   },
   {
     description: "고객 리뷰 감성 분석 결과가 포함된 골드 레이어 데이터셋",

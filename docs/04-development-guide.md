@@ -28,10 +28,12 @@ Dashboard table widget은 chart renderer 전환 범위에 포함하지 않으며
 
 ```bash
 cd frontend
+npm run verify:ui-regressions
 npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
+`npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -54,6 +56,29 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
+### Local Airflow smoke runtime
+
+Airflow run polling을 실제로 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local smoke 전용 `airflow` / `airflow`다.
+
+```bash
+docker compose up airflow-init
+docker compose up -d airflow-apiserver airflow-scheduler airflow-dag-processor
+curl -u airflow:airflow http://127.0.0.1:8081/api/v2/monitor/health
+```
+
+FastAPI backend는 아래 환경변수를 준 뒤 재시작한다.
+
+```bash
+AIRFLOW_API_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_DAG_ID=asklake_etl_job
+AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
+AIRFLOW_USERNAME=airflow
+AIRFLOW_PASSWORD=airflow
+```
+
+그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Run History와 DAG modal이 `GET /api/etl/jobs/{jobId}` polling으로 Airflow DAG Run/Task Instance 상태를 반영한다.
+
+
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
 설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
@@ -64,6 +89,7 @@ VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 
 대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
 로컬 PostgreSQL에 대시보드 demo dataset이 없으면 아래 seed를 먼저 실행한다.
+이 seed에는 커머스 데모용 `commerce_orders_daily`, `commerce_marketing_spend_daily`, `gold_commerce_channel_roi` dataset이 포함되어 Catalog와 Dashboard 흐름을 바로 확인할 수 있다.
 
 ```bash
 cd backend
@@ -72,6 +98,7 @@ cd backend
 
 OpenAI API key는 프론트가 아니라 backend env에만 둔다. 로컬에서는 `backend/.env` 또는 실행 환경에 아래 값을 둔다.
 `OPENAI_API_KEY`가 없거나 `OPENAI_ASSISTANT_ENABLED=false`이면 backend는 응답에 `mock fallback`을 명시한 fallback 응답을 반환한다.
+Assistant guard는 OpenAI가 없는 컬럼/부적절한 값축을 반환해도 catalog schema와 sample rows 기준으로 보정한다. 차원 컬럼만 제시된 요청은 `count` 집계 차트로, 매출/금액 지표가 포함된 요청은 `revenue`/`total_amount` 같은 실제 수치 컬럼으로 보정한다. OpenAI 응답이 비어 있으면 요청 문장과 available dataset 기준의 기본 막대 차트 action을 생성한다.
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -80,6 +107,11 @@ OPENAI_ASSISTANT_MODEL=gpt-4o-mini
 OPENAI_ASSISTANT_MAX_OUTPUT_TOKENS=1200
 OPENAI_ASSISTANT_MAX_SAMPLE_ROWS=5
 OPENAI_ASSISTANT_TIMEOUT_SECONDS=20
+```
+
+```bash
+cd backend
+npm run verify:dashboard-assistant-guard
 ```
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.

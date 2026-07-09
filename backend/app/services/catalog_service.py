@@ -1,6 +1,5 @@
 import re
 from datetime import datetime, timezone
-from uuid import uuid4
 
 from fastapi import status
 
@@ -11,6 +10,7 @@ from app.schemas.catalog import (
     CatalogDatasetListResponse,
     CatalogDatasetResponse,
     CreateDerivedDatasetRequest,
+    DeleteMaterializationRunResponse,
     LineageGraphColumn,
     LineageGraphDataset,
     LineageGraphEdge,
@@ -59,6 +59,41 @@ class CatalogService:
             return LineageGraphResponse.model_validate(lineage_payload)
         return build_fallback_lineage_graph(dataset)
 
+    def delete_materialization_run(
+        self,
+        dataset_id: str,
+        run_id: str,
+    ) -> DeleteMaterializationRunResponse:
+        payload = self.repository.get_dataset_payload(dataset_id)
+        if payload is None:
+            raise ApiError(ErrorCode.NOT_FOUND, "Dataset not found", status.HTTP_404_NOT_FOUND)
+
+        runs = payload.get("materializationRuns")
+        materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
+        next_runs = [
+            run
+            for run in materialization_runs
+            if str(run.get("runId") or "") != run_id
+        ]
+        if len(next_runs) == len(materialization_runs):
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Materialization run not found",
+                status.HTTP_404_NOT_FOUND,
+                {"datasetId": dataset_id, "runId": run_id},
+            )
+
+        saved_payload = self.repository.save_dataset_payload(
+            recalculate_dataset_payload_from_runs({
+                **payload,
+                "materializationRuns": next_runs,
+            })
+        )
+        return DeleteMaterializationRunResponse(
+            dataset=CatalogDatasetResponse.model_validate(saved_payload),
+            deleted_run_id=run_id,
+        )
+
     def create_derived_dataset(
         self,
         request: CreateDerivedDatasetRequest,
@@ -78,7 +113,8 @@ class CatalogService:
             request_source_dataset,
         ])
         dataset_name = build_derived_dataset_name(request, result_source_dataset)
-        dataset_id = build_unique_derived_dataset_id(dataset_name, self.repository)
+        dataset_id = build_derived_dataset_id(dataset_name)
+        previous_payload = self.repository.get_dataset_payload(dataset_id)
         materialized_result = self.lake_storage.materialize_sql_result(
             columns=sql_result.columns,
             dataset_id=dataset_id,
@@ -94,6 +130,7 @@ class CatalogService:
             result_source_dataset,
             sql_result,
             schema_source_datasets,
+            previous_payload,
         )
         derived_dataset = CatalogDatasetResponse.model_validate(dataset_payload)
         lineage_graph = build_derived_dataset_lineage_graph(
@@ -187,6 +224,7 @@ def build_derived_dataset_payload(
     result_source_dataset: CatalogDatasetResponse,
     sql_result: QueryRunResponse,
     schema_source_datasets: list[CatalogDatasetResponse],
+    previous_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     dataset_description = (
         request.dataset.description.strip()
@@ -198,31 +236,47 @@ def build_derived_dataset_payload(
         if reference_dataset_id != result_source_dataset.id
     ]
 
+    materialization_runs = append_materialization_run(
+        previous_payload.get("materializationRuns") if previous_payload else [],
+        {
+            "createdAt": current_utc_timestamp(),
+            "jobId": "sql-derived",
+            "rowCount": materialized_result.row_count,
+            "runId": request.source_run_id,
+            "sourceKind": "sql",
+            "sourceLabel": f"SQL Materialize · {sql_result.run_id}",
+            "status": "success",
+            "storageLocation": materialized_result.storage_location,
+            "storageSizeBytes": materialized_result.storage_size_bytes,
+        },
+    )
+    aggregate = aggregate_materialization_runs(materialization_runs)
     return {
         "description": dataset_description,
         "downstream": ["SQL 분석", "대시보드"],
         "freshness": "latest",
         "id": dataset_id,
         "layer": request.dataset.layer,
-        "lastUpdated": current_utc_timestamp(),
+        "lastUpdated": aggregate["lastUpdated"] or current_utc_timestamp(),
+        "materializationRuns": materialization_runs,
         "name": dataset_name,
         "nextRefresh": "수동 갱신",
         "owner": result_source_dataset.owner,
         "quality": "SQL materialized",
         "rag": request.dataset.rag,
-        "rows": f"{materialized_result.row_count:,} rows",
+        "rows": f"{aggregate['rowCount']:,} rows",
         "sampleRows": materialized_result.sample_rows,
         "schema": [
             [column_name, infer_column_type(schema_source_datasets, column_name)]
             for column_name in sql_result.columns
         ],
-        "size": format_storage_size(materialized_result.storage_size_bytes),
+        "size": format_storage_size(aggregate["storageSizeBytes"]),
         "source": f"SQL Materialize · {sql_result.run_id}",
-        "sourceRunId": request.source_run_id,
+        "sourceRunId": aggregate["latestRunId"] or request.source_run_id,
         "status": "available",
         "storageFormat": materialized_result.storage_format,
         "storageLocation": materialized_result.storage_location,
-        "storageSizeBytes": materialized_result.storage_size_bytes,
+        "storageSizeBytes": aggregate["storageSizeBytes"],
         "tags": normalize_derived_dataset_tags(request.dataset.tags),
         "upstream": [
             result_source_dataset.name,
@@ -252,14 +306,8 @@ def build_materialized_sql_rows(
     ]
 
 
-def build_unique_derived_dataset_id(
-    dataset_name: str,
-    repository: CatalogRepository,
-) -> str:
-    base_dataset_id = f"ds_{normalize_derived_dataset_id(dataset_name)}"
-    if repository.get_dataset_payload(base_dataset_id) is None:
-        return base_dataset_id
-    return f"{base_dataset_id}_{uuid4().hex[:8]}"
+def build_derived_dataset_id(dataset_name: str) -> str:
+    return f"ds_{normalize_derived_dataset_id(dataset_name)}"
 
 
 def normalize_derived_dataset_id(name: str) -> str:
@@ -399,6 +447,53 @@ def unique_datasets_by_id(
         unique_datasets.append(dataset)
         seen_dataset_ids.add(dataset.id)
     return unique_datasets
+
+
+def append_materialization_run(
+    previous_runs: object,
+    next_run: dict[str, object],
+) -> list[dict[str, object]]:
+    runs = [run for run in previous_runs if isinstance(run, dict)] if isinstance(previous_runs, list) else []
+    run_id = str(next_run.get("runId") or "")
+    if not run_id:
+        return runs
+    return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def recalculate_dataset_payload_from_runs(payload: dict[str, object]) -> dict[str, object]:
+    runs = payload.get("materializationRuns")
+    materialization_runs = [run for run in runs if isinstance(run, dict)] if isinstance(runs, list) else []
+    aggregate = aggregate_materialization_runs(materialization_runs)
+    next_payload = dict(payload)
+    next_payload["materializationRuns"] = materialization_runs
+    next_payload["lastUpdated"] = aggregate["lastUpdated"] or payload.get("lastUpdated") or current_utc_timestamp()
+    next_payload["rows"] = f"{aggregate['rowCount']:,} rows"
+    next_payload["size"] = format_storage_size(aggregate["storageSizeBytes"])
+    next_payload["sourceRunId"] = aggregate["latestRunId"]
+    next_payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
+    return next_payload
+
+
+def aggregate_materialization_runs(runs: list[dict[str, object]]) -> dict[str, object]:
+    active_runs = [run for run in runs if run.get("status") == "success"]
+    latest_run = active_runs[0] if active_runs else None
+    return {
+        "latestRunId": latest_run.get("runId") if latest_run else None,
+        "lastUpdated": latest_run.get("createdAt") if latest_run else None,
+        "rowCount": sum(parse_count_value(run.get("rowCount")) for run in active_runs),
+        "storageSizeBytes": sum(parse_count_value(run.get("storageSizeBytes")) for run in active_runs),
+    }
+
+
+def parse_count_value(value: object) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, int):
+        return max(value, 0)
+    if isinstance(value, float):
+        return max(int(value), 0)
+    digits = re.sub(r"[^0-9]", "", str(value))
+    return int(digits) if digits else 0
 
 
 def format_storage_size(size_bytes: int) -> str:

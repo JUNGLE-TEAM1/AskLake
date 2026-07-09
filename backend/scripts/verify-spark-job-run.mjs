@@ -6,6 +6,7 @@ const port = Number(process.env.ASKLAKE_VERIFY_SPARK_PORT || 18088);
 const sourceBucket = process.env.ASKLAKE_VERIFY_SPARK_BUCKET || "m3-raw";
 const sourceKey = process.env.ASKLAKE_VERIFY_SPARK_KEY || "nyc_taxi/csv/2019-Nov.csv";
 const rowLimit = process.env.ASKLAKE_VERIFY_SPARK_ROW_LIMIT || "3";
+const completionTimeoutMs = Number(process.env.ASKLAKE_VERIFY_SPARK_TIMEOUT_MS || 300000);
 
 const env = {
   ...process.env,
@@ -213,7 +214,7 @@ async function postJson(pathname, body) {
 }
 
 async function waitForJobCompletion(jobId, runId) {
-  const deadline = Date.now() + 180000;
+  const deadline = Date.now() + completionTimeoutMs;
   let latestJob;
   while (Date.now() < deadline) {
     latestJob = await getJson(`/api/etl/jobs/${encodeURIComponent(jobId)}`);

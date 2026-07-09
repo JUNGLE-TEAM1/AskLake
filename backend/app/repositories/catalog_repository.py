@@ -94,9 +94,9 @@ def ensure_catalog_schema(db: Session) -> None:
 
 def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
     if model.payload:
-        return model.payload
+        return normalize_dataset_payload(model.payload)
 
-    return {
+    return normalize_dataset_payload({
         "description": model.description or "",
         "downstream": model.downstream or [],
         "freshness": model.freshness or "latest",
@@ -117,7 +117,18 @@ def dataset_model_to_payload(model: CatalogDatasetModel) -> dict[str, Any]:
         "status": model.status or "available",
         "tags": model.tags or [],
         "upstream": model.upstream or [],
-    }
+    })
+
+
+def normalize_dataset_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = dict(payload)
+    materialization_runs = normalized_payload.get("materializationRuns")
+    normalized_payload["materializationRuns"] = (
+        materialization_runs
+        if isinstance(materialization_runs, list)
+        else []
+    )
+    return normalized_payload
 
 
 def dataset_payload_to_model_values(payload: dict[str, Any]) -> dict[str, Any]:

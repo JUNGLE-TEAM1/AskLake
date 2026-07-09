@@ -76,6 +76,7 @@ type DashboardRuntimeDatasetState = {
   isLoading: boolean;
   selectedDataset: DashboardDatasetOption | null;
   selectedDatasetId: string | null;
+  sourceMode?: "dataset" | "sqlResult";
 };
 
 type DashboardRuntimeViewActions = {
@@ -117,6 +118,12 @@ type DashboardRuntimeViewProps = {
 
 function AskLakeNessiIcon({ size = 20 }: { size?: number }) {
   return <img alt="" aria-hidden="true" className="asklake-toolbar-nessi-icon" height={size} src={askLakeNessiIconUrl} width={size} />;
+}
+
+function cloneDatasetRows(datasets: DashboardDatasetOption[], datasetId: string | null | undefined) {
+  if (!datasetId) return undefined;
+  const rows = datasets.find((dataset) => dataset.id === datasetId)?.rows;
+  return rows?.map((row) => ({ ...row }));
 }
 
 function DashboardEditToolbar({
@@ -178,7 +185,9 @@ function hidesInspectorForWidget(widget: DashboardRuntimeWidget | null) {
 }
 
 function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
-  return widget?.config.placeholderKind === "visualization_request";
+  if (!widget) return false;
+  return widget.config.placeholderKind === "visualization_request"
+    || (widget.title === "시각화 요청" && !widget.datasetId && widget.data.length === 0);
 }
 
 const emptyDashboardCopy = {
@@ -237,6 +246,7 @@ export function DashboardRuntimeView({
     isLoading: dashboardDatasetsLoading,
     selectedDataset,
     selectedDatasetId,
+    sourceMode = "dataset",
   } = datasets;
   const {
     addPage: onAddPage,
@@ -295,24 +305,43 @@ export function DashboardRuntimeView({
     type: widget.type,
   });
   const mergeAssistantWidgetConfig = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const convertsVisualizationRequest = widget.config.placeholderKind === "visualization_request" && (patch.datasetId || patch.type);
     const nextConfig = {
       ...widget.config,
       ...(patch.config ?? {}),
     } as Record<string, unknown>;
 
-    if (widget.config.placeholderKind === "visualization_request" && (patch.config || patch.datasetId || patch.type || patch.title)) {
+    if (convertsVisualizationRequest) {
       delete nextConfig.placeholderKind;
+      if (typeof nextConfig.description === "string" && nextConfig.description.includes("mock fallback")) {
+        delete nextConfig.description;
+      }
+      if (typeof nextConfig.body === "string" && nextConfig.body.includes("mock fallback")) {
+        delete nextConfig.body;
+      }
     }
 
     return nextConfig as UpdateDraftWidgetFormInput["config"];
   };
-  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => onUpdateWidget(widget.id, {
-    config: mergeAssistantWidgetConfig(widget, patch),
-    datasetId: patch.datasetId ?? widget.datasetId ?? null,
-    title: patch.title ?? widget.title ?? "제목 없는 위젯",
-    type: patch.type ?? widget.type,
-  });
+  const applyWidgetPatch = (widget: DashboardRuntimeWidget, patch: DashboardAssistantWidgetPatch) => {
+    const requestedDatasetId = patch.datasetId ?? widget.datasetId ?? selectedDatasetId ?? null;
+    const nextDataset = dashboardDatasets.find((dataset) => dataset.id === requestedDatasetId)
+      ?? (selectedDatasetId ? dashboardDatasets.find((dataset) => dataset.id === selectedDatasetId) : null)
+      ?? dashboardDatasets[0]
+      ?? null;
+    const nextDatasetId = nextDataset?.id ?? null;
+    const nextData = cloneDatasetRows(dashboardDatasets, nextDatasetId);
+
+    return onUpdateWidget(widget.id, {
+      config: mergeAssistantWidgetConfig(widget, patch),
+      data: nextData?.length ? nextData : undefined,
+      datasetId: nextDatasetId,
+      title: patch.title ?? widget.title ?? "제목 없는 위젯",
+      type: patch.type ?? widget.type,
+    });
+  };
   const assistantContext = {
+    activeDatasetId: selectedDatasetId,
     dashboardId: draftRuntime?.dashboard.id ?? title,
     onWorkingWidgetChange: setAiWorkingWidgetId,
     pageId: selectedPageId,
@@ -498,6 +527,7 @@ export function DashboardRuntimeView({
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
             selectedDatasetId={selectedDatasetId}
+            sourceMode={sourceMode}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}
           />
@@ -512,6 +542,7 @@ export function DashboardRuntimeView({
           <aside className="asklake-dashboard-inspector assistant">
             <DashboardAssistantPanel
               dashboardId={assistantContext.dashboardId}
+              datasets={dashboardDatasets}
               pageId={selectedPageId}
               promptInsertion={assistantPromptInsertion}
               selectedWidget={selectedDraftWidget}

@@ -279,10 +279,11 @@ def _request_fallback_context(
 
 
 def _request_widget_to_context(widget: DashboardAssistantWidgetContext) -> AssistantWidgetContext:
+    widget_type = widget.type if isinstance(widget.type, DashboardRuntimeWidgetType) else DashboardRuntimeWidgetType(widget.type)
     return AssistantWidgetContext(
         id=widget.id,
         title=widget.title or "제목 없는 위젯",
-        type=widget.type,
+        type=widget_type,
         dataset_id=widget.dataset_id,
         config=widget.config,
         data_sample=widget.data_sample,

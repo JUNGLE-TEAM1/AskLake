@@ -247,6 +247,7 @@ export type CreateDraftWidgetInput = {
 
 export type UpdateDraftWidgetInput = {
   config?: Record<string, unknown>;
+  data?: Array<Record<string, unknown>>;
   datasetId?: string | null;
   title?: string | null;
   type?: DashboardRuntimeWidgetType;
@@ -307,6 +308,7 @@ function updateLocalWidget(widget: DashboardRuntimeWidget, input: UpdateDraftWid
   return {
     ...widget,
     config: input.config ?? widget.config,
+    data: input.data ?? widget.data,
     datasetId: input.datasetId ?? widget.datasetId,
     title: input.title ?? widget.title,
     type: input.type ?? widget.type,

@@ -28,12 +28,14 @@ export type CreateDraftWidgetFormInput = {
 
 export type UpdateDraftWidgetFormInput = {
   config: DashboardRuntimeWidgetConfig;
+  data?: Array<Record<string, unknown>>;
   datasetId?: string | null;
   title: string;
   type: DashboardRuntimeWidgetType;
 };
 
 export type DashboardAssistantRuntimeContext = {
+  activeDatasetId?: string | null;
   dashboardId?: string;
   onWorkingWidgetChange?: (widgetId: string | null) => void;
   pageId: string | null;

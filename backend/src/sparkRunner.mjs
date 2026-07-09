@@ -204,6 +204,15 @@ function writeSampleRowsSource(job, runId) {
   return writeRowsSource(runId, columns, rows);
 }
 
+function hasSchemaSampleRows(job) {
+  return (
+    Array.isArray(job.schemaSampleRows) &&
+    job.schemaSampleRows.length > 0 &&
+    Array.isArray(job.schemaColumns) &&
+    job.schemaColumns.length > 0
+  );
+}
+
 function writeConnectorSampleRowsSource(job, runId) {
   const sourceType = job.sourceType || "";
   if (!isConnectorSampleSource(sourceType)) return "";
@@ -219,6 +228,7 @@ function writeConnectorSampleRowsSource(job, runId) {
     maxBuffer: 32 * 1024 * 1024,
   });
   if (result.status !== 0) {
+    if (hasSchemaSampleRows(job)) return "";
     throw sparkError(`Connector sample export failed for ${sourceType}.\n${result.stdout}\n${result.stderr}`);
   }
 

@@ -1525,7 +1525,32 @@ export function SourceConnectionPage({
     onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
   };
 
-  const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
+  const sourceChoiceGroups: Array<{ connectors: string[]; description: string; id: string; title: string }> = [
+    {
+      id: "database",
+      title: "데이터베이스",
+      description: "관계형/문서형 DB에서 테이블·컬렉션을 조회하고 샘플로 스키마를 추론합니다.",
+      connectors: ["PostgreSQL", "MongoDB"],
+    },
+    {
+      id: "object-storage",
+      title: "파일 / 오브젝트 스토리지",
+      description: "MinIO 버킷, 파일, Parquet 레이크 오브젝트를 선택합니다.",
+      connectors: ["File / S3", "Data Lake"],
+    },
+    {
+      id: "stream",
+      title: "스트림",
+      description: "이벤트 스트림 메타데이터와 토픽 기반 입력을 설정합니다.",
+      connectors: ["Stream / Kafka"],
+    },
+    {
+      id: "api",
+      title: "API",
+      description: "HTTP 응답 샘플을 수집해서 처리 입력으로 사용합니다.",
+      connectors: ["REST API"],
+    },
+  ];
 
   return (
     <CreationFlowLayout
@@ -1545,18 +1570,40 @@ export function SourceConnectionPage({
                 <h2>Select a data source</h2>
                 <p>Choose the type of data source you want to connect</p>
               </div>
-              <div className="source-choice-grid">
-                {sourceChoiceConnectors.map((connector) => {
-                  const meta = connectorMeta[connector];
-                  return (
-                    <button aria-label={`${meta.label} ${meta.desc}`} className={sourceType === connector ? "source-choice-card active" : "source-choice-card"} key={connector} type="button" onClick={() => selectSource(connector)}>
-                      <span className="source-choice-icon">{meta.icon}</span>
-                      <strong>{meta.label}</strong>
-                      <span>{meta.desc}</span>
-                      {sourceType === connector && <span className="source-choice-check"><Check size={18} /></span>}
-                    </button>
-                  );
-                })}
+              <div className="source-choice-groups">
+                {sourceChoiceGroups.map((group) => (
+                  <section className="source-choice-group" key={group.id} aria-labelledby={`source-choice-${group.id}`}>
+                    <div className="source-choice-group-head">
+                      <div>
+                        <h3 id={`source-choice-${group.id}`}>{group.title}</h3>
+                        <p>{group.description}</p>
+                      </div>
+                      <span>{group.connectors.length} connectors</span>
+                    </div>
+                    <div className="source-choice-list">
+                      {group.connectors.map((connector) => {
+                        const meta = connectorMeta[connector];
+                        const config = sourceConfigs[connector];
+                        const selected = sourceType === connector;
+                        return (
+                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                            <span className="source-choice-icon">{meta.icon}</span>
+                            <span className="source-choice-main">
+                              <strong>{meta.label}</strong>
+                              <span>{meta.desc}</span>
+                            </span>
+                            <span className="source-choice-meta">
+                              <em>{meta.status}</em>
+                              <span>{config?.assetsTitle ?? "데이터 탐색"}</span>
+                            </span>
+                            <span className="source-choice-next">연결 설정</span>
+                            {selected && <span className="source-choice-check"><Check size={18} /></span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </section>
+                ))}
               </div>
             </div>
           )}
@@ -5155,13 +5202,14 @@ export function ReviewPage({
     ["Summary", permissionReview.permissionSummary],
   ];
   const validationRows = [
-    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
-    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
-    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
-    ["실패 재시도", request.retryPolicySummary ? "유효함" : "확인 필요"],
-    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
+    ["소스 연결", draft.source.connectionStatus === "success" ? "실제 연결 확인" : "연결 테스트 필요"],
+    ["스키마", includedReviewColumns.length > 0 ? "추론 결과 있음" : "추론 필요"],
+    ["처리 규칙", request.ruleSummary ? "설정값 저장" : "규칙 없음"],
+    ["스케줄", request.scheduleLabel ? "예약 메타데이터 저장" : "확인 필요"],
+    ["실패 재시도", request.retryPolicySummary ? "정책 메타데이터 저장" : "기본 정책"],
+    ["권한/타겟", request.permissionSummary && request.targetDataset ? "메타데이터 저장" : "확인 필요"],
   ];
+  const readyValidationStatuses = new Set(["실제 연결 확인", "추론 결과 있음", "설정값 저장", "규칙 없음", "예약 메타데이터 저장", "정책 메타데이터 저장", "기본 정책", "메타데이터 저장"]);
   const canCreate = draft.source.connectionStatus === "success"
     && includedReviewColumns.length > 0
     && Boolean(request.sourceType.trim())
@@ -5246,7 +5294,7 @@ export function ReviewPage({
             </dl>
             <div className="xflow-review-validation">
               {validationRows.map(([item, status]) => (
-                <div className={status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "needs-review"} key={item}>
+                <div className={readyValidationStatuses.has(status) ? "ready" : "needs-review"} key={item}>
                   <Check size={15} />
                   <span>{item}</span>
                   <strong>{status}</strong>
