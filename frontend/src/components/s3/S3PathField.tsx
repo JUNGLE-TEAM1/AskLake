@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, Clipboard, Folder, FolderOpen, FolderSearch, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { NativeSelect } from "@/components/ui/native-select";
 import { PickerDialog } from "@/components/ui/picker-dialog";
 import { TreePanel } from "@/components/ui/tree-panel";
 import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
@@ -62,14 +64,14 @@ export function S3PathField({ onChange, value }: S3PathFieldProps) {
       <div className="s3-path-display" title={parsed.path || value}>
         <S3PathText value={value} />
       </div>
-      <button className="secondary-button s3-path-action" type="button" onClick={() => setPickerOpen(true)}>
+      <Button className="secondary-button s3-path-action" type="button" variant="outline" onClick={() => setPickerOpen(true)}>
         <FolderSearch size={14} />
         찾아보기
-      </button>
-      <button className="secondary-button s3-path-action" disabled={!value.trim()} type="button" onClick={copyPath}>
+      </Button>
+      <Button className="secondary-button s3-path-action" disabled={!value.trim()} type="button" variant="outline" onClick={copyPath}>
         {copied ? <Check size={14} /> : <Clipboard size={14} />}
         {copied ? "복사됨" : "복사"}
-      </button>
+      </Button>
       {pickerOpen ? (
         <S3PathPicker
           value={value}
@@ -273,25 +275,30 @@ function S3PathPicker({
       title="S3 경로 선택"
       toolbar={(
         <div className="s3-picker-toolbar">
-          <NativeSelectField
-            fieldClassName="field"
-            label="Bucket"
-            selectClassName="input control-input"
-            disabled={bucketsLoading || buckets.length === 0}
-            value={bucket}
-            onChange={(event) => {
-              setBucket(event.target.value);
-              setSelectedPrefix("");
-            }}
-          >
-            {buckets.map((item) => <option key={item}>{item}</option>)}
-          </NativeSelectField>
-          <FormFieldGroup className="field" label="주소 필터">
-            <div className="s3-picker-search">
-              <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
-            </div>
-          </FormFieldGroup>
+          <Field className="field">
+            <FieldLabel>Bucket</FieldLabel>
+            <NativeSelect
+              className="input control-input"
+              disabled={bucketsLoading || buckets.length === 0}
+              size="sm"
+              value={bucket}
+              onChange={(event) => {
+                setBucket(event.target.value);
+                setSelectedPrefix("");
+              }}
+            >
+              {buckets.map((item) => <option key={item}>{item}</option>)}
+            </NativeSelect>
+          </Field>
+          <Field className="field">
+            <FieldLabel>주소 필터</FieldLabel>
+            <InputGroup className="s3-picker-search">
+              <InputGroupAddon>
+                <Search size={14} />
+              </InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주소 검색" />
+            </InputGroup>
+          </Field>
         </div>
       )}
       error={bucketError ? (
