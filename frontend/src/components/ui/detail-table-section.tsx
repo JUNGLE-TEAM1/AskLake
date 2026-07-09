@@ -11,7 +11,10 @@ export interface DetailTableSectionProps
   isEmpty?: boolean;
   meta?: React.ReactNode;
   scrollClassName?: string;
+  summary?: React.ReactNode;
   title: React.ReactNode;
+  titleClassName?: string;
+  titleIcon?: React.ReactNode;
 }
 
 export const DetailTableSection = React.forwardRef<HTMLElement, DetailTableSectionProps>(
@@ -27,17 +30,24 @@ export const DetailTableSection = React.forwardRef<HTMLElement, DetailTableSecti
       isEmpty = false,
       meta,
       scrollClassName,
+      summary,
       title,
+      titleClassName,
+      titleIcon,
       ...props
     },
     ref,
   ) => (
     <article className={className} ref={ref} {...props}>
       <div className={headerClassName}>
-        <h3>{title}</h3>
+        <h3 className={titleClassName}>
+          {titleIcon}
+          {title}
+        </h3>
         {meta}
         {actions}
       </div>
+      {summary}
       <div className={scrollClassName}>
         {isEmpty ? emptyState : children}
       </div>

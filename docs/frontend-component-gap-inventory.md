@@ -166,7 +166,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result, Dashboard builder preview, dashboard runtime table widget에 1차 적용. ETL final preview와 Catalog preview shell은 후속 판단. |
 | 전체 | dense settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 Dashboard config shell을 1차 적용했고, #391에서 WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field까지 확장. ETL rule builder/target/permission form과 color picker 세부 layout은 후속. |
 | 전체 | icon-only option grid | `부분 해결` | `IconOptionGrid` | #389에서 Dashboard runtime widget type icon grid에 1차 적용. tooltip/focus state는 기존 runtime 흐름 유지. |
-| 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell에 적용. ETL detail과 schema transform editor는 후속. |
+| 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell, #405에서 ETL final preview와 SchemaTransformEditor sample preview shell에 적용. table row/density와 DataTable 전환은 후속. |
 | 전체 | color palette picker | `부분 해결` | `ColorPalettePicker` | #403에서 Dashboard widget color slot/choice/custom picker shell을 `ColorPalettePicker`로 분리. `react-colorful` 상태와 color config 계산은 `WidgetConfigPanel`에 유지. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
 | 전체 | tree/list hybrid selector | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 S3 picker, ETL source asset tree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell을 `TreePanel`로 분리. row renderer, hover card, MUI TreeView/react-arborist 통합은 후속. |
@@ -181,7 +181,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Source connector cards | `source-choice-card` | `부분 해결` | `SelectableCard` | #389에서 `SelectableCard`로 1차 전환. 선택 상태, 아이콘, 설명, check 표시 className은 유지. |
 | Schedule run type cards | `schedule-config-mode-card`, `run-card` | `부분 해결` | `SelectableCard` | #389에서 ETL 내부 schedule config card와 schedule page run type card를 `SelectableCard`로 전환. target chip grid는 후속. |
 | Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
-| Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section, #395에서 Jobs run history table shell에 적용. ETL transform preview는 후속. |
+| Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section, #395에서 Jobs run history table shell, #405에서 ETL final preview와 SchemaTransformEditor source/transformed sample preview shell에 적용. |
 | Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup`, `SegmentedTabs` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. #391에서는 source/schedule field까지만 전환했고, #393에서 rule category tabs를 `SegmentedTabs`로 전환. form/select 구조는 보류. |
 | Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
 | Target tags | `target-chip-grid`, `target-chip` | `부분 해결` | `TagList`, `Chip` | #385에서 target tag row와 clickable chip을 공통 컴포넌트로 전환. partition chip grid는 유지. |
@@ -265,3 +265,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |
 | 2026-07-09 | #401에서 `TreePanel`을 추가하고 S3 picker, ETL SourceAssetTree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell에 적용. row/hover card와 tree library 통합은 후속 gap으로 유지. |
 | 2026-07-09 | #403에서 `WidgetShell`, `RuntimeTopbar`, `ColorPalettePicker`를 추가하고 Dashboard runtime frame/topbar/color palette shell에 적용. runtime 상태와 grid/color 계산은 화면 전용으로 유지. |
+| 2026-07-09 | #405에서 `DetailTableSection`에 summary/title 확장 slot을 추가하고 ETL final preview와 SchemaTransformEditor sample preview table shell에 적용. table row/density CSS와 DataTable 전환은 후속으로 유지. |

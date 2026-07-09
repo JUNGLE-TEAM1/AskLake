@@ -2,7 +2,7 @@
 
 ## 목적
 
-이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393, #395, #401, #403에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
+이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393, #395, #401, #403, #405에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
 
 `docs/frontend-component-gap-inventory.md`는 전체 gap 추적 문서이고, `docs/frontend-css-cleanup-inventory.md`는 CSS 유지/교체 판단 문서다. 이 문서는 두 문서에서 #385 이후 남은 UI shell 후보만 뽑아 적용 순서와 보류 기준을 좁힌다.
 
@@ -77,6 +77,17 @@
 - `WidgetConfigPanel`의 color slot/swatch/custom picker shell을 `ColorPalettePicker`로 전환했다.
 - grid resize/drag, publish/share/rename, color config 계산은 기존 runtime 로직으로 유지한다.
 
+## #405 적용 결과
+
+| 컴포넌트 | 추가 적용 파일 | 남은 범위 |
+| --- | --- | --- |
+| `DetailTableSection` | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | table row/cell density CSS, DataTable 전환, SchemaTransformEditor 편집/SQL 변환 로직 |
+
+- `DetailTableSection`에 `summary`, `titleClassName`, `titleIcon` slot을 추가했다.
+- ETL final preview의 summary cards, table scroll, footer shell을 `DetailTableSection`으로 전환했다.
+- SchemaTransformEditor의 source/transformed sample preview shell을 `DetailTableSection`으로 전환했다.
+- row/cell density CSS, editor adapter scroll CSS, DataTable 전환은 후속으로 유지한다.
+
 ## 우선 구현 후보
 
 | 순서 | 후보 | 바꿀 수 있는 UI | 대표 사용처 | 이번 판단 |
@@ -89,7 +100,7 @@
 | 6 | `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | 단순 tab부터 적용하고 rename/edit 상태가 있는 탭은 보류한다. |
 | 7 | `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | source connector, schedule mode, widget type card에 반복되지만 icon/description/check 상태 설계가 필요하다. |
 | 8 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | dashboard chart/widget type 선택 UI부터 적용 가능하다. tooltip과 focus 상태를 같이 본다. |
-| 9 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule, #395에서 Jobs run history까지 적용. ETL/SchemaTransformEditor는 후속 설계로 둔다. |
+| 9 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule, #395에서 Jobs run history, #405에서 ETL final preview와 SchemaTransformEditor sample preview shell에 적용. row/density cleanup은 후속. |
 | 10 | `TreePanel` | dataset/source/path tree shell | `frontend/src/pages/sql/SqlDatasetRow.tsx`, `frontend/src/pages/dashboard/runtime/DatasetSidebar.tsx`, `frontend/src/pages/etl/SourceAssetTree.tsx`, `frontend/src/components/s3/S3PathField.tsx` | #401에서 wrapper/state shell에 1차 적용. row/hover/tree library 통합은 후속 설계로 둔다. |
 | 11 | `WidgetShell` / `RuntimeTopbar` / `ColorPalettePicker` | runtime frame/topbar/color shell | `frontend/src/pages/dashboard/runtime/WidgetFrame.tsx`, `frontend/src/pages/dashboard/runtime/DashboardTopBar.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #403에서 wrapper shell에 1차 적용. grid/color/publish 상태 로직은 후속 판단. |
 
@@ -117,6 +128,6 @@
 3. 상세 화면 table section에 `DetailTableSection` 추가 적용
 4. SQL/ETL의 큰 설정 panel shell은 `SettingsPanel` 추가 전에 route QA 후 판단
 5. route QA 후 `dashboard.css`, `dashboard-runtime.css`, `etl.css`, `ingest.css`, `sql.css`의 wrapper selector 축소
-6. 상태 결합이 큰 `TreeHoverCard`와 runtime 내부 상태 cleanup 별도 설계
+6. 상태 결합이 큰 `TreeHoverCard`, runtime 내부 상태 cleanup, table row/density cleanup 별도 설계
 
 각 PR은 구현 파일 변경과 함께 `docs/frontend-component-gap-inventory.md`와 `docs/frontend-css-cleanup-inventory.md`의 상태를 같이 갱신한다.

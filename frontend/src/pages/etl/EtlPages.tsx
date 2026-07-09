@@ -45,6 +45,7 @@ import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
+import { DetailTableSection } from "@/components/ui/detail-table-section";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { KeyValueList } from "@/components/ui/key-value-list";
 import { PageHeader } from "@/components/ui/page-header";
@@ -4089,53 +4090,57 @@ function FinalDatasetPreviewPanel({
   ];
 
   return (
-    <section className="panel hegun-console-panel hegun-final-preview-panel">
-      <div className="panel-header">
-        <Table2 size={18} />
-        <h2>최종 데이터셋 미리보기</h2>
-        <span className="panel-note">{showingRowsLabel}</span>
-      </div>
-      <div className="hegun-final-preview-summary">
-        {summaryItems.map((item) => (
-          <article key={item.label}>
-            <span>{item.label}</span>
-            <strong>{item.value}</strong>
-          </article>
-        ))}
-      </div>
-      <div className="hegun-table-scroll">
-        <table className="schema-table hegun-final-preview-table">
-          <thead>
-            <tr>
+    <DetailTableSection
+      className="panel hegun-console-panel hegun-final-preview-panel"
+      footer={showingRowsLabel}
+      footerClassName="hegun-final-preview-footer"
+      headerClassName="panel-header hegun-final-preview-header"
+      meta={<span className="panel-note">{showingRowsLabel}</span>}
+      scrollClassName="hegun-table-scroll"
+      summary={(
+        <div className="hegun-final-preview-summary">
+          {summaryItems.map((item) => (
+            <article key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+            </article>
+          ))}
+        </div>
+      )}
+      title="최종 데이터셋 미리보기"
+      titleClassName="hegun-final-preview-title"
+      titleIcon={<Table2 size={18} />}
+    >
+      <table className="schema-table hegun-final-preview-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column}>
+                <span className="hegun-final-column-header">
+                  {column}
+                  {derivedColumnSet.has(column) && <em>파생</em>}
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {previewRows.length > 0 ? previewRows.map((row, rowIndex) => (
+            <tr key={row.row_id ?? `row-${rowIndex}`}>
               {columns.map((column) => (
-                <th key={column}>
-                  <span className="hegun-final-column-header">
-                    {column}
-                    {derivedColumnSet.has(column) && <em>파생</em>}
-                  </span>
-                </th>
+                <td key={`${row.row_id ?? rowIndex}-${column}`}>{row[column] ?? ""}</td>
               ))}
             </tr>
-          </thead>
-          <tbody>
-            {previewRows.length > 0 ? previewRows.map((row, rowIndex) => (
-              <tr key={row.row_id ?? `row-${rowIndex}`}>
-                {columns.map((column) => (
-                  <td key={`${row.row_id ?? rowIndex}-${column}`}>{row[column] ?? ""}</td>
-                ))}
-              </tr>
-            )) : (
-              <tr>
-                <td colSpan={columns.length}>
-                  <span className="hegun-empty-table-state">변환된 샘플 행이 없습니다.</span>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-      <div className="hegun-final-preview-footer">{showingRowsLabel}</div>
-    </section>
+          )) : (
+            <tr>
+              <td colSpan={columns.length}>
+                <span className="hegun-empty-table-state">변환된 샘플 행이 없습니다.</span>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </DetailTableSection>
   );
 }
 
