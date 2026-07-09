@@ -309,3 +309,25 @@ Tree 계열은 wrapper/state shell 다음으로 hover card shell만 공통화했
 | SQL dataset tree | table/column hover card shell | `TreeHoverCard` | fixed position 계산과 row hover event는 SQL 전용으로 유지 |
 | Dashboard dataset sidebar | dataset/group/column tooltip card shell | `TreeHoverCard` | MUI Tooltip wrapper와 react-arborist row renderer는 유지 |
 | Tree UI 전체 | icon/title/subtitle/detail rows/description 구조 | `TreeHoverCard` | S3 picker, ETL source tree, JSON sample tree hover/row 통합은 후속 판단 |
+
+## #417 Shadcn Primitive Foundation 반영
+
+이번 PR은 새 화면 적용보다 foundation 추가가 목적이다. 따라서 gap 상태는 "공통 컴포넌트가 없음"에서 "공통 primitive는 생겼고, 화면별 적용이 남음"으로 바뀐다.
+
+새로 해결된 기반 gap:
+
+- Form 기본 단위: `Label`, `Field`, `InputGroup`, `NativeSelect`, `Textarea`
+- 선택/boolean control: `Checkbox`, `RadioGroup`, `Switch`, `Tabs`, `ToggleGroup`
+- 메뉴/보조 패널: `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet`
+- 상태/레이아웃 보조: `Separator`, `Skeleton`, `ScrollArea`, `Pagination`, `Empty`
+
+아직 남은 component gap:
+
+- 화면 적용 gap: ETL/SQL/Dashboard/S3/DB picker의 raw input/select/textarea/checkbox/radio를 새 primitive로 교체해야 한다.
+- composition gap: `FormFieldGroup`, `NativeSelectField`, `PaginationBar`, `DialogShell`, `EmptyState`, `SegmentedTabs`는 후속 PR에서 새 primitive 기반으로 축소하거나 유지 범위를 다시 판단한다.
+- 고유 UI gap: `WidgetShell`, `ColorPalettePicker`, `SplitPanel`, tree row renderer, dashboard grid/widget frame은 여전히 별도 설계가 필요하다.
+
+이번 PR에서 직접 적용한 범위:
+
+- `NativeSelectField` 내부 select를 새 `NativeSelect` primitive로 연결했다.
+- 그 외 화면 사용처는 충돌을 줄이기 위해 변경하지 않았다.

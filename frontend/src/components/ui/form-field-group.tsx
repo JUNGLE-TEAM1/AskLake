@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { selectTriggerVariants, type SelectTriggerProps } from "@/components/ui/select";
+import { NativeSelect, type NativeSelectProps } from "@/components/ui/native-select";
 import { cn } from "@/lib/utils";
 
 export interface FormFieldGroupProps
@@ -36,8 +36,8 @@ export interface NativeSelectFieldProps
   hint?: React.ReactNode;
   label: React.ReactNode;
   selectClassName?: string;
-  size?: SelectTriggerProps["size"];
-  variant?: SelectTriggerProps["variant"];
+  size?: NativeSelectProps["size"];
+  variant?: NativeSelectProps["variant"];
 }
 
 export const NativeSelectField = React.forwardRef<HTMLSelectElement, NativeSelectFieldProps>(
@@ -57,13 +57,15 @@ export const NativeSelectField = React.forwardRef<HTMLSelectElement, NativeSelec
     ref,
   ) => (
     <FormFieldGroup className={fieldClassName} error={error} hint={hint} label={label}>
-      <select
-        className={cn(selectTriggerVariants({ className: selectClassName, size, variant }), className)}
+      <NativeSelect
+        className={cn(selectClassName, className)}
         ref={ref}
+        size={size}
+        variant={variant}
         {...props}
       >
         {children}
-      </select>
+      </NativeSelect>
     </FormFieldGroup>
   ),
 );

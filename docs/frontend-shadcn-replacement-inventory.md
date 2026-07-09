@@ -142,3 +142,25 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | --- | --- |
 | 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
 | 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |
+
+## #417 Shadcn Primitive Foundation 반영
+
+이번 PR에서 후속 화면 교체의 기준이 되는 shadcn-style foundation을 추가했다. 화면별 raw UI 교체는 포함하지 않고, `frontend/src/components/ui` 안에서 공통 import/API 기준만 먼저 맞췄다.
+
+추가된 기준:
+
+- `frontend/components.json`: shadcn CLI가 `frontend` 앱 기준으로 `@/components`, `@/components/ui`, `@/lib/utils` alias를 인식하도록 추가했다.
+- Forms/Controls: `Label`, `Field`, `InputGroup`, `NativeSelect`, `Textarea`, `Checkbox`, `RadioGroup`, `Switch`
+- Selection/Navigation: `Tabs`, `ToggleGroup`, `Pagination`
+- Overlay/Menu: `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet`
+- Feedback/Layout: `Separator`, `Skeleton`, `ScrollArea`, `Empty`
+
+분류 변경:
+
+- 위 primitive들은 더 이상 "추가 필요" 상태가 아니라 "foundation 추가됨, 화면별 적용 필요" 상태로 본다.
+- 기존 `FormFieldGroup`/`NativeSelectField`, `EmptyState`, `PaginationBar`, `DialogShell` 같은 AskLake composition wrapper는 즉시 제거하지 않는다. 후속 PR에서 새 primitive 기반으로 내부를 줄이거나 사용처를 갈아끼운다.
+- `DropdownMenu`, `Tooltip`, `Popover`, `AlertDialog`, `Sheet`는 Navigation/Menu/Overlay PR에서 실제 화면 적용을 시작한다.
+
+검증:
+
+- `cd frontend && npm run build` 통과.
