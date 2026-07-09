@@ -27,6 +27,7 @@ from app.schemas.dashboard import (
     DashboardSortOption,
     UpdateDashboardRequest,
 )
+from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permission_grants_for_resource
 
 
 def _format_dashboard_timestamp(value: datetime) -> str:
@@ -97,8 +98,9 @@ def _filter_options(cards: list[DashboardCard]) -> DashboardListFilterOptions:
 
 def query_dashboard_cards(db: Session, query: DashboardListQuery, actor: ActorContext | None = None) -> DashboardListResponse:
     actor_context = actor or ActorContext()
-    source_cards = [with_dashboard_permissions(card, actor_context) for card in list_dashboard_cards(db)]
-    filtered_cards = [card for card in source_cards if _matches_query(card, query)]
+    source_cards = [with_dashboard_permissions(db, card, actor_context) for card in list_dashboard_cards(db)]
+    visible_cards = [card for card in source_cards if card.permissions.can_view]
+    filtered_cards = [card for card in visible_cards if _matches_query(card, query)]
     sorted_cards = _sort_dashboard_cards(filtered_cards, query.sort)
     page_size = query.page_size
     total = len(sorted_cards)
@@ -107,7 +109,7 @@ def query_dashboard_cards(db: Session, query: DashboardListQuery, actor: ActorCo
     start_index = (page - 1) * page_size
 
     return DashboardListResponse(
-        filterOptions=_filter_options(source_cards),
+        filterOptions=_filter_options(visible_cards),
         items=sorted_cards[start_index : start_index + page_size],
         page=page,
         pageSize=page_size,
@@ -147,13 +149,13 @@ def create_dashboard_card(db: Session, request: CreateDashboardRequest, actor_na
     return dashboard
 
 
-def with_dashboard_permissions(card: DashboardCard, actor: ActorContext | None = None) -> DashboardCard:
+def with_dashboard_permissions(db: Session, card: DashboardCard, actor: ActorContext | None = None) -> DashboardCard:
     actor_context = actor or ActorContext()
     grants = card.permission_grants or permission_grants_from_roles(card.owner, default_actions=["view", "manage", "share"])
-    grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in grants]
+    card = dashboard_with_persisted_permission_grants(db, card.model_copy(update={"permission_grants": grants}))
+    grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in card.permission_grants]
     return card.model_copy(update={
-        "permission_grants": grants,
-        "permissions": permissions_for_actor(actor_context, owner=card.owner, grants=grant_payloads, enforced=bool(card.permissions.enforced)),
+        "permissions": permissions_for_actor(actor_context, owner=card.owner, grants=grant_payloads, enforced=True),
     })
 
 
@@ -167,7 +169,7 @@ def identity_profile(name: str) -> dict[str, str]:
     }
 
 
-def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateDashboardRequest) -> DashboardCard:
+def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateDashboardRequest, actor: ActorContext) -> DashboardCard:
     title = request.title.strip()
     if not title:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Dashboard title is required", status.HTTP_400_BAD_REQUEST)
@@ -175,6 +177,19 @@ def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateD
     dashboard = get_dashboard_card(db, dashboard_id)
     if dashboard is None:
         raise ApiError(ErrorCode.NOT_FOUND, "Dashboard not found", status.HTTP_404_NOT_FOUND)
+    grants = permission_grants_for_resource(
+        db,
+        "dashboard",
+        dashboard.id,
+        dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "share"]),
+    )
+    grant_payloads = [grant.model_dump(by_alias=True) for grant in grants]
+    if not can(actor, "manage", owner=dashboard.owner, grants=grant_payloads):
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Only the dashboard owner or an admin can update this dashboard",
+            status.HTTP_403_FORBIDDEN,
+        )
 
     updated_at = datetime.now(timezone.utc)
     next_dashboard = dashboard.model_copy(
@@ -186,7 +201,7 @@ def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateD
     )
     save_dashboard_card(db, next_dashboard)
     db.commit()
-    return next_dashboard
+    return with_dashboard_permissions(db, next_dashboard, actor)
 
 
 def delete_dashboard_card_with_permission(
@@ -198,8 +213,13 @@ def delete_dashboard_card_with_permission(
     if dashboard is None:
         raise ApiError(ErrorCode.NOT_FOUND, "Dashboard not found", status.HTTP_404_NOT_FOUND)
 
-    grants = dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "delete", "share"])
-    grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in grants]
+    grants = permission_grants_for_resource(
+        db,
+        "dashboard",
+        dashboard.id,
+        dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "delete", "share"]),
+    )
+    grant_payloads = [grant.model_dump(by_alias=True) for grant in grants]
     if not can(actor, "delete", owner=dashboard.owner, grants=grant_payloads):
         raise ApiError(
             ErrorCode.FORBIDDEN,

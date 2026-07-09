@@ -67,8 +67,9 @@ def update_dashboard_title(
     dashboard_id: str,
     request: UpdateDashboardRequest,
     db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> DashboardCardResponse:
-    return DashboardCardResponse(dashboard=update_dashboard_card_title(db, dashboard_id, request))
+    return DashboardCardResponse(dashboard=update_dashboard_card_title(db, dashboard_id, request, actor))
 
 
 @router.delete("/{dashboard_id}", response_model=DeleteDashboardResponse)

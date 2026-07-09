@@ -11,6 +11,7 @@
     "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
     "verify:auth-session": "node scripts/verify-auth-session.mjs",
     "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",
+    "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",

@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, require_permission
+from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
@@ -32,6 +32,7 @@ from app.schemas.etl import (
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -123,11 +124,14 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     )
 
 
-def list_jobs(db: Session) -> list[JobRowData]:
-    return etl_repository.list_jobs(db)
+def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
+    return [
+        with_job_permissions(db, job, actor or ActorContext())
+        for job in etl_repository.list_jobs(db)
+    ]
 
 
-def get_job(db: Session, job_id: str) -> JobRowData:
+def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -135,7 +139,7 @@ def get_job(db: Session, job_id: str) -> JobRowData:
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    return job
+    return with_job_permissions(db, job, actor or ActorContext())
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -192,7 +196,12 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
         actor or ActorContext(),
         "run" if command in {"run", "retry"} else "manage",
         owner=job.owner,
-        grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
         resource_label="job",
     )
     if command == "run" and job.status == "running":
@@ -252,10 +261,26 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
         action=action_by_command[command],
         api_path=f"/api/etl/jobs/{job_id}/commands",
         dataset=dataset_schema,
-        job=saved_job,
+        job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
     )
+
+
+def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
+    job_with_grants = job_with_persisted_permission_grants(db, job)
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in job_with_grants.permission_grants
+    ]
+    return job_with_grants.model_copy(update={
+        "permissions": permissions_for_actor(
+            actor,
+            owner=job_with_grants.owner,
+            grants=grant_payloads,
+            enforced=True,
+        ),
+    })
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:

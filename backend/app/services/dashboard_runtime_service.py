@@ -52,6 +52,7 @@ from app.schemas.dashboard import (
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
+from app.services.resource_permission_service import dashboard_with_persisted_permission_grants
 from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
 
 
@@ -271,11 +272,15 @@ class DashboardRuntimeService:
         if dashboard is None:
             self._raise_dashboard_not_found(dashboard_id)
         grants = dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "share"])
+        dashboard = dashboard_with_persisted_permission_grants(
+            self.repository.db,
+            dashboard.model_copy(update={"permission_grants": grants}),
+        )
         require_permission(
             actor,
             action,
             owner=dashboard.owner,
-            grants=grants,
+            grants=dashboard.permission_grants,
             resource_label="dashboard",
         )
         return dashboard
@@ -337,8 +342,8 @@ class DashboardRuntimeService:
             {"widgetId": widget_id},
         )
 
-    @staticmethod
     def _dashboard_meta_to_schema(
+        self,
         record: DashboardRuntimeMetaRecord,
         has_published_revision: bool,
         actor: ActorContext,
@@ -346,12 +351,16 @@ class DashboardRuntimeService:
     ) -> DashboardMeta:
         status_value = DashboardStatus.PUBLISHED if has_published_revision else record.status
         grants = dashboard_card.permission_grants or permission_grants_from_roles(dashboard_card.owner, default_actions=["view", "manage", "share"])
+        dashboard_card = dashboard_with_persisted_permission_grants(
+            self.repository.db,
+            dashboard_card.model_copy(update={"permission_grants": grants}),
+        )
         return DashboardMeta(
             id=record.id,
             title=record.title,
             status=status_value,
-            permission_grants=grants,
-            permissions=permissions_for_actor(actor, owner=dashboard_card.owner, grants=grants, enforced=True),
+            permission_grants=dashboard_card.permission_grants,
+            permissions=permissions_for_actor(actor, owner=dashboard_card.owner, grants=dashboard_card.permission_grants, enforced=True),
             has_published_revision=has_published_revision,
             updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
         )

@@ -145,6 +145,7 @@ cd backend
 npm run verify
 npm run verify:fastapi-pair2
 npm run verify:permission-dataset
+npm run verify:permission-job-dashboard
 npm run verify:fastapi-etl-catalog
 npm run verify:sources
 npm run verify:spark-run
@@ -157,6 +158,7 @@ FastAPI Pair2 smoke:
 - 기본 포트는 `18084`이며 `ASKLAKE_FASTAPI_SMOKE_PORT`로 바꿀 수 있다.
 - 이미 실행 중인 FastAPI를 대상으로 볼 때는 `ASKLAKE_FASTAPI_SMOKE_START_SERVER=false`와 `ASKLAKE_FASTAPI_SMOKE_BASE_URL`을 지정한다.
 - `npm run verify:permission-dataset`는 권한 없는 viewer의 dataset 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다. 기본 포트는 `18087`이며 `ASKLAKE_PERMISSION_DATASET_PORT`로 바꿀 수 있다.
+- `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
 
 Frontend:

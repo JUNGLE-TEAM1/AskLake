@@ -45,13 +45,20 @@ def create_job(
 
 
 @router.get("/jobs", response_model=list[JobRowData])
-def list_jobs(db: Session = Depends(get_db)) -> list[JobRowData]:
-    return etl_service.list_jobs(db)
+def list_jobs(
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> list[JobRowData]:
+    return etl_service.list_jobs(db, actor)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRowData)
-def get_job(job_id: str, db: Session = Depends(get_db)) -> JobRowData:
-    return etl_service.get_job(db, job_id)
+def get_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobRowData:
+    return etl_service.get_job(db, job_id, actor)
 
 
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)

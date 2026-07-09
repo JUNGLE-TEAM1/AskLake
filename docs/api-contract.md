@@ -96,7 +96,7 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
-Catalog 목록/상세, SQL preview, Query AI, ETL job command API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
+Catalog 목록/상세, SQL preview, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
 
 `permissionGrants`와 `permissions`는 UI 표시와 backend enforcement를 함께 설명하는 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다. `permissions.enforced=true`이면 같은 기준으로 backend가 `403 FORBIDDEN`을 반환할 수 있습니다.
 
@@ -147,6 +147,9 @@ Resource/action 기준:
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
+| `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
+| `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
 | `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
 | `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
 | `POST /api/dashboards/{dashboardId}/publish` | `manage` | draft snapshot을 published revision으로 승격 |
@@ -1524,11 +1527,12 @@ type DashboardListResponse = {
 };
 ```
 
-`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 현재 actor를 만든 사람 metadata로 저장합니다. Dashboard 삭제 권한 검사는 공통 `ActorContext`/`can()` 코어를 사용하며, 현재 호환성을 위해 admin 또는 dashboard owner fallback이면 삭제할 수 있습니다.
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 현재 actor를 만든 사람 metadata로 저장합니다. Dashboard 목록/수정/삭제/runtime 권한 검사는 공통 `ActorContext`/`can()` 코어를 사용하며, 현재 호환성을 위해 admin 또는 dashboard owner fallback이면 해당 action을 수행할 수 있습니다.
 
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
+서버는 actor 기준 `view` 권한이 있는 dashboard만 `items`에 포함합니다. 프론트 숨김은 UX 보조이며, 직접 URL/API 접근은 backend 권한 검사에서 다시 차단됩니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
-`filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
+`filterOptions`는 현재 page에 보이는 값이 아니라 actor가 볼 수 있는 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
 
 ### 8.4 대시보드 삭제
 
@@ -1549,7 +1553,7 @@ Actor 입력:
 | `X-AskLake-Role` | `admin` | 세션이 없을 때 fallback role. `admin`이면 모든 dashboard 삭제 가능 |
 | `X-AskLake-Groups` | 빈 값 | 세션이 없을 때 fallback group 목록 |
 
-권한 허용 기준은 `admin 전체 허용 -> owner fallback -> permissionGrants delete action -> 403` 순서입니다.
+권한 허용 기준은 `admin 전체 허용 -> owner fallback -> permissionGrants delete action -> 403` 순서입니다. `permissionGrants`에는 dashboard payload의 legacy grant와 `permission_grants` table row가 병합됩니다.
 
 Response `200 OK`:
 
