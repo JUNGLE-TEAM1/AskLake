@@ -344,6 +344,7 @@
 
   .admin-permission-actions {
     grid-column: auto;
+    grid-row: auto;
   }
 
   .admin-permission-form .primary-button {
