@@ -17,6 +17,7 @@ import { DialogShell } from "@/components/ui/dialog-shell";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { ResultPanel } from "@/components/ui/preview-panel";
 import { executeQueryPreview } from "../../services/mockApi";
@@ -725,12 +726,12 @@ export function SqlAnalysisPage({
       "sql-page",
       contextCollapsed ? "context-collapsed" : "",
     ].filter(Boolean).join(" ")}>
-      <header className="sql-page-header">
-        <div>
-          <h1>SQL 분석</h1>
-          <p>선택한 데이터셋을 기준으로 SQL을 작성하고 Preview 결과를 처리 Job으로 전환합니다.</p>
-        </div>
-      </header>
+      <PageHeader
+        className="sql-page-header"
+        description="선택한 데이터셋을 기준으로 SQL을 작성하고 Preview 결과를 처리 Job으로 전환합니다."
+        icon={<Table2 size={18} />}
+        title="SQL 분석"
+      />
       {contextCollapsed && (
         <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
           <PanelLeftOpen size={16} />

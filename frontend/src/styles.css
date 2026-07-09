@@ -13,7 +13,6 @@
 
 .page-title h1,
 .jobs-page-header .page-title h1,
-.sql-page-header h1,
 .dashboard-header h1 {
   color: #0f172a;
   font-size: var(--page-title-font-size);
@@ -24,7 +23,6 @@
 
 .page-title p,
 .jobs-page-header .page-title p,
-.sql-page-header p,
 .dashboard-header p {
   max-width: 720px;
   color: #475569;

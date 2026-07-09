@@ -5,7 +5,7 @@
   max-width: none;
 }
 
-.catalog-page > .page-title {
+.catalog-page-header {
   min-height: var(--page-masthead-height);
 }
 

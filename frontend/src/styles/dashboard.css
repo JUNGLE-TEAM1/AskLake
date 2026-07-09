@@ -56,7 +56,15 @@
   padding-top: 2px;
 }
 
-.dashboard-header-actions .dashboard-create-button {
+.dashboard-page-header {
+  min-height: var(--page-masthead-height);
+}
+
+.dashboard-page-header > div {
+  width: 100%;
+}
+
+.dashboard-create-button {
   display: inline-flex;
   height: 44px;
   align-items: center;
@@ -69,11 +77,11 @@
   padding: 0 16px;
 }
 
-.dashboard-header-actions .dashboard-create-button svg {
+.dashboard-create-button svg {
   flex: 0 0 auto;
 }
 
-.dashboard-header-actions .dashboard-create-button:disabled {
+.dashboard-create-button:disabled {
   cursor: wait;
   opacity: 0.72;
 }

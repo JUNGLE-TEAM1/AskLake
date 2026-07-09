@@ -1,7 +1,7 @@
-import { Plus, Table2 } from "lucide-react";
-import { ActionGroup } from "@/components/ui/action-group";
+import { BarChart3, Plus, Table2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
@@ -88,12 +88,8 @@ export function DashboardLandingPage({
 
   return (
     <div className="dashboard-page dashboard-list-page">
-      <header className="dashboard-header">
-        <div>
-          <h1>대시보드</h1>
-          <p>게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다.</p>
-        </div>
-        <ActionGroup className="dashboard-header-actions" density="compact">
+      <PageHeader
+        actions={(
           <Button
             className="primary-button dashboard-create-button"
             disabled={isCreatingDashboard}
@@ -104,8 +100,12 @@ export function DashboardLandingPage({
           >
             <Plus size={16} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
           </Button>
-        </ActionGroup>
-      </header>
+        )}
+        className="dashboard-page-header"
+        description="게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다."
+        icon={<BarChart3 size={18} />}
+        title="대시보드"
+      />
 
       <div className="dashboard-panel-stack">
         <DashboardListToolbar

@@ -66,7 +66,6 @@
 
 .sql-panel-header span,
 .sql-schema-panel-header span,
-.sql-page-header span,
 .sql-editor-header span,
 .sql-result-header span:first-child {
   color: #64748b;
@@ -1181,40 +1180,12 @@
 
 .sql-page-header {
   grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: minmax(170px, max-content) minmax(0, 1fr);
   min-width: 0;
   min-height: var(--sql-masthead-height, 76px);
-  align-content: start;
-  align-items: start;
-  gap: 16px;
 }
 
 .sql-page-header > div {
-  display: grid;
-  align-content: center;
-  min-width: 0;
-  gap: 8px;
-  min-height: 76px;
-}
-
-.sql-page-header h1 {
-  color: #0f172a;
-  font-size: clamp(32px, 2.8vw, 42px);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: 0;
-  white-space: nowrap;
-  word-break: keep-all;
-}
-
-.sql-page-header p {
-  min-width: 0;
-  max-width: 720px;
-  color: #64748b;
-  font-size: var(--page-title-description-size, 14px);
-  line-height: var(--page-title-description-line-height, 1.5);
-  overflow-wrap: anywhere;
+  width: 100%;
 }
 
 .sql-editor-card,
