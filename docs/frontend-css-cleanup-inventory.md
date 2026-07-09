@@ -35,7 +35,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -106,10 +106,29 @@
 | `Chip` / `TagList` / `StatusBadge` | 기존 `Badge`로 대체된 범위와 interactive chip으로 유지한 범위를 분리한다. 예: `status-pill`, `run-status-pill`, `owner-chip`, `tag-chip`, `target-chip`, `*-type-pill`. |
 | `KeyValueList` / `ValidationList` | ETL/Creation/Catalog/Jobs detail의 summary/validation row selector를 화면별로 유지할지, 공통 row로 옮길지 기록한다. |
 | `PreviewPanel` / `ResultPanel` | `DataTable` 적용이 끝난 표 주변의 header, empty/loading, CTA, overflow shell selector를 추적한다. |
-| `SettingsPanel` / `FormFieldGroup` | input/select primitive 적용 후에도 남은 label/grid/textarea/checkbox/color picker selector를 유지 사유와 함께 적는다. |
-| `TreePanel` / `SelectableCard` | MUI TreeView, react-arborist, React Flow처럼 외부 라이브러리 class와 묶인 selector는 route QA 전 삭제하지 않고 `보류`로 유지한다. |
+| `SettingsPanel` / `FormFieldGroup` / `NativeSelectField` | input/select primitive 적용 후에도 남은 label/grid/textarea/checkbox/color picker/native select selector를 유지 사유와 함께 적는다. |
+| `SegmentedTabs` / `SelectableCard` | 단계 전환, source connector, schedule mode, widget type card의 selected/disabled/focus selector를 추적한다. rename/edit 상태가 있는 탭은 route QA 전 `보류`로 유지한다. |
+| `IconOptionGrid` | icon-only option button grid, selected state, tooltip, keyboard focus selector를 추적한다. |
+| `DetailTableSection` | 작은 detail table 주변 title, action, empty state, overflow shell selector를 추적한다. table 자체보다 section wrapper CSS를 먼저 기록한다. |
+| `TreePanel` | MUI TreeView, react-arborist, React Flow처럼 외부 라이브러리 class와 묶인 selector는 route QA 전 삭제하지 않고 `보류`로 유지한다. |
 
-현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PaginationBar` -> `DialogShell` -> `Chip/TagList/StatusBadge` -> `KeyValueList/ValidationList` -> `PreviewPanel/ResultPanel` -> `SettingsPanel/FormFieldGroup`이다. `TreePanel`과 `SelectableCard`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
+현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PreviewPanel/ResultPanel` -> `FormFieldGroup/NativeSelectField` -> `SettingsPanel` -> `SegmentedTabs/SelectableCard` -> `IconOptionGrid` -> `DetailTableSection`이다. `TreePanel`, `WidgetShell`, `ColorPalettePicker`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
+
+## #387 UI Shell 후보 CSS 기록
+
+이번 문서화 작업은 CSS 파일을 직접 삭제하지 않는다. 대신 다음 component 확장 PR에서 어떤 selector를 유지하거나 교체 후보로 볼지 기준을 좁힌다.
+
+| 후보 | 관련 CSS 파일 | CSS 판단 |
+| --- | --- | --- |
+| `PreviewPanel` | `sql.css`, `dashboard.css`, `etl.css` | preview header/body/empty/loading/action shell은 `DataTable` 적용 이후에도 남아 있어 `교체 후보`로 유지. |
+| `ResultPanel` | `sql.css`, `dashboard-runtime.css` | row count, execution status, result CTA, widget table viewport 주변 selector는 result shell 공통화 전까지 `부분 정리됨`으로 유지. |
+| `SettingsPanel` | `dashboard-runtime.css`, `etl.css`, `sql.css` | config/rule/materialize form의 panel header/body/footer selector는 props 설계 전까지 `교체 후보`로 유지. |
+| `FormFieldGroup` | `dashboard-runtime.css`, `etl.css`, `sql.css` | label/control/hint/error grid selector는 input primitive만으로 없어지지 않으므로 `교체 후보`로 추적. |
+| `NativeSelectField` | `dashboard-runtime.css`, `etl.css` | native select와 shadcn `Select` 사용 기준을 나눈 뒤 select label/tone selector를 축소한다. |
+| `SegmentedTabs` | `etl.css`, `ingest.css`, `dashboard-runtime.css` | 단순 tablist selector는 `교체 후보`, rename/edit 상태가 있는 tab selector는 `보류`. |
+| `SelectableCard` | `etl.css`, `dashboard.css` | source connector, schedule mode, widget type card의 selected/disabled/check selector는 설계 후 축소한다. |
+| `IconOptionGrid` | `dashboard.css`, `dashboard-runtime.css` | icon-only chart/widget option grid는 `구현 후보`; tooltip/focus/selected selector를 함께 확인한다. |
+| `DetailTableSection` | `ingest.css`, `etl.css`, `schema-transform-adapter.css` | detail table의 title/action/empty/overflow shell은 `DataTable` 전환과 별도로 `교체 후보`로 기록한다. |
 
 ## #378 Component 확장 CSS 기록
 
@@ -159,3 +178,4 @@ npm run build
 | 2026-07-09 | component 확장 PR에서 `PaginationBar`, `DialogShell`, `Chip/TagList`, `ValidationList`, `PreviewPanel`, `SettingsPanel`, `TreePanel` 후보별 CSS 기록 기준을 추가. |
 | 2026-07-09 | #375에서 Catalog 검색 box/tag row/filter row shell selector와 SQL 분석 테이블 검색 selector를 `FilterToolbar` 계열로 이동하고, shadcn primitive 전면 적용 원칙을 CSS cleanup 기준에 추가. |
 | 2026-07-09 | #385에서 `ActionGroup`, `Chip`, `TagList`, `StatusBadge`, `KeyValueList`, `ValidationList` 적용에 따른 CSS 판단을 기록. CSS 삭제는 하지 않고 wrapper/density/status selector를 route QA 전까지 유지한다. |
+| 2026-07-09 | #387에서 preview/result/settings/form/select/tab/card/icon option/detail table shell 후보별 CSS 추적 기준과 다음 정리 순서를 갱신. |
