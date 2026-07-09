@@ -60,6 +60,13 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 - `DetailTableSection`: Ingest Jobs detail의 schema/rule 작은 table section에 1차 적용.
 - CSS selector 삭제는 하지 않고 기존 className을 공통 컴포넌트에 전달해 route QA 전까지 스타일 계약을 유지한다.
 
+## #395 처리 결과
+
+- `DetailTableSection`: Jobs run history table card와 horizontal scroll shell에 추가 적용.
+- `DetailTableSection`에 optional `footer` slot을 추가해 table scroll 영역 밖에 `PaginationBar`를 유지할 수 있게 했다.
+- `runs-table-card`, `runs-table-scroll`, `runs-pagination` className은 그대로 전달해 route QA 전까지 기존 density와 pagination 스타일을 유지한다.
+- ETL detail table과 `SchemaTransformEditor` preview table은 편집/preview 상태가 강하게 묶여 있어 후속 설계 대상으로 남긴다.
+
 ## 다음 단계 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 판단 |
@@ -72,7 +79,7 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 | `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | #389에서 Dashboard 기간 필터와 ETL source stage tabs에 1차 적용. rename/edit 상태가 있는 탭은 보류한다. |
 | `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | #389에서 source connector, schedule mode, dashboard widget type card에 1차 적용. |
 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #389에서 dashboard runtime widget type 선택 UI에 1차 적용. |
-| `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule table에 1차 적용. ETL/SchemaTransformEditor는 후속. |
+| `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule table, #395에서 Jobs run history table에 적용. ETL/SchemaTransformEditor는 후속. |
 
 ## 나중에 분리하는 후보
 
@@ -94,4 +101,4 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 6. `DetailTableSection`
 7. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
 
-#389에서 위 후보군은 대표 사용처에 1차 적용됐다. 다음 PR은 남은 ETL/SQL/S3/DB picker form 전환과 route QA 후 CSS selector 축소를 이어간다.
+#389와 #395에서 위 후보군은 대표 사용처에 1차 적용됐다. 다음 PR은 남은 ETL/SQL/S3/DB picker form 전환과 route QA 후 CSS selector 축소를 이어간다.
