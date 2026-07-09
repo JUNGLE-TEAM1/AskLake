@@ -1,6 +1,7 @@
 import type React from "react";
 import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
@@ -113,14 +114,12 @@ export function CreationSummaryPanel({
         <FileText size={18} />
         <h2>{title}</h2>
       </div>
-      <dl>
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{selected && label === "실행 방식" ? selected : value}</dd>
-          </div>
-        ))}
-      </dl>
+      <KeyValueList
+        items={rows.map(([label, value]) => ({
+          label,
+          value: selected && label === "실행 방식" ? selected : value,
+        }))}
+      />
       <p className="summary-hint">{hint}</p>
       <CreationPanelActions
         nextDisabled={nextDisabled}

@@ -33,6 +33,13 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 | `KeyValueList` | label/value 요약 목록 | `frontend/src/components/creation/CreationFlow.tsx`, `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | review/detail summary에서 반복된다. |
 | `ValidationList` | 검증 항목 + 상태 + 설명 목록 | `frontend/src/components/creation/CreationFlow.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | 검증 결과 UI를 화면별 class 대신 공통 패턴으로 묶을 수 있다. |
 
+## #385 처리 결과
+
+- `ActionGroup`: SQL AI/editor/result actions, Dashboard list/workspace/runtime toolbar, Jobs card/detail actions, ETL rule action footer에 1차 적용.
+- `Chip` / `TagList` / `StatusBadge`: Jobs status/owner/tag, ETL target tag, Dashboard row tags/status, Dashboard list 상태 meta에 1차 적용.
+- `KeyValueList` / `ValidationList`: Creation summary, Jobs detail metadata, ETL Permission/Review summary와 validation rows에 1차 적용.
+- 남은 사용처: Catalog tag/status, 일부 ETL data chip, Catalog/Dashboard metadata, preview/result shell은 `docs/frontend-component-gap-inventory.md`에서 후속 후보로 유지한다.
+
 ## 다음 단계 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 판단 |
@@ -61,12 +68,10 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 
 1. `PaginationBar`
 2. `DialogShell` + `PickerDialog`
-3. `Chip` + `TagList` + `StatusBadge`
-4. `KeyValueList` + `ValidationList`
-5. `PreviewPanel` + `ResultPanel`
-6. `CommandBar` + `ActionGroup`
-7. `SettingsPanel` + `FormFieldGroup`
-8. `SegmentedTabs` + `SelectableCard`
-9. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
+3. `PreviewPanel` + `ResultPanel`
+4. `CommandBar`
+5. `SettingsPanel` + `FormFieldGroup`
+6. `SegmentedTabs` + `SelectableCard`
+7. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
 
 첫 PR은 `PaginationBar`가 가장 작다. Catalog와 검색바를 제외해도 SQL, Dashboard, Ingest에 반복 사용처가 있고, CSS cleanup 문서에 유지/교체 판단을 남기기 쉽다.

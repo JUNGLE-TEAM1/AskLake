@@ -32,16 +32,21 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
+import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
+import { TagList } from "@/components/ui/tag-list";
 import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
@@ -62,25 +67,24 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
-type BadgeVariant = React.ComponentProps<typeof Badge>["variant"];
 type JobActionButtonVariant = "destructive" | "outline" | "primary" | "subtle";
 
-function getJobStatusBadgeVariant(status: JobStatus): BadgeVariant {
-  if (status === "failed" || status === "canceled") return "destructive";
+function getJobStatusTone(status: JobStatus): StatusBadgeTone {
+  if (status === "failed" || status === "canceled") return "danger";
   if (status === "running") return "success";
   if (status === "paused") return "warning";
   return "default";
 }
 
-function getRunStatusBadgeVariant(status: JobRunStatus): BadgeVariant {
-  if (status === "failed" || status === "canceled") return "destructive";
+function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
+  if (status === "failed" || status === "canceled") return "danger";
   if (status === "success") return "success";
   if (status === "running") return "success";
   return "muted";
 }
 
-function getDagStatusBadgeVariant(status: JobDagStepStatus): BadgeVariant {
-  if (status === "failed") return "destructive";
+function getDagStatusTone(status: JobDagStepStatus): StatusBadgeTone {
+  if (status === "failed") return "danger";
   if (status === "success") return "success";
   if (status === "running") return "default";
   return "muted";
@@ -335,37 +339,44 @@ function JobsCardSection({
                   <strong>{job.name}</strong>
                   <p>{job.id}</p>
                 </div>
-                <div className="job-owner">
-                  <Badge className="owner-chip" variant="outline">{job.owner}</Badge>
-                  <Badge className="tag-chip" variant="secondary">{job.tag}</Badge>
-                </div>
+                <TagList className="job-owner" density="compact">
+                  <Chip className="owner-chip" tone="outline">{job.owner}</Chip>
+                  <Chip className="tag-chip" tone="secondary">{job.tag}</Chip>
+                </TagList>
               </div>
               {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
-              <dl className="job-row-details">
-                <div><dt>소스</dt><dd>{job.source}</dd></div>
-                <div><dt>타깃</dt><dd>{job.target}</dd></div>
-                <div><dt>스케줄</dt><dd>{job.schedule}</dd></div>
-                <div>
-                  <dt>마지막 실행</dt>
-                  <dd>{formatCompactDateTime(job.lastRun)}</dd>
-                  <dd className={executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary"} title={executionDisplay.raw}>
-                    {executionDisplay.summary}
-                  </dd>
-                  {executionDisplay.hasRawLog && (
-                    <button className="job-inline-log-button" type="button" onClick={() => openJobLog(job)}>
-                      원문 로그
-                    </button>
-                  )}
-                </div>
-                <div><dt>다음 실행</dt><dd>{job.nextRun}</dd></div>
-              </dl>
-              <div className="job-row-actions">
+              <KeyValueList
+                className="job-row-details"
+                items={[
+                  { label: "소스", value: job.source },
+                  { label: "타깃", value: job.target },
+                  { label: "스케줄", value: job.schedule },
+                  {
+                    description: (
+                      <>
+                        {executionDisplay.summary}
+                        {executionDisplay.hasRawLog && (
+                          <button className="job-inline-log-button" type="button" onClick={() => openJobLog(job)}>
+                            원문 로그
+                          </button>
+                        )}
+                      </>
+                    ),
+                    descriptionClassName: executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary",
+                    descriptionTitle: executionDisplay.raw,
+                    label: "마지막 실행",
+                    value: formatCompactDateTime(job.lastRun),
+                  },
+                  { label: "다음 실행", value: job.nextRun },
+                ]}
+              />
+              <ActionGroup className="job-row-actions" density="compact">
                 {getJobListActions(job).map((action) => (
                   <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind, job)}>
                     {action.label}
                   </Button>
                 ))}
-              </div>
+              </ActionGroup>
             </div>
           </article>
         );
@@ -477,7 +488,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <Badge className="owner-chip" variant="outline">{row.original.job.owner}</Badge>,
+      cell: ({ row }) => <Chip className="owner-chip" tone="outline">{row.original.job.owner}</Chip>,
       header: "소유자",
       id: "owner",
       meta: {
@@ -869,7 +880,7 @@ function truncateText(value: string, maxLength: number) {
 
 function StatusPill({ status }: { status: JobStatus }) {
   const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <Badge className={`status-pill ${statusClass}`} variant={getJobStatusBadgeVariant(status)}>{jobStatusMeta[status].label}</Badge>;
+  return <StatusBadge className={`status-pill ${statusClass}`} tone={getJobStatusTone(status)}>{jobStatusMeta[status].label}</StatusBadge>;
 }
 
 function JobProgress({ label, value }: { label: string; value: number }) {
@@ -991,17 +1002,17 @@ function JobDetailHeader({
       <div className="job-detail-title-row">
         <div>
           <h1>{job.name}</h1>
-          <div className="job-detail-meta">
+          <TagList className="job-detail-meta" density="compact">
             <StatusPill status={job.status} />
-            <Badge className="owner-chip" variant="outline">Owner: {job.owner}</Badge>
-            <Badge className="tag-chip" variant="secondary">{job.tag.replace("[", "").replace("]", "")}</Badge>
-          </div>
+            <Chip className="owner-chip" tone="outline">Owner: {job.owner}</Chip>
+            <Chip className="tag-chip" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
+          </TagList>
         </div>
-        <div className="job-detail-actions">
+        <ActionGroup className="job-detail-actions" density="compact">
           {getJobDetailActions(job).map((action) => (
             <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
           ))}
-        </div>
+        </ActionGroup>
       </div>
       <nav className="job-detail-tabs" aria-label="작업 상세 탭">
         <button className={activeTab === "detail" ? "active" : ""} type="button" onClick={onDetail}>작업 상세 정보</button>
@@ -1066,12 +1077,15 @@ export function JobDetailPage({
           </article>
           <article className="job-detail-card metadata-card">
             <h3>기본 메타</h3>
-            <dl className="detail-plain-kv-grid">
-              <div><dt>Job ID</dt><dd>{job.id}</dd></div>
-              <div><dt>Target</dt><dd>{job.target}</dd></div>
-              <div className="wide"><dt>소스</dt><dd>{job.source}</dd></div>
-              <div className="wide"><dt>운영 조직</dt><dd>{job.owner === "admin" ? "Data Platform" : "Analytics Ops"}</dd></div>
-            </dl>
+            <KeyValueList
+              className="detail-plain-kv-grid"
+              items={[
+                { label: "Job ID", value: job.id },
+                { label: "Target", value: job.target },
+                { className: "wide", label: "소스", value: job.source },
+                { className: "wide", label: "운영 조직", value: job.owner === "admin" ? "Data Platform" : "Analytics Ops" },
+              ]}
+            />
           </article>
         </div>
       </section>
@@ -1314,10 +1328,10 @@ function RunStatusPill({ status }: { status: JobRunStatus }) {
   const statusMeta = runStatusMeta[status];
 
   return (
-    <Badge className={`run-status-pill ${statusMeta.className}`} variant={getRunStatusBadgeVariant(status)}>
+    <StatusBadge className={`run-status-pill ${statusMeta.className}`} tone={getRunStatusTone(status)}>
       {status === "running" && <span className="run-status-dot" />}
       {statusMeta.label}
-    </Badge>
+    </StatusBadge>
   );
 }
 
@@ -1478,7 +1492,7 @@ function DagSummaryCard({ helper, label, value }: { helper?: string; label: stri
 
 function DagStatePill({ status }: { status: JobDagStepStatus }) {
   const statusMeta = dagStepStatusMeta[status];
-  return <Badge className={`dag-state-pill ${statusMeta.className}`} variant={getDagStatusBadgeVariant(status)}>{statusMeta.label}</Badge>;
+  return <StatusBadge className={`dag-state-pill ${statusMeta.className}`} tone={getDagStatusTone(status)}>{statusMeta.label}</StatusBadge>;
 }
 
 function DagStepNode({

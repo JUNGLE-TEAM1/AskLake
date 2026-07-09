@@ -41,8 +41,13 @@ import {
 } from "lucide-react";
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
+import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { PageHeader } from "@/components/ui/page-header";
+import { TagList } from "@/components/ui/tag-list";
+import { ValidationList } from "@/components/ui/validation-list";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -3924,11 +3929,11 @@ function RuleStepBuilder({
               </label>
             )}
           </div>
-          <div className="hegun-rule-form-actions">
+          <ActionGroup className="hegun-rule-form-actions" density="compact">
             {isEditing && <Button className="ghost-button" type="button" variant="ghost" onClick={cancelEdit}>수정 취소</Button>}
             <Button className="secondary-button" type="button" variant="outline" onClick={previewDraft}>{isTransform ? "선택 단계 미리보기" : "선택 검사 미리보기"}</Button>
             <Button className="primary-button" type="button" onClick={addDraftStep}>{submitLabel}</Button>
-          </div>
+          </ActionGroup>
         </>
       )}
     </section>
@@ -4364,10 +4369,10 @@ function QualityFailedRowsPanel({
           </tbody>
         </table>
       </div>
-      <div className="hegun-rule-form-actions">
+      <ActionGroup className="hegun-rule-form-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.quality_failed_rows_exported", "/api/etl/rules/quality/failed-rows/export")}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.quality_failed_rows_reviewed", "/api/etl/rules/quality/failed-rows/review")}>검토 완료</Button>
-      </div>
+      </ActionGroup>
     </section>
   );
 }
@@ -4412,10 +4417,10 @@ function InvalidRowsPanel({
           </tbody>
         </table>
       </div>
-      <div className="hegun-rule-form-actions">
+      <ActionGroup className="hegun-rule-form-actions" density="compact">
         <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.rules.invalid_rows_exported", "/api/etl/rules/invalid-rows/export")}>행 내보내기</Button>
         <Button className="primary-button" type="button" onClick={() => onAction("etl.rules.invalid_rows_reviewed", "/api/etl/rules/invalid-rows/review")}>검토 완료</Button>
-      </div>
+      </ActionGroup>
     </section>
   );
 }
@@ -4883,13 +4888,15 @@ export function TargetPage({
                 <h3>Tags</h3>
               </div>
               {targetTags.length > 0 ? (
-                <div className="target-chip-grid" role="group" aria-label="타겟 태그">
+                <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
                   {targetTags.map((tag) => (
-                    <button className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} type="button" onClick={() => toggleTag(tag)}>
-                      {tag}
-                    </button>
+                    <Chip asChild className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} selected={targetTags.includes(tag)} tone="secondary">
+                      <button type="button" onClick={() => toggleTag(tag)}>
+                        {tag}
+                      </button>
+                    </Chip>
                   ))}
-                </div>
+                </TagList>
               ) : null}
               <div className="target-inline-controls">
                 <input className="input control-input" placeholder="직접 태그 추가" value={customTag} onChange={(event) => setCustomTag(event.target.value)} onKeyDown={(event) => {
@@ -4996,15 +5003,14 @@ export function PermissionPage({
               <p>공개 범위, 민감 데이터, 승인 상태를 생성 전에 확인합니다.</p>
             </div>
           </div>
-          <div className="etl-review-validation permission-config-validation">
-            {governanceChecks.map(([label, value, status]) => (
-              <div className={status === "안전" || status === "준비됨" ? "ready" : "needs-review"} key={label}>
-                <Check size={15} />
-                <span>{label}</span>
-                <strong>{value} · {status}</strong>
-              </div>
-            ))}
-          </div>
+          <ValidationList
+            className="etl-review-validation permission-config-validation"
+            items={governanceChecks.map(([label, value, status]) => ({
+              label,
+              status: status === "안전" || status === "준비됨" ? "ready" : "warning",
+              value: `${value} · ${status}`,
+            }))}
+          />
           <InfoBox title="권한 검토 필요" body="외부 공유 또는 민감 데이터 접근 권한은 데이터 오너 승인 후 적용됩니다." />
         </section>
 
@@ -5191,14 +5197,14 @@ export function ReviewPage({
               </div>
               <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
-            <dl className="etl-review-kv">
-              {basicInformationRows.map(([label, value]) => (
-                <div className={label === "Description" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
+            <KeyValueList
+              className="etl-review-kv"
+              items={basicInformationRows.map(([label, value]) => ({
+                className: label === "Description" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
           </section>
 
           <section className="etl-review-card">
@@ -5221,14 +5227,14 @@ export function ReviewPage({
               </div>
               <ReviewEditButton onClick={() => onEdit("target")} />
             </div>
-            <dl className="etl-review-kv destination">
-              {destinationRows.map(([label, value]) => (
-                <div className={label === "Output Path" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
+            <KeyValueList
+              className="etl-review-kv destination"
+              items={destinationRows.map(([label, value]) => ({
+                className: label === "Output Path" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
           </section>
 
           <section className="etl-review-card">
@@ -5240,23 +5246,22 @@ export function ReviewPage({
               </div>
               <ReviewEditButton onClick={() => onEdit("permission")} />
             </div>
-            <dl className="etl-review-kv permission">
-              {permissionRows.map(([label, value]) => (
-                <div className={label === "Summary" ? "wide" : undefined} key={label}>
-                  <dt>{label}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-            <div className="etl-review-validation">
-              {validationRows.map(([item, status]) => (
-                <div className={status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "needs-review"} key={item}>
-                  <Check size={15} />
-                  <span>{item}</span>
-                  <strong>{status}</strong>
-                </div>
-              ))}
-            </div>
+            <KeyValueList
+              className="etl-review-kv permission"
+              items={permissionRows.map(([label, value]) => ({
+                className: label === "Summary" ? "wide" : undefined,
+                label,
+                value,
+              }))}
+            />
+            <ValidationList
+              className="etl-review-validation"
+              items={validationRows.map(([item, status]) => ({
+                label: item,
+                status: status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "warning",
+                value: status,
+              }))}
+            />
             <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
           </section>
         </div>

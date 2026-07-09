@@ -11,6 +11,7 @@ import {
   Sparkles,
   Table2,
 } from "lucide-react";
+import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
@@ -849,11 +850,11 @@ export function SqlAnalysisPage({
                           value={queryAiPrompt}
                         />
                       </label>
-                      <div className="sql-ai-actions">
+                      <ActionGroup className="sql-ai-actions" density="compact">
                         <Button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
                           <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
                         </Button>
-                      </div>
+                      </ActionGroup>
                     </div>
                   </div>
                   <div className={queryAiSuggestion ? "sql-ai-suggestion result" : queryAiError ? "sql-ai-suggestion error" : "sql-ai-suggestion empty"}>
@@ -883,11 +884,11 @@ export function SqlAnalysisPage({
             <div>
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
-            <div className="sql-editor-actions">
+            <ActionGroup className="sql-editor-actions" density="compact">
               <Button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
                 <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
               </Button>
-            </div>
+            </ActionGroup>
           </div>
           <div className="sql-editor-layout">
             <div className={baseDataset ? "sql-editor-surface" : "sql-editor-surface empty"}>
@@ -965,11 +966,11 @@ export function SqlAnalysisPage({
                   {` · ${resultDraft.rows.length}/${resultDraft.rowCount}행 표시 · ${resultDraft.columns.length}컬럼`}
                   {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
                 </span>
-                <div className="sql-result-actions">
+                <ActionGroup className="sql-result-actions" density="compact">
                   <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download size={14} /> CSV 다운로드</Button>
                   <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database size={14} /> 처리 Job 생성</Button>
                   <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 size={14} /> 대시보드 만들기</Button>
-                </div>
+                </ActionGroup>
               </div>
               <div className="sql-result-scroll">
                 <SqlPreviewTable resultDraft={resultDraft} />
