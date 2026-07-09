@@ -5665,6 +5665,18 @@
   border-color: #dbeafe;
 }
 
+.hegun-final-preview-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #171a1f;
+  font-size: 18px;
+}
+
+.hegun-final-preview-title svg {
+  color: #2563eb;
+}
+
 .hegun-final-preview-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
