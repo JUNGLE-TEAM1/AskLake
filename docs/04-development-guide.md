@@ -124,11 +124,12 @@ Kafka replay와 ingest pipeline 작업자는 실제 6.6GB Amazon review replay�
 
 ```bash
 cd backend
+npm run kafka:reviews-fixture:generate -- --count 100
 ASKLAKE_WITH_KAFKA=true ASKLAKE_RECREATE_KAFKA=true npm run sources:fixtures
 npm run kafka:reviews-fixture
 ```
 
-기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. producer는 기본 fixture인 `backend/fixtures/kafka/amazon-review-fixture.jsonl` 또는 실제 Amazon review JSONL/JSONL.gz 파일을 스트리밍으로 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A 작업자는 실제 Amazon review row를 이 표준 메시지로 변환하고, B 작업자는 우선 top-level 표준 필드만 의존한다.
+기본 broker와 topic은 `127.0.0.1:19092`, `reviews.raw`이다. 기본 fixture는 `backend/fixtures/kafka/amazon-review-fixture.jsonl`에 100건 mock review로 유지한다. producer는 이 fixture 또는 실제 Amazon review JSONL/JSONL.gz 파일을 스트리밍으로 읽어 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드를 가진 JSON 메시지를 전송한다. A 작업자는 실제 Amazon review row를 이 표준 메시지로 변환하고, B 작업자는 우선 top-level 표준 필드만 의존한다.
 
 Kafka 없이 fixture 계약만 확인하려면 아래처럼 실행한다.
 
