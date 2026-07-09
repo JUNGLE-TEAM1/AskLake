@@ -3368,22 +3368,23 @@ function RuleMetrics({ stats }: { stats: RuleStats }) {
 function RuleCategoryTabs({ activeCategory, onSelect }: { activeCategory: RuleCategory; onSelect: (category: RuleCategory) => void }) {
   return (
     <section className="hegun-rule-mode-switcher" aria-label="처리 규칙 모드">
-      <div className="hegun-rule-category-list" role="tablist" aria-label="처리 규칙 모드">
-        {RULE_CATEGORIES.map((category) => (
-          <button
-            aria-selected={category.id === activeCategory}
-            className={category.id === activeCategory ? "hegun-rule-category active" : "hegun-rule-category"}
-            key={category.id}
-            role="tab"
-            type="button"
-            onClick={() => onSelect(category.id)}
-          >
-            <span className="hegun-rule-category-icon">{category.icon}</span>
-            <strong>{category.label}</strong>
-            <em>{category.description}</em>
-          </button>
-        ))}
-      </div>
+      <SegmentedTabs
+        ariaLabel="처리 규칙 모드"
+        buttonClassName="hegun-rule-category"
+        className="hegun-rule-category-list"
+        items={RULE_CATEGORIES.map((category) => ({
+          icon: <span className="hegun-rule-category-icon">{category.icon}</span>,
+          label: (
+            <>
+              <strong>{category.label}</strong>
+              <em>{category.description}</em>
+            </>
+          ),
+          value: category.id,
+        }))}
+        value={activeCategory}
+        onValueChange={onSelect}
+      />
       <div className="hegun-rail-note">
         <BookOpen size={16} />
         <span>샘플로 먼저 확인하고 실행 시 전체 데이터에 적용합니다.</span>
