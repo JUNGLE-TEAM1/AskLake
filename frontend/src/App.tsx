@@ -275,7 +275,12 @@ export function App() {
         return;
       }
       if (window.location.pathname === "/admin") {
-        setActiveFlow(canAccessAdmin ? "admin" : "profile");
+        if (canAccessAdmin) {
+          setActiveFlow("admin");
+        } else {
+          window.history.replaceState(null, "", "/profile");
+          setActiveFlow("profile");
+        }
         return;
       }
       if (window.location.pathname === "/login") {

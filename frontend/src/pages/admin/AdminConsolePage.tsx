@@ -368,7 +368,10 @@ function PermissionsTable({
   const grantableUsers = users.filter((user) => user.role.toLowerCase() !== "admin");
   const principalOptions = draft.principalType === "group"
     ? groups.map((group) => ({ label: group.name, value: group.id }))
-    : grantableUsers.map((user) => ({ label: user.displayName, value: user.email || user.id }));
+    : grantableUsers.map((user) => ({
+      label: user.email ? `${user.displayName} · ${user.email}` : user.displayName,
+      value: user.displayName,
+    }));
   const hasPrincipalOptions = principalOptions.length > 0;
   const principalEmptyMessage = draft.principalType === "group"
     ? "권한을 부여할 그룹이 없습니다."
@@ -476,7 +479,7 @@ function PermissionsTable({
                     const nextType = event.target.value as PermissionPrincipalType;
                     const nextOptions = nextType === "group"
                       ? groups.map((group) => group.id)
-                      : grantableUsers.map((user) => user.email || user.id);
+                      : grantableUsers.map((user) => user.displayName);
                     onDraftChange((current) => ({
                       ...current,
                       principalId: nextOptions[0] || "",
