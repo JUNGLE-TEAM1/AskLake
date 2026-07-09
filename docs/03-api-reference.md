@@ -109,7 +109,7 @@ Canonical status values:
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
-| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. 소유자 또는 관리자 권한 필요 |
+| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 runtime 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft page 추가 |

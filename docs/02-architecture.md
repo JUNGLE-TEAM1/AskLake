@@ -139,7 +139,7 @@ FastAPI가 현재 소유하는 책임:
 후속으로 넘길 책임:
 
 - Audit log persistence
-- 인증/권한 판정
+- 운영 IdP/SSO, auth/permission Alembic migration, deny/policy 고도화
 - RAG 검색 기반 Dashboard Assistant 고도화
 
 ### Permission/Governance 경계
@@ -177,8 +177,8 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
 | Auth Session | local auth user/session rows + httpOnly cookie | FastAPI `/api/auth/*` local session resource |
 | Identity Profile | session actor 또는 current actor header + demo identity catalog | FastAPI `/api/users/me` profile resource |
-| Admin Console | placeholder module | FastAPI admin users/groups/permissions/audit 조회 resource |
-| Permission Grant | resource payload grant + `permission_grants` table | backend-enforced access control resource and future admin edit target |
+| Admin Console | admin users/groups/permissions/audit APIs + 관리 UI | FastAPI admin users/groups/permissions/audit resource |
+| Permission Grant | resource payload grant + `permission_grants` table | backend-enforced access control resource and admin edit target |
 
 Catalog dataset은 `materializationRuns` append history를 가질 수 있다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run history를 기준으로 계산한다. 마지막 append 결과를 삭제해도 dataset shell은 남기며, 전체 dataset 삭제와 append 결과 삭제는 별도 UX/API로 분리한다.
 

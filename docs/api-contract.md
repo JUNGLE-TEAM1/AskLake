@@ -170,7 +170,7 @@ Profile/Admin Console Phase 0 기준:
 - `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
-- 1차 관리 콘솔은 조회 중심입니다. 사용자/그룹/권한 정책 수정 API는 별도 후속 계약으로 분리합니다.
+- 관리 콘솔은 사용자/그룹/감사 로그 조회와 permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
 - 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 자동 생성하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
@@ -745,7 +745,7 @@ type CreatePipelineRequest = {
 };
 ```
 
-`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. 인증이 붙기 전까지 backend는 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
+`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Request 예시:
 
@@ -2596,7 +2596,7 @@ Response `201 Created`:
 
 - 인증 방식: 운영 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증.
 - Auth/session table의 Alembic migration.
-- 권한 모델: Phase 4 enforcement 범위를 Dashboard runtime 편집, Query AI, dataset 생성/삭제 전체로 확장할지 여부.
+- 권한 모델: deny policy, 조건부 정책, dataset 생성/삭제 전체 enforcement, group membership 편집 범위.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
