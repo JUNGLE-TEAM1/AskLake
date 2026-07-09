@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.schemas.dashboard import DashboardCard
 
 
@@ -103,6 +104,10 @@ def _row_to_dashboard_card(row: Any) -> DashboardCard:
         **payload,
         "createdAt": _payload_value(payload, "createdAt") or _format_timestamp(created_at),
         "createdAtValue": _payload_value(payload, "createdAtValue") or _iso_timestamp(created_at),
+        "createdBy": _payload_value(payload, "createdBy") or _payload_value(payload, "created_by") or getattr(row, "owner", None) or "Admin User",
+        "createdByProfile": _payload_value(payload, "createdByProfile") or _payload_value(payload, "created_by_profile"),
+        "permissionGrants": _payload_value(payload, "permissionGrants") or permission_grants_from_roles(getattr(row, "owner", None) or _payload_value(payload, "owner"), default_actions=["view", "manage", "share"]),
+        "permissions": _payload_value(payload, "permissions") or resource_permissions(),
         "datasetId": getattr(row, "dataset_id", None) or _payload_value(payload, "datasetId"),
         "hasPublishedRevision": has_published_revision,
         "id": getattr(row, "id", None) or payload.get("id"),

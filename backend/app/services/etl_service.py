@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -9,7 +9,9 @@ from typing import Any
 from fastapi import status
 from sqlalchemy.orm import Session
 
+from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
@@ -20,8 +22,13 @@ from app.schemas.etl import (
     JobCommandResponse,
     JobDagStep,
     JobRowData,
+    KafkaReviewIngestRequest,
+    KafkaReviewIngestResponse,
     QueryRunRequest,
     QueryRunResponse,
+    ScheduledJobRunItem,
+    ScheduledJobRunRequest,
+    ScheduledJobRunResponse,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -30,6 +37,7 @@ from app.schemas.etl import (
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -37,12 +45,14 @@ ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
+def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
     validate_create_request(request)
+    created_by = identity_name(request.created_by or actor_name or request.owner)
+    created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
-        update_existing_append_job(existing_job, request, dataset_id)
+        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
             catalog_target={
@@ -66,6 +76,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         id=job_id,
         name=request.job_name,
         owner=request.owner,
+        created_by=created_by,
+        created_by_profile=created_by_profile,
         status="scheduled",
         tag="[생성]",
         source=f"{request.source_type} / {request.source_label}",
@@ -85,8 +97,12 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
         partition=request.partition,
+        partition_columns=normalize_string_list(request.partition_columns),
+        index_columns=normalize_string_list(request.index_columns),
         compression=request.compression,
         storage_path=request.storage_path,
+        target_description=normalize_optional_text(request.target_description),
+        target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
         target_layer=request.target_layer,
         rag=request.rag,
@@ -117,11 +133,56 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     )
 
 
-def list_jobs(db: Session) -> list[JobRowData]:
-    return etl_repository.list_jobs(db)
+def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
+    return [
+        with_job_permissions(db, job, actor or ActorContext())
+        for job in etl_repository.list_jobs(db)
+    ]
 
 
-def get_job(db: Session, job_id: str) -> JobRowData:
+def run_due_scheduled_jobs(
+    db: Session,
+    request: ScheduledJobRunRequest,
+    actor: ActorContext | None = None,
+) -> ScheduledJobRunResponse:
+    jobs = etl_repository.list_job_models(db)
+    if request.job_id:
+        jobs = [job for job in jobs if job.id == request.job_id]
+    items: list[ScheduledJobRunItem] = []
+    actor_context = actor or ActorContext(name="scheduler", role="admin")
+
+    for job in jobs:
+        should_run, reason = should_run_scheduled_job(job, request)
+        if not should_run:
+            items.append(ScheduledJobRunItem(
+                job_id=job.id,
+                job_name=job.name,
+                reason=reason,
+                schedule=job.schedule,
+                triggered=False,
+            ))
+            continue
+
+        response = command_job(db, job.id, "run", actor_context)
+        if reason == "due":
+            advance_scheduled_job_after_tick(db, job.id)
+        items.append(ScheduledJobRunItem(
+            job_id=job.id,
+            job_name=job.name,
+            reason=reason,
+            response=response,
+            schedule=job.schedule,
+            triggered=True,
+        ))
+
+    return ScheduledJobRunResponse(
+        checked_count=len(items),
+        items=items,
+        triggered_count=sum(1 for item in items if item.triggered),
+    )
+
+
+def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -129,7 +190,7 @@ def get_job(db: Session, job_id: str) -> JobRowData:
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    return job
+    return with_job_permissions(db, job, actor or ActorContext())
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -175,13 +236,25 @@ def execute_query(db: Session, request: QueryRunRequest) -> QueryRunResponse:
     )
 
 
-def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
+def command_job(db: Session, job_id: str, command: str, actor: ActorContext | None = None) -> JobCommandResponse:
     job = etl_repository.get_job(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
+    require_permission(
+        actor or ActorContext(),
+        "run" if command in {"run", "retry"} else "manage",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
     if command == "pause" and job.status != "running":
@@ -216,10 +289,23 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     run_model = None
     dataset_model = None
     if command in {"run", "retry"}:
-        run_model = submit_airflow_job_run(job, command)
-        run_schema = etl_repository.run_to_schema(run_model)
-        apply_airflow_submit_job_state(job, command, run_model)
-        job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
+        if is_kafka_job(job):
+            run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
+            kafka_request = kafka_ingest_request_from_job(job, run_id)
+            db.commit()
+            result = run_kafka_ingest_request(kafka_request, command)
+            job = etl_repository.get_job(db, job_id)
+            if job is None:
+                raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Kafka ingest: {job_id}", status.HTTP_404_NOT_FOUND)
+            run_model = run_from_kafka_result(job, result)
+            run_schema = etl_repository.run_to_schema(run_model)
+            finalize_job_from_kafka_result(job, command, result)
+            job.dag_steps = dag_steps_from_kafka_result(job, command, run_schema.model_dump(by_alias=True), result)
+        else:
+            run_model = submit_airflow_job_run(job, command)
+            run_schema = etl_repository.run_to_schema(run_model)
+            apply_airflow_submit_job_state(job, command, run_model)
+            job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
     elif command == "cancelRun":
@@ -234,15 +320,33 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
 
     saved_job, persisted_run, dataset_schema = etl_repository.save_command_result(db, job, run_model, dataset_model)
     run_schema = persisted_run or run_schema
+    if dataset_schema is None and job.dataset_id:
+        dataset_schema = etl_repository.get_dataset_schema_by_id(db, job.dataset_id)
 
     return JobCommandResponse(
         action=action_by_command[command],
         api_path=f"/api/etl/jobs/{job_id}/commands",
         dataset=dataset_schema,
-        job=saved_job,
+        job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
     )
+
+
+def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> JobRowData:
+    job_with_grants = job_with_persisted_permission_grants(db, job)
+    grant_payloads = [
+        grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+        for grant in job_with_grants.permission_grants
+    ]
+    return job_with_grants.model_copy(update={
+        "permissions": permissions_for_actor(
+            actor,
+            owner=job_with_grants.owner,
+            grants=grant_payloads,
+            enforced=True,
+        ),
+    })
 
 
 def test_source_connector(request: SourceConnectorRequest) -> SourceConnectorAnalysis:
@@ -279,6 +383,114 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
+
+
+def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
+    result = run_node_bridge(
+        "ingest-kafka-reviews.mjs",
+        "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+        request.model_dump(by_alias=True, exclude_none=True),
+        error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+        timeout_seconds=max(30, int(request.timeout_ms / 1000) + 30),
+    )
+    return KafkaReviewIngestResponse.model_validate(result)
+
+
+def run_kafka_ingest_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+    request = kafka_ingest_request_from_job(job, run_id)
+    return run_kafka_ingest_request(request, command)
+
+
+def run_kafka_ingest_request(request: dict[str, Any], command: str) -> dict[str, Any]:
+    result = run_node_bridge(
+        "ingest-kafka-reviews.mjs",
+        "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+        request,
+        error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+        timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+    )
+    result["command"] = command
+    return result
+
+
+def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
+    fields = job.source_config or []
+    topic = (
+        field_value(fields, "TOPIC / QUEUE NAME")
+        or field_value(fields, "Topic")
+        or field_value(fields, "topic")
+        or "reviews.raw"
+    )
+    landing = parse_job_landing_path(job.storage_path or job.target_path, topic)
+    max_messages = (
+        parse_positive_integer(field_value(fields, "Batch Max Messages"))
+        or parse_positive_integer(field_value(fields, "Max Messages"))
+        or parse_positive_integer(field_value(fields, "__Batch Max Messages"))
+        or 100
+    )
+    timeout_ms = (
+        parse_positive_integer(field_value(fields, "Timeout Ms"))
+        or parse_positive_integer(field_value(fields, "Timeout Milliseconds"))
+        or 10000
+    )
+    consumer_group_id = (
+        field_value(fields, "CONSUMER GROUP ID")
+        or field_value(fields, "Consumer Group ID")
+        or f"asklake-{normalize_column_name(job.id)}"
+    )
+    offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
+    return {
+        "allowEmpty": True,
+        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or "127.0.0.1:19092",
+        "consumerGroupId": consumer_group_id,
+        "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
+        "datasetName": job.target or "reviews_raw",
+        "landingBucket": landing["bucket"],
+        "landingEndpoint": (
+            field_value(fields, "Landing Endpoint URL")
+            or field_value(fields, "Target Endpoint URL")
+            or "http://127.0.0.1:19000"
+        ),
+        "landingPrefix": landing["prefix"],
+        "maxMessages": max_messages,
+        "offsetPolicy": offset_policy,
+        "registerCatalog": True,
+        "runId": run_id,
+        "storageMode": landing["storageMode"],
+        "timeoutMs": timeout_ms,
+        "topic": topic,
+    }
+
+
+def kafka_offset_policy(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if "latest" in normalized or "new" in normalized:
+        return "latest"
+    return "earliest"
+
+
+def parse_job_landing_path(storage_path: str | None, topic: str) -> dict[str, str]:
+    default_prefix = "kafka-landing"
+    if storage_path:
+        match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
+        if match:
+            prefix = (match.group(2) or default_prefix).strip("/") or default_prefix
+            if prefix == topic or prefix.endswith(f"/{topic}"):
+                prefix = prefix[: -(len(topic) + 1)].strip("/") or default_prefix
+            return {
+                "bucket": match.group(1),
+                "prefix": prefix,
+                "storageMode": "s3",
+            }
+    return {"bucket": "m3-raw", "prefix": default_prefix, "storageMode": "s3"}
+
+
+def is_kafka_job(job: ETLJobModel) -> bool:
+    source_type = str(job.source_type or "").lower()
+    if "kafka" in source_type:
+        return True
+    fields = job.source_config or []
+    return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
 def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
@@ -350,9 +562,17 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "sourceType": job.source_type,
         "stats": job.stats or {},
         "target": job.target,
+        "targetDescription": job.target_description,
         "targetFormat": job.target_format,
         "targetLayer": job.target_layer,
         "targetPath": job.target_path,
+        "targetTags": job.target_tags or [],
+        "storagePath": job.storage_path,
+        "storageType": job.storage_type,
+        "partition": job.partition,
+        "partitionColumns": job.partition_columns or [],
+        "indexColumns": job.index_columns or [],
+        "compression": job.compression,
         "transformOutputColumns": job.transform_output_columns or [],
         "transformSteps": job.transform_steps or [],
     }
@@ -402,6 +622,25 @@ def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         output_path=result.get("outputPath") or "-",
         failed_stage="-" if success else spark_failed_stage(result),
         error_summary="-" if success else spark_error_summary(result),
+    )
+
+
+def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunModel:
+    success = result.get("status") == "success"
+    started_at = str(result.get("startedAt") or iso_now())
+    ended_at = str(result.get("endedAt") or iso_now())
+    return ETLRunModel(
+        run_id=str(result.get("runId") or stable_id("run", f"{job.id}:kafka:{iso_now()}")),
+        job_id=job.id,
+        status="success" if success else "failed",
+        started_at=started_at,
+        ended_at=ended_at,
+        duration=format_iso_duration(started_at, ended_at),
+        input_rows=format_rows(result.get("consumedCount")),
+        output_rows=format_rows(result.get("storedCount")),
+        output_path=result.get("storageLocation") or "-",
+        failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
+        error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
     )
 
 
@@ -657,6 +896,33 @@ def compact_storage_text(value: Any, *, limit: int) -> str:
     return f"{compact[: max(0, limit - 32)]} ... [truncated {len(compact)} chars]"
 
 
+def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
+    success = result.get("status") == "success"
+    stored_count = int(result.get("storedCount") or 0)
+    failed_count = int(result.get("failedCount") or 0)
+    job.last_run = str(result.get("endedAt") or iso_now())
+    job.last_state = (
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka {stored_count:,}건 landing"
+        if success
+        else f"Kafka 실행 실패 · {result.get('error') or '원인 확인 필요'}"
+    )
+    job.next_run = schedule_next_run_label(job.schedule, job.next_run)
+    job.progress = None
+    job.status = "scheduled" if success else "failed"
+    job.target_path = result.get("storageLocation") or job.target_path
+    job.stats = {
+        **(job.stats or {}),
+        "currentStage": "Kafka landing 완료" if success else "Kafka landing 실패",
+        "inputRows": format_rows(result.get("consumedCount")),
+        "lastSuccess": str(result.get("endedAt") or iso_now()) if success else job.stats.get("lastSuccess", "-"),
+        "outputPath": result.get("storageLocation") or job.target_path,
+        "outputRows": format_rows(result.get("storedCount")),
+        "sampleScope": f"{result.get('topic') or 'Kafka'} batch",
+        "sourceUnits": "Kafka topic",
+        "successRate": "100%" if success and failed_count == 0 else "확인 필요",
+    }
+
+
 def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:
     now = str(result.get("endedAt") or iso_now())
     schema = result.get("schema")
@@ -669,11 +935,13 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     dataset_payload = dataset_payload_from_spark_result(job, result, dataset_id, schema_json, now, previous_payload)
     storage_size_bytes = int(dataset_payload.get("storageSizeBytes") or 0)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    target_description = target_dataset_description(job)
+    target_tags = target_dataset_tags(job)
     return CatalogDatasetModel(
         id=dataset_id,
         payload=dataset_payload,
         name=job.target,
-        description=f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        description=target_description,
         owner=job.owner,
         layer=job.target_layer,
         status="available",
@@ -685,7 +953,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         last_updated=now,
         next_refresh=job.schedule,
         rag=job.rag,
-        tags=["#생성", f"#{str(job.target_layer).lower()}"],
+        tags=target_tags,
         schema_json=schema_json,
         sample_rows=job.schema_sample_rows or [],
         upstream=[job.source_label, job.name],
@@ -705,6 +973,9 @@ def dataset_payload_from_spark_result(
     storage_size_bytes = dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
     lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
+    partition_columns = normalize_string_list(job.partition_columns)
+    index_columns = normalize_string_list(job.index_columns)
+    partition = "/".join(partition_columns) if partition_columns else normalize_optional_text(job.partition)
     materialization_runs = append_materialization_run(
         previous_payload.get("materializationRuns") if previous_payload else [],
         {
@@ -721,7 +992,7 @@ def dataset_payload_from_spark_result(
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
     return {
-        "description": f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋",
+        "description": target_dataset_description(job),
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
@@ -732,6 +1003,10 @@ def dataset_payload_from_spark_result(
         "name": job.target,
         "nextRefresh": job.schedule,
         "owner": job.owner,
+        "createdBy": job.created_by or job.owner,
+        "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
+        "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
+        "permissions": resource_permissions(can_query=True),
         "quality": quality_summary_from_spark_result(job, result),
         "rag": job.rag,
         "rows": format_rows(aggregate["rowCount"]),
@@ -744,17 +1019,28 @@ def dataset_payload_from_spark_result(
         "storageFormat": "parquet",
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
-        "tags": ["#생성", f"#{str(job.target_layer).lower()}"],
+        "partition": partition,
+        "partitionColumns": partition_columns,
+        "indexColumns": index_columns,
+        "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
     }
 
 
-def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest, dataset_id: str) -> None:
+def update_existing_append_job(
+    job: ETLJobModel,
+    request: CreatePipelineRequest,
+    dataset_id: str,
+    created_by: str,
+    created_by_profile: dict[str, Any],
+) -> None:
     dataset_schema = dataset_schema_from_request(request)
     sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
     metrics = source_metrics_from_request(request, dataset_schema, sample_rows)
     job.name = request.job_name or job.name
     job.owner = request.owner
+    job.created_by = job.created_by or created_by
+    job.created_by_profile = job.created_by_profile or created_by_profile
     job.tag = "[append]"
     job.source = f"{request.source_type} / {request.source_label}"
     job.target = request.target_dataset
@@ -773,8 +1059,12 @@ def update_existing_append_job(job: ETLJobModel, request: CreatePipelineRequest,
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
     job.partition = request.partition
+    job.partition_columns = normalize_string_list(request.partition_columns)
+    job.index_columns = normalize_string_list(request.index_columns)
     job.compression = request.compression
     job.storage_path = request.storage_path
+    job.target_description = normalize_optional_text(request.target_description)
+    job.target_tags = normalize_target_tags(request.target_tags)
     job.target_format = request.target_format
     job.target_layer = request.target_layer
     job.rag = request.rag
@@ -799,6 +1089,20 @@ def append_materialization_run(previous_runs: Any, next_run: dict[str, Any]) -> 
     if not run_id:
         return runs
     return [next_run, *[run for run in runs if str(run.get("runId") or "") != run_id]]
+
+
+def identity_name(value: str | None) -> str:
+    return (value or "").strip() or "demo-user"
+
+
+def identity_profile(name: str) -> dict[str, str]:
+    display_name = identity_name(name)
+    words = [word for word in display_name.replace("_", " ").replace("-", " ").split(" ") if word]
+    initials = "".join(word[0].upper() for word in words[:2]) or display_name[:2].upper()
+    return {
+        "avatarInitials": initials[:2],
+        "displayName": display_name,
+    }
 
 
 def aggregate_materialization_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -926,6 +1230,35 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
             ["데이터셋", job.target],
             ["레이어", job.target_layer],
         ], ["실행 실패로 카탈로그 데이터셋을 갱신하지 않았습니다." if failed else "실행 성공 후 카탈로그 데이터셋을 갱신했습니다."]),
+    ]
+
+
+def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
+    failed = result.get("status") != "success"
+    topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
+    broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
+    storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
+    dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+    consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
+    return [
+        dag_step("source", "1. Kafka 소스 연결", topic, "failed" if failed else "success", [
+            ["Broker", broker],
+            ["Topic", topic],
+        ], [f"Kafka topic {topic} batch consume 요청을 실행했습니다."]),
+        dag_step("consume", "2. 메시지 batch consume", format_rows(result.get("consumedCount")), "failed" if failed else "success", [
+            ["Consumer group", consumer_group_id],
+            ["Consumed", format_rows(result.get("consumedCount"))],
+            ["Failed", format_rows(result.get("failedCount"))],
+        ], ["Kafka 메시지를 batch 단위로 읽었습니다." if not failed else f"Kafka consume 실패: {run.get('errorSummary')}"]),
+        dag_step("landing", "3. Lake landing 저장", storage_location, "blocked" if failed else "success", [
+            ["Storage", str(result.get("storageMode") or "s3")],
+            ["Format", str(result.get("storageFormat") or "jsonl")],
+            ["Stored", format_rows(result.get("storedCount"))],
+        ], ["이전 단계 실패로 landing 저장이 수행되지 않았습니다." if failed else f"원본 이벤트를 JSONL로 저장했습니다: {storage_location}"]),
+        dag_step("catalog", "4. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
+            ["Dataset", dataset_id],
+            ["Run ID", run.get("runId", "-")],
+        ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),
     ]
 
 
@@ -1079,6 +1412,88 @@ def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, An
 
 def has_scheduled_execution(job: ETLJobModel) -> bool:
     return job.status != "stopped" and has_scheduled_label(job.schedule)
+
+
+def should_run_scheduled_job(job: ETLJobModel, request: ScheduledJobRunRequest) -> tuple[bool, str]:
+    if request.kafka_only and not is_kafka_job(job):
+        return False, "not_kafka_job"
+    if job.status == "stopped":
+        return False, "stopped"
+    if job.status == "running":
+        return False, "already_running"
+    if request.force:
+        return True, "forced"
+    if not has_scheduled_execution(job):
+        return False, "not_scheduled"
+
+    next_run_utc = ""
+    if isinstance(job.schedule_policy, dict):
+        next_run_utc = str(job.schedule_policy.get("nextRunUtc") or "")
+    if not next_run_utc:
+        return False, "next_run_not_set"
+
+    try:
+        next_run_at = datetime.fromisoformat(next_run_utc.replace("Z", "+00:00"))
+    except ValueError:
+        return False, "invalid_next_run"
+
+    if next_run_at <= datetime.now(UTC):
+        return True, "due"
+    return False, "not_due"
+
+
+def advance_scheduled_job_after_tick(db: Session, job_id: str) -> None:
+    job = etl_repository.get_job(db, job_id)
+    if job is None or not isinstance(job.schedule_policy, dict):
+        return
+
+    next_run_utc = next_scheduled_run_utc(job)
+    if not next_run_utc:
+        return
+
+    job.schedule_policy = {
+        **job.schedule_policy,
+        "nextRunUtc": next_run_utc,
+    }
+    job.next_run = next_run_utc
+    etl_repository.save_job(db, job)
+
+
+def next_scheduled_run_utc(job: ETLJobModel) -> str:
+    schedule = str(job.schedule or "")
+    current = ""
+    if isinstance(job.schedule_policy, dict):
+        current = str(job.schedule_policy.get("nextRunUtc") or "")
+    try:
+        base = datetime.fromisoformat(current.replace("Z", "+00:00")) if current else datetime.now(UTC)
+    except ValueError:
+        base = datetime.now(UTC)
+
+    now = datetime.now(UTC)
+    if schedule.startswith("매시간"):
+        minute_match = re.search(r"매시간\s+(\d{1,2})분", schedule)
+        minute = max(0, min(59, int(minute_match.group(1)) if minute_match else base.minute))
+        candidate = base.replace(minute=minute, second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(hours=1)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    if schedule.startswith("매일"):
+        time_match = re.search(r"매일\s+(\d{1,2}):(\d{2})", schedule)
+        hour = max(0, min(23, int(time_match.group(1)) if time_match else base.hour))
+        minute = max(0, min(59, int(time_match.group(2)) if time_match else base.minute))
+        candidate = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    if schedule.startswith("매주"):
+        candidate = base.replace(second=0, microsecond=0)
+        while candidate <= now:
+            candidate += timedelta(days=7)
+        return candidate.isoformat().replace("+00:00", "Z")
+
+    return ""
 
 
 def apply_job_command(job: ETLJobModel, command: str) -> None:
@@ -1381,6 +1796,41 @@ def normalize_lineage_id(value: str) -> str:
 
 def tuple_rows_to_lists(rows: list[tuple[str, str]]) -> list[list[str]]:
     return [[str(key), str(value)] for key, value in rows]
+
+
+def normalize_string_list(values: list[str] | None) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for value in values or []:
+        item = str(value).strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        normalized.append(item)
+    return normalized
+
+
+def normalize_target_tags(values: list[str] | None) -> list[str]:
+    normalized = []
+    for value in normalize_string_list(values):
+        normalized.append(value if value.startswith("#") else f"#{value}")
+    return normalized
+
+
+def normalize_optional_text(value: str | None) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
+def target_dataset_description(job: ETLJobModel) -> str:
+    return (
+        normalize_optional_text(job.target_description)
+        or f"{job.source_type} 소스 {job.source_label} 실행 결과 데이터셋"
+    )
+
+
+def target_dataset_tags(job: ETLJobModel) -> list[str]:
+    return normalize_target_tags(job.target_tags) or ["#생성", f"#{str(job.target_layer).lower()}"]
 
 
 def parse_positive_integer(value: str) -> int:

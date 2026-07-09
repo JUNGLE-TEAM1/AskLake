@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
+import { permissionDeniedMessage } from "../../../utils/permissions";
 
 export function DashboardTable({
   dashboards,
@@ -27,7 +28,10 @@ export function DashboardTable({
           </tr>
         </thead>
         <tbody>
-          {dashboards.map((dashboard) => (
+          {dashboards.map((dashboard) => {
+            const canDeleteDashboard = dashboard.permissions?.canDelete !== false;
+
+            return (
             <tr className="dashboard-table-row" key={dashboard.id} onClick={() => onOpenDetail(dashboard)}>
               <td>
                 <button
@@ -46,15 +50,20 @@ export function DashboardTable({
                   ))}
                 </span>
               </td>
-              <td>{dashboard.owner}</td>
+              <td>
+                <div className="dashboard-owner-stack">
+                  <span>{dashboard.owner}</span>
+                  <small>Created: {dashboard.createdByProfile?.displayName || dashboard.createdBy || dashboard.owner}</small>
+                </div>
+              </td>
               <td>{dashboard.updated}</td>
               <td>{formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt)}</td>
               <td className="dashboard-table-action-cell">
                 <button
                   className="dashboard-row-delete-button"
                   type="button"
-                  disabled={deletingDashboardId === dashboard.id}
-                  title="대시보드 삭제"
+                  disabled={deletingDashboardId === dashboard.id || !canDeleteDashboard}
+                  title={canDeleteDashboard ? "대시보드 삭제" : permissionDeniedMessage("대시보드", "삭제")}
                   aria-label={`${dashboard.name} 삭제`}
                   onClick={(event) => {
                     event.stopPropagation();
@@ -65,7 +74,8 @@ export function DashboardTable({
                 </button>
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>

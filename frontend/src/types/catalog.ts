@@ -1,3 +1,6 @@
+import type { IdentityProfile } from "./identity";
+import type { PermissionGrant, ResourcePermissions } from "./permissions";
+
 export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
 export type LineageGraphColumn = {
@@ -39,6 +42,13 @@ export type CatalogDataset = {
   name: string;
   nextRefresh: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
+  partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   quality: string;
   rag: boolean;
   rows: string;
@@ -60,7 +70,7 @@ export type DatasetMaterializationRun = {
   jobId: string;
   rowCount: number;
   runId: string;
-  sourceKind: "etl" | "sql";
+  sourceKind: "etl" | "sql" | "kafka";
   sourceLabel: string;
   status: "success" | "failed" | "canceled" | "running" | "queued";
   storageLocation?: string;

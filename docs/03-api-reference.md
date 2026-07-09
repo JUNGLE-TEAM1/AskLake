@@ -45,7 +45,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - Time format: ISO 8601 string
 - Status values: API and frontend internal state use English canonical values. UI labels are translated in the frontend.
 - Error envelope: `docs/api-contract.md`의 Error Envelope를 따른다.
-- Authentication: 현재 demo frontend에는 토큰 저장이 없다. backend 도입 시 임시 actor 또는 bearer token 전략을 명시해야 한다.
+- Authentication: 로컬 demo 인증은 httpOnly `asklake_session` 쿠키를 사용한다. 세션이 없으면 기존 `X-AskLake-*` actor header fallback을 사용한다.
 
 FastAPI schema 구현 기준:
 
@@ -73,12 +73,113 @@ Canonical status values:
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
+| `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
+| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka review topic batch를 Lake landing에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. Kafka는 장기 저장소로 보지 않고, `topic -> batch consume -> Lake landing object(jsonl) -> Catalog materializationRuns append` 흐름으로 처리한다. 같은 consumer group을 쓰면 이미 읽은 offset 이후의 새 메시지만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
+
+### Kafka review ingest
+
+`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 Lake landing에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
+
+Request:
+
+```ts
+type KafkaReviewIngestRequest = {
+  broker?: string; // default "127.0.0.1:19092"
+  topic?: string; // default "reviews.raw"
+  consumerGroupId?: string;
+  maxMessages?: number; // default 100
+  timeoutMs?: number; // default 10000
+  offsetPolicy?: "earliest" | "latest";
+  allowEmpty?: boolean;
+  registerCatalog?: boolean;
+  datasetId?: string;
+  datasetName?: string;
+  runId?: string;
+  storageMode?: "local" | "s3";
+  localLandingDir?: string;
+  landingEndpoint?: string; // MinIO default "http://127.0.0.1:19000"
+  landingBucket?: string; // default "m3-raw"
+  landingPrefix?: string; // default "kafka-landing"
+};
+```
+
+Response:
+
+```ts
+type KafkaReviewIngestResponse = {
+  status: "success";
+  runId: string;
+  broker: string;
+  topic: string;
+  consumedCount: number;
+  storedCount: number;
+  failedCount: number;
+  storageMode: "local" | "s3";
+  storageFormat: "jsonl";
+  storageLocation: string;
+  metadataLocation: string;
+  datasetId?: string;
+  datasetName?: string;
+  catalogDataset?: CatalogDataset;
+};
+```
+
+Kafka review message contract:
+
+```ts
+type KafkaReviewEvent = {
+  event_id: string;
+  review: string;
+  offset: number;
+  created_at: string;
+  source?: string;
+  schema_version?: string;
+  raw?: Record<string, unknown>;
+};
+```
+
+필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
+
+### Scheduled job tick
+
+`POST /api/etl/schedules/run-due`는 production scheduler 자체가 아니라, scheduler/cron이 호출할 수 있는 due job 실행 endpoint다.
+
+Request:
+
+```ts
+type ScheduledJobRunRequest = {
+  force?: boolean; // true면 due 여부와 무관하게 실행
+  jobId?: string; // 특정 job만 검사
+  kafkaOnly?: boolean; // default true
+};
+```
+
+Response:
+
+```ts
+type ScheduledJobRunResponse = {
+  checkedCount: number;
+  triggeredCount: number;
+  items: Array<{
+    jobId: string;
+    jobName: string;
+    schedule: string;
+    reason: "due" | "forced" | "not_due" | "not_scheduled" | "next_run_not_set" | "invalid_next_run" | "not_kafka_job" | "already_running" | "stopped";
+    triggered: boolean;
+    response?: JobCommandResponse;
+  }>;
+};
+```
+
+`reason`이 `due`인 실행이 성공하면 backend가 `schedulePolicy.nextRunUtc`와 `job.nextRun`을 다음 예약 시각으로 advance한다. 현재 지원하는 반복 label은 `매시간 NN분`, `매일 HH:mm`, `매주 ... HH:mm` 범위다. `force: true`는 수동 검증/운영 보정 용도이며 due 시각 advance를 강제하지 않는다.
 
 ## 5) P1 API
 
@@ -95,15 +196,21 @@ Canonical status values:
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
 
+현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
+
 ## 6) P2 / 확장 API
 
 | Method | Endpoint | 설명 |
 | --- | --- | --- |
+| `POST` | `/api/auth/login` | 로컬 demo 계정 로그인, `asklake_session` 쿠키 발급 |
+| `POST` | `/api/auth/signup` | 로컬 viewer 계정 생성 후 `asklake_session` 쿠키 발급 |
+| `GET` | `/api/auth/session` | 현재 세션 사용자 조회. 세션 없으면 unauthenticated |
+| `POST` | `/api/auth/logout` | 서버 session 삭제 및 쿠키 제거 |
 | `GET` | `/api/dashboards` | dashboard 목록 조회 |
 | `POST` | `/api/dashboards/query` | dashboard 검색, 소유자/태그 필터, 정렬, pagination 조회 |
 | `POST` | `/api/dashboards` | dashboard card를 `draft` 상태로 생성 |
 | `PATCH` | `/api/dashboards/{dashboardId}` | dashboard title 등 card metadata 수정 |
-| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. 소유자 또는 관리자 권한 필요 |
+| `DELETE` | `/api/dashboards/{dashboardId}` | dashboard 삭제. admin/owner fallback 또는 `delete` grant 필요 |
 | `GET` | `/api/dashboards/{dashboardId}/published` | published revision 기반 runtime 조회 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/ensure` | draft revision 조회 또는 생성 |
 | `POST` | `/api/dashboards/{dashboardId}/draft/pages` | draft page 추가 |
@@ -114,9 +221,19 @@ Canonical status values:
 | `DELETE` | `/api/dashboards/{dashboardId}/draft/widgets/{widgetId}` | draft widget 삭제 |
 | `PATCH` | `/api/dashboards/{dashboardId}/draft/layouts` | draft widget layout batch 저장 |
 | `POST` | `/api/dashboards/{dashboardId}/publish` | dashboard 게시 |
+| `GET` | `/api/users/me` | 현재 actor 프로필, role, group, 권한 요약 조회 |
+| `GET` | `/api/admin/users` | 관리자 사용자 목록 조회. admin role 필요 |
+| `GET` | `/api/admin/groups` | 관리자 그룹 목록 조회. admin role 필요 |
+| `GET` | `/api/admin/permissions` | resource별 permission grant/현재 actor 권한 요약 조회. admin role 필요 |
+| `POST` | `/api/admin/permissions` | permission grant 생성. admin role 필요 |
+| `PATCH` | `/api/admin/permissions/{grantId}` | permission grant principal/actions 수정. admin role 필요 |
+| `DELETE` | `/api/admin/permissions/{grantId}` | permission grant 삭제. admin role 필요 |
+| `GET` | `/api/admin/audit-logs` | 관리자 감사 로그 조회. admin role 필요 |
 | `POST` | `/api/audit-logs` | audit log 서버 저장 |
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
+
+Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 `dataset`, `etl_job`, `dashboard` resource에 대해 `user`, `group`, `role`, `public` principal grant를 저장할 수 있다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이며, 운영 기본 흐름은 group grant와 user 예외 grant를 우선 사용한다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용한다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 
@@ -347,12 +464,12 @@ Day1 Pair A create request는 Review Summary용 `ruleSummary`만 보내지 않�
 - `dataset.downstream`은 SQL, dashboard, mart 같은 영향도/소비처 context에 사용할 수 있다.
 - 생성 후 ETL 목록과 Catalog 목록에 같은 `job.id`와 `dataset.id` 기준 결과가 보여야 한다.
 - 같은 Job 또는 같은 `targetDataset`으로 생성/실행한 결과는 새 Catalog row를 늘리지 않고 기존 dataset의 `materializationRuns`에 append한다. Catalog 목록 row는 하나만 보이고, row 펼침에서 append history를 최대 5개씩 pagination으로 표시한다.
-- Target draft의 `storageType`, `partition`, `compression`, `storagePath`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
+- Target draft의 `storageType`, `partition`, `partitionColumns`, `indexColumns`, `compression`, `storagePath`, `targetDescription`, `targetTags`는 `targetDataset`, `targetLayer`, `targetFormat`과 함께 create request에 전달된다.
 - 현재 Target 화면에서는 `targetLayer` 선택 버튼을 노출하지 않고 기존 draft/default layer 값을 사용한다.
 - `rag` 필드는 호환을 위해 create request에 남아 있지만, 현재 Target 화면에서는 노출하지 않고 frontend 기본값은 `false`다.
 - Target 화면은 기본정보, 태그, 파티션 단위로 구성되며 태그/파티션 섹션은 접고 펼칠 수 있다.
 - Source/schema sample이 `data` JSON 단일 컬럼으로 들어오면 frontend가 JSON을 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 만든다. 원본 JSON 보존용 `raw_data` 컬럼은 기본 미사용 optional 컬럼으로 제공한다.
-- Target 화면 저장은 backend API가 없는 현 범위에서 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태로 저장한다.
+- Target 화면 저장은 backend API가 없는 현 범위에서 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태로 저장한다. Review 생성 요청과 Spark run 성공 후 Catalog dataset metadata는 같은 Target draft 값을 사용해야 한다.
 
 Mock mode에서는 Pair A pipeline 생성 dataset과 backend direct SQL derived dataset을 모두 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합한다. 현재 SQL 화면의 `처리 Job 생성` UI는 직접 localStorage에 dataset을 쓰지 않고 SQL Result를 ETL Review draft로 변환한 뒤 기존 Job 생성 경로를 사용한다. 기존 `asklake.derivedDatasets` 값은 읽기 호환만 유지한다. Live API mode에서는 localStorage fallback을 사용하지 않고 backend catalog persistence와 `GET /api/catalog/datasets` 응답을 source of truth로 둔다.
 

@@ -604,7 +604,7 @@ const PERMISSION_TEMPLATES = ["Data Engineer Group", "Data Analyst Group", "ML T
 const VISIBILITY_OPTIONS = ["조직 내부", "프로젝트 멤버", "외부 공유"] as const;
 const APPROVAL_STATUS_OPTIONS = ["승인 검토", "승인 완료", "오너 승인 필요"] as const;
 const TARGET_LAYER_OPTIONS: TargetLayer[] = ["RAW", "BRONZE", "SILVER", "GOLD"];
-const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json"];
+const TARGET_FORMAT_OPTIONS: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
 
 const PERMISSION_ACCESS_ITEMS = ["조회", "쿼리 실행", "메타데이터", "관리"] as const;
 
@@ -652,7 +652,7 @@ type TargetDraftSlice = {
   testStatus?: "idle" | "success" | "failed";
 };
 
-type TargetFileFormat = "parquet" | "csv" | "json";
+type TargetFileFormat = "parquet" | "csv" | "json" | "jsonl";
 type TargetTestStatus = "idle" | "pending" | "success" | "failed";
 type TargetColumnType = "string" | "number" | "boolean" | "datetime" | "json";
 
@@ -742,8 +742,37 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
+function buildKafkaLandingPath(topic: string) {
+  return `s3://m3-raw/kafka-landing/${topic || "reviews.raw"}`;
+}
+
+function normalizeKafkaDatasetName(topic: string) {
+  return (topic || "reviews.raw").trim().replace(/[^0-9A-Za-z_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "reviews_raw";
+}
+
+function isDefaultTargetStoragePath(value: string | undefined) {
+  return !value || value.includes("asklake-output/");
+}
+
+function isDefaultTargetDataset(value: string | undefined) {
+  return !value || [DEFAULT_TARGET_DATASET, "pair_a_customer_review_gold"].includes(value);
+}
+
+function isDefaultTargetTable(value: string | undefined) {
+  return !value || [DEFAULT_TARGET_DATASET, "pair_a_customer_review_gold"].includes(value);
+}
+
+function isDefaultTargetDescription(value: string | undefined) {
+  return !value || value.includes("고객 리뷰 분석용");
+}
+
+function kafkaTargetTags(tags: string[] | undefined) {
+  const visibleTags = filterVisibleTargetTags(tags);
+  return visibleTags.length > 0 ? visibleTags : ["#kafka", "#raw"];
+}
+
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
-const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
+const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json", "jsonl"];
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
   { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
   { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
@@ -974,20 +1003,38 @@ function getPermissionDraftValues(draft: DraftPipeline) {
 function getTargetDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const target = compatDraft.target;
-  const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
-  const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-  const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
-  const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
+  const isKafkaSource = draft.source.sourceType === "Stream / Kafka" || draft.source.sourceType === "Kafka JSON";
+  const kafkaTopic = sourceConfigValue(draft.source.sourceConfig, "TOPIC / QUEUE NAME") || sourceConfigValue(draft.source.sourceConfig, "Topic") || "reviews.raw";
+  const kafkaDatasetName = normalizeKafkaDatasetName(kafkaTopic);
+  const rawTargetDataset = target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset;
+  const targetDataset = isKafkaSource && isDefaultTargetDataset(rawTargetDataset)
+    ? kafkaDatasetName
+    : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
+  const rawTargetFormat = target?.targetFormat ?? target?.format ?? compatDraft.targetFormat;
+  const targetFormat = isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
+    ? "jsonl"
+    : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
+  const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
+  const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
+    ? "RAW"
+    : normalizeTargetLayer(rawTargetLayer);
+  const storedPath = target?.storagePath ?? draft.target.storagePath;
+  const defaultTargetPath = isKafkaSource ? buildKafkaLandingPath(kafkaTopic) : buildTargetStoragePath(targetDataset, targetLayer);
+  const storagePath = isKafkaSource && isDefaultTargetStoragePath(storedPath) ? defaultTargetPath : getDisplayText(storedPath, defaultTargetPath);
 
   return {
-    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
+    description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
+      ? "Kafka 원본 이벤트 Lake landing 데이터셋"
+      : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
-    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
+    partitionColumns: isKafkaSource ? ["created_at"] : target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
     storagePath,
-    tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
+    tableName: isKafkaSource && isDefaultTargetTable(target?.tableName ?? draft.target.tableName)
+      ? targetDataset
+      : getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
+    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
@@ -1199,11 +1246,13 @@ export function SourceConnectionPage({
       fields: [
         ["Stream Type", "Apache Kafka"],
         ["Broker / Endpoint", "127.0.0.1:19092"],
-        ["TOPIC / QUEUE NAME", "asklake-source-events"],
-        ["CONSUMER GROUP ID", "asklake-etl-consumer-01"],
+        ["TOPIC / QUEUE NAME", "reviews.raw"],
+        ["CONSUMER GROUP ID", "asklake-reviews-raw-job"],
+        ["Batch Max Messages", "100"],
+        ["Timeout Ms", "10000"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
-        ["Authentication", "SASL / SCRAM"],
+        ["Authentication", "None"],
       ],
       testItems: [["Broker Reachable", "Not tested"], ["Topic Access", "Pending"], ["Backend connector", "Required"]],
       logs: ["Kafka 소스 윈도우 식별은 백엔드 커넥터 러너에서 검증합니다.", "브라우저는 Kafka 프로토콜 핸드셰이크를 수행할 수 없습니다."],
@@ -5927,7 +5976,7 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
 }
 
 function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
-  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "Broker / Endpoint"];
+  const priorityLabels = ["Storage Provider", "Endpoint URL", "Bucket / Stage Name", "Path / Prefix", "Path", "DATASET OR TABLE SELECTOR", "TOPIC / QUEUE NAME", "CONSUMER GROUP ID", "Broker / Endpoint"];
   const valuesByLabel = new Map(sourceConfig);
   return priorityLabels
     .map((label) => {
@@ -5940,6 +5989,10 @@ function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
 
 function sourceLabelFromFields(sourceType: string, fields: Array<[string, string]>) {
   const valuesByLabel = new Map(fields);
+  if (sourceType === "Stream / Kafka" || sourceType === "Kafka JSON") {
+    return valuesByLabel.get("TOPIC / QUEUE NAME") || valuesByLabel.get("Topic") || sourceType;
+  }
+
   if (sourceType === "File / S3") {
     const bucket = valuesByLabel.get("Bucket / Stage Name");
     const prefix = valuesByLabel.get("Path / Prefix");

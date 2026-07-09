@@ -18,6 +18,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const { body, method = body ? "POST" : "GET" } = options;
   const response = await fetch(`${apiConfig.baseUrl}${path}`, {
     body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: "include",
     headers: {
       Accept: "application/json",
       ...(body === undefined ? {} : { "Content-Type": "application/json" }),

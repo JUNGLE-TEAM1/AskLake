@@ -1,6 +1,7 @@
 from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
+from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
@@ -23,6 +24,8 @@ def ensure_schema(db: Session) -> None:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
+            "created_by": "VARCHAR(255)",
+            "created_by_profile": "JSON",
             "dag_steps": "JSON",
             "dag_steps_by_run_id": "JSON",
             "dataset_id": "VARCHAR(120)",
@@ -32,6 +35,8 @@ def ensure_schema(db: Session) -> None:
             "next_run": "VARCHAR(255)",
             "owner": "VARCHAR(255)",
             "partition": "VARCHAR(255)",
+            "partition_columns": "JSON",
+            "index_columns": "JSON",
             "permission_roles": "JSON",
             "progress": "JSON",
             "quality_invalid_rows": "JSON",
@@ -58,9 +63,11 @@ def ensure_schema(db: Session) -> None:
             "storage_type": "VARCHAR(64)",
             "tag": "VARCHAR(64)",
             "target": "VARCHAR(255)",
+            "target_description": "TEXT",
             "target_format": "VARCHAR(120)",
             "target_layer": "VARCHAR(32)",
             "target_path": "VARCHAR(512)",
+            "target_tags": "JSON",
             "transform_output_columns": "JSON",
             "transform_steps": "JSON",
         }
@@ -146,6 +153,11 @@ def list_jobs(db: Session) -> list[JobRowData]:
     ensure_schema(db)
     jobs = db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
     return [job_to_schema(db, job) for job in jobs]
+
+
+def list_job_models(db: Session) -> list[ETLJobModel]:
+    ensure_schema(db)
+    return db.scalars(select(ETLJobModel).order_by(ETLJobModel.created_at.desc())).all()
 
 
 def get_job(db: Session, job_id: str) -> ETLJobModel | None:
@@ -291,6 +303,10 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         id=job.id,
         name=job.name or job.target or job.id,
         owner=job.owner or "demo-user",
+        created_by=job.created_by or job.owner or "demo-user",
+        created_by_profile=job.created_by_profile,
+        permission_grants=permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        permissions=resource_permissions(can_run=True),
         status=job.status or "scheduled",
         tag=job.tag or "[생성]",
         source=job.source or job.source_label or "-",
@@ -307,8 +323,12 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         permission_roles=job.permission_roles,
         storage_type=job.storage_type,
         partition=job.partition,
+        partition_columns=job.partition_columns,
+        index_columns=job.index_columns,
         compression=job.compression,
         storage_path=job.storage_path,
+        target_description=job.target_description,
+        target_tags=job.target_tags,
         target_format=job.target_format,
         target_layer=job.target_layer,
         target_path=job.target_path,
@@ -337,6 +357,10 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             name=str(payload.get("name") or dataset.id),
             description=str(payload.get("description") or ""),
             owner=str(payload.get("owner") or ""),
+            created_by=payload.get("createdBy"),
+            created_by_profile=payload.get("createdByProfile"),
+            permission_grants=payload.get("permissionGrants") or permission_grants_from_roles(str(payload.get("owner") or ""), default_actions=["view", "query"]),
+            permissions=payload.get("permissions") or resource_permissions(can_query=True),
             layer=payload.get("layer") or "RAW",
             status=payload.get("status") or "available",
             freshness=payload.get("freshness") or "latest",
@@ -365,6 +389,10 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         name=dataset.name or dataset.id,
         description=dataset.description or "",
         owner=dataset.owner or "",
+        created_by=dataset.payload.get("createdBy") if dataset.payload else dataset.owner,
+        created_by_profile=dataset.payload.get("createdByProfile") if dataset.payload else None,
+        permission_grants=permission_grants_from_roles(dataset.owner, default_actions=["view", "query"]),
+        permissions=resource_permissions(can_query=True),
         layer=dataset.layer or "RAW",
         status=dataset.status or "available",
         freshness=dataset.freshness or "latest",

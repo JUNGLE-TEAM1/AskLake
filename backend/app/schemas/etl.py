@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel
+from app.schemas.permissions import PermissionGrant, ResourcePermissions
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -117,6 +118,10 @@ class JobRowData(CamelModel):
     name: str
     id: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     tag: str
     source: str
     target: str
@@ -132,8 +137,12 @@ class JobRowData(CamelModel):
     permission_roles: list[dict[str, Any]] | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
+    target_description: str | None = None
+    target_tags: list[str] | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
     target_path: str | None = None
@@ -158,6 +167,10 @@ class CatalogDataset(CamelModel):
     name: str
     description: str
     owner: str
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
+    permission_grants: list[PermissionGrant] = Field(default_factory=list)
+    permissions: ResourcePermissions = Field(default_factory=ResourcePermissions)
     layer: TargetLayer
     status: Literal["available", "approval_required"]
     freshness: Literal["latest", "stale", "approval"]
@@ -177,6 +190,9 @@ class CatalogDataset(CamelModel):
     storage_format: str | None = None
     storage_location: str | None = None
     storage_size_bytes: int | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -230,11 +246,18 @@ class CreatePipelineRequest(CamelModel):
     watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
     permission_summary: str = ""
     permission_roles: list[dict[str, Any]] | None = None
+    permission_grants: list[PermissionGrant] | None = None
+    created_by: str | None = None
+    created_by_profile: dict[str, Any] | None = None
     storage_type: str | None = None
     partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
+    target_description: str | None = None
+    target_tags: list[str] = Field(default_factory=list)
     target_layer: TargetLayer
     target_format: str
     owner: str
@@ -258,6 +281,63 @@ class JobCommandResponse(CamelModel):
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
     processing_result: dict[str, Any] | None = None
+
+
+class ScheduledJobRunRequest(CamelModel):
+    force: bool = False
+    job_id: str | None = None
+    kafka_only: bool = True
+
+
+class ScheduledJobRunItem(CamelModel):
+    job_id: str
+    job_name: str
+    reason: str
+    response: JobCommandResponse | None = None
+    schedule: str
+    triggered: bool
+
+
+class ScheduledJobRunResponse(CamelModel):
+    checked_count: int
+    items: list[ScheduledJobRunItem]
+    triggered_count: int
+
+
+class KafkaReviewIngestRequest(CamelModel):
+    allow_empty: bool = False
+    broker: str = "127.0.0.1:19092"
+    topic: str = "reviews.raw"
+    consumer_group_id: str | None = None
+    dataset_id: str | None = None
+    dataset_name: str = "reviews_raw"
+    landing_bucket: str = "m3-raw"
+    landing_endpoint: str = "http://127.0.0.1:19000"
+    landing_prefix: str = "kafka-landing"
+    local_landing_dir: str | None = None
+    max_messages: int = Field(default=100, ge=1, le=1_000_000)
+    offset_policy: Literal["earliest", "latest"] = "earliest"
+    register_catalog: bool = True
+    run_id: str | None = None
+    storage_mode: Literal["local", "s3"] = "s3"
+    timeout_ms: int = Field(default=10000, ge=1000, le=300000)
+
+
+class KafkaReviewIngestResponse(CamelModel):
+    broker: str
+    catalog_dataset: dict[str, Any] | None = None
+    consumed_count: int
+    dataset_id: str | None = None
+    dataset_name: str | None = None
+    failed_count: int
+    metadata_location: str
+    run_id: str
+    status: Literal["success"]
+    storage_format: str
+    storage_location: str
+    storage_mode: Literal["local", "s3"]
+    stored_count: int
+    topic: str
 
 
 class QueryRunRequest(CamelModel):

@@ -153,6 +153,8 @@ $env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
 
 ### Kafka
 
+기본 connector smoke는 기존 `asklake-source-events` topic을 사용한다.
+
 | Field | Value |
 | --- | --- |
 | Stream Type | `Apache Kafka` |
@@ -164,6 +166,43 @@ $env:ASKLAKE_MONGO_DATABASE = "asklake_sources"
 | Authentication | `None` |
 
 연결 테스트 후 topic metadata와 JSON 메시지 샘플 스키마를 확인한다.
+
+Amazon review replay/ingest 병렬 개발은 별도 topic `reviews.raw`를 사용한다. 실제 replay가 없어도 아래 producer로 같은 schema의 fixture 메시지를 넣을 수 있다.
+
+```powershell
+cd backend
+$env:ASKLAKE_WITH_KAFKA = "true"
+$env:ASKLAKE_RECREATE_KAFKA = "true"
+npm run sources:fixtures
+npm run kafka:reviews-fixture
+```
+
+Review fixture message key는 `event_id`, message value는 JSON이다. B ingest pipeline은 우선 `schema_version`, `event_id`, `source`, `offset`, `review`, `created_at`, `raw` top-level 필드만 의존한다. Amazon 원본 필드는 `raw`에 보존한다.
+
+```json
+{
+  "schema_version": "1.0",
+  "event_id": "amazon-review-000001",
+  "source": "amazon-review-fixture",
+  "offset": 1,
+  "review": "The headphones arrived early and paired with my phone in seconds. Battery life was better than expected.",
+  "created_at": "2026-07-09T00:00:00.000Z",
+  "raw": {
+    "reviewText": "The headphones arrived early and paired with my phone in seconds. Battery life was better than expected.",
+    "summary": "Easy setup and solid battery",
+    "overall": 5,
+    "asin": "B000ASK001",
+    "reviewerID": "A1FIXTURE0001",
+    "unixReviewTime": 1783555200
+  }
+}
+```
+
+topic 유입을 직접 확인하려면 Redpanda container 안의 `rpk`를 사용한다.
+
+```powershell
+docker exec -it asklake-redpanda-source rpk topic consume reviews.raw --brokers 127.0.0.1:9092 --num 5
+```
 
 ## 5. 자동 검증
 

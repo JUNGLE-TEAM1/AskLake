@@ -41,6 +41,8 @@ export function runSparkPipeline(job, command, runId) {
     "--rm",
     "--network",
     process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default",
+    "--add-host",
+    "host.docker.internal:host-gateway",
     "-v",
     `${sparkHostScriptsDir}:/work/scripts:ro`,
     "-v",

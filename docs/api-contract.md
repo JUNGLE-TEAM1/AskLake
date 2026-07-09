@@ -68,7 +68,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - 모든 response body는 JSON입니다.
 - 날짜/시간은 ISO 8601 문자열을 사용합니다.
 - ID는 문자열입니다.
-- 프론트는 현재 `credentials`를 포함하지 않고 `fetch`를 호출합니다.
+- 프론트는 세션 쿠키 기반 endpoint를 위해 `credentials: "include"`로 `fetch`를 호출합니다.
 
 권장 header:
 
@@ -79,8 +79,171 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 데모 프론트에는 로그인/토큰 저장이 아직 없으므로, 인증이 붙기 전까지는 백엔드에서 임시 actor를 `demo-user`로 처리해도 됩니다.
-인증을 붙일 때는 `frontend/src/services/apiClient.ts`에서 `Authorization` 헤더 주입 지점을 추가하면 됩니다.
+현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
+
+### Permission/Governance Phase 0 용어
+
+Phase 0 기준에서 identity metadata와 access control은 별도 개념입니다.
+
+| 용어 | 현재 의미 | 후속 방향 |
+| --- | --- | --- |
+| `createdBy` | Job/Dataset/Dashboard에 optional 표시 metadata로 제공 | resource를 생성한 사용자 표시와 감사 로그 문맥에 사용 |
+| `createdByProfile` | `displayName`, `avatarInitials` 중심의 optional 표시 metadata | profile/avatar 표시용으로 확장 가능 |
+| `owner` | Job/Dataset/Dashboard 화면에 표시되는 소유자 문자열 | 표시/책임자 metadata로 유지하고 권한 판정의 단일 근거로 쓰지 않음 |
+| profile/avatar | `createdByProfile`의 optional 표시 값 | `createdBy`/`owner` 옆 표시용 identity metadata로 추가 |
+| `permissionSummary` | Create Permission 단계의 요약 문구 | governance metadata로 유지 |
+| `permissionRoles` | Create Permission 단계의 역할별 설정 값 | 후속 `permissionGrants` 계약으로 승격 전까지 enforce하지 않음 |
+| `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
+| `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
+
+Catalog 목록/상세, SQL preview, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
+
+`permissionGrants`와 `permissions`는 UI 표시와 backend enforcement를 함께 설명하는 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다. `permissions.enforced=true`이면 같은 기준으로 backend가 `403 FORBIDDEN`을 반환할 수 있습니다.
+
+Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하고, 세션이 없을 때만 아래 임시 actor header를 공통 `ActorContext` fallback으로 해석할 수 있습니다. 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command, Dashboard runtime 편집에도 사용됩니다.
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 요청 사용자 표시 이름 |
+| `X-AskLake-Role` | `admin` | `admin`이면 모든 action 허용 |
+| `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
+
+권한 판정은 현재 allow-only 모델입니다. 명시적 deny는 아직 계약에 없고, 여러 grant는 합산됩니다.
+
+권한 허용 우선순위:
+
+1. `actor.role === "admin"`이면 모든 resource/action 허용
+2. resource `owner`가 actor name과 같으면 허용하는 local fallback 유지
+3. actor의 user principal, group principal, role principal 중 하나와 grant가 일치하고 해당 action이 포함되어 있으면 허용
+4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
+5. 위 조건이 모두 아니면 `403 FORBIDDEN`
+
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+
+Resource/action 기준:
+
+| Resource type | 주요 action | 의미 |
+| --- | --- | --- |
+| `dataset` | `view` | Catalog 목록/상세/lineage에서 조회 가능 |
+| `dataset` | `query` | SQL Preview, Query AI, SQL 결과 기반 후속 작업에서 dataset 사용 가능 |
+| `dataset` | `manage`, `delete` | materialization-run 삭제 등 dataset metadata 변경 가능 |
+| `dataset` | `delete` | dataset 삭제 가능. 별도 삭제 API 도입 시 사용 |
+| `etl_job` | `view` | Job 목록/상세 조회 가능 |
+| `etl_job` | `run` | Job run/retry 실행 가능 |
+| `etl_job` | `manage` | Job pause/cancel/stop 등 운영 상태 변경 가능 |
+| `dashboard` | `view` | Dashboard card/runtime 조회 가능 |
+| `dashboard` | `manage` | draft 생성, page/widget/layout 변경, publish 가능 |
+| `dashboard` | `delete` | Dashboard 삭제 가능 |
+| `dashboard` | `share` | Dashboard 공유/권한 위임 UI 도입 시 사용 |
+
+공통 enforcement 범위:
+
+| Endpoint | 필요 action | 비고 |
+| --- | --- | --- |
+| `GET /api/catalog/datasets` | `view` | actor가 볼 수 있는 dataset만 목록에 포함 |
+| `GET /api/catalog/datasets/{datasetId}` | `view` | 권한 없으면 `403 FORBIDDEN` |
+| `GET /api/catalog/datasets/{datasetId}/lineage` | `view` | dataset detail과 같은 기준 |
+| `DELETE /api/catalog/datasets/{datasetId}/materialization-runs/{runId}` | `manage` 또는 `delete` | materialization metadata 수정/삭제로 간주 |
+| `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
+| `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
+| `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
+| `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
+| `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
+| `POST /api/dashboards/{dashboardId}/draft/ensure` | `manage` | draft revision 생성/복사 가능 여부 검사 |
+| `POST/PATCH/DELETE /api/dashboards/{dashboardId}/draft/**` | `manage` | page/widget/layout draft 변경 전체 |
+| `POST /api/dashboards/{dashboardId}/publish` | `manage` | draft snapshot을 published revision으로 승격 |
+| `DELETE /api/dashboards/{dashboardId}` | `delete` | admin 또는 owner fallback 유지 |
+
+Frontend 기준:
+
+- `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
+- `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
+- `permissions.canManage=false`: Job pause/cancel/stop 버튼을 비활성화합니다. Dataset materialization-run 삭제 버튼은 `canManage` 또는 `canDelete` 중 하나가 없으면 비활성화합니다.
+- `permissions.canManage=false`: Dashboard runtime 편집 모드 진입, page/widget/layout 변경, publish 버튼을 비활성화합니다.
+- `permissions.canDelete=false`: Dashboard 삭제 버튼을 비활성화합니다.
+- Backend가 `403 FORBIDDEN`을 반환하면 프론트는 일반 실패가 아니라 권한 없음 메시지로 표시합니다.
+
+Profile/Admin Console Phase 0 기준:
+
+- 프로필 페이지와 관리 페이지는 세션 쿠키가 있으면 해당 계정 actor를 우선 사용하고, 세션이 없으면 기존 demo actor header fallback을 사용합니다.
+- `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
+- `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
+- `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
+- 관리 콘솔은 사용자/그룹/감사 로그 조회와 permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 자동 생성하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
+- 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
+- Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
+
+```ts
+type PermissionAction = "view" | "query" | "run" | "manage" | "delete" | "share";
+type PermissionPrincipalType = "user" | "group" | "role" | "public";
+
+type PermissionGrant = {
+  principalType: PermissionPrincipalType;
+  principalId: string;
+  actions: PermissionAction[];
+  source?: string;
+};
+
+type ResourcePermissions = {
+  canView: boolean;
+  canQuery: boolean;
+  canRun: boolean;
+  canManage: boolean;
+  canDelete: boolean;
+  canShare: boolean;
+  computedFor?: string;
+  enforced?: boolean;
+};
+```
+
+```ts
+type IdentityProfile = {
+  displayName: string;
+  avatarInitials?: string;
+  email?: string;
+  title?: string;
+};
+
+type IdentityGroup = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+type CurrentUserResponse = {
+  id: string;
+  displayName: string;
+  email: string;
+  role: "admin" | "editor" | "viewer" | string;
+  groups: IdentityGroup[];
+  profile: IdentityProfile;
+  permissionsSummary: {
+    canView: number;
+    canQuery: number;
+    canRun: number;
+    canManage: number;
+    canDelete: number;
+    canShare: number;
+  };
+};
+
+type AdminUser = CurrentUserResponse & {
+  status: "active" | "invited" | "disabled";
+  lastActiveAt?: string;
+};
+
+type AdminPermissionSummary = {
+  resourceType: "dataset" | "etl_job" | "dashboard";
+  resourceId: string;
+  resourceName: string;
+  owner?: string;
+  createdBy?: string;
+  grants: PermissionGrant[];
+  currentActorPermissions?: ResourcePermissions;
+};
+```
 
 ### Success Envelope
 
@@ -203,6 +366,15 @@ type JobRowData = {
   id: string;
   name: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   status: JobStatus;
   tag: string;
   source: string;
@@ -267,6 +439,15 @@ type CatalogDataset = {
   name: string;
   description: string;
   owner: string;
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   layer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   status: "available" | "approval_required";
   freshness: "latest" | "stale" | "approval";
@@ -284,6 +465,9 @@ type CatalogDataset = {
   storageFormat?: string;
   storageLocation?: string;
   storageSizeBytes?: number;
+  partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   materializationRuns?: Array<{
     runId: string;
     jobId: string;
@@ -544,17 +728,31 @@ type CreatePipelineRequest = {
   timezone: string;
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
+  permissionGrants?: PermissionGrant[];
+  createdBy?: string;
+  createdByProfile?: {
+    avatarInitials?: string;
+    displayName: string;
+    email?: string;
+    role?: string;
+  };
   storageType: "S3" | "Local" | "HDFS";
   partition: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   compression: "Snappy" | "Gzip" | "None";
   storagePath: string;
   targetDataset: string;
+  targetDescription?: string;
+  targetTags?: string[];
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
   targetFormat: string;
   owner: string;
   rag: boolean;
 };
 ```
+
+`permissionSummary`, `permissionRoles`, `permissionGrants`, `owner`, `createdBy`, `createdByProfile`은 현재 생성 결과를 설명하고 표시하기 위한 governance/identity metadata입니다. 이 값만으로 dataset 조회, SQL 실행, job command 권한을 허용하거나 거부하지 않습니다. Backend는 `asklake_session` 쿠키 actor를 우선 사용하고, 세션이 없을 때만 `X-AskLake-User` header 또는 demo actor를 `createdBy` fallback으로 사용할 수 있습니다.
 
 Request 예시:
 
@@ -598,9 +796,13 @@ Request 예시:
   "permissionSummary": "Data Engineer Group / 조직 내부",
   "storageType": "S3",
   "partition": "date/category",
+  "partitionColumns": ["date", "category"],
+  "indexColumns": ["review_id"],
   "compression": "Snappy",
   "storagePath": "s3a://asklake-output/customer_review_silver/silver/",
   "targetDataset": "customer_review_silver",
+  "targetDescription": "고객 리뷰 분석용 정제 데이터셋",
+  "targetTags": ["#customer", "#review", "#silver"],
   "targetLayer": "SILVER",
   "targetFormat": "Delta",
   "owner": "Data Engineer Group",
@@ -678,10 +880,12 @@ Validation:
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
 - `targetLayer`는 `RAW`, `BRONZE`, `SILVER`, `GOLD` 중 하나여야 합니다.
 - `storageType`, `partition`, `compression`, `storagePath`는 Target 화면의 draft 값이며, 없으면 frontend는 기존 기본값을 채웁니다.
+- Target metadata는 flat create contract를 유지하기 위해 `targetDescription`, `targetTags`, `partitionColumns`, `indexColumns`로 전달합니다. 기존 `partition`은 하위 호환용 표시/저장 문자열이며 `partitionColumns.join("/")` 값과 같아야 합니다.
 - 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
 - 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼만 선택하며, 선택값을 `/`로 연결해 create request의 `partition`에 반영합니다.
+- Spark run 성공 후 생성되는 `CatalogDataset`에는 `description`, `tags`, `partition`, `partitionColumns`, `indexColumns`가 create request의 Target metadata와 일치하게 저장되어야 합니다. 값이 없으면 backend는 기존 기본 description/tag fallback을 사용할 수 있습니다.
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
@@ -997,6 +1201,7 @@ Validation:
 - backend는 `OPENAI_API_KEY`를 서버 env에서만 읽고 브라우저에 노출하지 않습니다.
 - AI 응답 SQL도 backend에서 read-only guard를 다시 통과해야 합니다.
 - AI 응답 SQL은 선택된 dataset context 밖의 table을 참조하면 `422 VALIDATION_ERROR`로 실패해야 합니다.
+- 선택된 dataset 중 하나라도 현재 actor에게 `query` 권한이 없으면 dataset metadata를 AI context로 보내기 전에 `403 FORBIDDEN`을 반환합니다.
 - 선택된 reference dataset이 있으면 Query AI는 선택 dataset context 안에서 JOIN SQL 초안을 만들 수 있습니다.
 - frontend는 live 응답이 선택 reference JOIN을 포함하지 않는 경우 동일한 선택 metadata로 JOIN SQL 초안 fallback을 적용할 수 있습니다.
 - `SELECT` 또는 `WITH ... SELECT` 기반 단일 statement만 허용합니다.
@@ -1335,26 +1540,33 @@ type DashboardListResponse = {
 };
 ```
 
+`SavedDashboardCard`도 optional `createdBy`, `createdByProfile`, `permissionGrants`, `permissions`를 포함할 수 있습니다. Dashboard 생성 API는 현재 actor를 만든 사람 metadata로 저장합니다. Dashboard 목록/수정/삭제/runtime 권한 검사는 공통 `ActorContext`/`can()` 코어를 사용하며, 현재 호환성을 위해 admin 또는 dashboard owner fallback이면 해당 action을 수행할 수 있습니다.
+
 `items`는 이미 서버에서 검색, 필터, 정렬, pagination이 적용된 현재 page 목록입니다.
+서버는 actor 기준 `view` 권한이 있는 dashboard만 `items`에 포함합니다. 프론트 숨김은 UX 보조이며, 직접 URL/API 접근은 backend 권한 검사에서 다시 차단됩니다.
 프론트는 `items`를 그대로 표시하고, `total`, `page`, `pageSize`로 pagination UI를 계산합니다.
-`filterOptions`는 현재 page에 보이는 값이 아니라 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
+`filterOptions`는 현재 page에 보이는 값이 아니라 actor가 볼 수 있는 전체 dashboard 목록 기준으로 선택 가능한 소유자와 태그를 내려줍니다.
 
 ### 8.4 대시보드 삭제
 
 `DELETE /api/dashboards/{dashboardId}`
 
 대시보드 목록에서 삭제 버튼을 누르면 프론트가 먼저 사용자 확인 모달을 띄우고, 확인 후 이 API를 호출합니다.
-서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 소유자 또는 관리자 권한인지 검사합니다.
+서버는 삭제 전에 해당 dashboard가 존재하는지 확인하고, 공통 permission check로 `delete` 권한을 검사합니다.
 삭제가 성공하면 card/list row와 함께 `dashboard_revisions`, `dashboard_pages`, `dashboard_widgets` runtime snapshot row도 정리합니다.
 
 Request body는 없습니다.
 
-로컬 API 서버의 임시 권한 입력:
+Actor 입력:
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
-| `X-AskLake-User` | `Admin User` | 요청 사용자 이름 |
-| `X-AskLake-Role` | `admin` | `admin`이면 모든 dashboard 삭제 가능. 그 외에는 dashboard `owner`와 같아야 삭제 가능 |
+| `asklake_session` cookie | 없음 | 세션이 있으면 session user를 actor로 우선 사용 |
+| `X-AskLake-User` | `Admin User` | 세션이 없을 때 fallback 요청 사용자 이름 |
+| `X-AskLake-Role` | `admin` | 세션이 없을 때 fallback role. `admin`이면 모든 dashboard 삭제 가능 |
+| `X-AskLake-Groups` | 빈 값 | 세션이 없을 때 fallback group 목록 |
+
+권한 허용 기준은 `admin 전체 허용 -> owner fallback -> permissionGrants delete action -> 403` 순서입니다. `permissionGrants`에는 dashboard payload의 legacy grant와 `permission_grants` table row가 병합됩니다.
 
 Response `200 OK`:
 
@@ -1620,6 +1832,8 @@ type DashboardRuntimeResponse = {
     id: string;
     title: string;
     status: "draft" | "published";
+    permissionGrants?: PermissionGrant[];
+    permissions?: ResourcePermissions;
     hasPublishedRevision: boolean;
     updatedAt: string;
   };
@@ -1652,6 +1866,7 @@ Response `200 OK`:
 실패:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
+- dashboard `view` 권한이 없으면 `403 FORBIDDEN`.
 
 #### 8.5.2 Draft 조회/생성
 
@@ -1666,6 +1881,7 @@ Response `200 OK`:
 실패:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
+- dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
 #### 8.5.3 Draft page 추가
 
@@ -1884,6 +2100,7 @@ Response `200 OK`:
 
 - dashboard가 없으면 `404 NOT_FOUND`.
 - draft revision이 없으면 `422 NO_DRAFT_REVISION`.
+- dashboard `manage` 권한이 없으면 `403 FORBIDDEN`.
 
 ### 8.5.11 Dashboard Assistant UI Hook
 
@@ -1980,7 +2197,338 @@ Assistant guard는 OpenAI 응답을 그대로 신뢰하지 않고 catalog schema
 
 ## 9. P2 API
 
-### 9.1 감사 로그 저장
+### 9.1 인증 세션
+
+`POST /api/auth/login`
+
+Request:
+
+```json
+{
+  "email": "admin.user@asklake.local",
+  "password": "asklake-admin"
+}
+```
+
+Response `200 OK`:
+
+- `Set-Cookie: asklake_session=...; HttpOnly; Max-Age=604800; Path=/; SameSite=lax`
+- body는 `{ "user": CurrentUserResponse }`
+
+`POST /api/auth/signup`
+
+Request:
+
+```json
+{
+  "displayName": "Kim Analyst",
+  "email": "kim.analyst@example.com",
+  "password": "minimum8"
+}
+```
+
+Response `201 Created`:
+
+- 새 viewer 계정을 만들고 로그인과 동일하게 `asklake_session` 쿠키를 발급합니다.
+- body는 `{ "user": CurrentUserResponse }`
+
+`GET /api/auth/session`
+
+Response:
+
+```json
+{
+  "authenticated": true,
+  "user": {
+    "id": "admin-user",
+    "displayName": "Admin User",
+    "email": "admin.user@asklake.local",
+    "role": "admin",
+    "groups": [],
+    "profile": {
+      "displayName": "Admin User",
+      "avatarInitials": "AU",
+      "email": "admin.user@asklake.local"
+    },
+    "permissionsSummary": {
+      "canView": 0,
+      "canQuery": 0,
+      "canRun": 0,
+      "canManage": 0,
+      "canDelete": 0,
+      "canShare": 0
+    }
+  }
+}
+```
+
+세션 쿠키가 없거나 만료되면 `{ "authenticated": false, "user": null }`을 반환합니다.
+
+`POST /api/auth/logout`
+
+Response `200 OK`:
+
+```json
+{
+  "ok": true
+}
+```
+
+서버 session row를 삭제하고 `asklake_session` 쿠키를 제거합니다.
+
+현재 session token은 서버 DB에 저장된 opaque token이며 bearer/JWT가 아닙니다. 비밀번호는 plaintext로 저장하지 않고 salt + PBKDF2 hash로 저장합니다. 이 구현은 로컬 데모 세션 범위이며 운영 인증 전 단계입니다.
+
+### 9.2 현재 사용자 프로필 조회
+
+`GET /api/users/me`
+
+Actor 결정 순서:
+
+1. `asklake_session` 쿠키가 유효하면 session user를 actor로 사용합니다.
+2. 세션이 없으면 아래 임시 actor header를 사용합니다.
+
+| Header | 기본값 | 설명 |
+| --- | --- | --- |
+| `X-AskLake-User` | `Admin User` | 현재 actor 표시 이름 |
+| `X-AskLake-Role` | `admin` | 현재 actor role |
+| `X-AskLake-Groups` | 빈 값 | comma-separated group id/name 목록 |
+
+Response `200 OK`:
+
+```json
+{
+  "id": "admin-user",
+  "displayName": "Admin User",
+  "email": "admin.user@asklake.local",
+  "role": "admin",
+  "groups": [
+    {
+      "id": "data-platform",
+      "name": "Data Platform Team",
+      "description": "Lake platform administrators"
+    }
+  ],
+  "profile": {
+    "displayName": "Admin User",
+    "avatarInitials": "AU",
+    "email": "admin.user@asklake.local",
+    "title": "Platform Admin"
+  },
+  "permissionsSummary": {
+    "canView": 12,
+    "canQuery": 8,
+    "canRun": 5,
+    "canManage": 7,
+    "canDelete": 4,
+    "canShare": 6
+  }
+}
+```
+
+프로필 API는 session actor 또는 header actor를 demo identity로 정규화해 반환합니다. 사용자를 찾을 수 없으면 actor 값에서 deterministic fallback profile을 생성할 수 있습니다.
+
+### 9.3 관리자 사용자 목록 조회
+
+`GET /api/admin/users`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "users": [
+    {
+      "id": "admin-user",
+      "displayName": "Admin User",
+      "email": "admin.user@asklake.local",
+      "role": "admin",
+      "status": "active",
+      "lastActiveAt": "2026-07-09T06:30:00.000Z",
+      "groups": [
+        {
+          "id": "data-platform",
+          "name": "Data Platform Team"
+        }
+      ],
+      "profile": {
+        "displayName": "Admin User",
+        "avatarInitials": "AU",
+        "email": "admin.user@asklake.local"
+      },
+      "permissionsSummary": {
+        "canView": 12,
+        "canQuery": 8,
+        "canRun": 5,
+        "canManage": 7,
+        "canDelete": 4,
+        "canShare": 6
+      }
+    }
+  ]
+}
+```
+
+### 9.3 관리자 그룹 목록 조회
+
+`GET /api/admin/groups`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "groups": [
+    {
+      "id": "data-platform",
+      "name": "Data Platform Team",
+      "description": "Lake platform administrators",
+      "memberCount": 2
+    }
+  ]
+}
+```
+
+### 9.4 관리자 권한 요약 조회
+
+`GET /api/admin/permissions`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "resources": [
+    {
+      "resourceType": "dataset",
+      "resourceId": "ds_customer_orders_gold",
+      "resourceName": "Customer Orders Gold",
+      "owner": "Data Platform Team",
+      "createdBy": "Admin User",
+      "grants": [
+        {
+          "id": "grant_abc123",
+          "principalType": "group",
+          "principalId": "data-platform",
+          "actions": ["view", "query", "manage"],
+          "source": "owner"
+        }
+      ],
+      "currentActorPermissions": {
+        "canView": true,
+        "canQuery": true,
+        "canRun": true,
+        "canManage": true,
+        "canDelete": true,
+        "canShare": true,
+        "computedFor": "Admin User",
+        "enforced": true
+      }
+    }
+  ]
+}
+```
+
+관리 콘솔은 resource별 grant와 현재 actor 권한을 설명하며, admin actor는 별도 편집 endpoint로 `permission_grants` table row를 생성/수정/삭제할 수 있습니다.
+
+Backend 저장 기준:
+
+- 기존 Job/Dataset/Dashboard payload의 `permissionGrants`는 호환을 위해 계속 읽습니다.
+- 새 `permission_grants` table은 `resource_type`, `resource_id`, `principal_type`, `principal_id`, `actions`, `source`, `created_by`를 저장합니다.
+- `GET /api/admin/permissions`는 payload grant와 table grant를 합산해 반환합니다.
+- 로컬 demo seed는 table이 비어 있을 때 대표 dataset/job/dashboard에 `source="admin_seed"` grant를 생성할 수 있습니다.
+
+`POST /api/admin/permissions`
+
+권한:
+
+- admin role 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Request:
+
+```json
+{
+  "resourceType": "dataset",
+  "resourceId": "ds_customer_orders_gold",
+  "principalType": "group",
+  "principalId": "analytics",
+  "actions": ["view", "query"]
+}
+```
+
+Response `201 Created`:
+
+- 수정 후 `GET /api/admin/permissions`와 같은 `AdminPermissionsResponse`를 반환합니다.
+- 없는 resource면 `404 NOT_FOUND`.
+- action이 비어 있거나 지원하지 않는 값이면 `400 VALIDATION_ERROR`.
+
+`PATCH /api/admin/permissions/{grantId}`
+
+Request:
+
+```json
+{
+  "principalType": "user",
+  "principalId": "kim.analyst@asklake.local",
+  "actions": ["view"]
+}
+```
+
+Response `200 OK`:
+
+- 수정 후 `AdminPermissionsResponse`를 반환합니다.
+- 없는 grant면 `404 NOT_FOUND`.
+
+`DELETE /api/admin/permissions/{grantId}`
+
+Response `200 OK`:
+
+- 삭제 후 `AdminPermissionsResponse`를 반환합니다.
+- 없는 grant면 `404 NOT_FOUND`.
+
+### 9.5 관리자 감사 로그 조회
+
+`GET /api/admin/audit-logs`
+
+권한:
+
+- `X-AskLake-Role=admin` 필요.
+- admin이 아니면 `403 FORBIDDEN`.
+
+Response `200 OK`:
+
+```json
+{
+  "logs": [
+    {
+      "action": "etl.job.command_requested",
+      "actor_id": "Admin User",
+      "api_path": "/api/etl/jobs/JOB-001/commands",
+      "created_at": "2026-07-09T06:30:00.000Z",
+      "request_id": "req_demo_001",
+      "result": "success",
+      "target_id": "JOB-001",
+      "target_type": "etl_job"
+    }
+  ]
+}
+```
+
+초기 구현은 frontend local audit log와 backend demo audit snapshot을 합치지 않습니다. 서버 API는 backend가 알고 있는 demo log만 반환하고, Topbar의 local audit log는 별도 UI 상태로 유지합니다.
+
+### 9.6 감사 로그 저장
 
 `POST /api/audit-logs`
 
@@ -2059,7 +2607,9 @@ Response `201 Created`:
 
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
-- 인증 방식: JWT, 세션, 또는 임시 demo actor.
+- 인증 방식: 운영 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증.
+- Auth/session table의 Alembic migration.
+- 권한 모델: deny policy, 조건부 정책, dataset 생성/삭제 전체 enforcement, group membership 편집 범위.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
 - SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.

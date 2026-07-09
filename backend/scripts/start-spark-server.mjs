@@ -52,6 +52,7 @@ function createMasterArgs() {
       masterName,
       "--network",
       network,
+      ...hostGatewayArgs(),
       "--label",
       "asklake.role=spark-master",
       ...sampleMountArgs(),
@@ -78,6 +79,7 @@ function createWorkerArgs() {
       workerName,
       "--network",
       network,
+      ...hostGatewayArgs(),
       "--label",
       "asklake.role=spark-worker",
       ...sampleMountArgs(),
@@ -102,9 +104,16 @@ function containerNeedsCreate(name) {
   const sampleMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedSource && mount.Destination === sampleContainerDir);
   const reportMounted = metadata?.Mounts?.some((mount) => normalizePath(mount.Source) === expectedReportSource && mount.Destination === reportContainerDir);
   const outputMounted = metadata?.Mounts?.some((mount) => mount.Name === outputVolumeName && mount.Destination === outputContainerDir);
-  if (sampleMounted && reportMounted && outputMounted) return false;
+  const hostGatewayMapped = (metadata?.HostConfig?.ExtraHosts ?? []).some((entry) => (
+    String(entry || "").startsWith("host.docker.internal:")
+  ));
+  if (sampleMounted && reportMounted && outputMounted && hostGatewayMapped) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
+}
+
+function hostGatewayArgs() {
+  return ["--add-host", "host.docker.internal:host-gateway"];
 }
 
 function uiPortArgs(hostPort, containerPort) {

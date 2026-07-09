@@ -331,6 +331,12 @@
   }
 
   .option-grid,
+  .admin-permission-form,
+  .admin-permission-form.compact,
+  .admin-permission-toolbar,
+  .admin-permission-workbench,
+  .admin-console-metric-grid,
+  .profile-permission-grid,
   .form-grid,
   .form-grid.compact,
   .creation-validation-list,
@@ -353,6 +359,27 @@
   .review-analysis-flow,
   .review-analysis-metrics,
   .hegun-rule-library {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-permission-actions {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .admin-permission-action-group {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .admin-permission-form .primary-button {
+    grid-column: auto;
+    grid-row: auto;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .admin-grant-item {
     grid-template-columns: 1fr;
   }
 
