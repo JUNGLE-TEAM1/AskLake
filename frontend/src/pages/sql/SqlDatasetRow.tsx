@@ -2,6 +2,7 @@ import { Calendar, ChevronDown, ChevronRight, Database, Hash, Plus, Server, Tabl
 import { useState } from "react";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
+import { TreeGroup, TreeRow, TreeStaticRow, TreeView } from "@/components/ui/tree-view";
 import type { CatalogDataset } from "../../types";
 
 type SqlDatasetTreeProps = {
@@ -24,37 +25,39 @@ export function SqlDatasetTree({
   if (datasets.length === 0) return null;
 
   return (
-    <TreePanel className="sql-dataset-tree" role="tree" aria-label="분석 데이터셋 트리">
-      <div className="sql-tree-node depth-0" role="treeitem" aria-expanded="true">
-        <ChevronDown size={15} />
-        <Server size={16} />
-        <strong>system</strong>
-      </div>
-      <div className="sql-tree-branch depth-1">
-        <div className="sql-tree-node" role="treeitem" aria-expanded="true">
+    <TreePanel className="sql-dataset-tree">
+      <TreeView className="sql-tree" label="분석 데이터셋 트리">
+        <TreeStaticRow className="sql-tree-node depth-0" expanded level={0}>
           <ChevronDown size={15} />
-          <Database size={16} />
-          <strong>datasets</strong>
-        </div>
-        <div className="sql-tree-branch depth-2">
-          <div className="sql-tree-node" role="treeitem" aria-expanded="true">
+          <Server size={16} />
+          <strong>system</strong>
+        </TreeStaticRow>
+        <TreeGroup className="sql-tree-branch depth-1" level={1}>
+          <TreeStaticRow className="sql-tree-node" expanded level={1}>
             <ChevronDown size={15} />
-            <Table2 size={16} />
-            <strong>테이블({datasets.length})</strong>
-          </div>
-          <div className="sql-tree-table-list">
-            {datasets.map((dataset) => (
-              <SqlDatasetTreeRow
-                dataset={dataset}
-                expanded={expandedDatasetId === dataset.id}
-                key={dataset.id}
-                onSelect={onSelect}
-                onToggle={onToggle}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
+            <Database size={16} />
+            <strong>datasets</strong>
+          </TreeStaticRow>
+          <TreeGroup className="sql-tree-branch depth-2" level={2}>
+            <TreeStaticRow className="sql-tree-node" expanded level={2}>
+              <ChevronDown size={15} />
+              <Table2 size={16} />
+              <strong>테이블({datasets.length})</strong>
+            </TreeStaticRow>
+            <div className="sql-tree-table-list">
+              {datasets.map((dataset) => (
+                <SqlDatasetTreeRow
+                  dataset={dataset}
+                  expanded={expandedDatasetId === dataset.id}
+                  key={dataset.id}
+                  onSelect={onSelect}
+                  onToggle={onToggle}
+                />
+              ))}
+            </div>
+          </TreeGroup>
+        </TreeGroup>
+      </TreeView>
     </TreePanel>
   );
 }
@@ -87,9 +90,11 @@ function SqlDatasetTreeRow({
   return (
     <article className={expanded ? "sql-tree-table-node active expanded" : "sql-tree-table-node"}>
       <div className="sql-tree-table-row-shell">
-        <button
+        <TreeRow
           aria-expanded={expanded}
           className="sql-tree-table-row"
+          expanded={expanded}
+          level={3}
           type="button"
           onClick={() => onToggle(dataset)}
           onBlur={() => setHoverInfo(null)}
@@ -103,7 +108,7 @@ function SqlDatasetTreeRow({
             <strong title={dataset.name}>{dataset.name}</strong>
             <em>{dataset.schema.length} columns</em>
           </span>
-        </button>
+        </TreeRow>
         <button className="sql-tree-add-button" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)}>
           <Plus size={14} /> 추가
         </button>
@@ -113,9 +118,11 @@ function SqlDatasetTreeRow({
           {dataset.schema.map(([name, type], index) => {
             const Icon = getColumnIcon(type);
             return (
-              <button
+              <TreeRow
                 className="sql-tree-column-row"
                 key={`${dataset.id}-${name}-${index}`}
+                leaf
+                level={4}
                 type="button"
                 onBlur={() => setHoverInfo(null)}
                 onFocus={(event) => showColumnInfo(event.currentTarget, name, type)}
@@ -127,7 +134,7 @@ function SqlDatasetTreeRow({
                   <strong title={name}>{name}</strong>
                   <em>{formatColumnType(type)}</em>
                 </span>
-              </button>
+              </TreeRow>
             );
           })}
         </div>

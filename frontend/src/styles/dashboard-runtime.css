@@ -623,22 +623,15 @@
   white-space: nowrap;
 }
 
-.asklake-dataset-hover-tooltip.MuiTooltip-tooltip {
+.asklake-dataset-hover-tooltip {
   max-width: 380px;
+  overflow: visible;
   border: 1px solid #d8e1ee;
   border-radius: 8px;
   background: #ffffff;
   color: #0f172a;
   box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
   padding: 0;
-}
-
-.asklake-dataset-hover-arrow.MuiTooltip-arrow {
-  color: #ffffff;
-}
-
-.asklake-dataset-hover-arrow.MuiTooltip-arrow::before {
-  border: 1px solid #d8e1ee;
 }
 
 .asklake-dataset-hover-card {
