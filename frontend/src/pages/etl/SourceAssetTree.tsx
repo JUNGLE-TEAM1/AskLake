@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
 import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { TreePanel } from "@/components/ui/tree-panel";
 
 export type SourceAsset = [path: string, meta: string, status: string];
 
@@ -195,18 +196,26 @@ export function SourceAssetTree({
   };
 
   if (nodes.length === 0) {
-    return <p className="source-empty-note">{LABELS.empty}</p>;
+    return (
+      <TreePanel
+        className="source-asset-tree-panel"
+        emptyState={<p className="source-empty-note">{LABELS.empty}</p>}
+        isEmpty
+      />
+    );
   }
 
   return (
-    <SimpleTreeView
-      className="source-asset-tree"
-      expandedItems={expandedItems}
-      sx={TREE_VIEW_SX}
-      onExpandedItemsChange={(_, itemIds) => updateExpandedItems(itemIds)}
-    >
-      {nodes.map(renderNode)}
-    </SimpleTreeView>
+    <TreePanel className="source-asset-tree-panel">
+      <SimpleTreeView
+        className="source-asset-tree"
+        expandedItems={expandedItems}
+        sx={TREE_VIEW_SX}
+        onExpandedItemsChange={(_, itemIds) => updateExpandedItems(itemIds)}
+      >
+        {nodes.map(renderNode)}
+      </SimpleTreeView>
+    </TreePanel>
   );
 }
 

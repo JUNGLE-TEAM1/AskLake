@@ -10,6 +10,7 @@
 
 - shadcn components: https://ui.shadcn.com/docs/components
 - shadcn Data Table guide: https://ui.shadcn.com/docs/components/data-table
+- ReUI Tree visual reference: https://reui.io/components/tree
 
 ## 운영 원칙
 
@@ -19,6 +20,8 @@
 - AskLake composition component는 삭제 대상이 아니라 업무 화면 패턴을 묶는 상위 조립 단위다.
 - composition component 내부도 가능한 한 `Button`, `Input`, `Dialog`, `Table`, `Checkbox`, `Tabs`, `Dropdown Menu` 같은 shadcn primitive로 구성한다.
 - CSS selector 삭제는 primitive 교체와 route QA가 끝난 뒤 별도 cleanup PR에서만 진행한다.
+- Tree 계열은 `react-arborist`를 엔진 표준으로 두고, ReUI의 File Explorer Tree 스타일을 참고한 shadcn-style row/label/icon UI를 입힌다.
+- `TreePanel`은 tree 엔진이 아니라 header/body/footer/loading/error/empty를 감싸는 shell이다.
 - Backend API, 데이터 계약, React Router 구조, 도메인 로직은 이 문서의 범위가 아니다.
 
 ## 분류 기준
@@ -87,6 +90,7 @@
 | `PreviewPanel` / `ResultPanel` | SQL/Dashboard/ETL preview/result shell pattern이다. | header/status/empty/loading/action slot은 shadcn primitive로 구성한다. |
 | `SettingsPanel` | dashboard/ETL/SQL 설정 panel shell pattern이다. | form body는 `Field`, `Input Group`, `Native Select`, `Checkbox`로 교체한다. |
 | `DetailTableSection` | 상세 화면의 table title/body/footer shell pattern이다. | table body는 `DataTable` 또는 shadcn `Table` 기준으로 유지한다. |
+| `TreePanel` | S3/ETL/SQL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | 내부 tree는 `react-arborist` 기준으로 통일하고, row UI는 shadcn-style file explorer pattern으로 정리한다. |
 | `SelectableCard` | 아이콘, 설명, selected/check 상태가 있는 업무 선택 card pattern이다. | checkbox/radio 의미가 있으면 `Radio Group`/`Checkbox` 기반으로 재설계한다. |
 | `IconOptionGrid` | dashboard widget/chart type icon grid pattern이다. | `Tooltip`, `Toggle Group`, `Button` 기반으로 내부를 정리한다. |
 
@@ -128,11 +132,13 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 3. Forms/Controls PR: ETL/SQL/Dashboard/S3/DB picker의 input/select/textarea/checkbox/radio를 교체한다.
 4. Navigation/Menu/Overlay PR: tabs, toggle group, dropdown menu, alert dialog, sheet를 적용한다.
 5. Table/List/Search PR: Catalog result를 `DataTable`로 전환하고 `PaginationBar`/`FilterToolbar` 내부를 shadcn primitive로 정리한다.
-6. Complex Surface Polish PR: dashboard runtime, ETL rule builder, SQL result/editor shell을 화면별로 폴리싱한다.
-7. CSS Cleanup + Visual QA PR: 교체 완료 selector만 삭제하고 주요 route를 검증한다.
+6. Tree Standardization PR: S3/ETL/SQL의 MUI/custom tree를 `react-arborist`로 교체하고 ReUI File Explorer Tree 스타일의 shadcn-style row UI를 적용한다.
+7. Complex Surface Polish PR: dashboard runtime, ETL rule builder, SQL result/editor shell을 화면별로 폴리싱한다.
+8. CSS Cleanup + Visual QA PR: 교체 완료 selector만 삭제하고 주요 route를 검증한다.
 
 ## 업데이트 로그
 
 | 날짜 | 변경 |
 | --- | --- |
-| 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 31개 컴포넌트를 분류했다. |
+| 2026-07-09 | #400에서 shadcn replacement inventory를 생성하고 현재 `components/ui` 32개 컴포넌트를 분류했다. |
+| 2026-07-09 | #401의 `TreePanel` 추가를 반영하고, tree 계열 후속 표준을 `react-arborist` 엔진 + shadcn-style File Explorer Tree UI로 기록했다. |

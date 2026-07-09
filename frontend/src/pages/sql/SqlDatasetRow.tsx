@@ -1,5 +1,6 @@
 import { Calendar, ChevronDown, ChevronRight, Database, Hash, Plus, Server, Table2, Type } from "lucide-react";
 import { useState } from "react";
+import { TreePanel } from "@/components/ui/tree-panel";
 import type { CatalogDataset } from "../../types";
 
 type SqlDatasetTreeProps = {
@@ -22,7 +23,7 @@ export function SqlDatasetTree({
   if (datasets.length === 0) return null;
 
   return (
-    <div className="sql-dataset-tree" role="tree" aria-label="분석 데이터셋 트리">
+    <TreePanel className="sql-dataset-tree" role="tree" aria-label="분석 데이터셋 트리">
       <div className="sql-tree-node depth-0" role="treeitem" aria-expanded="true">
         <ChevronDown size={15} />
         <Server size={16} />
@@ -53,7 +54,7 @@ export function SqlDatasetTree({
           </div>
         </div>
       </div>
-    </div>
+    </TreePanel>
   );
 }
 
