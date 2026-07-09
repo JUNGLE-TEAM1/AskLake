@@ -2,7 +2,7 @@
 
 ## 목적
 
-이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
+이 문서는 #387에서 정리한 "나중에 분리하는 후보"와 #389, #391, #393, #395에서 실제 적용한 frontend UI shell component 범위를 추적하는 작업 문서다.
 
 `docs/frontend-component-gap-inventory.md`는 전체 gap 추적 문서이고, `docs/frontend-css-cleanup-inventory.md`는 CSS 유지/교체 판단 문서다. 이 문서는 두 문서에서 #385 이후 남은 UI shell 후보만 뽑아 적용 순서와 보류 기준을 좁힌다.
 
@@ -25,7 +25,7 @@
 | `SegmentedTabs` | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | rename/edit 상태가 있는 dashboard runtime tabs |
 | `SelectableCard` | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | target chip grid와 runtime-specific card |
 | `IconOptionGrid` | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | 다른 icon-only option grid가 생기면 재사용 |
-| `DetailTableSection` | `frontend/src/pages/ingest/JobsPages.tsx` | ETL detail, SchemaTransformEditor detail table |
+| `DetailTableSection` | `frontend/src/pages/ingest/JobsPages.tsx` | Jobs run history, ETL detail, SchemaTransformEditor detail table |
 
 ## #391 적용 결과
 
@@ -42,6 +42,17 @@
 | `SegmentedTabs` | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | Dashboard runtime page tabs는 rename/delete/edit 상태가 있어 보류 |
 | `SelectableCard` | 추가 신규 사용처 없음 | ETL permission role, partition option은 checkbox/radio 의미가 있어 보류 |
 
+## #395 적용 결과
+
+| 컴포넌트 | 추가 적용 파일 | 남은 범위 |
+| --- | --- | --- |
+| `DetailTableSection` | `frontend/src/pages/ingest/JobsPages.tsx` | ETL detail, SchemaTransformEditor detail table |
+
+- Jobs run history table card와 scroll wrapper를 `DetailTableSection`으로 전환했다.
+- `PaginationBar`가 table overflow 안에 들어가지 않도록 `DetailTableSection`에 optional `footer` slot을 추가했다.
+- `.runs-table-card`, `.runs-table-scroll`, `.runs-pagination` className은 유지해 CSS 삭제 없이 화면 스타일 계약을 보존한다.
+- ETL detail과 `SchemaTransformEditor` preview table은 편집/preview 상태가 커서 후속 설계 대상으로 남긴다.
+
 ## 우선 구현 후보
 
 | 순서 | 후보 | 바꿀 수 있는 UI | 대표 사용처 | 이번 판단 |
@@ -54,7 +65,7 @@
 | 6 | `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | 단순 tab부터 적용하고 rename/edit 상태가 있는 탭은 보류한다. |
 | 7 | `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | source connector, schedule mode, widget type card에 반복되지만 icon/description/check 상태 설계가 필요하다. |
 | 8 | `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | dashboard chart/widget type 선택 UI부터 적용 가능하다. tooltip과 focus 상태를 같이 본다. |
-| 9 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | 단순 `DataTable` 적용보다 section title/action/empty shell을 같이 잡아야 한다. |
+| 9 | `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule, #395에서 Jobs run history까지 적용. ETL/SchemaTransformEditor는 후속 설계로 둔다. |
 
 ## 보류 후보
 

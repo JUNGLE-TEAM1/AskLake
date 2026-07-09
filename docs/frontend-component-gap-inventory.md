@@ -94,6 +94,15 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `EmptyState`
 - `Table`
 - `DataTable`
+- `PreviewPanel`
+- `ResultPanel`
+- `SettingsPanel`
+- `FormFieldGroup`
+- `NativeSelectField`
+- `SegmentedTabs`
+- `SelectableCard`
+- `IconOptionGrid`
+- `DetailTableSection`
 
 ## 2026-07-09 코드 스윕 결과
 
@@ -152,7 +161,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result, Dashboard builder preview, dashboard runtime table widget에 1차 적용. ETL final preview와 Catalog preview shell은 후속 판단. |
 | 전체 | dense settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 Dashboard config shell을 1차 적용했고, #391에서 WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field까지 확장. ETL rule builder/target/permission form과 color picker 세부 layout은 후속. |
 | 전체 | icon-only option grid | `부분 해결` | `IconOptionGrid` | #389에서 Dashboard runtime widget type icon grid에 1차 적용. tooltip/focus state는 기존 runtime 흐름 유지. |
-| 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section에 1차 적용. ETL detail과 schema transform editor는 후속. |
+| 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell에 적용. ETL detail과 schema transform editor는 후속. |
 | 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
 | 전체 | tree/list hybrid selector | `보류` | `TreePanel` | react-arborist 도입 이후 Source tree/Dataset tree 기준을 다시 잡아야 함. Dashboard dataset tree는 B04에서 arborist로 전환됐지만 공통 wrapper는 아직 없음. |
@@ -167,7 +176,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Source connector cards | `source-choice-card` | `부분 해결` | `SelectableCard` | #389에서 `SelectableCard`로 1차 전환. 선택 상태, 아이콘, 설명, check 표시 className은 유지. |
 | Schedule run type cards | `schedule-config-mode-card`, `run-card` | `부분 해결` | `SelectableCard` | #389에서 ETL 내부 schedule config card와 schedule page run type card를 `SelectableCard`로 전환. target chip grid는 후속. |
 | Schema transform workbench | `SchemaTransformWorkbench`, `schema-transform-*` | `보류` | `TransformWorkbench` | Naming cleanup 완료. 공통 workbench component 분리는 후속 범위. |
-| Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section에 1차 적용. run history와 transform preview는 후속. |
+| Detail table section | run/detail/history와 transform preview의 작은 table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule table section, #395에서 Jobs run history table shell에 적용. ETL transform preview는 후속. |
 | Rule builder | `hegun-builder-panel`, `hegun-rule-field`, `hegun-rule-form-actions` | `부분 해결` | `RuleBuilderPanel`, `FormFieldGroup`, `ActionGroup`, `SegmentedTabs` | #385에서 rule form action footer와 failed-row action footer를 `ActionGroup`으로 전환. #391에서는 source/schedule field까지만 전환했고, #393에서 rule category tabs를 `SegmentedTabs`로 전환. form/select 구조는 보류. |
 | Review edit action | `etl-review-edit` | `구현 후보` | `SectionAction` | `ReviewEditButton` wrapper로 반복 제거. |
 | Target tags | `target-chip-grid`, `target-chip` | `부분 해결` | `TagList`, `Chip` | #385에서 target tag row와 clickable chip을 공통 컴포넌트로 전환. partition chip grid는 유지. |
@@ -248,3 +257,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #389에서 UI shell 컴포넌트 8종을 추가하고 SQL/Dashboard/ETL/Ingest 대표 사용처에 1차 적용. CSS 삭제는 route QA 후 후속 cleanup으로 분리. |
 | 2026-07-09 | #391에서 Form/Settings 계열 적용 범위를 확장. WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field를 공통 field component로 전환하고 보류 범위를 기록. |
 | 2026-07-09 | #393에서 Selection UI 계열을 추가 정리. Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 전환하고 checkbox/radio 성격의 card 후보는 보류로 기록. |
+| 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |

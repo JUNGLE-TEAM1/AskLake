@@ -35,7 +35,7 @@
 
 기준일: 2026-07-09
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -43,7 +43,7 @@
 | --- | ---: | --- | --- | --- |
 | `frontend/src/styles/base.css` | 706 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. #369에서 Jobs 전용으로 남아 있던 global `.filter-chip` selector 제거. |
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,760 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동. #385에서 status/owner/tag pill, job row/detail action group, Jobs detail key-value markup은 공통 컴포넌트로 전환했지만 `.status-pill`, `.owner-chip`, `.tag-chip`, `.job-row-details`, `.job-row-actions` density CSS는 유지. |
+| `frontend/src/styles/ingest.css` | 1,760 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동. #385에서 status/owner/tag pill, job row/detail action group, Jobs detail key-value markup은 공통 컴포넌트로 전환했고 #393에서 Jobs tab, #395에서 run history table shell은 공통 컴포넌트로 전환. `.status-pill`, `.owner-chip`, `.tag-chip`, `.job-row-details`, `.job-row-actions`, `.runs-table*` density CSS는 유지. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
 | `frontend/src/styles/etl.css` | 9,064 | A | `부분 정리됨` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. #378에서 S3/DB picker shell은 `PickerDialog`, schema/rule bottom bar는 `CommandBar`로 이동. #385에서 target tag row, rule action footer, permission/review validation, review key-value summary를 공통 컴포넌트로 전환. Source/Schema/Schedule/form/tree selector는 component gap 범위가 커서 유지. |
 | `frontend/src/styles/responsive.css` | 561 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector 제거. #369에서 Jobs/Dashboard toolbar responsive selector를 `FilterToolbar` responsive utility로 이동. 각 route 모바일 QA 후 추가 정리. |
@@ -64,7 +64,7 @@
 | Jobs 목록 shell / toolbar | `ingest.css`, `responsive.css`, `base.css` | `정리됨` | #367에서 Jobs metrics/filter/table panel shell과 metrics card selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip/reset responsive selector를 `FilterToolbar`로 이동. Jobs table detail selector는 유지. |
 | Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `정리됨` | A02에서 `JobsPages.tsx` 사용처가 제거된 뒤 CSS만 남아 있던 `jobs-table-empty`, `jobs-table-preview-footer` selector를 #364에서 삭제. |
 | Jobs status/owner/tag chip | `ingest.css` | `부분 정리됨` | #385에서 `StatusBadge`, `Chip`, `TagList`로 markup을 전환. `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`은 기존 색/간격 보존을 위해 유지. |
-| Run History table | `ingest.css`, `ingest-dag.css` | `부분 정리됨` | #378에서 `.runs-pagination` markup은 `PaginationBar`로 전환. `.runs-table*`과 DAG modal/graph는 별도 QA 전 유지한다. |
+| Run History table | `ingest.css`, `ingest-dag.css` | `부분 정리됨` | #378에서 `.runs-pagination` markup은 `PaginationBar`로 전환. #395에서 `.runs-table-card`와 `.runs-table-scroll` shell은 `DetailTableSection`으로 전환. `.runs-table*` density와 DAG modal/graph는 별도 QA 전 유지한다. |
 | ETL Source/Schema flow | `etl.css`, `schema-transform-adapter.css`, `schema-transform-source.css` | `부분 정리됨` | A03에서 PageHeader와 주요 action button은 primitive 적용. #357에서 legacy naming은 정리. #378에서 S3/DB picker shell과 schema/rule bottom command wrapper를 공통화했고, #385에서 Review summary/validation, Target tag, rule action footer를 공통 컴포넌트로 전환. card, segmented tabs, schema workbench, form/tree selector는 유지. |
 | Tree UI | `etl.css`, `schema-transform-adapter.css` | `보류` | MUI TreeView 유지가 아니라 `react-arborist` 기준 교체가 목표다. 단, 실제 교체 전 tree 관련 CSS는 삭제하지 않는다. |
 | Service-wide legacy xflow naming | `ingest.css`, `catalog.css`, `dashboard.css`, `etl.css`, `pages/ingest`, `pages/catalog`, `pages/dashboard`, `pages/etl` | `정리됨` | #357에서 ETL, #361에서 Ingest/Catalog/Dashboard의 legacy naming을 AskLake 도메인 이름으로 rename. 문서에 남은 `xflow` 문자열은 cleanup 추적 기록이다. |
@@ -165,6 +165,16 @@
 | ETL rule category tabs | `.hegun-rule-category-list`, `.hegun-rule-category`, `.hegun-rule-category-icon` | rule mode tablist를 `SegmentedTabs`로 전환. icon/copy/active selector는 유지. |
 | 보류 Selection card | `.permission-config-role`, `.target-partition-option` | checkbox/radio 의미가 있는 선택 UI라 `SelectableCard`로 억지 전환하지 않는다. |
 
+## #395 Detail Table Section 적용 CSS 기록
+
+이번 PR은 Jobs run history table 주변 shell을 `DetailTableSection`으로 옮기지만 CSS selector 삭제는 하지 않는다. 기존 className을 그대로 전달해 `/jobs/:jobId/runs` route QA 전까지 table density와 footer 스타일을 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| DetailTableSection footer | `.runs-table-card`, `.runs-table-scroll`, `.runs-pagination` | run history table card/overflow/footer shell을 공통 component로 전환. `PaginationBar`는 `footer` slot에 두어 table overflow 밖에 유지한다. |
+| Run table density | `.runs-table`, `.run-row`, `.run-status-pill`, `.runs-detail-button`, `.runs-log-button` | row height, column width, status color, compact action style은 화면 QA 전까지 유지한다. |
+| 보류 범위 | `.runs-dag-card`, `ingest-dag.css`, `schema-transform-adapter.css` | DAG modal/graph와 SchemaTransformEditor preview는 외부/편집 상태가 묶여 있어 이번 PR에서 건드리지 않는다. |
+
 ## #378 Component 확장 CSS 기록
 
 이번 PR은 CSS 파일을 직접 삭제하지 않고, 공통 컴포넌트가 기존 화면 className을 받을 수 있게 만든 뒤 대표 사용처를 전환했다. 따라서 아래 selector는 즉시 삭제가 아니라 route QA 후 후속 cleanup PR에서 정리한다.
@@ -217,3 +227,4 @@ npm run build
 | 2026-07-09 | #389에서 UI shell component 8종 적용에 따른 CSS 판단을 기록. 기존 selector 삭제 없이 className 전달 방식으로 route QA 전 스타일을 유지한다. |
 | 2026-07-09 | #391에서 Form/Settings 계열 추가 적용에 따른 CSS 판단을 기록. 기존 field/select selector는 삭제하지 않고 route QA 후 축소한다. |
 | 2026-07-09 | #393에서 Selection UI 추가 적용에 따른 CSS 판단을 기록. 단순 tab selector는 유지하고 checkbox/radio card 후보는 보류한다. |
+| 2026-07-09 | #395에서 Jobs run history table card/scroll/footer shell을 `DetailTableSection`으로 전환하고 `.runs-table*` density CSS는 route QA 전까지 유지하기로 기록. |

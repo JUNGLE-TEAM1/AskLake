@@ -1284,9 +1284,24 @@ export function JobRunsPage({
           </div>
         </div>
 
-        <article className="runs-table-card">
-          <div className="runs-table-scroll">
-            <table className="runs-table">
+        <DetailTableSection
+          className="runs-table-card"
+          footer={
+            <PaginationBar
+              buttonSize="icon"
+              className="runs-pagination"
+              nextLabel="›"
+              onNext={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}
+              onPrevious={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}
+              previousLabel="‹"
+              rangeLabel={`Showing ${runs.length ? `1-${runs.length}` : "0"} of ${runs.length}`}
+            />
+          }
+          headerClassName="sr-only"
+          scrollClassName="runs-table-scroll"
+          title="실행 이력"
+        >
+          <table className="runs-table">
             <thead>
               <tr>
                 <th>Run ID</th>
@@ -1327,17 +1342,7 @@ export function JobRunsPage({
               ))}
             </tbody>
           </table>
-          </div>
-          <PaginationBar
-            buttonSize="icon"
-            className="runs-pagination"
-            nextLabel="›"
-            onNext={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}
-            onPrevious={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}
-            previousLabel="‹"
-            rangeLabel={`Showing ${runs.length ? `1-${runs.length}` : "0"} of ${runs.length}`}
-          />
-        </article>
+        </DetailTableSection>
       </section>
       {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
       {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
