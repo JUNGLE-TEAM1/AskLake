@@ -562,16 +562,19 @@
 }
 
 .admin-permission-form.compact {
-  grid-template-columns: minmax(160px, 0.35fr) minmax(260px, 0.65fr) auto;
+  grid-template-columns: minmax(180px, 240px) minmax(280px, 1fr) auto;
+  align-items: end;
+  gap: 14px 16px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  background: #f8fafc;
-  padding: 12px;
+  background: #fff;
+  padding: 16px;
 }
 
 .admin-permission-form .field {
   display: grid;
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .admin-permission-form .field span {
@@ -582,7 +585,7 @@
 
 .admin-permission-form input,
 .admin-permission-form select {
-  min-height: 38px;
+  min-height: 42px;
   width: 100%;
   border: 1px solid #d9e2ef;
   border-radius: 8px;
@@ -595,17 +598,10 @@
 
 .admin-permission-form-title {
   grid-column: 1 / -1;
+  padding-bottom: 2px;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 850;
-}
-
-.admin-principal-id-hint {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 750;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
 }
 
 .admin-permission-form input[type="checkbox"],
@@ -621,7 +617,7 @@
   align-self: end;
   grid-column: 4;
   justify-self: end;
-  min-height: 38px;
+  min-height: 42px;
   min-width: 108px;
   width: auto;
 }
@@ -637,6 +633,7 @@
   justify-content: center;
   gap: 7px;
   min-width: 132px;
+  padding: 0 16px;
   border: 1px solid #1d4ed8;
   border-radius: 8px;
   background: #2563eb;
@@ -667,6 +664,11 @@
   grid-row: 3;
   gap: 8px;
   align-self: center;
+  min-width: 0;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
 }
 
 .admin-permission-action-group > span {

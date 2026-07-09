@@ -37,7 +37,7 @@ const tabs: Array<{ id: AdminTab; label: string; icon: typeof CircleUser }> = [
 ];
 
 const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "delete", "share"];
-const principalTypeOptions: PermissionPrincipalType[] = ["group", "user", "role", "public"];
+const principalTypeOptions: PermissionPrincipalType[] = ["group", "user"];
 const resourceTypeFilters: Array<"all" | AdminResourceType> = ["all", "dataset", "etl_job", "dashboard"];
 
 export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
@@ -367,11 +367,7 @@ function PermissionsTable({
   const [resourceTypeFilter, setResourceTypeFilter] = useState<"all" | AdminResourceType>("all");
   const principalOptions = draft.principalType === "group"
     ? groups.map((group) => ({ label: group.name, value: group.id }))
-    : draft.principalType === "user"
-      ? users.map((user) => ({ label: user.displayName, value: user.email || user.id }))
-      : draft.principalType === "role"
-        ? ["admin", "viewer"].map((role) => ({ label: role, value: role }))
-        : [{ label: "public", value: "public" }];
+    : users.map((user) => ({ label: user.displayName, value: user.email || user.id }));
   const normalizedSearch = resourceSearch.trim().toLowerCase();
   const filteredResources = permissions.filter((resource) => {
     const matchesType = resourceTypeFilter === "all" || resource.resourceType === resourceTypeFilter;
@@ -468,11 +464,7 @@ function PermissionsTable({
                     const nextType = event.target.value as PermissionPrincipalType;
                     const nextOptions = nextType === "group"
                       ? groups.map((group) => group.id)
-                      : nextType === "user"
-                        ? users.map((user) => user.email || user.id)
-                        : nextType === "role"
-                          ? ["admin", "viewer"]
-                          : ["public"];
+                      : users.map((user) => user.email || user.id);
                     onDraftChange((current) => ({
                       ...current,
                       principalId: nextOptions[0] || "",
@@ -485,17 +477,12 @@ function PermissionsTable({
                 </label>
                 <label className="field">
                   <span>대상</span>
-                  {draft.principalType === "public" ? (
-                    <input readOnly value="public" />
-                  ) : (
-                    <select
-                      value={draft.principalId}
-                      onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
-                    >
-                      {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                  )}
-                  <small className="admin-principal-id-hint">ID: {draft.principalType === "public" ? "public" : draft.principalId || "-"}</small>
+                  <select
+                    value={draft.principalId}
+                    onChange={(event) => onDraftChange((current) => ({ ...current, principalId: event.target.value, resourceKey: resourceKey(selectedResource) }))}
+                  >
+                    {principalOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
                 </label>
                 <div className="admin-permission-action-group">
                   <span>권한</span>
