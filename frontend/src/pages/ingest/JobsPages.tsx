@@ -37,6 +37,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { DetailTableSection } from "@/components/ui/detail-table-section";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
@@ -1137,11 +1138,12 @@ export function JobDetailPage({
           <span className="disclosure-indicator">펼치기</span>
         </summary>
         <div className="job-detail-disclosure-body">
-        <article className="detail-table-card">
-          <div className="detail-table-header">
-            <h3>스키마 매핑</h3>
-            <span>5 컬럼</span>
-          </div>
+        <DetailTableSection
+          className="detail-table-card"
+          headerClassName="detail-table-header"
+          meta={<span>5 컬럼</span>}
+          title="스키마 매핑"
+        >
           <table className="schema-table detail-table">
             <thead>
               <tr>
@@ -1159,12 +1161,13 @@ export function JobDetailPage({
               ))}
             </tbody>
           </table>
-        </article>
-        <article className="detail-table-card">
-          <div className="detail-table-header">
-            <h3>변환 규칙</h3>
-            <span>{ruleRows.length} rules</span>
-          </div>
+        </DetailTableSection>
+        <DetailTableSection
+          className="detail-table-card"
+          headerClassName="detail-table-header"
+          meta={<span>{ruleRows.length} rules</span>}
+          title="변환 규칙"
+        >
           <table className="schema-table detail-table">
             <thead>
               <tr>
@@ -1180,7 +1183,7 @@ export function JobDetailPage({
               ))}
             </tbody>
           </table>
-        </article>
+        </DetailTableSection>
         </div>
       </details>
 

@@ -50,19 +50,29 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 - `DetailTableSection`은 작은 detail table에 title, action, empty state가 붙는 section shell을 다룬다.
 - Tree, widget frame, color picker처럼 라이브러리 DOM이나 runtime 상태와 강하게 묶인 후보는 "나중에 분리하는 후보"로 유지한다.
 
+## #389 처리 결과
+
+- `PreviewPanel` / `ResultPanel`: dashboard builder preview와 SQL result, dashboard runtime table widget 주변 shell에 1차 적용.
+- `SettingsPanel` / `FormFieldGroup` / `NativeSelectField`: Dashboard runtime `WidgetConfigPanel`의 panel, title/description field, dataset native select에 1차 적용.
+- `SegmentedTabs`: Dashboard 기간 필터와 ETL source stage tabs에 1차 적용. rename/edit 상태가 있는 `DashboardPageTabs`는 보류.
+- `SelectableCard`: ETL source connector, ETL schedule run type, Dashboard builder widget type card에 1차 적용.
+- `IconOptionGrid`: Dashboard runtime widget type icon grid에 1차 적용.
+- `DetailTableSection`: Ingest Jobs detail의 schema/rule 작은 table section에 1차 적용.
+- CSS selector 삭제는 하지 않고 기존 className을 공통 컴포넌트에 전달해 route QA 전까지 스타일 계약을 유지한다.
+
 ## 다음 단계 후보
 
 | 후보 컴포넌트 | 바꿀 수 있는 UI | 대표 사용처 | 판단 |
 | --- | --- | --- | --- |
-| `PreviewPanel` | preview header + body + empty/loading/action shell | `frontend/src/pages/sql/SqlAnalysisPage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | 표는 `DataTable`로 일부 해결됐고, 주변 preview shell이 남아 있어 다음 구현 후보로 적합하다. |
-| `ResultPanel` | 실행 결과, row count, status, CTA shell | `frontend/src/pages/sql/SqlAnalysisPage.tsx`, `frontend/src/pages/sql/SqlPreviewTable.tsx`, `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx` | SQL/result/widget table 주변 구조를 `PreviewPanel`과 같은 PR에서 정리할 수 있다. |
-| `SettingsPanel` | 설정 panel header/body/footer | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | form 상태가 많아 props 설계가 먼저 필요하므로 `FormFieldGroup` 이후 적용한다. |
-| `FormFieldGroup` | label + control + hint/error layout | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/components/target/DatabaseField.tsx` | input/select/textarea 주변 CSS를 줄일 수 있어 설정 form PR의 선행 후보로 둔다. |
-| `NativeSelectField` | native select + label + tone | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | shadcn `Select`와 native `<select>`를 나눠 쓰는 기준을 세우는 작은 후보로 둔다. |
-| `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | 단순 tab부터 적용하고 rename/edit 상태가 있는 탭은 보류한다. |
-| `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | source connector, schedule mode, widget type card에 반복되지만 icon/description/check 상태 설계가 필요하다. |
-| `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | dashboard chart/widget type 선택 UI부터 적용 가능하다. tooltip과 selected state 기준을 같이 잡는다. |
-| `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | 단순 `DataTable` 적용보다 section title/action/empty shell을 같이 잡아야 한다. |
+| `PreviewPanel` | preview header + body + empty/loading/action shell | `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | #389에서 builder preview에 1차 적용. ETL final preview와 Catalog preview는 후속 판단. |
+| `ResultPanel` | 실행 결과, row count, status, CTA shell | `frontend/src/pages/sql/SqlAnalysisPage.tsx`, `frontend/src/pages/dashboard/runtime/WidgetRenderer.tsx` | #389에서 SQL result와 dashboard runtime table widget에 1차 적용. |
+| `SettingsPanel` | 설정 panel header/body/footer | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/sql/SqlAnalysisPage.tsx` | #389에서 Dashboard widget config panel에 1차 적용. ETL/SQL form panel은 후속 판단. |
+| `FormFieldGroup` | label + control + hint/error layout | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/s3/S3PathField.tsx`, `frontend/src/components/target/DatabaseField.tsx` | #389에서 Dashboard widget title/description field에 1차 적용. S3/DB picker와 ETL form은 후속. |
+| `NativeSelectField` | native select + label + tone | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx`, `frontend/src/pages/etl/EtlPages.tsx` | #389에서 Dashboard widget dataset select에 1차 적용. 나머지 native select 반복은 단계적으로 전환. |
+| `SegmentedTabs` | tablist 형태의 단계/상세 전환 | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx`, `frontend/src/pages/dashboard/runtime/DashboardPageTabs.tsx` | #389에서 Dashboard 기간 필터와 ETL source stage tabs에 1차 적용. rename/edit 상태가 있는 탭은 보류한다. |
+| `SelectableCard` | 선택 가능한 card option | `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/pages/etl/schedule/SchedulePage.tsx`, `frontend/src/pages/dashboard/DashboardPage.tsx` | #389에서 source connector, schedule mode, dashboard widget type card에 1차 적용. |
+| `IconOptionGrid` | icon-only option grid + selected state | `frontend/src/pages/dashboard/runtime/WidgetConfigPanel.tsx` | #389에서 dashboard runtime widget type 선택 UI에 1차 적용. |
+| `DetailTableSection` | 상세 화면의 작은 table + title + empty state | `frontend/src/pages/ingest/JobsPages.tsx`, `frontend/src/pages/etl/EtlPages.tsx`, `frontend/src/components/etl/SchemaTransformEditor.jsx` | #389에서 Jobs detail schema/rule table에 1차 적용. ETL/SchemaTransformEditor는 후속. |
 
 ## 나중에 분리하는 후보
 
@@ -84,4 +94,4 @@ Catalog가 아닌 화면에서도 같이 쓰일 수 있는 컴포넌트 후보�
 6. `DetailTableSection`
 7. `TreePanel`, `WidgetShell`, `ColorPalettePicker`
 
-#378과 #385에서 pagination, dialog, command/action, chip/status/summary 계열은 1차 적용됐다. 다음 PR은 표 자체가 아니라 표 주변 shell을 줄이는 `PreviewPanel`/`ResultPanel`이 가장 작고, form 계열은 props 설계가 필요하므로 그 다음에 둔다.
+#389에서 위 후보군은 대표 사용처에 1차 적용됐다. 다음 PR은 남은 ETL/SQL/S3/DB picker form 전환과 route QA 후 CSS selector 축소를 이어간다.

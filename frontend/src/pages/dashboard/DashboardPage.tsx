@@ -9,6 +9,9 @@ import {
   SlidersHorizontal,
   Table2,
 } from "lucide-react";
+import { PreviewPanel } from "@/components/ui/preview-panel";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { SelectableCard } from "@/components/ui/selectable-card";
 import { DatasetStatusBadge } from "../catalog/CatalogPage";
 import { DashboardRuntimeView } from "./runtime/DashboardRuntimeView";
 import { useDashboardDatasets } from "./runtime/useDashboardDatasets";
@@ -1272,13 +1275,17 @@ export function DashboardPage({
               <h2>Widget type</h2>
               <div className="dashboard-widget-type-list">
                 {widgetTypes.map((widget) => (
-                  <button className={selectedWidgetType === widget.id ? "active" : ""} key={widget.id} type="button" onClick={() => {
-                    setSelectedWidgetType(widget.id);
-                    onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", widget.id);
-                  }}>
-                    <strong>{widget.label}</strong>
-                    <span>{widget.desc}</span>
-                  </button>
+                  <SelectableCard
+                    className="dashboard-widget-type-card"
+                    description={widget.desc}
+                    key={widget.id}
+                    selected={selectedWidgetType === widget.id}
+                    title={widget.label}
+                    onClick={() => {
+                      setSelectedWidgetType(widget.id);
+                      onAction("dashboard.widget.type_selected", "/api/dashboards/widgets/types", widget.id);
+                    }}
+                  />
                 ))}
               </div>
             </section>
@@ -1292,18 +1299,17 @@ export function DashboardPage({
             </section>
           </aside>
           <main className={builderWidgets.length ? "dashboard-builder-canvas has-widgets" : "dashboard-builder-canvas"}>
-            <section className="dashboard-widget-preview-panel">
-              <div className="dashboard-card-header">
-                <div>
-                  <span>WIDGET PREVIEW</span>
-                  <h2>{widgetConfig[selectedWidgetType].title}</h2>
-                  <p>{activeSqlResult ? `${activeSqlResult.datasetName} · SQL result` : `${dataset.name} · ${dataset.layer} source`}</p>
-                </div>
-                <button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>
-              </div>
+            <PreviewPanel
+              actions={<button type="button" onClick={addWidgetToCanvas}><Plus size={16} /></button>}
+              className="dashboard-widget-preview-panel"
+              description={activeSqlResult ? `${activeSqlResult.datasetName} · SQL result` : `${dataset.name} · ${dataset.layer} source`}
+              eyebrow="WIDGET PREVIEW"
+              headerClassName="dashboard-card-header"
+              title={widgetConfig[selectedWidgetType].title}
+            >
               <DashboardWidgetPreview columns={dashboardColumns} rows={dashboardRowsPreview} type={selectedWidgetType} />
               <button className="primary-button" type="button" onClick={addWidgetToCanvas}><Plus size={16} /> 캔버스에 추가</button>
-            </section>
+            </PreviewPanel>
             <section className="dashboard-canvas-draft">
               <div className="dashboard-card-header">
                 <div>
@@ -1393,11 +1399,13 @@ export function DashboardPage({
           <SlidersHorizontal size={16} />
           <strong>필터</strong>
         </div>
-        <div className="dashboard-segmented">
-          {["오늘", "최근 7일", "최근 30일"].map((item) => (
-            <button className={period === item ? "active" : ""} key={item} type="button" onClick={() => changeFilter(item)}>{item}</button>
-          ))}
-        </div>
+        <SegmentedTabs
+          ariaLabel="대시보드 기간 필터"
+          className="dashboard-segmented"
+          items={["오늘", "최근 7일", "최근 30일"].map((item) => ({ label: item, value: item }))}
+          value={period}
+          onValueChange={(item) => changeFilter(item)}
+        />
         <label>
           <span>채널</span>
           <select value={segment} onChange={(event) => changeFilter(period, event.target.value)}>

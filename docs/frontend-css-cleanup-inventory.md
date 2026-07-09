@@ -130,6 +130,20 @@
 | `IconOptionGrid` | `dashboard.css`, `dashboard-runtime.css` | icon-only chart/widget option grid는 `구현 후보`; tooltip/focus/selected selector를 함께 확인한다. |
 | `DetailTableSection` | `ingest.css`, `etl.css`, `schema-transform-adapter.css` | detail table의 title/action/empty/overflow shell은 `DataTable` 전환과 별도로 `교체 후보`로 기록한다. |
 
+## #389 UI Shell Component 적용 CSS 기록
+
+이번 PR은 공통 컴포넌트를 추가하고 대표 사용처에 적용하지만 CSS selector 삭제는 하지 않는다. 기존 화면 className을 새 컴포넌트에 전달해 route QA 전까지 스타일을 유지한다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| PreviewPanel | `.dashboard-widget-preview-panel`, `.dashboard-card-header` | Dashboard builder preview shell을 공통 component로 전환. direct child button selector만 descendant 기준으로 완화. |
+| ResultPanel | `.sql-result-card`, `.sql-result-header`, `.sql-result-status`, `.asklake-table-widget` | SQL result와 dashboard runtime table widget shell을 공통 component로 전환. result toolbar/scroll/density CSS는 유지. |
+| SettingsPanel/FormFieldGroup/NativeSelectField | `.asklake-widget-config-panel`, `.asklake-widget-config-heading`, `.asklake-widget-config-form`, `.asklake-widget-select` | WidgetConfigPanel shell과 일부 field/select를 공통 component로 전환. chart-specific select/checkbox/color picker selector는 유지. |
+| SegmentedTabs | `.dashboard-segmented`, `.source-stage-tabs` | 단순 segmented/tablist markup을 공통 component로 전환. rename/edit tab selector는 보류. |
+| SelectableCard | `.source-choice-card`, `.schedule-config-mode-card`, `.run-card`, `.dashboard-widget-type-list button` | source connector, schedule mode, dashboard widget type card를 공통 component로 전환. selected/check/density CSS는 유지. |
+| IconOptionGrid | `.asklake-widget-type-grid`, `.asklake-widget-type-button`, `.asklake-widget-type-tooltip-layer` | runtime widget type grid를 공통 component로 전환. tooltip 위치 계산과 selected CSS는 유지. |
+| DetailTableSection | `.detail-table-card`, `.detail-table-header` | Jobs detail schema/rule table section을 공통 component로 전환. table density/row state CSS는 유지. |
+
 ## #378 Component 확장 CSS 기록
 
 이번 PR은 CSS 파일을 직접 삭제하지 않고, 공통 컴포넌트가 기존 화면 className을 받을 수 있게 만든 뒤 대표 사용처를 전환했다. 따라서 아래 selector는 즉시 삭제가 아니라 route QA 후 후속 cleanup PR에서 정리한다.
@@ -179,3 +193,4 @@ npm run build
 | 2026-07-09 | #375에서 Catalog 검색 box/tag row/filter row shell selector와 SQL 분석 테이블 검색 selector를 `FilterToolbar` 계열로 이동하고, shadcn primitive 전면 적용 원칙을 CSS cleanup 기준에 추가. |
 | 2026-07-09 | #385에서 `ActionGroup`, `Chip`, `TagList`, `StatusBadge`, `KeyValueList`, `ValidationList` 적용에 따른 CSS 판단을 기록. CSS 삭제는 하지 않고 wrapper/density/status selector를 route QA 전까지 유지한다. |
 | 2026-07-09 | #387에서 preview/result/settings/form/select/tab/card/icon option/detail table shell 후보별 CSS 추적 기준과 다음 정리 순서를 갱신. |
+| 2026-07-09 | #389에서 UI shell component 8종 적용에 따른 CSS 판단을 기록. 기존 selector 삭제 없이 className 전달 방식으로 route QA 전 스타일을 유지한다. |

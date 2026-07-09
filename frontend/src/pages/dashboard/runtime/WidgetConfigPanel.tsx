@@ -16,7 +16,10 @@ import {
 } from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
+import { SettingsPanel } from "@/components/ui/settings-panel";
 import { selectTriggerVariants } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type {
@@ -729,91 +732,91 @@ export function WidgetConfigPanel({
 
   if (!selectedDataset && !editingWidget) {
     return (
-      <section className="asklake-widget-config-panel empty">
-        <strong>데이터셋을 선택해 주세요</strong>
-        <span>왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다.</span>
-      </section>
+      <SettingsPanel
+        className="asklake-widget-config-panel empty"
+        description="왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다."
+        title="데이터셋을 선택해 주세요"
+      />
     );
   }
 
   return (
-    <section className="asklake-widget-config-panel">
-      <div className="asklake-widget-config-heading">
-        <div>
-          <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
-          <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+    <SettingsPanel
+      bodyClassName="contents"
+      className="asklake-widget-config-panel"
+      header={(
+        <div className="asklake-widget-config-heading">
+          <div>
+            <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
+            <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+          </div>
         </div>
-      </div>
-
+      )}
+    >
       <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
         {shouldShowDatasetSelect ? (
-          <label className="asklake-widget-dataset-field">
-            <span>데이터셋</span>
-            <NativeSelect
-              disabled={!datasets.length || !onSelectDataset}
-              value={selectedDatasetId ?? ""}
-              onChange={(event) => {
-                if (event.target.value) onSelectDataset?.(event.target.value);
-              }}
-            >
-              <option value="">데이터셋 선택</option>
-              {datasets.map((dataset) => (
-                <option key={dataset.id} value={dataset.id}>
-                  {dataset.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </label>
+          <NativeSelectField
+            fieldClassName="asklake-widget-dataset-field"
+            label="데이터셋"
+            selectClassName="asklake-widget-select"
+            disabled={!datasets.length || !onSelectDataset}
+            value={selectedDatasetId ?? ""}
+            onChange={(event) => {
+              if (event.target.value) onSelectDataset?.(event.target.value);
+            }}
+          >
+            <option value="">데이터셋 선택</option>
+            {datasets.map((dataset) => (
+              <option key={dataset.id} value={dataset.id}>
+                {dataset.name}
+              </option>
+            ))}
+          </NativeSelectField>
         ) : null}
-        <label>
-          <span>위젯 제목</span>
+        <FormFieldGroup label="위젯 제목">
           <Input
             size="sm"
             placeholder="제목 없는 위젯"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
-        </label>
+        </FormFieldGroup>
 
-        <label>
-          <span>설명</span>
+        <FormFieldGroup label="설명">
           <textarea
             placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
             rows={3}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
           />
-        </label>
+        </FormFieldGroup>
 
         <div className="asklake-widget-type-field">
           <span>위젯 타입</span>
-          <div className="asklake-widget-type-grid">
-            {dashboardWidgetTypeOptions.map((option) => {
+          <IconOptionGrid
+            ariaLabel="위젯 타입"
+            buttonClassName="asklake-widget-type-button"
+            className="asklake-widget-type-grid"
+            items={dashboardWidgetTypeOptions.map((option) => {
               const definition = dashboardWidgetDefinitions[option.value];
               const Icon = widgetTypeIcons[option.value];
-              const tooltip = `${definition.label}: ${definition.description}`;
-              const isSelected = type === option.value;
-              const showTooltip = (target: HTMLElement) => setWidgetTypeTooltip(createWidgetTypeTooltip(target, tooltip));
-              return (
-                <Button
-                  key={option.value}
-                  aria-label={tooltip}
-                  className={`asklake-widget-type-button${isSelected ? " selected" : ""}`}
-                  type="button"
-                  onBlur={() => setWidgetTypeTooltip(null)}
-                  onFocus={(event) => showTooltip(event.currentTarget)}
-                  onClick={() => {
-                    setCustomColorIndex(0);
-                    setType(option.value);
-                  }}
-                  onMouseEnter={(event) => showTooltip(event.currentTarget)}
-                  onMouseLeave={() => setWidgetTypeTooltip(null)}
-                >
-                  <Icon aria-hidden="true" size={18} strokeWidth={2.3} />
-                </Button>
-              );
+              return {
+                description: definition.description,
+                icon: <Icon aria-hidden="true" size={18} strokeWidth={2.3} />,
+                label: definition.label,
+                value: option.value,
+              };
             })}
-          </div>
+            value={type}
+            onOptionBlur={() => setWidgetTypeTooltip(null)}
+            onOptionFocus={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
+            onOptionMouseEnter={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
+            onOptionMouseLeave={() => setWidgetTypeTooltip(null)}
+            onValueChange={(nextType) => {
+              setCustomColorIndex(0);
+              setType(nextType);
+            }}
+          />
         </div>
 
         {colorSlotLabels.length > 0 && (
@@ -1174,6 +1177,6 @@ export function WidgetConfigPanel({
         </div>,
         document.body,
       )}
-    </section>
+    </SettingsPanel>
   );
 }

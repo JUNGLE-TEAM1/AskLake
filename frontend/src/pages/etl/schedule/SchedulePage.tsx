@@ -3,6 +3,7 @@ import type React from "react";
 import { Calendar, Clock3, PlayCircle, Repeat2 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy } from "../../../components/common";
 import { CreationFlowLayout, CreationSummaryPanel } from "../../../components/creation/CreationFlow";
+import { SelectableCard } from "../../../components/ui/selectable-card";
 import type { DraftPipelinePatch, ScheduleFlowId } from "../../../types";
 import type { RetryPolicyDraft } from "../../../types/etl";
 
@@ -127,12 +128,15 @@ export function SchedulePage({
 
 function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; icon: React.ReactNode; title: string; desc: string; onClick: () => void }) {
   return (
-    <button className={active ? "run-card active" : "run-card"} type="button" onClick={onClick}>
-      {active && <span className="run-selected-dot" />}
-      <span className="run-icon">{icon}</span>
-      <strong>{title}</strong>
-      <span>{desc}</span>
-    </button>
+    <SelectableCard
+      className="run-card"
+      description={desc}
+      icon={<span className="run-icon">{icon}</span>}
+      selected={active}
+      selectedIndicator={<span className="run-selected-dot" />}
+      title={title}
+      onClick={onClick}
+    />
   );
 }
 
@@ -402,4 +406,3 @@ function OnceSettings({
     </section>
   );
 }
-
