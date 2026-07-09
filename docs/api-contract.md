@@ -118,7 +118,7 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
 5. 위 조건이 모두 아니면 `403 FORBIDDEN`
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 `permissionGrants`를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
 
 Resource/action 기준:
 
@@ -168,7 +168,7 @@ Profile/Admin Console Phase 0 기준:
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 1차 관리 콘솔은 조회 중심입니다. 사용자/그룹/권한 정책 수정 API는 별도 후속 계약으로 분리합니다.
-- 후속 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공해야 합니다. role/public grant는 운영 위험이 크므로 별도 확인 UI 없이 자동 생성하지 않습니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 자동 생성하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
