@@ -75,8 +75,11 @@ function validateRecord(record, lineNumber) {
 
 async function ensureTopic(adminClient, targetTopic) {
   if (recreateTopic) {
-    await adminClient.deleteTopics({ topics: [targetTopic], timeout: 5000 }).catch(() => {});
-    await sleep(750);
+    const topics = await adminClient.listTopics();
+    if (topics.includes(targetTopic)) {
+      await adminClient.deleteTopics({ topics: [targetTopic], timeout: 5000 });
+      await sleep(750);
+    }
   }
   await adminClient.createTopics({
     topics: [{ topic: targetTopic, numPartitions: 1, replicationFactor: 1 }],

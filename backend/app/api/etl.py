@@ -8,6 +8,10 @@ from app.schemas.etl import (
     JobCommandRequest,
     JobCommandResponse,
     JobRowData,
+    KafkaReviewIngestRequest,
+    KafkaReviewIngestResponse,
+    ScheduledJobRunRequest,
+    ScheduledJobRunResponse,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -34,6 +38,11 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
 
 
+@router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
+def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
+    return etl_service.ingest_kafka_reviews(request)
+
+
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
 def create_job(request: CreatePipelineRequest, db: Session = Depends(get_db)) -> CreatePipelineResponse:
     return etl_service.create_pipeline(db, request)
@@ -52,3 +61,8 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobRowData:
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)
 def command_job(job_id: str, request: JobCommandRequest, db: Session = Depends(get_db)) -> JobCommandResponse:
     return etl_service.command_job(db, job_id, request.command)
+
+
+@router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)
+def run_due_scheduled_jobs(request: ScheduledJobRunRequest, db: Session = Depends(get_db)) -> ScheduledJobRunResponse:
+    return etl_service.run_due_scheduled_jobs(db, request)

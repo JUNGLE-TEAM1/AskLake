@@ -60,7 +60,7 @@ export type DatasetMaterializationRun = {
   jobId: string;
   rowCount: number;
   runId: string;
-  sourceKind: "etl" | "sql";
+  sourceKind: "etl" | "sql" | "kafka";
   sourceLabel: string;
   status: "success" | "failed" | "canceled" | "running" | "queued";
   storageLocation?: string;

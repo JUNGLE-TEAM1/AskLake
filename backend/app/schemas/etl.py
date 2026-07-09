@@ -260,6 +260,63 @@ class JobCommandResponse(CamelModel):
     processing_result: dict[str, Any] | None = None
 
 
+class ScheduledJobRunRequest(CamelModel):
+    force: bool = False
+    job_id: str | None = None
+    kafka_only: bool = True
+
+
+class ScheduledJobRunItem(CamelModel):
+    job_id: str
+    job_name: str
+    reason: str
+    response: JobCommandResponse | None = None
+    schedule: str
+    triggered: bool
+
+
+class ScheduledJobRunResponse(CamelModel):
+    checked_count: int
+    items: list[ScheduledJobRunItem]
+    triggered_count: int
+
+
+class KafkaReviewIngestRequest(CamelModel):
+    allow_empty: bool = False
+    broker: str = "127.0.0.1:19092"
+    topic: str = "reviews.raw"
+    consumer_group_id: str | None = None
+    dataset_id: str | None = None
+    dataset_name: str = "reviews_raw"
+    landing_bucket: str = "m3-raw"
+    landing_endpoint: str = "http://127.0.0.1:19000"
+    landing_prefix: str = "kafka-landing"
+    local_landing_dir: str | None = None
+    max_messages: int = Field(default=100, ge=1, le=1_000_000)
+    offset_policy: Literal["earliest", "latest"] = "earliest"
+    register_catalog: bool = True
+    run_id: str | None = None
+    storage_mode: Literal["local", "s3"] = "s3"
+    timeout_ms: int = Field(default=10000, ge=1000, le=300000)
+
+
+class KafkaReviewIngestResponse(CamelModel):
+    broker: str
+    catalog_dataset: dict[str, Any] | None = None
+    consumed_count: int
+    dataset_id: str | None = None
+    dataset_name: str | None = None
+    failed_count: int
+    metadata_location: str
+    run_id: str
+    status: Literal["success"]
+    storage_format: str
+    storage_location: str
+    storage_mode: Literal["local", "s3"]
+    stored_count: int
+    topic: str
+
+
 class QueryRunRequest(CamelModel):
     dataset_id: str
     query: str

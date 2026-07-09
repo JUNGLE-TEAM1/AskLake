@@ -73,12 +73,113 @@ Canonical status values:
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
+| `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
+| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka review topic batch를 Lake landing에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. Kafka는 장기 저장소로 보지 않고, `topic -> batch consume -> Lake landing object(jsonl) -> Catalog materializationRuns append` 흐름으로 처리한다. 같은 consumer group을 쓰면 이미 읽은 offset 이후의 새 메시지만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
+
+### Kafka review ingest
+
+`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 Lake landing에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
+
+Request:
+
+```ts
+type KafkaReviewIngestRequest = {
+  broker?: string; // default "127.0.0.1:19092"
+  topic?: string; // default "reviews.raw"
+  consumerGroupId?: string;
+  maxMessages?: number; // default 100
+  timeoutMs?: number; // default 10000
+  offsetPolicy?: "earliest" | "latest";
+  allowEmpty?: boolean;
+  registerCatalog?: boolean;
+  datasetId?: string;
+  datasetName?: string;
+  runId?: string;
+  storageMode?: "local" | "s3";
+  localLandingDir?: string;
+  landingEndpoint?: string; // MinIO default "http://127.0.0.1:19000"
+  landingBucket?: string; // default "m3-raw"
+  landingPrefix?: string; // default "kafka-landing"
+};
+```
+
+Response:
+
+```ts
+type KafkaReviewIngestResponse = {
+  status: "success";
+  runId: string;
+  broker: string;
+  topic: string;
+  consumedCount: number;
+  storedCount: number;
+  failedCount: number;
+  storageMode: "local" | "s3";
+  storageFormat: "jsonl";
+  storageLocation: string;
+  metadataLocation: string;
+  datasetId?: string;
+  datasetName?: string;
+  catalogDataset?: CatalogDataset;
+};
+```
+
+Kafka review message contract:
+
+```ts
+type KafkaReviewEvent = {
+  event_id: string;
+  review: string;
+  offset: number;
+  created_at: string;
+  source?: string;
+  schema_version?: string;
+  raw?: Record<string, unknown>;
+};
+```
+
+필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
+
+### Scheduled job tick
+
+`POST /api/etl/schedules/run-due`는 production scheduler 자체가 아니라, scheduler/cron이 호출할 수 있는 due job 실행 endpoint다.
+
+Request:
+
+```ts
+type ScheduledJobRunRequest = {
+  force?: boolean; // true면 due 여부와 무관하게 실행
+  jobId?: string; // 특정 job만 검사
+  kafkaOnly?: boolean; // default true
+};
+```
+
+Response:
+
+```ts
+type ScheduledJobRunResponse = {
+  checkedCount: number;
+  triggeredCount: number;
+  items: Array<{
+    jobId: string;
+    jobName: string;
+    schedule: string;
+    reason: "due" | "forced" | "not_due" | "not_scheduled" | "next_run_not_set" | "invalid_next_run" | "not_kafka_job" | "already_running" | "stopped";
+    triggered: boolean;
+    response?: JobCommandResponse;
+  }>;
+};
+```
+
+`reason`이 `due`인 실행이 성공하면 backend가 `schedulePolicy.nextRunUtc`와 `job.nextRun`을 다음 예약 시각으로 advance한다. 현재 지원하는 반복 label은 `매시간 NN분`, `매일 HH:mm`, `매주 ... HH:mm` 범위다. `force: true`는 수동 검증/운영 보정 용도이며 due 시각 advance를 강제하지 않는다.
 
 ## 5) P1 API
 
