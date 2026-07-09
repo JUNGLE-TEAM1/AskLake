@@ -49,6 +49,10 @@ async function runSmoke() {
     adminPermissions.resources.every((resource) => Array.isArray(resource.grants)),
     "Admin permission resources should include grant arrays.",
   );
+  assert(
+    adminPermissions.resources.some((resource) => resource.grants.some((grant) => grant.source === "admin_seed")),
+    "Admin permissions should merge persisted permission_grants rows.",
+  );
 
   const adminAuditLogs = await get("/api/admin/audit-logs");
   assert(Array.isArray(adminAuditLogs.logs), "Admin audit log response should include logs array.");

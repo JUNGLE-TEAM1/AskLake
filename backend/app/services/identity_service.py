@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, permissions_for_actor
 from app.core.errors import ApiError
+from app.core.permission_metadata import dedupe_grants
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_card_repository import list_dashboard_cards
 from app.repositories.etl_repository import list_jobs
+from app.repositories.permission_repository import list_permission_grants_by_resource, seed_permission_grants_if_empty
 from app.schemas.common import ErrorCode
 from app.schemas.identity import (
     AdminAuditLogEntry,
@@ -226,6 +228,7 @@ class IdentityService:
         return summary
 
     def _permission_resources(self, actor: ActorContext) -> list[AdminPermissionSummary]:
+        self._ensure_permission_grants_seeded()
         resources: list[AdminPermissionSummary] = []
         resources.extend(self._dataset_permission_summaries(actor))
         resources.extend(self._job_permission_summaries(actor))
@@ -235,14 +238,23 @@ class IdentityService:
     def _dataset_permission_summaries(self, actor: ActorContext) -> list[AdminPermissionSummary]:
         repository = CatalogRepository(self.db)
         summaries = []
-        for model in repository.list_dataset_models():
+        models = repository.list_dataset_models()
+        persisted_grants = list_permission_grants_by_resource(
+            self.db,
+            [("dataset", model.id) for model in models],
+        )
+        for model in models:
             payload = dataset_model_to_payload(model)
             owner = str(payload.get("owner") or "")
-            grants = parse_grants(payload.get("permissionGrants"))
+            resource_id = str(payload.get("id") or model.id)
+            grants = merge_grants(
+                parse_grants(payload.get("permissionGrants")),
+                persisted_grants.get(("dataset", resource_id), []),
+            )
             summaries.append(
                 AdminPermissionSummary(
                     resource_type="dataset",
-                    resource_id=str(payload.get("id") or model.id),
+                    resource_id=resource_id,
                     resource_name=str(payload.get("name") or model.id),
                     owner=owner,
                     created_by=string_or_none(payload.get("createdBy")),
@@ -259,8 +271,16 @@ class IdentityService:
 
     def _job_permission_summaries(self, actor: ActorContext) -> list[AdminPermissionSummary]:
         summaries = []
-        for job in list_jobs(self.db):
-            grants = parse_grants(job.permission_grants)
+        jobs = list_jobs(self.db)
+        persisted_grants = list_permission_grants_by_resource(
+            self.db,
+            [("etl_job", job.id) for job in jobs],
+        )
+        for job in jobs:
+            grants = merge_grants(
+                parse_grants(job.permission_grants),
+                persisted_grants.get(("etl_job", job.id), []),
+            )
             summaries.append(
                 AdminPermissionSummary(
                     resource_type="etl_job",
@@ -281,8 +301,16 @@ class IdentityService:
 
     def _dashboard_permission_summaries(self, actor: ActorContext) -> list[AdminPermissionSummary]:
         summaries = []
-        for dashboard in list_dashboard_cards(self.db):
-            grants = parse_grants(dashboard.permission_grants)
+        dashboards = list_dashboard_cards(self.db)
+        persisted_grants = list_permission_grants_by_resource(
+            self.db,
+            [("dashboard", dashboard.id) for dashboard in dashboards],
+        )
+        for dashboard in dashboards:
+            grants = merge_grants(
+                parse_grants(dashboard.permission_grants),
+                persisted_grants.get(("dashboard", dashboard.id), []),
+            )
             summaries.append(
                 AdminPermissionSummary(
                     resource_type="dashboard",
@@ -301,6 +329,15 @@ class IdentityService:
             )
         return summaries
 
+    def _ensure_permission_grants_seeded(self) -> None:
+        repository = CatalogRepository(self.db)
+        seed_permission_grants_if_empty(
+            self.db,
+            dataset_ids=[model.id for model in repository.list_dataset_models()],
+            job_ids=[job.id for job in list_jobs(self.db)],
+            dashboard_ids=[dashboard.id for dashboard in list_dashboard_cards(self.db)],
+        )
+
 
 def parse_grants(value: Any) -> list[PermissionGrant]:
     grants = value or []
@@ -312,6 +349,15 @@ def parse_grants(value: Any) -> list[PermissionGrant]:
         if isinstance(grant, dict):
             parsed.append(PermissionGrant.model_validate(grant))
     return parsed
+
+
+def merge_grants(*grant_groups: list[PermissionGrant]) -> list[PermissionGrant]:
+    payloads = [
+        grant.model_dump(by_alias=True)
+        for group in grant_groups
+        for grant in group
+    ]
+    return parse_grants(dedupe_grants(payloads))
 
 
 def string_or_none(value: Any) -> str | None:

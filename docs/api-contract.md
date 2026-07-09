@@ -118,7 +118,7 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
 5. 위 조건이 모두 아니면 `403 FORBIDDEN`
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 `permissionGrants`를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다.
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 `permissionGrants`를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
 
 Resource/action 기준:
 
@@ -2423,6 +2423,13 @@ Response `200 OK`:
 ```
 
 Phase 0 관리 콘솔은 권한을 수정하지 않고 resource별 grant와 현재 actor 권한을 설명하는 조회형 화면입니다. 권한 변경은 후속 `PATCH /api/admin/permissions` 계약에서 별도로 정의합니다.
+
+Backend 저장 기준:
+
+- 기존 Job/Dataset/Dashboard payload의 `permissionGrants`는 호환을 위해 계속 읽습니다.
+- 새 `permission_grants` table은 `resource_type`, `resource_id`, `principal_type`, `principal_id`, `actions`, `source`, `created_by`를 저장합니다.
+- `GET /api/admin/permissions`는 payload grant와 table grant를 합산해 반환합니다.
+- 로컬 demo seed는 table이 비어 있을 때 대표 dataset/job/dashboard에 `source="admin_seed"` grant를 생성할 수 있습니다.
 
 ### 9.5 관리자 감사 로그 조회
 
