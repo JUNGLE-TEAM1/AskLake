@@ -103,6 +103,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 - `SelectableCard`
 - `IconOptionGrid`
 - `DetailTableSection`
+- `TreePanel`
 
 ## 2026-07-09 코드 스윕 결과
 
@@ -127,7 +128,8 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 3. `SettingsPanel`은 form group 적용 뒤 header/body/footer shell을 설계한다.
 4. `SegmentedTabs`/`SelectableCard`/`IconOptionGrid`는 단순 선택 UI부터 적용하고 rename/edit 상태나 runtime 상태가 섞인 사용처는 보류한다.
 5. `DetailTableSection`은 작은 table 주변 title/action/empty shell을 `DataTable`과 같이 잡는 후보로 둔다.
-6. `TreePanel`/`WidgetShell`/`ColorPalettePicker`는 외부 라이브러리와 runtime 상태 차이가 커서 별도 설계 PR에서 다룬다.
+6. `TreePanel`은 wrapper/state shell만 먼저 분리하고, row/hover card와 tree library 통합은 별도 PR에서 다룬다.
+7. `WidgetShell`/`ColorPalettePicker`는 외부 라이브러리와 runtime 상태 차이가 커서 별도 설계 PR에서 다룬다.
 
 ## B 작업 반영 기준
 
@@ -164,7 +166,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | detail table section | `부분 해결` | `DetailTableSection` | #389에서 Jobs detail schema/rule 작은 table section, #395에서 Jobs run history table shell에 적용. ETL detail과 schema transform editor는 후속. |
 | 전체 | color palette picker | `보류` | `ColorPalettePicker` | Dashboard widget color slot/choice/custom color picker는 `react-colorful` 상태와 묶여 있어 별도 설계 필요. |
 | 전체 | split panel layout | `보류` | `SplitPanel` | ETL Source browse, SQL context/editor, Dashboard runtime side panel이 유사하지만 상태가 복잡함. |
-| 전체 | tree/list hybrid selector | `보류` | `TreePanel` | react-arborist 도입 이후 Source tree/Dataset tree 기준을 다시 잡아야 함. Dashboard dataset tree는 B04에서 arborist로 전환됐지만 공통 wrapper는 아직 없음. |
+| 전체 | tree/list hybrid selector | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 S3 picker, ETL source asset tree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell을 `TreePanel`로 분리. row renderer, hover card, MUI TreeView/react-arborist 통합은 후속. |
 | 전체 | runtime/widget frame shell | `설계 필요` | `WidgetShell` 또는 `RuntimeFrame` | Dashboard widget frame, table widget viewport, assistant/loading/error state가 화면 고유 CSS로 남아 있음. |
 
 ## A03 ETL Seed Gap
@@ -198,7 +200,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Dashboard widget config panel | dense chart/table settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` | #389에서 config panel shell과 기본 field를 적용했고, #391에서 chart/table select와 number field를 `WidgetSelectField`/`FormFieldGroup` 기준으로 확장. checkbox와 color picker layout은 유지. |
 | Dashboard widget type picker | icon-only chart type grid + tooltip | `부분 해결` | `IconOptionGrid` | #389에서 `IconOptionGrid`로 전환. 기존 tooltip positioning과 selected state className은 유지. |
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
-| Dashboard dataset tree | arborist tree row + hover card + type icon | `보류` | `TreePanel`, `TreeHoverCard` | B04에서 `react-arborist`로 전환했고 #364에서 legacy MUI TreeItem selector는 제거. 공통 tree wrapper/hover card primitive는 아직 없음. |
+| Dashboard dataset tree | arborist tree row + hover card + type icon | `부분 해결` | `TreePanel`, `TreeHoverCard` | #401에서 loading/error/empty/body wrapper를 `TreePanel`로 전환. arborist row renderer와 hover card primitive는 후속으로 유지. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
 | SQL editor/action surface | editor toolbar + execution status + result shell | `부분 해결` | `QueryActionBar`, `ResultPanel`, `PaginationBar`, `DialogShell`, `ActionGroup` | #378에서 context pagination과 materialize dialog shell을 공통화했고, #385에서 SQL AI/editor/result button rows를 `ActionGroup`으로 전환. execution status와 result shell은 후속 `ResultPanel` 후보로 유지. |
 
@@ -258,3 +260,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #391에서 Form/Settings 계열 적용 범위를 확장. WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field를 공통 field component로 전환하고 보류 범위를 기록. |
 | 2026-07-09 | #393에서 Selection UI 계열을 추가 정리. Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 전환하고 checkbox/radio 성격의 card 후보는 보류로 기록. |
 | 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |
+| 2026-07-09 | #401에서 `TreePanel`을 추가하고 S3 picker, ETL SourceAssetTree, SQL dataset tree, Dashboard dataset sidebar의 wrapper/state shell에 적용. row/hover card와 tree library 통합은 후속 gap으로 유지. |

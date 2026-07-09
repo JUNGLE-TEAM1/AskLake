@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import Tooltip from "@mui/material/Tooltip";
 import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import { TreePanel } from "@/components/ui/tree-panel";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 type DatasetSidebarProps = {
@@ -332,36 +333,35 @@ export function DatasetSidebar({
         <h2>Dataset</h2>
       </div>
 
-      {isLoading ? (
-        <div className="asklake-dataset-sidebar-state">Loading datasets...</div>
-      ) : error ? (
-        <div className="asklake-dataset-sidebar-state error">
-          Failed to load datasets. Please try again.
-        </div>
-      ) : datasets.length === 0 ? (
-        <div className="asklake-dataset-sidebar-state">No datasets available.</div>
-      ) : (
-        <div className="asklake-dataset-tree-wrap">
-          <Tree<DatasetTreeNode>
-            aria-label="Dashboard dataset tree"
-            className="asklake-dataset-tree"
-            data={treeData}
-            disableDrag
-            disableEdit
-            height={treeHeight}
-            idAccessor="id"
-            indent={18}
-            openByDefault
-            overscanCount={6}
-            rowHeight={datasetTreeRowHeight}
-            selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
-            width="100%"
-            onActivate={handleActivateTreeItem}
-          >
-            {DatasetTreeNodeRow}
-          </Tree>
-        </div>
-      )}
+      <TreePanel
+        bodyClassName="asklake-dataset-tree-wrap"
+        emptyState="No datasets available."
+        errorState="Failed to load datasets. Please try again."
+        isEmpty={datasets.length === 0}
+        isError={Boolean(error)}
+        isLoading={isLoading}
+        loadingState="Loading datasets..."
+        stateClassName={error && !isLoading ? "asklake-dataset-sidebar-state error" : "asklake-dataset-sidebar-state"}
+      >
+        <Tree<DatasetTreeNode>
+          aria-label="Dashboard dataset tree"
+          className="asklake-dataset-tree"
+          data={treeData}
+          disableDrag
+          disableEdit
+          height={treeHeight}
+          idAccessor="id"
+          indent={18}
+          openByDefault
+          overscanCount={6}
+          rowHeight={datasetTreeRowHeight}
+          selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
+          width="100%"
+          onActivate={handleActivateTreeItem}
+        >
+          {DatasetTreeNodeRow}
+        </Tree>
+      </TreePanel>
     </aside>
   );
 }

@@ -5,6 +5,7 @@ import { TreeItem } from "@mui/x-tree-view/TreeItem";
 import { Button } from "@/components/ui/button";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { PickerDialog } from "@/components/ui/picker-dialog";
+import { TreePanel } from "@/components/ui/tree-panel";
 import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFolder } from "../../services/s3PathApi";
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
@@ -286,38 +287,38 @@ function S3PathPicker({
       ) : null}
     >
       <div className="s3-picker-body">
-          <div className="s3-tree-panel">
-            <SimpleTreeView
-              className="s3-tree"
-              expandedItems={expandedItems}
-              selectedItems={prefixToItemId(selectedPrefix)}
-              onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
-                setExpandedItems(itemIds);
-                itemIds.forEach((itemId) => {
-                  if (itemId.startsWith("prefix:") || itemId === ROOT_PREFIX_ID) {
-                    void loadPrefix(itemIdToPrefix(itemId));
-                  }
-                });
-              }}
-              onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
-                if (!itemId || itemId.startsWith("loading:") || itemId.startsWith("error:") || itemId.startsWith("empty:") || itemId.startsWith("more:")) return;
-                setSelectedPrefix(itemIdToPrefix(itemId));
-              }}
+        <TreePanel className="s3-tree-panel">
+          <SimpleTreeView
+            className="s3-tree"
+            expandedItems={expandedItems}
+            selectedItems={prefixToItemId(selectedPrefix)}
+            onExpandedItemsChange={(_event: SyntheticEvent | null, itemIds: string[]) => {
+              setExpandedItems(itemIds);
+              itemIds.forEach((itemId) => {
+                if (itemId.startsWith("prefix:") || itemId === ROOT_PREFIX_ID) {
+                  void loadPrefix(itemIdToPrefix(itemId));
+                }
+              });
+            }}
+            onSelectedItemsChange={(_event: SyntheticEvent | null, itemId: string | null) => {
+              if (!itemId || itemId.startsWith("loading:") || itemId.startsWith("error:") || itemId.startsWith("empty:") || itemId.startsWith("more:")) return;
+              setSelectedPrefix(itemIdToPrefix(itemId));
+            }}
+          >
+            <TreeItem
+              itemId={ROOT_PREFIX_ID}
+              label={(
+                <span className={selectedPrefix === "" ? "s3-tree-label selected" : "s3-tree-label"}>
+                  <FolderOpen size={15} />
+                  <strong>/</strong>
+                </span>
+              )}
             >
-              <TreeItem
-                itemId={ROOT_PREFIX_ID}
-                label={(
-                  <span className={selectedPrefix === "" ? "s3-tree-label selected" : "s3-tree-label"}>
-                    <FolderOpen size={15} />
-                    <strong>/</strong>
-                  </span>
-                )}
-              >
-                {renderChildren("")}
-              </TreeItem>
-            </SimpleTreeView>
-          </div>
-        </div>
+              {renderChildren("")}
+            </TreeItem>
+          </SimpleTreeView>
+        </TreePanel>
+      </div>
     </PickerDialog>
   );
 }
