@@ -178,9 +178,11 @@ function sparkSourceFromJob(job, runId) {
     };
   }
 
-  const samplePath = isConnectorSampleSource(sourceType)
-    ? writeConnectorSampleRowsSource(job, runId) || writeSampleRowsSource(job, runId)
-    : writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId);
+  const samplePath = hasInlineSampleEndpoint(job)
+    ? writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId)
+    : isConnectorSampleSource(sourceType)
+      ? writeConnectorSampleRowsSource(job, runId) || writeSampleRowsSource(job, runId)
+      : writeSampleRowsSource(job, runId) || writeConnectorSampleRowsSource(job, runId);
   if (samplePath) {
     return {
       format: "jsonl",
@@ -195,6 +197,12 @@ function isConnectorSampleSource(sourceType) {
   return ["mongodb", "postgresql", "database", "rest api", "stream / kafka", "kafka json"].includes(
     String(sourceType || "").trim().toLowerCase(),
   );
+}
+
+function hasInlineSampleEndpoint(job) {
+  const sourceConfig = Array.isArray(job?.sourceConfig) ? job.sourceConfig : [];
+  const endpoint = fieldValue(sourceConfig, "Endpoint URL") || fieldValue(sourceConfig, "Endpoint");
+  return /^sample:\/\//i.test(endpoint);
 }
 
 function writeSampleRowsSource(job, runId) {

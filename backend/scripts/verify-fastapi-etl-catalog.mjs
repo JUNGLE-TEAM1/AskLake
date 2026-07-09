@@ -79,7 +79,8 @@ async function runSmoke() {
   const datasetId = command.dataset?.id;
   assert(command.run?.status === "success", `Spark run should succeed: ${command.run?.errorSummary}`);
   assert(datasetId === create.catalogTarget.id, "Run response dataset should match the create catalog target.");
-  assert(command.dataset?.storageFormat === undefined, "ETL command schema should keep the existing public dataset shape.");
+  assert(command.dataset?.storageFormat === "parquet", "ETL command dataset should include parquet storage format.");
+  assert(command.dataset?.storageLocation === command.run.outputPath, "ETL command dataset storageLocation should match run outputPath.");
   assert(command.dataset?.size && !String(command.dataset.size).includes("/"), "ETL command dataset size should be display text, not a path.");
 
   const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(datasetId)}`);

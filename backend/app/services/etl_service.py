@@ -331,8 +331,8 @@ def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         input_rows=format_rows(result.get("inputRows")),
         output_rows=format_rows(result.get("outputRows")),
         output_path=result.get("outputPath") or "-",
-        failed_stage="-" if success else str(result.get("failedStage") or "Spark ETL"),
-        error_summary="-" if success else str(result.get("error") or "Spark job failed."),
+        failed_stage="-" if success else spark_failed_stage(result),
+        error_summary="-" if success else spark_error_summary(result),
     )
 
 
@@ -342,12 +342,29 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
     job.last_state = (
         f"{'재실행' if command == 'retry' else '실행'} 완료 · Spark Parquet 적재"
         if success
-        else f"Spark 실행 실패 · {result.get('error') or '원인 확인 필요'}"
+        else f"Spark 실행 실패 · {spark_error_summary(result, limit=180)}"
     )
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
     job.status = "scheduled" if success else "failed"
     job.target_path = result.get("outputPath") or job.target_path
+
+
+def spark_failed_stage(result: dict[str, Any]) -> str:
+    return compact_storage_text(result.get("failedStage") or "Spark ETL", limit=500)
+
+
+def spark_error_summary(result: dict[str, Any], *, limit: int = 1800) -> str:
+    return compact_storage_text(result.get("error") or result.get("stderr") or result.get("stdout") or "Spark job failed.", limit=limit)
+
+
+def compact_storage_text(value: Any, *, limit: int) -> str:
+    text_value = str(value or "").replace("\r", "\n")
+    lines = [line.strip() for line in text_value.splitlines() if line.strip()]
+    compact = " | ".join(lines) if lines else "-"
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: max(0, limit - 32)]} ... [truncated {len(compact)} chars]"
 
 
 def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:

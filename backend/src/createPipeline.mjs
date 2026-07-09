@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
 import { runSparkPipeline } from "./sparkRunner.mjs";
 import {
@@ -11,6 +14,9 @@ import {
   saveJob,
   saveSqlRun,
 } from "./metadataStore.mjs";
+
+const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const scriptsDir = path.join(backendDir, "scripts");
 
 export function listJobs() {
   return listStoredJobs();
@@ -214,20 +220,67 @@ export async function executeQuery(request) {
   const dataset = await getDataset(datasetId);
   if (!dataset) throw notFoundError(`데이터셋을 찾지 못했습니다: ${datasetId}`);
 
-  const columns = dataset.schema.slice(0, 6).map(([name]) => name);
-  const rows = dataset.sampleRows.map((row) => row.slice(0, Math.max(columns.length, 1)));
+  const referenceDatasetIds = Array.isArray(request.referenceDatasetIds) ? request.referenceDatasetIds : [];
+  const contextDatasets = await queryContextDatasets(request, dataset, referenceDatasetIds);
+  const queryResult = runDuckdbPreview({
+    datasets: contextDatasets,
+    limit: request.limit,
+    query: request.query,
+  });
   const result = {
-    columns,
+    baseDatasetId: request.baseDatasetId ?? dataset.id,
+    columns: queryResult.columns,
     datasetId: dataset.id,
     datasetName: dataset.name,
     executedAt: new Date().toISOString(),
+    mode: request.mode ?? "preview",
+    previewLimit: request.limit ?? 100,
     query: request.query,
-    rowCount: rows.length,
-    rows,
+    referenceDatasetIds,
+    rowCount: queryResult.rowCount,
+    rows: queryResult.rows,
     runId: sourceId("sql", `${dataset.id}:${Date.now()}`),
+    validationKey: request.validationKey,
   };
   await saveSqlRun(result);
   return result;
+}
+
+async function queryContextDatasets(request, dataset, referenceDatasetIds) {
+  const ids = [
+    request?.baseDatasetId || dataset.id,
+    dataset.id,
+    ...referenceDatasetIds,
+  ].filter(Boolean);
+  const uniqueIds = Array.from(new Set(ids));
+  const datasets = [];
+  for (const id of uniqueIds) {
+    const contextDataset = id === dataset.id ? dataset : await getDataset(id);
+    if (!contextDataset) throw notFoundError(`데이터셋을 찾지 못했습니다: ${id}`);
+    datasets.push(contextDataset);
+  }
+  return datasets;
+}
+
+function runDuckdbPreview(payload) {
+  const pythonBin = process.env.ASKLAKE_FASTAPI_PYTHON || process.env.PYTHON || "python";
+  const result = spawnSync(pythonBin, [path.join(scriptsDir, "query-duckdb-preview.py")], {
+    cwd: backendDir,
+    encoding: "utf8",
+    input: JSON.stringify(payload),
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  const marker = String(result.stdout || "").split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_QUERY_RUN_RESULT="));
+  if (result.status !== 0 || !marker) {
+    const error = validationError([
+      "SQL preview execution failed.",
+      result.stdout,
+      result.stderr,
+    ].filter(Boolean).join("\n"));
+    error.code = "SQL_PREVIEW_FAILED";
+    throw error;
+  }
+  return JSON.parse(marker.slice("ASKLAKE_QUERY_RUN_RESULT=".length));
 }
 
 function validateCreatePipelineRequest(request) {

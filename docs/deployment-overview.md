@@ -257,7 +257,55 @@ docker compose logs backend
 - ECS/Fargate 전환.
 - RDS/DocumentDB 같은 managed DB 전환.
 - production-grade scheduler.
+
 - 실제 인증/인가.
 - 운영용 backup/monitoring 체계.
 
 이 항목들은 데모 배포가 안정화된 뒤 별도 작업으로 분리한다.
+
+## Deployment Dependency Manifest
+
+The deploy path is expected to be reproducible from declared files only.
+
+Host prerequisites:
+
+- Docker Engine and the Docker Compose plugin.
+- Git, SSH, curl, and AWS CLI for `scripts/deploy.sh`.
+- A writable Docker socket at `/var/run/docker.sock`; the backend uses it to start Spark submit/master/worker containers.
+- EC2 repo checkout at `ASKLAKE_DEPLOY_PATH`, default `/opt/asklake`.
+
+Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
+
+- `caddy:2.8-alpine`
+- `frontend`, built from `frontend/Dockerfile`
+- `backend`, built from `backend/Dockerfile`
+- `postgres:16-alpine`
+- `mongo:7`
+- `minio/minio:RELEASE.2025-07-23T15-54-02Z`
+
+Backend deploy image dependencies:
+
+- OS packages from `backend/Dockerfile`: `nodejs`, `npm`, `docker-cli`, `ca-certificates`.
+- Python packages from `backend/requirements.txt`: FastAPI/Uvicorn, SQLAlchemy, psycopg, pydantic settings, dotenv, and DuckDB.
+- Node connector packages from `backend/package.json`: S3, Kafka, MongoDB, Parquet, and PostgreSQL clients.
+
+Spark runtime dependencies:
+
+- Spark jobs run in `ASKLAKE_SPARK_IMAGE`, default `apache/spark:4.0.1`.
+- The backend starts/uses `ASKLAKE_SPARK_MASTER_CONTAINER` and `ASKLAKE_SPARK_WORKER_CONTAINER` through Docker.
+- S3A jobs use `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`, default `org.apache.hadoop:hadoop-aws:3.4.1`.
+- Spark output/report/sample host directories are rooted at `ASKLAKE_HOST_DATA_DIR`, default `/tmp/asklake`.
+
+Frontend deploy image dependencies:
+
+- Node 22 build image and Nginx runtime from `frontend/Dockerfile`.
+- Frontend packages from `frontend/package.json`.
+- Required build args are listed in `deploy/.env.example`: `VITE_API_BASE_URL`, `VITE_USE_MOCK_API`, and `VITE_DASHBOARD_ASSISTANT_API_PATH`.
+
+Local deploy dependency verification:
+
+```bash
+scripts/verify-deploy-dependencies.sh
+```
+
+This renders the production Compose config, builds backend/frontend deploy images, checks backend Python and Node imports, checks Docker CLI availability in the backend image, and verifies that the Spark image is available.

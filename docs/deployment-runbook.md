@@ -50,6 +50,14 @@ source deploy/ec2.env
 scripts/deploy.sh status
 ```
 
+Before deploying a branch, run the dependency verification from the repo root:
+
+```bash
+scripts/verify-deploy-dependencies.sh
+```
+
+It checks the production Compose file, backend Python dependencies, backend Node connector dependencies, Docker CLI availability for the Spark runner, Spark image availability, and the frontend production build image. If this fails, fix the declared dependency or env key before running `scripts/deploy.sh deploy`.
+
 확인하는 것:
 
 - EC2 instance state
