@@ -12,6 +12,7 @@ import {
 } from "../services/mockApi";
 import {
   createPipelineDraft as createLivePipelineDraft,
+  getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -49,6 +50,7 @@ type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
 const maxStoredCatalogDatasets = 30;
+const jobPollingIntervalMs = 3000;
 
 function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
   return {
@@ -525,6 +527,18 @@ function buildRunStateFromJobs(jobs: JobRowData[]): JobRunStateMaps {
   return { dagStepsByRunId, runsByJobId, selectedRunIdByJobId };
 }
 
+
+function isActiveRun(run: JobRunSummary) {
+  return run.status === "queued" || run.status === "running";
+}
+
+function activePollingJobIds(jobs: JobRowData[], runsByJobId: RunsByJobId) {
+  return jobs
+    .filter((job) => job.status === "running" || (runsByJobId[job.id] ?? []).some(isActiveRun))
+    .map((job) => job.id)
+    .sort();
+}
+
 function isFetchConnectionError(error: unknown) {
   return error instanceof TypeError && /fetch|network|load failed|connection/i.test(error.message);
 }
@@ -627,12 +641,43 @@ export function useAskLakeData({
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const createPendingRef = useRef(false);
+  const pollingFailureRef = useRef<Set<string>>(new Set());
   const commandPendingRef = useRef<Set<string>>(new Set());
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
     [dagStepsByRunId, runsByJobId, selectedRunIdByJobId],
   );
+
+  const activePollingKey = useMemo(
+    () => activePollingJobIds(jobs, runsByJobId).join("|"),
+    [jobs, runsByJobId],
+  );
+
+  const applyHydratedJob = (job: JobRowData) => {
+    const normalizedJob = normalizeJobRow(job);
+    const hydratedRunState = buildRunStateFromJobs([normalizedJob]);
+    setJobs((items) => items.map((item) => (item.id === normalizedJob.id ? normalizedJob : item)));
+    setSelectedJob((current) => (current.id === normalizedJob.id ? normalizedJob : current));
+    setRunsByJobId((state) => ({
+      ...state,
+      [normalizedJob.id]: hydratedRunState.runsByJobId[normalizedJob.id] ?? [],
+    }));
+    setSelectedRunIdByJobId((state) => {
+      const nextRuns = hydratedRunState.runsByJobId[normalizedJob.id] ?? [];
+      const currentRunId = state[normalizedJob.id];
+      const nextSelectedRunId = currentRunId && nextRuns.some((run) => run.runId === currentRunId)
+        ? currentRunId
+        : hydratedRunState.selectedRunIdByJobId[normalizedJob.id];
+      return nextSelectedRunId
+        ? { ...state, [normalizedJob.id]: nextSelectedRunId }
+        : withoutRecordKey(state, normalizedJob.id);
+    });
+    setDagStepsByRunId((state) => ({
+      ...state,
+      ...hydratedRunState.dagStepsByRunId,
+    }));
+  };
 
   useEffect(() => {
     if (apiConfig.useMock) {
@@ -689,6 +734,39 @@ export function useAskLakeData({
       cancelled = true;
     };
   }, []);
+
+
+  useEffect(() => {
+    if (apiConfig.useMock || !activePollingKey) return;
+
+    let cancelled = false;
+    const jobIds = activePollingKey.split("|").filter(Boolean);
+
+    async function pollJobs() {
+      await Promise.all(jobIds.map(async (jobId) => {
+        try {
+          const job = await getLiveJob(jobId);
+          if (cancelled) return;
+          applyHydratedJob(job);
+          pollingFailureRef.current.delete(jobId);
+        } catch {
+          if (cancelled || pollingFailureRef.current.has(jobId)) return;
+          pollingFailureRef.current.add(jobId);
+          showToast("작업 상태 동기화에 실패했습니다.", "info");
+        }
+      }));
+    }
+
+    void pollJobs();
+    const intervalId = window.setInterval(() => {
+      void pollJobs();
+    }, jobPollingIntervalMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [activePollingKey, showToast]);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));

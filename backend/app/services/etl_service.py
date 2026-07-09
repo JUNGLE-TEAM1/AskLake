@@ -29,8 +29,12 @@ from app.schemas.etl import (
     SourceConnectorRequest,
 )
 
+from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
+
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
+ACTIVE_RUN_STATUSES = {"queued", "running"}
+TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
@@ -118,6 +122,10 @@ def list_jobs(db: Session) -> list[JobRowData]:
 
 
 def get_job(db: Session, job_id: str) -> JobRowData:
+    job_model = etl_repository.get_job(db, job_id)
+    if job_model is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    sync_airflow_runs_for_job(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -208,17 +216,12 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     run_model = None
     dataset_model = None
     if command in {"run", "retry"}:
-        apply_job_command(job, command)
-        spark_result = run_spark_job(job, command, stable_id("run", f"{job.id}:{command}:{iso_now()}"))
-        run_model = run_from_spark_result(job, spark_result)
+        run_model = submit_airflow_job_run(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
-        finalize_job_from_spark_result(job, command, spark_result)
-        job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), spark_result)
+        apply_airflow_submit_job_state(job, command, run_model)
+        job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
-        if spark_result.get("status") == "success":
-            existing_dataset = etl_repository.get_dataset_by_id(db, job.dataset_id) if job.dataset_id else None
-            dataset_model = dataset_from_spark_result(job, spark_result, existing_dataset)
     elif command == "cancelRun":
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
@@ -292,6 +295,42 @@ def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]
     )
 
 
+def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
+    submitted_at = iso_now()
+    run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
+    airflow_client = build_airflow_client()
+    dag_run = airflow_client.trigger_dag_run(
+        dag_run_id=run_id,
+        conf=airflow_dag_run_conf(job, command, run_id, submitted_at),
+        note=f"AskLake {command} command for {job.id}",
+    )
+    if not dag_run.dag_run_id:
+        raise ApiError(
+            "AIRFLOW_BAD_RESPONSE",
+            "Airflow DAG Run response did not include dag_run_id.",
+            status.HTTP_502_BAD_GATEWAY,
+            {"dagId": airflow_client.config.dag_id, "runId": run_id},
+        )
+    return run_from_airflow_submit(
+        job,
+        command,
+        run_id,
+        submitted_at,
+        dag_run,
+        airflow_client.dag_run_url(dag_run.dag_run_id),
+    )
+
+
+def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_at: str) -> dict[str, Any]:
+    return {
+        "command": command,
+        "job": job_payload_for_spark(job),
+        "jobId": job.id,
+        "runId": run_id,
+        "submittedAt": submitted_at,
+    }
+
+
 def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
     return {
         "id": job.id,
@@ -319,6 +358,36 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
     }
 
 
+def run_from_airflow_submit(
+    job: ETLJobModel,
+    command: str,
+    run_id: str,
+    submitted_at: str,
+    dag_run: AirflowDagRun,
+    airflow_run_url: str | None,
+) -> ETLRunModel:
+    return ETLRunModel(
+        run_id=run_id,
+        job_id=job.id,
+        status=dag_run.asklake_status,
+        started_at=submitted_at,
+        ended_at="-",
+        duration="-",
+        input_rows="-",
+        output_rows="-",
+        output_path=job.target_path,
+        failed_stage="-",
+        error_summary="-",
+        airflow_dag_id=dag_run.dag_id,
+        airflow_dag_run_id=dag_run.dag_run_id,
+        airflow_run_url=airflow_run_url,
+        airflow_state=dag_run.state,
+        task_states=None,
+        last_synced_at=submitted_at,
+        sync_error=None,
+    )
+
+
 def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunModel:
     success = result.get("status") == "success"
     return ETLRunModel(
@@ -334,6 +403,227 @@ def run_from_spark_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         failed_stage="-" if success else str(result.get("failedStage") or "Spark ETL"),
         error_summary="-" if success else str(result.get("error") or "Spark job failed."),
     )
+
+
+def apply_airflow_submit_job_state(job: ETLJobModel, command: str, run: ETLRunModel) -> None:
+    action_label = "재실행" if command == "retry" else "실행"
+    state_label = run.airflow_state or run.status
+    job.last_run = run.started_at
+    job.last_state = f"Airflow {action_label} 접수 · {state_label}"
+    job.next_run = "-"
+    if run.status == "failed":
+        job.progress = None
+        job.status = "failed"
+        return
+    if run.status == "success":
+        job.progress = None
+        job.status = "scheduled"
+        return
+    job.progress = {
+        "label": f"Airflow DAG Run {state_label}",
+        "value": 10 if run.status == "queued" else 20,
+    }
+    job.status = "running"
+
+
+def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
+    runs = etl_repository.list_run_models_for_job(db, job.id)
+    active_runs = [
+        run
+        for run in runs
+        if run.status in ACTIVE_RUN_STATUSES and run.airflow_dag_run_id
+    ]
+    if not active_runs:
+        return
+
+    try:
+        airflow_client = build_airflow_client()
+    except ApiError as exc:
+        sync_error = exc.message
+        synced_at = iso_now()
+        for run in active_runs:
+            run.sync_error = sync_error
+            run.last_synced_at = synced_at
+        job.last_state = f"Airflow 상태 동기화 실패 · {sync_error}"
+        etl_repository.save_job(db, job)
+        return
+
+    for run in active_runs:
+        sync_airflow_run(job, run, airflow_client)
+
+    latest_run = runs[0]
+    apply_job_state_from_latest_run(job, latest_run)
+    job.stats = stats_from_runs(job, [etl_repository.run_to_schema(run) for run in runs])
+    etl_repository.save_job(db, job)
+
+
+def sync_airflow_run(job: ETLJobModel, run: ETLRunModel, airflow_client: Any) -> None:
+    synced_at = iso_now()
+    try:
+        dag_run = airflow_client.get_dag_run(run.airflow_dag_run_id)
+        task_instances = airflow_client.list_task_instances(run.airflow_dag_run_id)
+    except ApiError as exc:
+        run.sync_error = exc.message
+        run.last_synced_at = synced_at
+        return
+
+    run.status = dag_run.asklake_status
+    run.airflow_dag_id = dag_run.dag_id or run.airflow_dag_id
+    run.airflow_dag_run_id = dag_run.dag_run_id or run.airflow_dag_run_id
+    run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
+    run.airflow_state = dag_run.state
+    run.task_states = task_state_snapshot(task_instances)
+    run.last_synced_at = synced_at
+    run.sync_error = None
+
+    if run.status in TERMINAL_RUN_STATUSES and run.ended_at == "-":
+        run.ended_at = synced_at
+        run.duration = format_iso_duration(run.started_at, synced_at)
+
+    if run.status == "failed":
+        failed_task = first_problem_task(task_instances)
+        run.failed_stage = task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
+        run.error_summary = f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
+    elif run.status == "success":
+        run.failed_stage = "-"
+        run.error_summary = "-"
+
+    run_schema = etl_repository.run_to_schema(run)
+    dag_steps = dag_steps_from_airflow_sync(job, run_schema.model_dump(by_alias=True), task_instances)
+    job.dag_steps_by_run_id = {
+        **(job.dag_steps_by_run_id or {}),
+        run.run_id: dag_steps,
+    }
+    job.dag_steps = dag_steps
+
+
+def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -> None:
+    job.last_run = latest_run.ended_at if latest_run.status in TERMINAL_RUN_STATUSES else latest_run.started_at
+    job.next_run = "-" if job.schedule in {"수동 실행", "manual"} else job.schedule
+
+    if latest_run.status == "success":
+        job.status = "scheduled"
+        job.progress = None
+        job.last_state = "최근 실행 성공 · 다음 실행 대기"
+        return
+    if latest_run.status == "failed":
+        job.status = "failed"
+        job.progress = None
+        job.last_state = f"최근 실행 실패 · {latest_run.failed_stage}"
+        return
+    if latest_run.status == "canceled":
+        job.status = "canceled"
+        job.progress = None
+        job.last_state = "최근 실행 취소"
+        return
+
+    state_label = latest_run.airflow_state or latest_run.status
+    job.status = "running"
+    job.progress = {
+        "label": f"Airflow DAG Run {state_label}",
+        "value": 10 if latest_run.status == "queued" else 55,
+    }
+    job.last_state = f"Airflow 실행 중 · {state_label}"
+    job.next_run = "-"
+
+
+AIRFLOW_TASK_TITLES = {
+    "receive_asklake_run": "1. Airflow DAG Run 접수",
+    "spark_source_read": "2. Spark 소스 읽기",
+    "transform_quality_write": "3. 처리/품질/적재",
+    "catalog_update": "4. 카탈로그 갱신",
+}
+
+
+def task_state_snapshot(task_instances: list[AirflowTaskInstance]) -> dict[str, dict[str, Any]]:
+    return {
+        task.task_id: {
+            "airflowState": task.state,
+            "dagId": task.dag_id,
+            "dagRunId": task.dag_run_id,
+            "status": task.asklake_status,
+            "taskId": task.task_id,
+        }
+        for task in task_instances
+        if task.task_id
+    }
+
+
+def first_problem_task(task_instances: list[AirflowTaskInstance]) -> AirflowTaskInstance | None:
+    for task in task_instances:
+        if task.asklake_status in {"failed", "blocked"}:
+            return task
+    return None
+
+
+def task_title(task_id: str) -> str:
+    if task_id in AIRFLOW_TASK_TITLES:
+        return AIRFLOW_TASK_TITLES[task_id]
+    return str(task_id or "Airflow task").replace("_", " ").strip().title()
+
+
+def dag_steps_from_airflow_submit(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, Any]]:
+    action_label = "재실행" if command == "retry" else "실행"
+    state_label = str(run.get("airflowState") or run.get("status") or "queued")
+    return [
+        dag_step("airflow-submit", "Airflow DAG Run 접수", state_label, "running", [
+            ["Job", job.name],
+            ["Run ID", run.get("runId", "-")],
+            ["DAG Run ID", run.get("airflowDagRunId", "-")],
+        ], [f"AskLake {action_label} 명령이 Airflow에 접수되었습니다."]),
+        *[
+            dag_step(task_id, title, "대기", "pending", [
+                ["Airflow task", task_id],
+            ], ["Airflow Task Instance 상태 polling 대기 중입니다."])
+            for task_id, title in AIRFLOW_TASK_TITLES.items()
+        ],
+    ]
+
+
+def dag_steps_from_airflow_sync(
+    job: ETLJobModel,
+    run: dict[str, Any],
+    task_instances: list[AirflowTaskInstance],
+) -> list[dict[str, Any]]:
+    task_by_id = {task.task_id: task for task in task_instances if task.task_id}
+    run_status = str(run.get("status") or "running")
+    run_state = str(run.get("airflowState") or run_status)
+    submit_status = "success" if run_status in TERMINAL_RUN_STATUSES else "running"
+    if run_status == "failed":
+        submit_status = "failed"
+
+    steps = [
+        dag_step("airflow-submit", "Airflow DAG Run 상태", run_state, submit_status, [
+            ["Job", job.name],
+            ["Run ID", run.get("runId", "-")],
+            ["DAG Run ID", run.get("airflowDagRunId", "-")],
+            ["Airflow state", run_state],
+        ], [f"Airflow DAG Run 상태: {run_state}"]),
+    ]
+
+    for task_id, title in AIRFLOW_TASK_TITLES.items():
+        task = task_by_id.get(task_id)
+        status_value = task.asklake_status if task else "pending"
+        airflow_state = task.state if task and task.state else "not_started"
+        logs = [f"Airflow Task Instance state: {airflow_state}"]
+        if task and task.raw.get("try_number") is not None:
+            logs.append(f"try_number={task.raw.get('try_number')}")
+        steps.append(dag_step(task_id, title, airflow_state, status_value, [
+            ["Airflow task", task_id],
+            ["Airflow state", airflow_state],
+        ], logs))
+
+    extra_tasks = [
+        task for task in task_instances
+        if task.task_id and task.task_id not in AIRFLOW_TASK_TITLES
+    ]
+    for task in extra_tasks:
+        steps.append(dag_step(task.task_id, task_title(task.task_id), task.state or "-", task.asklake_status, [
+            ["Airflow task", task.task_id],
+            ["Airflow state", task.state or "-"],
+        ], [f"Airflow Task Instance state: {task.state or '-'}"]))
+
+    return steps
 
 
 def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[str, Any]) -> None:
@@ -622,9 +912,13 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
     ]
 
 
-def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[str]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[Any]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:
+    normalized_details = [
+        [str(label or "-"), str(value if value is not None else "-")]
+        for label, value in (details or [])
+    ]
     return {
-        "details": details or [],
+        "details": normalized_details,
         "id": id_,
         "logs": [str(line) for line in (logs or []) if line],
         "meta": str(meta or "-"),
@@ -1110,6 +1404,15 @@ def format_duration_ms(value: Any) -> str:
         return f"{seconds}\ucd08"
     minutes, rest = divmod(seconds, 60)
     return f"{minutes}\ubd84 {rest}\ucd08"
+
+
+def format_iso_duration(started_at: str, ended_at: str) -> str:
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "-"
+    return format_duration_ms(max(0, int((end - start).total_seconds() * 1000)))
 
 
 def iso_now() -> str:
