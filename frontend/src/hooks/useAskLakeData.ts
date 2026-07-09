@@ -665,10 +665,12 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
 }
 
 export function useAskLakeData({
+  enabled = true,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
+  enabled?: boolean;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
@@ -726,6 +728,12 @@ export function useAskLakeData({
   };
 
   useEffect(() => {
+    if (!enabled) {
+      setDataLoading(false);
+      setDataError(null);
+      return;
+    }
+
     if (apiConfig.useMock) {
       const hydratedRunState = buildRunStateFromJobs(getInitialJobs());
       setRunsByJobId(hydratedRunState.runsByJobId);
@@ -779,11 +787,11 @@ export function useAskLakeData({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled, showToast]);
 
 
   useEffect(() => {
-    if (apiConfig.useMock || !activePollingKey) return;
+    if (!enabled || apiConfig.useMock || !activePollingKey) return;
 
     let cancelled = false;
     const jobIds = activePollingKey.split("|").filter(Boolean);
@@ -812,7 +820,7 @@ export function useAskLakeData({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activePollingKey, showToast]);
+  }, [activePollingKey, enabled, showToast]);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));

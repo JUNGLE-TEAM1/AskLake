@@ -156,7 +156,7 @@ export function App() {
     setSqlResultDraft,
     sqlResultDraft,
     updateDraftPipeline,
-  } = useAskLakeData({ onFlowChange: setActiveFlow, showToast, writeAuditLog });
+  } = useAskLakeData({ enabled: Boolean(currentUser), onFlowChange: setActiveFlow, showToast, writeAuditLog });
   const current = useMemo(() => flowTabs.find((tab) => tab.id === activeFlow), [activeFlow]);
   const activeNavId = useMemo<NavId | null>(() => {
     if (activeFlow === "catalog" || activeFlow === "catalogDetail") return "catalog";
@@ -185,9 +185,9 @@ export function App() {
     [datasets, selectedDataset, sqlInitialDatasetId],
   );
   const shouldRenderAppContent = !shouldBlockForInitialData && !shouldBlockForInitialError && canRenderActiveFlow;
-  const isAuthProtectedFlow = activeFlow === "profile" || activeFlow === "admin";
-  const shouldBlockForAuthCheck = isAuthProtectedFlow && !authChecked;
-  const shouldShowAuthGate = isAuthProtectedFlow && authChecked && !currentUser;
+  const isPublicAuthFlow = activeFlow === "login";
+  const shouldBlockForAuthCheck = !authChecked && !isPublicAuthFlow;
+  const shouldShowAuthGate = authChecked && !currentUser && !isPublicAuthFlow;
   const wizardStepFlows = useMemo<FlowId[]>(
     () => ["source", "schema", lastScheduleFlow, "permission", "target", "review"],
     [lastScheduleFlow],
@@ -214,6 +214,18 @@ export function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!authChecked || currentUser || activeFlow === "login") return;
+    if (window.location.pathname !== "/login") window.history.replaceState(null, "", "/login");
+    setActiveFlow("login");
+  }, [activeFlow, authChecked, currentUser]);
+
+  useEffect(() => {
+    if (!authChecked || !currentUser || activeFlow !== "login") return;
+    if (window.location.pathname !== "/profile") window.history.replaceState(null, "", "/profile");
+    setActiveFlow("profile");
+  }, [activeFlow, authChecked, currentUser]);
 
   useEffect(() => {
     if (activeFlow !== "dashboard" || dashboardEntry.source !== "sql" || !dashboardEntry.sqlRunId) return undefined;
@@ -356,10 +368,8 @@ export function App() {
         setCurrentUser(null);
         writeAuditLog("auth.logout.succeeded", "/api/auth/logout", "session", "success", { targetType: "ui" });
         showToast("로그아웃되었습니다.", "info");
-        if (window.location.pathname === "/profile" || window.location.pathname === "/admin") {
-          window.history.pushState(null, "", "/login");
-          moveToFlow("login");
-        }
+        if (window.location.pathname !== "/login") window.history.pushState(null, "", "/login");
+        moveToFlow("login");
       })
       .catch(() => {
         writeAuditLog("auth.logout.failed", "/api/auth/logout", "session", "failed", { targetType: "ui" });
@@ -400,6 +410,32 @@ export function App() {
   };
 
   if (activeFlow === "rules") {
+    if (shouldBlockForAuthCheck) {
+      return (
+        <div className="auth-only-shell" data-last-action={auditSignal}>
+          <main className="auth-only-main">
+            <div className="module-placeholder-page">
+              <span>SESSION</span>
+              <h1>세션을 확인하는 중입니다</h1>
+              <p>로그인 상태를 확인한 뒤 AskLake를 표시합니다.</p>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    if (shouldShowAuthGate) {
+      return (
+        <div className="auth-only-shell" data-last-action={auditSignal}>
+          <main className="auth-only-main">
+            {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
+            <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
+          </main>
+          <Footer />
+        </div>
+      );
+    }
+
     return (
       <RuleBuilderShell
         auditOpen={auditOpen}
@@ -429,6 +465,32 @@ export function App() {
     );
   }
 
+  if (shouldBlockForAuthCheck) {
+    return (
+      <div className="auth-only-shell" data-last-action={auditSignal}>
+        <main className="auth-only-main">
+          <div className="module-placeholder-page">
+            <span>SESSION</span>
+            <h1>세션을 확인하는 중입니다</h1>
+            <p>로그인 상태를 확인한 뒤 AskLake를 표시합니다.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (shouldShowAuthGate || (!currentUser && activeFlow === "login")) {
+    return (
+      <div className="auth-only-shell" data-last-action={auditSignal}>
+        <main className="auth-only-main">
+          {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
+          <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell" data-last-action={auditSignal}>
       <Sidebar
@@ -443,38 +505,28 @@ export function App() {
         {(apiPending || (dataLoading && (hasShellRows || isIngestShellFlow))) && <div className="app-api-pending">{pendingMessage}</div>}
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
-          {shouldBlockForAuthCheck && (
-            <div className="module-placeholder-page">
-              <span>SESSION</span>
-              <h1>세션을 확인하는 중입니다</h1>
-              <p>로그인 상태를 확인한 뒤 계정 화면을 표시합니다.</p>
-            </div>
-          )}
-          {shouldShowAuthGate && (
-            <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
-          )}
-          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldBlockForInitialData && (
+          {shouldBlockForInitialData && (
             <div className="module-placeholder-page">
               <span>POSTGRES</span>
               <h1>DB 데이터를 불러오는 중입니다</h1>
               <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
             </div>
           )}
-          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldBlockForInitialError && (
+          {shouldBlockForInitialError && (
             <div className="module-placeholder-page">
               <span>POSTGRES ERROR</span>
               <h1>DB API 연결을 확인해주세요</h1>
               <p>{dataError}</p>
             </div>
           )}
-          {!shouldBlockForAuthCheck && !shouldShowAuthGate && !dataLoading && !dataError && !canRenderActiveFlow && (
+          {!dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
               <span>EMPTY STATE</span>
               <h1>먼저 실제 데이터를 선택해주세요</h1>
               <p>목록에서 Job 또는 Dataset을 선택하거나, 새 파이프라인을 생성하고 실행해 주세요.</p>
             </div>
           )}
-          {!shouldBlockForAuthCheck && !shouldShowAuthGate && shouldRenderAppContent && (
+          {shouldRenderAppContent && (
             <>
           {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetail} onRuns={openJobRuns} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
           {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRuns} onDetail={openJobDetail} onAction={writeAuditLog} />}
