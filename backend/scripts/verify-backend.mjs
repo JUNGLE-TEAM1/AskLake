@@ -152,7 +152,10 @@ try {
   const jobs = await get("/api/etl/jobs");
   const datasets = await get("/api/catalog/datasets");
   assert(jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
-  assert(datasets.length === 0, "Catalog should stay empty until a job run succeeds.");
+  assert(
+    !datasets.some((dataset) => dataset.id === created.catalogTarget.id || dataset.name === createRequest.targetDataset),
+    "Catalog should not expose the pending target dataset until a job run succeeds.",
+  );
 
   console.log("verify-backend: ok");
 } finally {

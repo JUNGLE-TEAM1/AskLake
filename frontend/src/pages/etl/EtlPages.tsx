@@ -30,6 +30,7 @@ import {
   Plus,
   RefreshCw,
   Repeat2,
+  Save,
   Star,
   Search,
   Settings,
@@ -38,6 +39,7 @@ import {
   Table2,
   TerminalSquare,
   Trash2,
+  X,
 } from "lucide-react";
 import { Field, InfoBox, PageTitle, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
@@ -45,6 +47,7 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { runCellphonesReviewAnalysis, suggestReviewAnalysisSchema, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
 import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
@@ -2209,6 +2212,403 @@ function formatSourceFieldPath(value: string) {
   return parts.map((part, index) => (index === 0 ? part : `└ ${part}`)).join(" ");
 }
 
+type ReviewStructuringColumnDef = {
+  allowedValues?: string[];
+  label: string;
+  method?: string;
+  nullable: boolean;
+  targetName: string;
+  type: string;
+};
+
+type ReviewStructuringTemplate = {
+  columns: ReviewStructuringColumnDef[];
+  createdAt: string;
+  id: string;
+  name: string;
+  sourceObject: string;
+};
+
+const REVIEW_STRUCTURING_SOURCE_OBJECT = "s3://m3-raw/amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
+const REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY = "asklake.reviewSchemaTemplates.v1";
+const REVIEW_STRUCTURING_COLUMNS: ReviewStructuringColumnDef[] = [
+  { label: "리뷰 식별자", method: "copy_or_extract_field", nullable: false, targetName: "review_id", type: "String" },
+  { allowedValues: ["positive", "mixed", "negative"], label: "감정", method: "sentiment_3way", nullable: false, targetName: "sentiment", type: "String" },
+  { label: "이슈 카테고리", method: "issue_category", nullable: false, targetName: "issue_category", type: "String" },
+  { label: "이슈 세부 분류", method: "issue_subcategory", nullable: true, targetName: "issue_subcategory", type: "String" },
+  { allowedValues: ["critical", "high", "medium", "low"], label: "심각도", method: "severity_4level", nullable: false, targetName: "severity", type: "String" },
+  { label: "요약", method: "extractive_summary", nullable: true, targetName: "summary", type: "String" },
+  { label: "근거 문장", method: "evidence_span", nullable: true, targetName: "evidence", type: "String" },
+];
+const REVIEW_STRUCTURING_STEP_PREFIX = "review-row-analysis-";
+
+function reviewStructuringOutputNames(columns = REVIEW_STRUCTURING_COLUMNS) {
+  return new Set(columns.map((column) => column.targetName));
+}
+
+function readReviewStructuringTemplates() {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is ReviewStructuringTemplate => (
+        item
+        && typeof item.id === "string"
+        && typeof item.name === "string"
+        && Array.isArray(item.columns)
+      ))
+      .slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+function writeReviewStructuringTemplates(templates: ReviewStructuringTemplate[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY, JSON.stringify(templates.slice(0, 20)));
+}
+
+function buildReviewStructuringTemplate(name: string): ReviewStructuringTemplate {
+  return {
+    columns: REVIEW_STRUCTURING_COLUMNS,
+    createdAt: new Date().toISOString(),
+    id: `review-schema-${Date.now()}`,
+    name: name.trim() || "Amazon 리뷰 분석 추천 스키마",
+    sourceObject: REVIEW_STRUCTURING_SOURCE_OBJECT,
+  };
+}
+
+function buildReviewStructuringTemplateFromSchema(columns: SchemaColumnDraft[], name: string): ReviewStructuringTemplate {
+  const configuredColumns = columns
+    .filter((column) => column.sourceName.startsWith("__review_analysis.") || column.role?.startsWith("review-row-analysis:"))
+    .map((column) => ({
+      allowedValues: reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__review_analysis\./, "")),
+      label: (column.role ?? "").replace(/^review-row-analysis:/, "") || column.targetName || column.sourceName,
+      method: (column as SchemaColumnDraft & { reviewAnalysisMethod?: string }).reviewAnalysisMethod || reviewAnalysisMethodForTarget(column.targetName || column.sourceName),
+      nullable: column.nullable,
+      targetName: column.targetName || column.sourceName.replace(/^__review_analysis\./, ""),
+      type: column.type || "String",
+    }))
+    .filter((column) => Boolean(column.targetName));
+  return {
+    columns: configuredColumns.length > 0 ? configuredColumns : REVIEW_STRUCTURING_COLUMNS,
+    createdAt: new Date().toISOString(),
+    id: `review-schema-${Date.now()}`,
+    name: name.trim() || "사용자 수정 리뷰 분석 스키마",
+    sourceObject: REVIEW_STRUCTURING_SOURCE_OBJECT,
+  };
+}
+
+function reviewAnalysisMethodForTarget(value: string) {
+  const target = String(value || "").replace(/^__review_analysis\./, "").toLowerCase();
+  if (target === "sentiment") return "sentiment_3way";
+  if (target === "issue_category") return "issue_category";
+  if (target === "issue_subcategory") return "issue_subcategory";
+  if (target === "severity" || target === "severity_risk") return "severity_4level";
+  if (target === "summary") return "extractive_summary";
+  if (target === "evidence" || target === "supporting_evidence") return "evidence_span";
+  if (target.startsWith("is_") || target.startsWith("has_") || target === "clicked") return "boolean_y_n";
+  return "copy_or_extract_field";
+}
+
+function reviewAnalysisAllowedValuesForTarget(value: string) {
+  const method = reviewAnalysisMethodForTarget(value);
+  if (method === "sentiment_3way") return ["positive", "mixed", "negative"];
+  if (method === "severity_4level") return ["critical", "high", "medium", "low"];
+  if (method === "boolean_y_n") return ["Y", "N"];
+  return [];
+}
+
+function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDef[]) {
+  return JSON.stringify({
+    columns: reviewColumns.map((column) => ({
+      allowedValues: column.allowedValues ?? reviewAnalysisAllowedValuesForTarget(column.targetName),
+      method: column.method || reviewAnalysisMethodForTarget(column.targetName),
+      nullable: column.nullable,
+      targetName: column.targetName,
+      type: column.type,
+    })),
+    asinField: "asin",
+    ratingField: "rating",
+    sourceField: "text",
+    textField: "text",
+    titleField: "title",
+    version: 1,
+  });
+}
+
+function reviewTemplateDateLabel(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function normalizeReviewFieldName(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function schemaColumnName(column: SchemaColumnDraft) {
+  return normalizeReviewFieldName(column.targetName || column.sourceName);
+}
+
+function findReviewFieldIndex(columns: SchemaColumnDraft[], names: string[]) {
+  const normalizedNames = new Set(names.map(normalizeReviewFieldName));
+  return columns.findIndex((column) => normalizedNames.has(schemaColumnName(column)) || normalizedNames.has(normalizeReviewFieldName(column.sourceName)));
+}
+
+function hasReviewTextFields(columns: SchemaColumnDraft[]) {
+  return findReviewFieldIndex(columns, ["text", "review_text", "body"]) >= 0
+    && findReviewFieldIndex(columns, ["rating", "stars", "score"]) >= 0;
+}
+
+function isReviewStructuringApplied(columns: SchemaColumnDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
+  return reviewColumns.every((column) => (
+    columns.some((item) => schemaColumnName(item) === column.targetName)
+  ));
+}
+
+function shouldShowReviewStructuringFlow(draft: DraftPipeline, columns: SchemaColumnDraft[], sourceFormat: string) {
+  const sourceText = [
+    draft.source.sourceLabel,
+    draft.source.sourceType,
+    sourceFormat,
+    ...draft.source.sourceConfig.flatMap(([label, value]) => [label, value]),
+    ...columns.flatMap((column) => [column.sourceName, column.targetName]),
+  ].join(" ").toLowerCase();
+  return hasReviewTextFields(columns)
+    || sourceText.includes("cell_phones_and_accessories")
+    || sourceText.includes("amazon_reviews")
+    || sourceText.includes("review");
+}
+
+function buildReviewStructuringColumns(columns: SchemaColumnDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
+  const outputNames = reviewStructuringOutputNames(reviewColumns);
+  const baseColumns = columns.filter((column) => (
+    !outputNames.has(schemaColumnName(column))
+    && !column.sourceName.startsWith("__review_analysis.")
+  ));
+  const params = reviewAnalysisParamsForColumns(reviewColumns);
+  const generatedColumns = reviewColumns.map((column) => ({
+    included: true,
+    nullable: column.nullable,
+    role: `review-row-analysis:${column.label}`,
+    sourceName: `__review_analysis.${column.targetName}`,
+    targetName: column.targetName,
+    reviewAnalysisMethod: column.method || reviewAnalysisMethodForTarget(column.targetName),
+    transformChain: [{
+      display: `리뷰 row 분석 -> ${column.label}`,
+      expression: `REVIEW_ANALYZE(rating, title, text, asin).${column.targetName}`,
+      onError: "Warn",
+      operation: "Review Row Analysis",
+      params,
+      type: column.type,
+    }],
+    type: column.type,
+  } satisfies SchemaColumnDraft));
+  return [...baseColumns, ...generatedColumns];
+}
+
+function buildReviewStructuringTransformSteps(existingSteps: TransformStepDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
+  const rest = existingSteps.filter((step) => !step.id.startsWith(REVIEW_STRUCTURING_STEP_PREFIX));
+  const params = reviewAnalysisParamsForColumns(reviewColumns);
+  const generatedSteps = reviewColumns.map((column) => ({
+    enabled: true,
+    id: `${REVIEW_STRUCTURING_STEP_PREFIX}${column.targetName}`,
+    input: "rating,title,text,asin",
+    kind: "derive",
+    label: `리뷰 row 분석: ${column.label}`,
+    onError: "Warn",
+    operation: "Review Row Analysis",
+    output: column.targetName,
+    params,
+  } satisfies TransformStepDraft));
+  return [...rest, ...generatedSteps];
+}
+
+function buildReviewStructuringSampleRows(columns: SchemaColumnDraft[], sampleRows: string[][], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
+  const fieldIndexes = {
+    asin: findReviewFieldIndex(columns, ["asin", "product_id"]),
+    rating: findReviewFieldIndex(columns, ["rating", "stars", "score"]),
+    text: findReviewFieldIndex(columns, ["text", "review_text", "body"]),
+    timestamp: findReviewFieldIndex(columns, ["timestamp", "event_time", "created_at"]),
+    title: findReviewFieldIndex(columns, ["title", "summary", "review_title"]),
+    userId: findReviewFieldIndex(columns, ["user_id", "reviewer_id", "customer_id"]),
+  };
+  return sampleRows.map((row, rowIndex) => {
+    const sample = classifyReviewSample(row, fieldIndexes, rowIndex);
+    return [
+      ...row,
+      ...reviewColumns.map((column) => sample[column.targetName] ?? ""),
+    ];
+  });
+}
+
+function classifyReviewSample(row: string[], indexes: { asin: number; rating: number; text: number; timestamp: number; title: number; userId: number }, rowIndex: number) {
+  const rating = Number(row[indexes.rating] ?? "");
+  const title = indexes.title >= 0 ? row[indexes.title] ?? "" : "";
+  const text = indexes.text >= 0 ? row[indexes.text] ?? "" : "";
+  const asin = indexes.asin >= 0 ? row[indexes.asin] ?? "" : "";
+  const userId = indexes.userId >= 0 ? row[indexes.userId] ?? "" : "";
+  const timestamp = indexes.timestamp >= 0 ? row[indexes.timestamp] ?? "" : "";
+  const combined = `${title} ${text}`.toLowerCase();
+  const category = reviewIssueCategoryForText(combined, rating);
+  const severity = reviewSeverityForText(combined, rating, category.id);
+  const sentiment = rating <= 2 || severity === "critical" || severity === "high"
+    ? "negative"
+    : rating === 3 || category.id !== "positive_value"
+      ? "mixed"
+      : "positive";
+  const evidence = compactSchemaPreviewValue(text || title || "(샘플 텍스트 없음)");
+  const reviewIdSeed = [asin, userId, timestamp].filter(Boolean).join("_") || `sample_${rowIndex + 1}`;
+  return {
+    confidence: category.id === "positive_value" ? "0.78" : "0.86",
+    evidence,
+    issue_category: category.id,
+    issue_subcategory: category.label,
+    review_id: reviewIdSeed.replace(/[^a-zA-Z0-9_-]+/g, "_"),
+    sentiment,
+    severity,
+    summary: `${category.label} 신호를 감지했습니다. ${evidence}`,
+  } as Record<string, string>;
+}
+
+function reviewIssueCategoryForText(text: string, rating: number) {
+  const rules = [
+    { id: "safety_battery", label: "배터리/안전", pattern: /(battery|explode|fire|hot|overheat|burn|smoke|danger)/i },
+    { id: "charging_power", label: "충전/전원", pattern: /(charge|charging|charger|power|cable|usb|plug)/i },
+    { id: "screen_display", label: "화면/디스플레이", pattern: /(screen|display|glass|crack|touch|protector)/i },
+    { id: "audio_bluetooth", label: "오디오/블루투스", pattern: /(sound|audio|speaker|earbud|bluetooth|pairing|mic)/i },
+    { id: "compatibility_fit", label: "호환/장착", pattern: /(fit|compatible|case|size|model|install|mount)/i },
+    { id: "delivery_packaging", label: "배송/포장", pattern: /(shipping|delivery|package|packaging|arrived|box)/i },
+    { id: "durability_quality", label: "내구성/품질", pattern: /(broke|broken|defect|quality|cheap|scratch|stopped|fail)/i },
+    { id: "listing_accuracy", label: "상품 정보 불일치", pattern: /(not as described|wrong|fake|different|missing|picture|listing)/i },
+  ];
+  const matched = rules.find((rule) => rule.pattern.test(text));
+  if (matched) return matched;
+  if (rating > 0 && rating <= 2) return { id: "general_negative", label: "일반 불만" };
+  return { id: "positive_value", label: "긍정/가치" };
+}
+
+function reviewSeverityForText(text: string, rating: number, category: string) {
+  if (/(explode|fire|burn|smoke|danger|injury)/i.test(text)) return "critical";
+  if (category === "safety_battery" || rating === 1) return "high";
+  if (rating === 2 || /(broken|defect|stopped|fail|wrong|missing)/i.test(text)) return "medium";
+  if (category !== "positive_value") return "low";
+  return "none";
+}
+
+function summarizeReviewAnalysisResult(result: ReviewAnalysisSummary | null) {
+  if (!result || result.status !== "success") return "아직 실제 원본 검증을 실행하지 않았습니다.";
+  const processedRows = result.processedRows?.toLocaleString() ?? "0";
+  const issueRows = result.metrics?.issueRows?.toLocaleString() ?? "0";
+  const highRows = result.metrics?.highSeverityRows?.toLocaleString() ?? "0";
+  return `${processedRows}행 처리 · 이슈 ${issueRows}행 · High+ ${highRows}행`;
+}
+
+function ReviewStructuringFlowCard({
+  applied,
+  error,
+  hasRequiredFields,
+  loading,
+  recommendedColumns,
+  result,
+  suggesting,
+  selectedTemplateId,
+  templateName,
+  templates,
+  onApply,
+  onGenerateSuggestion,
+  onLoadTemplate,
+  onRunValidation,
+  onSaveTemplate,
+  onClose,
+  onTemplateNameChange,
+}: {
+  applied: boolean;
+  error: string;
+  hasRequiredFields: boolean;
+  loading: boolean;
+  recommendedColumns: ReviewStructuringColumnDef[];
+  result: ReviewAnalysisSummary | null;
+  suggesting: boolean;
+  selectedTemplateId: string;
+  templateName: string;
+  templates: ReviewStructuringTemplate[];
+  onApply: () => void;
+  onGenerateSuggestion: () => void;
+  onLoadTemplate: (templateId: string) => void;
+  onRunValidation: () => void;
+  onSaveTemplate: () => void;
+  onClose: () => void;
+  onTemplateNameChange: (value: string) => void;
+}) {
+  return (
+    <section className="review-structuring-flow-card" aria-label="AI 추천 리뷰 분석 스키마 초안">
+      <div className="review-structuring-flow-head">
+        <span className="review-structuring-flow-icon"><Bot size={17} /></span>
+        <div>
+          <strong>AI 스키마 추천</strong>
+          <p>리뷰 row를 어떤 출력 컬럼으로 나눌지 초안만 만듭니다. 적용 후 XFlow에서 직접 수정하고 템플릿으로 저장하세요.</p>
+        </div>
+        <span className={applied ? "review-structuring-status applied" : "review-structuring-status"}>
+          {applied ? "편집 가능 상태" : "초안 대기"}
+        </span>
+        <button className="review-schema-close-button" type="button" aria-label="AI 스키마 추천 닫기" onClick={onClose}>
+          <X size={16} />
+        </button>
+      </div>
+      <div className="review-structuring-pipeline">
+        <div><HardDrive size={15} /><span>입력</span><strong>리뷰 JSONL row</strong></div>
+        <div><Bot size={15} /><span>AI 역할</span><strong>초안 스키마 추천만</strong></div>
+        <div><Table2 size={15} /><span>실행 기준</span><strong>사용자가 수정/저장한 템플릿</strong></div>
+      </div>
+      <div className="review-structuring-columns">
+        {recommendedColumns.length > 0
+          ? recommendedColumns.map((column) => (
+            <span key={column.targetName}>{column.targetName}</span>
+          ))
+          : <p>{suggesting ? "로컬 LLM이 추천 스키마를 생성하는 중입니다." : "아직 생성된 AI 추천 스키마가 없습니다."}</p>}
+      </div>
+      <div className="review-template-controls">
+        <label>
+          <span>템플릿 이름</span>
+          <input value={templateName} onChange={(event) => onTemplateNameChange(event.target.value)} />
+        </label>
+        <label>
+          <span>저장된 템플릿</span>
+          <select value={selectedTemplateId} onChange={(event) => onLoadTemplate(event.target.value)}>
+            <option value="">템플릿 선택</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name}{template.createdAt ? ` · ${reviewTemplateDateLabel(template.createdAt)}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="secondary-button" type="button" disabled={!hasRequiredFields || suggesting} onClick={onGenerateSuggestion}>
+          <Bot size={15} /> {suggesting ? "AI 추천 중..." : "AI 추천 새로 생성"}
+        </button>
+        <button className="secondary-button" type="button" onClick={onSaveTemplate}>
+          <Save size={15} /> 현재 스키마 템플릿 저장
+        </button>
+      </div>
+      {error && <div className="review-structuring-error">{error}</div>}
+      <div className="review-structuring-actions">
+        <span>{summarizeReviewAnalysisResult(result)}</span>
+        <button className="secondary-button" type="button" disabled={!hasRequiredFields || loading} onClick={onRunValidation}>
+          <PlayCircle size={15} /> {loading ? "검증 실행 중..." : "현재 템플릿 기준 실제 원본 검증"}
+        </button>
+        <button className="primary-button" type="button" disabled={!hasRequiredFields || recommendedColumns.length === 0 || suggesting} onClick={onApply}>
+          <Check size={15} /> {applied ? "AI 초안 다시 적용" : "AI 추천 초안 적용"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function SchemaInferencePage({
   draft,
   onDraftChange,
@@ -2233,6 +2633,15 @@ export function SchemaInferencePage({
   const [flattenBaseSchema, setFlattenBaseSchema] = useState<SchemaBaseSnapshot | null>(null);
   const [schemaSampleScope, setSchemaSampleScope] = useState<SchemaSampleScope>("current");
   const [isRecheckingSchema, setIsRecheckingSchema] = useState(false);
+  const [reviewStructuringResult, setReviewStructuringResult] = useState<ReviewAnalysisSummary | null>(null);
+  const [reviewStructuringError, setReviewStructuringError] = useState("");
+  const [isReviewStructuringRunning, setIsReviewStructuringRunning] = useState(false);
+  const [isReviewSchemaSuggesting, setIsReviewSchemaSuggesting] = useState(false);
+  const [isReviewSchemaPanelOpen, setIsReviewSchemaPanelOpen] = useState(false);
+  const [reviewSchemaSuggestionColumns, setReviewSchemaSuggestionColumns] = useState<ReviewStructuringColumnDef[]>([]);
+  const [reviewTemplates, setReviewTemplates] = useState<ReviewStructuringTemplate[]>(() => readReviewStructuringTemplates());
+  const [selectedReviewTemplateId, setSelectedReviewTemplateId] = useState("");
+  const [reviewTemplateName, setReviewTemplateName] = useState("Amazon 리뷰 분석 스키마");
   const hasInferredSchema = draft.schema.columns.length > 0;
   const schemaColumns: SchemaColumnDraft[] = draft.schema.columns;
   const includedSchemaColumns = schemaColumns.filter(isSchemaColumnIncluded);
@@ -2271,6 +2680,11 @@ export function SchemaInferencePage({
   const previewOutputItems = includedSchemaColumnItems.slice(0, 8);
   const hiddenPreviewColumnCount = Math.max(0, includedSchemaColumnItems.length - previewOutputItems.length);
   const previewOutputRows = schemaSampleRows.slice(0, 4);
+  const reviewStructuringVisible = hasInferredSchema && shouldShowReviewStructuringFlow(draft, schemaColumns, sourceFormat);
+  const reviewStructuringHasRequiredFields = hasReviewTextFields(schemaColumns);
+  const selectedReviewTemplate = reviewTemplates.find((template) => template.id === selectedReviewTemplateId);
+  const activeReviewColumns = selectedReviewTemplate?.columns?.length ? selectedReviewTemplate.columns : reviewSchemaSuggestionColumns;
+  const reviewStructuringApplied = activeReviewColumns.length > 0 && isReviewStructuringApplied(schemaColumns, activeReviewColumns);
   const visibleSchemaColumns = schemaColumns
     .map((column, index) => ({ column, index }))
     .filter(({ column }) => {
@@ -2288,6 +2702,9 @@ export function SchemaInferencePage({
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary,
       },
+      transform: {
+        outputColumns: buildSchemaDraftOutputColumns(columns),
+      },
     });
     return true;
   };
@@ -2300,6 +2717,9 @@ export function SchemaInferencePage({
         sampleRows,
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
+      },
+      transform: {
+        outputColumns: buildSchemaDraftOutputColumns(columns),
       },
     });
   };
@@ -2384,6 +2804,132 @@ export function SchemaInferencePage({
     onAction(action, path, draft.source.sourceLabel || "source");
     if (schemaSummary) {
       applySchemaDraft(schemaSummary);
+    }
+  };
+
+  const applyReviewStructuringPreset = () => {
+    if (!hasInferredSchema) {
+      onNotify("스키마 추론 후 리뷰 row 분석 프리셋을 적용할 수 있습니다.");
+      return;
+    }
+    if (!reviewStructuringHasRequiredFields) {
+      onNotify("리뷰 row 분석에는 최소 rating과 text 필드가 필요합니다.");
+      return;
+    }
+    if (activeReviewColumns.length === 0) {
+      onNotify("먼저 AI 추천 스키마 초안을 생성하세요.");
+      return;
+    }
+    const activeOutputNames = reviewStructuringOutputNames(activeReviewColumns);
+    const baseColumns = schemaColumns.filter((column) => (
+      !activeOutputNames.has(schemaColumnName(column))
+      && !column.sourceName.startsWith("__review_analysis.")
+    ));
+    const nextColumns = buildReviewStructuringColumns(schemaColumns, activeReviewColumns);
+    const nextSampleRows = buildReviewStructuringSampleRows(baseColumns, schemaSampleRows, activeReviewColumns);
+    const nextSteps = buildReviewStructuringTransformSteps(draft.transform.steps, activeReviewColumns);
+    onDraftChange({
+      schema: {
+        columns: nextColumns,
+        sampleRows: nextSampleRows,
+        schemaFingerprint: buildSchemaFingerprint(nextColumns),
+        summary: `AI 추천 리뷰 분석 스키마 적용 · 출력 파생 컬럼 ${activeReviewColumns.length}개 추가`,
+      },
+      transform: {
+        outputColumns: buildSchemaDraftOutputColumns(nextColumns),
+        steps: nextSteps,
+        summary: `AI 추천 리뷰 분석 스키마 적용 · ${activeReviewColumns.map((column) => column.targetName).join(", ")}`,
+      },
+    });
+    setSelectedSchemaIndex(Math.max(0, nextColumns.findIndex((column) => activeOutputNames.has(schemaColumnName(column)))));
+    onAction("etl.schema.review_row_analysis_applied", "/api/etl/schema-inference/review-row-analysis", draft.source.sourceLabel || REVIEW_STRUCTURING_SOURCE_OBJECT, "success");
+    onNotify("AI 추천 스키마 초안을 출력 스키마와 변환 단계에 반영했습니다. 이제 컬럼명/타입/변환식을 직접 수정하세요.");
+  };
+
+  const saveReviewStructuringTemplate = () => {
+    const draftTemplate = buildReviewStructuringTemplateFromSchema(schemaColumns, reviewTemplateName);
+    const nextTemplate = isReviewStructuringApplied(schemaColumns, activeReviewColumns)
+      ? draftTemplate
+      : { ...draftTemplate, columns: activeReviewColumns };
+    if (nextTemplate.columns.length === 0) {
+      onNotify("저장할 리뷰 분석 스키마가 없습니다. AI 추천 초안을 먼저 생성하세요.");
+      return;
+    }
+    const nextTemplates = [nextTemplate, ...reviewTemplates.filter((template) => template.name !== nextTemplate.name)];
+    setReviewTemplates(nextTemplates);
+    setSelectedReviewTemplateId(nextTemplate.id);
+    writeReviewStructuringTemplates(nextTemplates);
+    onAction("etl.schema.review_template_saved", "/api/etl/schema-inference/review-row-analysis/templates", nextTemplate.name, "success");
+    onNotify(`현재 리뷰 분석 스키마를 템플릿으로 저장했습니다: ${nextTemplate.name}`);
+  };
+
+  const loadReviewStructuringTemplate = (templateId: string) => {
+    setSelectedReviewTemplateId(templateId);
+    const template = reviewTemplates.find((item) => item.id === templateId);
+    if (!template) return;
+    setReviewTemplateName(template.name);
+    onAction("etl.schema.review_template_selected", "/api/etl/schema-inference/review-row-analysis/templates", template.name, "success");
+    onNotify(`템플릿을 선택했습니다. 적용을 누르면 현재 출력 스키마에 반영됩니다: ${template.name}`);
+  };
+
+  const generateReviewSchemaSuggestion = async () => {
+    if (!reviewStructuringHasRequiredFields) {
+      onNotify("AI 추천에는 최소 rating과 text 필드가 필요합니다.");
+      return;
+    }
+    setIsReviewSchemaSuggesting(true);
+    setReviewStructuringError("");
+    try {
+      const suggestion = await suggestReviewAnalysisSchema({
+        sampleRows: schemaSampleRows.slice(0, 3),
+        sourceColumns: schemaColumns.map((column) => ({
+          name: column.targetName || column.sourceName,
+          type: column.type,
+        })),
+      });
+      setSelectedReviewTemplateId("");
+      setReviewSchemaSuggestionColumns(suggestion.columns);
+      onAction("etl.schema.review_schema_suggested", "/api/review-analysis/schema-suggestion", suggestion.model, "success");
+      onNotify(`로컬 LLM이 리뷰 분석 스키마 초안 ${suggestion.columns.length}개 컬럼을 추천했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "로컬 LLM 스키마 추천에 실패했습니다.";
+      setReviewStructuringError(message);
+      onAction("etl.schema.review_schema_suggestion_failed", "/api/review-analysis/schema-suggestion", "local-llm", "failed");
+      onNotify(message);
+    } finally {
+      setIsReviewSchemaSuggesting(false);
+    }
+  };
+
+  const openReviewSchemaPanel = () => {
+    setIsReviewSchemaPanelOpen(true);
+    onAction("etl.schema.review_schema_panel_opened", "/api/review-analysis/schema-suggestion", draft.source.sourceLabel || "source", "success");
+    if (reviewStructuringHasRequiredFields && activeReviewColumns.length === 0 && !isReviewSchemaSuggesting) {
+      void generateReviewSchemaSuggestion();
+    }
+  };
+
+  const runReviewStructuringValidation = async () => {
+    setIsReviewStructuringRunning(true);
+    setReviewStructuringError("");
+    try {
+      const configuredSchema = buildReviewStructuringTemplateFromSchema(schemaColumns, reviewTemplateName).columns;
+      const validationSchema = isReviewStructuringApplied(schemaColumns, activeReviewColumns) ? configuredSchema : activeReviewColumns;
+      if (validationSchema.length === 0) {
+        onNotify("검증할 AI 추천 스키마가 없습니다.");
+        return;
+      }
+      const result = await runCellphonesReviewAnalysis(50000, validationSchema);
+      setReviewStructuringResult(result);
+      onAction("etl.schema.review_row_analysis_validated", "/api/review-analysis/cellphones/run", result.runId ?? "Cell_Phones_and_Accessories", "success");
+      onNotify(`실제 원본 검증 완료: ${(result.processedRows ?? 0).toLocaleString()}행을 처리했습니다.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "실제 원본 검증 실행에 실패했습니다.";
+      setReviewStructuringError(message);
+      onAction("etl.schema.review_row_analysis_validation_failed", "/api/review-analysis/cellphones/run", "Cell_Phones_and_Accessories", "failed");
+      onNotify(message);
+    } finally {
+      setIsReviewStructuringRunning(false);
     }
   };
 
@@ -2508,6 +3054,32 @@ export function SchemaInferencePage({
         </div>
       </section>
 
+      {reviewStructuringVisible && isReviewSchemaPanelOpen && (
+        <div className="review-schema-modal-backdrop" role="presentation" onMouseDown={() => setIsReviewSchemaPanelOpen(false)}>
+          <div className="review-schema-modal" role="dialog" aria-modal="true" aria-label="AI 스키마 추천" onMouseDown={(event) => event.stopPropagation()}>
+            <ReviewStructuringFlowCard
+              applied={reviewStructuringApplied}
+              error={reviewStructuringError}
+              hasRequiredFields={reviewStructuringHasRequiredFields}
+              loading={isReviewStructuringRunning}
+              recommendedColumns={activeReviewColumns}
+              result={reviewStructuringResult}
+              suggesting={isReviewSchemaSuggesting}
+              selectedTemplateId={selectedReviewTemplateId}
+              templateName={reviewTemplateName}
+              templates={reviewTemplates}
+              onApply={applyReviewStructuringPreset}
+              onClose={() => setIsReviewSchemaPanelOpen(false)}
+              onGenerateSuggestion={generateReviewSchemaSuggestion}
+              onLoadTemplate={loadReviewStructuringTemplate}
+              onRunValidation={runReviewStructuringValidation}
+              onSaveTemplate={saveReviewStructuringTemplate}
+              onTemplateNameChange={setReviewTemplateName}
+            />
+          </div>
+        </div>
+      )}
+
       <XFlowSchemaTransformEditor
         columns={schemaColumns}
         sampleRows={schemaSampleRows}
@@ -2532,6 +3104,11 @@ export function SchemaInferencePage({
 
       <section className="schema-bottom-bar">
         <button className="secondary-button" type="button" onClick={onPrev}>이전: 데이터 탐색</button>
+        {reviewStructuringVisible && (
+          <button className="secondary-button ai-schema-action-button" type="button" disabled={!reviewStructuringHasRequiredFields} onClick={openReviewSchemaPanel}>
+            <Bot size={15} /> AI 스키마 추천
+          </button>
+        )}
         <button className="secondary-button" type="button" disabled={!hasInferredSchema} onClick={exportSchema}><Download size={15} /> 스키마 JSON 내보내기</button>
         <span>2/3 단계 · {hasInferredSchema ? approvedSummary : inferredSummary}</span>
         <button className="primary-button" type="button" disabled={!hasInferredSchema} onClick={confirmCurrentSchema}>스키마 확정 후 다음</button>
@@ -2736,6 +3313,23 @@ function writeTransformQualityPreviewCache(cache: TransformQualityPreviewCache) 
 
 function schemaColumnOutputName(column: SchemaColumnDraft) {
   return (column.targetName || column.sourceName || "column").trim();
+}
+
+function buildSchemaDraftOutputColumns(columns: SchemaColumnDraft[]) {
+  return columns
+    .filter(isSchemaColumnIncluded)
+    .map((column) => [schemaColumnOutputName(column), column.type] as [string, string]);
+}
+
+function reviewTransformLabel(outputName: string, sourceColumn: SchemaColumnDraft | undefined, steps: TransformStepDraft[]) {
+  const matchedSteps = steps.filter((step) => step.enabled !== false && step.output === outputName);
+  if (matchedSteps.length > 0) {
+    return matchedSteps
+      .map((step) => `${step.operation}${step.params ? `: ${step.params}` : ""}`)
+      .join(" -> ");
+  }
+  if (!sourceColumn) return "변환 출력";
+  return sourceColumn.sourceName === outputName ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${outputName}`;
 }
 
 function getRuleSourceColumns(columns: SchemaColumnDraft[]) {
@@ -5191,14 +5785,14 @@ export function ReviewPage({
         return {
           columnName: name,
           nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
-          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
+          transform: reviewTransformLabel(name, sourceColumn, draft.transform.steps),
           type,
         };
       })
     : includedReviewColumns.map((column) => ({
         columnName: column.targetName,
         nullable: column.nullable ? "예" : "아니요",
-        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
+        transform: reviewTransformLabel(schemaColumnOutputName(column), column, draft.transform.steps),
         type: column.type,
       }));
   const sourceSummary = summarizeSourceConfig(request.sourceConfig);

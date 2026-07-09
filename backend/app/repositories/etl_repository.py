@@ -30,7 +30,7 @@ def ensure_schema(db: Session) -> None:
             "dag_steps_by_run_id": "JSON",
             "dataset_id": "VARCHAR(120)",
             "last_run": "VARCHAR(64)",
-            "last_state": "VARCHAR(255)",
+            "last_state": "TEXT",
             "name": "VARCHAR(255)",
             "next_run": "VARCHAR(255)",
             "owner": "VARCHAR(255)",
@@ -121,6 +121,14 @@ def ensure_schema(db: Session) -> None:
             connection.execute(text(f"UPDATE etl_jobs SET {column_name} = {sql_value} WHERE {column_name} IS NULL"))
         if "schema_fingerprint" in existing_columns:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN schema_fingerprint TYPE TEXT"))
+        if "last_state" in existing_columns:
+            connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN last_state TYPE TEXT"))
+
+        existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}
+        if "failed_stage" in existing_run_columns:
+            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN failed_stage TYPE TEXT"))
+        if "error_summary" in existing_run_columns:
+            connection.execute(text("ALTER TABLE etl_runs ALTER COLUMN error_summary TYPE TEXT"))
 
 
         existing_run_columns = {column["name"] for column in inspector.get_columns("etl_runs")}

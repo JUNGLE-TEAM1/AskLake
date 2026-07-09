@@ -23,7 +23,6 @@ import {
   Database,
   Download,
   ExternalLink,
-  FileText,
   HardDrive,
   Info,
   LayoutGrid,
@@ -44,6 +43,7 @@ import {
   X,
 } from "lucide-react";
 import { Field, PageTitle } from "../../components/common";
+import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
 import { jobStatusMeta } from "../../utils/statusMeta";
@@ -114,7 +114,6 @@ export function JobsLandingPage({
   onTableDemo?: () => void;
 }) {
   const metrics = getJobMetrics(jobs);
-
   return (
     <div className="jobs-landing">
       <div className="jobs-page-header">
@@ -156,6 +155,237 @@ export function JobsLandingPage({
       </div>
     </div>
   );
+}
+
+function CellphonesReviewAnalysisPanel({
+  analysis,
+  error,
+  loading,
+  onClose,
+  onRefresh,
+  onRun,
+}: {
+  analysis: ReviewAnalysisSummary | null;
+  error: string;
+  loading: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+  onRun: () => void;
+}) {
+  const processedRows = analysis?.processedRows ?? 0;
+  const rows = analysis?.rows ?? [];
+  const categoryBreakdown = analysis?.categoryBreakdown ?? [];
+  const metrics = analysis?.metrics;
+  const statusLabel = loading ? "실행 중" : analysis?.status === "success" ? "마지막 결과 있음" : "대기";
+  const outputPath = analysis?.output?.jsonlPath ?? "";
+  const runId = analysis?.runId ?? "-";
+  const finishedAt = analysis?.finishedAt ? new Date(analysis.finishedAt).toLocaleString("ko-KR") : "-";
+
+  return (
+    <section className="review-analysis-workspace" aria-label="Amazon Cell Phones 리뷰 정형화 파이프라인">
+      <div className="review-analysis-topline">
+        <div className="review-analysis-title">
+          <span><Bot size={15} /> 비정형 리뷰 정형화</span>
+          <h2>Cell Phones 리뷰를 분석 테이블로 변환</h2>
+          <p>m3 MinIO의 실제 JSONL 원본을 스트리밍해서 리뷰마다 감정, 이슈, 심각도, 요약 컬럼을 생성합니다.</p>
+        </div>
+        <div className="review-analysis-controls">
+          <span className={["review-analysis-status", loading ? "running" : analysis?.status === "success" ? "success" : ""].filter(Boolean).join(" ")}>
+            {statusLabel}
+          </span>
+          <button className="secondary-button" type="button" onClick={onRefresh} disabled={loading}>
+            <RefreshCw size={15} /> 결과 새로고침
+          </button>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={loading}>
+            <X size={15} /> 닫기
+          </button>
+          <button className="primary-button" type="button" onClick={onRun} disabled={loading}>
+            <PlayCircle size={15} /> {loading ? "실행 중..." : "실제 원본 50,000행 실행"}
+          </button>
+        </div>
+      </div>
+
+      <div className="review-analysis-flow" aria-label="처리 흐름">
+        <ReviewAnalysisStep index="1" icon={<HardDrive size={16} />} title="원본" value="MinIO JSONL" detail="Cell_Phones_and_Accessories.jsonl" />
+        <ReviewAnalysisStep index="2" icon={<Bot size={16} />} title="정형화" value="row-level 분석" detail="sentiment / issue / severity / summary" />
+        <ReviewAnalysisStep index="3" icon={<Check size={16} />} title="대화형 실행" value="실제 50,000행" detail="mock 없이 원본 스트림 처리" />
+        <ReviewAnalysisStep index="4" icon={<Database size={16} />} title="출력" value="JSONL 테이블" detail="review_issue_rows.jsonl" />
+      </div>
+
+      {error && <div className="review-analysis-error">{error}</div>}
+
+      <div className="review-analysis-layout">
+        <aside className="review-analysis-run-panel">
+          <div className="review-analysis-panel-heading">
+            <span>실행 설정</span>
+            <strong>실제 원본 대화형 실행</strong>
+          </div>
+          <dl className="review-analysis-facts">
+            <div>
+              <dt>Source object</dt>
+              <dd title={analysis?.source?.object}>{analysis?.source?.object ?? "s3://m3-raw/amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl"}</dd>
+            </div>
+            <div>
+              <dt>Run scope</dt>
+              <dd>원본 앞 50,000행</dd>
+            </div>
+            <div>
+              <dt>Output schema</dt>
+              <dd>review_id, asin, rating, sentiment, issue_category, issue_subcategory, severity, summary, evidence, confidence</dd>
+            </div>
+            <div>
+              <dt>Last run</dt>
+              <dd>{runId} · {finishedAt}</dd>
+            </div>
+            <div>
+              <dt>Output file</dt>
+              <dd title={outputPath}>{outputPath || "아직 생성된 출력 파일이 없습니다."}</dd>
+            </div>
+          </dl>
+        </aside>
+
+        <div className="review-analysis-result-panel">
+          <div className="review-analysis-panel-heading">
+            <span>마지막 결과</span>
+            <strong>{processedRows > 0 ? `${processedRows.toLocaleString()} rows processed` : "실행 전"}</strong>
+          </div>
+          <div className="review-analysis-metrics">
+            <ReviewAnalysisMetric label="처리 행수" value={processedRows.toLocaleString()} />
+            <ReviewAnalysisMetric label="이슈 행" value={(metrics?.issueRows ?? 0).toLocaleString()} />
+            <ReviewAnalysisMetric label="High+ 심각도" value={(metrics?.highSeverityRows ?? 0).toLocaleString()} />
+            <ReviewAnalysisMetric label="평균 rating" value={(metrics?.averageRating ?? 0).toLocaleString()} />
+          </div>
+
+          <div className="review-analysis-result-grid">
+            <div className="review-analysis-breakdown">
+              <div className="review-analysis-section-title">
+                <HardDrive size={15} />
+                <strong>이슈 카테고리 분포</strong>
+              </div>
+              {categoryBreakdown.length > 0 ? (
+                <ul>
+                  {categoryBreakdown.slice(0, 6).map((item) => (
+                    <li key={item.id}>
+                      <span>{reviewCategoryLabel(item)}</span>
+                      <strong>{item.count.toLocaleString()} · {formatShare(item.share)}</strong>
+                      <i style={{ width: `${Math.max(2, Math.round(item.share * 100))}%` }} />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>아직 실행 결과가 없습니다.</p>
+              )}
+            </div>
+            <div className="review-analysis-table-wrap">
+              <div className="review-analysis-section-title">
+                <Table2 size={15} />
+                <strong>정형 결과 미리보기</strong>
+              </div>
+              <table className="review-analysis-table">
+                <thead>
+                  <tr>
+                    <th>rating</th>
+                    <th>감정</th>
+                    <th>이슈</th>
+                    <th>심각도</th>
+                    <th>요약</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.length > 0 ? rows.slice(0, 8).map((row) => (
+                    <tr key={row.review_id}>
+                      <td>{row.rating}</td>
+                      <td>{sentimentLabel(row.sentiment)}</td>
+                      <td>{reviewIssueLabel(row.issue_category, row.issue_label)}</td>
+                      <td>{severityLabel(row.severity)}</td>
+                      <td>{reviewSummary(row)}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={5}>실제 원본 실행을 누르면 결과가 표시됩니다.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ReviewAnalysisStep({ detail, icon, index, title, value }: { detail: string; icon: React.ReactNode; index: string; title: string; value: string }) {
+  return (
+    <div className="review-analysis-step">
+      <span className="review-analysis-step-index">{index}</span>
+      <span className="review-analysis-step-icon">{icon}</span>
+      <div>
+        <strong>{title}</strong>
+        <span>{value}</span>
+        <small>{detail}</small>
+      </div>
+    </div>
+  );
+}
+
+function ReviewAnalysisMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="review-analysis-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function reviewCategoryLabel(item: { id: string; label: string }) {
+  return reviewIssueLabel(item.id, item.label);
+}
+
+function reviewIssueLabel(id: string, fallback: string) {
+  const labels: Record<string, string> = {
+    audio_bluetooth: "오디오 / 블루투스",
+    charging_power: "충전 / 전원",
+    compatibility_fit: "호환성 / 핏",
+    delivery_packaging: "배송 / 포장",
+    durability_quality: "내구성 / 품질",
+    general_negative: "일반 불만",
+    listing_accuracy: "상품 정보 불일치",
+    positive_value: "긍정 / 가치",
+    safety_battery: "안전 / 배터리",
+    screen_display: "화면 / 디스플레이",
+  };
+  return labels[id] ?? fallback;
+}
+
+function sentimentLabel(value: string) {
+  if (value === "positive") return "긍정";
+  if (value === "negative") return "부정";
+  if (value === "mixed") return "혼합";
+  return value;
+}
+
+function severityLabel(value: string) {
+  if (value === "critical") return "치명";
+  if (value === "high") return "높음";
+  if (value === "medium") return "중간";
+  if (value === "low") return "낮음";
+  if (value === "none") return "없음";
+  return value;
+}
+
+function reviewSummary(row: { issue_category: string; issue_label: string; summary: string }) {
+  return row.summary
+    .replace(`${row.issue_label} 이슈`, `${reviewIssueLabel(row.issue_category, row.issue_label)} 이슈`)
+    .replace("Positive / value", "긍정 / 가치")
+    .replace("Charging / power", "충전 / 전원")
+    .replace("Screen / display", "화면 / 디스플레이")
+    .replace("Durability / quality", "내구성 / 품질")
+    .replace("Listing accuracy", "상품 정보 불일치");
+}
+
+function formatShare(value: number) {
+  return `${Math.round(value * 1000) / 10}%`;
 }
 
 function MetricCard({ active, label, tone, value }: JobMetric) {

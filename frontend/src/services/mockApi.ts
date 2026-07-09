@@ -5,7 +5,13 @@ import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta"
 import { apiClient, apiConfig } from "./apiClient";
 
 export type PipelineCreationResult = {
-  dataset: CatalogDataset;
+  catalogTarget?: {
+    id: string;
+    layer: string;
+    name: string;
+    status: "pending_run";
+  };
+  dataset?: CatalogDataset;
   job: JobRowData;
 };
 
@@ -133,7 +139,8 @@ function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset[
 
 function normalizePipelineCreationResult(result: PipelineCreationResult): PipelineCreationResult {
   return {
-    dataset: normalizeDataset(result.dataset),
+    ...(result.catalogTarget ? { catalogTarget: result.catalogTarget } : {}),
+    ...(result.dataset ? { dataset: normalizeDataset(result.dataset) } : {}),
     job: normalizeJob(result.job),
   };
 }

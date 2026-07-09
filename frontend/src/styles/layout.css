@@ -42,6 +42,18 @@
   width: 100%;
 }
 
+.schema-body .creation-flow-grid,
+.schema-body .creation-flow-grid .content-main {
+  min-height: 0;
+  height: 100%;
+}
+
+.schema-body .creation-flow-grid .content-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .creation-flow-topbar {
   display: flex;
   justify-content: flex-end;

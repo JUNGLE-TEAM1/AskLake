@@ -12,6 +12,7 @@ backend/.env.local
 frontend/.env
 frontend/.env.local
 backend/tmp/
+output/
 __pycache__/
 *.pyc
 .playwright-cli/

@@ -35,6 +35,7 @@ export type {
   SourceDraft,
   TargetDraft,
   TargetLayer,
+  TransformChainStepDraft,
   TransformDraft,
   TransformStepDraft,
   WatermarkPolicyDraft,
