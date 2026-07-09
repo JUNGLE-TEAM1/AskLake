@@ -6,11 +6,14 @@
 
 CSS cleanup inventory가 "어떤 selector를 유지/교체/삭제할지"를 보는 문서라면, 이 문서는 "어떤 공통 컴포넌트가 더 필요해서 CSS가 계속 남는지"를 보는 문서다. 특정 화면에서 무리하게 `Button`, `Card`, `Badge`만 끼워 맞추지 않고, 반복되는 UI 패턴을 발견하면 이 문서에 기록한 뒤 별도 component 확장 PR에서 다룬다.
 
+shadcn primitive로 대체 가능한 기본 UI 판단은 `docs/frontend-shadcn-replacement-inventory.md`를 우선 기준으로 본다. 이 문서는 그 위에 남는 AskLake 서비스 전용 composition gap을 추적한다.
+
 ## 운영 규칙
 
 - UI 전환 PR마다 새 gap을 발견하면 이 문서에 추가한다.
 - 하나의 화면에서만 쓰이는 일회성 UI는 바로 AskLake 조합 컴포넌트로 만들지 않는다.
 - 단, 반복되지 않는 UI라도 shadcn primitive가 이미 제공하는 기본 부품이면 `components/ui` 표준 부품으로 교체할 수 있는 후보로 본다.
+- shadcn primitive가 이미 있는 UI는 새 AskLake wrapper를 만들기 전에 `docs/frontend-shadcn-replacement-inventory.md`의 `shadcn primitive 추가 필요` 또는 `shadcn으로 교체/흡수` 분류를 먼저 확인한다.
 - 두 화면 이상에서 반복되거나, CSS 삭제를 막는 구조적 패턴만 component gap으로 본다.
 - Backend API, 데이터 계약, 도메인 로직은 이 문서의 범위가 아니다.
 - gap을 기록했다고 해서 즉시 구현한다는 뜻은 아니다. 우선순위와 담당 PR을 따로 정한다.
@@ -23,6 +26,8 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 
 - 반복되는 UI는 `FilterToolbar`, `DataTable`, `Panel`, `PaginationBar`처럼 AskLake 조합 컴포넌트로 묶는다.
 - 반복되지 않는 UI라도 `Textarea`, `Checkbox`, `Tabs`, `Tooltip`, `DropdownMenu`, `Select`, `Popover`, `Command`, `AlertDialog`처럼 shadcn에 검증된 primitive가 있으면 교체 후보로 본다.
+- `SegmentedTabs`, `PaginationBar`, `FormFieldGroup`, `NativeSelectField`, `Chip`, `StatusBadge`, `DialogShell`, `PickerDialog`처럼 shadcn primitive로 흡수 가능한 wrapper는 새 사용처를 늘리기보다 후속 replacement PR에서 정리한다.
+- `DataTable`, `FilterToolbar`, `PageHeader`, `Panel`, `PreviewPanel`, `SettingsPanel`, `DetailTableSection`처럼 업무 화면 구조를 묶는 component는 유지하되 내부를 shadcn primitive로 구성한다.
 - 화면 고유 상태가 복잡한 경우에도 raw HTML과 화면별 CSS를 계속 늘리기보다, 우선 shadcn primitive를 적용하고 조합 컴포넌트 분리는 후속 PR로 판단한다.
 - Tree, React Flow, dashboard grid처럼 외부 라이브러리 DOM과 강하게 묶인 UI는 shadcn primitive만으로 해결하지 않고 별도 설계 PR에서 다룬다.
 
@@ -258,3 +263,4 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-09 | #391에서 Form/Settings 계열 적용 범위를 확장. WidgetConfigPanel chart/table select, S3/DB picker toolbar, ETL source/schedule field, SQL materialize field를 공통 field component로 전환하고 보류 범위를 기록. |
 | 2026-07-09 | #393에서 Selection UI 계열을 추가 정리. Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 전환하고 checkbox/radio 성격의 card 후보는 보류로 기록. |
 | 2026-07-09 | #395에서 `DetailTableSection` footer slot을 추가하고 Jobs run history table shell에 적용. ETL/SchemaTransformEditor detail table은 후속 설계 대상으로 유지. |
+| 2026-07-09 | #400에서 shadcn replacement inventory를 추가하고, shadcn primitive로 대체 가능한 wrapper와 유지할 AskLake composition component를 구분하는 기준을 연결. |

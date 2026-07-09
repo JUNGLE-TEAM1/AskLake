@@ -6,6 +6,8 @@
 
 현재 `frontend/src/styles.css`는 화면별 CSS를 전역으로 import한다. 그래서 작은 selector 삭제나 수정도 다른 화면에 영향을 줄 수 있다. 이 문서는 CSS를 바로 삭제하기 위한 문서가 아니라, A/B가 병렬로 전환 작업을 하면서 같은 기준으로 정리 후보를 표시하기 위한 문서다.
 
+shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-shadcn-replacement-inventory.md`를 우선 기준으로 본다. 이 문서는 그 교체가 끝난 뒤 어떤 selector를 유지, 축소, 삭제할지 추적한다.
+
 ## 운영 규칙
 
 - 이 문서는 계속 업데이트한다. UI 전환, UI 폴리싱, CSS 삭제 PR마다 관련 행의 상태와 메모를 갱신한다.
@@ -19,6 +21,8 @@
 - B가 Catalog/SQL/Dashboard 작업으로 정리하게 될 CSS도 이 문서에서 함께 추적한다.
 - CSS가 남는 이유가 공통 컴포넌트 부재라면 `docs/frontend-component-gap-inventory.md`에도 함께 기록한다.
 - 반복되지 않는 UI라도 shadcn primitive가 제공하는 기본 부품이면 raw HTML과 화면별 CSS를 늘리지 않고 `components/ui` 기준으로 교체하는 것을 우선한다.
+- shadcn으로 흡수 가능한 wrapper(`SegmentedTabs`, `PaginationBar`, `FormFieldGroup`, `NativeSelectField`, `Chip`, `StatusBadge`, `DialogShell`, `PickerDialog` 등)는 새 CSS selector를 늘리지 않고 replacement PR에서 기존 selector를 common variant로 옮긴다.
+- AskLake composition component(`DataTable`, `FilterToolbar`, `Panel`, `PreviewPanel`, `SettingsPanel`, `DetailTableSection` 등)는 유지하되 내부 primitive 교체가 끝난 selector만 삭제 후보로 올린다.
 
 ## 상태 값
 
@@ -97,6 +101,8 @@
 ## Component 확장 PR 기록 방식
 
 공통 컴포넌트 확장 PR에서는 CSS를 바로 삭제하지 않더라도 아래 기준으로 이 문서를 갱신한다.
+
+shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`의 분류를 먼저 갱신하고, 아래 표에는 실제 selector 상태만 기록한다.
 
 | 컴포넌트 후보 | CSS 기록 기준 |
 | --- | --- |
@@ -228,3 +234,4 @@ npm run build
 | 2026-07-09 | #391에서 Form/Settings 계열 추가 적용에 따른 CSS 판단을 기록. 기존 field/select selector는 삭제하지 않고 route QA 후 축소한다. |
 | 2026-07-09 | #393에서 Selection UI 추가 적용에 따른 CSS 판단을 기록. 단순 tab selector는 유지하고 checkbox/radio card 후보는 보류한다. |
 | 2026-07-09 | #395에서 Jobs run history table card/scroll/footer shell을 `DetailTableSection`으로 전환하고 `.runs-table*` density CSS는 route QA 전까지 유지하기로 기록. |
+| 2026-07-09 | #400에서 shadcn replacement inventory를 CSS cleanup 기준에 연결. shadcn으로 흡수 가능한 wrapper는 새 selector를 늘리지 않고 기존 selector를 common variant로 옮기는 방향을 추가. |
