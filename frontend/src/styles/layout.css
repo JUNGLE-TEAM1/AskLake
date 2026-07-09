@@ -226,17 +226,20 @@
 
 .auth-panel {
   display: grid;
-  gap: 22px;
+  gap: 18px;
+  overflow: visible;
 }
 
 .auth-tabs {
   margin-bottom: 0;
+  padding: 0 20px;
 }
 
 .auth-form {
   display: grid;
   gap: 16px;
   max-width: 520px;
+  padding: 0 20px 20px;
 }
 
 .auth-form .field {
@@ -267,7 +270,8 @@
 }
 
 .profile-hero-panel {
-  padding: 24px;
+  overflow: hidden;
+  padding: 22px 24px;
 }
 
 .profile-hero {
@@ -280,12 +284,13 @@
 .profile-avatar {
   display: grid;
   flex: 0 0 auto;
-  width: 72px;
-  height: 72px;
+  width: 76px;
+  height: 76px;
   place-items: center;
-  border-radius: 50%;
-  background: #eff6ff;
-  color: #2563eb;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #eff6ff, #dbeafe);
+  color: #1d4ed8;
   font-size: 24px;
   font-weight: 800;
 }
@@ -318,12 +323,50 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+  padding: 0 20px 20px;
+}
+
+.profile-permission-card,
+.admin-console-metric {
+  display: grid;
+  gap: 6px;
+  min-height: 86px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 16px;
+}
+
+.profile-permission-card strong,
+.admin-console-metric strong {
+  color: #0f172a;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.profile-permission-card strong {
+  font-size: 18px;
+}
+
+.admin-console-metric strong {
+  font-size: 24px;
+}
+
+.profile-permission-card span,
+.admin-console-metric span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .profile-group-list,
 .profile-summary-panel dl {
   display: grid;
   gap: 10px;
+}
+
+.profile-group-list {
+  padding: 0 20px 20px;
 }
 
 .profile-group-row {
@@ -358,13 +401,18 @@
 
 .profile-summary-panel {
   display: grid;
-  gap: 18px;
-  padding: 22px;
+  align-self: start;
+  gap: 0;
+  padding: 0;
 }
 
 .profile-summary-panel h2 {
   color: #171a1f;
   font-size: 18px;
+}
+
+.profile-summary-panel dl {
+  padding: 0 20px 20px;
 }
 
 .profile-summary-panel dl div {
@@ -397,19 +445,17 @@
   gap: 12px;
 }
 
-.admin-console-metric strong {
-  font-size: 24px;
-}
-
 .admin-console-panel {
   display: grid;
   gap: 18px;
+  overflow: hidden;
 }
 
 .admin-console-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  padding: 0 20px;
 }
 
 .admin-console-tabs button {
@@ -435,6 +481,7 @@
 
 .admin-console-table-scroll {
   overflow-x: auto;
+  padding: 0 20px 20px;
 }
 
 .admin-console-table {
@@ -487,8 +534,9 @@
 
 .admin-console-summary-panel {
   display: grid;
-  gap: 18px;
-  padding: 22px;
+  align-self: start;
+  gap: 0;
+  padding: 0;
 }
 
 .admin-console-summary-panel h2 {
@@ -499,6 +547,7 @@
 .admin-console-summary-panel dl {
   display: grid;
   gap: 10px;
+  padding: 0 20px 20px;
 }
 
 .admin-console-summary-panel dl div {

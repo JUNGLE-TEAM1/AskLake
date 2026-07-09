@@ -93,7 +93,14 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
           <AdminMetric label="감사 로그" value={`${auditLogs.length}`} />
         </div>
 
-        <section className="panel admin-console-panel">
+        <section className="xflow-review-card admin-console-panel">
+          <div className="xflow-review-card-header">
+            <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+            <div>
+              <h2>Governance Console</h2>
+              <p>사용자, 그룹, 리소스 grant, 감사 로그를 조회합니다.</p>
+            </div>
+          </div>
           <div className="admin-console-tabs" role="tablist" aria-label="관리 콘솔">
             {tabs.map(({ id, icon: Icon, label }) => (
               <button
@@ -123,8 +130,14 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
         </section>
       </div>
 
-      <aside className="summary-panel admin-console-summary-panel">
-        <h2>운영 기준</h2>
+      <aside className="xflow-review-card admin-console-summary-panel">
+        <div className="xflow-review-card-header">
+          <span className="xflow-review-icon"><ShieldCheck size={17} /></span>
+          <div>
+            <h2>운영 기준</h2>
+            <p>현재 PR의 권한 적용 범위입니다.</p>
+          </div>
+        </div>
         <dl>
           <div>
             <dt>인증</dt>
@@ -146,7 +159,7 @@ export function AdminConsolePage({ onAction }: AdminConsolePageProps) {
 
 function AdminMetric({ label, value }: { label: string; value: string }) {
   return (
-    <article className="review-mini-card admin-console-metric">
+    <article className="admin-console-metric">
       <strong>{value}</strong>
       <span>{label}</span>
     </article>

@@ -66,28 +66,34 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
         />
 
         {loading && (
-          <section className="panel">
-            <div className="panel-header">
-              <CircleUser size={18} />
-              <h2>프로필 로딩 중</h2>
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><CircleUser size={17} /></span>
+              <div>
+                <h2>프로필 로딩 중</h2>
+                <p>현재 세션의 계정 정보를 확인합니다.</p>
+              </div>
             </div>
             <InfoBox title="API 요청 처리 중" body="/api/users/me에서 현재 사용자 정보를 가져오고 있습니다." />
           </section>
         )}
 
         {!loading && error && (
-          <section className="panel">
-            <div className="panel-header">
-              <CircleUser size={18} />
-              <h2>프로필 오류</h2>
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><CircleUser size={17} /></span>
+              <div>
+                <h2>프로필 오류</h2>
+                <p>계정 정보를 불러오지 못했습니다.</p>
+              </div>
             </div>
             <InfoBox title="프로필 요청 실패" body={error} />
           </section>
         )}
 
         {!loading && currentUser && (
-          <>
-            <section className="panel profile-hero-panel">
+          <div className="xflow-review-stack profile-xflow-stack">
+            <section className="xflow-review-card profile-hero-panel">
               <div className="profile-hero">
                 <div className="profile-avatar" aria-hidden="true">{avatarInitials}</div>
                 <div>
@@ -99,15 +105,17 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
               </div>
             </section>
 
-            <section className="panel">
-              <div className="panel-header">
-                <ShieldCheck size={18} />
-                <h2>권한 요약</h2>
-                <span className="panel-note">{currentUser.permissionsSummary.canView}개 리소스 조회 가능</span>
+            <section className="xflow-review-card">
+              <div className="xflow-review-card-header">
+                <span className="xflow-review-icon permission"><ShieldCheck size={17} /></span>
+                <div>
+                  <h2>권한 요약</h2>
+                  <p>{currentUser.permissionsSummary.canView}개 리소스 조회 가능</p>
+                </div>
               </div>
               <div className="profile-permission-grid">
                 {permissionLabels.map(([key, label]) => (
-                  <article className="review-mini-card" key={key}>
+                  <article className="profile-permission-card" key={key}>
                     <strong>{label}</strong>
                     <span>{currentUser.permissionsSummary[key]}개</span>
                   </article>
@@ -115,11 +123,13 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
               </div>
             </section>
 
-            <section className="panel">
-              <div className="panel-header">
-                <Boxes size={18} />
-                <h2>소속 그룹</h2>
-                <span className="panel-note">{currentUser.groups.length}개 그룹</span>
+            <section className="xflow-review-card">
+              <div className="xflow-review-card-header">
+                <span className="xflow-review-icon schema"><Boxes size={17} /></span>
+                <div>
+                  <h2>소속 그룹</h2>
+                  <p>{currentUser.groups.length}개 그룹이 현재 actor principal로 계산됩니다.</p>
+                </div>
               </div>
               <div className="profile-group-list">
                 {currentUser.groups.map((group) => (
@@ -134,12 +144,18 @@ export function ProfilePage({ onAction }: ProfilePageProps) {
                 {currentUser.groups.length === 0 && <InfoBox title="소속 그룹 없음" body="현재 actor header에 연결된 그룹이 없습니다." />}
               </div>
             </section>
-          </>
+          </div>
         )}
       </div>
 
-      <aside className="summary-panel profile-summary-panel">
-        <h2>Actor Context</h2>
+      <aside className="xflow-review-card profile-summary-panel">
+        <div className="xflow-review-card-header">
+          <span className="xflow-review-icon"><CircleUser size={17} /></span>
+          <div>
+            <h2>Actor Context</h2>
+            <p>권한 계산에 사용하는 현재 계정 기준입니다.</p>
+          </div>
+        </div>
         <dl>
           <div>
             <dt>사용자</dt>
