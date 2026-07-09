@@ -266,6 +266,7 @@ npm run build
 | 2026-07-09 | #416에서 SQL/Dashboard dataset tree hover card shell을 `TreeHoverCard`로 전환하고 fixed tooltip/row/tree-library selector는 유지하기로 기록. |
 | 2026-07-09 | #418에서 ETL/Schedule/S3/DB picker 대표 form control을 `Input`, `NativeSelect`, `InputGroup`, `Checkbox` 기준으로 1차 교체하고, CSS selector 삭제는 후속 cleanup으로 보류. |
 | 2026-07-09 | #421에서 S3/ETL JSON/ETL asset/SQL/Dashboard tree row를 `TreeView`/`TreeRow` 기준으로 표준화하고 `@mui/x-tree-view`, MUI Tooltip, Emotion/MUI package 의존 제거를 기록. |
+| 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard share panel을 `Sheet`로 전환하고 직접 absolute menu/dialog selector를 정리. |
 
 ## #410 Modal Shell 꼬리 정리 CSS 기록
 
@@ -343,3 +344,22 @@ npm run build
 
 - `rg "@mui|@emotion|MuiTreeItem|MuiTooltip|SimpleTreeView"` 기준으로 코드/package 사용처 없음.
 - `cd frontend && npm run build` 통과. Vite chunk size warning과 기존 audit warning은 별도 범위로 유지.
+
+## #420 Navigation/Menu/Overlay Primitive CSS 기록
+
+이번 PR은 #419 Forms/Controls와 충돌하지 않도록 menu/overlay 사용처 중 화면 독립성이 높은 두 곳만 먼저 교체했다.
+
+| 범위 | 관련 selector | 이번 판단 |
+| --- | --- | --- |
+| Catalog sort menu | `.catalog-sort-control`, `.catalog-sort-menu button`, `.catalog-sort-menu button.active` | custom outside-click wrapper와 absolute menu 위치 CSS를 제거하고 `DropdownMenuContent`/`DropdownMenuRadioItem` 기준의 `.catalog-sort-menu`, `.catalog-sort-option[data-highlighted]`, `.catalog-sort-option[data-state="checked"]`만 유지. |
+| Dashboard runtime share panel | `.asklake-dashboard-share-panel`, `.asklake-dashboard-share-panel *` | inline custom `role="dialog"` panel을 `Sheet`로 전환하면서 기존 share panel selector를 제거. Sheet 전용 `.asklake-dashboard-share-sheet`, `.asklake-dashboard-share-sheet-body`, `.asklake-dashboard-share-link`, `.asklake-dashboard-share-sheet-footer`만 추가. |
+| DropdownMenu primitive icon | `frontend/src/components/ui/dropdown-menu.tsx` | repo의 vendored lucide export 기준에 맞춰 radio indicator icon을 `CircleDot`으로 변경. CSS selector 영향은 없고 build 안정화 목적. |
+
+유지/보류:
+
+- Dashboard list filter/action menu, SQL autocomplete popover, audit popover, destructive confirm은 이번 범위에서 제외한다.
+- `frontend/src/styles/catalog.css`, `frontend/src/styles/dashboard-runtime.css` 외 route CSS는 건드리지 않는다.
+
+검증:
+
+- `cd frontend && npm run build` 통과. Vite chunk size warning과 `npm audit` warning은 기존 dependency 범위로 유지.
