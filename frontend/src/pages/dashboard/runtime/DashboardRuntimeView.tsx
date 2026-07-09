@@ -8,6 +8,7 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
+import { ActionGroup } from "@/components/ui/action-group";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
@@ -147,7 +148,7 @@ function DashboardEditToolbar({
   onUndo: () => void;
 }) {
   return (
-    <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
+    <ActionGroup className="asklake-dashboard-edit-toolbar" density="compact" wrap="nowrap" role="toolbar" aria-label="대시보드 편집 도구">
       <button
         aria-label="AskLake 보조 패널"
         className={assistantActive ? "active asklake-toolbar-assistant" : "asklake-toolbar-assistant"}
@@ -175,7 +176,7 @@ function DashboardEditToolbar({
       <button aria-label="다시 실행" disabled={!canRedo} title="다시 실행" type="button" onClick={onRedo}>
         <Redo2 size={18} />
       </button>
-    </div>
+    </ActionGroup>
   );
 }
 

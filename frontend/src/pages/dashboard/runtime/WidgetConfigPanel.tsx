@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type SelectHTMLAttributes } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   Boxes,
@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
+import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
+import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
-import { selectTriggerVariants } from "@/components/ui/select";
+import { SettingsPanel } from "@/components/ui/settings-panel";
 import { cn } from "@/lib/utils";
 import type {
   DashboardRuntimeWidget,
@@ -101,13 +103,8 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
 ];
 const multiColorFallbackCount = 6;
 
-function NativeSelect({ className, ...props }: Omit<SelectHTMLAttributes<HTMLSelectElement>, "size">) {
-  return (
-    <select
-      className={cn(selectTriggerVariants({ className, size: "sm" }), "asklake-widget-select")}
-      {...props}
-    />
-  );
+function WidgetSelectField({ selectClassName, ...props }: ComponentProps<typeof NativeSelectField>) {
+  return <NativeSelectField selectClassName={cn("asklake-widget-select", selectClassName)} {...props} />;
 }
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
@@ -729,91 +726,90 @@ export function WidgetConfigPanel({
 
   if (!selectedDataset && !editingWidget) {
     return (
-      <section className="asklake-widget-config-panel empty">
-        <strong>데이터셋을 선택해 주세요</strong>
-        <span>왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다.</span>
-      </section>
+      <SettingsPanel
+        className="asklake-widget-config-panel empty"
+        description="왼쪽에서 데이터셋을 선택하면 위젯 설정을 만들 수 있습니다."
+        title="데이터셋을 선택해 주세요"
+      />
     );
   }
 
   return (
-    <section className="asklake-widget-config-panel">
-      <div className="asklake-widget-config-heading">
-        <div>
-          <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
-          <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+    <SettingsPanel
+      bodyClassName="contents"
+      className="asklake-widget-config-panel"
+      header={(
+        <div className="asklake-widget-config-heading">
+          <div>
+            <span>{isEditMode ? "선택된 위젯" : "데이터셋"}</span>
+            <strong>{isEditMode ? editingWidget?.title || "제목 없는 위젯" : selectedDataset?.name}</strong>
+          </div>
         </div>
-      </div>
-
+      )}
+    >
       <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
         {shouldShowDatasetSelect ? (
-          <label className="asklake-widget-dataset-field">
-            <span>데이터셋</span>
-            <NativeSelect
-              disabled={!datasets.length || !onSelectDataset}
-              value={selectedDatasetId ?? ""}
-              onChange={(event) => {
-                if (event.target.value) onSelectDataset?.(event.target.value);
-              }}
-            >
-              <option value="">데이터셋 선택</option>
-              {datasets.map((dataset) => (
-                <option key={dataset.id} value={dataset.id}>
-                  {dataset.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </label>
+          <WidgetSelectField
+            fieldClassName="asklake-widget-dataset-field"
+            label="데이터셋"
+            disabled={!datasets.length || !onSelectDataset}
+            value={selectedDatasetId ?? ""}
+            onChange={(event) => {
+              if (event.target.value) onSelectDataset?.(event.target.value);
+            }}
+          >
+            <option value="">데이터셋 선택</option>
+            {datasets.map((dataset) => (
+              <option key={dataset.id} value={dataset.id}>
+                {dataset.name}
+              </option>
+            ))}
+          </WidgetSelectField>
         ) : null}
-        <label>
-          <span>위젯 제목</span>
+        <FormFieldGroup label="위젯 제목">
           <Input
             size="sm"
             placeholder="제목 없는 위젯"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
-        </label>
+        </FormFieldGroup>
 
-        <label>
-          <span>설명</span>
+        <FormFieldGroup label="설명">
           <textarea
             placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
             rows={3}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
           />
-        </label>
+        </FormFieldGroup>
 
         <div className="asklake-widget-type-field">
           <span>위젯 타입</span>
-          <div className="asklake-widget-type-grid">
-            {dashboardWidgetTypeOptions.map((option) => {
+          <IconOptionGrid
+            ariaLabel="위젯 타입"
+            buttonClassName="asklake-widget-type-button"
+            className="asklake-widget-type-grid"
+            items={dashboardWidgetTypeOptions.map((option) => {
               const definition = dashboardWidgetDefinitions[option.value];
               const Icon = widgetTypeIcons[option.value];
-              const tooltip = `${definition.label}: ${definition.description}`;
-              const isSelected = type === option.value;
-              const showTooltip = (target: HTMLElement) => setWidgetTypeTooltip(createWidgetTypeTooltip(target, tooltip));
-              return (
-                <Button
-                  key={option.value}
-                  aria-label={tooltip}
-                  className={`asklake-widget-type-button${isSelected ? " selected" : ""}`}
-                  type="button"
-                  onBlur={() => setWidgetTypeTooltip(null)}
-                  onFocus={(event) => showTooltip(event.currentTarget)}
-                  onClick={() => {
-                    setCustomColorIndex(0);
-                    setType(option.value);
-                  }}
-                  onMouseEnter={(event) => showTooltip(event.currentTarget)}
-                  onMouseLeave={() => setWidgetTypeTooltip(null)}
-                >
-                  <Icon aria-hidden="true" size={18} strokeWidth={2.3} />
-                </Button>
-              );
+              return {
+                description: definition.description,
+                icon: <Icon aria-hidden="true" size={18} strokeWidth={2.3} />,
+                label: definition.label,
+                value: option.value,
+              };
             })}
-          </div>
+            value={type}
+            onOptionBlur={() => setWidgetTypeTooltip(null)}
+            onOptionFocus={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
+            onOptionMouseEnter={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
+            onOptionMouseLeave={() => setWidgetTypeTooltip(null)}
+            onValueChange={(nextType) => {
+              setCustomColorIndex(0);
+              setType(nextType);
+            }}
+          />
         </div>
 
         {colorSlotLabels.length > 0 && (
@@ -865,14 +861,13 @@ export function WidgetConfigPanel({
               {customColorOpen && (
                 <div className="asklake-widget-custom-color-panel">
                   <HexColorPicker color={activeCustomColor} onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)} />
-                  <label className="asklake-widget-hex-input">
-                    <span>HEX</span>
+                  <FormFieldGroup className="asklake-widget-hex-input" label="HEX">
                     <HexColorInput
                       prefixed
                       color={activeCustomColor}
                       onChange={(nextColor) => updateColorSlot(customColorIndex, nextColor)}
                     />
-                  </label>
+                  </FormFieldGroup>
                 </div>
               )}
             </div>
@@ -887,30 +882,21 @@ export function WidgetConfigPanel({
 
         {type === "metric" && (
           <>
-            <label>
-              <span>값</span>
-              <NativeSelect value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <NativeSelect value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>표시 형식</span>
-              <NativeSelect value={currentConfig.format ?? "number"} onChange={(event) => patchCurrentConfig({ format: event.target.value as DashboardWidgetFormat })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="표시 형식" value={currentConfig.format ?? "number"} onChange={(event) => patchCurrentConfig({ format: event.target.value as DashboardWidgetFormat })}>
                 {formatOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
@@ -929,24 +915,17 @@ export function WidgetConfigPanel({
                 </label>
               ))}
             </fieldset>
-            <label>
-              <span>기본 정렬 컬럼</span>
-              <NativeSelect value={currentConfig.sortKey ?? ""} onChange={(event) => patchCurrentConfig({ sortKey: event.target.value })}>
+            <WidgetSelectField label="기본 정렬 컬럼" value={currentConfig.sortKey ?? ""} onChange={(event) => patchCurrentConfig({ sortKey: event.target.value })}>
                 <option value="">선택 안 함</option>
                 {(currentConfig.columns ?? []).map((column) => (
                   <option key={column} value={column}>{column}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>정렬 방향</span>
-              <NativeSelect value={currentConfig.sortDirection ?? "asc"} onChange={(event) => patchCurrentConfig({ sortDirection: event.target.value as DashboardWidgetSortDirection })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="정렬 방향" value={currentConfig.sortDirection ?? "asc"} onChange={(event) => patchCurrentConfig({ sortDirection: event.target.value as DashboardWidgetSortDirection })}>
                 <option value="asc">오름차순</option>
                 <option value="desc">내림차순</option>
-              </NativeSelect>
-            </label>
-            <label>
-              <span>행 개수 제한</span>
+            </WidgetSelectField>
+            <FormFieldGroup label="행 개수 제한">
               <Input
                 size="sm"
                 min={1}
@@ -954,87 +933,63 @@ export function WidgetConfigPanel({
                 value={currentConfig.limit ?? 100}
                 onChange={(event) => patchCurrentConfig({ limit: Number(event.target.value) || 100 })}
               />
-            </label>
+            </FormFieldGroup>
           </>
         )}
 
         {(type === "bar_chart" || type === "line_chart" || type === "area_chart") && (
           <>
-            <label>
-              <span>X축</span>
-              <NativeSelect value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.allColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>Y축</span>
-              <NativeSelect value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <NativeSelect value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
+            </WidgetSelectField>
             {type === "bar_chart" && (
               <>
-                <label>
-                  <span>그룹 컬럼</span>
-                  <NativeSelect value={currentConfig.groupKey ?? ""} onChange={(event) => patchCurrentConfig({ groupKey: event.target.value })}>
+                <WidgetSelectField label="그룹 컬럼" value={currentConfig.groupKey ?? ""} onChange={(event) => patchCurrentConfig({ groupKey: event.target.value })}>
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
                     ))}
-                  </NativeSelect>
-                </label>
-                <label>
-                  <span>방향</span>
-                  <NativeSelect value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
+                </WidgetSelectField>
+                <WidgetSelectField label="방향" value={currentConfig.orientation ?? "vertical"} onChange={(event) => patchCurrentConfig({ orientation: event.target.value as DashboardWidgetOrientation })}>
                     {orientationOptions.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
-                  </NativeSelect>
-                </label>
+                </WidgetSelectField>
               </>
             )}
             {(type === "line_chart" || type === "area_chart") && (
               <>
-                <label>
-                  <span>시리즈 컬럼</span>
-                  <NativeSelect value={currentConfig.seriesKey ?? ""} onChange={(event) => patchCurrentConfig({ seriesKey: event.target.value })}>
+                <WidgetSelectField label="시리즈 컬럼" value={currentConfig.seriesKey ?? ""} onChange={(event) => patchCurrentConfig({ seriesKey: event.target.value })}>
                     <option value="">선택 안 함</option>
                     {columnGroups.dimensionColumns.map((column) => (
                       <option key={column.name} value={column.name}>{column.name}</option>
                     ))}
-                  </NativeSelect>
-                </label>
-              <label>
-                <span>날짜 단위</span>
-                <NativeSelect value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
+                </WidgetSelectField>
+              <WidgetSelectField label="날짜 단위" value={currentConfig.dateUnit ?? "month"} onChange={(event) => patchCurrentConfig({ dateUnit: event.target.value as DashboardWidgetDateUnit })}>
                   {dateUnitOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
-                </NativeSelect>
-              </label>
+              </WidgetSelectField>
               </>
             )}
             {type === "line_chart" && (
-              <label>
-                <span>선 모양</span>
-                <NativeSelect value={currentConfig.curve ?? "smooth"} onChange={(event) => patchCurrentConfig({ curve: event.target.value as DashboardWidgetLineCurve })}>
+              <WidgetSelectField label="선 모양" value={currentConfig.curve ?? "smooth"} onChange={(event) => patchCurrentConfig({ curve: event.target.value as DashboardWidgetLineCurve })}>
                   {curveOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
-                </NativeSelect>
-              </label>
+              </WidgetSelectField>
             )}
             {type === "area_chart" && (
               <label className="asklake-widget-checkbox-row">
@@ -1051,105 +1006,73 @@ export function WidgetConfigPanel({
 
         {(type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") && (
           <>
-            <label>
-              <span>분류</span>
-              <NativeSelect value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
+            <WidgetSelectField label="분류" value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
                 {(columnGroups.categoricalColumns.length ? columnGroups.categoricalColumns : columnGroups.dimensionColumns).map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>값</span>
-              <NativeSelect value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <NativeSelect value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {donutAggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
         {type === "radial_bar_chart" && (
           <>
-            <label>
-              <span>값</span>
-              <NativeSelect value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>분류</span>
-              <NativeSelect value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="분류" value={currentConfig.labelKey ?? ""} onChange={(event) => patchCurrentConfig({ labelKey: event.target.value })}>
                 <option value="">선택 안 함</option>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <NativeSelect value={currentConfig.aggregation ?? "avg"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "avg"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>최솟값</span>
+            </WidgetSelectField>
+            <FormFieldGroup label="최솟값">
               <Input size="sm" type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
-            </label>
-            <label>
-              <span>최댓값</span>
+            </FormFieldGroup>
+            <FormFieldGroup label="최댓값">
               <Input size="sm" type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
-            </label>
+            </FormFieldGroup>
           </>
         )}
 
         {type === "heatmap_chart" && (
           <>
-            <label>
-              <span>X축</span>
-              <NativeSelect value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
+            <WidgetSelectField label="X축" value={currentConfig.xKey ?? ""} onChange={(event) => patchCurrentConfig({ xKey: event.target.value })}>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>Y축</span>
-              <NativeSelect value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="Y축" value={currentConfig.yKey ?? ""} onChange={(event) => patchCurrentConfig({ yKey: event.target.value })}>
                 {columnGroups.dimensionColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>값</span>
-              <NativeSelect value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="값" value={currentConfig.valueKey ?? ""} onChange={(event) => patchCurrentConfig({ valueKey: event.target.value })}>
                 {columnGroups.numericColumns.map((column) => (
                   <option key={column.name} value={column.name}>{column.name}</option>
                 ))}
-              </NativeSelect>
-            </label>
-            <label>
-              <span>집계 방식</span>
-              <NativeSelect value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
+            </WidgetSelectField>
+            <WidgetSelectField label="집계 방식" value={currentConfig.aggregation ?? "sum"} onChange={(event) => patchCurrentConfig({ aggregation: event.target.value as DashboardWidgetAggregation })}>
                 {aggregationOptions.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
-              </NativeSelect>
-            </label>
+            </WidgetSelectField>
           </>
         )}
 
@@ -1174,6 +1097,6 @@ export function WidgetConfigPanel({
         </div>,
         document.body,
       )}
-    </section>
+    </SettingsPanel>
   );
 }

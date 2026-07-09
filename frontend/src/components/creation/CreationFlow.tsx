@@ -1,6 +1,8 @@
 import type React from "react";
 import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CommandBar } from "@/components/ui/command-bar";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { summaryByFlow } from "../../data/appShellData";
 import type { FlowId } from "../../types";
 
@@ -44,10 +46,10 @@ export function CreationTopActions({
   prevLabel?: string;
 }) {
   return (
-    <div className="creation-top-actions">
+    <CommandBar className="creation-top-actions" density="compact">
       <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
       <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
-    </div>
+    </CommandBar>
   );
 }
 
@@ -71,11 +73,11 @@ export function CreationPanelActions({
   withDivider?: boolean;
 }) {
   return (
-    <div className={withDivider ? "summary-actions permission-actions" : "summary-actions"}>
+    <CommandBar className={withDivider ? "summary-actions permission-actions" : "summary-actions"} density="compact">
       <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
       <Button className="secondary-button" type="button" variant="outline" onClick={onSave}>{saveLabel}</Button>
       <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
-    </div>
+    </CommandBar>
   );
 }
 
@@ -113,14 +115,12 @@ export function CreationSummaryPanel({
         <FileText size={18} />
         <h2>{title}</h2>
       </div>
-      <dl>
-        {rows.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{selected && label === "실행 방식" ? selected : value}</dd>
-          </div>
-        ))}
-      </dl>
+      <KeyValueList
+        items={rows.map(([label, value]) => ({
+          label,
+          value: selected && label === "실행 방식" ? selected : value,
+        }))}
+      />
       <p className="summary-hint">{hint}</p>
       <CreationPanelActions
         nextDisabled={nextDisabled}

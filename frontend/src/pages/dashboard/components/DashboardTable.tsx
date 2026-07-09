@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { TagList } from "@/components/ui/tag-list";
 import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
@@ -34,11 +37,14 @@ export function DashboardTable({
               >
                 {dashboard.name}
               </Button>
-              <span className="dashboard-row-tags">
-                {[...splitDashboardTags(dashboard.tags), dashboardStatusMeta[dashboard.status].label].map((tag, tagIndex) => (
-                  <span className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`}>{tag}</span>
+              <TagList className="dashboard-row-tags" density="compact">
+                {splitDashboardTags(dashboard.tags).map((tag, tagIndex) => (
+                  <Chip className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`} size="sm" tone="secondary">{tag}</Chip>
                 ))}
-              </span>
+                <StatusBadge className="dashboard-row-tag" size="sm" tone={dashboard.status === "published" ? "success" : "warning"}>
+                  {dashboardStatusMeta[dashboard.status].label}
+                </StatusBadge>
+              </TagList>
             </>
           );
         },

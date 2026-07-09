@@ -32,16 +32,25 @@ import {
   TerminalSquare,
   X,
 } from "lucide-react";
+import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Chip } from "@/components/ui/chip";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import { DetailTableSection } from "@/components/ui/detail-table-section";
+import { DialogShell } from "@/components/ui/dialog-shell";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
+import { KeyValueList } from "@/components/ui/key-value-list";
 import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
+import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
+import { TagList } from "@/components/ui/tag-list";
 import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
@@ -62,25 +71,24 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
-type BadgeVariant = React.ComponentProps<typeof Badge>["variant"];
 type JobActionButtonVariant = "destructive" | "outline" | "primary" | "subtle";
 
-function getJobStatusBadgeVariant(status: JobStatus): BadgeVariant {
-  if (status === "failed" || status === "canceled") return "destructive";
+function getJobStatusTone(status: JobStatus): StatusBadgeTone {
+  if (status === "failed" || status === "canceled") return "danger";
   if (status === "running") return "success";
   if (status === "paused") return "warning";
   return "default";
 }
 
-function getRunStatusBadgeVariant(status: JobRunStatus): BadgeVariant {
-  if (status === "failed" || status === "canceled") return "destructive";
+function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
+  if (status === "failed" || status === "canceled") return "danger";
   if (status === "success") return "success";
   if (status === "running") return "success";
   return "muted";
 }
 
-function getDagStatusBadgeVariant(status: JobDagStepStatus): BadgeVariant {
-  if (status === "failed") return "destructive";
+function getDagStatusTone(status: JobDagStepStatus): StatusBadgeTone {
+  if (status === "failed") return "danger";
   if (status === "success") return "success";
   if (status === "running") return "default";
   return "muted";
@@ -263,16 +271,19 @@ function JobsToolbar({
 
 function JobViewSwitch({ activeView, onCards, onTable }: { activeView: "cards" | "table"; onCards: () => void; onTable: () => void }) {
   return (
-    <div className="jobs-view-switch" aria-label="작업 목록 보기 방식">
-      <button className={activeView === "cards" ? "active" : ""} type="button" onClick={onCards} aria-pressed={activeView === "cards"}>
-        <LayoutGrid size={15} />
-        카드
-      </button>
-      <button className={activeView === "table" ? "active" : ""} type="button" onClick={onTable} aria-pressed={activeView === "table"}>
-        <Table2 size={15} />
-        TanStack Table
-      </button>
-    </div>
+    <SegmentedTabs
+      ariaLabel="작업 목록 보기 방식"
+      className="jobs-view-switch"
+      items={[
+        { icon: <LayoutGrid size={15} />, label: "카드", value: "cards" },
+        { icon: <Table2 size={15} />, label: "TanStack Table", value: "table" },
+      ]}
+      value={activeView}
+      onValueChange={(value) => {
+        if (value === "cards") onCards();
+        else onTable();
+      }}
+    />
   );
 }
 
@@ -335,37 +346,44 @@ function JobsCardSection({
                   <strong>{job.name}</strong>
                   <p>{job.id}</p>
                 </div>
-                <div className="job-owner">
-                  <Badge className="owner-chip" variant="outline">{job.owner}</Badge>
-                  <Badge className="tag-chip" variant="secondary">{job.tag}</Badge>
-                </div>
+                <TagList className="job-owner" density="compact">
+                  <Chip className="owner-chip" tone="outline">{job.owner}</Chip>
+                  <Chip className="tag-chip" tone="secondary">{job.tag}</Chip>
+                </TagList>
               </div>
               {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
-              <dl className="job-row-details">
-                <div><dt>소스</dt><dd>{job.source}</dd></div>
-                <div><dt>타깃</dt><dd>{job.target}</dd></div>
-                <div><dt>스케줄</dt><dd>{job.schedule}</dd></div>
-                <div>
-                  <dt>마지막 실행</dt>
-                  <dd>{formatCompactDateTime(job.lastRun)}</dd>
-                  <dd className={executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary"} title={executionDisplay.raw}>
-                    {executionDisplay.summary}
-                  </dd>
-                  {executionDisplay.hasRawLog && (
-                    <button className="job-inline-log-button" type="button" onClick={() => openJobLog(job)}>
-                      원문 로그
-                    </button>
-                  )}
-                </div>
-                <div><dt>다음 실행</dt><dd>{job.nextRun}</dd></div>
-              </dl>
-              <div className="job-row-actions">
+              <KeyValueList
+                className="job-row-details"
+                items={[
+                  { label: "소스", value: job.source },
+                  { label: "타깃", value: job.target },
+                  { label: "스케줄", value: job.schedule },
+                  {
+                    description: (
+                      <>
+                        {executionDisplay.summary}
+                        {executionDisplay.hasRawLog && (
+                          <button className="job-inline-log-button" type="button" onClick={() => openJobLog(job)}>
+                            원문 로그
+                          </button>
+                        )}
+                      </>
+                    ),
+                    descriptionClassName: executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary",
+                    descriptionTitle: executionDisplay.raw,
+                    label: "마지막 실행",
+                    value: formatCompactDateTime(job.lastRun),
+                  },
+                  { label: "다음 실행", value: job.nextRun },
+                ]}
+              />
+              <ActionGroup className="job-row-actions" density="compact">
                 {getJobListActions(job).map((action) => (
                   <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind, job)}>
                     {action.label}
                   </Button>
                 ))}
-              </div>
+              </ActionGroup>
             </div>
           </article>
         );
@@ -477,7 +495,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <Badge className="owner-chip" variant="outline">{row.original.job.owner}</Badge>,
+      cell: ({ row }) => <Chip className="owner-chip" tone="outline">{row.original.job.owner}</Chip>,
       header: "소유자",
       id: "owner",
       meta: {
@@ -753,19 +771,20 @@ function JobLogModal({ job, onClose }: { job: JobRowData; onClose: () => void })
   const failedRun = getLatestProblemRun(job);
 
   return (
-    <div className="job-log-modal" role="dialog" aria-modal="true" aria-label={`${job.name} 원문 로그`} onClick={onClose}>
-      <section onClick={(event) => event.stopPropagation()}>
-        <header className="job-log-modal-header">
-          <div>
-            <span>{failedRun?.runId ?? job.id}</span>
-            <h2>{job.name}</h2>
-            <p>{executionDisplay.stage} · {executionDisplay.summary}</p>
-          </div>
-          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-        </header>
-        <pre>{executionDisplay.raw}</pre>
-      </section>
-    </div>
+    <DialogShell
+      bodyClassName="p-0"
+      contentClassName="w-[min(920px,calc(100vw-2rem))] max-h-[min(720px,calc(100vh-2rem))] overflow-hidden"
+      description={`${executionDisplay.stage} · ${executionDisplay.summary}`}
+      eyebrow={failedRun?.runId ?? job.id}
+      headerActions={(
+        <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
+      )}
+      headerClassName="job-log-modal-header"
+      onClose={onClose}
+      title={job.name}
+    >
+      <pre className="m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words bg-slate-900 px-5 py-4 font-mono text-xs leading-6 text-blue-100">{executionDisplay.raw}</pre>
+    </DialogShell>
   );
 }
 
@@ -869,7 +888,7 @@ function truncateText(value: string, maxLength: number) {
 
 function StatusPill({ status }: { status: JobStatus }) {
   const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <Badge className={`status-pill ${statusClass}`} variant={getJobStatusBadgeVariant(status)}>{jobStatusMeta[status].label}</Badge>;
+  return <StatusBadge className={`status-pill ${statusClass}`} tone={getJobStatusTone(status)}>{jobStatusMeta[status].label}</StatusBadge>;
 }
 
 function JobProgress({ label, value }: { label: string; value: number }) {
@@ -991,22 +1010,31 @@ function JobDetailHeader({
       <div className="job-detail-title-row">
         <div>
           <h1>{job.name}</h1>
-          <div className="job-detail-meta">
+          <TagList className="job-detail-meta" density="compact">
             <StatusPill status={job.status} />
-            <Badge className="owner-chip" variant="outline">Owner: {job.owner}</Badge>
-            <Badge className="tag-chip" variant="secondary">{job.tag.replace("[", "").replace("]", "")}</Badge>
-          </div>
+            <Chip className="owner-chip" tone="outline">Owner: {job.owner}</Chip>
+            <Chip className="tag-chip" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
+          </TagList>
         </div>
-        <div className="job-detail-actions">
+        <ActionGroup className="job-detail-actions" density="compact">
           {getJobDetailActions(job).map((action) => (
             <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
           ))}
-        </div>
+        </ActionGroup>
       </div>
-      <nav className="job-detail-tabs" aria-label="작업 상세 탭">
-        <button className={activeTab === "detail" ? "active" : ""} type="button" onClick={onDetail}>작업 상세 정보</button>
-        <button className={activeTab === "runs" ? "active" : ""} type="button" onClick={onRuns}>실행 이력</button>
-      </nav>
+      <SegmentedTabs
+        ariaLabel="작업 상세 탭"
+        className="job-detail-tabs"
+        items={[
+          { label: "작업 상세 정보", value: "detail" },
+          { label: "실행 이력", value: "runs" },
+        ]}
+        value={activeTab}
+        onValueChange={(value) => {
+          if (value === "detail") onDetail();
+          else onRuns();
+        }}
+      />
     </header>
   );
 }
@@ -1066,12 +1094,15 @@ export function JobDetailPage({
           </article>
           <article className="job-detail-card metadata-card">
             <h3>기본 메타</h3>
-            <dl className="detail-plain-kv-grid">
-              <div><dt>Job ID</dt><dd>{job.id}</dd></div>
-              <div><dt>Target</dt><dd>{job.target}</dd></div>
-              <div className="wide"><dt>소스</dt><dd>{job.source}</dd></div>
-              <div className="wide"><dt>운영 조직</dt><dd>{job.owner === "admin" ? "Data Platform" : "Analytics Ops"}</dd></div>
-            </dl>
+            <KeyValueList
+              className="detail-plain-kv-grid"
+              items={[
+                { label: "Job ID", value: job.id },
+                { label: "Target", value: job.target },
+                { className: "wide", label: "소스", value: job.source },
+                { className: "wide", label: "운영 조직", value: job.owner === "admin" ? "Data Platform" : "Analytics Ops" },
+              ]}
+            />
           </article>
         </div>
       </section>
@@ -1120,11 +1151,12 @@ export function JobDetailPage({
           <span className="disclosure-indicator">펼치기</span>
         </summary>
         <div className="job-detail-disclosure-body">
-        <article className="detail-table-card">
-          <div className="detail-table-header">
-            <h3>스키마 매핑</h3>
-            <span>5 컬럼</span>
-          </div>
+        <DetailTableSection
+          className="detail-table-card"
+          headerClassName="detail-table-header"
+          meta={<span>5 컬럼</span>}
+          title="스키마 매핑"
+        >
           <table className="schema-table detail-table">
             <thead>
               <tr>
@@ -1142,12 +1174,13 @@ export function JobDetailPage({
               ))}
             </tbody>
           </table>
-        </article>
-        <article className="detail-table-card">
-          <div className="detail-table-header">
-            <h3>변환 규칙</h3>
-            <span>{ruleRows.length} rules</span>
-          </div>
+        </DetailTableSection>
+        <DetailTableSection
+          className="detail-table-card"
+          headerClassName="detail-table-header"
+          meta={<span>{ruleRows.length} rules</span>}
+          title="변환 규칙"
+        >
           <table className="schema-table detail-table">
             <thead>
               <tr>
@@ -1163,7 +1196,7 @@ export function JobDetailPage({
               ))}
             </tbody>
           </table>
-        </article>
+        </DetailTableSection>
         </div>
       </details>
 
@@ -1251,9 +1284,24 @@ export function JobRunsPage({
           </div>
         </div>
 
-        <article className="runs-table-card">
-          <div className="runs-table-scroll">
-            <table className="runs-table">
+        <DetailTableSection
+          className="runs-table-card"
+          footer={
+            <PaginationBar
+              buttonSize="icon"
+              className="runs-pagination"
+              nextLabel="›"
+              onNext={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}
+              onPrevious={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}
+              previousLabel="‹"
+              rangeLabel={`Showing ${runs.length ? `1-${runs.length}` : "0"} of ${runs.length}`}
+            />
+          }
+          headerClassName="sr-only"
+          scrollClassName="runs-table-scroll"
+          title="실행 이력"
+        >
+          <table className="runs-table">
             <thead>
               <tr>
                 <th>Run ID</th>
@@ -1294,15 +1342,7 @@ export function JobRunsPage({
               ))}
             </tbody>
           </table>
-          </div>
-          <div className="runs-pagination">
-            <span>Showing {runs.length ? `1-${runs.length}` : "0"} of {runs.length}</span>
-            <div>
-              <IconButton label="이전 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}>‹</IconButton>
-              <IconButton label="다음 페이지" size="xs" type="button" variant="outline" onClick={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}>›</IconButton>
-            </div>
-          </div>
-        </article>
+        </DetailTableSection>
       </section>
       {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
       {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
@@ -1314,10 +1354,10 @@ function RunStatusPill({ status }: { status: JobRunStatus }) {
   const statusMeta = runStatusMeta[status];
 
   return (
-    <Badge className={`run-status-pill ${statusMeta.className}`} variant={getRunStatusBadgeVariant(status)}>
+    <StatusBadge className={`run-status-pill ${statusMeta.className}`} tone={getRunStatusTone(status)}>
       {status === "running" && <span className="run-status-dot" />}
       {statusMeta.label}
-    </Badge>
+    </StatusBadge>
   );
 }
 
@@ -1334,19 +1374,20 @@ function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => vo
   const logBody = normalizeWhitespace(run.errorSummary) || "표시할 로그가 없습니다.";
 
   return (
-    <div className="job-log-modal" role="dialog" aria-modal="true" aria-label={`${run.runId} 로그`} onClick={onClose}>
-      <section onClick={(event) => event.stopPropagation()}>
-        <header className="job-log-modal-header">
-          <div>
-            <span>{run.runId} · {runStatusMeta[run.status].label}</span>
-            <h2>{job.name}</h2>
-            <p>{run.failedStage} · {formatCompactDateTime(run.startedAt)} - {formatCompactDateTime(run.endedAt)}</p>
-          </div>
-          <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-        </header>
-        <pre>{logBody}</pre>
-      </section>
-    </div>
+    <DialogShell
+      bodyClassName="p-0"
+      contentClassName="w-[min(920px,calc(100vw-2rem))] max-h-[min(720px,calc(100vh-2rem))] overflow-hidden"
+      description={`${run.failedStage} · ${formatCompactDateTime(run.startedAt)} - ${formatCompactDateTime(run.endedAt)}`}
+      eyebrow={`${run.runId} · ${runStatusMeta[run.status].label}`}
+      headerActions={(
+        <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
+      )}
+      headerClassName="job-log-modal-header"
+      onClose={onClose}
+      title={job.name}
+    >
+      <pre className="m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words bg-slate-900 px-5 py-4 font-mono text-xs leading-6 text-blue-100">{logBody}</pre>
+    </DialogShell>
   );
 }
 
@@ -1478,7 +1519,7 @@ function DagSummaryCard({ helper, label, value }: { helper?: string; label: stri
 
 function DagStatePill({ status }: { status: JobDagStepStatus }) {
   const statusMeta = dagStepStatusMeta[status];
-  return <Badge className={`dag-state-pill ${statusMeta.className}`} variant={getDagStatusBadgeVariant(status)}>{statusMeta.label}</Badge>;
+  return <StatusBadge className={`dag-state-pill ${statusMeta.className}`} tone={getDagStatusTone(status)}>{statusMeta.label}</StatusBadge>;
 }
 
 function DagStepNode({
