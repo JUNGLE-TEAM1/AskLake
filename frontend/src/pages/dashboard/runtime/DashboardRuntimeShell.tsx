@@ -13,6 +13,7 @@ type RuntimeNotice = {
 };
 
 export function DashboardRuntimeShell({
+  canManage = true,
   children,
   datasetSidebar,
   datasetSidebarOpen = false,
@@ -42,6 +43,7 @@ export function DashboardRuntimeShell({
   shareLink,
   title,
 }: {
+  canManage?: boolean;
   children: React.ReactNode;
   datasetSidebar?: React.ReactNode;
   datasetSidebarOpen?: boolean;
@@ -83,6 +85,7 @@ export function DashboardRuntimeShell({
   return (
     <div className="asklake-dashboard-runtime">
       <DashboardTopBar
+        canManage={canManage}
         hasPublishedRevision={hasPublishedRevision}
         isPublishing={isPublishing}
         isRenaming={isRenamingTitle}
@@ -125,6 +128,7 @@ export function DashboardRuntimeShell({
           </button>
         )}
         <DashboardPageTabs
+          canManage={canManage}
           isAddingPage={isAddingPage}
           mode={mode}
           pages={pages}

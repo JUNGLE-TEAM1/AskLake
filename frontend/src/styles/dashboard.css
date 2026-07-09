@@ -848,6 +848,17 @@
   background: #f8fafc;
 }
 
+.dashboard-owner-stack {
+  display: grid;
+  gap: 3px;
+}
+
+.dashboard-owner-stack small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 650;
+}
+
 .dashboard-list-count {
   color: #64748b;
   font-size: 13px;

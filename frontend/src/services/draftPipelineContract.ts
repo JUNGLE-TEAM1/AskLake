@@ -25,6 +25,8 @@ export const watermarkWindowModeLabels: Record<WatermarkWindowMode, string> = {
 
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
   const targetDataset = draft.target.datasetName.trim();
+  const partitionColumns = normalizeStringList(draft.target.partitionColumns);
+  const targetTags = normalizeStringList(draft.target.tags);
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   const watermarkPolicy = normalizeWatermarkPolicy(draft.schedule.watermarkPolicy);
   return {
@@ -58,15 +60,23 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
     compression: draft.target.compression,
-    partition: draft.target.partition,
+    partition: partitionColumns.length > 0 ? partitionColumns.join("/") : draft.target.partition,
+    partitionColumns,
+    indexColumns: normalizeStringList(draft.target.indexColumns),
     storagePath: draft.target.storagePath,
     storageType: draft.target.storageType,
     targetDataset,
+    targetDescription: draft.target.description?.trim(),
+    targetTags,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
     transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
+}
+
+function normalizeStringList(values: string[] | undefined): string[] {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
 }
 
 function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {

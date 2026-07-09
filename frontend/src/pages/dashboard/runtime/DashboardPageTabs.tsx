@@ -7,6 +7,7 @@ type DashboardPageTab = {
 };
 
 export function DashboardPageTabs({
+  canManage = true,
   isAddingPage = false,
   mode,
   onAddPage,
@@ -17,6 +18,7 @@ export function DashboardPageTabs({
   renamingPageId,
   selectedPageId,
 }: {
+  canManage?: boolean;
   isAddingPage?: boolean;
   mode: "published" | "draft";
   onAddPage?: () => void;
@@ -104,7 +106,7 @@ export function DashboardPageTabs({
                 {page.title}
               </button>
             )}
-            {mode === "draft" && isSelected && !isEditing && (
+            {mode === "draft" && canManage && isSelected && !isEditing && (
               <button
                 className="asklake-dashboard-tab-rename"
                 type="button"
@@ -117,7 +119,7 @@ export function DashboardPageTabs({
                 <Pencil size={13} />
               </button>
             )}
-            {mode === "draft" && !isEditing && (
+            {mode === "draft" && canManage && !isEditing && (
               <button
                 className="asklake-dashboard-tab-delete"
                 type="button"
@@ -134,7 +136,7 @@ export function DashboardPageTabs({
           </span>
         );
       })}
-      {mode === "draft" && (
+      {mode === "draft" && canManage && (
         <button
           className="asklake-dashboard-tab-add"
           disabled={isAddingPage}
