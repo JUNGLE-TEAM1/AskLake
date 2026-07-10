@@ -68,7 +68,7 @@ type LineageTableNodeData = Record<string, unknown> & {
   onColumnSelect: (columnKey: string | null) => void;
   relatedColumnKeys: string[] | null;
   tableName: string;
-  tone: "source" | "bronze" | "silver" | "gold" | "downstream";
+  tone: "source" | "process" | "bronze" | "silver" | "gold" | "downstream";
 };
 
 const lineageNodeTypes = {
@@ -1328,7 +1328,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       )}
       <div className="catalog-lineage-footer">
-        <span>상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></span>
+        <span>상위 데이터셋 <strong>{countUpstreamDatasets(lineageGraph)}개</strong></span>
         <span>레이어 <strong>{dataset.layer}</strong></span>
         <span>상태 <strong>{statusMeta.label}</strong></span>
       </div>
@@ -1433,7 +1433,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
     ].filter(Boolean).join(" ")}>
       <header className="xflow-schema-header">
         <div className="xflow-schema-icon">
-          <Table2 size={18} />
+          {data.tone === "process" ? <Settings size={18} /> : <Table2 size={18} />}
         </div>
         <div className="xflow-schema-title">
           <strong title={data.tableName}>{data.tableName}</strong>
@@ -1619,6 +1619,11 @@ function getMaxColumnCount(datasets: LineageGraphDataset[]): number {
   return Math.max(...datasets.map((dataset) => dataset.columns.length), 1);
 }
 
+function countUpstreamDatasets(graph: LineageGraph | null): number {
+  if (!graph) return 0;
+  return graph.datasets.filter((item) => item.id !== graph.datasetId && item.layer !== "PROCESS").length;
+}
+
 function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): LineageTableNodeData["handleMode"] {
   if (hasIncoming && hasOutgoing) return "both";
   if (hasIncoming) return "target";
@@ -1627,6 +1632,7 @@ function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): Linea
 
 function getLineageLayerLabel(layer: LineageLayer): string {
   if (layer === "SOURCE") return "SOURCE";
+  if (layer === "PROCESS") return "PROCESS";
   if (layer === "CONSUMER") return "CONSUMER";
   return `${layer} LAYER`;
 }
@@ -1635,6 +1641,7 @@ function getLayerTone(layer: LineageLayer): LineageTableNodeData["tone"] {
   if (layer === "GOLD") return "gold";
   if (layer === "SILVER") return "silver";
   if (layer === "BRONZE") return "bronze";
+  if (layer === "PROCESS") return "process";
   if (layer === "CONSUMER") return "downstream";
   return "source";
 }

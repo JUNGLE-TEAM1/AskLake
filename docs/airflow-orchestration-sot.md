@@ -290,9 +290,10 @@ In scope:
 - One stable Airflow DAG for AskLake ETL execution, for example
   `asklake_etl_job`.
 - DAG run configuration passed through `dag_run.conf`.
-- Existing Spark runner reused from Airflow task execution.
+- Existing Spark runner reused through the authenticated AskLake internal execution endpoint invoked by the Airflow task.
 - AskLake remains the source of truth for user-facing job and dataset metadata.
 - Airflow is the source of truth for orchestration state while a run is active.
+- AskLake accepts Airflow `success` only when the same run id has persisted Spark output metadata and a successful Catalog materialization.
 
 Out of scope for v1:
 

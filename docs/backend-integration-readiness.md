@@ -109,7 +109,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 `POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
 
-현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. smoke DAG는 `airflow/dags/asklake_etl_job.py`이며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. `airflow/dags/asklake_etl_job.py`는 backend 내부 실행 endpoint를 통해 기존 Spark runner를 호출하는 ETL DAG이며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
 
 필수 Airflow 환경변수:
 
@@ -118,8 +118,11 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_UI_BASE_URL`: Airflow UI link 생성용 optional base URL
 - `AIRFLOW_API_TOKEN` 또는 `AIRFLOW_USERNAME`/`AIRFLOW_PASSWORD`: Airflow API 인증
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: API timeout, 기본값 `10`
+- `AIRFLOW_INTERNAL_BASE_URL`: Airflow task에서 접근 가능한 backend URL. local Docker는 `http://host.docker.internal:8080`, production Compose는 `http://backend:8080`
+- `AIRFLOW_INTERNAL_TOKEN`: Airflow task와 backend가 공유하는 내부 실행 토큰
+- `AIRFLOW_INTERNAL_TIMEOUT_SECONDS`: Spark 실행 HTTP timeout, local 기본값 `1800`
 
-Airflow DAG task는 기존 Spark runner를 호출하는 orchestration boundary로 둔다.
+Airflow DAG task는 내부 인증 endpoint를 거쳐 기존 Spark runner를 호출하는 orchestration boundary로 둔다. Spark 성공과 Catalog materialization이 같은 backend transaction으로 저장된 뒤에만 `catalog_update` task가 성공한다. Airflow terminal state만 성공이고 같은 `runId`의 Catalog materialization이 없으면 backend가 Run을 실패로 보정한다.
 
 Spark runner 입력:
 
@@ -172,7 +175,8 @@ FastAPI Pair2 smoke:
 - 이미 실행 중인 FastAPI를 대상으로 볼 때는 `ASKLAKE_FASTAPI_SMOKE_START_SERVER=false`와 `ASKLAKE_FASTAPI_SMOKE_BASE_URL`을 지정한다.
 - `npm run verify:permission-dataset`는 권한 없는 viewer의 dataset 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다. 기본 포트는 `18087`이며 `ASKLAKE_PERMISSION_DATASET_PORT`로 바꿀 수 있다.
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
-- `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
+- `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 Airflow 내부 실행 endpoint를 통해 FastAPI ETL job을 실제 실행하고, 동일 Run 재호출의 idempotency와 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
+- `npm run verify:etl-lineage`는 text source 하나가 `text`, `sentiment`, `severity`로 파생되는 경우 source node가 `text`만 갖고 one-to-many transform edge를 만들며 `_asklake_*` metadata에 가짜 source edge를 만들지 않는지 확인한다. 또한 Parquet source를 `SOURCE · PARQUET`, Spark Job을 `PROCESS · SPARK`, Parquet target을 실제 layer의 `PARQUET` engine으로 표시하는지 검증한다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
 - `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
 

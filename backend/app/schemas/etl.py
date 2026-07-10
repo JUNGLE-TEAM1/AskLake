@@ -336,6 +336,25 @@ class JobCommandResponse(CamelModel):
     processing_result: dict[str, Any] | None = None
 
 
+class AirflowRunExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+
+
+class AirflowRunExecutionResponse(CamelModel):
+    status: Literal["success", "failed"]
+    job_id: str
+    run_id: str
+    dataset_id: str | None = None
+    input_rows: int = 0
+    output_rows: int = 0
+    output_path: str = "-"
+    duration_ms: int | None = None
+    schema_: list[dict[str, Any]] = Field(default_factory=list, alias="schema")
+    quality: dict[str, Any] | None = None
+    failed_stage: str | None = None
+    error: str | None = None
+
+
 class ScheduledJobRunRequest(CamelModel):
     force: bool = False
     job_id: str | None = None
