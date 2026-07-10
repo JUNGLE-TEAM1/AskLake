@@ -1,8 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Loader2, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import type { DashboardRuntimeWidget } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -16,6 +13,7 @@ import {
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
@@ -66,14 +64,13 @@ export function DashboardAssistantPanel({
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
-  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
   }, [selectedWidget, widgets]);
 
-  const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
 
@@ -195,19 +192,18 @@ export function DashboardAssistantPanel({
         </div>
       )}
 
-      <form className="asklake-assistant-form" onSubmit={(event) => void submitQuestion(event)}>
-        <Textarea
-          aria-label="AskLake 질문"
-          placeholder="AskLake에게 질문하세요."
-          ref={promptInputRef}
-          rows={3}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-        <Button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
-          {isSubmitting ? <Loader2 className="spin" /> : <Send />}
-        </Button>
-      </form>
+      <VisualizationPromptInput
+        ariaLabel="AskLake 질문"
+        isSubmitting={isSubmitting}
+        placeholder="AskLake에게 질문하세요."
+        ref={promptInputRef}
+        rows={3}
+        submitAriaLabel="질문 보내기"
+        textareaClassName="min-h-[72px] px-3 py-2 text-sm font-medium"
+        value={prompt}
+        onSubmit={() => void submitQuestion()}
+        onValueChange={setPrompt}
+      />
 
       {error && <span className="asklake-assistant-error">{error}</span>}
     </section>

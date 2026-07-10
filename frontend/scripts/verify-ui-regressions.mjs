@@ -103,6 +103,41 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard assistant reuses the visualization prompt input composition",
+    file: "src/pages/dashboard/runtime/DashboardAssistantPanel.tsx",
+    patterns: [
+      /import \{ VisualizationPromptInput, type VisualizationPromptInputHandle \} from "\.\/VisualizationPromptInput";/,
+      /const promptInputRef = useRef<VisualizationPromptInputHandle \| null>\(null\);/,
+      /<VisualizationPromptInput[\s\S]*ariaLabel="AskLake 질문"[\s\S]*rows=\{3\}[\s\S]*submitAriaLabel="질문 보내기"[\s\S]*onSubmit=\{\(\) => void submitQuestion\(\)\}/s,
+    ],
+    forbiddenPatterns: [
+      /<Textarea/,
+      /<Button aria-label="질문 보내기"/,
+    ],
+  },
+  {
+    name: "Visualization request widget uses a reusable shadcn prompt input",
+    file: "src/pages/dashboard/runtime/VisualizationPromptInput.tsx",
+    patterns: [
+      /import \{ InputGroup, InputGroupTextarea \} from "@\/components\/ui\/input-group";/,
+      /<InputGroup className="items-end p-1\.5">/,
+      /<InputGroupTextarea/,
+      /<Button aria-label=\{submitAriaLabel\} disabled=\{!canSubmit\} size="icon" type="submit">/,
+      /if \(event\.key === "Escape"\)/,
+    ],
+  },
+  {
+    name: "Visualization request widget delegates prompt UI to the reusable module",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /import \{ VisualizationPromptInput, type VisualizationPromptInputHandle \} from "\.\/VisualizationPromptInput";/,
+      /<VisualizationPromptInput[\s\S]*onSubmit=\{\(\) => void savePrompt\(\)\}/s,
+    ],
+    forbiddenPatterns: [
+      /asklake-visualization-request-nessi-icon/,
+    ],
+  },
+  {
     name: "Dashboard widget basics use shadcn form and single ToggleGroup composition",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [

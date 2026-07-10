@@ -176,9 +176,6 @@
 .asklake-widget-create-button:focus-visible,
 .asklake-widget-secondary-button:focus-visible,
 .asklake-assistant-context select:focus-visible,
-.asklake-assistant-form textarea:focus-visible,
-.asklake-assistant-form select:focus-visible,
-.asklake-assistant-form button:focus-visible,
 .asklake-dashboard-share-sheet button:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.25);
   outline-offset: 2px;
@@ -1016,13 +1013,6 @@
   padding: 18px 20px;
 }
 
-.asklake-visualization-request-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
-  gap: 8px;
-}
-
-.asklake-visualization-request-form input,
 .asklake-text-placeholder-widget textarea {
   width: 100%;
   min-width: 0;
@@ -1036,12 +1026,6 @@
   line-height: 1.4;
 }
 
-.asklake-visualization-request-form input {
-  height: 42px;
-  padding: 0 14px;
-}
-
-.asklake-visualization-request-form button,
 .asklake-text-placeholder-actions button {
   display: inline-flex;
   min-height: 38px;
@@ -1056,17 +1040,9 @@
   padding: 0 12px;
 }
 
-.asklake-visualization-request-form button:disabled,
 .asklake-text-placeholder-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.56;
-}
-
-.asklake-visualization-request-nessi-icon {
-  display: block;
-  width: 20px;
-  height: 20px;
-  object-fit: contain;
 }
 
 .asklake-visualization-request-widget p {
@@ -1817,63 +1793,6 @@
   min-height: 0;
 }
 
-.asklake-assistant-form {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1fr) 42px;
-  align-items: end;
-  gap: 8px;
-  width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.06);
-  padding: 8px;
-}
-
-.asklake-assistant-form textarea {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  max-height: 96px;
-  border: 0;
-  background: transparent;
-  color: var(--dash-text);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 750;
-  line-height: 1.45;
-  padding: 6px 4px;
-  resize: none;
-}
-
-.asklake-assistant-form textarea:focus-visible {
-  outline: 0;
-}
-
-.asklake-assistant-form button {
-  display: inline-flex;
-  width: 42px;
-  min-width: 42px;
-  min-height: 42px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #93c5fd;
-  border-radius: 6px;
-  background: #dbeafe;
-  color: #ffffff;
-  padding: 0;
-}
-
-.asklake-assistant-form button:not(:disabled) {
-  border-color: #2563eb;
-  background: #2563eb;
-}
-
-.asklake-assistant-form button:disabled {
-  cursor: not-allowed;
-  opacity: 0.56;
-}
 
 .asklake-assistant-error {
   color: #b91c1c;
