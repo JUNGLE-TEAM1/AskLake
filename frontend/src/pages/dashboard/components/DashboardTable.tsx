@@ -60,19 +60,24 @@ export function DashboardTable({
           const tags = localizeDashboardTags(dashboard.tags);
           const dashboardName = localizeDashboardName(dashboard);
           return (
-            <DataTableStackedCell className="gap-1.5">
-              <Button
-                className="h-auto min-w-0 justify-start truncate px-0 py-0 text-xl font-semibold leading-7 text-slate-950"
-                type="button"
-                variant="link"
-                onClick={() => onOpenDetail(dashboard)}
-              >
-                {dashboardName}
-              </Button>
-              <DataTableCellSecondary className="text-base" title={tags.join(" · ")}>
-                {tags.length ? tags.join(" · ") : "태그 없음"}
-              </DataTableCellSecondary>
-            </DataTableStackedCell>
+            <Button
+              className="min-h-[72px] w-full justify-start rounded-none px-0 py-0 text-left hover:bg-transparent"
+              type="button"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetail(dashboard);
+              }}
+            >
+              <DataTableStackedCell className="w-full gap-1.5">
+                <span className="truncate text-xl font-semibold leading-7 text-slate-950">
+                  {dashboardName}
+                </span>
+                <DataTableCellSecondary className="text-base" title={tags.join(" · ")}>
+                  {tags.length ? tags.join(" · ") : "태그 없음"}
+                </DataTableCellSecondary>
+              </DataTableStackedCell>
+            </Button>
           );
         },
         header: "대시보드",
@@ -153,6 +158,7 @@ export function DashboardTable({
       }}
       getRowId={(dashboard) => dashboard.id}
       headerRowClassName="h-[68px] bg-white"
+      onRowClick={(row) => onOpenDetail(row.original)}
       tableClassName="dashboard-list-data-table"
       viewportClassName="dashboard-table-viewport"
       renderRowActions={(row) => (
@@ -164,7 +170,10 @@ export function DashboardTable({
           type="button"
           variant="ghost"
           size="icon"
-          onClick={() => onRequestDelete(row.original)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRequestDelete(row.original);
+          }}
         >
           <Trash2 />
         </Button>

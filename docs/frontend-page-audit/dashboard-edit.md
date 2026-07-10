@@ -124,3 +124,4 @@
 - radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
 - 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
+- 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.

@@ -600,13 +600,22 @@
   margin: 0;
 }
 
-.asklake-dashboard-canvas-wrap {
+.asklake-dashboard-canvas-scroll-area {
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  background: #ffffff;
+}
+
+.asklake-dashboard-canvas-scroll-viewport > div {
+  min-height: 100%;
+}
+
+.asklake-dashboard-canvas-wrap {
+  min-width: 0;
+  min-height: 100%;
+  overflow: visible;
   background: #ffffff;
   padding: 20px 24px 24px;
-  scrollbar-gutter: stable;
 }
 
 .asklake-dashboard-edit-stage {

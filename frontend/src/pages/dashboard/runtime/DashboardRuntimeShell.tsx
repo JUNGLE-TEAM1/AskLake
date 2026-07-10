@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Database } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
   SheetContent,
@@ -212,9 +213,15 @@ export function DashboardRuntimeShell({
       </div>
       <div className={workspaceClassName}>
         {datasetSidebar}
-        <main className={mode === "draft" ? "asklake-dashboard-canvas-wrap edit" : "asklake-dashboard-canvas-wrap"}>
-          {children}
-        </main>
+        <ScrollArea
+          className="asklake-dashboard-canvas-scroll-area"
+          scrollbars="both"
+          viewportProps={{ className: "asklake-dashboard-canvas-scroll-viewport" }}
+        >
+          <main className={mode === "draft" ? "asklake-dashboard-canvas-wrap edit" : "asklake-dashboard-canvas-wrap"}>
+            {children}
+          </main>
+        </ScrollArea>
         {inspector}
       </div>
     </div>

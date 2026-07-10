@@ -116,3 +116,4 @@
 - 기존 `Chip`, `TagList`, `dashboard-row-*` 전용 CSS를 제거하고 shadcn variant와 utility layout으로 대체했다.
 - 검색, owner/tag filter, server pagination, 상세 이동, 삭제 dialog 계약은 유지한다.
 - 기본 목록 fixture의 상태, 대시보드명, 태그, 소유자 표시값을 한글로 통일하고 masthead 아이콘과 제목의 상단 기준선을 맞췄다.
+- 삭제 action을 제외한 목록 row 전체를 상세 진입 영역으로 확장하고 Enter/Space 키보드 진입을 지원한다.
