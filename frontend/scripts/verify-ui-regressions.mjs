@@ -18,6 +18,7 @@ const checks = [
       /data-sql-tab-indicator=""[\s\S]*layoutId="sql-tools-active-tab"/,
       /transition=\{\{ type: "spring", stiffness: 420, damping: 32 \}\}/,
       /className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3"/,
+      /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
       /<Slider[\s\S]*max=\{PREVIEW_ROW_LIMIT\}[\s\S]*value=\{\[previewRowLimit\]\}/,
       /limit: previewRowLimit,/,
       /<Bubble[\s\S]*variant=\{queryAiSuggestion \? "outline" : queryAiError \? "destructive" : "muted"\}/,
@@ -43,6 +44,9 @@ const checks = [
       /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
       /<aside className="sql-schema-panel">[\s\S]*<ScrollArea className="h-full" type="always">/,
       /<SelectedSchemaColumnList dataset=\{dataset\}/,
+      /data-sql-selected-dataset-row=""/,
+      /hover:bg-blue-50[\s\S]*active && "bg-blue-50"/,
+      /bg-transparent px-2\.5 text-left hover:bg-transparent/,
     ],
   },
   {

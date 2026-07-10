@@ -125,6 +125,8 @@
 - 기존 `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` selector는 제거하고 fixed hover card selector만 유지했다.
 - SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
 - 중앙 `sql-workspace`의 auto row는 `max-content`로 고정해 제한된 viewport 안에서도 editor/result Panel이 내부 콘텐츠보다 작아지거나 서로 겹치지 않게 했다.
+- 다크 SQL editor에서는 shadcn `Textarea`의 파란 focus ring/offset을 제거해 line-number gutter 옆에 이중 세로선이 생기지 않게 했다. 다른 form control의 focus ring은 유지한다.
+- 선택 테이블 row의 연한 파란 hover/active 배경을 정보 버튼에만 두지 않고 JOIN/해제 action까지 포함한 전체 row wrapper에 적용했다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification

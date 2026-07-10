@@ -938,6 +938,7 @@ export function SqlAnalysisPage({
               <div className="sql-editor-input-wrap">
                 <FieldLabel className="sr-only" htmlFor="sql-query-editor">SQL editor</FieldLabel>
                 <Textarea
+                  className="focus-visible:ring-0 focus-visible:ring-offset-0"
                   id="sql-query-editor"
                   ref={textareaRef}
                   disabled={!baseDataset}

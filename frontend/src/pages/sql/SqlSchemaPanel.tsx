@@ -7,6 +7,7 @@ import { FieldTitle } from "@/components/ui/field";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import type { CatalogDataset } from "../../types";
 
 export function SchemaDetailsPanel({
@@ -68,12 +69,18 @@ export function SchemaDetailsPanel({
                   return (
                     <Fragment key={item.id}>
                       {index > 0 && <Separator />}
-                      <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_64px_40px] items-center">
+                      <div
+                        className={cn(
+                          "grid min-h-14 grid-cols-[minmax(0,1fr)_64px_40px] items-center rounded-lg transition-colors hover:bg-blue-50",
+                          active && "bg-blue-50",
+                        )}
+                        data-sql-selected-dataset-row=""
+                      >
                         <Button
                           aria-pressed={active}
-                          className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] gap-2 px-2.5 text-left"
+                          className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] gap-2 bg-transparent px-2.5 text-left hover:bg-transparent"
                           type="button"
-                          variant={active ? "subtle" : "ghost"}
+                          variant="ghost"
                           onClick={() => onSchemaSelect(item)}
                         >
                           <Badge size="sm" variant={active ? "default" : "secondary"}>{index + 1}</Badge>
@@ -87,7 +94,7 @@ export function SchemaDetailsPanel({
                           title={isBaseDataset ? "기준 테이블입니다" : "이 테이블을 SQL에 JOIN"}
                           type="button"
                           size="sm"
-                          variant="subtle"
+                          variant="ghost"
                         >
                           JOIN
                         </Button>
