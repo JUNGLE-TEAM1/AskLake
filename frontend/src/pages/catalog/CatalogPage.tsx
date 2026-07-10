@@ -17,6 +17,7 @@ import {
   Share2,
   Table2,
   TerminalSquare,
+  Trash2,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,7 +47,6 @@ import {
   FilterToolbarActions,
   FilterToolbarCheckbox,
   FilterToolbarCheckboxGroup,
-  FilterToolbarFieldGroup,
   FilterToolbarInput,
   FilterToolbarSearch,
 } from "@/components/ui/filter-toolbar";
@@ -54,6 +54,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -208,13 +209,6 @@ function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSea
   };
 }
 
-function removeCatalogTagFromSearchText(searchText: string, tag: string) {
-  return searchText
-    .replace(new RegExp(`(^|\\s)${escapeRegExp(tag)}(?=\\s|$)`, "gi"), " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function datasetMatchesSearch(dataset: CatalogDataset, searchQuery: CatalogSearchQuery) {
   if (searchQuery.keywords.length === 0 && searchQuery.tags.length === 0) return true;
 
@@ -304,10 +298,7 @@ export function CatalogPage({
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
-  const topTags = useMemo(() => tags.slice(0, 10), [tags]);
-  const inputSearchQuery = useMemo(() => parseCatalogSearchQuery(searchText, tags), [searchText, tags]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const selectedSearchTags = useMemo(() => new Set(inputSearchQuery.tags), [inputSearchQuery.tags]);
   const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
@@ -379,23 +370,6 @@ export function CatalogPage({
     onAction("catalog.search.submitted", `/api/catalog/datasets?q=${encodeURIComponent(query)}`, query || "empty");
   };
 
-  const addTagToSearch = (tag: string) => {
-    const normalizedTag = normalizeCatalogText(tag);
-
-    if (selectedSearchTags.has(normalizedTag)) {
-      const nextSearchText = removeCatalogTagFromSearchText(searchText, tag);
-
-      setSearchText(nextSearchText);
-      onAction("catalog.tag_search_removed", `/api/catalog/datasets?q=${encodeURIComponent(nextSearchText)}`, tag);
-      return;
-    }
-
-    const nextSearchText = [searchText.trim(), tag].filter(Boolean).join(" ");
-
-    setSearchText(nextSearchText);
-    onAction("catalog.tag_search_added", `/api/catalog/datasets?q=${encodeURIComponent(nextSearchText)}`, tag);
-  };
-
   const updateFilter = (filterName: keyof CatalogFilterState, checked: boolean) => {
     setFilterState((filters) => ({ ...filters, [filterName]: checked }));
     onAction("catalog.filter_changed", `/api/catalog/datasets?filter=${filterName}&enabled=${checked}`, filterName);
@@ -420,8 +394,19 @@ export function CatalogPage({
 
   const selectPreviewDataset = (dataset: CatalogDataset) => {
     setPreviewDataset(dataset);
-    setExpandedDatasetIds((ids) => ids.includes(dataset.id) ? ids.filter((id) => id !== dataset.id) : [...ids, dataset.id]);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+  };
+
+  const toggleExpandedDataset = (dataset: CatalogDataset) => {
+    const isExpanded = expandedDatasetIds.includes(dataset.id);
+    setExpandedDatasetIds((ids) => isExpanded
+      ? ids.filter((id) => id !== dataset.id)
+      : [...ids, dataset.id]);
+    onAction(
+      isExpanded ? "catalog.dataset.results_collapsed" : "catalog.dataset.results_expanded",
+      `/api/catalog/datasets/${dataset.id}/materialization-runs`,
+      dataset.id,
+    );
   };
 
   const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
@@ -478,31 +463,11 @@ export function CatalogPage({
                       handleSearchSubmit();
                     }
                   }}
-                  placeholder="테이블명, 컬럼명, 태그 또는 업무 키워드로 검색하세요..."
+                  placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
                   type="search"
                   value={searchText}
                 />
               </FilterToolbarSearch>
-              <FilterToolbarFieldGroup label="태그">
-                {topTags.map((tag) => {
-                  const isTagInSearch = selectedSearchTags.has(normalizeCatalogText(tag));
-
-                  return (
-                    <Button
-                      aria-pressed={isTagInSearch}
-                      className="catalog-tag"
-                      key={tag}
-                      shape="compact"
-                      type="button"
-                      size="sm"
-                      variant={isTagInSearch ? "subtle" : "outline"}
-                      onClick={() => addTagToSearch(tag)}
-                    >
-                      {tag}
-                    </Button>
-                  );
-                })}
-              </FilterToolbarFieldGroup>
             </FilterToolbar>
           </Panel>
 
@@ -566,32 +531,46 @@ export function CatalogPage({
 
                 return (
                   <div className={cn("catalog-result-item", isExpanded && "expanded")} key={`${dataset.id}:${dataset.name}`}>
-                    <Button
-                      aria-pressed={isActive}
-                      className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")}
-                      shape="compact"
-                      size="content"
-                      type="button"
-                      variant="outline"
-                      onClick={() => selectPreviewDataset(dataset)}
-                    >
-                      <div className="catalog-result-summary">
-                        {isPinned && (
-                          <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
-                            <Pin />
-                            고정됨
-                          </Badge>
-                        )}
-                        <div className="catalog-result-title">
-                          <strong>{dataset.name}</strong>
-                          <DatasetStatusBadge dataset={dataset} shape="compact" />
-                          <span className="catalog-result-expand-indicator">{isExpanded ? <ChevronUp /> : <ChevronDown />}</span>
+                    <Panel className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")}>
+                      <Button
+                        aria-pressed={isActive}
+                        className="catalog-result-select"
+                        shape="compact"
+                        size="content"
+                        type="button"
+                        variant="ghost"
+                        onClick={() => selectPreviewDataset(dataset)}
+                      >
+                        <div className="catalog-result-summary">
+                          <div className="catalog-result-title">
+                            <strong>{dataset.name}</strong>
+                            <DatasetStatusBadge dataset={dataset} shape="compact" />
+                            {isPinned && (
+                              <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
+                                <Pin />
+                                고정됨
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="catalog-result-tags">
+                            {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
+                          </div>
                         </div>
-                        <div className="catalog-result-tags">
-                          {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
-                        </div>
-                      </div>
-                    </Button>
+                      </Button>
+                      <Button
+                        aria-expanded={isExpanded}
+                        aria-label={`${dataset.name} 상세 ${isExpanded ? "닫기" : "열기"}`}
+                        className="catalog-result-expand"
+                        shape="compact"
+                        size="iconSm"
+                        title={isExpanded ? "결과 닫기" : "결과 열기"}
+                        type="button"
+                        variant="ghost"
+                        onClick={() => toggleExpandedDataset(dataset)}
+                      >
+                        {isExpanded ? <ChevronUp /> : <ChevronDown />}
+                      </Button>
+                    </Panel>
                     {isExpanded && (
                       <CatalogMaterializationRuns
                         dataset={dataset}
@@ -667,7 +646,6 @@ export function CatalogPage({
                 <div className="catalog-preview-card-header">
                   <TerminalSquare size={16} />
                   <h3>스키마 미리보기</h3>
-                  <span>{previewDataset.schema.length} 컬럼</span>
                 </div>
                 <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
                 <Button className="catalog-text-button" type="button" onClick={() => {
@@ -925,13 +903,15 @@ function CatalogMaterializationRuns({
                 <AlertDialogTrigger asChild>
                   <Button
                     aria-label={`${run.runId} append 결과 삭제`}
+                    className="catalog-delete-button"
                     shape="compact"
-                    size="sm"
+                    size="iconSm"
+                    title="append 결과 삭제"
                     type="button"
-                    variant="destructive"
+                    variant="outline"
                     onClick={(event) => event.stopPropagation()}
                   >
-                    삭제
+                    <Trash2 />
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent className="rounded-md" onClick={(event) => event.stopPropagation()}>
@@ -1077,15 +1057,64 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
 }
 
 function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
-  const columns = dataset.schema.slice(0, 5).map(([name]) => name);
+  const columns = dataset.schema.map(([name]) => name);
+  const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+  const [horizontalScrollPercent, setHorizontalScrollPercent] = useState(0);
+
+  useEffect(() => {
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+
+    const updateScrollState = () => {
+      const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      setHorizontalScrollPercent(nextMax > 0 ? (viewport.scrollLeft / nextMax) * 100 : 0);
+    };
+    const resizeObserver = new ResizeObserver(updateScrollState);
+
+    resizeObserver.observe(viewport);
+    if (viewport.firstElementChild) resizeObserver.observe(viewport.firstElementChild);
+    updateScrollState();
+
+    return () => resizeObserver.disconnect();
+  }, [dataset.id]);
+
+  const updateHorizontalScroll = ([nextPercent]: number[]) => {
+    const viewport = scrollViewportRef.current;
+    if (!viewport) return;
+
+    const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+    viewport.scrollLeft = (nextPercent / 100) * nextMax;
+    setHorizontalScrollPercent(nextPercent);
+  };
+
   return (
     <section className="catalog-table-card">
       <div className="catalog-section-header">
         <h2>샘플 데이터</h2>
         <span>읽기 전용 미리보기</span>
       </div>
-      <ScrollArea className="catalog-sample-scroll" scrollbars="horizontal" type="always">
-        <table className="schema-table">
+      <Slider
+        aria-label="샘플 데이터 가로 이동"
+        className="catalog-sample-slider"
+        max={100}
+        min={0}
+        step={1}
+        value={[horizontalScrollPercent]}
+        onValueChange={updateHorizontalScroll}
+      />
+      <ScrollArea
+        className="catalog-sample-scroll"
+        scrollbars="none"
+        viewportProps={{
+          onScroll: (event) => {
+            const viewport = event.currentTarget;
+            const nextMax = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+            setHorizontalScrollPercent(nextMax > 0 ? (viewport.scrollLeft / nextMax) * 100 : 0);
+          },
+        }}
+        viewportRef={scrollViewportRef}
+      >
+        <table className="schema-table catalog-sample-table">
           <thead><tr>{columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
           <tbody>{dataset.sampleRows.map((row, rowIndex) => <tr key={`sample-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
         </table>

@@ -53,10 +53,6 @@
   line-height: 1.4;
 }
 
-.catalog-tag {
-  min-width: 0;
-}
-
 .catalog-results-section {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -119,23 +115,15 @@
 
 .catalog-result-card {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0;
   min-height: 92px;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  cursor: pointer;
-  padding: 14px 16px;
-  text-align: left;
-  white-space: normal;
-}
-
-.catalog-result-card.pinned {
-  padding-right: 104px;
+  padding: 0;
 }
 
 .catalog-result-card.active {
@@ -151,10 +139,22 @@
   min-width: 0;
 }
 
+.catalog-result-select {
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;
+  justify-content: flex-start;
+  border-radius: inherit;
+  padding: 14px 16px;
+  text-align: left;
+  white-space: normal;
+}
+
+.catalog-result-expand {
+  margin-right: 12px;
+}
+
 .catalog-result-pin-badge {
-  position: absolute;
-  top: 16px;
-  right: 18px;
   pointer-events: none;
   white-space: nowrap;
 }
@@ -179,15 +179,6 @@
   font-weight: 850;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.catalog-result-expand-indicator {
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: 6px;
-  color: #64748b;
 }
 
 .catalog-materialization-panel {
@@ -319,6 +310,18 @@
   text-align: center;
 }
 
+.catalog-delete-button {
+  border-color: #ef4444;
+  background: transparent;
+  color: #dc2626;
+}
+
+.catalog-delete-button:hover {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .catalog-materialization-empty {
   border: 1px dashed #cbd5e1;
   border-radius: 6px;
@@ -422,6 +425,9 @@
 }
 
 .catalog-preview-metrics .catalog-mini-metric {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f8fafc;
@@ -441,10 +447,15 @@
 }
 
 .catalog-mini-metric strong {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   color: #0f172a;
   font-size: 14px;
   line-height: 1.35;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .catalog-preview-card {
@@ -738,6 +749,20 @@
 .catalog-sample-scroll {
   width: 100%;
   min-width: 0;
+}
+
+.catalog-sample-slider {
+  margin-bottom: 12px;
+}
+
+.catalog-sample-table {
+  width: 1280px;
+  min-width: 100%;
+}
+
+.catalog-sample-table th,
+.catalog-sample-table td {
+  min-width: 140px;
 }
 
 .catalog-lineage-flow {

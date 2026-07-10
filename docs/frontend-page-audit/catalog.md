@@ -111,6 +111,12 @@
 - 결과 목록, append 결과 목록, sample table, schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
 - 공통 `Button`/`Badge`의 기본 variant와 shape는 유지하고, 선택형 `compact` shape만 추가해 다른 화면의 기본 UI는 변경하지 않는다.
 
+- 검색 조건의 빠른 태그 버튼 영역을 제거하고 텍스트 검색만 유지했다. 결과 카드 안의 데이터셋 태그는 식별 정보이므로 유지한다.
+- 결과 카드 본문 클릭은 우측 미리보기 선택만 수행하고, append 결과는 별도 화살표 버튼으로만 열고 닫는다.
+- 샘플 데이터의 가로 이동 컨트롤을 실제 스크롤 위치와 동기화된 shadcn `Slider`로 교체했다.
+- 우측 지표의 긴 날짜/담당자 값은 카드 내부에서 줄바꿈하고, append 삭제는 작은 shadcn 휴지통 아이콘 버튼으로 교체했다.
+- 우측 스키마 미리보기 헤더의 컬럼 수 메타를 제거했다.
+
 ## Conflict Risk
 
 - #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이므로 list/search/pagination 데이터 흐름은 유지한다.
