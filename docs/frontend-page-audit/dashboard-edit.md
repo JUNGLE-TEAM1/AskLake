@@ -15,7 +15,7 @@
 - `DashboardRuntimeShell`, `DashboardTopBar`, `DashboardPageTabs`: runtime chrome과 navigation을 담당한다.
 - `DashboardCanvas`: `react-grid-layout`을 사용해 widget drag/resize와 collision validation을 처리한다.
 - `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
-- `WidgetConfigPanel`: `SettingsPanel`, `FormFieldGroup`, `NativeSelectField`, `IconOptionGrid`, `Input`, `Textarea`, `Checkbox`, `Button`을 조합한다.
+- `WidgetConfigPanel`: `SettingsPanel`, `FieldGroup`, `Field`, `Select`, `Input`, `Textarea`, `ToggleGroup`, `Tooltip`, `Checkbox`, `Button`을 조합한다.
 - `DashboardAssistantPanel`: `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
 - `ActionGroup`: undo/redo, assistant, cursor, widget 생성 toolbar의 layout을 담당한다.
 - `WidgetFrame`, `WidgetRenderer`: widget selection, delete, preview, chart/table/metric 렌더링을 담당한다.
@@ -48,8 +48,8 @@
 
 - `DashboardCanvas`와 `react-grid-layout`: drag/resize/collision 도메인 엔진이므로 유지한다.
 - `DatasetSidebar`: 대규모 tree와 hover metadata가 있어 AskLake composition으로 유지하고 `TreePanel`/`Tooltip` 사용을 강화한다.
-- `WidgetConfigPanel`: type별 subform으로 분리하되 `SettingsPanel`, `FormFieldGroup`, `NativeSelectField` API는 유지한다.
-- `IconOptionGrid`: widget type 선택에 적합하므로 유지하고 tooltip/focus contract를 공통화한다.
+- `WidgetConfigPanel`: type별 subform으로 분리하되 기본 데이터셋·제목·설명은 shadcn `Field` composition을 유지한다.
+- 위젯 타입은 shadcn `ToggleGroup type="single"`과 `Tooltip`을 사용해 단일 선택 및 설명 contract를 유지한다.
 - `DashboardAssistantPanel`: 도메인 component로 유지하고 feedback surface만 공통 primitive로 바꾼다.
 - chart engine, `react-colorful`, layout data contract는 shadcn으로 대체할 대상이 아니다.
 
@@ -125,3 +125,4 @@
 - 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
 - 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.
+- 위젯 설정의 데이터셋·제목·설명을 `FieldGroup`과 `Select`/`Input`/`Textarea`로 통일하고, 차트 타입 아이콘은 `ToggleGroup type="single"` 및 `Tooltip`로 교체한다.

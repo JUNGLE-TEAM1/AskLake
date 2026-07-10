@@ -103,6 +103,27 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard widget basics use shadcn form and single ToggleGroup composition",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ Field, FieldError, FieldGroup, FieldLabel \} from "@\/components\/ui\/field";/,
+      /import \{ Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue \} from "@\/components\/ui\/select";/,
+      /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
+      /import \{ Tooltip, TooltipContent, TooltipProvider, TooltipTrigger \} from "@\/components\/ui\/tooltip";/,
+      /<FieldGroup className="contents">/,
+      /<Select[\s\S]*<SelectGroup>[\s\S]*<SelectItem/s,
+      /<ToggleGroup[\s\S]*type="single"[\s\S]*value=\{type\}/s,
+      /if \(!nextType\) return;/,
+      /<TooltipTrigger asChild>[\s\S]*<ToggleGroupItem/s,
+      /<FieldError>\{formError \?\? validationMessage\}<\/FieldError>/,
+    ],
+    forbiddenPatterns: [
+      /IconOptionGrid/,
+      /createPortal/,
+      /widgetTypeTooltip/,
+    ],
+  },
+  {
     name: "Dashboard edit uses shadcn Slider for radial range",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [
