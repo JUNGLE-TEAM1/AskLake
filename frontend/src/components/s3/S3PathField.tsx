@@ -12,6 +12,7 @@ import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../util
 
 type S3PathFieldProps = {
   onChange: (path: string) => void;
+  useShadcnStyles?: boolean;
   value: string;
 };
 
@@ -47,7 +48,7 @@ function S3PathText({ value }: { value: string }) {
   return <span className="s3-path-text" title={parsed.path}>{parsed.path}</span>;
 }
 
-export function S3PathField({ onChange, value }: S3PathFieldProps) {
+export function S3PathField({ onChange, useShadcnStyles = false, value }: S3PathFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -64,17 +65,18 @@ export function S3PathField({ onChange, value }: S3PathFieldProps) {
       <div className="s3-path-display" title={parsed.path || value}>
         <S3PathText value={value} />
       </div>
-      <Button className="secondary-button s3-path-action" type="button" variant="outline" onClick={() => setPickerOpen(true)}>
-        <FolderSearch size={14} />
+      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+        <FolderSearch data-icon="inline-start" />
         찾아보기
       </Button>
-      <Button className="secondary-button s3-path-action" disabled={!value.trim()} type="button" variant="outline" onClick={copyPath}>
-        {copied ? <Check size={14} /> : <Clipboard size={14} />}
+      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} disabled={!value.trim()} type="button" variant="outline" onClick={copyPath}>
+        {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
         {copied ? "복사됨" : "복사"}
       </Button>
       {pickerOpen ? (
         <S3PathPicker
           value={value}
+          useShadcnStyles={useShadcnStyles}
           onCancel={() => setPickerOpen(false)}
           onSelect={(path) => {
             onChange(path);
@@ -89,10 +91,12 @@ export function S3PathField({ onChange, value }: S3PathFieldProps) {
 function S3PathPicker({
   onCancel,
   onSelect,
+  useShadcnStyles,
   value,
 }: {
   onCancel: () => void;
   onSelect: (path: string) => void;
+  useShadcnStyles: boolean;
   value: string;
 }) {
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -265,8 +269,8 @@ function S3PathPicker({
       footer={(
         <>
           <div className="s3-picker-preview" title={selectedPath}>{selectedPath || "선택된 경로가 없습니다."}</div>
-          <Button className="secondary-button" type="button" variant="outline" onClick={onCancel}>취소</Button>
-          <Button className="primary-button" disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
+          <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onCancel}>취소</Button>
+          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={!bucket} type="button" onClick={() => onSelect(selectedPath)}>선택</Button>
         </>
       )}
       footerClassName="s3-picker-footer"
@@ -304,7 +308,7 @@ function S3PathPicker({
       error={bucketError ? (
         <div className="s3-picker-error">
           <span>{bucketError}</span>
-          <button type="button" onClick={loadBuckets}>다시 시도</button>
+          <Button size="sm" type="button" variant="link" onClick={loadBuckets}>다시 시도</Button>
         </div>
       ) : null}
     >

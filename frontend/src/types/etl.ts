@@ -265,6 +265,8 @@ export type CreatePipelineRequest = {
   compression?: "Snappy" | "Gzip" | "None";
   storagePath?: string;
   targetDataset: string;
+  targetDatabase?: string;
+  targetDescription?: string;
   targetLayer: TargetLayer;
   targetFormat: string;
   owner: string;

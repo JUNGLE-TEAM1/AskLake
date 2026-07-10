@@ -6022,26 +6022,21 @@
 }
 
 .etl-review-edit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  border: 1px solid #dee1e6;
-  border-radius: 8px;
-  background: #fff;
-  color: #374151;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 12px;
   white-space: nowrap;
 }
 
-.etl-review-edit:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
+.etl-review-page-header > div > div:first-child {
+  align-items: center;
+}
+
+.etl-review-page-header > div > div:first-child > span {
+  margin-top: 0;
+}
+
+.etl-review-page-header h1 {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
 }
 
 .etl-review-kv {
@@ -6241,6 +6236,29 @@
 
 .etl-review-card .info-box {
   margin: 0 20px 20px;
+}
+
+.review-schema-table-viewport {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.review-schema-table-viewport:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.review-schema-table {
+  min-width: 680px;
+}
+
+.review-schema-table td[colspan] {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .permission-config-card .field {
@@ -6606,54 +6624,6 @@
 .target-chip-grid.partition {
   border: 0;
   padding: 0;
-}
-
-.target-chip {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  min-height: 32px;
-  border: 1px solid #dee1e6;
-  border-radius: 999px;
-  background: #fff;
-  color: #374151;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 0 12px;
-}
-
-.target-chip.active {
-  border-color: #2563eb;
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.target-chip.disabled {
-  border-color: #e5e7eb;
-  background: #f9fafb;
-  color: #9ca3af;
-  cursor: not-allowed;
-}
-
-.target-chip-check {
-  display: inline-grid;
-  width: 14px;
-  min-width: 14px;
-  place-items: center;
-  color: currentColor;
-  font-size: 12px;
-  font-weight: 950;
-}
-
-.target-chip-label {
-  color: currentColor;
-}
-
-.target-chip-badge {
-  margin-left: 2px;
-  color: #16a34a;
-  font-size: 10px;
-  font-weight: 900;
 }
 
 .target-inline-controls {
@@ -7141,11 +7111,6 @@
   background: #f9fafb;
   color: #9ca3af;
   cursor: not-allowed;
-}
-
-.target-partition-option input {
-  width: 14px;
-  height: 14px;
 }
 
 .target-partition-name {

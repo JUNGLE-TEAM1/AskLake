@@ -228,6 +228,8 @@ class CreatePipelineRequest(CamelModel):
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
+    target_database: str | None = None
+    target_description: str | None = None
     target_layer: TargetLayer
     target_format: str
     owner: str
@@ -237,6 +239,37 @@ class CreatePipelineRequest(CamelModel):
 class CreatePipelineResponse(CamelModel):
     job: JobRowData
     catalog_target: dict[str, Any] | None = None
+
+
+class ReviewPipelineRequest(CreatePipelineRequest):
+    source_connection_status: Literal["idle", "testing", "success", "failed"] = "idle"
+
+
+class ReviewEntry(CamelModel):
+    label: str
+    value: str
+
+
+class ReviewSchemaRow(CamelModel):
+    column_name: str
+    nullable: str
+    transform: str
+    type: str
+
+
+class ReviewValidationRow(CamelModel):
+    label: str
+    status: Literal["ready", "warning"]
+    value: str
+
+
+class ReviewSnapshot(CamelModel):
+    basic_information: list[ReviewEntry]
+    can_create: bool
+    destination: list[ReviewEntry]
+    permission: list[ReviewEntry]
+    schema_: list[ReviewSchemaRow] = Field(alias="schema")
+    validation: list[ReviewValidationRow]
 
 
 class JobCommandRequest(CamelModel):

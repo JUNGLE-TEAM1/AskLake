@@ -43,8 +43,8 @@ import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
-import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
@@ -62,10 +62,12 @@ import {
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { TagList } from "@/components/ui/tag-list";
 import { ValidationList } from "@/components/ui/validation-list";
+import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
@@ -4822,25 +4824,26 @@ export function TargetPage({
   const renderPartitionOption = (rule: TargetSchemaRule) => {
     const selected = filteredPartitionColumns.includes(rule.name);
     const disabled = !rule.use;
+    const checkboxId = `target-partition-${rule.name}`;
     return (
-      <CheckableOption
-        checked={selected}
-        className="target-partition-option"
-        disabled={disabled}
-        inputName="target-partition-columns"
-        inputType="checkbox"
-        inputValue={rule.name}
+      <label
+        className={cn("target-partition-option", selected && "active", disabled && "disabled")}
         key={rule.name}
-        onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked)}
       >
+        <Checkbox
+          checked={selected}
+          disabled={disabled}
+          id={checkboxId}
+          onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked === true)}
+        />
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
-      </CheckableOption>
+      </label>
     );
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" useShadcnStyles onPrev={onPrev} onNext={handleNext} />}>
       <PageHeader
         className="etl-flow-page-header"
         icon={<HardDrive size={18} />}
@@ -4856,7 +4859,7 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon"><FileText size={17} /></span>
             <div>
-              <h2>Basic Information</h2>
+              <h2>기본 정보</h2>
             </div>
           </div>
           <div className="target-config-form-grid basic">
@@ -4879,12 +4882,12 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon destination"><HardDrive size={17} /></span>
             <div>
-              <h2>Destination Settings</h2>
+              <h2>저장 위치 설정</h2>
             </div>
           </div>
           <div className="target-config-form-grid destination">
             <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField value={databaseName} onChange={setDatabaseName} />
+              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
             </FormFieldGroup>
             <FormFieldGroup className="field target-format-field" label="포맷">
               <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
@@ -4899,7 +4902,7 @@ export function TargetPage({
               </Select>
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장경로">
-              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField useShadcnStyles value={targetStoragePath} onChange={setTargetStoragePath} />
             </FormFieldGroup>
           </div>
         </section>
@@ -4907,23 +4910,21 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>Partition & Tags</h2>
+              <h2>파티션 및 태그</h2>
             </div>
           </div>
           <div className="target-config-split">
             <div className="target-config-subsection">
               <div className="target-config-subheader">
                 <BookOpen size={16} />
-                <h3>Tags</h3>
+                <h3>태그</h3>
               </div>
               {targetTags.length > 0 ? (
                 <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
                   {targetTags.map((tag) => (
-                    <Chip asChild className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} selected={targetTags.includes(tag)} tone="secondary">
-                      <button type="button" onClick={() => toggleTag(tag)}>
-                        {tag}
-                      </button>
-                    </Chip>
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
                   ))}
                 </TagList>
               ) : null}
@@ -4934,13 +4935,13 @@ export function TargetPage({
                     addCustomTag();
                   }
                 }} />
-                <Button className="secondary-button" type="button" variant="outline" onClick={addCustomTag}><Plus size={14} />추가</Button>
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
               </div>
             </div>
             <div className="target-config-subsection">
               <div className="target-config-subheader">
                 <SlidersHorizontal size={16} />
-                <h3>Partition</h3>
+                <h3>파티션</h3>
               </div>
               <div className="target-partition-settings">
                 <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
@@ -5156,75 +5157,43 @@ export function ReviewPage({
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
 }) {
-  const request = toCreatePipelineRequest(draft);
-  const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
-  const schemaRows: ReviewSchemaRow[] = draft.transform.outputColumns.length > 0
-    ? draft.transform.outputColumns.map(([name, type]) => {
-        const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return {
-          columnName: name,
-          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
-          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
-          type,
-        };
+  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReviewLoading(true);
+    void getReviewSnapshot(draft)
+      .then((snapshot) => {
+        if (!cancelled) setReviewSnapshot(snapshot);
       })
-    : includedReviewColumns.map((column) => ({
-        columnName: column.targetName,
-        nullable: column.nullable ? "예" : "아니요",
-        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
-        type: column.type,
-      }));
-  const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const permissionReview = getPermissionDraftValues(draft);
-  const targetReview = getTargetDraftValues(draft);
-  const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
-  const basicInformationRows = [
-    ["Job ID", request.id],
-    ["Job Name", targetReview.jobName],
-    ["Source", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`],
-    ["Target Dataset", targetReview.targetDataset],
-    ["Description", targetReview.description],
-  ];
-  const destinationRows = [
-    ["Output Path", targetReview.storagePath],
-    ["Database", targetDatabaseName],
-    ["Table Name", targetReview.tableName],
-    ["Format", targetReview.targetFormat],
-    ["Layer", targetReview.targetLayer],
-    ["Partition", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
-  ];
-  const permissionRows = [
-    ["Permission Template", permissionReview.permissionTemplate],
-    ["Visibility", permissionReview.visibility],
-    ["Approval", permissionReview.approvalStatus],
-    ["Owner", permissionReview.owner],
-    ["Summary", permissionReview.permissionSummary],
-  ];
-  const validationRows = [
-    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
-    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
-    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
-    ["실패 재시도", request.retryPolicySummary ? "유효함" : "확인 필요"],
-    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
-  ];
-  const canCreate = draft.source.connectionStatus === "success"
-    && includedReviewColumns.length > 0
-    && Boolean(request.sourceType.trim())
-    && Boolean(request.sourceLabel.trim())
-    && Boolean(request.targetDataset.trim())
-    && Boolean(request.owner.trim());
-  const createDisabled = createPending || !canCreate;
-  const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+      .catch(() => {
+        if (!cancelled) setReviewSnapshot(null);
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft]);
+
+  const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
+  const destinationRows = reviewSnapshot?.destination ?? [];
+  const permissionRows = reviewSnapshot?.permission ?? [];
+  const schemaRows = reviewSnapshot?.schema ?? [];
+  const validationRows = reviewSnapshot?.validation ?? [];
+  const canCreate = reviewSnapshot?.canCreate === true;
+  const createDisabled = createPending || reviewLoading || !canCreate;
+  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
   return (
     <CreationFlowLayout
       variant="review"
-      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} useShadcnStyles onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
         <PageHeader
-          className="etl-flow-page-header"
-          description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."
+          className="etl-flow-page-header etl-review-page-header"
           icon={<FileText size={18} />}
           title="검토 및 생성"
         />
@@ -5233,15 +5202,14 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
-                <h2>Basic Information</h2>
-                <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
+                <h2>기본 정보</h2>
               </div>
-              <ReviewEditButton onClick={() => onEdit("target")} />
+              <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv"
-              items={basicInformationRows.map(([label, value]) => ({
-                className: label === "Description" ? "wide" : undefined,
+              items={basicInformationRows.map(({ label, value }) => ({
+                className: label === "설명" ? "wide" : undefined,
                 label,
                 value,
               }))}
@@ -5252,9 +5220,9 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon schema"><Database size={17} /></span>
               <div>
-                <h2>Output Schema</h2>
+                <h2>출력 스키마</h2>
               </div>
-              <ReviewEditButton onClick={() => onEdit("schema")} />
+              <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
             </div>
             <ReviewSchemaTable rows={schemaRows} />
           </section>
@@ -5263,15 +5231,14 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon destination"><HardDrive size={17} /></span>
               <div>
-                <h2>Destination Settings</h2>
-                <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
+                <h2>저장 위치 설정</h2>
               </div>
-              <ReviewEditButton onClick={() => onEdit("target")} />
+              <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv destination"
-              items={destinationRows.map(([label, value]) => ({
-                className: label === "Output Path" ? "wide" : undefined,
+              items={destinationRows.map(({ label, value }) => ({
+                className: label === "저장 경로" ? "wide" : undefined,
                 label,
                 value,
               }))}
@@ -5282,38 +5249,36 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
-                <h2>Permission & Validation</h2>
-                <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
+                <h2>권한 및 검증</h2>
               </div>
-              <ReviewEditButton onClick={() => onEdit("permission")} />
+              <ReviewEditButton label="권한 및 검증 수정" onClick={() => onEdit("permission")} />
             </div>
             <KeyValueList
               className="etl-review-kv permission"
-              items={permissionRows.map(([label, value]) => ({
-                className: label === "Summary" ? "wide" : undefined,
+              items={permissionRows.map(({ label, value }) => ({
+                className: label === "요약" ? "wide" : undefined,
                 label,
                 value,
               }))}
             />
             <ValidationList
               className="etl-review-validation"
-              items={validationRows.map(([item, status]) => ({
-                label: item,
-                status: status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "warning",
-                value: status,
+              items={validationRows.map(({ label, status, value }) => ({
+                label,
+                status,
+                value,
               }))}
             />
-            <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
           </section>
         </div>
     </CreationFlowLayout>
   );
 }
 
-function ReviewEditButton({ onClick }: { onClick: () => void }) {
+function ReviewEditButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Button className="etl-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
-      <Pencil size={14} /> 수정
+    <Button aria-label={label} className="etl-review-edit" size="sm" type="button" variant="outline" onClick={onClick}>
+      <Pencil aria-hidden="true" data-icon="inline-start" /> 수정
     </Button>
   );
 }
@@ -5335,34 +5300,40 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
   });
 
   return (
-    <table className="schema-table review-schema-table">
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id}>
-                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-            ))}
-          </tr>
-        ))}
-        {rows.length === 0 && (
-          <tr>
-            <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+    <div aria-label="출력 스키마 표" className="review-schema-table-viewport" role="region" tabIndex={0}>
+      <table className="schema-table review-schema-table">
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+function displayReviewValue(value: string | undefined) {
+  return value?.trim() || "미설정";
 }
 
 function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
