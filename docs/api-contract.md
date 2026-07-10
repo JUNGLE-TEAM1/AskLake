@@ -551,6 +551,8 @@ Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creat
 
 `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch uses a stable batch-ID Parquet subpath to avoid duplicate output after a checkpoint retry. Job hydrate verifies Docker worker liveness and heartbeat freshness; an exited/missing/stale active worker becomes `failed`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
+Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display.
+
 ### LineageGraph
 
 ```ts

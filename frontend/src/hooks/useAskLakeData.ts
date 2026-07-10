@@ -677,6 +677,10 @@ function commandSuccessMessage(command: ServerJobCommand): string {
   if (command === "run") return "작업 실행 요청을 접수했습니다.";
   if (command === "retry") return "작업 재실행 요청을 접수했습니다.";
   if (command === "pause") return "작업 일시정지 요청을 접수했습니다.";
+  if (command === "startContinuous") return "Continuous 스트림 시작 요청을 접수했습니다.";
+  if (command === "pauseContinuous") return "Continuous 스트림 일시정지 요청을 접수했습니다.";
+  if (command === "resumeContinuous") return "Continuous 스트림 재개 요청을 접수했습니다.";
+  if (command === "stopContinuous") return "Continuous 스트림 중지 요청을 접수했습니다.";
   if (command === "stopSchedule") return "다음 반복 예약을 중지했습니다.";
   return "작업 취소 요청을 접수했습니다.";
 }

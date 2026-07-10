@@ -1034,6 +1034,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const target = compatDraft.target;
   const isKafkaSource = draft.source.sourceType === "Stream / Kafka" || draft.source.sourceType === "Kafka JSON";
+  const isContinuousKafka = isKafkaSource && draft.source.executionMode === "continuous";
   const kafkaTopic = sourceConfigValue(draft.source.sourceConfig, "TOPIC / QUEUE NAME") || sourceConfigValue(draft.source.sourceConfig, "Topic") || "reviews.raw";
   const kafkaDatasetName = normalizeKafkaDatasetName(kafkaTopic);
   const rawTargetDataset = target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset;
@@ -1041,9 +1042,11 @@ function getTargetDraftValues(draft: DraftPipeline) {
     ? kafkaDatasetName
     : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
   const rawTargetFormat = target?.targetFormat ?? target?.format ?? compatDraft.targetFormat;
-  const targetFormat = isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
-    ? "jsonl"
-    : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
+  const targetFormat = isContinuousKafka
+    ? "parquet"
+    : isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
+      ? "jsonl"
+      : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
   const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
     ? "BRONZE"
@@ -1056,7 +1059,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
 
   return {
     description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? "Kafka snapshot direct target 데이터셋"
+      ? isContinuousKafka ? "Kafka continuous micro-batch target 데이터셋" : "Kafka snapshot direct target 데이터셋"
       : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
@@ -1099,6 +1102,7 @@ export function SourceConnectionPage({
   sourceLocked?: boolean;
 }) {
   const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
+  const kafkaExecutionMode = draft.source.executionMode ?? "snapshot";
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
@@ -1387,6 +1391,7 @@ export function SourceConnectionPage({
       return;
     }
     const label = sourceLabelFromFields(nextType, nextFields);
+    const executionMode = nextType === "Stream / Kafka" ? draft.source.executionMode ?? "snapshot" : "snapshot";
     onDraftChange({
       source: {
         connectionMessage: nextMessage,
@@ -1394,6 +1399,8 @@ export function SourceConnectionPage({
         sourceConfig: nextFields,
         sourceLabel: label,
         sourceType: nextType,
+        executionMode,
+        continuousConfig: executionMode === "continuous" ? draft.source.continuousConfig : undefined,
       },
     });
   };
@@ -1749,6 +1756,22 @@ export function SourceConnectionPage({
                     </label>
                   ))}
                 </div>
+                {activeSourceType === "Stream / Kafka" && (
+                  <section className="source-step-section" aria-label="Kafka 실행 방식">
+                    <div className="source-step-header">
+                      <em>2</em>
+                      <div><strong>Kafka 실행 방식</strong></div>
+                    </div>
+                    <div className="source-stage-tabs" role="group" aria-label="Kafka 실행 방식 선택">
+                      <button aria-pressed={kafkaExecutionMode === "snapshot"} className={kafkaExecutionMode === "snapshot" ? "active" : ""} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>Snapshot</button>
+                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={kafkaExecutionMode === "continuous" ? "active" : ""} disabled={sourceLocked} type="button" onClick={() => onDraftChange({
+                        source: { executionMode: "continuous", continuousConfig: draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 } },
+                        target: { format: "parquet" },
+                      })}>Continuous</button>
+                    </div>
+                    {kafkaExecutionMode === "continuous" && <p className="panel-note">Spark micro-batch로 Parquet에 append합니다. 현재 transform/quality rule은 Continuous에서 지원되지 않습니다.</p>}
+                  </section>
+                )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
               </section>
 

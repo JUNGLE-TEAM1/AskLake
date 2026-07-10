@@ -59,6 +59,10 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceConfig: draft.source.sourceConfig,
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
+    executionMode: draft.source.executionMode ?? "snapshot",
+    continuousConfig: draft.source.executionMode === "continuous"
+      ? draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 }
+      : undefined,
     compression: draft.target.compression,
     partition: partitionColumns.length > 0 ? partitionColumns.join("/") : draft.target.partition,
     partitionColumns,
@@ -126,6 +130,12 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
       sourceConfig,
       sourceLabel,
       sourceType,
+      executionMode: job.executionMode ?? "snapshot",
+      continuousConfig: job.continuousConfig ? {
+        initialOffsetPolicy: job.continuousConfig.initialOffsetPolicy,
+        triggerIntervalSeconds: job.continuousConfig.triggerIntervalSeconds,
+        maxOffsetsPerTrigger: job.continuousConfig.maxOffsetsPerTrigger,
+      } : fallback.source.continuousConfig,
     },
     target: {
       ...fallback.target,
@@ -204,6 +214,8 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.sourceConfig !== undefined) next.source.sourceConfig = patch.sourceConfig;
   if (patch.sourceLabel !== undefined) next.source.sourceLabel = patch.sourceLabel;
   if (patch.sourceType !== undefined) next.source.sourceType = patch.sourceType;
+  if (patch.executionMode !== undefined) next.source.executionMode = patch.executionMode;
+  if (patch.continuousConfig !== undefined) next.source.continuousConfig = patch.continuousConfig;
   if (patch.schemaColumns !== undefined) next.schema.columns = patch.schemaColumns;
   if (patch.schemaFingerprint !== undefined) next.schema.schemaFingerprint = patch.schemaFingerprint;
   if (patch.schemaSampleRows !== undefined) next.schema.sampleRows = patch.schemaSampleRows;

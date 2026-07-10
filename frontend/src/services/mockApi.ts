@@ -392,9 +392,40 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
     cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
     stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
+    startContinuous: { action: "etl.continuous.start_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    pauseContinuous: { action: "etl.continuous.pause_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    resumeContinuous: { action: "etl.continuous.resume_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
+    stopContinuous: { action: "etl.continuous.stop_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
   };
   const audit = actionByCommand[command];
   const runId = `run_${Date.now()}`;
+
+  if (["startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"].includes(command)) {
+    const current = job.continuousRuntime ?? {
+      checkpointPath: `s3a://asklake-output/${job.target}/_checkpoints/${job.id}`,
+      consumedCount: 0,
+      failedCount: 0,
+      quarantinedCount: 0,
+      status: "stopped" as const,
+      storedCount: 0,
+    };
+    const status = command === "pauseContinuous" ? "paused" : command === "stopContinuous" ? "stopped" : "running" as const;
+    return resolveMock({
+      ...audit,
+      job: {
+        ...job,
+        executionMode: "continuous",
+        continuousRuntime: {
+          ...current,
+          heartbeatAt: new Date().toISOString(),
+          status,
+        },
+        lastState: status === "running" ? "Continuous Spark streaming" : status === "paused" ? "Continuous worker 일시정지됨" : "Continuous worker 중지됨 · checkpoint 보존",
+        progress: status === "running" ? { label: "Continuous micro-batch 실행 중", value: 66 } : undefined,
+        status: status === "running" ? "running" : status,
+      },
+    });
+  }
 
   if (command === "run" || command === "retry") {
     const run: JobRunSummary = {

@@ -87,6 +87,16 @@ function jobCreatorLabel(job: JobRowData) {
   return job.createdByProfile?.displayName || job.createdBy || job.owner;
 }
 
+function isContinuousKafkaJob(job: JobRowData) {
+  return job.executionMode === "continuous";
+}
+
+function continuousRuntimeLabel(job: JobRowData) {
+  const runtime = job.continuousRuntime;
+  if (!runtime) return "Continuous 설정 대기";
+  return `${runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
+}
+
 function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
   if (action === "detail" || action === "runs") return false;
   return !canRunJobCommand(job, action);
@@ -772,7 +782,7 @@ function JobsTableSection({
   );
 }
 
-type JobListActionKind = Exclude<JobCommand, "delete" | "pause"> | "detail" | "runs";
+type JobListActionKind = Exclude<JobCommand, "delete"> | "detail" | "runs";
 
 type JobListAction = {
   className: string;
@@ -784,6 +794,15 @@ function getJobListActions(job: JobRowData): JobListAction[] {
   const actions: JobListAction[] = [
     { className: "job-action-button", kind: "detail", label: "작업 정보" },
   ];
+
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (["starting", "running", "pausing", "stopping"].includes(runtimeStatus)) {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "런타임" }, { className: "job-action-button", kind: "pauseContinuous", label: "일시정지" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    }
+    if (runtimeStatus === "paused") return [...actions, { className: "job-action-button primary soft", kind: "resumeContinuous", label: "재개" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    return [...actions, { className: "job-action-button primary soft", kind: runtimeStatus === "failed" ? "resumeContinuous" : "startContinuous", label: runtimeStatus === "failed" ? "체크포인트 재개" : "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
 
   if (job.status === "running") {
     return [
@@ -823,6 +842,17 @@ type JobDetailAction = {
 };
 
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (["starting", "running", "pausing", "stopping"].includes(runtimeStatus)) {
+      return [
+        { className: "job-action-button", kind: "pauseContinuous", label: "일시정지" },
+        { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" },
+      ];
+    }
+    if (runtimeStatus === "paused") return [{ className: "job-action-button primary", kind: "resumeContinuous", label: "체크포인트 재개" }, { className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
+    return [{ className: "job-action-button primary", kind: runtimeStatus === "failed" ? "resumeContinuous" : "startContinuous", label: runtimeStatus === "failed" ? "체크포인트 재개" : "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
   if (job.status === "running") {
     return [
       { className: "job-action-button", kind: "pause", label: "일시정지" },
@@ -1143,11 +1173,15 @@ function DetailSummaryStat({ label, tone, value }: { label: string; tone?: "dang
 }
 
 type JobNextAction = {
-  kind: "run" | "retry";
+  kind: "run" | "retry" | "startContinuous" | "resumeContinuous";
   label: string;
 };
 
 function getJobNextAction(job: JobRowData): JobNextAction {
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    return { kind: runtimeStatus === "paused" || runtimeStatus === "failed" ? "resumeContinuous" : "startContinuous", label: runtimeStatus === "paused" || runtimeStatus === "failed" ? "체크포인트 재개" : "스트림 시작" };
+  }
   if (job.status === "failed" || job.status === "canceled") return { kind: "retry", label: "재실행 요청" };
   if (job.status === "paused") return { kind: "run", label: "재개 실행" };
   return { kind: "run", label: "즉시 실행" };
@@ -1263,6 +1297,7 @@ export function JobDetailPage({
               <div className="wide"><dt>운영 조직</dt><dd>{job.owner === "admin" ? "Data Platform" : "Analytics Ops"}</dd></div>
             </dl>
           </article>
+          {isContinuousKafkaJob(job) && <ContinuousRuntimeCard job={job} />}
         </div>
       </section>
 
@@ -1282,7 +1317,7 @@ export function JobDetailPage({
               <Field label="소스 경로" value={sourcePath} />
               <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료"} />
               <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "S3 호환 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
-              <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
+              <Field label="읽기 방식" value={isContinuousKafkaJob(job) ? "Continuous Streaming" : "Snapshot Batch"} />
             </div>
           </article>
           <article className="job-detail-card">
@@ -1390,6 +1425,24 @@ export function JobDetailPage({
         </div>
       </details>
     </div>
+  );
+}
+
+function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
+  const runtime = job.continuousRuntime;
+  return (
+    <article className="job-detail-card metadata-card">
+      <h3>Continuous Runtime</h3>
+      <div className="detail-kv-grid">
+        <Field label="상태" value={continuousRuntimeLabel(job)} />
+        <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
+        <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="격리 / 실패" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.failedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
+        <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
+        {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
+      </div>
+    </article>
   );
 }
 

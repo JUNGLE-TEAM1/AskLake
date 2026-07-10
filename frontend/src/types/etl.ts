@@ -2,7 +2,29 @@ import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
+export type KafkaExecutionMode = "snapshot" | "continuous";
+export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
+
+export type KafkaContinuousConfigDraft = {
+  initialOffsetPolicy: "earliest" | "latest";
+  triggerIntervalSeconds: number;
+  maxOffsetsPerTrigger: number;
+};
+
+export type KafkaContinuousRuntime = {
+  status: ContinuousRuntimeStatus;
+  checkpointPath: string;
+  heartbeatAt?: string | null;
+  lastFlushAt?: string | null;
+  lastBatchId?: string | null;
+  lag?: number | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastError?: string | null;
+};
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
@@ -25,6 +47,9 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
+  continuousRuntime?: KafkaContinuousRuntime | null;
   schemaColumns?: SchemaColumnDraft[];
   schemaFingerprint?: string;
   schemaSampleRows?: string[][];
@@ -88,6 +113,8 @@ export type SourceDraft = {
   sourceConfig: Array<[string, string]>;
   sourceLabel: string;
   sourceType: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type TransformChainStepDraft = {
@@ -313,6 +340,8 @@ export type CreatePipelineRequest = {
   targetFormat: string;
   owner: string;
   rag: boolean;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type UpdatePipelineRequest = Omit<
