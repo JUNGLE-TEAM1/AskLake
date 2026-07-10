@@ -63,6 +63,8 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_RUN_ID=${runId}`,
     "-e",
+    `ASKLAKE_SPARK_PARTITION_COLUMNS=${job.partition || ""}`,
+    "-e",
     `ASKLAKE_SPARK_TRANSFORM_STEPS=${JSON.stringify(job.transformSteps ?? [])}`,
     "-e",
     `ASKLAKE_SPARK_QUALITY_RULES=${JSON.stringify(job.qualityRules ?? [])}`,

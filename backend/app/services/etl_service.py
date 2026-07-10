@@ -297,6 +297,7 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "id": job.id,
         "name": job.name,
         "owner": job.owner,
+        "partition": job.partition,
         "qualityInvalidRows": job.quality_invalid_rows or [],
         "qualityRules": job.quality_rules or [],
         "qualityScore": job.quality_score,
