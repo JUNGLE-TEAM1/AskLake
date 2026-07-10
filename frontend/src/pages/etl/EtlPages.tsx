@@ -1590,16 +1590,19 @@ export function SourceConnectionPage({
                 {sourceChoiceConnectors.map((connector) => {
                   const meta = connectorMeta[connector];
                   return (
-                    <SelectableCard
+                    <Button
                       aria-label={`${meta.label} 소스 선택`}
-                      className="source-choice-card"
-                      icon={<span className="source-choice-icon">{meta.icon}</span>}
+                      aria-pressed={sourceType === connector}
+                      className="source-choice-button relative grid h-auto min-h-28 w-full grid-cols-[56px_minmax(0,1fr)] items-center justify-items-start gap-4 whitespace-normal px-8 py-6 text-left"
                       key={connector}
-                      selected={sourceType === connector}
-                      selectedIndicator={<span className="source-choice-check"><Check size={18} /></span>}
-                      title={meta.label}
+                      type="button"
+                      variant={sourceType === connector ? "subtle" : "outline"}
                       onClick={() => selectSource(connector)}
-                    />
+                    >
+                      {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
+                      <span className="inline-flex size-14 items-center justify-center">{meta.icon}</span>
+                      <span className="text-base font-semibold text-slate-950">{meta.label}</span>
+                    </Button>
                   );
                 })}
               </div>
@@ -1633,10 +1636,9 @@ export function SourceConnectionPage({
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
-                  <div className={cn("hegun-status-copy", !publicConnectionMessage && "single-line")}>
+                  <div className="hegun-status-copy single-line">
                     {sourceStatusIcon(connectionStatus)}
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-                    {publicConnectionMessage && <span className="panel-note">{publicConnectionMessage}</span>}
                   </div>
                   <div className="hegun-status-actions">
                     {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}><FolderOpen data-icon="inline-start" />데이터 탐색 열기</Button>}
@@ -1782,7 +1784,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
   if (kind === "s3") {
     return (
-      <svg className="source-brand-icon source-brand-s3" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-s3 size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#ff9900" d="M14 17.5 32 8l18 9.5v29L32 56l-18-9.5v-29Z" />
         <path fill="#f58518" d="m32 8 18 9.5-18 9.4-18-9.4L32 8Z" opacity=".72" />
         <path fill="#d95b00" d="M32 26.9 50 17.5v29L32 56V26.9Z" opacity=".36" />
@@ -1793,7 +1795,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "postgres") {
     return (
-      <svg className="source-brand-icon source-brand-postgres" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-postgres size-14" viewBox="0 0 64 64" aria-hidden="true">
         <circle cx="32" cy="32" r="29" fill="#336791" />
         <path fill="#fff" d="M18.8 29.2c.2-8.7 5.7-14.5 14.2-14.2 8.9.3 14 6.7 12.5 15.4l-1.9 10.8c-.6 3.6-4.4 5.6-7.5 3.9l-4.2-2.3-5 6.6c-2.2 2.9-6.8 1.3-6.7-2.4l.2-8.7-1.5-.7c-3.2-1.5-4.8-4.6-4.2-8.1l4.1-.3Z" opacity=".96" />
         <path fill="#336791" d="M25.1 30.4c-.6-5.8 2.2-9.1 7.2-9.1 5.7 0 8.3 4.3 7.1 10.7l-1.1 5.9-6.3-3.3-4.8 6.4.4-8.2-2.5-2.4Z" />
@@ -1804,7 +1806,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "mongo") {
     return (
-      <svg className="source-brand-icon source-brand-mongo" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-mongo size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#47a248" d="M33.2 4.8c10.1 7.9 14.5 16.6 13.1 26.3-1.2 8.5-6.1 15.6-14.3 28.1-8.3-12.5-13.1-19.6-14.3-28.1-1.4-9.7 3-18.4 13.1-26.3l1.2-.9 1.2.9Z" />
         <path fill="#2f7d32" d="M32 3.9v55.3c8.2-12.5 13.1-19.6 14.3-28.1C47.7 21.4 43.3 12.7 33.2 4.8L32 3.9Z" opacity=".4" />
         <path fill="none" stroke="#e7f7ea" strokeLinecap="round" strokeWidth="3.2" d="M32 12.5v36.8" />
@@ -1814,7 +1816,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "rest") {
     return (
-      <svg className="source-brand-icon source-brand-rest" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-rest size-14" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="9" y="11" width="46" height="42" rx="10" fill="#eff6ff" stroke="#2563eb" strokeWidth="3" />
         <path fill="none" stroke="#2563eb" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M24 27.5 17.5 34 24 40.5M40 27.5 46.5 34 40 40.5M35.8 24.5l-7.6 19" />
         <path fill="#2563eb" d="M18 18.5h28a2 2 0 0 1 2 2v1.2H16v-1.2a2 2 0 0 1 2-2Z" opacity=".18" />
@@ -1825,7 +1827,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "lake") {
     return (
-      <svg className="source-brand-icon source-brand-lake" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-lake size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#e0f2fe" d="M8 23c0-6.6 10.7-12 24-12s24 5.4 24 12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" />
         <ellipse cx="32" cy="23" fill="#38bdf8" rx="24" ry="12" />
         <path fill="#0284c7" d="M8 23c0 6.6 10.7 12 24 12s24-5.4 24-12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" opacity=".7" />
@@ -1835,7 +1837,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
     );
   }
   return (
-    <svg className="source-brand-icon source-brand-kafka" viewBox="0 0 64 64" aria-hidden="true">
+    <svg className="source-brand-icon source-brand-kafka size-14" viewBox="0 0 64 64" aria-hidden="true">
       <circle cx="19" cy="18" r="8" fill="#111827" />
       <circle cx="45" cy="18" r="8" fill="#111827" />
       <circle cx="32" cy="46" r="8" fill="#111827" />
