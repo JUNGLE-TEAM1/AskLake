@@ -177,9 +177,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .dag-node {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 780px) {
@@ -285,28 +282,10 @@
     padding: 14px;
   }
 
-  .dag-run-select {
-    width: 100%;
-    min-width: 0;
-  }
-
   .job-runs-page,
   .runs-body-content {
     min-height: 0;
     height: auto;
-  }
-
-  .runs-table-scroll {
-    max-height: 420px;
-  }
-
-  .runs-stats-summary {
-    grid-template-columns: 1fr;
-  }
-
-  .dag-summary-grid,
-  .runs-stats-summary > div {
-    grid-template-columns: 1fr;
   }
 
   .dag-flow-topbar,
