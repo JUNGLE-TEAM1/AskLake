@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import {
   flexRender,
@@ -48,7 +48,7 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { runCellphonesReviewAnalysis, suggestReviewAnalysisSchema, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
-import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
+import { listSourceAssets, testSourceConnector, type SourceAssetsResponse, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
@@ -182,10 +182,40 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
 
 function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<[string, string]>): Array<[string, string]> {
   const savedByLabel = new Map(savedFields);
-  const mergedFields = baseFields.map(([label, value]) => [label, savedByLabel.get(label) ?? value] as [string, string]);
+  const mergedFields = baseFields.map(([label, value]) => {
+    const savedValue = savedByLabel.get(label);
+    if (shouldBackfillSourceField(label, value, savedValue)) return [label, value] as [string, string];
+    return [label, savedValue ?? value] as [string, string];
+  });
   const baseLabels = new Set(baseFields.map(([label]) => label));
   const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
   return [...mergedFields, ...extraSavedFields];
+}
+
+function mergeSourceFieldsWithDefaults(baseFields: Array<[string, string]>, savedFields: Array<[string, string]> | undefined): Array<[string, string]> {
+  return savedFields ? mergeFieldRows(baseFields, savedFields) : baseFields;
+}
+
+function shouldBackfillSourceField(label: string, defaultValue: string, savedValue: string | undefined) {
+  if (savedValue === undefined || savedValue.trim() !== "" || defaultValue.trim() === "") return false;
+  return [
+    "Access Key",
+    "Broker / Endpoint",
+    "Bucket / Stage Name",
+    "CONSUMER GROUP ID",
+    "Database Name",
+    "Endpoint / Host",
+    "Endpoint URL",
+    "File Type",
+    "Path",
+    "Password / Auth Token",
+    "Port",
+    "Region",
+    "Secret Key",
+    "TOPIC / QUEUE NAME",
+    "Use Path Style",
+    "Username",
+  ].includes(label);
 }
 
 function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
@@ -1076,6 +1106,7 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => sourceLocked ? "connect" : getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
+  const sourceAssetCacheRef = useRef<Map<string, SourceAssetsResponse>>(new Map());
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1171,12 +1202,12 @@ export function SourceConnectionPage({
       description: "MinIO 오브젝트 스토리지에서 버킷과 제한 샘플을 실제 조회합니다.",
       fields: [
         ["Storage Provider", "MinIO"],
-        ["Endpoint URL", ""],
-        ["Region", ""],
-        ["Bucket / Stage Name", ""],
+        ["Endpoint URL", "http://127.0.0.1:9000"],
+        ["Region", "us-east-1"],
+        ["Bucket / Stage Name", "m3-raw"],
         ["Path / Prefix", ""],
-        ["Access Key", ""],
-        ["Secret Key", ""],
+        ["Access Key", "m3admin"],
+        ["Secret Key", "wishuponastar"],
         ["Use Path Style", "true"],
         ["File Type", "auto"],
         ["Delimiter", ","],
@@ -1200,11 +1231,11 @@ export function SourceConnectionPage({
         ["Lake Type", "Delta Lake (Databricks)"],
         ["CATALOG / NAMESPACE", "local_catalog"],
         ["DATABASE / SCHEMA", "default"],
-        ["Path", "s3://m3-raw/nyc_taxi/yellow_parquet/"],
+        ["Path", "s3://m3-raw/"],
         ["Endpoint URL", "http://127.0.0.1:9000"],
         ["Region", "us-east-1"],
-        ["Access Key", ""],
-        ["Secret Key", ""],
+        ["Access Key", "m3admin"],
+        ["Secret Key", "wishuponastar"],
         ["Use Path Style", "true"],
         ["Read Mode", "Latest Version (Snapshot Isolation)"],
         ["DATASET OR TABLE SELECTOR", ""],
@@ -1273,11 +1304,14 @@ export function SourceConnectionPage({
   const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
   const hasSelectedSource = activeSourceType.length > 0;
   const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
-  const editableFields = sourceFields[activeSourceType] ?? (
+  const cachedEditableFields = activeSourceType ? sourceFields[activeSourceType] : undefined;
+  const editableFields = cachedEditableFields
+    ? mergeSourceFieldsWithDefaults(current.fields, cachedEditableFields)
+    : (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
-  );
+    );
   const isSqlResultSource = activeSourceType === "SQL Result";
   const hasSqlResultPreview = isSqlResultSource && hasSqlResultPreviewConfig(editableFields);
   const sourceLabel = hasSelectedSource
@@ -1317,6 +1351,22 @@ export function SourceConnectionPage({
     ["인증 방식", isSqlResultSource ? "SQL Preview 검증" : activeSourceType === "File / S3" ? "MinIO 액세스 키" : "백엔드 커넥터"],
     ["다음 단계", isSqlResultSource ? "Review 확인" : "스키마 추론"],
   ];
+  const assetCacheKey = (prefix: string, fieldsForAssets = editableFields) => JSON.stringify({
+    fields: fieldsForAssets,
+    prefix,
+    sourceType: activeSourceType,
+  });
+  const getSourceAssets = async (prefix: string, fieldsForAssets = editableFields) => {
+    const key = assetCacheKey(prefix, fieldsForAssets);
+    const cached = sourceAssetCacheRef.current.get(key);
+    if (cached) return cached;
+    const result = await listSourceAssets(activeSourceType, fieldsForAssets, prefix);
+    sourceAssetCacheRef.current.set(key, result);
+    return result;
+  };
+  const clearSourceAssetCache = () => {
+    sourceAssetCacheRef.current.clear();
+  };
 
   const applySourceDraft = (
     nextType = activeSourceType,
@@ -1350,7 +1400,9 @@ export function SourceConnectionPage({
 
   const selectSource = (value: string) => {
     if (sourceLocked) return;
-    const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
+    const nextFields = value === activeSourceType
+      ? editableFields
+      : mergeSourceFieldsWithDefaults(sourceConfigs[value].fields, sourceFields[value]);
     const nextIsSqlResult = value === "SQL Result";
     const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
     const nextStatus: SourceDraft["connectionStatus"] = nextIsSqlResult ? (nextHasSqlResultPreview ? "success" : "idle") : "idle";
@@ -1360,6 +1412,7 @@ export function SourceConnectionPage({
         : "SQL Result는 SQL 분석 Preview에서 처리 Job 생성으로 진입할 때 사용합니다."
       : `${sourceTypeLabel(value)} 설정을 선택했습니다. 검토 전에 연결 테스트를 실행하세요.`;
     setSourceType(value);
+    clearSourceAssetCache();
     setSourceRuntime(null);
     setSelectedAssetPath("");
     setSourceStage("connect");
@@ -1374,6 +1427,7 @@ export function SourceConnectionPage({
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
     const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
     const nextStatus = isSqlResultSource ? connectionStatus : "idle";
+    clearSourceAssetCache();
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setSourceRuntime(null);
     setSelectedAssetPath("");
@@ -1414,7 +1468,7 @@ export function SourceConnectionPage({
     const folderPrefix = normalizeFolderPrefix(folderPath);
     setLoadingAssetPath(folderPrefix);
     try {
-      const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
+      const result = await getSourceAssets(folderPrefix);
       setSourceRuntime((runtime) => runtime
         ? { ...runtime, assets: mergeSourceAssets(runtime.assets ?? [], result.assets ?? []) }
         : {
@@ -1486,7 +1540,7 @@ export function SourceConnectionPage({
     }
   };
 
-  const testConnection = async () => {
+  const runSourceConnectionTest = async (fieldsForTest = editableFields) => {
     if (sourceLocked) return;
     if (!hasSelectedSource) {
       onNotify("먼저 소스를 선택하세요.");
@@ -1499,7 +1553,7 @@ export function SourceConnectionPage({
       const nextStatus: SourceDraft["connectionStatus"] = hasSqlResultPreview ? "success" : "idle";
       setConnectionStatus(nextStatus);
       setConnectionMessage(message);
-      applySourceDraft(activeSourceType, editableFields, nextStatus, message);
+      applySourceDraft(activeSourceType, fieldsForTest, nextStatus, message);
       onNotify(message);
       return;
     }
@@ -1509,15 +1563,15 @@ export function SourceConnectionPage({
     setConnectionMessage(testingMessage);
     setSourceRuntime(null);
     setSelectedAssetPath("");
-    applySourceDraft(activeSourceType, editableFields, "testing", testingMessage);
+    applySourceDraft(activeSourceType, fieldsForTest, "testing", testingMessage);
     try {
       if (activeSourceType !== "File / S3" && activeSourceType !== "Data Lake") {
         const result = mergeConnectorAnalysisSourceConfig(
-          publicConnectorAnalysis(await testSourceConnector(activeSourceType, editableFields)),
-          editableFields,
+          publicConnectorAnalysis(await testSourceConnector(activeSourceType, fieldsForTest)),
+          fieldsForTest,
         );
         if (result.draftPatch.source?.sourceConfig) {
-          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? editableFields }));
+          setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? fieldsForTest }));
         }
         setSourceRuntime(result);
         setSelectedAssetPath("");
@@ -1528,7 +1582,7 @@ export function SourceConnectionPage({
         onNotify(result.message);
         return;
       }
-      const result = await listSourceAssets(activeSourceType, editableFields, "");
+      const result = await getSourceAssets("", fieldsForTest);
       const successMessage = `${sourceTypeLabel(activeSourceType)} 연결 성공: 하위 항목 ${result.assets.length}개`;
       const connectorResult: SourceConnectorAnalysis = {
         actionPath: "/api/etl/sources/assets",
@@ -1537,8 +1591,8 @@ export function SourceConnectionPage({
           source: {
             connectionMessage: successMessage,
             connectionStatus: "success",
-            sourceConfig: editableFields,
-            sourceLabel: sourceLabelFromFields(activeSourceType, editableFields),
+            sourceConfig: fieldsForTest,
+            sourceLabel: sourceLabelFromFields(activeSourceType, fieldsForTest),
             sourceType: activeSourceType,
           },
         },
@@ -1562,10 +1616,14 @@ export function SourceConnectionPage({
       setSourceRuntime(null);
       setConnectionStatus("failed");
       setConnectionMessage(message);
-      applySourceDraft(activeSourceType, editableFields, "failed", message);
+      applySourceDraft(activeSourceType, fieldsForTest, "failed", message);
       onAction("etl.source.connection_failed", "/api/etl/sources/test", activeSourceType, "failed");
       onNotify(message);
     }
+  };
+
+  const testConnection = () => {
+    void runSourceConnectionTest(editableFields);
   };
 
   const goNext = () => {
@@ -2222,6 +2280,7 @@ function formatSourceFieldPath(value: string) {
 
 type ReviewStructuringColumnDef = {
   allowedValues?: string[];
+  instruction?: string;
   label: string;
   method?: string;
   nullable: boolean;
@@ -2240,15 +2299,16 @@ type ReviewStructuringTemplate = {
 const REVIEW_STRUCTURING_SOURCE_OBJECT = "s3://m3-raw/amazon_reviews/cell_phones_and_accessories/reviews/Cell_Phones_and_Accessories.jsonl";
 const REVIEW_SCHEMA_TEMPLATE_STORAGE_KEY = "asklake.reviewSchemaTemplates.v1";
 const REVIEW_STRUCTURING_COLUMNS: ReviewStructuringColumnDef[] = [
-  { label: "리뷰 식별자", method: "copy_or_extract_field", nullable: false, targetName: "review_id", type: "String" },
-  { allowedValues: ["positive", "mixed", "negative"], label: "감정", method: "sentiment_3way", nullable: false, targetName: "sentiment", type: "String" },
-  { label: "이슈 카테고리", method: "issue_category", nullable: false, targetName: "issue_category", type: "String" },
-  { label: "이슈 세부 분류", method: "issue_subcategory", nullable: true, targetName: "issue_subcategory", type: "String" },
-  { allowedValues: ["critical", "high", "medium", "low"], label: "심각도", method: "severity_4level", nullable: false, targetName: "severity", type: "String" },
-  { label: "요약", method: "extractive_summary", nullable: true, targetName: "summary", type: "String" },
-  { label: "근거 문장", method: "evidence_span", nullable: true, targetName: "evidence", type: "String" },
+  { label: "리뷰 식별자", method: "copy", nullable: false, targetName: "review_id", type: "String" },
+  { allowedValues: ["positive", "mixed", "negative"], label: "감정", method: "one_of_values", nullable: false, targetName: "sentiment", type: "String" },
+  { allowedValues: ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"], label: "이슈 카테고리", method: "one_of_values", nullable: false, targetName: "issue_category", type: "String" },
+  { allowedValues: ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"], label: "이슈 세부 분류", method: "one_of_values", nullable: true, targetName: "issue_subcategory", type: "String" },
+  { allowedValues: ["critical", "high", "medium", "low"], label: "심각도", method: "one_of_values", nullable: false, targetName: "severity", type: "String" },
+  { instruction: "리뷰 내용을 한 문장으로 요약", label: "요약", method: "instruction", nullable: true, targetName: "summary", type: "String" },
+  { instruction: "판단 근거가 되는 원문 문장 추출", label: "근거 문장", method: "instruction", nullable: true, targetName: "evidence", type: "String" },
 ];
 const REVIEW_STRUCTURING_STEP_PREFIX = "review-row-analysis-";
+const TEXT_ANALYSIS_SOURCE_NAMES = ["text", "review_text", "body", "content", "message", "description", "payload", "value"];
 
 function reviewStructuringOutputNames(columns = REVIEW_STRUCTURING_COLUMNS) {
   return new Set(columns.map((column) => column.targetName));
@@ -2289,15 +2349,36 @@ function buildReviewStructuringTemplate(name: string): ReviewStructuringTemplate
   };
 }
 
+function reviewAnalysisInstructionForColumn(column: SchemaColumnDraft) {
+  if (column.reviewAnalysisInstruction) return column.reviewAnalysisInstruction;
+  const targetName = column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "");
+  const chainStep = column.transformChain?.find((step) => step.operation === "Text Row Analysis" || step.operation === "Review Row Analysis");
+  if (!chainStep?.params) return "";
+  try {
+    const parsed = JSON.parse(chainStep.params);
+    const columns = Array.isArray(parsed.columns) ? parsed.columns : [];
+    const matched = columns.find((item: { targetName?: string }) => normalizeReviewFieldName(item.targetName || "") === normalizeReviewFieldName(targetName));
+    return String(matched?.instruction || "");
+  } catch {
+    return "";
+  }
+}
+
 function buildReviewStructuringTemplateFromSchema(columns: SchemaColumnDraft[], name: string): ReviewStructuringTemplate {
   const configuredColumns = columns
-    .filter((column) => column.sourceName.startsWith("__review_analysis.") || column.role?.startsWith("review-row-analysis:"))
+    .filter((column) => (
+      column.sourceName.startsWith("__review_analysis.")
+      || column.sourceName.startsWith("__text_analysis.")
+      || column.role?.startsWith("review-row-analysis:")
+      || column.role?.startsWith("text-row-analysis:")
+    ))
     .map((column) => ({
-      allowedValues: reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__review_analysis\./, "")),
-      label: (column.role ?? "").replace(/^review-row-analysis:/, "") || column.targetName || column.sourceName,
+      allowedValues: reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "")),
+      instruction: reviewAnalysisInstructionForColumn(column),
+      label: (column.role ?? "").replace(/^(review|text)-row-analysis:/, "") || column.targetName || column.sourceName,
       method: (column as SchemaColumnDraft & { reviewAnalysisMethod?: string }).reviewAnalysisMethod || reviewAnalysisMethodForTarget(column.targetName || column.sourceName),
       nullable: column.nullable,
-      targetName: column.targetName || column.sourceName.replace(/^__review_analysis\./, ""),
+      targetName: column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, ""),
       type: column.type || "String",
     }))
     .filter((column) => Boolean(column.targetName));
@@ -2311,29 +2392,31 @@ function buildReviewStructuringTemplateFromSchema(columns: SchemaColumnDraft[], 
 }
 
 function reviewAnalysisMethodForTarget(value: string) {
-  const target = String(value || "").replace(/^__review_analysis\./, "").toLowerCase();
-  if (target === "sentiment") return "sentiment_3way";
-  if (target === "issue_category") return "issue_category";
-  if (target === "issue_subcategory") return "issue_subcategory";
-  if (target === "severity" || target === "severity_risk") return "severity_4level";
-  if (target === "summary") return "extractive_summary";
-  if (target === "evidence" || target === "supporting_evidence") return "evidence_span";
-  if (target.startsWith("is_") || target.startsWith("has_") || target === "clicked") return "boolean_y_n";
-  return "copy_or_extract_field";
+  const target = String(value || "").replace(/^__(review|text)_analysis\./, "").toLowerCase();
+  if (target === "sentiment" || target === "issue_present" || target === "has_issue" || target === "action_needed" || target === "needs_action" || target === "issue_category" || target === "issue_subcategory" || target === "severity" || target === "severity_risk") return "one_of_values";
+  if (target === "summary" || target === "evidence" || target === "supporting_evidence" || target.includes("reason")) return "instruction";
+  if (target.startsWith("is_") || target.startsWith("has_") || target === "clicked") return "one_of_values";
+  return "copy";
 }
 
 function reviewAnalysisAllowedValuesForTarget(value: string) {
   const method = reviewAnalysisMethodForTarget(value);
-  if (method === "sentiment_3way") return ["positive", "mixed", "negative"];
-  if (method === "severity_4level") return ["critical", "high", "medium", "low"];
-  if (method === "boolean_y_n") return ["Y", "N"];
+  const target = String(value || "").replace(/^__(review|text)_analysis\./, "").toLowerCase();
+  if (target === "sentiment") return ["positive", "mixed", "negative"];
+  if (target === "issue_present" || target === "has_issue") return ["issue", "no_issue"];
+  if (target === "action_needed" || target === "needs_action") return ["action_needed", "low_or_none"];
+  if (target === "issue_category") return ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"];
+  if (target === "issue_subcategory") return ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"];
+  if (target === "severity" || target === "severity_risk") return ["critical", "high", "medium", "low"];
+  if (target.endsWith("_yn") || target.startsWith("is_") || target.startsWith("has_")) return ["Y", "N"];
   return [];
 }
 
-function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDef[]) {
+function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDef[], sourceField = "text") {
   return JSON.stringify({
     columns: reviewColumns.map((column) => ({
       allowedValues: column.allowedValues ?? reviewAnalysisAllowedValuesForTarget(column.targetName),
+      instruction: column.instruction ?? "",
       method: column.method || reviewAnalysisMethodForTarget(column.targetName),
       nullable: column.nullable,
       targetName: column.targetName,
@@ -2341,8 +2424,8 @@ function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDe
     })),
     asinField: "asin",
     ratingField: "rating",
-    sourceField: "text",
-    textField: "text",
+    sourceField,
+    textField: sourceField,
     titleField: "title",
     version: 1,
   });
@@ -2368,8 +2451,13 @@ function findReviewFieldIndex(columns: SchemaColumnDraft[], names: string[]) {
 }
 
 function hasReviewTextFields(columns: SchemaColumnDraft[]) {
-  return findReviewFieldIndex(columns, ["text", "review_text", "body"]) >= 0
-    && findReviewFieldIndex(columns, ["rating", "stars", "score"]) >= 0;
+  return findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES) >= 0;
+}
+
+function findTextAnalysisSourceField(columns: SchemaColumnDraft[]) {
+  const index = findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES);
+  if (index < 0) return "text";
+  return columns[index]?.targetName || columns[index]?.sourceName || "text";
 }
 
 function isReviewStructuringApplied(columns: SchemaColumnDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
@@ -2387,6 +2475,7 @@ function shouldShowReviewStructuringFlow(draft: DraftPipeline, columns: SchemaCo
     ...columns.flatMap((column) => [column.sourceName, column.targetName]),
   ].join(" ").toLowerCase();
   return hasReviewTextFields(columns)
+    || sourceFormat.toLowerCase() === "text"
     || sourceText.includes("cell_phones_and_accessories")
     || sourceText.includes("amazon_reviews")
     || sourceText.includes("review");
@@ -2397,20 +2486,23 @@ function buildReviewStructuringColumns(columns: SchemaColumnDraft[], reviewColum
   const baseColumns = columns.filter((column) => (
     !outputNames.has(schemaColumnName(column))
     && !column.sourceName.startsWith("__review_analysis.")
+    && !column.sourceName.startsWith("__text_analysis.")
   ));
-  const params = reviewAnalysisParamsForColumns(reviewColumns);
+  const sourceField = findTextAnalysisSourceField(columns);
+  const params = reviewAnalysisParamsForColumns(reviewColumns, sourceField);
   const generatedColumns = reviewColumns.map((column) => ({
     included: true,
     nullable: column.nullable,
-    role: `review-row-analysis:${column.label}`,
-    sourceName: `__review_analysis.${column.targetName}`,
+    role: `text-row-analysis:${column.label}`,
+    sourceName: `__text_analysis.${column.targetName}`,
     targetName: column.targetName,
+    reviewAnalysisInstruction: column.instruction ?? "",
     reviewAnalysisMethod: column.method || reviewAnalysisMethodForTarget(column.targetName),
     transformChain: [{
-      display: `리뷰 row 분석 -> ${column.label}`,
-      expression: `REVIEW_ANALYZE(rating, title, text, asin).${column.targetName}`,
+      display: `텍스트 row 구조화 -> ${column.label}`,
+      expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
       onError: "Warn",
-      operation: "Review Row Analysis",
+      operation: "Text Row Analysis",
       params,
       type: column.type,
     }],
@@ -2419,17 +2511,17 @@ function buildReviewStructuringColumns(columns: SchemaColumnDraft[], reviewColum
   return [...baseColumns, ...generatedColumns];
 }
 
-function buildReviewStructuringTransformSteps(existingSteps: TransformStepDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS) {
+function buildReviewStructuringTransformSteps(existingSteps: TransformStepDraft[], reviewColumns = REVIEW_STRUCTURING_COLUMNS, sourceField = "text") {
   const rest = existingSteps.filter((step) => !step.id.startsWith(REVIEW_STRUCTURING_STEP_PREFIX));
-  const params = reviewAnalysisParamsForColumns(reviewColumns);
+  const params = reviewAnalysisParamsForColumns(reviewColumns, sourceField);
   const generatedSteps = reviewColumns.map((column) => ({
     enabled: true,
     id: `${REVIEW_STRUCTURING_STEP_PREFIX}${column.targetName}`,
-    input: "rating,title,text,asin",
+    input: sourceField,
     kind: "derive",
-    label: `리뷰 row 분석: ${column.label}`,
+    label: `텍스트 row 구조화: ${column.label}`,
     onError: "Warn",
-    operation: "Review Row Analysis",
+    operation: "Text Row Analysis",
     output: column.targetName,
     params,
   } satisfies TransformStepDraft));
@@ -2440,7 +2532,7 @@ function buildReviewStructuringSampleRows(columns: SchemaColumnDraft[], sampleRo
   const fieldIndexes = {
     asin: findReviewFieldIndex(columns, ["asin", "product_id"]),
     rating: findReviewFieldIndex(columns, ["rating", "stars", "score"]),
-    text: findReviewFieldIndex(columns, ["text", "review_text", "body"]),
+    text: findReviewFieldIndex(columns, TEXT_ANALYSIS_SOURCE_NAMES),
     timestamp: findReviewFieldIndex(columns, ["timestamp", "event_time", "created_at"]),
     title: findReviewFieldIndex(columns, ["title", "summary", "review_title"]),
     userId: findReviewFieldIndex(columns, ["user_id", "reviewer_id", "customer_id"]),
@@ -2472,7 +2564,6 @@ function classifyReviewSample(row: string[], indexes: { asin: number; rating: nu
   const evidence = compactSchemaPreviewValue(text || title || "(샘플 텍스트 없음)");
   const reviewIdSeed = [asin, userId, timestamp].filter(Boolean).join("_") || `sample_${rowIndex + 1}`;
   return {
-    confidence: category.id === "positive_value" ? "0.78" : "0.86",
     evidence,
     issue_category: category.id,
     issue_subcategory: category.label,
@@ -2554,12 +2645,12 @@ function ReviewStructuringFlowCard({
   onTemplateNameChange: (value: string) => void;
 }) {
   return (
-    <section className="review-structuring-flow-card" aria-label="AI 추천 리뷰 분석 스키마 초안">
+    <section className="review-structuring-flow-card" aria-label="AI 추천 텍스트 구조화 스키마 초안">
       <div className="review-structuring-flow-head">
         <span className="review-structuring-flow-icon"><Bot size={17} /></span>
         <div>
           <strong>AI 스키마 추천</strong>
-          <p>리뷰 row를 어떤 출력 컬럼으로 나눌지 초안만 만듭니다. 적용 후 XFlow에서 직접 수정하고 템플릿으로 저장하세요.</p>
+          <p>텍스트 row를 어떤 출력 컬럼으로 나눌지 초안만 만듭니다. 적용 후 XFlow에서 직접 수정하고 템플릿으로 저장하세요.</p>
         </div>
         <span className={applied ? "review-structuring-status applied" : "review-structuring-status"}>
           {applied ? "편집 가능 상태" : "초안 대기"}
@@ -2569,7 +2660,7 @@ function ReviewStructuringFlowCard({
         </button>
       </div>
       <div className="review-structuring-pipeline">
-        <div><HardDrive size={15} /><span>입력</span><strong>리뷰 JSONL row</strong></div>
+        <div><HardDrive size={15} /><span>입력</span><strong>텍스트 포함 source row</strong></div>
         <div><Bot size={15} /><span>AI 역할</span><strong>초안 스키마 추천만</strong></div>
         <div><Table2 size={15} /><span>실행 기준</span><strong>사용자가 수정/저장한 템플릿</strong></div>
       </div>
@@ -2821,7 +2912,7 @@ export function SchemaInferencePage({
       return;
     }
     if (!reviewStructuringHasRequiredFields) {
-      onNotify("리뷰 row 분석에는 최소 rating과 text 필드가 필요합니다.");
+      onNotify("텍스트 row 구조화에는 text/content/body/value 같은 텍스트 필드가 필요합니다.");
       return;
     }
     if (activeReviewColumns.length === 0) {
@@ -2829,13 +2920,15 @@ export function SchemaInferencePage({
       return;
     }
     const activeOutputNames = reviewStructuringOutputNames(activeReviewColumns);
+    const sourceField = findTextAnalysisSourceField(schemaColumns);
     const baseColumns = schemaColumns.filter((column) => (
       !activeOutputNames.has(schemaColumnName(column))
       && !column.sourceName.startsWith("__review_analysis.")
+      && !column.sourceName.startsWith("__text_analysis.")
     ));
     const nextColumns = buildReviewStructuringColumns(schemaColumns, activeReviewColumns);
     const nextSampleRows = buildReviewStructuringSampleRows(baseColumns, schemaSampleRows, activeReviewColumns);
-    const nextSteps = buildReviewStructuringTransformSteps(draft.transform.steps, activeReviewColumns);
+    const nextSteps = buildReviewStructuringTransformSteps(draft.transform.steps, activeReviewColumns, sourceField);
     onDraftChange({
       schema: {
         columns: nextColumns,
@@ -2882,7 +2975,7 @@ export function SchemaInferencePage({
 
   const generateReviewSchemaSuggestion = async () => {
     if (!reviewStructuringHasRequiredFields) {
-      onNotify("AI 추천에는 최소 rating과 text 필드가 필요합니다.");
+      onNotify("AI 추천에는 text/content/body/value 같은 텍스트 필드가 필요합니다.");
       return;
     }
     setIsReviewSchemaSuggesting(true);

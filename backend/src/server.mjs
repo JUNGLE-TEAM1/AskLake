@@ -1,15 +1,18 @@
 import http from "node:http";
-import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs } from "./createPipeline.mjs";
+import { commandJob, createPipeline, executeQuery, getPipelineJob, listDatasets, listJobs, listModelArtifacts, previewDatasetRows } from "./createPipeline.mjs";
 import { listSourceAssets, testSourceConnector } from "./connectors.mjs";
 import { listS3Buckets, listS3Prefixes } from "./s3.service.mjs";
 import { ensureMetadataSchema, resetMetadata } from "./metadataStore.mjs";
 import { listTargetDatabases } from "./targetDatabase.service.mjs";
 import { getCellphonesReviewAnalysisStatus, runCellphonesReviewAnalysis, suggestReviewAnalysisSchema } from "./reviewRowAnalysis.mjs";
+import { handleAuthRoute } from "./authService.mjs";
 
 const port = Number(process.env.PORT || 8080);
 
 const server = http.createServer(async (request, response) => {
-  response.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN || "*");
+  const requestOrigin = request.headers.origin;
+  response.setHeader("Access-Control-Allow-Origin", process.env.CORS_ORIGIN || requestOrigin || "*");
+  response.setHeader("Access-Control-Allow-Credentials", "true");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
@@ -26,6 +29,10 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (await handleAuthRoute(request, response, url, readJson, sendJson)) {
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/etl/jobs") {
       sendJson(response, 200, await listJobs());
       return;
@@ -39,6 +46,20 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/catalog/datasets") {
       sendJson(response, 200, await listDatasets());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/catalog/models") {
+      sendJson(response, 200, await listModelArtifacts());
+      return;
+    }
+
+    if (request.method === "GET" && /^\/api\/catalog\/datasets\/[^/]+\/rows$/.test(url.pathname)) {
+      const datasetId = decodeURIComponent(url.pathname.split("/")[4]);
+      sendJson(response, 200, await previewDatasetRows(datasetId, {
+        limit: url.searchParams.get("limit"),
+        offset: url.searchParams.get("offset"),
+      }));
       return;
     }
 

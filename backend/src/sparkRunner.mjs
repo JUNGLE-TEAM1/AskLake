@@ -14,6 +14,11 @@ const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/w
 const localOutputDir = path.resolve(process.env.ASKLAKE_SPARK_LOCAL_OUTPUT_DIR || path.join(backendDir, "tmp", "spark-output"));
 const sampleHostDir = path.resolve(process.env.ASKLAKE_LOCAL_SAMPLE_DIR || path.join(os.tmpdir(), "asklake-1gb-samples"));
 const sampleContainerDir = process.env.ASKLAKE_SAMPLE_CONTAINER_DIR || "/opt/asklake-samples";
+const reviewTextModelHostDir = path.resolve(
+  process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
+    || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+);
+const reviewTextModelContainerDir = process.env.ASKLAKE_REVIEW_TEXT_MODEL_CONTAINER_DIR || "/work/review-text-models";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
 
@@ -23,6 +28,7 @@ export function runSparkPipeline(job, command, runId) {
   ensureWritableDir(reportDir);
   ensureWritableDir(localOutputDir);
   ensureWritableDir(sampleHostDir);
+  ensureWritableDir(reviewTextModelHostDir);
 
   const source = sparkSourceFromJob(job, runId);
   const output = sparkOutputPath(job, runId);
@@ -35,7 +41,7 @@ export function runSparkPipeline(job, command, runId) {
   const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
-  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "local_llm";
+  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
   const dockerArgs = [
     "run",
     "--rm",
@@ -51,6 +57,8 @@ export function runSparkPipeline(job, command, runId) {
     `${reportDir}:${reportContainerDir}`,
     "-v",
     `${sampleHostDir}:${sampleContainerDir}:ro`,
+    "-v",
+    `${reviewTextModelHostDir}:${reviewTextModelContainerDir}:ro`,
     "-v",
     `${outputVolumeName}:${outputContainerDir}`,
     "-e",
@@ -92,6 +100,8 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
     "-e",
+    `ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
+    "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
     "/opt/spark/bin/spark-submit",
@@ -109,6 +119,8 @@ export function runSparkPipeline(job, command, runId) {
     `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
     "--conf",
     `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_REVIEW_TEXT_MODEL_ROOT=${reviewTextModelContainerDir}`,
     ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
@@ -332,12 +344,12 @@ function sparkOutputPath(job, runId) {
 
 function sparkRowLimitFromJob(job) {
   const sourceConfig = Array.isArray(job.sourceConfig) ? job.sourceConfig : [];
-  const configuredLimit = fieldValue(sourceConfig, "__Sample Row Limit");
+  const configuredLimit = fieldValue(sourceConfig, "__Execution Row Limit") || fieldValue(sourceConfig, "Execution Row Limit");
   if (configuredLimit && Number(configuredLimit) > 0) return configuredLimit;
   const scope = fieldValue(sourceConfig, "__Schema Sample Scope");
   if (scope === "slice1gb") return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "10000";
-  if (scope === "full") return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "100000";
-  return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "10000";
+  if (scope === "full") return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "0";
+  return process.env.ASKLAKE_SPARK_RUN_ROW_LIMIT || "0";
 }
 
 function inferFormat(sourceConfig, prefix, fallback) {

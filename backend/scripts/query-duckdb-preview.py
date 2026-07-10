@@ -20,21 +20,30 @@ def main() -> None:
     statement = validate_query(str(payload.get("query") or ""))
     datasets = payload.get("datasets") if isinstance(payload.get("datasets"), list) else []
     limit = normalize_limit(payload.get("limit"))
+    offset = normalize_offset(payload.get("offset"))
 
     connection = duckdb.connect(database=":memory:")
     try:
         for dataset in unique_datasets(datasets):
             register_dataset(connection, dataset)
 
+        count_cursor = connection.execute(
+            f"SELECT COUNT(*) FROM ({statement}) AS asklake_query_count",
+        )
+        total_rows = int((count_cursor.fetchone() or [0])[0] or 0)
         cursor = connection.execute(
-            f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ?",
-            [limit],
+            f"SELECT * FROM ({statement}) AS asklake_query_result LIMIT ? OFFSET ?",
+            [limit, offset],
         )
         raw_rows = cursor.fetchall()
         columns = [str(description[0]) for description in (cursor.description or [])]
         result = {
             "columns": columns,
-            "rowCount": len(raw_rows),
+            "hasNext": offset + len(raw_rows) < total_rows,
+            "limit": limit,
+            "offset": offset,
+            "returnedRows": len(raw_rows),
+            "rowCount": total_rows,
             "rows": [[format_cell(cell) for cell in row] for row in raw_rows],
         }
         print(f"ASKLAKE_QUERY_RUN_RESULT={json.dumps(result, ensure_ascii=False)}")
@@ -61,7 +70,15 @@ def normalize_limit(value: Any) -> int:
         parsed = int(value)
     except (TypeError, ValueError):
         parsed = 100
-    return min(max(parsed, 1), 1000)
+    return min(max(parsed, 1), 10000)
+
+
+def normalize_offset(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 0
+    return max(parsed, 0)
 
 
 def unique_datasets(datasets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -100,15 +117,13 @@ def register_storage_location(connection: duckdb.DuckDBPyConnection, dataset: di
         return False
 
     storage_format = str(dataset.get("storageFormat") or dataset.get("storage_format") or "").lower()
-    if storage_format != "parquet":
+    scan_path = dataset_scan_path(storage_path, storage_format)
+    if not scan_path:
         return False
 
-    parquet_path = parquet_scan_path(storage_path)
-    if not parquet_path:
-        return False
-
+    reader = storage_reader(storage_format, scan_path)
     connection.execute(
-        f"CREATE TEMP VIEW {quote_identifier(table_name)} AS SELECT * FROM read_parquet({quote_literal(parquet_path)})",
+        f"CREATE TEMP VIEW {quote_identifier(table_name)} AS SELECT * FROM {reader}({quote_literal(scan_path)})",
     )
     return True
 
@@ -231,12 +246,27 @@ def format_cell(value: Any) -> str:
     return str(value)
 
 
-def parquet_scan_path(storage_path: Path) -> str:
-    if storage_path.is_file() and storage_path.suffix.lower() == ".parquet":
+def dataset_scan_path(storage_path: Path, storage_format: str) -> str:
+    suffix = storage_path.suffix.lower()
+    if storage_path.is_file() and suffix in {".parquet", ".csv", ".json", ".jsonl", ".ndjson"}:
         return str(storage_path)
-    if storage_path.is_dir() and list(storage_path.rglob("*.parquet")):
-        return str(storage_path / "**" / "*.parquet")
+    if storage_path.is_dir():
+        if storage_format == "csv" and list(storage_path.rglob("*.csv")):
+            return str(storage_path / "**" / "*.csv")
+        if storage_format in {"json", "jsonl", "ndjson"} and list(storage_path.rglob("*.json*")):
+            return str(storage_path / "**" / "*.json*")
+        if list(storage_path.rglob("*.parquet")):
+            return str(storage_path / "**" / "*.parquet")
     return ""
+
+
+def storage_reader(storage_format: str, scan_path: str) -> str:
+    lower_path = scan_path.lower()
+    if storage_format == "csv" or lower_path.endswith(".csv"):
+        return "read_csv_auto"
+    if storage_format in {"json", "jsonl", "ndjson"} or lower_path.endswith((".json", ".jsonl", ".ndjson")):
+        return "read_json_auto"
+    return "read_parquet"
 
 
 def quote_identifier(identifier: str) -> str:

@@ -372,7 +372,7 @@ class KafkaReviewIngestRequest(CamelModel):
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"
-    landing_endpoint: str = "http://127.0.0.1:19000"
+    landing_endpoint: str = "http://127.0.0.1:9000"
     landing_prefix: str = "kafka-landing"
     local_landing_dir: str | None = None
     max_messages: int = Field(default=100, ge=1, le=1_000_000)

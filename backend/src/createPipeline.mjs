@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, normalizeColumnName, sourceId } from "./profile.mjs";
@@ -10,8 +11,10 @@ import {
   getJob,
   listDatasets as listStoredDatasets,
   listJobs as listStoredJobs,
+  listModelArtifacts as listStoredModelArtifacts,
   saveDataset,
   saveJob,
+  saveModelArtifact,
   saveSqlRun,
 } from "./metadataStore.mjs";
 
@@ -28,8 +31,91 @@ export async function getPipelineJob(jobId) {
   return job;
 }
 
-export function listDatasets() {
-  return listStoredDatasets();
+export async function listDatasets() {
+  const datasets = await listStoredDatasets();
+  return datasets.filter((dataset) => !isCatalogModelArtifact(dataset));
+}
+
+export async function listModelArtifacts() {
+  const stored = await listStoredModelArtifacts();
+  const discovered = discoverReviewTextModelArtifacts();
+  const byId = new Map();
+  for (const artifact of discovered) {
+    byId.set(artifact.id, artifact);
+  }
+  for (const artifact of stored) {
+    byId.set(artifact.id, { ...(byId.get(artifact.id) ?? {}), ...artifact });
+  }
+  return [...byId.values()].sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+}
+
+function isCatalogModelArtifact(dataset) {
+  const kind = String(dataset?.artifactType || dataset?.resourceType || dataset?.type || "").toLowerCase();
+  return kind === "model" || kind === "model_artifact";
+}
+
+function discoverReviewTextModelArtifacts() {
+  const root = path.resolve(
+    process.env.ASKLAKE_REVIEW_TEXT_MODEL_HOST_DIR
+      || path.join(backendDir, "..", "output", "nlp-eval", "template-model-validation", "runtime", "latest"),
+  );
+  if (!existsSync(root)) return [];
+  const files = findPortableReviewTextModels(root);
+  return files.map((filePath) => {
+    const filename = path.basename(filePath);
+    const targetColumn = normalizeColumnName(filename.replace(/\.portable_linear_svc\.json$/i, ""));
+    let classes = [];
+    try {
+      const payload = JSON.parse(readFileSync(filePath, "utf8"));
+      classes = Array.isArray(payload.classes) ? payload.classes.map((value) => String(value)) : [];
+    } catch {
+      classes = [];
+    }
+    let updatedAt = new Date().toISOString();
+    try {
+      updatedAt = statSync(filePath).mtime.toISOString();
+    } catch {
+      // Keep current timestamp fallback.
+    }
+    return {
+      allowedValues: classes,
+      artifactType: "model",
+      id: `model_${targetColumn}`,
+      method: "one_of_values",
+      modelArtifact: filename,
+      modelKind: "portable_linear_svc",
+      modelPath: filePath,
+      runtimeStatus: "portable_text_model_available",
+      source: "filesystem",
+      status: "available",
+      targetColumn,
+      updatedAt,
+      validationStatus: "available_for_selection",
+    };
+  });
+}
+
+function findPortableReviewTextModels(root) {
+  const found = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries = [];
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      } else if (/\.portable_linear_svc\.json$/i.test(entry.name)) {
+        found.push(fullPath);
+      }
+    }
+  }
+  return found;
 }
 
 export async function createPipeline(request) {
@@ -225,6 +311,7 @@ export async function executeQuery(request) {
   const queryResult = runDuckdbPreview({
     datasets: contextDatasets,
     limit: request.limit,
+    offset: request.offset,
     query: request.query,
   });
   const result = {
@@ -235,6 +322,7 @@ export async function executeQuery(request) {
     executedAt: new Date().toISOString(),
     mode: request.mode ?? "preview",
     previewLimit: request.limit ?? 100,
+    previewOffset: request.offset ?? 0,
     query: request.query,
     referenceDatasetIds,
     rowCount: queryResult.rowCount,
@@ -244,6 +332,30 @@ export async function executeQuery(request) {
   };
   await saveSqlRun(result);
   return result;
+}
+
+export async function previewDatasetRows(datasetId, options = {}) {
+  const dataset = await getDataset(datasetId);
+  if (!dataset) throw notFoundError(`Dataset not found: ${datasetId}`);
+
+  const queryResult = runDuckdbPreview({
+    datasets: [dataset],
+    limit: options.limit,
+    offset: options.offset,
+    query: `SELECT * FROM ${duckdbIdentifier(dataset.name || dataset.id)}`,
+  });
+
+  return {
+    columns: queryResult.columns,
+    datasetId: dataset.id,
+    datasetName: dataset.name,
+    hasNext: Boolean(queryResult.hasNext),
+    limit: queryResult.limit,
+    offset: queryResult.offset,
+    returnedRows: queryResult.returnedRows ?? queryResult.rows.length,
+    rowCount: queryResult.rowCount,
+    rows: queryResult.rows,
+  };
 }
 
 async function queryContextDatasets(request, dataset, referenceDatasetIds) {
@@ -281,6 +393,10 @@ function runDuckdbPreview(payload) {
     throw error;
   }
   return JSON.parse(marker.slice("ASKLAKE_QUERY_RUN_RESULT=".length));
+}
+
+function duckdbIdentifier(value) {
+  return `"${String(value || "dataset").replace(/"/g, "\"\"")}"`;
 }
 
 function validateCreatePipelineRequest(request) {
@@ -617,15 +733,20 @@ async function updateDatasetFromSparkResult(job, result) {
     nextDataset.quality = result.quality.summary || `품질 점수 ${result.quality.score ?? "-"}% · 상태 ${qualityStatusLabel(result.quality.status)}`;
   }
   nextDataset.rows = formatRows(result.outputRows);
+  nextDataset.sampleRows = Array.isArray(result.sampleRows) ? result.sampleRows : nextDataset.sampleRows ?? [];
   nextDataset.size = result.outputPath ?? nextDataset.size;
   nextDataset.source = job.name;
+  nextDataset.sourceRunId = result.runId;
   nextDataset.status = "available";
   if (result.outputPath) {
     nextDataset.storageFormat = "parquet";
     nextDataset.storageLocation = result.outputPath;
   }
+  nextDataset.storageSizeBytes = Number(result.storageSizeBytes || nextDataset.storageSizeBytes || 0);
+  nextDataset.materializationRuns = upsertMaterializationRun(nextDataset.materializationRuns, materializationRunFromSparkResult(job, result));
   nextDataset.upstream = Array.from(new Set([...(nextDataset.upstream ?? []), result.sourcePath ?? job.source]));
   await saveDataset(nextDataset);
+  await saveReviewRowModelArtifacts(job, result, nextDataset);
   return nextDataset;
 }
 
@@ -647,16 +768,76 @@ function datasetFromSuccessfulRun(job, result) {
     quality: result.quality?.summary || `품질 점수 ${result.quality?.score ?? job.qualityScore ?? "-"}% · 상태 ${qualityStatusLabel(result.quality?.status ?? job.qualityStatus)}`,
     rag: Boolean(job.rag),
     rows: formatRows(result.outputRows),
-    sampleRows: Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [],
+    sampleRows: Array.isArray(result.sampleRows) ? result.sampleRows : Array.isArray(job.schemaSampleRows) ? job.schemaSampleRows : [],
     schema,
     size: result.outputPath ?? "-",
     source: job.name,
+    sourceRunId: result.runId,
     status: "available",
     tags: ["#실행완료", `#${String(layer).toLowerCase()}`],
     storageFormat: "parquet",
     storageLocation: result.outputPath ?? null,
+    storageSizeBytes: Number(result.storageSizeBytes || 0),
+    materializationRuns: [materializationRunFromSparkResult(job, result)],
     upstream: Array.from(new Set([job.sourceLabel, job.name, result.sourcePath ?? job.source].filter(Boolean))),
   };
+}
+
+function materializationRunFromSparkResult(job, result) {
+  return {
+    createdAt: result.endedAt ?? new Date().toISOString(),
+    jobId: job.id,
+    rowCount: Number(result.outputRows || 0),
+    runId: result.runId,
+    sourceKind: "etl",
+    sourceLabel: job.sourceLabel || job.source || job.name,
+    status: result.status === "success" ? "success" : "failed",
+    storageLocation: result.outputPath ?? null,
+    storageSizeBytes: Number(result.storageSizeBytes || 0),
+  };
+}
+
+function upsertMaterializationRun(runs, nextRun) {
+  return [
+    nextRun,
+    ...(Array.isArray(runs) ? runs.filter((run) => run?.runId !== nextRun.runId) : []),
+  ];
+}
+
+async function saveReviewRowModelArtifacts(job, result, dataset) {
+  const checks = result?.quality?.reviewRowAnalysisChecks;
+  if (!Array.isArray(checks) || checks.length === 0) return [];
+  const saved = [];
+  for (const check of checks) {
+    if (!check || typeof check !== "object") continue;
+    const target = normalizeColumnName(check.target || check.output || check.id || "output");
+    if (!target) continue;
+    const artifact = {
+      allowedValues: Array.isArray(check.allowedValues) ? check.allowedValues : [],
+      artifactType: "model",
+      createdAt: result.endedAt ?? new Date().toISOString(),
+      datasetName: dataset.name,
+      id: `model_${normalizeColumnName(dataset.id)}_${target}`,
+      jobId: job.id,
+      method: check.method || "",
+      modelArtifact: check.modelArtifact || "",
+      modelKind: "review_row_text_transform",
+      modelRequired: Boolean(check.modelRequired),
+      outputColumn: check.output || target,
+      runId: result.runId,
+      runtimeStatus: check.runtimeStatus || "",
+      status: check.modelArtifact ? "available" : check.runtimeStatus === "missing_model_artifact" ? "missing" : "fallback",
+      supportedMethods: Array.isArray(check.supportedMethods) ? check.supportedMethods : [],
+      targetColumn: target,
+      targetDatasetId: dataset.id,
+      totalRows: Number(check.totalRows || result.outputRows || 0),
+      updatedAt: result.endedAt ?? new Date().toISOString(),
+      validRows: Number(check.validRows || 0),
+      validationStatus: check.validationStatus || "",
+    };
+    saved.push(await saveModelArtifact(artifact));
+  }
+  return saved;
 }
 
 function schemaFromJob(job) {

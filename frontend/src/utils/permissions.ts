@@ -1,9 +1,17 @@
-import type { CatalogDataset, DashboardMeta, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
+import type { CatalogDataset, CurrentUserResponse, DashboardMeta, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
 
 type PermissionResource = CatalogDataset | DashboardMeta | JobRowData | SavedDashboardCard;
 
 export function canQueryDataset(dataset: CatalogDataset | null | undefined) {
   return permissionValue(dataset, "canQuery", true);
+}
+
+export function isAdminUser(user: CurrentUserResponse | null | undefined) {
+  return String(user?.role ?? "").toLowerCase() === "admin";
+}
+
+export function canQueryDatasetAs(dataset: CatalogDataset | null | undefined, user: CurrentUserResponse | null | undefined) {
+  return isAdminUser(user) || canQueryDataset(dataset);
 }
 
 export function canManageDataset(dataset: CatalogDataset | null | undefined) {
