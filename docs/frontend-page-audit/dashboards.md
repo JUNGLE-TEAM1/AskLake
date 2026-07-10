@@ -107,3 +107,11 @@
 - `DashboardTable`의 shadcn `Empty` composition에 active filter 여부를 전달해 전체 empty와 검색 결과 empty 문구를 구분했다.
 - 삭제 dialog의 custom `dashboard-delete-error` paragraph와 CSS를 제거하고 destructive `Alert`로 교체했다.
 - 검색, owner/tag filter, sort, pagination, create/delete API 계약은 변경하지 않았다.
+
+## #492 Jobs 목록 패턴 통일
+
+- `DashboardTable`의 column을 Jobs 목록과 같은 `상태 → 대시보드 → 마지막 수정 → 생성 일시 → 소유자 → 액션` 순서로 재구성했다.
+- row는 공통 `DataTableStackedCell`, `DataTableCellPrimary`, `DataTableCellSecondary`를 사용해 primary/secondary 정보 위계를 맞췄다.
+- 상태는 Jobs와 같은 크기의 `StatusBadge`, 소유자는 `Avatar`와 `AvatarFallback` 조합으로 표시한다.
+- 기존 `Chip`, `TagList`, `dashboard-row-*` 전용 CSS를 제거하고 shadcn variant와 utility layout으로 대체했다.
+- 검색, owner/tag filter, server pagination, 상세 이동, 삭제 dialog 계약은 유지한다.
