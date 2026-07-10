@@ -1153,7 +1153,7 @@ export function SqlAnalysisPage({
                   )}
                 </div>
               </div>
-              {trinoMaterialization && <div className="sql-result-toolbar"><span>Iceberg materialization: {trinoMaterialization.status}</span></div>}
+              {trinoMaterialization && <div className="sql-result-toolbar"><span>Iceberg Dataset {trinoMaterialization.datasetName}: {trinoMaterialization.status}</span></div>}
               <div className="sql-result-scroll">
                 <SqlPreviewTable
                   resultDraft={visibleResult}

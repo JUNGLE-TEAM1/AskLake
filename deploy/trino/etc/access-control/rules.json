@@ -1,6 +1,11 @@
 {
   "catalogs": [
     {
+      "user": "asklake-materializer",
+      "catalog": "iceberg",
+      "allow": "all"
+    },
+    {
       "user": "asklake-api",
       "catalog": "iceberg",
       "allow": "read-only"
@@ -8,11 +13,25 @@
   ],
   "tables": [
     {
+      "user": "asklake-materializer",
+      "catalog": "iceberg",
+      "schema": "asklake",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    },
+    {
       "user": "asklake-api",
       "catalog": "iceberg",
       "schema": "asklake",
       "table": ".*",
       "privileges": ["SELECT"]
+    }
+  ],
+  "schemas": [
+    {
+      "user": "asklake-materializer",
+      "schema": "asklake",
+      "owner": true
     }
   ],
   "functions": []

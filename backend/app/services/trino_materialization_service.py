@@ -6,6 +6,7 @@ from fastapi import status
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
 from app.core.errors import ApiError
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse, CreateDerivedDatasetRequest, QueryEngineTableRef
@@ -34,8 +35,11 @@ class TrinoMaterializationService:
         if payload is None or payload.get("engine") != "trino":
             raise ApiError(ErrorCode.NOT_FOUND, "Trino source run not found", status.HTTP_404_NOT_FOUND)
         source_run = TrinoQueryRunResponse.model_validate(payload)
-        if source_run.submitted_by_user_id and actor.id != source_run.submitted_by_user_id and not actor.is_admin:
+        is_submitter = (source_run.submitted_by_user_id and actor.id == source_run.submitted_by_user_id) or actor.name == source_run.submitted_by_name
+        if not is_submitter and not actor.is_admin:
             raise ApiError(ErrorCode.FORBIDDEN, "Only the source run submitter can materialize it", status.HTTP_403_FORBIDDEN)
+        if request.source_run_id != source_run_id or request.source_dataset_id != source_run.base_dataset_id or request.query.strip() != source_run.query.strip() or set(request.reference_dataset_ids) != set(source_run.reference_dataset_ids):
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "Materialization request does not match the source query run", status.HTTP_422_UNPROCESSABLE_ENTITY)
         compiled_query = str(payload.get("compiledQuery") or "")
         dataset_name = request.dataset.name.strip() or f"{source_run.base_dataset_id}_analysis"
         dataset_slug = re.sub(r"[^a-z0-9_]+", "_", dataset_name.lower()).strip("_") or "sql_derived"
@@ -54,7 +58,7 @@ class TrinoMaterializationService:
             dataset_name=dataset_name,
             materialization_id=materialization_id,
             source_run_id=source_run_id,
-            status="failed" if page.error else "running",
+            status=trino_status(page),
             trino_query_id=page.query_id or None,
         )
         persisted = response.model_dump(by_alias=True, mode="json")
@@ -68,13 +72,19 @@ class TrinoMaterializationService:
             "submittedByUserId": actor.id,
         })
         self.repository.save_run_payload({"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted})
+        if response.status == "succeeded":
+            self._register_catalog_dataset(persisted, response)
+            persisted["catalogRegisteredAt"] = "registered"
+            self.repository.save_run_payload({"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted})
+        safe_record_audit_event(self.repository.db, action="trino_materialization.submit", actor=actor, api_path=f"/api/catalog/trino-runs/{source_run_id}/materializations", http_method="POST", metadata={"materializationId": materialization_id, "trinoQueryId": response.trino_query_id}, target_id=materialization_id, target_type="dataset")
         return response
 
     def refresh(self, materialization_id: str, actor: ActorContext) -> TrinoMaterializationRunResponse:
         payload = self.repository.get_run_payload(materialization_id)
         if payload is None or payload.get("engine") != "trino-materialization":
             raise ApiError(ErrorCode.NOT_FOUND, "Trino materialization run not found", status.HTTP_404_NOT_FOUND)
-        if payload.get("submittedByUserId") and payload.get("submittedByUserId") != actor.id and not actor.is_admin:
+        is_submitter = (payload.get("submittedByUserId") and payload.get("submittedByUserId") == actor.id) or actor.name == payload.get("submittedByName")
+        if not is_submitter and not actor.is_admin:
             raise ApiError(ErrorCode.FORBIDDEN, "Only the materialization submitter can view it", status.HTTP_403_FORBIDDEN)
         response = TrinoMaterializationRunResponse.model_validate(payload)
         next_uri = str(payload.get("trinoNextUri") or "")
@@ -89,8 +99,12 @@ class TrinoMaterializationService:
         updated_payload.update(updated.model_dump(by_alias=True, mode="json"))
         updated_payload["trinoNextUri"] = page.next_uri
         self.repository.save_run_payload(updated_payload)
-        if updated.status == "succeeded":
+        if updated.status == "succeeded" and not payload.get("catalogRegisteredAt"):
             self._register_catalog_dataset(updated_payload, updated)
+            updated_payload["catalogRegisteredAt"] = "registered"
+            self.repository.save_run_payload(updated_payload)
+        if updated.status in {"succeeded", "failed", "cancelled"} and updated.status != response.status:
+            safe_record_audit_event(self.repository.db, action=f"trino_materialization.{updated.status}", actor=actor, api_path=f"/api/catalog/trino-materializations/{materialization_id}", http_method="GET", metadata={"trinoQueryId": updated.trino_query_id}, result="success" if updated.status == "succeeded" else "failed", target_id=materialization_id, target_type="dataset")
         return updated
 
     def _register_catalog_dataset(self, payload: dict[str, object], response: TrinoMaterializationRunResponse) -> CatalogDatasetResponse:
