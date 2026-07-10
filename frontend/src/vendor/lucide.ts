@@ -85,6 +85,7 @@ export { default as Share2 } from "lucide-react/dist/esm/icons/share-2.mjs";
 export { default as ShieldCheck } from "lucide-react/dist/esm/icons/shield-check.mjs";
 export { default as SlidersHorizontal } from "lucide-react/dist/esm/icons/sliders-horizontal.mjs";
 export { default as Sparkles } from "lucide-react/dist/esm/icons/sparkles.mjs";
+export { default as Square } from "lucide-react/dist/esm/icons/square.mjs";
 export { default as Star } from "lucide-react/dist/esm/icons/star.mjs";
 export { default as Table2 } from "lucide-react/dist/esm/icons/table-2.mjs";
 export { default as TerminalSquare } from "lucide-react/dist/esm/icons/terminal-square.mjs";

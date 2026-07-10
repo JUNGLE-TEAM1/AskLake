@@ -38,7 +38,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
-- Dataset 범위의 read-only SQL 실행. 목표 runtime은 Trino 기반 실제 전체 실행이며, Phase 0 계약은 `docs/trino-query-run-contract.md`를 따른다.
+- Dataset 범위의 read-only SQL 실행. 기본 SQL 초안에는 preview용 `LIMIT`을 넣지 않으며, 목표 runtime은 Trino 기반 실제 전체 실행이다. Phase 0 계약은 `docs/trino-query-run-contract.md`를 따른다.
 - SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
 - AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.

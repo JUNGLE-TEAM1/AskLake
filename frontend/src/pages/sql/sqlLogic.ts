@@ -41,8 +41,7 @@ const sqlParser = new SqlParser();
 export function buildDefaultQuery(dataset: CatalogDataset) {
   const columns = dataset.schema.slice(0, 4).map(([name]) => quoteSqlIdentifier(name)).join(", ") || "*";
   return `SELECT ${columns}
-FROM ${getDatasetSqlReference(dataset)}
-LIMIT 100;`;
+FROM ${getDatasetSqlReference(dataset)};`;
 }
 
 export function quoteSqlIdentifier(identifier: string) {

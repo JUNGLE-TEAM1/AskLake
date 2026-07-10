@@ -9,15 +9,18 @@ import {
   RotateCcw,
   Search,
   Sparkles,
+  Square,
   Table2,
 } from "lucide-react";
+import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
+import { cancelTrinoQueryRun, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
 import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
@@ -89,6 +92,9 @@ export function SqlAnalysisPage({
   const [query, setQuery] = useState(defaultQuery);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
+  const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
+  const [trinoResultPages, setTrinoResultPages] = useState<TrinoQueryRunResultPage[]>([]);
+  const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
@@ -294,7 +300,7 @@ export function SqlAnalysisPage({
     setOpenSchemaDatasetId(baseDataset.id);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
-  const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
+  const queryContextPath = (mode: "preflight" | "preview" | "run" = "preview") => {
     const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
     params.set("mode", mode);
@@ -388,9 +394,40 @@ export function SqlAnalysisPage({
     });
   };
 
+  useEffect(() => {
+    if (!trinoRun || !["queued", "running"].includes(trinoRun.status)) return;
+    const timeoutId = window.setTimeout(() => {
+      void getTrinoQueryRun(trinoRun.runId)
+        .then((nextRun) => setTrinoRun(nextRun))
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : "Trino 실행 상태를 확인하지 못했습니다.";
+          setTrinoRun((current) => current ? {
+            ...current,
+            error: { code: "STATUS_POLL_FAILED", message },
+            status: "failed",
+          } : current);
+          setPreflightResult({ key: queryValidationKey, canExecute: false, messages: [{ tone: "error", text: message }] });
+        });
+    }, 800);
+    return () => window.clearTimeout(timeoutId);
+  }, [queryValidationKey, trinoRun]);
+
+  useEffect(() => {
+    if (!trinoRun || trinoResultPages.length > 0 || !trinoRun.result?.columns.length) return;
+    void getTrinoQueryRunResultPage(trinoRun.runId)
+      .then((page) => {
+        setTrinoResultPages([page]);
+        setTrinoResultPageIndex(0);
+      })
+      .catch(() => undefined);
+  }, [trinoResultPages.length, trinoRun]);
+
   const resetResultState = () => {
     setExecuted(false);
     setResultDraft(null);
+    setTrinoRun(null);
+    setTrinoResultPages([]);
+    setTrinoResultPageIndex(0);
     setExecutionMs(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
@@ -465,6 +502,26 @@ export function SqlAnalysisPage({
     const startedAt = performance.now();
     setQueryPending(true);
     try {
+      if (!apiConfig.useMock) {
+        const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
+        if (isTrinoQueryRun(response)) {
+          setExecuted(true);
+          setExecutionMs(Math.round(performance.now() - startedAt));
+          setResultDraft(null);
+          setTrinoRun(response);
+          setTrinoResultPages([]);
+          setTrinoResultPageIndex(0);
+          onResultChange(null);
+          onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
+          return;
+        }
+        setExecuted(true);
+        setExecutionMs(Math.round(performance.now() - startedAt));
+        setResultDraft(response);
+        onResultChange(response);
+        onAction("analysis.query.compatibility_executed", queryContextPath("run"), baseDataset.id);
+        return;
+      }
       const resultDraft = await buildPreviewDraft();
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
@@ -479,6 +536,43 @@ export function SqlAnalysisPage({
         messages: [{ tone: "error", text: message }],
       });
       onAction("analysis.query.preview_failed", queryContextPath("preview"), baseDataset.id, "failed");
+    } finally {
+      setQueryPending(false);
+    }
+  };
+
+  const activeTrinoPage = trinoResultPages[trinoResultPageIndex] ?? null;
+  const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
+    if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
+    return {
+      baseDatasetId: trinoRun.baseDatasetId,
+      columns: activeTrinoPage.columns,
+      datasetId: baseDataset.id,
+      datasetName: baseDataset.name,
+      executedAt: trinoRun.completedAt ?? trinoRun.startedAt ?? trinoRun.submittedAt,
+      mode: "run",
+      query: trinoRun.query,
+      referenceDatasetIds: trinoRun.referenceDatasetIds,
+      rowCount: trinoRun.result?.rowCount ?? activeTrinoPage.pageSize,
+      rows: activeTrinoPage.rows.map((row) => row.map((cell) => cell == null ? "" : String(cell))),
+      runId: trinoRun.runId,
+    };
+  }, [activeTrinoPage, baseDataset, trinoRun]);
+  const visibleResult = resultDraft ?? trinoDisplayResult;
+
+  const loadNextTrinoResultPage = async () => {
+    if (!trinoRun || !activeTrinoPage?.nextCursor) return;
+    const page = await getTrinoQueryRunResultPage(trinoRun.runId, activeTrinoPage.nextCursor);
+    setTrinoResultPages((pages) => [...pages, page]);
+    setTrinoResultPageIndex((index) => index + 1);
+  };
+
+  const cancelActiveTrinoRun = async () => {
+    if (!trinoRun) return;
+    setQueryPending(true);
+    try {
+      setTrinoRun(await cancelTrinoQueryRun(trinoRun.runId));
+      onAction("analysis.query.run_cancelled", `/api/query/runs/${trinoRun.runId}/cancel`, trinoRun.baseDatasetId);
     } finally {
       setQueryPending(false);
     }
@@ -931,7 +1025,7 @@ export function SqlAnalysisPage({
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" title={hasQueryPermission ? "SQL Preview를 실행합니다." : queryPermissionMessage} type="button" onClick={executePreview} disabled={!canRunPreview || queryPending}>
+              <button className="primary-button" title={hasQueryPermission ? "선택 데이터셋 전체에 SQL을 실행합니다." : queryPermissionMessage} type="button" onClick={executePreview} disabled={!canRunPreview || queryPending || ["queued", "running"].includes(trinoRun?.status ?? "")}>
                 <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
               </button>
             </div>
@@ -997,48 +1091,59 @@ export function SqlAnalysisPage({
           </div>
         </section>
 
-        <section className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}>
+        <section className={visibleResult ? "sql-result-card result-ready" : "sql-result-card"}>
           <div className="sql-result-header">
             <div>
               <span>실행 결과</span>
-              <h2>{resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}</h2>
+              <h2>{visibleResult ? `${visibleResult.rowCount}행 조회됨` : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}</h2>
             </div>
             <div className="sql-result-status">
-              <span>{queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
+              <span>{trinoRun ? trinoRun.status : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
+              {trinoRun && ["queued", "running"].includes(trinoRun.status) && (
+                <button type="button" onClick={cancelActiveTrinoRun} disabled={queryPending}><Square size={14} /> 취소</button>
+              )}
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
-          {resultDraft ? (
+          {visibleResult ? (
             <>
               <div className="sql-result-toolbar">
                 <span>
-                  실행 ID {resultDraft.runId}
-                  {resultDraft.previewLimit ? ` · 최대 ${resultDraft.previewLimit}행 표시` : ""}
-                  {` · ${resultDraft.rows.length}/${resultDraft.rowCount}행 표시 · ${resultDraft.columns.length}컬럼`}
-                  {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
+                  실행 ID {visibleResult.runId}
+                  {visibleResult.previewLimit ? ` · 최대 ${visibleResult.previewLimit}행 표시` : ""}
+                  {` · ${visibleResult.rows.length}/${visibleResult.rowCount}행 표시 · ${visibleResult.columns.length}컬럼`}
+                  {` · ${formatResultTimestamp(visibleResult.executedAt)}`}
                 </span>
                 <div className="sql-result-actions">
-                  <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>
-                  <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>
-                  <button
-                    disabled={!dashboardBaseDataset}
-                    title={dashboardBaseDataset ? "현재 SQL 실행 결과로 대시보드 초안을 엽니다." : "SQL 실행 결과의 기준 데이터셋을 찾을 수 없습니다."}
-                    type="button"
-                    onClick={openDashboardBuilder}
-                    onMouseDown={handleDashboardBuilderMouseDown}
-                  >
-                    <BarChart3 size={14} /> 대시보드 만들기
-                  </button>
+                  {!trinoRun && <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>}
+                  {!trinoRun && <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>}
+                  {!trinoRun && (
+                    <button
+                      disabled={!dashboardBaseDataset}
+                      title={dashboardBaseDataset ? "현재 SQL 실행 결과로 대시보드 초안을 엽니다." : "SQL 실행 결과의 기준 데이터셋을 찾을 수 없습니다."}
+                      type="button"
+                      onClick={openDashboardBuilder}
+                      onMouseDown={handleDashboardBuilderMouseDown}
+                    >
+                      <BarChart3 size={14} /> 대시보드 만들기
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="sql-result-scroll">
-                <SqlPreviewTable resultDraft={resultDraft} />
+                <SqlPreviewTable
+                  resultDraft={visibleResult}
+                  remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
+                  remoteNextCursor={activeTrinoPage?.nextCursor}
+                  onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
+                  onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => setTrinoResultPageIndex((index) => index - 1) : undefined}
+                />
               </div>
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>아직 결과가 없습니다.</strong>
-              <span>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</span>
+              <strong>{trinoRun?.status === "failed" ? "실행에 실패했습니다." : "아직 결과가 없습니다."}</strong>
+              <span>{trinoRun?.error?.message ?? (baseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.")}</span>
             </div>
           )}
         </section>

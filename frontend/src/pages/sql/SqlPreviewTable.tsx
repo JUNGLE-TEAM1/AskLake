@@ -19,7 +19,19 @@ function getCellKind(value: string) {
   return "text";
 }
 
-export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }) {
+export function SqlPreviewTable({
+  resultDraft,
+  remoteNextCursor,
+  remotePageIndex,
+  onRemoteNext,
+  onRemotePrevious,
+}: {
+  resultDraft: SqlResultDraft;
+  remoteNextCursor?: string | null;
+  remotePageIndex?: number;
+  onRemoteNext?: () => void;
+  onRemotePrevious?: () => void;
+}) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
   useEffect(() => {
     setPagination({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
@@ -50,6 +62,24 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
   const pageStart = data.length === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
   const pageEnd = data.length === 0 ? 0 : Math.min(data.length, pageStart + pageRows.length - 1);
   const pageCount = Math.max(table.getPageCount(), 1);
+  const canGoPrevious = table.getCanPreviousPage() || Boolean(onRemotePrevious);
+  const canGoNext = table.getCanNextPage() || Boolean(remoteNextCursor && onRemoteNext);
+
+  const goPrevious = () => {
+    if (table.getCanPreviousPage()) {
+      table.previousPage();
+      return;
+    }
+    onRemotePrevious?.();
+  };
+
+  const goNext = () => {
+    if (table.getCanNextPage()) {
+      table.nextPage();
+      return;
+    }
+    onRemoteNext?.();
+  };
 
   return (
     <div className="sql-preview-table-wrap" data-column-count={resultDraft.columns.length}>
@@ -78,10 +108,10 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
         </tbody>
       </table>
       <div className="sql-result-pagination" aria-label="SQL 실행 결과 페이지">
-        <span>{pageStart}-{pageEnd} / {data.length}행 · {pagination.pageIndex + 1} / {pageCount}쪽</span>
+        <span>{pageStart}-{pageEnd} / {data.length}행 · {remotePageIndex === undefined ? pagination.pageIndex + 1 : remotePageIndex + 1} / {remotePageIndex === undefined ? pageCount : "?"}쪽</span>
         <div>
-          <button type="button" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>이전</button>
-          <button type="button" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>다음</button>
+          <button type="button" disabled={!canGoPrevious} onClick={goPrevious}>이전</button>
+          <button type="button" disabled={!canGoNext} onClick={goNext}>다음</button>
         </div>
       </div>
     </div>
