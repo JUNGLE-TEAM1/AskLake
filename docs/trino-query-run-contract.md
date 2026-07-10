@@ -143,3 +143,5 @@ Phase 2는 `TrinoClient`의 statement/nextUri/cancel protocol adapter, canonical
 production Trino는 backend-only internal network, HTTPS/password authentication, file-based read-only access control, separate Iceberg JDBC/MinIO credentials를 전제로 한다. TLS CA, keystore, password hash file은 서버 secret 경로에서 mount하며 repository에 저장하지 않는다. Phase 3부터 `TRINO_ENABLED=true`이면 `/api/query/runs` routing은 Trino runtime을 사용한다. Phase 4 frontend는 run status polling, cancel, cursor 결과 page를 사용하며 preview-only `LIMIT`을 기본 SQL에 넣지 않는다.
 
 Phase 5는 legacy JSONL derived dataset 경로와 Trino run을 명확히 분리한다. Trino run은 전체 결과 page를 재조합하지 않고, succeeded run의 SQL을 Iceberg CTAS statement로 materialize해야 한다. CTAS를 실제 제출하고 Catalog/lineage/dashboard source로 등록하는 API는 다음 Phase에서 연결한다.
+
+Phase 6은 `POST /api/catalog/trino-runs/{runId}/materializations`로 CTAS를 Trino materializer service account에 제출하고 materialization run을 별도 저장한다. Catalog/lineage 상태 polling과 dashboard source 전환은 다음 Phase다.

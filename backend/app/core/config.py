@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     trino_user: str = "asklake-api"
     trino_auth_username: str | None = None
     trino_auth_password: str | None = None
+    trino_materializer_username: str | None = None
+    trino_materializer_password: str | None = None
     trino_tls_ca_file: str | None = None
     trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
     trino_max_response_bytes: int = Field(default=2_000_000, ge=65_536, le=50_000_000)

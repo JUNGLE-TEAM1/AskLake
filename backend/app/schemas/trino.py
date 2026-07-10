@@ -36,6 +36,15 @@ class TrinoQueryRunResultPage(CamelModel):
     run_id: str
 
 
+class TrinoMaterializationRunResponse(CamelModel):
+    dataset_id: str
+    dataset_name: str
+    materialization_id: str
+    source_run_id: str
+    status: TrinoQueryRunStatus
+    trino_query_id: str | None = None
+
+
 class SubmitTrinoQueryRunRequest(CamelModel):
     base_dataset_id: str
     client_request_id: str | None = None

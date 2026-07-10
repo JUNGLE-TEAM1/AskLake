@@ -17,8 +17,10 @@ from app.schemas.trino import TrinoClientPage, TrinoQueryRunError
 class TrinoClient:
     """Small wrapper around Trino's direct HTTP client protocol."""
 
-    def __init__(self, runtime_settings: Settings | None = None) -> None:
+    def __init__(self, runtime_settings: Settings | None = None, *, username: str | None = None, password: str | None = None) -> None:
         self.settings = runtime_settings or settings
+        self.username = username
+        self.password = password
         ssl_context = ssl.create_default_context(cafile=self.settings.trino_tls_ca_file) if self.settings.trino_tls_ca_file else None
         handlers: list[object] = [NoRedirectHandler()]
         if ssl_context is not None:
@@ -49,8 +51,8 @@ class TrinoClient:
         self._request(next_uri, method="DELETE", headers=self._auth_headers(), allow_empty_response=True)
 
     def _auth_headers(self) -> dict[str, str]:
-        username = self.settings.trino_auth_username or self.settings.trino_user
-        password = self.settings.trino_auth_password
+        username = self.username or self.settings.trino_auth_username or self.settings.trino_user
+        password = self.password if self.password is not None else self.settings.trino_auth_password
         if not password:
             return {}
         token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
