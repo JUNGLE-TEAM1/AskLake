@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type React from "react";
 import {
   flexRender,
@@ -1266,100 +1266,125 @@ function RunDagModal({
   run: JobRunSummary;
 }) {
   const [dagSearchOpen, setDagSearchOpen] = useState(false);
+  const [dagQuery, setDagQuery] = useState("");
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
   const currentRun = run;
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
+  const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);
+  const filteredDagSteps = useMemo(() => filterDagSteps(dagSteps, dagQuery), [dagQuery, dagSteps]);
+  const hasAirflowContext = Boolean(
+    currentRun.airflowDagId
+    || currentRun.airflowDagRunId
+    || currentRun.airflowRunUrl
+    || currentRun.airflowState
+    || currentRun.lastSyncedAt,
+  );
   const toggleSearch = () => {
     setDagSearchOpen((open) => !open);
     onAction("etl.dag.search_opened", `/api/etl/jobs/${job.id}/dag/search`, job.id);
   };
-
-  const dagCanvas = (
-    <div className="dag-canvas-expanded">
-      <div className="dag-context-row">
-        <strong>실행 컨텍스트</strong>
-        <span>현재 Run의 단계별 상태와 작업 진행 순서를 확인합니다.</span>
-        <div className="dag-legend">
-          <DagStatePill status="success" />
-          <DagStatePill status="failed" />
-          <DagStatePill status="blocked" />
-        </div>
-      </div>
-
-      <div className="dag-graph">
-        <div className="dag-row dag-row-top">
-          {dagSteps.slice(0, 4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow top" />}
-            </Fragment>
-          ))}
-        </div>
-        <div className="dag-down-arrow">
-          <span>{currentRun.status === "failed" ? "실패 이후 중단" : "다음 단계"}</span>
-        </div>
-        <div className="dag-row dag-row-bottom">
-          {dagSteps.slice(4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow muted bottom" />}
-            </Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div className="run-dag-modal" role="dialog" aria-modal="true" aria-label={`${currentRun.runId} 실행 상세`} onClick={onClose}>
       <section onClick={(event) => event.stopPropagation()}>
         <header className="run-dag-modal-header">
           <div>
-            <span>{job.name}</span>
-            <h2>{currentRun.runId} 실행 상세</h2>
-            <p>{currentRun.startedAt} · {runStatusMeta[currentRun.status].label}</p>
+            <span className="run-dag-eyebrow">RUN OBSERVABILITY</span>
+            <div className="run-dag-title-line">
+              <h2>{currentRun.runId}</h2>
+              <RunStatusPill status={currentRun.status} />
+            </div>
+            <p>{job.name} · {formatCompactDateTime(currentRun.startedAt)}</p>
           </div>
           <button type="button" aria-label="닫기" onClick={onClose}><X size={16} />닫기</button>
         </header>
         <div className="run-dag-modal-body">
           <section className="dag-body-content">
-            <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-              {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
-              <span>▾</span>
-            </button>
+            {hasAirflowContext && (
+              <section className="airflow-runtime-card" aria-label="Airflow 실행 연결 정보">
+                <div className="airflow-runtime-heading">
+                  <div>
+                    <span>ORCHESTRATION</span>
+                    <h3>Airflow 실행 연결</h3>
+                  </div>
+                  {currentRun.airflowRunUrl && (
+                    <a
+                      href={currentRun.airflowRunUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                      onClick={() => onAction("etl.airflow.run_opened", currentRun.airflowRunUrl ?? `/api/etl/jobs/${job.id}`, currentRun.runId)}
+                    >
+                      Airflow에서 보기 <ExternalLink size={14} />
+                    </a>
+                  )}
+                </div>
+                <dl className="airflow-runtime-meta">
+                  <div><dt>DAG</dt><dd>{currentRun.airflowDagId || "연결 대기"}</dd></div>
+                  <div><dt>DAG Run</dt><dd>{currentRun.airflowDagRunId || "생성 대기"}</dd></div>
+                  <div><dt>Airflow 상태</dt><dd>{currentRun.airflowState || "동기화 대기"}</dd></div>
+                  <div><dt>마지막 동기화</dt><dd>{currentRun.lastSyncedAt ? formatCompactDateTime(currentRun.lastSyncedAt) : "-"}</dd></div>
+                </dl>
+              </section>
+            )}
+
+            {currentRun.syncError && (
+              <div className="airflow-sync-alert" role="alert">
+                <Info size={16} />
+                <span><strong>Airflow 상태 동기화 지연</strong>{currentRun.syncError}</span>
+              </div>
+            )}
 
             <div className="dag-summary-grid">
-              <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
+              <DagSummaryCard label="실행 상태" value={runStatusMeta[currentRun.status].label} />
               <DagSummaryCard label="소요 시간" value={currentRun.duration} />
-              <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
-              <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
-              <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
+              <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length || 0}`} />
+              <DagSummaryCard helper={`출력 ${currentRun.outputRows}`} label="입력 행" value={currentRun.inputRows} />
+              <DagSummaryCard label={currentRun.status === "failed" ? "실패 지점" : "현재 지점"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
             </div>
 
-            <article className="dag-flow-card">
-              <div className="dag-flow-topbar">
-                <h2>작업 진행 순서 / 실행 단계</h2>
-                <div className="dag-flow-controls">
-                  <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
+            <article className="dag-workbench">
+              <section className="dag-timeline-panel" aria-label="실행 타임라인">
+                <div className="dag-flow-topbar">
+                  <div>
+                    <span>EXECUTION TIMELINE</span>
+                    <h2>실행 단계</h2>
+                    <p>실제 실행 순서와 상태를 기준으로 표시합니다.</p>
+                  </div>
+                  <div className="dag-flow-controls">
+                    <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
+                  </div>
                 </div>
-              </div>
-              {dagSearchOpen && (
-                <div className="dag-search-panel">
-                  <Search size={15} />
-                  <input aria-label="실행 단계 검색" defaultValue="변환 규칙" />
-                  <span>1개 단계 발견</span>
+                {dagSearchOpen && (
+                  <label className="dag-search-panel">
+                    <Search size={15} />
+                    <input aria-label="실행 단계 검색" onChange={(event) => setDagQuery(event.target.value)} placeholder="단계명, 상태, 메시지 검색" type="search" value={dagQuery} />
+                    <span>{filteredDagSteps.length}/{dagSteps.length}</span>
+                  </label>
+                )}
+
+                <div className="dag-timeline" role="list">
+                  {filteredDagSteps.map((step) => {
+                    const stepIndex = dagSteps.findIndex((candidate) => candidate.id === step.id);
+                    return (
+                      <DagTimelineItem
+                        active={selectedStep?.id === step.id}
+                        index={stepIndex}
+                        key={step.id}
+                        onSelect={() => {
+                          setSelectedStepId(step.id);
+                          onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id);
+                        }}
+                        step={step}
+                      />
+                    );
+                  })}
+                  {filteredDagSteps.length === 0 && <p className="dag-timeline-empty">검색어와 일치하는 실행 단계가 없습니다.</p>}
                 </div>
-              )}
+              </section>
 
-              <div className="dag-canvas-scroll">
-                {dagCanvas}
-              </div>
-
-              <div className="dag-selected-strip">
-                <span>선택: 실행 단계 노드를 클릭하면 단계 상세 패널이 열립니다 · ETL 작업 수정 링크는 상세 패널에서 제공합니다</span>
-                <strong>선택</strong>
-              </div>
+              <DagStepInspector currentRun={currentRun} step={selectedStep} />
             </article>
           </section>
         </div>
@@ -1383,26 +1408,98 @@ function DagStatePill({ status }: { status: JobDagStepStatus }) {
   return <span className={`dag-state-pill ${statusMeta.className}`}>{statusMeta.label}</span>;
 }
 
-function DagStepNode({
-  onSelect,
-  step,
-  wide,
-}: {
-  onSelect: () => void;
-  step: JobDagStep;
-  wide?: boolean;
-}) {
+function DagTimelineItem({ active, index, onSelect, step }: { active: boolean; index: number; onSelect: () => void; step: JobDagStep }) {
   const tone = dagStepStatusMeta[step.status].className;
 
   return (
-    <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} type="button" onClick={onSelect}>
-      <span className="dag-step-dot" />
-      <strong>{step.title}</strong>
-      <span className="dag-step-meta">{step.meta}</span>
-      <span className="dag-step-footer">
-        <DagStatePill status={step.status} />
-        {step.note && <em>{step.note}</em>}
-      </span>
-    </button>
+    <div className="dag-timeline-entry" role="listitem">
+      <button aria-current={active ? "step" : undefined} className={active ? `dag-timeline-item ${tone} active` : `dag-timeline-item ${tone}`} type="button" onClick={onSelect}>
+        <span className="dag-timeline-marker">{getDagStepStatusIcon(step.status)}</span>
+        <span className="dag-timeline-content">
+          <span className="dag-timeline-kicker">단계 {index + 1}</span>
+          <strong>{formatDagStepTitle(step.title)}</strong>
+          <span className="dag-step-meta">{step.meta}</span>
+        </span>
+        <span className="dag-timeline-status"><DagStatePill status={step.status} /></span>
+      </button>
+    </div>
   );
+}
+
+function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; step?: JobDagStep }) {
+  if (!step) {
+    return (
+      <aside className="dag-step-inspector dag-step-inspector-empty">
+        <TerminalSquare size={22} />
+        <strong>표시할 실행 단계가 없습니다.</strong>
+        <p>이 Run의 단계 정보가 수집되면 여기에서 상세 상태를 확인할 수 있습니다.</p>
+      </aside>
+    );
+  }
+
+  const details = [["단계 상태", dagStepStatusMeta[step.status].label], ...(step.details ?? [])];
+  const messages = (step.logs ?? []).filter(Boolean);
+
+  return (
+    <aside className="dag-step-inspector" aria-label={`${step.title} 상세`}>
+      <header>
+        <span>SELECTED STEP</span>
+        <div>
+          <h3>{formatDagStepTitle(step.title)}</h3>
+          <DagStatePill status={step.status} />
+        </div>
+        <p>{step.meta}</p>
+      </header>
+
+      <dl className="dag-step-detail-list">
+        {details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "-"}</dd></div>)}
+      </dl>
+
+      <section className="dag-step-message">
+        <div>
+          <span>진단 메시지</span>
+          {messages.length > 1 && <em>{messages.length}개</em>}
+        </div>
+        {messages.length > 0 ? (
+          <ul>{messages.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}</ul>
+        ) : (
+          <p>{step.note || `${currentRun.runId}의 단계 메시지가 아직 수집되지 않았습니다.`}</p>
+        )}
+      </section>
+    </aside>
+  );
+}
+
+function filterDagSteps(steps: JobDagStep[], query: string) {
+  const normalizedQuery = normalizeWhitespace(query).toLowerCase();
+  if (!normalizedQuery) return steps;
+
+  return steps.filter((step) => [
+    step.title,
+    step.meta,
+    step.note,
+    dagStepStatusMeta[step.status].label,
+    ...(step.logs ?? []),
+    ...(step.details ?? []).flat(),
+  ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery));
+}
+
+function getSelectedDagStep(steps: JobDagStep[], selectedStepId: string | null) {
+  if (selectedStepId) {
+    const selectedStep = steps.find((step) => step.id === selectedStepId);
+    if (selectedStep) return selectedStep;
+  }
+
+  return steps.find((step) => step.status === "failed" || step.status === "running" || step.status === "blocked") ?? steps[0];
+}
+
+function getDagStepStatusIcon(status: JobDagStepStatus) {
+  if (status === "success") return <Check aria-hidden="true" size={14} />;
+  if (status === "failed") return <X aria-hidden="true" size={14} />;
+  if (status === "blocked") return <TerminalSquare aria-hidden="true" size={13} />;
+  return <Clock3 aria-hidden="true" size={14} />;
+}
+
+function formatDagStepTitle(title: string) {
+  return title.replace(/^\d+\.\s*/, "");
 }
