@@ -77,11 +77,6 @@
     grid-template-columns: 1fr;
   }
 
-  .job-detail-card-grid.two-up,
-  .job-detail-card-grid.summary-grid {
-    grid-template-columns: 1fr;
-  }
-
   .catalog-page,
   .catalog-content-grid,
   .catalog-detail-grid,
@@ -268,7 +263,6 @@
     padding: 24px;
   }
 
-  .job-detail-title-row,
   .job-log-modal-header,
   .run-dag-modal-header {
     align-items: flex-start;
@@ -286,27 +280,6 @@
 
   .run-dag-modal-body {
     padding: 14px;
-  }
-
-  .detail-kv-grid,
-  .detail-plain-kv-grid,
-  .job-detail-overview-grid,
-  .job-summary-stat-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .job-ops-summary-card,
-  .job-detail-disclosure summary {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .job-next-actions {
-    width: 100%;
-  }
-
-  .job-next-actions .job-action-button {
-    flex: 1 1 0;
   }
 
   .job-runs-page,
@@ -416,10 +389,6 @@
   }
 
   .dashboard-category-bars {
-    overflow-x: auto;
-  }
-
-  .job-detail-tabs {
     overflow-x: auto;
   }
 

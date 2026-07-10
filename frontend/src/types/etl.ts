@@ -5,6 +5,33 @@ export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobRunOutcome = "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
+export type RealtimeOperationalHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
+
+export type BatchOperationalMetrics = {
+  metricType: "batch";
+  windowFrom: string;
+  windowTo: string;
+  totalRuns: number;
+  successfulRuns: number;
+  successRate: number | null;
+  averageDurationMs: number | null;
+};
+
+export type RealtimeOperationalMetrics = {
+  metricType: "realtime";
+  windowFrom: string;
+  windowTo: string;
+  healthStatus: RealtimeOperationalHealth;
+  availabilityRate: number | null;
+  consumerLag: number | null;
+  processingDelayMs: number | null;
+  lastHeartbeatAt: string | null;
+  lastCheckpointAt: string | null;
+  restartCount: number;
+  errorRate: number | null;
+};
+
+export type JobOperationalMetrics = BatchOperationalMetrics | RealtimeOperationalMetrics;
 
 export type JobRowData = {
   createdAt?: string;
@@ -34,6 +61,7 @@ export type JobRowData = {
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
+  schemaSampleValues?: Record<string, string>;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
   qualityInvalidRows?: string[][];
@@ -43,6 +71,7 @@ export type JobRowData = {
   lastRun: string;
   lastState: string;
   nextRun: string;
+  operationalMetrics?: JobOperationalMetrics;
   progress?: {
     label: string;
     value: number;

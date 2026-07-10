@@ -15,6 +15,8 @@ export { default as Activity } from "lucide-react/dist/esm/icons/activity.mjs";
 export { default as AlertCircle } from "lucide-react/dist/esm/icons/circle-alert.mjs";
 export { default as AlertTriangle } from "lucide-react/dist/esm/icons/triangle-alert.mjs";
 export { default as ArrowDown } from "lucide-react/dist/esm/icons/arrow-down.mjs";
+export { default as ArrowLeft } from "lucide-react/dist/esm/icons/arrow-left.mjs";
+export { default as ArrowRight } from "lucide-react/dist/esm/icons/arrow-right.mjs";
 export { default as ArrowUp } from "lucide-react/dist/esm/icons/arrow-up.mjs";
 export { default as ArrowUpDown } from "lucide-react/dist/esm/icons/arrow-up-down.mjs";
 export { default as BarChart3 } from "lucide-react/dist/esm/icons/chart-column.mjs";
