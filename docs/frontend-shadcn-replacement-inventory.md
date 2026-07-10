@@ -278,7 +278,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 
 적용 범위:
 
-- sidebar의 raw tablist를 shadcn `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent`로 교체했다.
+- sidebar의 raw tablist를 shadcn `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent`로 교체했다. useLayouts Discrete Tabs registry 구현을 검토한 뒤 별도 tab state를 중복하지 않고, 선택된 흰 배경만 기존 `motion` dependency의 shared `layoutId`로 이동시켰다.
 - SQL Preview 최대 행 수를 shadcn `Slider`로 추가하고 실제 `executeQueryPreview`의 `limit`에 연결했다.
 - Query AI 안내/결과/오류를 공식 `Bubble` composition으로 교체했다.
 - embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.

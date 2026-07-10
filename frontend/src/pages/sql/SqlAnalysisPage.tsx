@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "motion/react";
 import {
   BarChart3,
   Database,
@@ -778,11 +779,35 @@ export function SqlAnalysisPage({
                     title="SQL 도구"
                   />
                   <TabsList className="grid w-full grid-cols-2" aria-label="SQL 도구 선택">
-                    <TabsTrigger value="tables">
-                      <Table2 /> 분석 테이블
+                    <TabsTrigger
+                      className="relative isolate overflow-hidden data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                      value="tables"
+                    >
+                      {contextPanelTab === "tables" && (
+                        <motion.span
+                          aria-hidden="true"
+                          className="absolute inset-0 z-0 rounded-md bg-white shadow-sm"
+                          data-sql-tab-indicator=""
+                          layoutId="sql-tools-active-tab"
+                          transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        />
+                      )}
+                      <span className="relative z-10 inline-flex items-center gap-1.5"><Table2 /> 분석 테이블</span>
                     </TabsTrigger>
-                    <TabsTrigger value="queryAi">
-                      <Sparkles /> Query AI
+                    <TabsTrigger
+                      className="relative isolate overflow-hidden data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                      value="queryAi"
+                    >
+                      {contextPanelTab === "queryAi" && (
+                        <motion.span
+                          aria-hidden="true"
+                          className="absolute inset-0 z-0 rounded-md bg-white shadow-sm"
+                          data-sql-tab-indicator=""
+                          layoutId="sql-tools-active-tab"
+                          transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                        />
+                      )}
+                      <span className="relative z-10 inline-flex items-center gap-1.5"><Sparkles /> Query AI</span>
                     </TabsTrigger>
                   </TabsList>
                 </div>
@@ -894,7 +919,7 @@ export function SqlAnalysisPage({
         </Panel>
       )}
 
-      <main className="sql-workspace grid min-w-0 gap-3">
+      <main className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3">
         <Panel className="grid gap-4 p-5">
           <PanelHeader
             actions={(

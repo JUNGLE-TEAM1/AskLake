@@ -29,7 +29,7 @@
 
 ## shadcn/ReUI Replacement Candidates
 
-- `Tabs`: #468에서 table browser와 Query AI panel 전환에 적용했다.
+- `Tabs`: #468에서 table browser와 Query AI panel 전환에 적용하고, useLayouts Discrete Tabs 패턴을 참고한 shared `layoutId` indicator를 추가했다.
 - `Popover` + `Command`: SQL autocomplete list의 focus 이동, active option, dismiss behavior를 정리한다.
 - `Dialog`: #468에서 raw dashboard builder backdrop를 accessible dialog composition으로 교체했다.
 - `ScrollArea`: #468에서 dataset panel, schema panel, autocomplete, result table의 독립 scroll 영역에 적용했다.
@@ -107,6 +107,7 @@
 2026-07-10 구현에서는 API와 Dashboard runtime 계약을 유지하면서 SQL route의 raw UI와 중복 CSS를 shadcn 기준으로 정리했다.
 
 - 왼쪽 도구 전환을 `Tabs`로 바꿔 keyboard/ARIA 동작을 primitive에 맡겼다.
+- 선택된 SQL 도구 탭의 흰 배경만 `motion` shared `layoutId`로 이동시켜 기존 Tabs 구조와 focus/ARIA 계약을 유지한다. 전환값은 `spring`, `stiffness: 420`, `damping: 32`다.
 - editor footer에 `Slider`를 추가해 Preview 최대 행 수를 10~100, 10행 단위로 실제 변경한다. 선택값은 preflight key와 `executeQueryPreview`의 `limit`에 함께 반영된다.
 - Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
@@ -123,6 +124,7 @@
 - SQL dataset tree를 Shadcnblocks `tree-lines-1` registry로 교체하고 Kibo UI Tree source를 프로젝트에 설치했다. `motion`은 registry의 expand/collapse animation 의존성으로 추가했다.
 - 기존 `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` selector는 제거하고 fixed hover card selector만 유지했다.
 - SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
+- 중앙 `sql-workspace`의 auto row는 `max-content`로 고정해 제한된 viewport 안에서도 editor/result Panel이 내부 콘텐츠보다 작아지거나 서로 겹치지 않게 했다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification
@@ -133,6 +135,8 @@
 - Shadcnblocks Tree에서 connector line과 icon이 표시되고 table row mouse click, Enter key 접기, column group 노출, `+ 추가` 후 editor/schema 활성화를 확인했다.
 - 720px viewport에서 panel 하단 634px, pagination 하단 613px, footer 시작 658px로 `이전`/`다음`이 잘리지 않음을 확인하고 실제 1→2→1 page 이동을 검증했다.
 - Query AI 탭에서 `Query AI 생성`, `테이블 선택 필요` 문구가 렌더링되지 않는 것을 확인했다.
+- 720px viewport에서 editor Panel 462px, result Panel 250px의 자체 높이를 확보하고 두 Panel 사이 12px gap이 유지되며 Tree 펼침 후에도 overlap이 없음을 확인했다.
+- 분석 테이블↔Query AI 전환 시 흰 indicator가 shared `layoutId` spring으로 좌우 이동하고 선택 tab의 ARIA state가 함께 변경됨을 확인했다.
 - 1,200px와 860px viewport에서 Tree와 page의 horizontal overflow가 없음을 확인했다.
 - Query AI prompt를 실행해 Bubble 안에 생성 SQL과 `SQL에 적용` action이 표시되는 것을 확인했다.
 - Dashboard builder Dialog가 열리고 `Escape`로 닫히는 것을 확인했다.

@@ -363,7 +363,7 @@ Tree 계열은 wrapper/state shell과 hover card shell 다음으로 row/group sh
 
 | SQL 영역 | 적용 컴포넌트 | 상태 | 남은 gap |
 | --- | --- | --- | --- |
-| 분석 테이블 / Query AI 전환 | shadcn `Tabs` | `해결됨` | 없음 |
+| 분석 테이블 / Query AI 전환 | shadcn `Tabs` + `motion` shared indicator | `해결됨` | useLayouts Discrete Tabs 패턴을 참고하되 기존 Tabs의 keyboard/ARIA 상태를 유지 |
 | Preview 최대 행 수 | shadcn `Slider` | `해결됨` | 10~100, 10행 단위의 실제 query `limit` control로 연결 |
 | Query AI 상태 surface | shadcn `Bubble` | `해결됨` | 생성 SQL 적용/실행 정책은 기존 domain logic 유지 |
 | Dashboard builder overlay | shadcn `Dialog` | `해결됨` | 내부 `DashboardPage` runtime contract와 layout은 유지 |
