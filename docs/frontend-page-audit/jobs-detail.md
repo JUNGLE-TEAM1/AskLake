@@ -69,6 +69,9 @@ shadcn primitive로 무리하게 없애지 않고 유지한 composition은 아�
 - 실제 Job 데이터로 Source → Process → Target 경로를 표시합니다.
 - 현재 상태와 최근 Run 결과를 분리하고, 다음 실행과 최근 성공을 함께 표시합니다.
 - backend에 freshness 계약이 없으므로 임의 값을 만들지 않고 최근 성공 시각과 성공률을 사용합니다.
+- 작업 상세는 Job의 현재 운영 판단, 실행 이력은 여러 Run의 집계와 비교, 실행 단계 Dialog는 단일 Run 진단을 담당합니다.
+- 상세의 `OperationSummaryItem`은 unframed 상태 요약이고 실행 이력의 `MetricCard`는 집계 카드이므로 형태를 강제로 같게 만들지 않습니다.
+- 실행 이력 page card와 실행 단계 modal card의 밀도 차이는 `MetricCard`의 `default`/`compact` size variant로 관리합니다.
 
 ## 5. 교체하지 않은 영역
 

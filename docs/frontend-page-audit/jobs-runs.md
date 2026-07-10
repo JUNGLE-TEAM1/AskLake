@@ -22,16 +22,20 @@
 ### 실행 통계 요약
 
 - `Panel`, `PanelHeader`, `MetricCard`로 공통화했습니다.
-- 성공률, 평균 소요시간, 총 실행 수, 최근 실행 결과를 표시합니다.
+- 실행 성공률, 평균 실행 시간, 누적 실행 수, 최근 실행 결과를 표시합니다.
 - 기존 3개 단순 텍스트 통계를 4개 요약 카드로 변경했습니다.
-- `MetricCard`에 `icon`, `detail` API를 추가해 다른 운영 요약에서도 재사용할 수 있게 했습니다.
+- `MetricCard`에 `icon`, `detail`, `size` API를 두고 page는 `default`, 실행 단계 Dialog는 `compact`를 사용합니다.
+- 집계 기간 Backend 계약이 없으므로 특정 기간이나 실행 횟수를 임의로 붙이지 않고 `집계된 종료 Run 기준`이라고 표시합니다.
 
 ### 실행 이력 표
 
 - raw `<table>`을 `DataTable`로 교체했습니다.
 - 엔진은 TanStack Table, 표 UI는 로컬 shadcn-style `Table`을 사용합니다.
 - 페이지당 5개 Run을 표시합니다.
-- 상태 필터는 `DropdownMenu`로 실제 동작합니다.
+- 표 밖의 독립 상태 필터는 제거했습니다.
+- `/jobs` 목록과 같은 방식으로 상태 column header에 `DropdownMenu` filter를 결합했습니다.
+- `/jobs` 목록과 같은 header/filter/action/pagination 시각 체계를 사용하되, 실행 이력은 정보 밀도에 맞춰 860px 최소 table, 48px header, 96px row의 compact density를 사용합니다.
+- 공통 컴포넌트 사용은 동일한 물리 크기를 뜻하지 않으며, 일반 데스크톱에서는 모든 열과 action이 한 화면에 보이도록 폭을 제한합니다.
 - 날짜 선택처럼 기능이 없는 가짜 버튼은 제거했습니다.
 - 열 구성은 아래와 같습니다.
 
@@ -54,8 +58,8 @@
 
 ### 로그 Dialog
 
-- `DialogShell`과 `Button`을 유지했습니다.
-- 표의 액션은 큰 버튼 대신 파란색 link button으로 정리했습니다.
+- `DialogShell`을 유지했습니다.
+- 표의 로그와 실행 단계 action은 `/jobs` 목록처럼 `IconButton`과 `Tooltip` 조합으로 정리했습니다.
 - 로그 본문은 진단 정보이므로 고정폭 글꼴을 유지합니다.
 
 ### 실행 단계 Dialog
@@ -66,7 +70,7 @@
 - 왼쪽은 실행 단계 타임라인, 오른쪽은 선택 단계 상세로 구성했습니다.
 - 단계 선택 시 상세 정보와 진단 메시지가 갱신됩니다.
 - Run별 `dagStepsByRunId`를 우선 사용해 다른 Run의 단계가 섞이지 않게 했습니다.
-- 요약 영역은 `MetricCard`를 재사용합니다.
+- 요약 영역은 `MetricCard size="compact"`를 사용하고 `이 Run의 상태`, `이 Run의 소요 시간`, `완료 단계`, `이 Run의 입력 행`처럼 단일 Run 범위를 label에 명시합니다.
 - 단계 상태는 `StatusBadge`, 진행 상태는 `Spinner`를 사용합니다.
 - Dialog shell은 `DialogShell`, 섹션 제목은 `PanelHeader`를 사용합니다.
 
@@ -76,13 +80,14 @@
 | --- | --- |
 | 섹션 외곽 | `Panel` |
 | 섹션 제목 | `PanelHeader` |
-| 통계 카드 | `MetricCard` |
+| 통계 카드 | `MetricCard size="default"` |
 | 실행 이력 | `DataTable` |
 | 상태 | `StatusBadge` |
-| 상태 필터 | `DropdownMenu` |
-| 액션 | `Button` |
+| 상태 필터 | 상태 column header의 `DropdownMenu` |
+| 액션 | `IconButton`, `Tooltip` |
 | Modal | `DialogShell` |
 | 진행 표시 | `Spinner` |
+| Modal 통계 카드 | `MetricCard size="compact"` |
 
 표면별 조합 컴포넌트는 유지하지만, 단일 primitive를 다시 만드는 CSS는 추가하지 않습니다.
 
@@ -143,7 +148,9 @@ Airflow DAG ID, DAG Run ID, Airflow URL, 동기화 시각은 현재 계약에 �
 
 - `/jobs/JOB-001/runs`: 성공 Run과 통계 카드
 - `/jobs/JOB-002/runs`: 실패 Run, 빨간 badge, 실패 요약
-- 상태 필터 선택 및 해제
+- 상태 column header filter 선택 및 해제
+- `/jobs` 목록과 실행 이력의 header, action, pagination 시각 체계 비교
+- 일반 데스크톱에서 실행 이력 전체 열과 action이 가로 scroll 없이 보이는지 확인
 - 페이지당 5개 pagination
 - 로그 Dialog 열기, 스크롤, 닫기
 - 실행 단계 Dialog 열기, 단계 선택, inspector 변경
