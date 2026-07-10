@@ -294,7 +294,11 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             run_id = stable_id("run", f"{job.id}:{command}:kafka:{iso_now()}")
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             db.commit()
-            result = run_kafka_ingest_request(kafka_request, command)
+            try:
+                result = run_kafka_ingest_request(kafka_request, command)
+            except ApiError as exc:
+                bridge_error = exc.details.get("bridge") if isinstance(exc.details, dict) else None
+                result = kafka_failure_result(kafka_request, run_id, exc, bridge_error if isinstance(bridge_error, dict) else {})
             job = etl_repository.get_job(db, job_id)
             if job is None:
                 raise ApiError(ErrorCode.NOT_FOUND, f"Job not found after Kafka ingest: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -412,6 +416,26 @@ def run_kafka_ingest_request(request: dict[str, Any], command: str) -> dict[str,
     )
     result["command"] = command
     return result
+
+
+def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, bridge_error: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "broker": bridge_error.get("broker") or request.get("broker"),
+        "consumedCount": int(bridge_error.get("consumedCount") or 0),
+        "endedAt": bridge_error.get("endedAt") or iso_now(),
+        "error": bridge_error.get("message") or error.message,
+        "failedCount": int(bridge_error.get("failedCount") or 0),
+        "failedStage": bridge_error.get("failedStage") or "Kafka ingest",
+        "runId": bridge_error.get("runId") or run_id,
+        "snapshot": bridge_error.get("snapshot"),
+        "startedAt": bridge_error.get("startedAt") or iso_now(),
+        "status": "failed",
+        "storedCount": 0,
+        "targetLayer": request.get("targetLayer") or "BRONZE",
+        "topic": bridge_error.get("topic") or request.get("topic"),
+        "transform": bridge_error.get("transform"),
+        "quality": bridge_error.get("quality"),
+    }
 
 
 def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
@@ -1251,6 +1275,10 @@ def dag_steps_from_spark_result(job: ETLJobModel, command: str, run: dict[str, A
 
 def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, Any], result: dict[str, Any]) -> list[dict[str, Any]]:
     failed = result.get("status") != "success"
+    failed_stage = str(result.get("failedStage") or "").lower()
+    consume_failed = failed and failed_stage in {"kafka ingest", "consume", "source"}
+    transform_failed = failed and failed_stage == "transform"
+    quality_failed = failed and failed_stage == "quality"
     topic = str(result.get("topic") or field_value(job.source_config or [], "TOPIC / QUEUE NAME") or "-")
     broker = str(result.get("broker") or field_value(job.source_config or [], "Broker / Endpoint") or "-")
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
@@ -1264,28 +1292,28 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
         for item in snapshot.get("partitions", [])
     ) or "-"
     return [
-        dag_step("source", "1. Kafka 소스 연결", topic, "failed" if failed else "success", [
+        dag_step("source", "1. Kafka 소스 연결", topic, "failed" if consume_failed else "success", [
             ["Broker", broker],
             ["Topic", topic],
         ], [f"Kafka topic {topic} batch consume 요청을 실행했습니다."]),
-        dag_step("consume", "2. 메시지 batch consume", format_rows(result.get("consumedCount")), "failed" if failed else "success", [
+        dag_step("consume", "2. 메시지 batch consume", format_rows(result.get("consumedCount")), "failed" if consume_failed else "success", [
             ["Consumer group", consumer_group_id],
             ["Snapshot", str(snapshot.get("snapshotId") or "-")],
             ["Offset ranges", snapshot_ranges],
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
-        ], ["Kafka 메시지를 batch 단위로 읽었습니다." if not failed else f"Kafka consume 실패: {run.get('errorSummary')}"]),
-        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "blocked" if failed else "success", [
+        ], [f"Kafka consume 실패: {run.get('errorSummary')}" if consume_failed else "Kafka 메시지를 batch 단위로 읽었습니다."]),
+        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "failed" if transform_failed else "blocked" if failed else "success", [
             ["Configured", str(transform.get("configuredStepCount", 0))],
             ["Applied", str(transform.get("appliedStepCount", 0))],
             ["Transform errors", str(transform.get("errorCount", 0))],
-        ], ["이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
-        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "blocked" if failed else "success", [
+        ], [f"변환 규칙 적용 실패: {run.get('errorSummary')}" if transform_failed else "이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
+        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "failed" if quality_failed else "blocked" if failed else "success", [
             ["Configured", str(quality.get("configuredRuleCount", 0))],
             ["Invalid", str(quality.get("invalidRowCount", 0))],
             ["Quarantined", str(quality.get("quarantinedCount", 0))],
             ["Dropped", str(quality.get("droppedCount", 0))],
-        ], ["이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
+        ], [f"품질 검증 실패: {run.get('errorSummary')}" if quality_failed else "이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
         dag_step("target", "5. Direct target 저장", storage_location, "blocked" if failed else "success", [
             ["Storage", str(result.get("storageMode") or "s3")],
             ["Format", str(result.get("storageFormat") or "jsonl")],
@@ -1366,7 +1394,7 @@ def run_node_bridge(script_name: str, success_marker: str, payload: dict[str, An
             error_payload.get("code") or "BACKEND_BRIDGE_FAILED",
             error_payload.get("message") or (stderr.strip() or f"{script_name} failed."),
             int(error_payload.get("status") or status.HTTP_502_BAD_GATEWAY),
-            {"stderr": stderr[-4000:], "stdout": stdout[-4000:]},
+            {"bridge": error_payload, "stderr": stderr[-4000:], "stdout": stdout[-4000:]},
         )
     payload_result = marker_payload(stdout, success_marker)
     if payload_result is None:

@@ -38,6 +38,7 @@ try {
   await verifyScheduledKafkaIngest();
   await verifyMinimalReviewContractIngest();
   await verifyTransformAndQualityIngest();
+  await verifyFailRunLeavesOffsetsForRetry();
   console.log("verify-kafka-review-scheduled-ingest: ok");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -181,6 +182,59 @@ async function verifyTransformAndQualityIngest() {
   assert(quarantineBody.includes(`transform-${suffix}-2`), "Quarantine object should contain the rejected Kafka row.");
 }
 
+async function verifyFailRunLeavesOffsetsForRetry() {
+  const failureTopic = `reviews.raw.fail.${suffix}`;
+  const failureGroup = `asklake-fail-${suffix}`;
+  const baseRequest = {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: failureTopic,
+    consumerGroupId: failureGroup,
+    datasetId: `ds_reviews_fail_${suffix}`,
+    datasetName: `reviews_fail_${suffix}`,
+    maxMessages: 10,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: false,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${failureTopic}/silver`,
+    targetLayer: "SILVER",
+    targetFormat: "jsonl",
+  };
+  await produceReviewEvents(failureTopic, [
+    { event_id: `failure-${suffix}-1`, offset: 1, review: "Fail run review", created_at: "2026-07-09T03:00:00Z", raw: { email: "invalid-email" } },
+  ]);
+  const failed = await postError("/api/etl/kafka/reviews/ingest", {
+    ...baseRequest,
+    qualityRules: [{ enabled: true, failureAction: "Fail Run", id: "failure-email", kind: "regex", severity: "Error", targetColumn: "raw.email", validationType: "Regex Match" }],
+  });
+  assert(failed.status === 502, `Fail Run should return bridge failure: ${JSON.stringify(failed)}`);
+  const failedSnapshot = failed.payload?.error?.details?.bridge?.snapshot;
+  assert(failed.payload?.error?.details?.bridge?.failedStage === "quality", `Failure should report quality stage: ${JSON.stringify(failed)}`);
+  assert(failedSnapshot?.partitions?.[0]?.startOffset === "0", "Failed snapshot should begin at the first message.");
+  assert(await groupOffset(failureTopic, failureGroup) === "-1", "Fail Run must not commit the consumer group offset.");
+
+  const retried = await post("/api/etl/kafka/reviews/ingest", { ...baseRequest, qualityRules: [] });
+  assert(retried.consumedCount === 1, `Retry should read the uncommitted Kafka message: ${JSON.stringify(retried)}`);
+  assert(retried.snapshot?.snapshotId === failedSnapshot.snapshotId, "Retry should reuse the same snapshot identity for the unchanged offset range.");
+  assert(await groupOffset(failureTopic, failureGroup) === "1", "Successful retry should commit the snapshot end offset.");
+
+  const jobFailureTopic = `reviews.raw.job-fail.${suffix}`;
+  const jobFailureGroup = `asklake-job-fail-${suffix}`;
+  await produceReviewEvents(jobFailureTopic, [
+    { event_id: `job-failure-${suffix}-1`, offset: 1, review: "Job failure review", created_at: "2026-07-09T03:01:00Z", raw: { email: "invalid-email" } },
+  ]);
+  const jobCreate = await post("/api/etl/jobs", kafkaFailureJobPayload(jobFailureTopic, jobFailureGroup));
+  const jobCommand = await post(`/api/etl/jobs/${encodeURIComponent(jobCreate.job.id)}/commands`, { command: "run" });
+  assert(jobCommand.run?.status === "failed", `Kafka Job failure should persist a failed run: ${JSON.stringify(jobCommand)}`);
+  assert(jobCommand.job?.status === "failed", "Kafka Job should expose failed status after quality Fail Run.");
+  assert(jobCommand.run?.taskStates?.kafkaSnapshot?.partitions?.[0]?.startOffset === "0", "Failed Job Run should retain its snapshot metadata.");
+  assert(jobCommand.dagSteps?.some((step) => step.id === "quality" && step.status === "failed"), "Kafka Job DAG should mark the quality stage as failed.");
+  assert(await groupOffset(jobFailureTopic, jobFailureGroup) === "-1", "Failed Kafka Job must not commit its consumer group offset.");
+}
+
 async function readS3Object(location) {
   const match = String(location || "").match(/^s3:\/\/([^/]+)\/(.+)$/);
   assert(match, `Expected an S3 location: ${location}`);
@@ -247,6 +301,19 @@ async function produceReviewEvents(targetTopic, records) {
     await producer.send({ topic: targetTopic, messages: records.map((record) => ({ key: record.event_id, value: JSON.stringify(record) })) });
   } finally {
     await producer.disconnect().catch(() => undefined);
+    await admin.disconnect().catch(() => undefined);
+  }
+}
+
+async function groupOffset(topicName, groupId) {
+  const { Kafka } = await import("kafkajs");
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-offset-verify", retry: { retries: 2 } });
+  const admin = kafka.admin();
+  try {
+    await admin.connect();
+    const offsets = await admin.fetchOffsets({ groupId, topics: [topicName] });
+    return offsets[0]?.partitions?.find((partition) => partition.partition === 0)?.offset ?? "-1";
+  } finally {
     await admin.disconnect().catch(() => undefined);
   }
 }
@@ -318,6 +385,26 @@ function kafkaJobPayload() {
   };
 }
 
+function kafkaFailureJobPayload(jobTopic, jobGroup) {
+  const payload = kafkaJobPayload();
+  const jobDataset = `reviews_job_fail_${suffix}`;
+  return {
+    ...payload,
+    id: `kafka-review-fail-verify-${suffix}`,
+    jobName: `Kafka Review Failure Verify ${suffix}`,
+    qualityRules: [{ enabled: true, failureAction: "Fail Run", id: "job-failure-email", kind: "regex", severity: "Error", targetColumn: "raw.email", validationType: "Regex Match" }],
+    sourceConfig: payload.sourceConfig.map(([key, value]) => {
+      if (key === "TOPIC / QUEUE NAME") return [key, jobTopic];
+      if (key === "CONSUMER GROUP ID") return [key, jobGroup];
+      return [key, value];
+    }),
+    sourceLabel: jobTopic,
+    storagePath: `s3://asklake-output/${jobDataset}/silver`,
+    targetDataset: jobDataset,
+    targetLayer: "SILVER",
+  };
+}
+
 function ensureFastApiPythonDependencies() {
   const result = spawnSync(pythonBin, ["-c", "import fastapi, psycopg, pydantic_settings, sqlalchemy, uvicorn"], {
     cwd: backendDir,
@@ -381,6 +468,16 @@ async function post(route, body) {
     method: "POST",
   });
   return readResponse(response);
+}
+
+async function postError(route, body) {
+  const response = await fetch(`${baseUrl}${route}`, {
+    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const text = await response.text();
+  return { payload: text ? JSON.parse(text) : null, status: response.status };
 }
 
 async function readResponse(response) {

@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior.
 
 ## 2. Objective
 
@@ -75,6 +75,8 @@ Kafka, object storage, Catalog, and the metadata database do not share a distrib
 ```
 
 If target writing or Catalog registration fails, offsets must not be committed. A retry must reuse the same snapshot range and idempotent target identity. A failure after target publication but before offset commit may re-read the same range; it must not duplicate target records or Catalog runs.
+
+For a Job command failure, AskLake persists a failed Run with `KafkaSnapshot`, `failedStage`, and the bridge error summary. Its DAG marks the failing transform or quality stage as failed and downstream target/Catalog stages as blocked. A direct ingest endpoint call still returns an error response, including the bridge snapshot diagnostics, for fixture and debug callers.
 
 Empty snapshots are valid successful runs. They create no target data file and record `rowCount: 0` with the captured partition ranges.
 

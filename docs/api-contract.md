@@ -512,6 +512,8 @@ type KafkaSnapshot = {
 
 Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
 
+Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
+
 ### LineageGraph
 
 ```ts

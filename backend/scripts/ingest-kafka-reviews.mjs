@@ -35,6 +35,7 @@ let s3QuarantineKey = "";
 let targetDir = "";
 let dataPath = "";
 let metadataPath = "";
+let activeSnapshot = null;
 const startedAt = new Date().toISOString();
 const requiredFields = ["event_id", "offset", "review", "created_at"];
 
@@ -44,8 +45,16 @@ try {
 } catch (error) {
   console.log(`ASKLAKE_KAFKA_REVIEW_INGEST_ERROR=${JSON.stringify({
     code: "KAFKA_REVIEW_INGEST_FAILED",
+    broker,
+    consumerGroupId,
+    endedAt: new Date().toISOString(),
+    failedStage: error?.failedStage || "Kafka ingest",
     message: error?.message || String(error),
+    runId,
+    snapshot: activeSnapshot,
     status: 502,
+    startedAt,
+    topic,
   })}`);
   process.exitCode = 1;
 } finally {
@@ -66,6 +75,7 @@ async function ingestReviews() {
     retry: { retries: 2 },
   });
   const snapshot = await captureKafkaSnapshot(kafka);
+  activeSnapshot = snapshot;
   configureTargetOutput(snapshot.snapshotId);
   const consumer = kafka.consumer({ groupId: snapshotReaderGroupId(snapshot) });
   let consumerStarted = false;
@@ -566,7 +576,7 @@ function applyPipelineRules(records) {
       } catch (error) {
         transform.errorCount += 1;
         const failure = transformFailure(step, error);
-        if (failure.action === "Fail Run") throw new Error(`Transform rule ${step.id || step.output} failed: ${failure.reason}`);
+        if (failure.action === "Fail Run") throw pipelineError("transform", `Transform rule ${step.id || step.output} failed: ${failure.reason}`);
         if (failure.action === "Drop Row") {
           discard = true;
           break;
@@ -611,7 +621,7 @@ function applyPipelineRules(records) {
     let discard = false;
     for (const { rule, reason } of failures) {
       const action = normalizeFailureAction(rule.failureAction);
-      if (action === "Fail Run") throw new Error(`Quality rule ${rule.id || rule.targetColumn} failed: ${reason}`);
+      if (action === "Fail Run") throw pipelineError("quality", `Quality rule ${rule.id || rule.targetColumn} failed: ${reason}`);
       if (action === "Drop Row") {
         quality.droppedCount += 1;
         discard = true;
@@ -669,6 +679,12 @@ function applyTransformStep(record, step) {
 
 function transformFailure(step, error) {
   return { action: normalizeFailureAction(step.onError), reason: error?.message || String(error) };
+}
+
+function pipelineError(failedStage, message) {
+  const error = new Error(message);
+  error.failedStage = failedStage;
+  return error;
 }
 
 function normalizeFailureAction(value) {
