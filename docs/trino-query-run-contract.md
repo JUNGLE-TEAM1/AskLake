@@ -144,4 +144,4 @@ production Trino는 backend-only internal network, HTTPS/password authentication
 
 Phase 5는 legacy JSONL derived dataset 경로와 Trino run을 명확히 분리한다. Trino run은 전체 결과 page를 재조합하지 않고, succeeded run의 SQL을 Iceberg CTAS statement로 materialize해야 한다. CTAS를 실제 제출하고 Catalog/lineage/dashboard source로 등록하는 API는 다음 Phase에서 연결한다.
 
-Phase 6은 `POST /api/catalog/trino-runs/{runId}/materializations`로 CTAS를 Trino materializer service account에 제출하고 materialization run을 별도 저장한다. Catalog/lineage 상태 polling과 dashboard source 전환은 다음 Phase다.
+Phase 6은 `POST /api/catalog/trino-runs/{runId}/materializations`로 CTAS를 Trino materializer service account에 제출하고 materialization run을 별도 저장한다. `GET /api/catalog/trino-materializations/{materializationId}` polling이 terminal success를 확인하면 Iceberg physical mapping, materialization run, source run을 포함한 Catalog Dataset을 등록한다. lineage/dashboard source UI 전환은 다음 Phase다.
