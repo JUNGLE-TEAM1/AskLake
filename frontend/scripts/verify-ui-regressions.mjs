@@ -29,14 +29,14 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list table stays compact",
-    file: "src/styles/dashboard.css",
+    name: "Dashboard list uses shared DataTable cells and permission-aware actions",
+    file: "src/pages/dashboard/components/DashboardTable.tsx",
     patterns: [
-      /\.dashboard-table-scroll \.schema-table\s*\{[^}]*table-layout:\s*fixed;/s,
-      /\.dashboard-table-list \.schema-table th,\s*\.dashboard-table-list \.schema-table td\s*\{[^}]*font-size:\s*13px;/s,
-      /\.dashboard-row-link\s*\{[^}]*white-space:\s*nowrap;/s,
-      /\.dashboard-row-tags\s*\{[^}]*flex-wrap:\s*nowrap;/s,
-      /\.dashboard-row-tag\s*\{[^}]*height:\s*22px;/s,
+      /<DataTable/,
+      /<DataTableStackedCell/,
+      /<StatusBadge/,
+      /<Avatar size="lg">/,
+      /dashboard\.permissions\?\.canDelete !== false|row\.original\.permissions\?\.canDelete !== false/,
     ],
   },
   {
