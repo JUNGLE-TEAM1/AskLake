@@ -76,14 +76,17 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list table stays compact",
+    name: "Dashboard list table uses Jobs table spacing",
     file: "src/styles/dashboard.css",
     patterns: [
       /\.dashboard-table-scroll \.schema-table(?:,\s*\.dashboard-list-data-table)?\s*\{[^}]*table-layout:\s*fixed;/s,
-      /\.dashboard-table-list \.schema-table th,\s*\.dashboard-table-list \.schema-table td\s*\{[^}]*font-size:\s*13px;/s,
-      /\.dashboard-row-link\s*\{[^}]*white-space:\s*nowrap;/s,
-      /\.dashboard-row-tags\s*\{[^}]*flex-wrap:\s*nowrap;/s,
-      /\.dashboard-row-tag\s*\{[^}]*height:\s*22px;/s,
+      /\.dashboard-list-data-table\s*\{[^}]*min-width:\s*1320px;/s,
+      /\.dashboard-table-list-body\s*\{[^}]*padding:\s*0;/s,
+    ],
+    forbiddenPatterns: [
+      /\.dashboard-row-link\s*\{/,
+      /\.dashboard-row-tags\s*\{/,
+      /\.dashboard-row-tag\s*\{/,
     ],
   },
   {
@@ -126,6 +129,27 @@ const checks = [
     forbiddenPatterns: [
       /react-arborist/,
       /<TreePanel/,
+    ],
+  },
+  {
+    name: "Dashboard list reuses Jobs shadcn table composition",
+    file: "src/pages/dashboard/components/DashboardTable.tsx",
+    patterns: [
+      /import \{ Avatar, AvatarFallback \} from "@\/components\/ui\/avatar";/,
+      /DataTableStackedCell/,
+      /DataTableCellPrimary/,
+      /DataTableCellSecondary/,
+      /header: "상태"/,
+      /header: "대시보드"/,
+      /header: "마지막 수정"/,
+      /header: "생성 일시"/,
+      /header: "소유자"/,
+      /<StatusBadge[\s\S]*min-w-\[132px\]/,
+      /<Avatar size="lg">/,
+    ],
+    forbiddenPatterns: [
+      /dashboard-row-tag/,
+      /dashboard-row-link/,
     ],
   },
   {

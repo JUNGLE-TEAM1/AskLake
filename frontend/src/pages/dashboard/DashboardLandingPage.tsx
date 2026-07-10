@@ -32,7 +32,6 @@ function DashboardListSkeleton() {
 export function DashboardLandingPage({
   currentPage,
   createError,
-  dashboardCount,
   deleteError,
   deleteTarget,
   deletingDashboardId,
@@ -56,8 +55,6 @@ export function DashboardLandingPage({
   openControl,
   ownerFilter,
   owners,
-  pageEnd,
-  pageStart,
   searchQuery,
   selectedTags,
   sortOption,
@@ -141,7 +138,6 @@ export function DashboardLandingPage({
             title="대시보드 목록"
           />
           <div className="dashboard-table-list-body">
-            <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
             {error && (
               <Alert variant="destructive">
                 <AlertCircle />
