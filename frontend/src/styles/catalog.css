@@ -738,6 +738,10 @@
   height: 100%;
 }
 
+.catalog-lineage-footer {
+  display: none;
+}
+
 .catalog-lineage-empty {
   display: grid;
   min-height: 360px;
