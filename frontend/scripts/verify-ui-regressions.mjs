@@ -19,6 +19,26 @@ const checks = [
       /<Bubble[\s\S]*variant=\{queryAiSuggestion \? "outline" : queryAiError \? "destructive" : "muted"\}/,
       /<FieldGroup className="grid-cols-12 gap-3 max-\[860px\]:grid-cols-1">/,
       /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
+      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
+      /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
+    ],
+  },
+  {
+    name: "SQL analysis uses visible shadcn slider styling",
+    file: "src/components/ui/slider.tsx",
+    patterns: [
+      /data-slot="slider-track"[\s\S]*bg-slate-200[\s\S]*data-\[orientation=horizontal\]:h-2/,
+      /data-slot="slider-range"[\s\S]*bg-blue-600/,
+      /data-slot="slider-thumb"[\s\S]*border-2 border-blue-600/,
+    ],
+  },
+  {
+    name: "SQL panels use shadcn scroll areas instead of native overflow",
+    file: "src/pages/sql/SqlSchemaPanel.tsx",
+    patterns: [
+      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
+      /<aside className="sql-schema-panel">[\s\S]*<ScrollArea className="h-full" type="always">/,
+      /<SelectedSchemaColumnList dataset=\{dataset\}/,
     ],
   },
   {

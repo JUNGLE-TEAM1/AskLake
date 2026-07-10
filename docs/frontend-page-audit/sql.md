@@ -12,7 +12,7 @@
 
 ## Current Shared Components
 
-- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `Input`, `NativeSelect`, `Separator`, `Slider`, `Tabs`, `Textarea`.
+- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `Input`, `NativeSelect`, `ScrollArea`, `Separator`, `Slider`, `Tabs`, `Textarea`.
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
 - `SqlDatasetTree`: `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`, `TreeHoverCard`를 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
@@ -22,7 +22,7 @@
 ## Weakly Componentized Areas
 
 - SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- dataset tree, SQL editor, autocomplete 위치, result overflow에는 도메인 layout CSS가 남아 있다.
+- dataset tree, SQL editor, autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
 - `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
 
@@ -31,7 +31,7 @@
 - `Tabs`: #468에서 table browser와 Query AI panel 전환에 적용했다.
 - `Popover` + `Command`: SQL autocomplete list의 focus 이동, active option, dismiss behavior를 정리한다.
 - `Dialog`: #468에서 raw dashboard builder backdrop를 accessible dialog composition으로 교체했다.
-- `ScrollArea`: dataset tree, schema panel, autocomplete, result table의 독립 scroll 영역에 사용한다.
+- `ScrollArea`: #468에서 dataset panel, schema panel, autocomplete, result table의 독립 scroll 영역에 적용했다.
 - `Alert`: preflight error, Query AI error, execution error를 공통 feedback 구조로 표시한다.
 - `Badge`: #468에서 layer, RAG, preflight tone, selected dataset metadata에 적용했다.
 - `Empty`: #468에서 schema 미선택과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
@@ -50,7 +50,7 @@
 
 - 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
 - 현재 사용 중: `.sql-tree-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
-- #468 2차 정리까지 `sql.css`를 2,547줄에서 591줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table surface CSS는 제거했다.
+- #468 3차 정리까지 `sql.css`를 2,547줄에서 582줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll surface CSS는 제거했다.
 
 ## Pre-#468 QA Notes
 
@@ -111,14 +111,19 @@
 - SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
 - dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
-- `sql.css`는 2,547줄에서 591줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table 기본 surface로 header/form/list/table CSS를 추가 제거했다.
+- `sql.css`는 2,547줄에서 582줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea 기본 surface로 header/form/list/table/scroll CSS를 추가 제거했다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
 - schema list는 `Panel` + `PanelHeader` + `Separator`, result header는 `PanelHeader`, autocomplete surface는 `Panel` + `Button` + `Badge`로 구성한다.
+- dataset/schema/autocomplete/result의 native `overflow: auto`를 제거하고 shadcn `ScrollArea`를 실제 scroll container로 사용한다. SQL 영역은 `type="always"`로 thumb를 명확히 노출하고 result는 vertical/horizontal scrollbar를 모두 제공한다.
+- Slider track/range/thumb는 AskLake의 slate/blue token으로 명시해 track과 현재 값이 배경에서 확실히 구분되도록 했다.
+- SQL 도구의 후보/검색 건수와 schema의 선택 건수 badge를 제거하고, Page/Panel/Dialog title 아래의 반복 설명문을 제거해 heading hierarchy를 한 줄로 정리했다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification
 
 - `commerce_orders_daily` 선택 후 Slider를 50행으로 조작하고 실행해 `50행 조회됨`, `최대 50행 표시`, 2-page result를 확인했다.
+- Slider track, blue range, thumb가 모두 표시되고 keyboard로 설정한 50행이 label과 실행 limit에 반영되는 것을 확인했다.
+- dataset/schema/result의 scrollbar가 shadcn `ScrollArea` thumb로 렌더링되고 native scrollbar가 중첩되지 않는 것을 확인했다.
 - Query AI prompt를 실행해 Bubble 안에 생성 SQL과 `SQL에 적용` action이 표시되는 것을 확인했다.
 - Dashboard builder Dialog가 열리고 `Escape`로 닫히는 것을 확인했다.
 - 실제 1,200x750 CSS viewport에서 2열 전환 후 SQL page/table의 horizontal overflow가 없음을 확인했다.
@@ -128,6 +133,6 @@
 
 ### #468 Remaining Deliberate CSS
 
-- SQL autocomplete의 surface/action/status는 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
-- dataset tree 연결선/hover 위치, dark editor, result overflow, embedded Dashboard 크기는 도메인 layout이라 유지했다.
+- SQL autocomplete의 surface/action/status/scroll은 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
+- dataset tree 연결선/hover 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.

@@ -24,10 +24,8 @@
   max-height: calc(100vh - 130px);
   gap: 16px;
   min-width: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 20px;
-  scrollbar-gutter: stable;
 }
 
 .sql-schema-panel {
@@ -402,9 +400,6 @@
   bottom: 14px;
   display: grid;
   width: min(420px, calc(100% - 28px));
-  max-height: 232px;
-  overflow-y: auto;
-  padding: 6px;
 }
 
 .sql-autocomplete-popover strong {
@@ -415,8 +410,6 @@
 }
 
 .sql-ai-suggestion pre {
-  max-height: 220px;
-  overflow: auto;
   border: 1px solid #1e293b;
   border-radius: 8px;
   background: #0f172a;
@@ -465,11 +458,9 @@
 }
 
 .sql-result-scroll {
+  height: min(560px, 58vh);
   min-height: 320px;
-  max-height: min(560px, 58vh);
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: auto;
 }
 
 .sql-result-scroll .schema-table {

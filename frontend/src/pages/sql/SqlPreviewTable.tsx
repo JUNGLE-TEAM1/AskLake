@@ -94,6 +94,7 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
       pagination={{ label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
       resetPaginationKey={resultDraft.runId}
       tableClassName="schema-table sql-preview-table"
+      viewportClassName="overflow-visible"
     />
   );
 }

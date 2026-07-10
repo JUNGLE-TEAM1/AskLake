@@ -12,8 +12,16 @@ export const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
   ScrollAreaProps
 >(({ children, className, horizontalScrollBarClassName, scrollbars = "vertical", ...props }, ref) => (
-  <ScrollAreaPrimitive.Root className={cn("relative overflow-hidden", className)} ref={ref} {...props}>
-    <ScrollAreaPrimitive.Viewport className="size-full rounded-[inherit]">
+  <ScrollAreaPrimitive.Root
+    className={cn("relative overflow-hidden", className)}
+    data-slot="scroll-area"
+    ref={ref}
+    {...props}
+  >
+    <ScrollAreaPrimitive.Viewport
+      className="size-full rounded-[inherit]"
+      data-slot="scroll-area-viewport"
+    >
       {children}
     </ScrollAreaPrimitive.Viewport>
     {scrollbars !== "horizontal" && <ScrollBar />}
@@ -30,8 +38,10 @@ export const ScrollBar = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.ScrollAreaScrollbar>
 >(({ className, orientation = "vertical", ...props }, ref) => (
   <ScrollAreaPrimitive.ScrollAreaScrollbar
+    data-slot="scroll-area-scrollbar"
+    forceMount
     className={cn(
-      "flex touch-none select-none transition-colors",
+      "flex touch-none select-none bg-slate-100/90 transition-[background-color,opacity] data-[state=hidden]:pointer-events-none data-[state=hidden]:opacity-0 data-[state=visible]:opacity-100",
       orientation === "vertical" && "h-full w-2.5 border-l border-l-transparent p-px",
       orientation === "horizontal" && "h-2.5 flex-col border-t border-t-transparent p-px",
       className,
@@ -40,8 +50,11 @@ export const ScrollBar = React.forwardRef<
     ref={ref}
     {...props}
   >
-    <ScrollAreaPrimitive.ScrollAreaThumb className="relative flex-1 rounded-full bg-slate-300" />
+    <ScrollAreaPrimitive.ScrollAreaThumb
+      className="relative flex-1 rounded-full bg-slate-400 transition-[background-color,opacity] data-[state=hidden]:opacity-0 data-[state=visible]:opacity-100 hover:bg-slate-500"
+      data-slot="scroll-area-thumb"
+      forceMount
+    />
   </ScrollAreaPrimitive.ScrollAreaScrollbar>
 ));
 ScrollBar.displayName = ScrollAreaPrimitive.ScrollAreaScrollbar.displayName;
-
