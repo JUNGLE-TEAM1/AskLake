@@ -3,19 +3,16 @@ import type React from "react";
 import {
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Background, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
-import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
+import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
   LayoutGrid,
-  Maximize2,
-  Minus,
   PanelRight,
   Pin,
-  Plus,
   Star,
   Search,
   Share2,
@@ -26,8 +23,7 @@ import {
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ButtonGroup } from "@/components/ui/button-group";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   AlertDialog,
@@ -62,13 +58,13 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -84,16 +80,14 @@ type LineageColumn = {
 type LineageTableNodeData = Record<string, unknown> & {
   activeColumnKey: string | null;
   columns: LineageColumn[];
+  dataset: LineageGraphDataset;
   dimmed: boolean;
-  engine: string;
   handleMode: "source" | "target" | "both";
   highlighted: boolean;
-  layerLabel: string;
   nodeId: string;
   onColumnSelect: (columnKey: string | null) => void;
   relatedColumnKeys: string[] | null;
-  tableName: string;
-  tone: "source" | "bronze" | "silver" | "gold" | "downstream";
+  selected: boolean;
 };
 
 const lineageNodeTypes = {
@@ -1194,17 +1188,18 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance | null>(null);
-  const flowWrapperRef = useRef<HTMLDivElement | null>(null);
+  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null);
   const { edges, nodes } = lineageGraph
-    ? buildLineageGraph(lineageGraph, selectedColumnKey, setSelectedColumnKey)
+    ? buildLineageGraph(lineageGraph, selectedColumnKey, selectedDatasetId, setSelectedColumnKey)
     : { edges: [], nodes: [] };
+  const selectedLineageDataset = lineageGraph?.datasets.find((item) => item.id === selectedDatasetId) ?? null;
   const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
     let isActive = true;
     setLineageGraph(dataset.lineageGraph ?? null);
     setSelectedColumnKey(null);
+    setSelectedDatasetId(null);
     getDatasetLineageGraph(dataset)
       .then((graph) => {
         if (isActive) setLineageGraph(graph);
@@ -1218,119 +1213,104 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     };
   }, [dataset.id]);
 
-  useEffect(() => {
-    if (!flowInstance || !lineageGraph) return;
-
-    const animationFrame = window.requestAnimationFrame(() => {
-      void flowInstance.fitView(lineageFitViewOptions);
-    });
-
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [edges.length, flowInstance, lineageGraph, nodes.length]);
-
-  useEffect(() => {
-    if (!flowInstance || !flowWrapperRef.current || !lineageGraph || typeof ResizeObserver === "undefined") return;
-
-    let animationFrame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      animationFrame = window.requestAnimationFrame(() => {
-        void flowInstance.fitView(lineageFitViewOptions);
-      });
-    });
-
-    observer.observe(flowWrapperRef.current);
-
-    return () => {
-      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame);
-      observer.disconnect();
-    };
-  }, [flowInstance, lineageGraph]);
-
-  const zoomLineageIn = () => {
-    if (flowInstance) void flowInstance.zoomIn({ duration: 180 });
-  };
-
-  const zoomLineageOut = () => {
-    if (flowInstance) void flowInstance.zoomOut({ duration: 180 });
-  };
-
-  const fitLineageView = () => {
-    if (flowInstance) void flowInstance.fitView({ ...lineageFitViewOptions, duration: 220 });
-  };
-
   return (
-    <Panel asChild className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
-      <section>
-      {!compact && (
-        <PanelHeader
-          bordered={false}
-          className="catalog-lineage-title min-h-0 p-0"
-          description="리니지"
-          icon={<LayoutGrid size={18} />}
-          title={dataset.name}
-        />
-      )}
-      {lineageGraph ? (
-        <div className="catalog-lineage-flow" ref={flowWrapperRef} aria-label={`${dataset.name} lineage graph`}>
-          <ReactFlow
-            edges={edges}
-            fitView
-            fitViewOptions={lineageFitViewOptions}
-            maxZoom={1.2}
-            minZoom={0.35}
-            nodes={nodes}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            nodeTypes={lineageNodeTypes}
-            onInit={setFlowInstance}
-            onPaneClick={() => setSelectedColumnKey(null)}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="#d5dde8" gap={22} />
-          </ReactFlow>
-          <TooltipProvider delayDuration={200}>
-            <ButtonGroup aria-label="리니지 화면 제어" className="catalog-lineage-controls" orientation="vertical">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton label="리니지 확대" size="xs" type="button" variant="outline" onClick={zoomLineageIn}><Plus /></IconButton>
-                </TooltipTrigger>
-                <TooltipContent side="right">확대</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton label="리니지 축소" size="xs" type="button" variant="outline" onClick={zoomLineageOut}><Minus /></IconButton>
-                </TooltipTrigger>
-                <TooltipContent side="right">축소</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <IconButton label="리니지 화면 맞춤" size="xs" type="button" variant="outline" onClick={fitLineageView}><Maximize2 /></IconButton>
-                </TooltipTrigger>
-                <TooltipContent side="right">화면 맞춤</TooltipContent>
-              </Tooltip>
-            </ButtonGroup>
-          </TooltipProvider>
-        </div>
-      ) : (
-        <div className="catalog-lineage-empty">
-          <strong>리니지를 불러오지 못했습니다.</strong>
-          <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
-        </div>
-      )}
-      <div className="catalog-lineage-footer">
-        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></Badge>
-        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">레이어 <strong>{dataset.layer}</strong></Badge>
-        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">상태 <strong>{statusMeta.label}</strong></Badge>
-      </div>
-      </section>
-    </Panel>
+    <>
+      <Panel asChild className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
+        <section>
+          {!compact && (
+            <PanelHeader
+              bordered={false}
+              className="catalog-lineage-title min-h-0 p-0"
+              description="리니지"
+              icon={<LayoutGrid size={18} />}
+              title={dataset.name}
+            />
+          )}
+          {lineageGraph ? (
+            <div className="catalog-lineage-flow" aria-label={`${dataset.name} 리니지 그래프`}>
+              <ReactFlow
+                edges={edges}
+                fitView
+                fitViewOptions={lineageFitViewOptions}
+                maxZoom={1.4}
+                minZoom={0.25}
+                nodes={nodes}
+                nodesConnectable={false}
+                nodesDraggable={false}
+                nodeTypes={lineageNodeTypes}
+                onNodeClick={(_, node) => setSelectedDatasetId(node.id)}
+                onPaneClick={() => {
+                  setSelectedColumnKey(null);
+                  setSelectedDatasetId(null);
+                }}
+                proOptions={{ hideAttribution: true }}
+              >
+                <Background color="#d5dde8" gap={22} />
+                <Controls position="bottom-left" showInteractive={false} />
+              </ReactFlow>
+            </div>
+          ) : (
+            <div className="catalog-lineage-empty">
+              <strong>리니지를 불러오지 못했습니다.</strong>
+              <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
+            </div>
+          )}
+          <div className="catalog-lineage-footer">
+            <Badge shape="compact" variant="secondary">상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></Badge>
+            <Badge shape="compact" variant="secondary">레이어 <strong>{dataset.layer}</strong></Badge>
+            <Badge shape="compact" variant="secondary">상태 <strong>{statusMeta.label}</strong></Badge>
+          </div>
+        </section>
+      </Panel>
+
+      <Sheet open={selectedLineageDataset !== null} onOpenChange={(open) => !open && setSelectedDatasetId(null)}>
+        {lineageGraph && selectedLineageDataset ? (
+          <SheetContent className="flex h-full flex-col gap-0 p-0" closeLabel="리니지 상세 닫기" side="right">
+            <SheetHeader className="gap-3 p-6 pr-16">
+              <Badge className="w-fit" shape="compact" variant={getLineageLayerBadgeVariant(selectedLineageDataset.layer)}>
+                {getLineageLayerLabel(selectedLineageDataset.layer)}
+              </Badge>
+              <SheetTitle className="break-words">{selectedLineageDataset.name}</SheetTitle>
+              <SheetDescription>{selectedLineageDataset.engine} 데이터셋의 컬럼과 연결 정보를 확인합니다.</SheetDescription>
+            </SheetHeader>
+            <Separator />
+            <ScrollArea className="min-h-0 flex-1">
+              <div className="flex flex-col gap-6 p-6">
+                <section className="flex flex-col gap-3">
+                  <h3 className="text-sm font-semibold text-slate-950">연결 정보</h3>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge shape="compact" variant="outline">상위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "upstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">하위 {countLineageConnections(lineageGraph, selectedLineageDataset.id, "downstream")}개</Badge>
+                    <Badge shape="compact" variant="outline">컬럼 {selectedLineageDataset.columns.length}개</Badge>
+                  </div>
+                </section>
+                <Separator />
+                <section className="flex flex-col gap-3">
+                  <h3 className="text-sm font-semibold text-slate-950">컬럼</h3>
+                  <Card className="overflow-hidden" size="none" variant="muted">
+                    <CardContent className="divide-y divide-slate-200 p-0 pt-0">
+                      {selectedLineageDataset.columns.map((column) => (
+                        <div className="flex min-w-0 items-center justify-between gap-3 px-4 py-3" key={column.id}>
+                          <span className="min-w-0 truncate text-sm font-medium text-slate-900" title={column.name}>{column.name}</span>
+                          <Badge shape="compact" size="sm" variant={getColumnTypeBadgeVariant(column.type)}>{column.type}</Badge>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                </section>
+              </div>
+            </ScrollArea>
+          </SheetContent>
+        ) : null}
+      </Sheet>
+    </>
   );
 }
 
 function buildLineageGraph(
   graph: LineageGraph,
   selectedColumnKey: string | null,
+  selectedDatasetId: string | null,
   onColumnSelect: (columnKey: string | null) => void,
 ): { edges: Edge[]; nodes: FlowNode[] } {
   const graphDatasets = graph.datasets;
@@ -1354,16 +1334,14 @@ function buildLineageGraph(
         data: {
           activeColumnKey: selectedColumnKey,
           columns,
+          dataset: lineageDataset,
           dimmed: !isRelated,
-          engine: lineageDataset.engine,
           handleMode: getLineageHandleMode(hasIncoming, hasOutgoing),
           highlighted: Boolean(selection && isRelated),
-          layerLabel: getLineageLayerLabel(lineageDataset.layer),
           nodeId: lineageDataset.id,
           onColumnSelect,
           relatedColumnKeys: relatedColumnKeys ? Array.from(relatedColumnKeys) : null,
-          tableName: lineageDataset.name,
-          tone: getLayerTone(lineageDataset.layer),
+          selected: selectedDatasetId === lineageDataset.id,
         },
         id: lineageDataset.id,
         position: {
@@ -1411,36 +1389,45 @@ function getLineageTableHeight(columnCount: number): number {
 
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
+  const layerVariant = getLineageLayerBadgeVariant(data.dataset.layer);
 
   useEffect(() => {
     updateNodeInternals(data.nodeId);
   }, [data.nodeId, updateNodeInternals]);
 
   return (
-    <Card className={[
-      "lineage-schema-node",
-      data.tone,
-      data.dimmed ? "dimmed" : "",
-      data.highlighted ? "highlighted" : "",
-    ].filter(Boolean).join(" ")} size="none">
-      <header className="lineage-schema-header">
-        <div className="lineage-schema-icon">
-          <Table2 size={18} />
+    <Card
+      className={cn(
+        "w-60 overflow-visible p-0 transition-[border-color,box-shadow,opacity]",
+        data.dimmed && "opacity-35",
+        data.highlighted && "border-orange-400 shadow-md",
+        data.selected && "border-blue-500 ring-2 ring-blue-100",
+      )}
+      size="none"
+    >
+      <CardHeader className="flex min-h-16 flex-row items-center gap-3 border-b border-slate-200 p-3">
+        <div className="grid size-10 shrink-0 place-items-center rounded-md border border-blue-100 bg-blue-50 text-blue-600">
+          <Table2 className="size-5" />
         </div>
-        <div className="lineage-schema-title">
-          <strong title={data.tableName}>{data.tableName}</strong>
-          <span>{data.layerLabel} · {data.engine}</span>
+        <div className="min-w-0 flex-1">
+          <CardTitle className="break-words text-sm leading-5" title={data.dataset.name}>{data.dataset.name}</CardTitle>
+          <CardDescription className="mt-1 flex flex-wrap items-center gap-1 text-xs leading-4">
+            <Badge shape="compact" size="sm" variant={layerVariant}>{data.dataset.layer}</Badge>
+            <span>{data.dataset.engine}</span>
+          </CardDescription>
         </div>
-      </header>
-      <div className="lineage-column-head">
+      </CardHeader>
+      <CardContent className="p-0 pt-0">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-slate-200 bg-slate-50 px-4 py-1.5 text-[10px] font-semibold text-slate-500">
         <span>컬럼</span>
-        <span>타입</span>
+        <span className="text-right">타입</span>
       </div>
-      <div className="lineage-schema-columns">
+      <div>
         {data.columns.map((column) => (
           <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
       </div>
+      </CardContent>
     </Card>
   );
 }
@@ -1452,12 +1439,12 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
 
   return (
     <Button
-      className={[
-        "lineage-column-row",
-        isActive ? "active" : "",
-        data.relatedColumnKeys && !isRelated ? "dimmed" : "",
-        data.relatedColumnKeys && isRelated ? "related" : "",
-      ].filter(Boolean).join(" ")}
+      className={cn(
+        "nodrag relative grid min-h-8 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-none border-b border-slate-100 px-4 text-left text-xs last:border-b-0",
+        isActive && "bg-orange-100 ring-1 ring-inset ring-orange-300 hover:bg-orange-100",
+        data.relatedColumnKeys && !isRelated && "opacity-30",
+        data.relatedColumnKeys && isRelated && !isActive && "bg-orange-50 hover:bg-orange-50",
+      )}
       onClick={(event) => {
         event.stopPropagation();
         data.onColumnSelect(isActive ? null : columnKey);
@@ -1469,17 +1456,17 @@ function LineageColumnRow({ column, data }: { column: LineageColumn; data: Linea
     >
       {(data.handleMode === "target" || data.handleMode === "both") && (
         <Handle
-          className="lineage-column-handle left target-handle"
+          className="!size-3 !border-2 !border-white !bg-blue-500"
           id={lineageHandleId(data.nodeId, column.name, "target")}
           position={Position.Left}
           type="target"
         />
       )}
-      <span>{column.name}</span>
-      <Badge className={`lineage-type-pill ${getColumnTypeTone(column.type)}`} shape="compact" size="sm" variant="muted">{column.type}</Badge>
+      <span className="min-w-0 truncate" title={column.name}>{column.name}</span>
+      <Badge className="justify-self-end" shape="compact" size="sm" variant={getColumnTypeBadgeVariant(column.type)}>{column.type}</Badge>
       {(data.handleMode === "source" || data.handleMode === "both") && (
         <Handle
-          className="lineage-column-handle right source-handle"
+          className="!size-3 !border-2 !border-white !bg-blue-500"
           id={lineageHandleId(data.nodeId, column.name, "source")}
           position={Position.Right}
           type="source"
@@ -1508,14 +1495,14 @@ function buildColumnEdge({
 }): Edge {
   return {
     animated: false,
-    className: selected ? active ? "lineage-column-edge active" : "lineage-column-edge muted" : "lineage-column-edge",
     id,
     markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
     source,
     sourceHandle,
     style: {
+      opacity: selected && !active ? 0.28 : 1,
       stroke: "#fb923c",
-      strokeDasharray: "6 5",
+      strokeDasharray: selected && active ? "0" : "6 5",
       strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
@@ -1626,21 +1613,27 @@ function getLineageLayerLabel(layer: LineageLayer): string {
   return `${layer} LAYER`;
 }
 
-function getLayerTone(layer: LineageLayer): LineageTableNodeData["tone"] {
-  if (layer === "GOLD") return "gold";
-  if (layer === "SILVER") return "silver";
-  if (layer === "BRONZE") return "bronze";
-  if (layer === "CONSUMER") return "downstream";
-  return "source";
+function getLineageLayerBadgeVariant(layer: LineageLayer): BadgeProps["variant"] {
+  if (layer === "GOLD" || layer === "SILVER") return "default";
+  if (layer === "BRONZE" || layer === "SOURCE") return "warning";
+  return "success";
 }
 
-function getColumnTypeTone(type: string): string {
+function getColumnTypeBadgeVariant(type: string): BadgeProps["variant"] {
   const normalized = type.toLowerCase();
-  if (["int", "integer", "bigint"].includes(normalized)) return "integer";
-  if (["decimal", "double", "float", "number"].includes(normalized)) return "double";
-  if (["timestamp", "date", "datetime"].includes(normalized)) return "timestamp";
-  if (normalized.includes("json")) return "json";
-  return "string";
+  if (["int", "integer", "bigint", "decimal", "double", "float", "number"].includes(normalized)) return "default";
+  if (["timestamp", "date", "datetime"].includes(normalized)) return "warning";
+  if (normalized.includes("json")) return "secondary";
+  return "success";
+}
+
+function countLineageConnections(graph: LineageGraph, datasetId: string, direction: "upstream" | "downstream"): number {
+  const connectedDatasetIds = new Set(
+    graph.edges
+      .filter((edge) => direction === "upstream" ? edge.toDatasetId === datasetId : edge.fromDatasetId === datasetId)
+      .map((edge) => direction === "upstream" ? edge.fromDatasetId : edge.toDatasetId),
+  );
+  return connectedDatasetIds.size;
 }
 
 function lineageHandleId(datasetId: string, columnName: string, kind: "source" | "target"): string {
