@@ -4,28 +4,60 @@ import { X } from "lucide-react";
 const SQL_EXPRESSION = "SQL Expression";
 const LEGACY_CSV_CLASSIFIER = "Custom CSV Classifier";
 const REVIEW_ROW_ANALYSIS = "Review Row Analysis";
+const TEXT_ROW_ANALYSIS = "Text Row Analysis";
 const FIELD_ONLY_OPERATIONS = new Set(["Default Value", "Null Guard"]);
 
 const OUTPUT_TYPE_OPTIONS = ["string", "integer", "long", "double", "boolean", "timestamp", "date"];
 
 const REVIEW_ANALYSIS_METHOD_OPTIONS = [
-  { value: "copy_or_extract_field", label: "Copy / extract original field", kind: "copy" },
-  { value: "one_of_values", label: "One of N values", kind: "classify" },
-  { value: "sentiment_3way", label: "Sentiment", kind: "classify", values: ["positive", "mixed", "negative"] },
-  { value: "issue_category", label: "Issue category", kind: "classify", values: ["battery_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_quality", "positive_feedback", "general_issue"] },
-  { value: "issue_subcategory", label: "Issue subcategory", kind: "classify" },
-  { value: "severity_4level", label: "Severity", kind: "classify", values: ["critical", "high", "medium", "low"] },
-  { value: "boolean_y_n", label: "Y/N", kind: "classify", values: ["Y", "N"] },
-  { value: "extractive_summary", label: "Summary", kind: "generate" },
-  { value: "evidence_span", label: "Evidence span", kind: "extract" },
+  { value: "copy", label: "Copy", kind: "copy" },
+  { value: "one_of_values", label: "One of values", kind: "classify" },
+  { value: "instruction", label: "Instruction", kind: "instruction" },
 ];
 
 const LEGACY_METHOD_ALIASES = {
-  custom_instruction: "one_of_values",
-  issue_taxonomy: "issue_category",
+  copy_or_extract_field: "copy",
+  custom_instruction: "instruction",
+  copy: "copy",
+  instruction: "instruction",
+  issue_taxonomy: "one_of_values",
+  issue_category: "one_of_values",
+  issue_subcategory: "one_of_values",
+  severity_4level: "one_of_values",
+  text_classification: "one_of_values",
+  sentiment: "one_of_values",
+  sentiment_3way: "one_of_values",
+  issue_present: "one_of_values",
+  issue_present_binary: "one_of_values",
+  action_needed: "one_of_values",
+  action_needed_binary: "one_of_values",
+  boolean_y_n: "one_of_values",
+  summary: "instruction",
+  evidence: "instruction",
+  extractive_summary: "instruction",
+  evidence_span: "instruction",
 };
 
 const METHOD_OPTION_BY_VALUE = Object.fromEntries(REVIEW_ANALYSIS_METHOD_OPTIONS.map((option) => [option.value, option]));
+const LEGACY_METHOD_DEFAULT_VALUES = {
+  issue_category: ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"],
+  issue_subcategory: ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"],
+  severity_4level: ["critical", "high", "medium", "low"],
+  sentiment: ["positive", "mixed", "negative"],
+  sentiment_3way: ["positive", "mixed", "negative"],
+  issue_present: ["issue", "no_issue"],
+  issue_present_binary: ["issue", "no_issue"],
+  action_needed: ["action_needed", "low_or_none"],
+  action_needed_binary: ["action_needed", "low_or_none"],
+  boolean_y_n: ["Y", "N"],
+};
+
+const LEGACY_METHOD_DEFAULT_INSTRUCTIONS = {
+  evidence: "Extract the source sentence that best supports this output.",
+  evidence_span: "Extract the source sentence that best supports this output.",
+  extractive_summary: "Summarize the row in one short factual sentence.",
+  summary: "Summarize the row in one short factual sentence.",
+};
 
 function formatChainStep(step) {
   if (!step) return "";
@@ -79,7 +111,7 @@ function lastDataTransformStep(chain) {
   return [...chain].reverse().find((step) => !FIELD_ONLY_OPERATIONS.has(step.operation)) || null;
 }
 
-function normalizeReviewAnalysisMethod(value, fallback = "copy_or_extract_field") {
+function normalizeReviewAnalysisMethod(value, fallback = "copy") {
   const raw = String(value || "").split(":")[0].trim();
   const normalized = LEGACY_METHOD_ALIASES[raw] || raw;
   return REVIEW_ANALYSIS_METHOD_OPTIONS.some((option) => option.value === normalized)
@@ -88,7 +120,23 @@ function normalizeReviewAnalysisMethod(value, fallback = "copy_or_extract_field"
 }
 
 function defaultAllowedValues(method) {
-  return METHOD_OPTION_BY_VALUE[normalizeReviewAnalysisMethod(method)]?.values || [];
+  const raw = String(method || "").split(":")[0].trim();
+  return LEGACY_METHOD_DEFAULT_VALUES[raw] || METHOD_OPTION_BY_VALUE[normalizeReviewAnalysisMethod(method)]?.values || [];
+}
+
+function defaultInstruction(method, targetName) {
+  const raw = String(method || "").split(":")[0].trim();
+  if (LEGACY_METHOD_DEFAULT_INSTRUCTIONS[raw]) return LEGACY_METHOD_DEFAULT_INSTRUCTIONS[raw];
+  const normalizedMethod = normalizeReviewAnalysisMethod(method);
+  const normalizedTarget = normalizeCsvColumnName(targetName || "").toLowerCase();
+  if (normalizedMethod !== "instruction") return "";
+  if (normalizedTarget.includes("summary")) return LEGACY_METHOD_DEFAULT_INSTRUCTIONS.summary;
+  if (normalizedTarget.includes("evidence") || normalizedTarget.includes("reason")) return LEGACY_METHOD_DEFAULT_INSTRUCTIONS.evidence;
+  return "Use the whole source row and produce this output column according to its name.";
+}
+
+function isRowAnalysisOperation(operation) {
+  return operation === REVIEW_ROW_ANALYSIS || operation === TEXT_ROW_ANALYSIS;
 }
 
 function parseAllowedValues(value) {
@@ -103,8 +151,8 @@ function serializeAllowedValues(values) {
 }
 
 function parseReviewAnalysisStep(step, sourceField, outputName, outputType) {
-  if (step?.operation !== REVIEW_ROW_ANALYSIS || !step?.params) {
-    const method = "copy_or_extract_field";
+  if (!isRowAnalysisOperation(step?.operation) || !step?.params) {
+    const method = "copy";
     return {
       allowedValues: defaultAllowedValues(method),
       method,
@@ -116,16 +164,18 @@ function parseReviewAnalysisStep(step, sourceField, outputName, outputType) {
   try {
     const parsed = JSON.parse(step.params);
     const firstColumn = Array.isArray(parsed.columns) ? parsed.columns[0] : parsed;
-    const method = normalizeReviewAnalysisMethod(firstColumn?.method || parsed.method, "copy_or_extract_field");
+    const rawMethod = firstColumn?.method || parsed.method;
+    const method = normalizeReviewAnalysisMethod(rawMethod, "copy");
     return {
-      allowedValues: Array.isArray(firstColumn?.allowedValues) ? firstColumn.allowedValues : defaultAllowedValues(method),
+      allowedValues: Array.isArray(firstColumn?.allowedValues) ? firstColumn.allowedValues : defaultAllowedValues(rawMethod || method),
+      instruction: String(firstColumn?.instruction || parsed.instruction || defaultInstruction(rawMethod || method, outputName)),
       method,
       sourceField: String(parsed.sourceField || sourceField),
       targetName: String(firstColumn?.targetName || parsed.targetName || outputName),
       type: String(firstColumn?.type || parsed.type || outputType || "string"),
     };
   } catch {
-    const method = "copy_or_extract_field";
+    const method = "copy";
     return {
       allowedValues: defaultAllowedValues(method),
       method,
@@ -140,11 +190,16 @@ function newReviewRuleId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createReviewRule({ allowedValues, method, targetName, type } = {}) {
-  const normalizedMethod = normalizeReviewAnalysisMethod(method, "copy_or_extract_field");
+function createReviewRule({ allowedValues, instruction, method, targetName, type } = {}) {
+  const normalizedMethod = normalizeReviewAnalysisMethod(method, "copy");
+  const normalizedAllowedValues = Array.isArray(allowedValues) && allowedValues.length > 0
+    ? allowedValues
+    : defaultAllowedValues(method || normalizedMethod);
   return {
-    allowedValues: Array.isArray(allowedValues) && allowedValues.length > 0 ? allowedValues : defaultAllowedValues(normalizedMethod),
+    allowedValues: normalizedAllowedValues,
+    allowedValuesInput: serializeAllowedValues(normalizedAllowedValues),
     id: newReviewRuleId(),
+    instruction: String(instruction || defaultInstruction(method || normalizedMethod, targetName)).trim(),
     method: normalizedMethod,
     targetName: normalizeCsvColumnName(targetName || "output_value") || "output_value",
     type: type || "string",
@@ -152,13 +207,14 @@ function createReviewRule({ allowedValues, method, targetName, type } = {}) {
 }
 
 function parseReviewAnalysisRules(step, sourceField, outputName, outputType) {
-  if (step?.operation === REVIEW_ROW_ANALYSIS && step?.params) {
+  if (isRowAnalysisOperation(step?.operation) && step?.params) {
     try {
       const parsed = JSON.parse(step.params);
       const columns = Array.isArray(parsed.columns) ? parsed.columns : [parsed];
       const rules = columns
         .map((column, index) => createReviewRule({
           allowedValues: Array.isArray(column?.allowedValues) ? column.allowedValues : [],
+          instruction: column?.instruction || column?.description || "",
           method: column?.method || column?.analysisMethod || parsed.method,
           targetName: column?.targetName || column?.value || parsed.outputColumn || outputName || `output_${index + 1}`,
           type: column?.type || parsed.type || outputType || "string",
@@ -181,8 +237,8 @@ function normalizeCsvColumnName(value) {
     .slice(0, 80);
 }
 
-function buildReviewRowExpression(sourceField, targetName) {
-  return `REVIEW_ANALYZE(${sourceField}).${targetName}`;
+function buildTextRowExpression(sourceField, targetName) {
+  return `TEXT_ANALYZE(${sourceField}).${targetName}`;
 }
 
 export default function TransformFunctionModal({ column, onApply, onClose }) {
@@ -198,15 +254,15 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   const [chain, setChain] = useState(initialChain);
   const [selectedFunction, setSelectedFunction] = useState(initialChain[initialChain.length - 1]?.operation || "");
   const [isClassifierEditorOpen, setIsClassifierEditorOpen] = useState(
-    initialDataStep?.operation === LEGACY_CSV_CLASSIFIER || initialDataStep?.operation === REVIEW_ROW_ANALYSIS,
+    initialDataStep?.operation === LEGACY_CSV_CLASSIFIER || isRowAnalysisOperation(initialDataStep?.operation),
   );
   const [reviewRules, setReviewRules] = useState(() => parseReviewAnalysisRules(initialDataStep, sourceField, column.name, column.type));
 
   const functions = [
     {
-      name: "Review row rule",
+      name: "Text row to CSV",
       group: "M3",
-      desc: "Create this target row from the full source review row",
+      desc: "Split one text/source row into structured CSV output columns",
       detail: "classifier",
       type: "string",
     },
@@ -291,7 +347,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
   ];
 
   const openClassifierEditor = () => {
-    setSelectedFunction("Review row rule");
+    setSelectedFunction("Text row to CSV");
     setIsClassifierEditorOpen(true);
   };
 
@@ -301,25 +357,35 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
 
   const updateReviewRuleMethod = (id, method) => {
     const normalizedMethod = normalizeReviewAnalysisMethod(method);
-    const defaults = defaultAllowedValues(normalizedMethod);
     setReviewRules((prev) => prev.map((rule) => (rule.id === id
-      ? {
-        ...rule,
-        allowedValues: defaults.length > 0 ? defaults : [],
-        method: normalizedMethod,
-      }
+      ? (() => {
+        const defaults = defaultAllowedValues(method);
+        return {
+          ...rule,
+          allowedValues: normalizedMethod === "one_of_values" ? defaults : [],
+          allowedValuesInput: normalizedMethod === "one_of_values" ? serializeAllowedValues(defaults) : "",
+          instruction: normalizedMethod === "instruction"
+            ? (rule.instruction || defaultInstruction(method, rule.targetName))
+            : "",
+          method: normalizedMethod,
+        };
+      })()
       : rule)));
   };
 
   const updateReviewRuleAllowedValues = (id, value) => {
-    updateReviewRule(id, { allowedValues: parseAllowedValues(value) });
+    updateReviewRule(id, { allowedValues: parseAllowedValues(value), allowedValuesInput: value });
+  };
+
+  const updateReviewRuleInstruction = (id, value) => {
+    updateReviewRule(id, { instruction: value });
   };
 
   const addReviewRule = () => {
     setReviewRules((prev) => [
       ...prev,
       createReviewRule({
-        method: "copy_or_extract_field",
+        method: "copy",
         targetName: `output_${prev.length + 1}`,
         type: "string",
       }),
@@ -391,9 +457,10 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
       const outputColumns = reviewRules
         .map((rule, index) => {
           const targetName = normalizeCsvColumnName(rule.targetName || `output_${index + 1}`) || `output_${index + 1}`;
-          const method = normalizeReviewAnalysisMethod(rule.method, "copy_or_extract_field");
+          const method = normalizeReviewAnalysisMethod(rule.method, "copy");
           return {
-            allowedValues: Array.isArray(rule.allowedValues) ? rule.allowedValues.filter(Boolean) : [],
+            allowedValues: parseAllowedValues(rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues)),
+            instruction: String(rule.instruction || "").trim(),
             method,
             nullable: true,
             targetName,
@@ -404,12 +471,12 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
 
       if (outputColumns.length === 0) return;
       const firstColumn = outputColumns[0];
-      const expression = buildReviewRowExpression(sourceField, firstColumn.targetName);
+      const expression = buildTextRowExpression(sourceField, firstColumn.targetName);
       onApply(expression, firstColumn.targetName, firstColumn.type, {
         columns: outputColumns,
         mode: "csvMultiOutput",
         onError: "Warn",
-        operation: REVIEW_ROW_ANALYSIS,
+        operation: TEXT_ROW_ANALYSIS,
         sourceField,
       });
       return;
@@ -486,8 +553,8 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
             <div className="space-y-5 rounded-xl border border-indigo-100 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <strong className="block text-base font-bold text-slate-900">Review row to CSV rows</strong>
-                  <span className="font-mono text-xs font-semibold text-indigo-600">source row: {sourceField}</span>
+                  <strong className="block text-base font-bold text-slate-900">Text row to structured CSV columns</strong>
+                  <span className="font-mono text-xs font-semibold text-indigo-600">source field: {sourceField}</span>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -495,7 +562,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                     onClick={addReviewRule}
                     type="button"
                   >
-                    + output row
+                    + output column
                   </button>
                   <button
                     className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
@@ -508,12 +575,12 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
               </div>
 
               <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
-                <div className="grid grid-cols-[56px_minmax(160px,1fr)_150px_220px_minmax(180px,1fr)_72px] bg-slate-950 font-mono text-xs font-bold text-slate-100">
+                <div className="grid grid-cols-[56px_minmax(150px,1fr)_132px_180px_minmax(260px,1.4fr)_72px] bg-slate-950 font-mono text-xs font-bold text-slate-100">
                   <div className="border-r border-slate-700 px-3 py-3 text-center">#</div>
                   <div className="border-r border-slate-700 px-3 py-3">A - output_column</div>
                   <div className="border-r border-slate-700 px-3 py-3">B - type</div>
-                  <div className="border-r border-slate-700 px-3 py-3">C - LLM method</div>
-                  <div className="border-r border-slate-700 px-3 py-3">D - allowed_values</div>
+                  <div className="border-r border-slate-700 px-3 py-3">C - method</div>
+                  <div className="border-r border-slate-700 px-3 py-3">D - values_or_instruction</div>
                   <div className="px-3 py-3 text-center">delete</div>
                 </div>
 
@@ -521,10 +588,11 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                   {reviewRules.map((rule, index) => {
                     const methodOption = METHOD_OPTION_BY_VALUE[normalizeReviewAnalysisMethod(rule.method)] || METHOD_OPTION_BY_VALUE.one_of_values;
                     const canUseAllowedValues = methodOption.kind === "classify";
+                    const canUseInstruction = methodOption.kind === "instruction";
                     return (
                       <div
                         key={rule.id}
-                        className="grid grid-cols-[56px_minmax(160px,1fr)_150px_220px_minmax(180px,1fr)_72px] border-t border-slate-200 font-mono text-sm"
+                        className="grid grid-cols-[56px_minmax(150px,1fr)_132px_180px_minmax(260px,1.4fr)_72px] border-t border-slate-200 font-mono text-sm"
                       >
                         <div className="flex items-center justify-center bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
                           {index + 1}
@@ -561,10 +629,20 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                         <div className="border-l border-slate-200 p-0">
                           <textarea
                             className="min-h-12 w-full resize-y border-0 px-3 py-2 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-400"
-                            disabled={!canUseAllowedValues}
-                            placeholder={canUseAllowedValues ? "one value per line" : "generated at runtime"}
-                            value={serializeAllowedValues(rule.allowedValues)}
-                            onChange={(event) => updateReviewRuleAllowedValues(rule.id, event.target.value)}
+                            disabled={!canUseAllowedValues && !canUseInstruction}
+                            placeholder={
+                              canUseAllowedValues
+                                ? "value_1\nvalue_2\nvalue_3"
+                                : canUseInstruction
+                                  ? "natural language instruction for this output"
+                                  : "source value is copied"
+                            }
+                            value={canUseInstruction ? (rule.instruction || "") : (rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues))}
+                            onChange={(event) => (
+                              canUseInstruction
+                                ? updateReviewRuleInstruction(rule.id, event.target.value)
+                                : updateReviewRuleAllowedValues(rule.id, event.target.value)
+                            )}
                           />
                         </div>
                         <div className="flex items-center justify-center border-l border-slate-200 bg-slate-50 px-2 py-2">
@@ -583,25 +661,19 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-950 px-4 py-3">
-                <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Generated Spark expressions</span>
-                <code className="mt-2 block whitespace-pre-wrap break-all font-mono text-xs text-slate-100">
-                  {reviewRules.map((rule, index) => `${normalizeCsvColumnName(rule.targetName || `output_${index + 1}`)} = ${buildReviewRowExpression(sourceField, normalizeCsvColumnName(rule.targetName || `output_${index + 1}`))}`).join("\n")}
-                </code>
-              </div>
             </div>          ) : (
             <>
               <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <strong className="block text-xs font-bold text-emerald-900">리뷰 row 변환 방식</strong>
+                    <strong className="block text-xs font-bold text-emerald-900">Text row structuring</strong>
                   </div>
                   <button
                     className="shrink-0 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700"
                     onClick={openClassifierEditor}
                     type="button"
                   >
-                    방식 선택
+                    Select method
                   </button>
                 </div>
               </div>
@@ -693,7 +765,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
             className="px-5 py-2 bg-indigo-600 text-white text-xs font-bold rounded-lg hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200"
             type="button"
           >
-            {isClassifierEditorOpen ? "Apply Row Rule" : "Apply Transform"}
+            {isClassifierEditorOpen ? "Apply Text Schema" : "Apply Transform"}
           </button>
         </div>
       </div>

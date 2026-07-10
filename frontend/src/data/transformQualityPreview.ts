@@ -92,15 +92,9 @@ type CustomCsvClassifierConfig = {
 };
 
 type ReviewAnalysisMethod =
-  | "copy_or_extract_field"
+  | "copy"
   | "one_of_values"
-  | "sentiment_3way"
-  | "issue_category"
-  | "issue_subcategory"
-  | "severity_4level"
-  | "boolean_y_n"
-  | "extractive_summary"
-  | "evidence_span";
+  | "instruction";
 
 type ReviewAnalysisColumnConfig = {
   allowedValues: string[];
@@ -111,15 +105,9 @@ type ReviewAnalysisColumnConfig = {
 };
 
 const REVIEW_ANALYSIS_METHODS = new Set<ReviewAnalysisMethod>([
-  "copy_or_extract_field",
+  "copy",
   "one_of_values",
-  "sentiment_3way",
-  "issue_category",
-  "issue_subcategory",
-  "severity_4level",
-  "boolean_y_n",
-  "extractive_summary",
-  "evidence_span",
+  "instruction",
 ]);
 
 export function runTransformQualitySamplePreview(
@@ -220,32 +208,14 @@ function reviewRowAnalysisPreviewValue(row: TransformQualitySampleRow, step: Tra
   const text = getReviewText(row, config.sourceField);
   const rating = getReviewRating(row);
 
-  if (looksLikeConfidenceOrScore(config.targetName) && config.method !== "copy_or_extract_field") {
+  if (looksLikeConfidenceOrScore(config.targetName) && config.method !== "copy") {
     return runtimeAnalysisPlaceholder(config.method);
   }
-  if (!hasReviewAnalysisSignal(text, rating) && config.method !== "copy_or_extract_field" && config.method !== "one_of_values") {
-    return runtimeAnalysisPlaceholder(config.method);
-  }
-
-  const category = reviewIssueCategoryForText(text, rating);
-
   switch (config.method) {
-    case "copy_or_extract_field":
+    case "copy":
       return copyOrExtractReviewField(row, config, step);
-    case "sentiment_3way":
-      return reviewSentimentForText(text, rating, category.id);
-    case "issue_category":
-      return category.id;
-    case "issue_subcategory":
-      return category.label;
-    case "severity_4level":
-      return reviewSeverityForText(text, rating, category.id);
-    case "boolean_y_n":
-      return reviewBooleanForText(text, config);
-    case "extractive_summary":
-      return reviewExtractiveSummary(text);
-    case "evidence_span":
-      return reviewEvidenceSpan(text);
+    case "instruction":
+      return reviewCustomInstructionPreviewValue(text, config);
     case "one_of_values":
       return config.allowedValues[0] ?? runtimeAnalysisPlaceholder(config.method);
     default:
@@ -301,36 +271,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeReviewAnalysisMethod(rawMethod: string, targetName: string, fallback: ReviewAnalysisMethod): ReviewAnalysisMethod {
   const method = normalizePreviewName(rawMethod.split(":")[0] ?? "");
-  if (method === "custom_instruction") return "one_of_values";
-  if (method === "issue_taxonomy") return targetName === "issue_subcategory" ? "issue_subcategory" : "issue_category";
+  if (method === "copy_or_extract_field") return "copy";
+  if (method === "custom_instruction" || method === "instruction" || method === "summary" || method === "extractive_summary" || method === "evidence" || method === "evidence_span") return "instruction";
+  if (["sentiment", "sentiment_3way", "issue_present", "issue_present_binary", "action_needed", "action_needed_binary", "boolean_y_n", "issue_taxonomy", "issue_category", "issue_subcategory", "severity_4level"].includes(method)) return "one_of_values";
   return REVIEW_ANALYSIS_METHODS.has(method as ReviewAnalysisMethod) ? method as ReviewAnalysisMethod : fallback;
 }
 
 function inferReviewAnalysisMethod(targetName: string): ReviewAnalysisMethod {
   const target = normalizePreviewName(targetName);
   if (["review_id", "asin", "parent_asin", "rating", "title", "text", "review_text", "timestamp", "event_time", "user_id", "verified_purchase", "helpful_vote"].includes(target)) {
-    return "copy_or_extract_field";
+    return "copy";
   }
-  if (target === "sentiment") {
-    return "sentiment_3way";
+  if (target === "sentiment" || target === "issue_present" || target === "has_issue" || target === "action_needed" || target === "needs_action" || target === "issue_subcategory" || target === "issue_category" || target === "severity") {
+    return "one_of_values";
   }
-  if (target === "issue_subcategory") {
-    return "issue_subcategory";
-  }
-  if (target === "issue_category") {
-    return "issue_category";
-  }
-  if (target === "severity") {
-    return "severity_4level";
-  }
-  if (target === "summary") {
-    return "extractive_summary";
-  }
-  if (target === "evidence") {
-    return "evidence_span";
+  if (target === "summary" || target === "evidence" || target.includes("reason")) {
+    return "instruction";
   }
   if (target.endsWith("_yn") || target.startsWith("is_") || target.startsWith("has_")) {
-    return "boolean_y_n";
+    return "one_of_values";
   }
   return "one_of_values";
 }
@@ -343,9 +302,6 @@ function parseReviewAllowedValues(value: unknown, method: ReviewAnalysisMethod) 
       .map((item) => item.trim())
       .filter(Boolean);
   if (parsedValues.length > 0) return parsedValues;
-  if (method === "sentiment_3way") return ["positive", "mixed", "negative"];
-  if (method === "severity_4level") return ["critical", "high", "medium", "low"];
-  if (method === "boolean_y_n") return ["Y", "N"];
   return [];
 }
 
@@ -420,6 +376,13 @@ function reviewSeverityForText(text: string, rating: number, category: string) {
   return "low";
 }
 
+function reviewActionNeededForText(text: string, rating: number) {
+  if (rating > 0 && rating <= 2) return "action_needed";
+  return /(refund|return|replacement|replace|not working|doesn.?t work|does not work|didn.?t work|stopped working|broken|broke|cracked|shattered|dead|defective|failed|wrong|fake|missing|never arrived|doesn.?t fit|does not fit|won.?t charge|does not charge|doesn.?t charge|fire|smoke|explode|overheat|unsafe|danger)/i.test(text)
+    ? "action_needed"
+    : "low_or_none";
+}
+
 function reviewBooleanForText(text: string, config: ReviewAnalysisColumnConfig) {
   const target = normalizePreviewName(config.targetName);
   if (target.includes("negative") || target.includes("issue") || target.includes("complaint")) {
@@ -428,16 +391,34 @@ function reviewBooleanForText(text: string, config: ReviewAnalysisColumnConfig) 
   return text.trim() ? "Y" : "N";
 }
 
+function reviewCustomInstructionPreviewValue(text: string, config: ReviewAnalysisColumnConfig) {
+  const target = normalizePreviewName(config.targetName);
+  const instruction = String(config.instruction || "").toLowerCase();
+  if (target.includes("summary") || instruction.includes("summar") || instruction.includes("요약")) {
+    return reviewExtractiveSummary(text);
+  }
+  if (
+    target.includes("evidence")
+    || target.includes("reason")
+    || instruction.includes("evidence")
+    || instruction.includes("reason")
+    || instruction.includes("근거")
+  ) {
+    return reviewEvidenceSpan(text);
+  }
+  return reviewEvidenceSpan(text) || reviewExtractiveSummary(text);
+}
+
 function reviewExtractiveSummary(text: string) {
   const cleaned = text.replace(/\s+/g, " ").trim();
-  if (!cleaned) return runtimeAnalysisPlaceholder("extractive_summary");
+  if (!cleaned) return runtimeAnalysisPlaceholder("instruction");
   const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
   return sentence.length > 96 ? `${sentence.slice(0, 93)}...` : sentence;
 }
 
 function reviewEvidenceSpan(text: string) {
   const cleaned = text.replace(/\s+/g, " ").trim();
-  if (!cleaned) return runtimeAnalysisPlaceholder("evidence_span");
+  if (!cleaned) return runtimeAnalysisPlaceholder("instruction");
   const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] || cleaned;
   return sentence.length > 120 ? `${sentence.slice(0, 117)}...` : sentence;
 }
