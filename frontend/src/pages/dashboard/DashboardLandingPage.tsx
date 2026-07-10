@@ -1,15 +1,35 @@
-import { BarChart3, Plus, Table2 } from "lucide-react";
+import { AlertCircle, BarChart3, Plus, Table2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
 import { DashboardTable } from "./components/DashboardTable";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 import type { SavedDashboardCard } from "../../types";
+
+function DashboardListSkeleton() {
+  return (
+    <div aria-label="대시보드 목록을 불러오는 중" className="grid gap-3" role="status">
+      {Array.from({ length: 5 }, (_, index) => (
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(100px,1fr)_minmax(120px,1fr)_40px] items-center gap-4 rounded-lg border border-slate-200 p-3" key={index}>
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-5 w-1/2" />
+          </div>
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="size-8" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function DashboardLandingPage({
   currentPage,
@@ -98,7 +118,7 @@ export function DashboardLandingPage({
             variant="primary"
             onClick={onCreateDashboard}
           >
-            <Plus size={16} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+            <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
           </Button>
         )}
         className="dashboard-page-header"
@@ -138,15 +158,31 @@ export function DashboardLandingPage({
           />
           <div className="dashboard-table-list-body">
             <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
-            {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
-            {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
-            {createError && <div className="dashboard-list-count">대시보드 생성 오류: {createError}</div>}
-            <DashboardTable
-              dashboards={dashboards}
-              deletingDashboardId={deletingDashboardId}
-              onOpenDetail={onOpenDashboard}
-              onRequestDelete={onRequestDelete}
-            />
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertTitle>대시보드 목록을 불러오지 못했습니다.</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {createError && (
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertTitle>대시보드를 생성하지 못했습니다.</AlertTitle>
+                <AlertDescription>{createError}</AlertDescription>
+              </Alert>
+            )}
+            {isLoading ? (
+              <DashboardListSkeleton />
+            ) : (
+              <DashboardTable
+                dashboards={dashboards}
+                deletingDashboardId={deletingDashboardId}
+                hasActiveFilters={Boolean(searchQuery.trim() || ownerFilter !== "all" || selectedTags.length)}
+                onOpenDetail={onOpenDashboard}
+                onRequestDelete={onRequestDelete}
+              />
+            )}
             <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
           </div>
         </Panel>

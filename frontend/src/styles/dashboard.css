@@ -1206,14 +1206,6 @@
   color: #0f172a;
 }
 
-.dashboard-delete-error {
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c !important;
-  font-weight: 800;
-  padding: 10px 12px;
-}
-
 .danger-button {
   background: #dc2626;
 }

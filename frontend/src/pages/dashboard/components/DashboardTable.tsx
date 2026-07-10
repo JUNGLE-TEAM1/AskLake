@@ -13,11 +13,13 @@ import type { SavedDashboardCard } from "../../../types";
 export function DashboardTable({
   dashboards,
   deletingDashboardId,
+  hasActiveFilters,
   onOpenDetail,
   onRequestDelete,
 }: {
   dashboards: SavedDashboardCard[];
   deletingDashboardId: string | null;
+  hasActiveFilters: boolean;
   onOpenDetail: (dashboard: SavedDashboardCard) => void;
   onRequestDelete: (dashboard: SavedDashboardCard) => void;
 }) {
@@ -85,8 +87,8 @@ export function DashboardTable({
       columns={columns}
       data={dashboards}
       emptyState={{
-        description: "검색 조건에 맞는 대시보드가 없습니다.",
-        title: "대시보드가 없습니다.",
+        description: hasActiveFilters ? "검색어나 필터 조건을 변경해 보세요." : "새 대시보드를 생성해 분석 화면을 구성해 보세요.",
+        title: hasActiveFilters ? "검색 조건에 맞는 대시보드가 없습니다." : "아직 대시보드가 없습니다.",
       }}
       getRowId={(dashboard) => dashboard.id}
       tableClassName="schema-table dashboard-list-data-table"
@@ -102,7 +104,7 @@ export function DashboardTable({
           size="icon"
           onClick={() => onRequestDelete(row.original)}
         >
-          <Trash2 size={18} />
+          <Trash2 />
         </Button>
       )}
       rowActionsClassName="dashboard-table-action-cell"

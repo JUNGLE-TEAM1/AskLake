@@ -34,7 +34,15 @@ export function DashboardDeleteConfirmDialog({
         <strong>{dashboard.name}</strong> 대시보드를 삭제하면 목록과 데이터베이스에서 제거됩니다.
         삭제 후에는 되돌릴 수 없습니다.
       </p>
-      {error && <p className="dashboard-delete-error">{error}</p>}
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertTitle>대시보드를 삭제하지 못했습니다.</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
     </DialogShell>
   );
 }
+import { AlertCircle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
