@@ -357,3 +357,16 @@ Tree 계열은 wrapper/state shell과 hover card shell 다음으로 row/group sh
 
 - `@mui/x-tree-view`, `@mui/material`, `@mui/system`, `@emotion/react`, `@emotion/styled` 제거.
 - tree row shell은 해결됐지만 `WidgetShell`, `ColorPalettePicker`, `SplitPanel`, dashboard grid/widget frame은 아직 별도 component gap으로 남긴다.
+
+## #468 SQL Analysis Shadcn Refactor 반영
+
+| SQL 영역 | 적용 컴포넌트 | 상태 | 남은 gap |
+| --- | --- | --- | --- |
+| 분석 테이블 / Query AI 전환 | shadcn `Tabs` | `해결됨` | 없음 |
+| Preview 최대 행 수 | shadcn `Slider` | `해결됨` | 10~100, 10행 단위의 실제 query `limit` control로 연결 |
+| Query AI 상태 surface | shadcn `Bubble` | `해결됨` | 생성 SQL 적용/실행 정책은 기존 domain logic 유지 |
+| Dashboard builder overlay | shadcn `Dialog` | `해결됨` | 내부 `DashboardPage` runtime contract와 layout은 유지 |
+| action/status/empty/surface | `Button`, `Badge`, `Empty`, `Panel`, `Field` | `부분 해결` | autocomplete popover와 tree/table domain layout은 유지 |
+| mobile SQL workspace | 기존 responsive layout | `보류` | page overflow는 없으나 global App Shell sidebar가 좁은 viewport를 점유하므로 별도 shell 작업 필요 |
+
+`SqlDatasetSchemaPreview`는 사용처가 없어 삭제했다. SQL route의 새 공통 component gap은 추가하지 않았고, `SplitPanel`/mobile `Sheet` 여부는 global responsive 요구와 함께 판단한다.

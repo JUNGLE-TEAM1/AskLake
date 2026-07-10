@@ -72,6 +72,8 @@
 | `Pagination` | DataTable 밖 pagination | `PaginationBar` 재구성 기준이다. |
 | `Button Group` | action cluster | `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. |
 | `Empty` | empty state | `EmptyState`를 shadcn `Empty` 기준으로 정렬한다. |
+| `Slider` | SQL Preview 최대 행 수 | #468에서 실제 query `limit`을 변경하는 control로 적용했다. |
+| `Bubble` | Query AI 응답/안내/오류 | #468에서 제안 결과와 상태 surface에 적용했다. |
 
 ### AskLake composition 유지
 
@@ -269,3 +271,21 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - Catalog result card 자체, tag/status visual state, lineage/schema preview shell은 후속 list/card cleanup 후보로 유지한다.
 - Dashboard menu option/filter button/table density CSS는 route QA 전까지 유지한다.
 - `frontend/src/vendor/lucide.ts`에는 이번에 실제로 쓰기 시작한 `MoreHorizontal` 아이콘 export만 추가했다.
+
+## #468 SQL Analysis Shadcn Refactor 반영
+
+적용 범위:
+
+- sidebar의 raw tablist를 shadcn `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent`로 교체했다.
+- SQL Preview 최대 행 수를 shadcn `Slider`로 추가하고 실제 `executeQueryPreview`의 `limit`에 연결했다.
+- Query AI 안내/결과/오류를 공식 `Bubble` composition으로 교체했다.
+- embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.
+- editor/result/schema/tool surface를 `Panel`, 상태와 metadata를 `Badge`, empty state를 `Empty`, form label을 `Field`, raw action을 `Button`으로 교체했다.
+- dataset의 `+ 추가` action은 custom pill CSS를 제거하고 shadcn `Button size="sm" variant="subtle"`로 맞췄다.
+
+CSS/의존성 판단:
+
+- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog backdrop/surface selector를 삭제했다.
+- workspace grid, SQL editor, dataset tree hover, result table density, embedded Dashboard sizing은 도메인 layout이라 유지한다.
+- Slider는 monolithic `radix-ui`가 아니라 `@radix-ui/react-slider` 직접 의존을 사용한다.
+- autocomplete는 editor focus/selection 회귀 위험 때문에 이번 범위에서 `Popover`/`Command`로 전환하지 않는다.

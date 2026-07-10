@@ -33,7 +33,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 SQL 분석의 shadcn `Tabs`/실제 `Slider`/`Bubble`, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
 
 ## 3) Backend Live Mode
 

@@ -12,16 +12,25 @@ import {
   Table2,
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Badge } from "@/components/ui/badge";
+import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import { Panel } from "@/components/ui/panel";
 import { ResultPanel } from "@/components/ui/preview-panel";
+import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { executeQueryPreview } from "../../services/mockApi";
 import {
   generateQueryAiSuggestion,
@@ -53,6 +62,8 @@ import {
 } from "./sqlLogic";
 
 const QUERY_AI_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
+const PREVIEW_ROW_LIMIT_MIN = 10;
+const PREVIEW_ROW_LIMIT_STEP = 10;
 
 function isSqlCandidateDataset(dataset: CatalogDataset) {
   const normalizedName = dataset.name.toLowerCase();
@@ -94,6 +105,7 @@ export function SqlAnalysisPage({
   const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
+  const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
@@ -122,10 +134,11 @@ export function SqlAnalysisPage({
   const queryValidationKey = useMemo(
     () => JSON.stringify({
       baseDatasetId: baseDataset?.id ?? null,
+      previewRowLimit,
       query,
       referenceDatasetIds: [...referenceDatasetIds].sort(),
     }),
-    [baseDataset?.id, query, referenceDatasetIds],
+    [baseDataset?.id, previewRowLimit, query, referenceDatasetIds],
   );
   const derivedDatasetTagList = useMemo(() => parseDerivedDatasetTags(derivedDatasetTags), [derivedDatasetTags]);
   const selectedContextDatasets = useMemo(
@@ -273,6 +286,7 @@ export function SqlAnalysisPage({
 
     setExecuted(true);
     setQuery(cachedResult.query);
+    setPreviewRowLimit(cachedResult.previewLimit ?? PREVIEW_ROW_LIMIT);
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
@@ -288,7 +302,7 @@ export function SqlAnalysisPage({
     const params = new URLSearchParams({ baseDatasetId: baseDataset?.id ?? "" });
     referenceDatasetIds.forEach((id) => params.append("referenceDatasetIds", id));
     params.set("mode", mode);
-    if (mode === "preview") params.set("previewLimit", String(PREVIEW_ROW_LIMIT));
+    if (mode === "preview") params.set("previewLimit", String(previewRowLimit));
     return `/api/query/runs?${params.toString()}`;
   };
 
@@ -359,13 +373,13 @@ export function SqlAnalysisPage({
       return;
     }
     const referenceDatasets = datasets.filter((item) => referenceDatasetIdSet.has(item.id));
-    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey));
-  }, [baseDataset, datasets, query, queryValidationKey, referenceDatasetIdSet]);
+    setPreflightResult(runSqlPreflight(query, baseDataset, referenceDatasets, queryValidationKey, previewRowLimit));
+  }, [baseDataset, datasets, previewRowLimit, query, queryValidationKey, referenceDatasetIdSet]);
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => {
     if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
     return executeQueryPreview(baseDataset, query, {
-      limit: PREVIEW_ROW_LIMIT,
+      limit: previewRowLimit,
       referenceDatasetIds: [...referenceDatasetIds].sort(),
       validationKey: queryValidationKey,
     });
@@ -723,11 +737,17 @@ export function SqlAnalysisPage({
     onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
   };
 
+  const updatePreviewRowLimit = (values: number[]) => {
+    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
+  };
+
+  const commitPreviewRowLimit = (values: number[]) => {
+    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
+    resetResultState();
+  };
+
   return (
-    <div className={[
-      "sql-page",
-      contextCollapsed ? "context-collapsed" : "",
-    ].filter(Boolean).join(" ")}>
+    <div className={cn("sql-page", contextCollapsed && "context-collapsed")}>
       <PageHeader
         className="sql-page-header"
         description="선택한 데이터셋을 기준으로 SQL을 작성하고 Preview 결과를 처리 Job으로 전환합니다."
@@ -736,44 +756,39 @@ export function SqlAnalysisPage({
       />
       {contextCollapsed && (
         <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
-          <PanelLeftOpen size={16} />
+          <PanelLeftOpen data-icon="inline-start" />
         </Button>
       )}
       {!contextCollapsed && (
-        <aside className="sql-dataset-panel" ref={contextPanelRef}>
-          <div className="sql-panel-header">
-            <div className="sql-panel-title-row">
-              <strong>SQL 도구</strong>
-              <span className="sql-panel-header-actions">
-                <em>{contextPanelTab === "tables" ? `${Math.max(0, datasets.length - selectedContextDatasets.length)}개 후보` : queryAiSuggestion ? "초안 생성됨" : "보조 기능"}</em>
-                <Button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기" size="icon" variant="ghost">
-                  <PanelLeftClose size={15} />
-                </Button>
-              </span>
+        <Panel asChild>
+          <aside className="sql-dataset-panel" ref={contextPanelRef}>
+            <Tabs
+              className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
+              onValueChange={(value) => setContextPanelTab(value as "tables" | "queryAi")}
+              value={contextPanelTab}
+            >
+            <div className="sql-panel-header">
+              <div className="sql-panel-title-row">
+                <strong>SQL 도구</strong>
+                <span className="sql-panel-header-actions">
+                  <Badge size="sm" variant="default">
+                    {contextPanelTab === "tables" ? `${Math.max(0, datasets.length - selectedContextDatasets.length)}개 후보` : queryAiSuggestion ? "초안 생성됨" : "보조 기능"}
+                  </Badge>
+                  <Button type="button" onClick={toggleContext} aria-label="분석 테이블 접기" title="분석 테이블 접기" size="icon" variant="ghost">
+                    <PanelLeftClose data-icon="inline-start" />
+                  </Button>
+                </span>
+              </div>
+              <TabsList className="sql-sidebar-tabs grid w-full grid-cols-2" aria-label="SQL 도구 선택">
+                <TabsTrigger value="tables">
+                  <Table2 /> 분석 테이블
+                </TabsTrigger>
+                <TabsTrigger value="queryAi">
+                  <Sparkles /> Query AI
+                </TabsTrigger>
+              </TabsList>
             </div>
-            <div className="sql-sidebar-tabs" role="tablist" aria-label="SQL 도구 선택">
-              <button
-                className={contextPanelTab === "tables" ? "active" : ""}
-                type="button"
-                role="tab"
-                aria-selected={contextPanelTab === "tables"}
-                onClick={() => setContextPanelTab("tables")}
-              >
-                <Table2 size={14} /> 분석 테이블
-              </button>
-              <button
-                className={contextPanelTab === "queryAi" ? "active" : ""}
-                type="button"
-                role="tab"
-                aria-selected={contextPanelTab === "queryAi"}
-                onClick={() => setContextPanelTab("queryAi")}
-              >
-                <Sparkles size={14} /> Query AI
-              </button>
-            </div>
-          </div>
-          {contextPanelTab === "tables" ? (
-            <div className="sql-sidebar-tab-panel tables">
+            <TabsContent className="sql-sidebar-tab-panel tables mt-0" value="tables">
               <FilterToolbarSearch icon={<Search size={15} />} size="compact">
                 <FilterToolbarInput
                   aria-label="분석 테이블 검색"
@@ -787,7 +802,7 @@ export function SqlAnalysisPage({
               <section className="sql-dataset-search-results">
                 <div className="sql-section-heading">
                   <h2>데이터셋</h2>
-                  <span>{filteredDatasets.length}개</span>
+                  <Badge size="sm" variant="muted">{filteredDatasets.length}개</Badge>
                 </div>
                 <div className="sql-context-result-list" ref={contextListRef}>
                   <SqlDatasetTree
@@ -797,14 +812,18 @@ export function SqlAnalysisPage({
                     onToggle={toggleDatasetPreview}
                   />
                   {filteredDatasets.length === 0 && (
-                    <p>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</p>
+                    <Empty size="sm" variant="bordered">
+                      <EmptyHeader>
+                        <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
+                        <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "선택된 테이블을 해제하면 다시 표시됩니다."}</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
                   )}
                 </div>
                 {filteredDatasets.length > contextPageSize && (
                   <PaginationBar
                     aria-label="테이블 검색 결과 페이지"
                     buttonSize="sm"
-                    className="sql-context-pagination"
                     currentPage={currentContextPage}
                     onNext={() => setContextPage((page) => Math.min(totalContextPages, page + 1))}
                     onPrevious={() => setContextPage((page) => Math.max(1, page - 1))}
@@ -814,10 +833,9 @@ export function SqlAnalysisPage({
                   />
                 )}
               </section>
-            </div>
-          ) : (
-            <section className="sql-sidebar-tab-panel ai" aria-label="Query AI 생성">
-              <div className="sql-ai-assistant sidebar">
+            </TabsContent>
+            <TabsContent className="sql-sidebar-tab-panel ai mt-0" value="queryAi">
+              <Panel className="sql-ai-assistant sidebar" variant="muted">
                 <div className="sql-ai-heading">
                   <div className="sql-ai-title-block">
                     <div className="sql-ai-title">
@@ -830,9 +848,10 @@ export function SqlAnalysisPage({
                 <div className="sql-ai-content">
                   <div className="sql-ai-compose">
                     <div className="sql-ai-input-row">
-                      <label className="sql-ai-prompt">
-                        <span>요청</span>
+                      <Field className="sql-ai-prompt">
+                        <FieldLabel htmlFor="sql-query-ai-prompt">요청</FieldLabel>
                         <Textarea
+                          id="sql-query-ai-prompt"
                           ref={queryAiPromptRef}
                           onChange={(event) => {
                             setQueryAiPrompt(event.target.value);
@@ -847,44 +866,53 @@ export function SqlAnalysisPage({
                           rows={3}
                           value={queryAiPrompt}
                         />
-                      </label>
+                      </Field>
                       <ActionGroup className="sql-ai-actions" density="compact">
-                        <Button className="secondary-button" disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
-                          <Sparkles size={14} /> {queryAiPending ? "생성 중" : "제안"}
+                        <Button disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
+                          <Sparkles data-icon="inline-start" /> {queryAiPending ? "생성 중" : "제안"}
                         </Button>
                       </ActionGroup>
                     </div>
                   </div>
-                  <div className={queryAiSuggestion ? "sql-ai-suggestion result" : queryAiError ? "sql-ai-suggestion error" : "sql-ai-suggestion empty"}>
-                    {queryAiSuggestion ? (
-                      <>
-                        {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
-                        {queryAiSuggestion.sql && (
-                          <Button className="sql-ai-apply-button primary-button" onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
-                            SQL에 적용
-                          </Button>
-                        )}
-                      </>
-                    ) : (
-                      <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
-                    )}
-                  </div>
+                  <Bubble
+                    aria-live="polite"
+                    className={cn("sql-ai-suggestion w-full max-w-full", queryAiSuggestion ? "result" : queryAiError ? "error" : "empty")}
+                    role={queryAiError ? "alert" : "status"}
+                    variant={queryAiSuggestion ? "outline" : queryAiError ? "destructive" : "muted"}
+                  >
+                    <BubbleContent className="grid w-full gap-2">
+                      {queryAiSuggestion ? (
+                        <>
+                          {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
+                          {queryAiSuggestion.sql && (
+                            <Button onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
+                              SQL에 적용
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
+                      )}
+                    </BubbleContent>
+                  </Bubble>
                 </div>
-              </div>
-            </section>
-          )}
-        </aside>
+              </Panel>
+            </TabsContent>
+            </Tabs>
+          </aside>
+        </Panel>
       )}
 
       <main className="sql-workspace">
-        <section className="sql-editor-card">
+        <Panel asChild>
+          <section className="sql-editor-card">
           <div className="sql-editor-header">
             <div>
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <ActionGroup className="sql-editor-actions" density="compact">
-              <Button className="primary-button" type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
-                <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
+              <Button type="button" onClick={executePreview} disabled={!canRunPreview || queryPending} size="sm" variant="primary">
+                <PlayCircle data-icon="inline-start" /> {queryPending ? "실행 중" : "실행"}
               </Button>
             </ActionGroup>
           </div>
@@ -892,7 +920,9 @@ export function SqlAnalysisPage({
             <div className={baseDataset ? "sql-editor-surface" : "sql-editor-surface empty"}>
               <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
               <div className="sql-editor-input-wrap">
+                <FieldLabel className="sr-only" htmlFor="sql-query-editor">SQL editor</FieldLabel>
                 <Textarea
+                  id="sql-query-editor"
                   ref={textareaRef}
                   disabled={!baseDataset}
                   placeholder={baseDataset ? "SQL을 입력하세요." : "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다."}
@@ -915,16 +945,18 @@ export function SqlAnalysisPage({
                 {autocompleteCandidates.length > 0 && (
                   <div className="sql-autocomplete-popover">
                     {autocompleteCandidates.map((candidate, index) => (
-                      <button
-                        className={index === autocompleteIndex ? "active" : ""}
+                      <Button
+                        className={cn("sql-autocomplete-option", index === autocompleteIndex && "active")}
                         key={candidate.id}
                         type="button"
+                        size="sm"
+                        variant="ghost"
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => applyAutocompleteCandidate(candidate)}
                       >
                         <strong>{candidate.label}</strong>
                         <span>{candidate.detail}</span>
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 )}
@@ -934,33 +966,59 @@ export function SqlAnalysisPage({
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
               {preflightSummary && (
-                <span className={`sql-check-pill ${preflightSummary.tone}`}>
+                <Badge
+                  size="sm"
+                  variant={preflightSummary.tone === "success" ? "success" : preflightSummary.tone === "warning" ? "warning" : "destructive"}
+                >
                   {preflightSummary.label}
-                </span>
+                </Badge>
               )}
               {preflightSummary?.detail && <span className={`sql-check-detail ${preflightSummary.tone}`}>{preflightSummary.detail}</span>}
             </div>
-            <Button className="secondary-button" type="button" onClick={resetQuery} size="sm" variant="outline"><RotateCcw size={14} /> SQL 초기화</Button>
+            <div className="sql-editor-footer-controls">
+              <Field className="sql-preview-limit-field">
+                <FieldLabel htmlFor="sql-preview-row-limit">Preview {previewRowLimit}행</FieldLabel>
+                <Slider
+                  aria-label={`SQL Preview 최대 ${previewRowLimit}행`}
+                  aria-valuetext={`${previewRowLimit}행`}
+                  disabled={!baseDataset || queryPending}
+                  id="sql-preview-row-limit"
+                  max={PREVIEW_ROW_LIMIT}
+                  min={PREVIEW_ROW_LIMIT_MIN}
+                  onValueChange={updatePreviewRowLimit}
+                  onValueCommit={commitPreviewRowLimit}
+                  step={PREVIEW_ROW_LIMIT_STEP}
+                  value={[previewRowLimit]}
+                />
+              </Field>
+              <Button type="button" onClick={resetQuery} size="sm" variant="outline">
+                <RotateCcw data-icon="inline-start" /> SQL 초기화
+              </Button>
+            </div>
           </div>
-        </section>
+          </section>
+        </Panel>
 
-        <ResultPanel
-          className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}
-          eyebrow="실행 결과"
-          headerClassName="sql-result-header"
-          isEmpty={!resultDraft}
-          status={(
-            <>
-              <span>{queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
-              {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
-            </>
-          )}
-          statusClassName="sql-result-status"
-          title={resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}
-        >
+        <Panel asChild>
+          <ResultPanel
+            className={resultDraft ? "sql-result-card result-ready" : "sql-result-card"}
+            eyebrow="실행 결과"
+            headerClassName="sql-result-header"
+            isEmpty={!resultDraft}
+            status={(
+              <>
+                <Badge size="sm" variant={queryPending ? "default" : executed ? "success" : "muted"}>
+                  {queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
+                </Badge>
+                {executionMs !== null && <Badge size="sm" variant="secondary">{formatDuration(executionMs)}</Badge>}
+              </>
+            )}
+            statusClassName="sql-result-status"
+            title={resultDraft ? `${resultDraft.rowCount}행 조회됨` : "결과 대기 중"}
+          >
           {resultDraft ? (
             <>
-              <div className="sql-result-toolbar">
+              <Panel className="sql-result-toolbar" variant="muted">
                 <span>
                   실행 ID {resultDraft.runId}
                   {resultDraft.previewLimit ? ` · 최대 ${resultDraft.previewLimit}행 표시` : ""}
@@ -968,22 +1026,25 @@ export function SqlAnalysisPage({
                   {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
                 </span>
                 <ActionGroup className="sql-result-actions" density="compact">
-                  <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download size={14} /> CSV 다운로드</Button>
-                  <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database size={14} /> 처리 Job 생성</Button>
-                  <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 size={14} /> 대시보드 만들기</Button>
+                  <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>
+                  <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> 처리 Job 생성</Button>
+                  <Button type="button" onClick={openDashboardBuilder} size="sm" variant="outline"><BarChart3 data-icon="inline-start" /> 대시보드 만들기</Button>
                 </ActionGroup>
-              </div>
+              </Panel>
               <div className="sql-result-scroll">
                 <SqlPreviewTable resultDraft={resultDraft} />
               </div>
             </>
           ) : (
-            <div className="sql-result-empty">
-              <strong>아직 결과가 없습니다.</strong>
-              <span>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</span>
-            </div>
+            <Empty className="sql-result-empty" size="sm" variant="bordered">
+              <EmptyHeader>
+                <EmptyTitle>아직 결과가 없습니다.</EmptyTitle>
+                <EmptyDescription>{baseDataset ? "SQL을 실행하면 Preview 결과가 여기에 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요."}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
-        </ResultPanel>
+          </ResultPanel>
+        </Panel>
       </main>
       {resultDraft && materializeDialogOpen && (
         <DialogShell
@@ -1037,30 +1098,36 @@ export function SqlAnalysisPage({
                 <option value="SILVER">SILVER</option>
                 <option value="GOLD">GOLD</option>
               </NativeSelectField>
-              <label className="sql-materialize-checkbox">
+              <Field className="sql-materialize-checkbox">
                 <Checkbox
+                  id="sql-materialize-rag"
                   checked={derivedDatasetRag}
                   onCheckedChange={(checked) => {
                     setDerivedDatasetRag(checked === true);
                   }}
                 />
-                <span>RAG 사용 가능</span>
-              </label>
+                <FieldLabel htmlFor="sql-materialize-rag">RAG 사용 가능</FieldLabel>
+              </Field>
               <Button
-                className="primary-button"
+                className="sql-materialize-submit"
                 disabled={derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
                 onClick={prepareDerivedDatasetJob}
                 type="button"
                 size="sm"
                 variant="primary"
               >
-                <Database size={15} /> Job 생성 검토로 이동
+                <Database data-icon="inline-start" /> Job 생성 검토로 이동
               </Button>
         </DialogShell>
       )}
-      {resultDraft && baseDataset && dashboardDialogOpen && (
-        <div className="sql-dashboard-builder-backdrop" role="presentation" onMouseDown={() => setDashboardDialogOpen(false)}>
-          <section className="sql-dashboard-builder-dialog" role="dialog" aria-modal="true" aria-label="SQL 결과 대시보드 만들기" onMouseDown={(event) => event.stopPropagation()}>
+      {resultDraft && baseDataset && (
+        <Dialog onOpenChange={setDashboardDialogOpen} open={dashboardDialogOpen}>
+          <DialogContent
+            aria-describedby={undefined}
+            className="sql-dashboard-builder-dialog"
+            showCloseButton={false}
+          >
+            <DialogTitle className="sr-only">SQL 결과 대시보드 만들기</DialogTitle>
             <Button className="sql-dashboard-builder-close" type="button" onClick={() => setDashboardDialogOpen(false)} size="sm" variant="outline">
               닫기
             </Button>
@@ -1071,8 +1138,8 @@ export function SqlAnalysisPage({
               sqlResult={resultDraft}
               onAction={onAction}
             />
-          </section>
-        </div>
+          </DialogContent>
+        </Dialog>
       )}
       <SchemaDetailsPanel
         dataset={schemaDataset}

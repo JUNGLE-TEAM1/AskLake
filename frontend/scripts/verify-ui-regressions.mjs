@@ -7,14 +7,16 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 
 const checks = [
   {
-    name: "SQL sidebar tabs keep grid layout",
-    file: "src/styles/sql.css",
+    name: "SQL analysis keeps shadcn tabs and functional preview limit",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /\.sql-sidebar-tabs\s*\{[^}]*display:\s*grid;/s,
-      /\.sql-sidebar-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*display:\s*inline-flex;/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*gap:\s*6px;/s,
-      /\.sql-sidebar-tabs button svg\s*\{[^}]*flex:\s*0 0 auto;/s,
+      /import \{ Tabs, TabsContent, TabsList, TabsTrigger \} from "@\/components\/ui\/tabs";/,
+      /<TabsList className="sql-sidebar-tabs grid w-full grid-cols-2"/,
+      /<TabsTrigger value="tables">/,
+      /<TabsTrigger value="queryAi">/,
+      /<Slider[\s\S]*max=\{PREVIEW_ROW_LIMIT\}[\s\S]*value=\{\[previewRowLimit\]\}/,
+      /limit: previewRowLimit,/,
+      /<Bubble[\s\S]*variant=\{queryAiSuggestion \? "outline" : queryAiError \? "destructive" : "muted"\}/,
     ],
   },
   {
@@ -32,7 +34,7 @@ const checks = [
     name: "Dashboard list table stays compact",
     file: "src/styles/dashboard.css",
     patterns: [
-      /\.dashboard-table-scroll \.schema-table\s*\{[^}]*table-layout:\s*fixed;/s,
+      /\.dashboard-table-scroll \.schema-table(?:,\s*\.dashboard-list-data-table)?\s*\{[^}]*table-layout:\s*fixed;/s,
       /\.dashboard-table-list \.schema-table th,\s*\.dashboard-table-list \.schema-table td\s*\{[^}]*font-size:\s*13px;/s,
       /\.dashboard-row-link\s*\{[^}]*white-space:\s*nowrap;/s,
       /\.dashboard-row-tags\s*\{[^}]*flex-wrap:\s*nowrap;/s,

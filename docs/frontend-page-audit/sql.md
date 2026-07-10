@@ -12,7 +12,7 @@
 
 ## Current Shared Components
 
-- shadcn primitive: `Button`, `Checkbox`, `Input`, `Textarea`.
+- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `Input`, `Slider`, `Tabs`, `Textarea`.
 - AskLake composition: `PageHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `FormFieldGroup`, `NativeSelectField`, `PaginationBar`, `ResultPanel`, `DialogShell`.
 - `SqlDatasetTree`: `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`, `TreeHoverCard`를 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
@@ -21,23 +21,20 @@
 
 ## Weakly Componentized Areas
 
-- 왼쪽 도구 탭은 raw button과 `role="tablist"`를 사용하지만 shadcn `Tabs`의 keyboard behavior를 사용하지 않는다.
-- SQL editor는 `Textarea`, line-number `<pre>`, custom surface, custom footer를 직접 조합한다. autocomplete도 absolute custom popover와 raw button list다.
-- `SqlDatasetTreeRow`, `SchemaDetailsPanel`의 add/JOIN/remove/column insert action 일부는 raw `<button>`으로 구현되어 Button variant와 focus style이 일관되지 않다.
-- Query AI의 compose/result/error 상태는 `sql-ai-*` 전용 div와 CSS로 구성된다.
-- dashboard builder overlay는 raw backdrop와 `section[role="dialog"]`이며 `DialogShell`을 사용하지 않는다.
-- schema panel, selected dataset pill, check/result status, result empty state가 전용 markup에 강하게 결합되어 있다.
+- SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
+- dataset tree, schema list, result table에는 도메인 density/overflow/hover 위치 CSS가 남아 있다.
+- global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
 - `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
 
 ## shadcn/ReUI Replacement Candidates
 
-- `Tabs`: table browser와 Query AI panel 전환을 표준 tab pattern으로 바꾼다.
+- `Tabs`: #468에서 table browser와 Query AI panel 전환에 적용했다.
 - `Popover` + `Command`: SQL autocomplete list의 focus 이동, active option, dismiss behavior를 정리한다.
-- `Dialog`: raw dashboard builder backdrop를 accessible dialog composition으로 교체한다.
+- `Dialog`: #468에서 raw dashboard builder backdrop를 accessible dialog composition으로 교체했다.
 - `ScrollArea`: dataset tree, schema panel, autocomplete, result table의 독립 scroll 영역에 사용한다.
 - `Alert`: preflight error, Query AI error, execution error를 공통 feedback 구조로 표시한다.
-- `Badge` 또는 `StatusBadge`: layer, RAG, preflight tone, selected dataset metadata를 통일한다.
-- `Skeleton`과 `Empty`: dataset loading, schema 미선택, result 미실행 상태를 명확히 분리한다.
+- `Badge`: #468에서 layer, RAG, preflight tone, selected dataset metadata에 적용했다.
+- `Empty`: #468에서 schema 미선택과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
 - `ResizablePanelGroup`: 좌측 dataset, editor, 우측 schema panel 폭 조절이 제품 요구에 포함될 때 검토한다.
 - 전문 SQL editor가 필요해지면 shadcn으로 억지 구현하지 말고 CodeMirror 또는 Monaco 같은 검증된 editor engine을 별도 결정한다.
 
@@ -51,11 +48,11 @@
 
 ## Related CSS
 
-- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-sidebar-tabs`, `.sql-sidebar-tab-panel`.
+- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-sidebar-tab-panel`.
 - 현재 사용 중: `.sql-tree-*`, `.sql-schema-panel`, `.sql-selected-dataset-*`, `.sql-card-schema-*`, `.sql-tree-hover-card`.
 - 현재 사용 중: `.sql-editor-*`, `.sql-autocomplete-popover`, `.sql-check-*`, `.sql-result-*`, `.sql-preview-table-*`.
-- 현재 사용 중: `.sql-ai-*`, `.sql-materialize-*`, `.sql-dashboard-builder-*`.
-- 주의: `sql.css`가 약 48KB로 화면 상태와 legacy selector가 섞여 있으므로 component 전환 전 selector-to-markup inventory가 필요하다.
+- 현재 사용 중: Query AI/editor/result의 배치용 `.sql-ai-*`, `.sql-materialize-*`, embedded Dashboard 크기용 `.sql-dashboard-builder-dialog`.
+- #468에서 `sql.css`를 2,547줄에서 1,255줄로 줄였으며, shadcn이 소유하는 tab/button/status/empty/dialog surface CSS는 제거했다.
 
 ## QA Notes
 
@@ -64,7 +61,7 @@
 - autocomplete keyboard, editor focus, sidebar collapse, nested dialog focus trap이 후속 구현의 핵심 QA다.
 - mobile에서는 세 column workspace가 순차 layout으로 바뀔 때 editor와 schema가 겹치지 않는지 확인한다.
 
-## Rendered Audit Findings
+## Pre-#468 Rendered Audit Findings
 
 ### Desktop Findings
 
@@ -105,3 +102,30 @@
 - dashboard runtime을 embedded dialog로 재사용하므로 SQL overlay 변경은 dashboard route와 함께 확인해야 한다.
 - query contract, mock API, derived dataset payload, dashboard runtime API는 이번 문서 범위에서 변경하지 않는다.
 
+## #468 Applied Refactor
+
+2026-07-10 구현에서는 API와 Dashboard runtime 계약을 유지하면서 SQL route의 raw UI와 중복 CSS를 shadcn 기준으로 정리했다.
+
+- 왼쪽 도구 전환을 `Tabs`로 바꿔 keyboard/ARIA 동작을 primitive에 맡겼다.
+- editor footer에 `Slider`를 추가해 Preview 최대 행 수를 10~100, 10행 단위로 실제 변경한다. 선택값은 preflight key와 `executeQueryPreview`의 `limit`에 함께 반영된다.
+- Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
+- embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
+- SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
+- dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
+- 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
+- `sql.css`는 2,547줄에서 1,255줄로 줄였다. 3-column workspace, dark editor, tree/hover positioning, result table density, embedded Dashboard 크기처럼 도메인 layout에 필요한 selector는 유지했다.
+
+### #468 Verification
+
+- `commerce_orders_daily` 선택 후 Slider를 50행으로 조작하고 실행해 `50행 조회됨`, `최대 50행 표시`, 2-page result를 확인했다.
+- Query AI prompt를 실행해 Bubble 안에 생성 SQL과 `SQL에 적용` action이 표시되는 것을 확인했다.
+- Dashboard builder Dialog가 열리고 `Escape`로 닫히는 것을 확인했다.
+- 1024x768 override에서 SQL page/workspace/result toolbar의 horizontal overflow가 없음을 확인했다.
+- 360px에서 page-level horizontal overflow는 없지만, 기존 global sidebar가 첫 viewport를 점유하는 문제는 그대로다. App Shell mobile navigation은 #468 범위를 넓히지 않고 별도 작업으로 유지한다.
+- browser console warning/error가 없음을 확인했다.
+
+### #468 Remaining Deliberate CSS
+
+- SQL autocomplete는 editor focus/selection과 absolute position 계산이 묶여 있어 `Popover`/`Command`로 무리하게 바꾸지 않았다.
+- dataset tree와 schema/result table은 각 도메인 density와 overflow가 있어 구조/layout selector를 유지했다.
+- global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.

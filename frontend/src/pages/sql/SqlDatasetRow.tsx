@@ -1,5 +1,6 @@
 import { Calendar, ChevronDown, ChevronRight, Database, Hash, Plus, Server, Table2, Type } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
 import { TreeGroup, TreeRow, TreeStaticRow, TreeView } from "@/components/ui/tree-view";
@@ -109,9 +110,9 @@ function SqlDatasetTreeRow({
             <em>{dataset.schema.length} columns</em>
           </span>
         </TreeRow>
-        <button className="sql-tree-add-button" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)}>
-          <Plus size={14} /> 추가
-        </button>
+        <Button className="mr-2 min-w-[58px]" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)} size="sm" variant="subtle">
+          <Plus data-icon="inline-start" /> 추가
+        </Button>
       </div>
       {expanded && (
         <div className="sql-tree-column-list" role="group">
