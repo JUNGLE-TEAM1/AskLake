@@ -75,7 +75,7 @@ Kafka source의 현재 구현은 `persist partition offset snapshot -> fixed-ran
 
 ### ETL Job 수정 계약
 
-현재 `GET /api/etl/jobs/{jobId}`는 저장된 Job 설정을 hydrate할 수 있는 metadata를 반환하지만, 생성 후 Job 상세의 수정 화면은 아직 신규 wizard draft를 표시하는 제한이 있다. Issue #460은 이 흐름을 `Job -> edit draft -> PATCH -> same Job`으로 전환한다.
+Issue #460 Phase 2에서 Job 상세/목록의 수정은 `GET /api/etl/jobs/{jobId}` 결과를 `edit draft`로 hydrate해 Source 단계에 표시한다. 수정 mode의 Kafka source identity는 읽기 전용이며, update API가 준비되기 전에는 최종 생성 요청을 차단해 중복 Job 생성을 막는다. 다음 Phase는 `Job -> edit draft -> PATCH -> same Job`의 저장 단계다.
 
 Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 broker, topic, consumer group, offset 정책을 포함하므로 수정에서 고정한다. 실행 이력이 있는 Job의 target identity도 고정하고, source 또는 output destination 변경은 복제 후 새 Job 생성으로 분리한다. 세부 필드 정책과 failure handling은 [ETL Job Edit Contract](etl-job-edit-contract.md)를 따른다.
 

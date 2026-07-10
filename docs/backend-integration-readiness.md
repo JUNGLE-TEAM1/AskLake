@@ -9,7 +9,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. `GET /api/etl/jobs/{jobId}`는 source/schema/rule/permission/target 원본 metadata까지 반환해 수정 hydrate 기반으로 사용 | 삭제, 수정 저장 API와 수정 UI |
+| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시 | 삭제, 수정 저장 API |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |

@@ -1,4 +1,4 @@
-import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
 
 export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
   notify_only: "알림만 남기기",
@@ -73,6 +73,84 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetLayer: draft.target.layer,
     transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
+  };
+}
+
+export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipeline): DraftPipeline {
+  const schedulePolicy = job.schedulePolicy;
+  const scheduleLabel = job.schedule || fallback.schedule.label;
+  const sourceConfig = job.sourceConfig ?? fallback.source.sourceConfig;
+  const sourceType = job.sourceType || fallback.source.sourceType;
+  const sourceLabel = job.sourceLabel || fallback.source.sourceLabel;
+  const transformSummary = job.ruleSummary || fallback.transform.summary;
+
+  return {
+    id: job.id,
+    permission: {
+      ...fallback.permission,
+      owner: job.owner || fallback.permission.owner,
+      roles: job.permissionRoles ?? fallback.permission.roles,
+      summary: job.permissionSummary || fallback.permission.summary,
+    },
+    quality: {
+      ...fallback.quality,
+      invalidRows: job.qualityInvalidRows ?? [],
+      rules: job.qualityRules ?? [],
+      score: job.qualityScore,
+      status: job.qualityStatus ?? fallback.quality.status,
+      summary: transformSummary,
+    },
+    schedule: {
+      ...fallback.schedule,
+      endDate: schedulePolicy?.endDate ?? fallback.schedule.endDate,
+      label: scheduleLabel,
+      mode: scheduleModeFromLabel(scheduleLabel),
+      nextRun: job.nextRun || fallback.schedule.nextRun,
+      nextRunUtc: schedulePolicy?.nextRunUtc,
+      overlapPolicy: schedulePolicy?.overlapPolicy ?? fallback.schedule.overlapPolicy,
+      retryPolicy: job.retryPolicy ?? fallback.schedule.retryPolicy,
+      startDate: schedulePolicy?.startDate ?? fallback.schedule.startDate,
+      summary: job.scheduleSummary || scheduleLabel,
+      timezone: schedulePolicy?.timezone ?? fallback.schedule.timezone,
+      watermarkPolicy: schedulePolicy?.watermarkPolicy ?? fallback.schedule.watermarkPolicy,
+    },
+    schema: {
+      columns: job.schemaColumns ?? [],
+      sampleRows: job.schemaSampleRows ?? [],
+      schemaFingerprint: job.schemaFingerprint,
+      summary: job.schemaSummary || fallback.schema.summary,
+    },
+    source: {
+      connectionMessage: "저장된 Job 소스 설정을 수정 모드로 불러왔습니다.",
+      connectionStatus: sourceType ? "success" : "idle",
+      sourceConfig,
+      sourceLabel,
+      sourceType,
+    },
+    target: {
+      ...fallback.target,
+      compression: job.compression ?? fallback.target.compression,
+      databaseName: job.targetDatabase ?? fallback.target.databaseName,
+      datasetName: job.target || fallback.target.datasetName,
+      description: job.targetDescription ?? fallback.target.description,
+      format: job.targetFormat ?? fallback.target.format,
+      indexColumns: job.indexColumns ?? fallback.target.indexColumns,
+      layer: job.targetLayer ?? fallback.target.layer,
+      partition: job.partition ?? fallback.target.partition,
+      partitionColumns: job.partitionColumns ?? fallback.target.partitionColumns,
+      rag: job.rag ?? fallback.target.rag,
+      storagePath: job.storagePath ?? job.targetPath ?? fallback.target.storagePath,
+      storageType: job.storageType ?? fallback.target.storageType,
+      tableName: job.target || fallback.target.tableName,
+      targetTableName: job.target || fallback.target.targetTableName,
+      tags: job.targetTags ?? fallback.target.tags,
+      testStatus: "success",
+    },
+    transform: {
+      outputColumns: job.transformOutputColumns ?? [],
+      steps: job.transformSteps ?? [],
+      summary: transformSummary,
+    },
   };
 }
 

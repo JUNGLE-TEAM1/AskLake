@@ -1057,6 +1057,7 @@ export function SourceConnectionPage({
   onNotify,
   onPrev,
   onNext,
+  sourceLocked = false,
 }: {
   draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -1065,13 +1066,14 @@ export function SourceConnectionPage({
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
+  sourceLocked?: boolean;
 }) {
   const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
-  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => sourceLocked ? "connect" : getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
@@ -1347,6 +1349,7 @@ export function SourceConnectionPage({
   };
 
   const selectSource = (value: string) => {
+    if (sourceLocked) return;
     const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
     const nextIsSqlResult = value === "SQL Result";
     const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
@@ -1367,6 +1370,7 @@ export function SourceConnectionPage({
   };
 
   const updateSourceField = (label: string, value: string) => {
+    if (sourceLocked) return;
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
     const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
     const nextStatus = isSqlResultSource ? connectionStatus : "idle";
@@ -1379,6 +1383,7 @@ export function SourceConnectionPage({
   };
 
   const fillMinioDemoFields = () => {
+    if (sourceLocked) return;
     const demoFields: Array<[string, string]> = [
       ["Storage Provider", "MinIO"],
       ["Endpoint URL", "http://127.0.0.1:19000"],
@@ -1482,6 +1487,7 @@ export function SourceConnectionPage({
   };
 
   const testConnection = async () => {
+    if (sourceLocked) return;
     if (!hasSelectedSource) {
       onNotify("먼저 소스를 선택하세요.");
       return;
@@ -1610,10 +1616,10 @@ export function SourceConnectionPage({
     <CreationFlowLayout
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
+        <PageTitle title="소스 연결" description={sourceLocked ? "저장된 Job의 소스 설정입니다. 소스를 바꾸려면 복제 후 새 Job을 생성하세요." : isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
-            <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
+            <button className={sourceStage === "choose" ? "active" : ""} disabled={sourceLocked} title={sourceLocked ? "수정 모드에서는 소스가 고정됩니다." : undefined} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
             <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
             <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
           </div>
@@ -1640,7 +1646,7 @@ export function SourceConnectionPage({
                         const config = sourceConfigs[connector];
                         const selected = sourceType === connector;
                         return (
-                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} disabled={sourceLocked} key={connector} type="button" onClick={() => selectSource(connector)}>
                             <span className="source-choice-icon">{meta.icon}</span>
                             <span className="source-choice-main">
                               <strong>{meta.label}</strong>
@@ -1671,17 +1677,17 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                  {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
+                  {!sourceLocked && activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
+                  {!sourceLocked && current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                  {!sourceLocked && current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    {sourceLocked ? <span className="panel-note">저장된 소스 고정</span> : isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
                       <span>{sourceFieldLabel(label)}</span>
-                      <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                      <input className="input control-input" readOnly={isSqlResultSource || sourceLocked} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                     </label>
                   ))}
                 </div>

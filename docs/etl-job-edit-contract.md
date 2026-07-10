@@ -1,6 +1,6 @@
 # ETL Job Edit Contract
 
-이 문서는 생성된 ETL Job의 수정 흐름에서 유지해야 할 데이터 경계와 향후 API 계약을 정의한다. 현재 `GET /api/etl/jobs/{jobId}`는 복원에 필요한 Job metadata를 반환하지만, 이 문서의 edit hydrate와 update endpoint는 Issue #460에서 구현한다.
+이 문서는 생성된 ETL Job의 수정 흐름에서 유지해야 할 데이터 경계와 API 계약을 정의한다. Issue #460 Phase 2는 `GET /api/etl/jobs/{jobId}` 결과를 edit draft로 복원하고 source를 고정하는 UI를 구현했다. 기존 Job update endpoint는 후속 Phase에서 구현한다.
 
 ## 1. 문제와 목표
 
@@ -29,7 +29,7 @@ type PipelineEditorMode =
 ```
 
 - `create`: 빈/신규 draft로 `POST /api/etl/jobs`를 호출한다.
-- `edit`: `GET /api/etl/jobs/{jobId}` 결과를 draft로 변환하고 `PATCH /api/etl/jobs/{jobId}`를 호출한다.
+- `edit`: `GET /api/etl/jobs/{jobId}` 결과를 draft로 변환한다. Phase 2에서는 중복 생성을 막고, 다음 Phase에서 `PATCH /api/etl/jobs/{jobId}`를 호출한다.
 - 수정 중 취소하거나 update가 실패해도 서버의 기존 Job을 변경하지 않는다. 실패한 edit draft는 화면에 남겨 재시도할 수 있어야 한다.
 - 브라우저 새로고침 뒤에도 URL 또는 화면 state로 edit 대상 Job을 다시 조회할 수 있어야 한다. 저장 전 draft의 영속화 방식은 구현 단계에서 정하되, 새 기본 draft로 대체하면 안 된다.
 
@@ -92,4 +92,3 @@ PATCH /api/etl/jobs/{jobId}
 3. update는 새 Job이나 새 Dataset을 만들지 않는다.
 4. update 이후 Kafka run은 기존 consumer group의 마지막 성공 offset 다음부터 실행한다.
 5. 실행 중 수정, source 변경, 성공 materialization 뒤 target identity 변경은 명시적인 오류로 차단된다.
-
