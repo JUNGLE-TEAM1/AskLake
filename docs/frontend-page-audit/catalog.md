@@ -118,6 +118,10 @@
 - 우측 스키마 미리보기 헤더의 컬럼 수 메타를 제거했다.
 - shadcn 재점검으로 append 선택 행을 `Panel`과 `Button`으로 분리하고, preview/card surface와 상세 탭·표·리니지 컨트롤을 `Card`, `Panel`, `Tabs`, `Table`, `Button`, `Badge`로 교체했다.
 - ReactFlow 좌표·핸들, grid, overflow, 긴 텍스트 줄바꿈처럼 컴포넌트로 대체할 수 없는 레이아웃 CSS만 유지했다.
+- 결과 카드 태그는 제거하고 우측 미리보기의 `SQL 분석에서 열기` 아래 마지막 영역으로 이동해 shadcn `Badge`와 `TagList`로 표시한다.
+- 상세 리니지의 고정 그래프 높이를 viewport 대응 높이로 바꾸고 node surface와 footer status를 shadcn `Card`, `Badge`로 교체했다.
+- 우측 미리보기는 shadcn `Accordion`을 사용해 기본 정보, 스키마 미리보기, 리니지, SQL 분석이 연결된 세로 목록으로 펼쳐지도록 구성했다.
+- 여러 항목을 동시에 열 수 있고 기본 정보는 초기 표시한다. 태그는 마지막 SQL 분석 항목의 버튼 아래에 유지한다.
 
 ## Conflict Risk
 

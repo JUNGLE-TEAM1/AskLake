@@ -22,6 +22,7 @@ import {
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -57,6 +58,7 @@ import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
@@ -555,9 +557,6 @@ export function CatalogPage({
                               </Badge>
                             )}
                           </div>
-                          <div className="catalog-result-tags">
-                            {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
-                          </div>
                         </div>
                       </Button>
                       <Button
@@ -636,59 +635,82 @@ export function CatalogPage({
                 iconVariant="success"
                 title={previewDataset.name}
               />
-              <div className="catalog-overview-metrics catalog-preview-metrics">
-                <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-                <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-                <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-                <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-                <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-                <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-              </div>
+              <Accordion className="catalog-preview-accordion" defaultValue={["overview"]} type="multiple">
+                <AccordionItem value="overview">
+                  <AccordionTrigger>
+                    <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="catalog-overview-metrics catalog-preview-metrics">
+                      <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+                      <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+                      <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+                      <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+                      <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+                      <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
 
-              <Panel asChild className="catalog-preview-card">
-                <article>
-                  <div className="catalog-preview-card-header">
-                    <TerminalSquare size={16} />
-                    <h3>스키마 미리보기</h3>
-                  </div>
-                  <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
-                  <Button className="catalog-text-button" type="button" onClick={() => {
-                    onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
-                    setActiveModal("schema");
-                  }} size="sm" variant="link">전체 스키마 상세 보기</Button>
-                </article>
-              </Panel>
+                <AccordionItem value="schema">
+                  <AccordionTrigger>
+                    <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
+                  </AccordionTrigger>
+                  <AccordionContent className="catalog-preview-accordion-content">
+                    <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
+                    <Button className="catalog-text-button" type="button" onClick={() => {
+                      onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
+                      setActiveModal("schema");
+                    }} size="sm" variant="link">전체 스키마 상세 보기</Button>
+                  </AccordionContent>
+                </AccordionItem>
 
-              <Button
-                className="catalog-lineage-teaser"
-                shape="compact"
-                size="content"
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-                  setActiveModal("lineage");
-                }}
-              >
-                <Share2 data-icon="inline-start" />
-                <div>
-                  <strong>리니지 보기</strong>
-                </div>
-                <span>›</span>
-              </Button>
+                <AccordionItem value="lineage">
+                  <AccordionTrigger>
+                    <span className="catalog-preview-accordion-label"><Share2 /> 리니지</span>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <Button
+                      className="catalog-wide-button"
+                      shape="compact"
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
+                        setActiveModal("lineage");
+                      }}
+                    >
+                      <Share2 data-icon="inline-start" /> 전체 리니지 보기
+                    </Button>
+                  </AccordionContent>
+                </AccordionItem>
 
-              <Button
-                className="catalog-wide-button"
-                disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-                shape="compact"
-                title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
-                type="button"
-                size="sm"
-                variant="primary"
-                onClick={openSelectedSqlDataset}
-              >
-                <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
-              </Button>
+                <AccordionItem value="sql">
+                  <AccordionTrigger>
+                    <span className="catalog-preview-accordion-label"><ExternalLink /> SQL 분석</span>
+                  </AccordionTrigger>
+                  <AccordionContent className="catalog-preview-sql-content">
+                    <Button
+                      className="catalog-wide-button"
+                      disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+                      shape="compact"
+                      title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      onClick={openSelectedSqlDataset}
+                    >
+                      <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+                    </Button>
+                    <TagList className="catalog-preview-tags" density="compact">
+                      {previewDataset.tags.map((tag) => (
+                        <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
+                      ))}
+                    </TagList>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
             </aside>
           </Panel>
         ) : (
@@ -1201,13 +1223,13 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     <Panel asChild className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
       <section>
       {!compact && (
-        <div className="catalog-lineage-title">
-          <div className="lineage-title-icon"><LayoutGrid size={22} /></div>
-          <div>
-            <h2>{dataset.name}</h2>
-            <span>리니지</span>
-          </div>
-        </div>
+        <PanelHeader
+          bordered={false}
+          className="catalog-lineage-title min-h-0 p-0"
+          description="리니지"
+          icon={<LayoutGrid size={18} />}
+          title={dataset.name}
+        />
       )}
       {lineageGraph ? (
         <div className="catalog-lineage-flow" ref={flowWrapperRef} aria-label={`${dataset.name} lineage graph`}>
@@ -1236,9 +1258,9 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       )}
       <div className="catalog-lineage-footer">
-        <span>상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></span>
-        <span>레이어 <strong>{dataset.layer}</strong></span>
-        <span>상태 <strong>{statusMeta.label}</strong></span>
+        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></Badge>
+        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">레이어 <strong>{dataset.layer}</strong></Badge>
+        <Badge className="catalog-lineage-stat" shape="compact" variant="secondary">상태 <strong>{statusMeta.label}</strong></Badge>
       </div>
       </section>
     </Panel>
@@ -1334,12 +1356,12 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   }, [data.nodeId, updateNodeInternals]);
 
   return (
-    <article className={[
+    <Card className={[
       "lineage-schema-node",
       data.tone,
       data.dimmed ? "dimmed" : "",
       data.highlighted ? "highlighted" : "",
-    ].filter(Boolean).join(" ")}>
+    ].filter(Boolean).join(" ")} size="none">
       <header className="lineage-schema-header">
         <div className="lineage-schema-icon">
           <Table2 size={18} />
@@ -1358,7 +1380,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
           <LineageColumnRow column={column} data={data} key={column.id} />
         ))}
       </div>
-    </article>
+    </Card>
   );
 }
 

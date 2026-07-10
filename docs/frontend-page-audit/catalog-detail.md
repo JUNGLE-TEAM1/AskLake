@@ -103,6 +103,8 @@
 - lineage column raw button과 type pill을 shadcn `Button`, `Badge`로 교체했다.
 - ReactFlow canvas, handle, node 좌표와 크기, responsive grid 및 overflow CSS는 도메인 레이아웃이므로 유지했다.
 - 브라우저에서 탭 4개와 ArrowRight 전환, sample Slider 0→100, lineage column Button/Badge 렌더링을 확인했다.
+- 상세 lineage node surface를 shadcn `Card`, footer status를 shadcn `Badge`, header를 `PanelHeader`로 교체했다.
+- 상세 lineage graph 높이는 viewport에 맞춰 줄어들고 modal에서는 기존 full-height를 유지하도록 분리했다.
 
 ## Conflict Risk
 
