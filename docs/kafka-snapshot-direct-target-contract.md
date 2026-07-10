@@ -53,7 +53,7 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 
 The selected target dataset is the only Lake data output for the default path.
 
-- `RAW` and `BRONZE`: snapshot records are written without business transformation or quality mutation.
+- `RAW` and `BRONZE`: snapshot records are written without business transformation or quality mutation. Stored UI rules are not executed for these layers.
 - `SILVER`: supported field transforms and quality rules run before the single target write.
 - `GOLD`: out of scope until join/aggregation execution semantics are implemented.
 

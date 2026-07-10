@@ -1475,14 +1475,6 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
         )
-    if "kafka" in request.source_type.lower() and request.target_layer != "SILVER" and (
-        any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules)
-    ):
-        raise ApiError(
-            ErrorCode.VALIDATION_ERROR,
-            "Kafka RAW/BRONZE targets cannot apply transform or quality mutation; select SILVER.",
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-        )
 
 
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:

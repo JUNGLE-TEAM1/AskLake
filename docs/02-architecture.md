@@ -67,7 +67,7 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ### Kafka Snapshot Direct Target 전환 계획
 
-Kafka source의 현재 구현은 `persist partition offset snapshot -> fixed-range consume -> supported transform/quality -> selected target write -> Catalog -> offset commit` 경로를 사용한다. Issue #455는 대용량 처리 지연을 줄이기 위해 중간 RAW landing을 제거했다. direct write는 normalized Kafka review event를 JSONL target에 저장하며, RAW/BRONZE는 무변환으로 유지하고 SILVER Job에만 지원 변환과 품질 정책을 실행한다. 실패한 Job은 durable snapshot과 실패 단계를 Run/DAG에 보존하고 offset을 이동시키지 않아 같은 범위를 재시도할 수 있으며, capture 이후 새 메시지는 다음 snapshot에 남는다.
+Kafka source의 현재 구현은 `persist partition offset snapshot -> fixed-range consume -> supported transform/quality -> selected target write -> Catalog -> offset commit` 경로를 사용한다. Issue #455는 대용량 처리 지연을 줄이기 위해 중간 RAW landing을 제거했다. direct write는 normalized Kafka review event를 JSONL target에 저장하며, RAW/BRONZE는 화면에 설정된 processing rule이 있어도 이를 실행하지 않고 무변환으로 유지한다. SILVER Job에만 지원 변환과 품질 정책을 실행한다. 실패한 Job은 durable snapshot과 실패 단계를 Run/DAG에 보존하고 offset을 이동시키지 않아 같은 범위를 재시도할 수 있으며, capture 이후 새 메시지는 다음 snapshot에 남는다.
 
 이 전환에서 snapshot은 메시지 본문을 복사한 landing 파일이 아니라, run 시작 시점의 partition별 offset 경계 metadata다. 기본 경로는 중간 RAW landing을 만들지 않고 선택한 `BRONZE` 또는 `SILVER` target에 한 번만 저장한다. `GOLD` join/aggregation 실행과 선택형 장기 RAW archive는 별도 범위다.
 
