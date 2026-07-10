@@ -6243,6 +6243,29 @@
   margin: 0 20px 20px;
 }
 
+.review-schema-table-viewport {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+
+.review-schema-table-viewport:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+
+.review-schema-table {
+  min-width: 680px;
+}
+
+.review-schema-table td[colspan] {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .permission-config-card .field {
   margin: 0;
 }

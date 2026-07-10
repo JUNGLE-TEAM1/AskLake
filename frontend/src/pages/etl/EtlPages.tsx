@@ -5178,10 +5178,14 @@ export function ReviewPage({
   const permissionReview = getPermissionDraftValues(draft);
   const targetReview = getTargetDraftValues(draft);
   const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
+  const sourceDisplay = [sourceTypeLabel(request.sourceType), sourceSummary || request.sourceLabel]
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .join(" · ");
   const basicInformationRows = [
-    ["Job ID", request.id],
+    ["Job ID", displayReviewValue(request.id)],
     ["Job Name", targetReview.jobName],
-    ["Source", `${sourceTypeLabel(request.sourceType)} · ${sourceSummary || request.sourceLabel}`],
+    ["Source", displayReviewValue(sourceDisplay)],
     ["Target Dataset", targetReview.targetDataset],
     ["Description", targetReview.description],
   ];
@@ -5224,7 +5228,6 @@ export function ReviewPage({
     >
         <PageHeader
           className="etl-flow-page-header"
-          description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."
           icon={<FileText size={18} />}
           title="검토 및 생성"
         />
@@ -5234,9 +5237,8 @@ export function ReviewPage({
               <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
                 <h2>Basic Information</h2>
-                <p>생성될 파이프라인과 타겟 데이터셋의 기본 정보를 확인합니다.</p>
               </div>
-              <ReviewEditButton onClick={() => onEdit("target")} />
+              <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv"
@@ -5254,7 +5256,7 @@ export function ReviewPage({
               <div>
                 <h2>Output Schema</h2>
               </div>
-              <ReviewEditButton onClick={() => onEdit("schema")} />
+              <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
             </div>
             <ReviewSchemaTable rows={schemaRows} />
           </section>
@@ -5264,9 +5266,8 @@ export function ReviewPage({
               <span className="etl-review-icon destination"><HardDrive size={17} /></span>
               <div>
                 <h2>Destination Settings</h2>
-                <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 확인합니다.</p>
               </div>
-              <ReviewEditButton onClick={() => onEdit("target")} />
+              <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv destination"
@@ -5283,9 +5284,8 @@ export function ReviewPage({
               <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
                 <h2>Permission & Validation</h2>
-                <p>접근 권한과 생성 전 체크 항목을 확인합니다.</p>
               </div>
-              <ReviewEditButton onClick={() => onEdit("permission")} />
+              <ReviewEditButton label="권한 및 검증 수정" onClick={() => onEdit("permission")} />
             </div>
             <KeyValueList
               className="etl-review-kv permission"
@@ -5303,17 +5303,16 @@ export function ReviewPage({
                 value: status,
               }))}
             />
-            <InfoBox title="안내사항" body="파이프라인 생성 후 실행이 성공하면 데이터 카탈로그에 등록되고 SQL 쿼리를 수행할 수 있습니다." />
           </section>
         </div>
     </CreationFlowLayout>
   );
 }
 
-function ReviewEditButton({ onClick }: { onClick: () => void }) {
+function ReviewEditButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Button className="etl-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
-      <Pencil size={14} /> 수정
+    <Button aria-label={label} className="etl-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
+      <Pencil aria-hidden="true" size={14} /> 수정
     </Button>
   );
 }
@@ -5335,34 +5334,40 @@ function ReviewSchemaTable({ rows }: { rows: ReviewSchemaRow[] }) {
   });
 
   return (
-    <table className="schema-table review-schema-table">
-      <thead>
-        {table.getHeaderGroups().map((headerGroup) => (
-          <tr key={headerGroup.id}>
-            {headerGroup.headers.map((header) => (
-              <th key={header.id}>
-                {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-              </th>
-            ))}
-          </tr>
-        ))}
-      </thead>
-      <tbody>
-        {table.getRowModel().rows.map((row) => (
-          <tr key={row.id}>
-            {row.getVisibleCells().map((cell) => (
-              <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
-            ))}
-          </tr>
-        ))}
-        {rows.length === 0 && (
-          <tr>
-            <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
-          </tr>
-        )}
-      </tbody>
-    </table>
+    <div aria-label="출력 스키마 표" className="review-schema-table-viewport" role="region" tabIndex={0}>
+      <table className="schema-table review-schema-table">
+        <thead>
+          {table.getHeaderGroups().map((headerGroup) => (
+            <tr key={headerGroup.id}>
+              {headerGroup.headers.map((header) => (
+                <th key={header.id}>
+                  {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                </th>
+              ))}
+            </tr>
+          ))}
+        </thead>
+        <tbody>
+          {table.getRowModel().rows.map((row) => (
+            <tr key={row.id}>
+              {row.getVisibleCells().map((cell) => (
+                <td key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</td>
+              ))}
+            </tr>
+          ))}
+          {rows.length === 0 && (
+            <tr>
+              <td colSpan={columns.length}>소스 연결과 스키마 추론이 완료되면 출력 스키마가 표시됩니다.</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+function displayReviewValue(value: string | undefined) {
+  return value?.trim() || "미설정";
 }
 
 function summarizeSourceConfig(sourceConfig: Array<[string, string]>) {
