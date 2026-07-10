@@ -1,7 +1,8 @@
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Bot,
@@ -13,10 +14,10 @@ import {
   Clock3,
   Database,
   Download,
-  ExternalLink,
   FileText,
   Filter,
   HardDrive,
+  History,
   Info,
   Pencil,
   Play,
@@ -31,6 +32,8 @@ import {
   ShieldCheck,
   Square,
   Table2,
+  TerminalSquare,
+  Workflow,
   X,
   Zap,
 } from "lucide-react";
@@ -61,8 +64,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
 import { KeyValueList } from "@/components/ui/key-value-list";
+import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
-import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -78,7 +81,7 @@ const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> 
   running: { className: "running", label: "실행 중" },
   failed: { className: "failed", label: "실패" },
   success: { className: "success", label: "성공" },
-  canceled: { className: "failed", label: "취소됨" },
+  canceled: { className: "canceled", label: "취소됨" },
 };
 
 const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: string }> = {
@@ -100,7 +103,8 @@ function getJobStatusTone(status: JobStatus): StatusBadgeTone {
 }
 
 function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
-  if (status === "failed" || status === "canceled") return "danger";
+  if (status === "failed") return "danger";
+  if (status === "canceled") return "muted";
   if (status === "success") return "success";
   if (status === "running") return "success";
   return "muted";
@@ -1528,7 +1532,13 @@ export function JobRunsPage({
 }) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
+  const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");
   const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const filteredRuns = runStatusFilter === "all" ? runs : runs.filter((run) => run.status === runStatusFilter);
+  const latestRun = runs[0];
+  const totalRunsValue = job.stats?.totalRuns
+    ? job.stats.totalRuns.endsWith("회") ? job.stats.totalRuns : `${job.stats.totalRuns}회`
+    : `${runs.length}회`;
   const openRunDetail = (run: JobRunSummary) => {
     onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}`, run.runId);
     setActiveRun(run);
@@ -1537,91 +1547,163 @@ export function JobRunsPage({
     onAction("etl.run.log_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}/logs`, run.runId);
     setActiveLogRun(run);
   };
+  const runColumns: ColumnDef<JobRunSummary>[] = [
+    {
+      accessorKey: "runId",
+      header: "Run ID",
+      cell: ({ row }) => (
+        <DataTableCellPrimary className="max-w-[180px] text-base font-bold" title={row.original.runId}>
+          {row.original.runId}
+        </DataTableCellPrimary>
+      ),
+      meta: { widthClassName: "w-[180px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "status",
+      header: "상태",
+      cell: ({ row }) => <RunStatusPill status={row.original.status} />,
+      meta: { widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "executionTime",
+      header: "실행 시간",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary className="whitespace-nowrap text-base font-semibold tabular-nums">
+            {formatCompactDateTime(row.original.startedAt)}
+          </DataTableCellPrimary>
+          <DataTableCellSecondary className="whitespace-nowrap text-sm tabular-nums">
+            종료 {formatCompactDateTime(row.original.endedAt)} · {row.original.duration}
+          </DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[245px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "throughput",
+      header: "처리 행",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary className="text-base font-semibold tabular-nums">{row.original.inputRows} → {row.original.outputRows}</DataTableCellPrimary>
+          <DataTableCellSecondary className="text-sm">입력 → 출력</DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[205px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "resultSummary",
+      header: "결과 요약",
+      cell: ({ row }) => {
+        const result = getRunResultSummary(row.original);
+        return (
+          <DataTableStackedCell>
+            <DataTableCellPrimary className={row.original.status === "failed" ? "text-base font-bold text-red-700" : "text-base font-semibold"}>{result.title}</DataTableCellPrimary>
+            <DataTableCellSecondary className="max-w-[280px] text-sm" title={result.detail}>{result.detail}</DataTableCellSecondary>
+          </DataTableStackedCell>
+        );
+      },
+      meta: { widthClassName: "w-[250px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "actions",
+      header: "액션",
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-4">
+          <Button className="text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunLog(row.original)}>
+            <FileText aria-hidden="true" />
+            로그
+          </Button>
+          <Button className="text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunDetail(row.original)}>
+            <Workflow aria-hidden="true" />
+            실행 단계
+          </Button>
+        </div>
+      ),
+      meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
+    },
+  ];
+
+  const statusFilterLabels: Record<"all" | JobRunStatus, string> = {
+    all: "전체 상태",
+    queued: "대기 중",
+    running: "실행 중",
+    success: "성공",
+    failed: "실패",
+    canceled: "취소됨",
+  };
 
   return (
     <div className="job-detail-page job-runs-page">
       <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
 
       <section className="runs-body-content">
-        <article className="runs-stats-summary">
-          <h2>실행 통계 요약</h2>
-          <div>
-            <RunSummaryMetric label="성공률" value={job.stats?.successRate ?? "-"} />
-            <RunSummaryMetric label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
-            <RunSummaryMetric label="총 실행" value={job.stats?.totalRuns ?? `${runs.length}회`} />
-          </div>
-        </article>
-
-        <div className="runs-filter-bar">
-          <div className="runs-filters-left">
-            <Button className="runs-filter-button" size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.status_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/status`, job.id)}>상태: 전체 <span>▾</span></Button>
-            <Button className="runs-filter-button date" size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.date_filter_opened", `/api/etl/jobs/${job.id}/runs/filters/date`, job.id)}><Calendar size={14} /> 날짜 선택</Button>
-          </div>
-          <div className="runs-filters-right">
-            <span>{runs.length} runs total</span>
-            <Button className="runs-refresh-button" size="sm" type="button" variant="subtle" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}><RefreshCw size={14} /> 새로고침</Button>
-          </div>
-        </div>
-
-        <DetailTableSection
-          className="runs-table-card"
-          footer={
-            <PaginationBar
-              buttonSize="icon"
-              className="runs-pagination"
-              nextLabel="›"
-              onNext={() => onAction("etl.runs.page_next", `/api/etl/jobs/${job.id}/runs?page=next`, job.id)}
-              onPrevious={() => onAction("etl.runs.page_previous", `/api/etl/jobs/${job.id}/runs?page=previous`, job.id)}
-              previousLabel="‹"
-              rangeLabel={`Showing ${runs.length ? `1-${runs.length}` : "0"} of ${runs.length}`}
+        <Panel overflow="visible">
+          <PanelHeader icon={<BarChart3 aria-hidden="true" size={18} />} title="실행 통계 요약" />
+          <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard detail="종료된 Run 기준" icon={<Check aria-hidden="true" />} label="성공률" tone="running" value={job.stats?.successRate ?? "-"} />
+            <MetricCard detail="최근 집계 기준" icon={<Clock3 aria-hidden="true" />} label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
+            <MetricCard detail="누적 실행 횟수" icon={<History aria-hidden="true" />} label="총 실행" tone="total" value={totalRunsValue} />
+            <MetricCard
+              detail={latestRun ? formatCompactDateTime(latestRun.endedAt || latestRun.startedAt) : "실행 기록 없음"}
+              icon={<Activity aria-hidden="true" />}
+              label="최근 실행"
+              tone={latestRun?.status === "failed" ? "failed" : latestRun?.status === "success" ? "running" : latestRun?.status === "canceled" ? "default" : "scheduled"}
+              value={latestRun ? runStatusMeta[latestRun.status].label : "-"}
             />
-          }
-          headerClassName="sr-only"
-          scrollClassName="runs-table-scroll"
-          title="실행 이력"
-        >
-          <table className="runs-table">
-            <thead>
-              <tr>
-                <th>Run ID</th>
-                <th>상태</th>
-                <th>시작</th>
-                <th>종료</th>
-                <th>소요시간</th>
-                <th>입력 행</th>
-                <th>출력 행</th>
-                <th>실패 단계</th>
-                <th>로그</th>
-                <th>액션</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.length === 0 && (
-                <tr className="run-row">
-                  <td colSpan={10}>아직 실행 이력이 없습니다. 작업을 실행하면 이 표에 Run이 추가됩니다.</td>
-                </tr>
-              )}
-              {runs.map((row) => (
-                <tr className={row.status === "failed" || row.status === "canceled" ? "run-row failed" : "run-row"} key={row.runId}>
-                  <td>{row.runId}</td>
-                  <td><RunStatusPill status={row.status} /></td>
-                  <td>{formatCompactDateTime(row.startedAt)}</td>
-                  <td>{formatCompactDateTime(row.endedAt)}</td>
-                  <td>{row.duration}</td>
-                  <td>{row.inputRows}</td>
-                  <td>{row.outputRows}</td>
-                  <td>{row.failedStage}</td>
-                  <td>
-                    <Button className="runs-log-button" size="sm" type="button" variant="subtle" onClick={() => openRunLog(row)}>로그 보기</Button>
-                  </td>
-                  <td>
-                    <Button className="runs-detail-button" size="sm" type="button" variant="link" onClick={() => openRunDetail(row)}>실행 단계 보기</Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </DetailTableSection>
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelHeader
+            actions={(
+              <Button size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}>
+                <RefreshCw aria-hidden="true" />
+                새로고침
+              </Button>
+            )}
+            icon={<Workflow aria-hidden="true" size={18} />}
+            meta={<Badge shape="compact" size="lg" variant="muted">{filteredRuns.length}건</Badge>}
+            title="실행 이력"
+          />
+          <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50/60 px-5 py-3">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline">
+                  {statusFilterLabels[runStatusFilter]}
+                  <Filter aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuLabel>실행 상태</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup
+                  value={runStatusFilter}
+                  onValueChange={(value) => {
+                    const nextValue = value as "all" | JobRunStatus;
+                    setRunStatusFilter(nextValue);
+                    onAction("etl.runs.status_filtered", `/api/etl/jobs/${job.id}/runs?status=${nextValue}`, job.id);
+                  }}
+                >
+                  {(Object.entries(statusFilterLabels) as Array<["all" | JobRunStatus, string]>).map(([value, label]) => (
+                    <DropdownMenuRadioItem key={value} value={value}>{label}</DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <DataTable
+            bodyRowClassName="[&_td]:py-4"
+            className="gap-0 [&_th]:text-sm [&_td]:text-base"
+            columns={runColumns}
+            data={filteredRuns}
+            emptyState={{ title: runStatusFilter === "all" ? "아직 실행 이력이 없습니다." : "선택한 상태의 실행 이력이 없습니다." }}
+            enableSorting={false}
+            getRowClassName={(row) => row.original.status === "failed" ? "bg-red-50/45 hover:bg-red-50/70" : row.original.status === "canceled" ? "bg-slate-50/80" : undefined}
+            pagination={{ label: "실행 이력", pageSize: 5, showSummary: true }}
+            tableClassName="min-w-[1160px]"
+            viewportClassName="rounded-none border-0"
+          />
+        </Panel>
       </section>
       {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
       {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
@@ -1633,20 +1715,24 @@ function RunStatusPill({ status }: { status: JobRunStatus }) {
   const statusMeta = runStatusMeta[status];
 
   return (
-    <StatusBadge className={`run-status-pill ${statusMeta.className}`} tone={getRunStatusTone(status)}>
-      {status === "running" && <span className="run-status-dot" />}
+    <StatusBadge className="min-w-[74px] justify-center rounded-md text-sm" shape="compact" size="lg" tone={getRunStatusTone(status)}>
+      {status === "running" && <Spinner className="size-3.5" aria-label="실행 중" />}
       {statusMeta.label}
     </StatusBadge>
   );
 }
 
-function RunSummaryMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="run-summary-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function getRunResultSummary(run: JobRunSummary) {
+  if (run.status === "failed") {
+    return {
+      detail: normalizeWhitespace(run.errorSummary) && run.errorSummary !== "-" ? truncateText(normalizeWhitespace(run.errorSummary), 96) : "실패 원인 로그를 확인하세요.",
+      title: run.failedStage && run.failedStage !== "-" ? run.failedStage : "실행 실패",
+    };
+  }
+  if (run.status === "canceled") return { detail: "실행이 완료되기 전에 취소되었습니다.", title: "실행 취소" };
+  if (run.status === "running") return { detail: "현재 단계 정보를 실행 단계에서 확인할 수 있습니다.", title: run.failedStage !== "-" ? run.failedStage : "진행 중" };
+  if (run.status === "queued") return { detail: "실행 리소스 할당을 기다리고 있습니다.", title: "실행 대기" };
+  return { detail: "모든 실행 단계가 정상적으로 완료되었습니다.", title: "정상 완료" };
 }
 
 function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => void; run: JobRunSummary }) {
@@ -1683,51 +1769,16 @@ function RunDagModal({
   onClose: () => void;
   run: JobRunSummary;
 }) {
-  const [dagSearchOpen, setDagSearchOpen] = useState(false);
-  const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
+  const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const dagSteps = job.dagStepsByRunId?.[run.runId]
+    ?? (evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? []);
   const currentRun = run;
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
-  const toggleSearch = () => {
-    setDagSearchOpen((open) => !open);
-    onAction("etl.dag.search_opened", `/api/etl/jobs/${job.id}/dag/search`, job.id);
-  };
-
-  const dagCanvas = (
-    <div className="dag-canvas-expanded">
-      <div className="dag-context-row">
-        <strong>실행 컨텍스트</strong>
-        <span>현재 Run의 단계별 상태와 작업 진행 순서를 확인합니다.</span>
-        <div className="dag-legend">
-          <DagStatePill status="success" />
-          <DagStatePill status="failed" />
-          <DagStatePill status="blocked" />
-        </div>
-      </div>
-
-      <div className="dag-graph">
-        <div className="dag-row dag-row-top">
-          {dagSteps.slice(0, 4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow top" />}
-            </Fragment>
-          ))}
-        </div>
-        <div className="dag-down-arrow">
-          <span>{currentRun.status === "failed" ? "실패 이후 중단" : "다음 단계"}</span>
-        </div>
-        <div className="dag-row dag-row-bottom">
-          {dagSteps.slice(4).map((step, index) => (
-            <Fragment key={step.id}>
-              <DagStepNode onSelect={() => onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/dag/${step.id}`, step.id)} step={step} wide={index === 3} />
-              {index < 3 && <div className="dag-arrow muted bottom" />}
-            </Fragment>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);
+  const currentPoint = currentRun.failedStage !== "-"
+    ? currentRun.failedStage
+    : activeOrFailedStep?.title ?? (currentRun.status === "success" ? "전체 단계 완료" : "단계 정보 대기");
 
   return (
     <DialogShell
@@ -1735,93 +1786,181 @@ function RunDagModal({
       bodyClassName="run-dag-modal-body"
       closeLabel="닫기"
       contentClassName="run-dag-modal-panel"
-      description={`${currentRun.startedAt} · ${runStatusMeta[currentRun.status].label}`}
-      eyebrow={job.name}
+      description={`${job.target} · ${formatCompactDateTime(currentRun.startedAt)}`}
+      eyebrow="실행 관측"
       headerActions={<Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>}
       headerClassName="run-dag-modal-header"
       onClose={onClose}
       showCloseButton={false}
       size="wide"
-      title={`${currentRun.runId} 실행 상세`}
+      title={currentRun.runId}
     >
       <section className="dag-body-content">
-        <button className="dag-run-select" type="button" onClick={() => onAction("etl.dag.run_selector_opened", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-          {currentRun.runId} · {currentRun.startedAt} · {runStatusMeta[currentRun.status].label}
-          <span>▾</span>
-        </button>
-
         <div className="dag-summary-grid">
-          <DagSummaryCard label="현재 상태" value={runStatusMeta[currentRun.status].label} />
-          <DagSummaryCard label="소요 시간" value={currentRun.duration} />
-          <DagSummaryCard label="진행 단계" value={`${completedSteps}/${dagSteps.length} steps`} />
-          <DagSummaryCard helper={`→ ${currentRun.outputRows}`} label="처리 행수" value={currentRun.inputRows} />
-          <DagSummaryCard label={currentRun.status === "failed" ? "실패 단계" : "현재 단계"} value={currentRun.failedStage !== "-" ? currentRun.failedStage : activeOrFailedStep?.title ?? "-"} />
+          <MetricCard
+            className="min-h-[104px] gap-2.5"
+            detail={formatDagStepTitle(currentPoint)}
+            icon={<Activity aria-hidden="true" />}
+            label="실행 상태"
+            tone={currentRun.status === "failed" ? "failed" : currentRun.status === "success" ? "running" : "scheduled"}
+            value={runStatusMeta[currentRun.status].label}
+          />
+          <MetricCard
+            className="min-h-[104px] gap-2.5"
+            detail={`${formatCompactDateTime(currentRun.startedAt)} - ${formatCompactDateTime(currentRun.endedAt)}`}
+            icon={<Clock3 aria-hidden="true" />}
+            label="소요 시간"
+            value={currentRun.duration}
+          />
+          <MetricCard
+            className="min-h-[104px] gap-2.5"
+            detail="성공한 단계 / 전체 단계"
+            icon={<Workflow aria-hidden="true" />}
+            label="진행 단계"
+            tone="total"
+            value={`${completedSteps}/${dagSteps.length}`}
+          />
+          <MetricCard
+            className="min-h-[104px] gap-2.5"
+            detail={`출력 ${currentRun.outputRows}`}
+            icon={<Table2 aria-hidden="true" />}
+            label="입력 행"
+            value={currentRun.inputRows}
+          />
         </div>
 
-        <article className="dag-flow-card">
-          <div className="dag-flow-topbar">
-            <h2>작업 진행 순서 / 실행 단계</h2>
-            <div className="dag-flow-controls">
-              <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
+        <article className="dag-workbench">
+          <section className="dag-timeline-panel" aria-label="실행 타임라인">
+            <PanelHeader
+              className="min-h-16"
+              description="단계를 선택하면 수집된 상태와 진단 메시지를 확인할 수 있습니다."
+              icon={<Workflow aria-hidden="true" size={18} />}
+              title="실행 단계"
+            />
+            <div className="dag-timeline" role="list">
+              {dagSteps.length ? dagSteps.map((step, index) => (
+                <DagTimelineItem
+                  active={selectedStep?.id === step.id}
+                  index={index}
+                  key={step.id}
+                  onSelect={() => {
+                    setSelectedStepId(step.id);
+                    onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/runs/${currentRun.runId}/steps/${step.id}`, step.id);
+                  }}
+                  step={step}
+                />
+              )) : (
+                <div className="dag-timeline-empty">이 Run에 수집된 실행 단계가 없습니다.</div>
+              )}
             </div>
-          </div>
-          {dagSearchOpen && (
-            <div className="dag-search-panel">
-              <Search size={15} />
-              <input aria-label="실행 단계 검색" defaultValue="변환 규칙" />
-              <span>1개 단계 발견</span>
-            </div>
-          )}
+          </section>
 
-          <div className="dag-canvas-scroll">
-            {dagCanvas}
-          </div>
-
-          <div className="dag-selected-strip">
-            <span>선택: 실행 단계 노드를 클릭하면 단계 상세 패널이 열립니다 · ETL 작업 수정 링크는 상세 패널에서 제공합니다</span>
-            <strong>선택</strong>
-          </div>
+          <DagStepInspector currentRun={currentRun} step={selectedStep} />
         </article>
       </section>
     </DialogShell>
   );
 }
 
-function DagSummaryCard({ helper, label, value }: { helper?: string; label: string; value: string }) {
-  return (
-    <article className="dag-summary-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {helper && <em>{helper}</em>}
-    </article>
-  );
-}
-
 function DagStatePill({ status }: { status: JobDagStepStatus }) {
   const statusMeta = dagStepStatusMeta[status];
-  return <StatusBadge className={`dag-state-pill ${statusMeta.className}`} tone={getDagStatusTone(status)}>{statusMeta.label}</StatusBadge>;
+  return <StatusBadge className="min-w-[58px] justify-center rounded-md" shape="compact" tone={getDagStatusTone(status)}>{statusMeta.label}</StatusBadge>;
 }
 
-function DagStepNode({
+function DagTimelineItem({
+  active,
+  index,
   onSelect,
   step,
-  wide,
 }: {
+  active: boolean;
+  index: number;
   onSelect: () => void;
   step: JobDagStep;
-  wide?: boolean;
 }) {
   const tone = dagStepStatusMeta[step.status].className;
 
   return (
-    <button className={wide ? `dag-step-node ${tone} wide` : `dag-step-node ${tone}`} type="button" onClick={onSelect}>
-      <span className="dag-step-dot" />
-      <strong>{step.title}</strong>
-      <span className="dag-step-meta">{step.meta}</span>
-      <span className="dag-step-footer">
-        <DagStatePill status={step.status} />
-        {step.note && <em>{step.note}</em>}
-      </span>
-    </button>
+    <div className="dag-timeline-entry" role="listitem">
+      <button
+        aria-current={active ? "step" : undefined}
+        className={active ? `dag-timeline-item ${tone} active` : `dag-timeline-item ${tone}`}
+        type="button"
+        onClick={onSelect}
+      >
+        <span className="dag-timeline-marker">{getDagStepStatusIcon(step.status)}</span>
+        <span className="dag-timeline-content">
+          <span className="dag-timeline-kicker">단계 {index + 1}</span>
+          <strong>{formatDagStepTitle(step.title)}</strong>
+          <span className="dag-step-meta">{step.meta}</span>
+        </span>
+        <span className="dag-timeline-status"><DagStatePill status={step.status} /></span>
+      </button>
+    </div>
   );
+}
+
+function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; step?: JobDagStep }) {
+  if (!step) {
+    return (
+      <aside className="dag-step-inspector dag-step-inspector-empty">
+        <TerminalSquare aria-hidden="true" size={24} />
+        <strong>표시할 실행 단계가 없습니다.</strong>
+        <p>이 Run의 단계 정보가 수집되면 여기에서 상세 상태를 확인할 수 있습니다.</p>
+      </aside>
+    );
+  }
+
+  const details = [["단계 상태", dagStepStatusMeta[step.status].label], ...(step.details ?? [])];
+  const messages = (step.logs ?? []).filter(Boolean);
+
+  return (
+    <aside className="dag-step-inspector" aria-label={`${step.title} 상세`}>
+      <header>
+        <span>선택한 단계</span>
+        <div>
+          <h3>{formatDagStepTitle(step.title)}</h3>
+          <DagStatePill status={step.status} />
+        </div>
+        <p>{step.meta}</p>
+      </header>
+
+      <dl className="dag-step-detail-list">
+        {details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || "-"}</dd></div>)}
+      </dl>
+
+      <section className="dag-step-message">
+        <div>
+          <span>진단 메시지</span>
+          {messages.length > 1 && <em>{messages.length}개</em>}
+        </div>
+        {messages.length ? (
+          <ul>{messages.map((message, index) => <li key={`${index}-${message}`}>{message}</li>)}</ul>
+        ) : (
+          <p>{step.note || `${currentRun.runId}의 단계 메시지가 아직 수집되지 않았습니다.`}</p>
+        )}
+      </section>
+    </aside>
+  );
+}
+
+function getSelectedDagStep(steps: JobDagStep[], selectedStepId: string | null) {
+  if (selectedStepId) {
+    const selectedStep = steps.find((step) => step.id === selectedStepId);
+    if (selectedStep) return selectedStep;
+  }
+
+  return steps.find((step) => step.status === "failed" || step.status === "running" || step.status === "blocked") ?? steps[0];
+}
+
+function getDagStepStatusIcon(status: JobDagStepStatus) {
+  if (status === "success") return <Check aria-hidden="true" size={14} />;
+  if (status === "failed") return <X aria-hidden="true" size={14} />;
+  if (status === "running") return <Spinner aria-label="진행 중" className="size-3.5" />;
+  if (status === "blocked") return <TerminalSquare aria-hidden="true" size={13} />;
+  return <Clock3 aria-hidden="true" size={14} />;
+}
+
+function formatDagStepTitle(title: string) {
+  return title.replace(/^\d+\.\s*/, "");
 }
