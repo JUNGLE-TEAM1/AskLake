@@ -1,0 +1,71 @@
+# Catalog
+
+## Route
+
+- `/catalog`
+
+## Screen Purpose
+
+- mock/catalog API의 데이터셋을 검색하고 tag, 상태, RAG 여부, 정렬 기준으로 좁혀 목록과 preview를 확인한다.
+- 데이터셋별 materialization run을 펼쳐 SQL 분석 대상으로 선택하고 schema 또는 lineage dialog를 연다.
+- 현재 페이지 크기는 5이며 mock 데이터셋이 있어 검색, pagination, preview, empty state를 확인할 수 있다.
+
+## Current Shared Components
+
+- shadcn primitive: `Button`, `Badge`, `DropdownMenu`, `DropdownMenuRadioGroup`, `DropdownMenuRadioItem`.
+- AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `FilterToolbar`, `FilterToolbarSearch`, `FilterToolbarInput`, `FilterToolbarCheckbox`, `PaginationBar`.
+- `DataTable`: preview 및 상세 schema table에 사용한다.
+- `DialogShell`: 전체 schema와 lineage overlay shell에 사용한다.
+- `DatasetStatusBadge`: dataset status와 RAG 상태를 `Badge` variant로 조합한다.
+- `CatalogMaterializationRuns`, `CatalogSchemaTable`, `CatalogLineage`: run 목록, schema, lineage의 도메인 조합 컴포넌트다.
+- `ReactFlow`: lineage graph의 layout, edge, control을 담당한다.
+
+## Weakly Componentized Areas
+
+- 검색 결과는 `article[role="button"]`과 `catalog-result-*` CSS로 만든 custom selectable card다. focus/selected/expanded 상태를 직접 관리한다.
+- result tag와 preview metric은 raw `<span>`, `<div>`로 구성되어 `Chip`, `TagList`, metric composition을 재사용하지 않는다.
+- materialization run 목록은 custom row와 status span, delete button을 직접 조합한다.
+- preview schema card, lineage teaser, SQL 이동 hint, empty state가 각각 전용 CSS block으로 구현되어 있다.
+- 목록과 preview가 하나의 `CatalogPage.tsx`에 함께 있어 검색, 선택, modal, run pagination 책임이 크다.
+- `CatalogLineage`는 ReactFlow를 쓰지만 node 내부 table, type pill, footer는 전용 markup과 CSS에 강하게 결합되어 있다.
+
+## shadcn/ReUI Replacement Candidates
+
+- `Collapsible`: materialization run의 펼침/접힘 상태와 trigger/content 접근성 구조에 사용한다.
+- `ToggleGroup` 또는 `Badge` + `Button`: 상단 tag quick filter를 일관된 pressed state로 정리한다.
+- `Card`보다 기존 `Panel` variant: result card와 preview section의 surface 규칙을 통일한다.
+- `TagList` + `Chip`: result tag와 선택 tag 표시를 공통화한다.
+- `DataTable`: materialization run row를 정렬된 table 정보로 바꾸는 경우 사용한다.
+- `AlertDialog`: run 삭제가 비가역 작업이라면 현재 inline delete action 앞에 확인 단계를 둔다.
+- `Empty`, `Skeleton`, `Alert`: 검색 결과 없음, loading, API error를 각각 공통 feedback 상태로 표현한다.
+- `ScrollArea`: preview panel과 modal의 긴 schema/lineage 내용을 viewport 안에서 안정적으로 스크롤한다.
+
+## Design Options For Existing Components
+
+- `FilterToolbar`, `Panel`, `PaginationBar`, `DialogShell`: 이미 shadcn primitive를 조합한 AskLake 공통 컴포넌트이므로 유지한다.
+- `DatasetStatusBadge`: `StatusBadge`와 역할이 겹치는지 확인한 뒤 dataset 전용 mapping만 남기고 공통 status primitive로 합칠 수 있다.
+- `CatalogMaterializationRuns`: 도메인 동작이 있으므로 유지하되 내부 row, empty, pagination을 공통 컴포넌트로 교체한다.
+- `CatalogLineage`: ReactFlow를 유지한다. ReUI tree나 shadcn table로 graph engine을 교체할 대상은 아니다.
+- result card는 별도 범용 Card를 새로 만들기보다 `CatalogResultItem` 도메인 컴포넌트로 분리하는 편이 명확하다.
+
+## Related CSS
+
+- 현재 사용 중: `frontend/src/styles/catalog.css`의 `.catalog-page`, `.catalog-content-grid`, `.catalog-main`, `.catalog-search-panel`, `.catalog-results-section`.
+- 현재 사용 중: `.catalog-result-list`, `.catalog-result-item`, `.catalog-result-card`, `.catalog-result-summary`, `.catalog-result-tags`, `.catalog-empty-state`, `.catalog-pagination`.
+- 현재 사용 중: `.catalog-preview-panel`, `.catalog-preview-card`, `.catalog-overview-metrics`, `.catalog-lineage-teaser`, `.catalog-sql-target-hint`.
+- 현재 사용 중: `.catalog-materialization-*`, `.catalog-run-status`, `.catalog-sort-*`, `.catalog-favorite-button`.
+- 주의: lineage selector는 catalog detail과 modal에서도 공유하므로 목록 화면만 보고 삭제하면 안 된다.
+
+## QA Notes
+
+- process 환경에서 `VITE_USE_MOCK_API=true`로 실행했을 때 `/catalog`가 mock 데이터와 함께 렌더링되고 API 오류가 없다.
+- mock dataset 수가 page size보다 많아 result pagination, tag filter, preview 선택 상태를 확인할 수 있다.
+- keyboard QA는 result card Enter/Space, dropdown menu, lineage teaser, run 선택을 포함해야 한다.
+- loading/error는 현재 목록 영역의 표현이 약하므로 후속 구현에서 layout shift와 focus 복귀를 확인한다.
+
+## Conflict Risk
+
+- #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이다. 이 문서 PR에서는 구현을 변경하지 않는다.
+- catalog list와 detail이 `CatalogPage.tsx` 및 `catalog.css`를 공유하므로 분리 작업 전에 두 route를 함께 회귀 확인한다.
+- API, mock fixture, React Router, ReactFlow graph contract는 이번 범위에서 변경하지 않는다.
+
