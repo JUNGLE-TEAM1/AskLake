@@ -46,6 +46,7 @@
 | `Table` | 유지 | shadcn table visual primitive다. TanStack logic은 `DataTable`에서 유지한다. |
 | `Badge` | 유지 | 단순 상태/라벨 pill의 기본 대체 대상이다. interactive chip은 `Badge` variant 또는 별도 composition으로 판단한다. |
 | `Card` | 유지 | 단순 framed item의 기본 대체 대상이다. page section을 card로 감싸는 용도는 피한다. |
+| `Alert` | 유지 | 상태 집계와 분리해야 하는 경고·주의 정보를 표시한다. #440에서 최근 실행 실패 안내와 결과 필터 진입점에 적용했다. |
 
 ### shadcn primitive 추가 필요
 
@@ -68,6 +69,7 @@
 | `Textarea` | SQL/editor assistant, widget text | raw `<textarea>` 제거 기준이다. |
 | `Separator` | toolbar/menu/panel divider | 화면별 divider CSS 축소 기준이다. |
 | `Skeleton` | loading state | table/panel loading placeholder를 통일한다. |
+| `Spinner` | 실행 중/저장 중의 작은 진행 표시 | button 또는 status label의 텍스트를 대체하지 않고 보조한다. |
 | `Scroll Area` | dataset tree/list/result overflow | browser scrollbar CSS를 줄일 수 있는 영역에만 적용한다. |
 | `Pagination` | DataTable 밖 pagination | `PaginationBar` 재구성 기준이다. |
 | `Button Group` | action cluster | `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. |
@@ -80,10 +82,11 @@
 | 컴포넌트 | 유지 이유 | 내부 정리 방향 |
 | --- | --- | --- |
 | `DataTable` | TanStack Table logic과 shadcn Table UI를 묶는 서비스 표준 table이다. | shadcn Data Table 가이드와 맞춰 pagination/sort/loading API를 정리한다. |
+| `DataTableStackedCell` 계열 | table 안의 title/subtitle/summary를 일관되게 쌓는 서비스 표시 pattern이다. | shadcn typography/token을 사용하고 domain 상태나 action은 호출 화면에서 조합한다. |
 | `FilterToolbar` 계열 | 검색, filter, actions, divider를 한 화면 toolbar로 묶는 서비스 패턴이다. | 내부 input/checkbox/menu는 `Input Group`, `Checkbox`, `Dropdown Menu`, `Button`으로 교체한다. |
 | `PageHeader` | route 상단 제목/설명/actions 패턴이다. | action slot은 `Button Group`/`ActionGroup` 기준으로 정리한다. |
 | `Panel` / `PanelHeader` | 화면 섹션 shell과 header pattern이다. | shadcn `Card`와 역할을 혼동하지 않도록 page section 용도로 유지한다. |
-| `MetricCard` | dashboard/jobs metric summary pattern이다. | 내부는 `Card`/`Badge` 기반으로 정렬한다. |
+| `MetricCard` | dashboard metric summary pattern이다. | 내부는 `Card`/`Badge` 기반으로 정렬한다. Jobs 상태 요약은 interactive filter라서 `Button` composition으로 분리했다. |
 | `CommandBar` | ETL/Creation 하단 command 영역이다. | 내부 action은 `Button`/`Button Group` 기반으로 정리한다. |
 | `ActionGroup` | 화면별 action row spacing/wrap pattern이다. | 단순 button cluster는 후속 `Button Group`으로 흡수 가능한지 재평가한다. |
 | `TagList` | 여러 tag/chip 행을 다루는 서비스 pattern이다. | 단순 tag는 `Badge`; interactive tag는 명확한 variant로 제한한다. |
@@ -150,6 +153,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard runtime share panel을 `Sheet`로 교체했다. |
 | 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
 | 2026-07-10 | #468에서 SQL dataset tree에 Shadcnblocks `tree-lines-1` registry와 Kibo UI Tree를 적용하고 `motion` dependency, controlled expand, keyboard trigger, line tree CSS 제거 상태를 반영했다. |
+| 2026-07-10 | #440에서 Jobs 검색을 `FilterToolbarInput`으로 정리하고 `DataTableStackedCell` 계열을 AskLake composition으로 추가했다. row action은 `IconButton` + shadcn `Tooltip`, owner identity는 ReUI `Avatar` fallback으로 정리했고 목록 log modal은 실행 이력 route 이동으로 교체했다. 이어서 작업 현황은 shadcn `Button` 기반의 상호 배타적인 현재 상태 필터 4개로 전환하고, 최근 실행 실패는 shadcn `Alert`와 독립 결과 필터로 분리했다. `DropdownMenu`로 상태/소유자와 매일/매주/매월/실시간/스케줄 없음/기타 실행 주기 filter를 제공하며, 검색 input은 작업 목록 PanelHeader 바로 아래로 이동했다. filter는 live mode에서 `GET /api/etl/jobs` query와 facet response를 사용한다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 

@@ -77,7 +77,7 @@ const checks = [
       /\.catalog-wide-button\s*\{[^}]*align-items:\s*center;/s,
       /\.catalog-wide-button\s*\{[^}]*justify-content:\s*center;/s,
       /\.catalog-wide-button\s*\{[^}]*gap:\s*6px;/s,
-      /\.catalog-wide-button svg\s*\{[^}]*flex:\s*0 0 auto;/s,
+      /\.catalog-wide-button\s*\{[^}]*width:\s*100%;/s,
     ],
   },
   {

@@ -500,7 +500,38 @@ type ReviewSnapshot = {
 - live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
 - Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
 
-### 7.3 파이프라인 생성
+### 7.3 작업 목록 조회
+
+`GET /api/etl/jobs`
+
+작업 현황의 상태 버튼과 `실행 주기` 컬럼 필터는 이 endpoint를 사용한다. 목록을 프론트엔드에서 임의로 잘라내지 않고, live mode에서는 선택한 조건을 query parameter로 서버에 전달한다.
+
+Query parameter:
+
+- `status`: 0개 이상 반복 가능한 job status. 목록 UI 예: `?status=running&status=stopped`. 저장된 legacy `failed`, `canceled`, `paused` 상태는 목록 응답에서 `scheduled`로 정규화한다.
+- `owner`: 정확히 일치하는 소유자 1명. 예: `?owner=analytics`
+- `lastRunOutcome`: `success`, `failed`, `canceled` 중 하나. 최근 Run 결과로 목록을 필터링한다.
+- `scheduleKind`: `daily`, `weekly`, `monthly`, `realtime`, `none`, `other` 중 하나. 서버는 저장된 schedule label을 기준으로 분류한다.
+
+Response `200 OK`:
+
+```ts
+type GetJobsResponse = {
+  jobs: JobRowData[];
+  facets: {
+    latestRunOutcomeCounts: Record<"success" | "failed" | "canceled", number>;
+    owners: string[];
+    total: number;
+    statusCounts: Record<JobStatus, number>;
+  };
+};
+```
+
+`facets`는 현재 선택한 filter와 무관한 전체 목록 기준이다. 따라서 소유자 한 명을 선택한 뒤에도 `owners`에는 등록된 모든 소유자가 유지되고, 현황 버튼도 전체 작업의 상태 분포를 유지한다.
+
+각 `JobRowData`는 DB timestamp 기준의 optional `createdAt`, `updatedAt`을 포함한다. 목록 소유자 셀은 `updatedAt`을 우선 표시하고, legacy row처럼 수정 시각이 없을 때만 `createdAt`을 표시한다.
+
+### 7.4 파이프라인 생성
 
 `POST /api/etl/jobs`
 
@@ -715,7 +746,7 @@ Validation:
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
-### 7.3 작업 명령
+### 7.5 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 
@@ -727,7 +758,7 @@ Request:
 
 ```ts
 type JobCommandRequest = {
-  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule";
+  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule";
 };
 ```
 
@@ -805,9 +836,10 @@ Response 예시:
 | `retry` | `etl.run.retry_requested` | `running` |
 | `pause` | `etl.job.pause_requested` | `paused` |
 | `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
-| `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
+| `stopSchedule` | `etl.schedule.stop_requested` | 스케줄 설정을 보존한 채 `stopped`, `nextRun: "-"`. 실행 중인 실시간 Job은 현재 Run도 `canceled`로 종료하고 `실시간 수집 중지`로 기록 |
+| `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
-`run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 실행 접수 직후 `job.status: "running"`을 응답한다. 실행이 끝난 뒤 Job은 `scheduled`로 돌아가고, 성공·실패·취소 결과는 최신 `runHistory` 항목으로 구분한다. Spark는 후속 연동 범위이므로 현재 `pause`는 checkpoint 복원을 보장하지 않으며 목록 UI에서는 노출하지 않는다.
 
 Validation:
 
@@ -816,8 +848,9 @@ Validation:
 - 실행 중이 아닌 job에 `pause`하면 `422 INVALID_JOB_STATE`.
 - 실행 중이 아닌 job에 `cancelRun`하면 `422 INVALID_JOB_STATE`.
 - 스케줄이 없는 job에 `stopSchedule`하면 `422 INVALID_JOB_STATE`.
+- `stopped` 상태가 아니거나 보존된 스케줄이 없는 job에 `resumeSchedule`하면 `422 INVALID_JOB_STATE`.
 
-### 7.2.1 작업 단건 조회
+### 7.5.1 작업 단건 조회
 
 `GET /api/etl/jobs/{jobId}`
 
@@ -829,7 +862,7 @@ type GetJobResponse = JobRowData;
 
 실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
 
-### 7.3 읽기 전용 SQL 실행
+### 7.6 읽기 전용 SQL 실행
 
 `POST /api/query/runs`
 
@@ -917,7 +950,7 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
-### 7.4 Query AI SQL 초안 생성
+### 7.7 Query AI SQL 초안 생성
 
 `POST /api/query/ai-suggestions`
 
@@ -1020,7 +1053,7 @@ Validation:
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
 - mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
 
-### 7.5 SQL 결과 기반 Lake Dataset 생성
+### 7.8 SQL 결과 기반 Lake Dataset 생성
 
 `POST /api/catalog/derived-datasets`
 

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -7,7 +7,11 @@ from app.schemas.etl import (
     CreatePipelineResponse,
     JobCommandRequest,
     JobCommandResponse,
+    JobListResponse,
     JobRowData,
+    JobRunOutcome,
+    JobScheduleKind,
+    JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
     SchemaDraft,
@@ -46,9 +50,15 @@ def create_job(request: CreatePipelineRequest, db: Session = Depends(get_db)) ->
     return etl_service.create_pipeline(db, request)
 
 
-@router.get("/jobs", response_model=list[JobRowData])
-def list_jobs(db: Session = Depends(get_db)) -> list[JobRowData]:
-    return etl_service.list_jobs(db)
+@router.get("/jobs", response_model=JobListResponse)
+def list_jobs(
+    last_run_outcome: JobRunOutcome | None = Query(default=None, alias="lastRunOutcome"),
+    owner: str | None = Query(default=None),
+    status_filter: list[JobStatus] = Query(default_factory=list, alias="status"),
+    schedule_kind: JobScheduleKind | None = Query(default=None, alias="scheduleKind"),
+    db: Session = Depends(get_db),
+) -> JobListResponse:
+    return etl_service.list_jobs(db, last_run_outcome=last_run_outcome, owner=owner, statuses=status_filter, schedule_kind=schedule_kind)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRowData)
