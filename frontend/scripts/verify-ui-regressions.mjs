@@ -102,34 +102,37 @@ const checks = [
     file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
       /datasets\.filter\(\(dataset\) => dataset\.status === "available" && dataset\.permissions\?\.canQuery !== false\)/,
-      /const \[selectedDatasetIds, setSelectedDatasetIds\] = useState<string\[\]>\(\[\]\);/,
+      /type Conversation = \{[\s\S]*selectedDatasetIds: string\[\];[\s\S]*submissionState: SubmissionState;/,
       /onAction\("ai\.context\.dataset_toggled", "\/api\/ai\/context", datasetId\);/,
-      /disabled=\{!prompt\.trim\(\) \|\| awaitingRuntime \|\| selectedDatasets\.length === 0\}/,
+      /disabled=\{!activeConversation\.draftPrompt\.trim\(\) \|\| runtimeUnavailable \|\| selectedDatasets\.length === 0\}/,
     ],
   },
   {
-    name: "AI chat shows pending response blocks without mock content",
+    name: "AI chat creates local conversations and shows no mock response",
     file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
-      /function AiResponsePendingCard\(\)/,
-      /<strong>AI runtime 연결 대기<\/strong>/,
-      /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>대기<\/small><\/button>/,
-      /<button disabled type="button"><Braces size=\{15\} \/><span>SQL<\/span><small>대기<\/small><\/button>/,
-      /<button disabled type="button"><Database size=\{15\} \/><span>결과<\/span><small>대기<\/small><\/button>/,
+      /function createConversation\(\): Conversation/,
+      /setConversations\(\(current\) => \[nextConversation, \.\.\.current\]\);/,
+      /<strong>AI runtime 미연결<\/strong>/,
+      /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>미연결<\/small><\/button>/,
+      /aria-current=\{conversation\.id === activeConversation\.id \? "page" : undefined\}/,
     ],
   },
   {
-    name: "AI chat keeps dataset context and stacks response blocks on mobile",
+    name: "AI chat context selector supports keyboard and outside close",
     file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
-      /const startNewConversation = \(\) => \{\s*setMessages\(\[\]\);\s*setPrompt\(""\);\s*setAwaitingRuntime\(false\);/s,
+      /event instanceof KeyboardEvent && event\.key === "Escape"/,
+      /!contextPickerRef\.current\?\.contains\(event\.target as Node\)/,
     ],
   },
   {
-    name: "AI pending response blocks remain readable on mobile",
+    name: "AI conversation controls remain usable on mobile",
     file: "src/styles/ai.css",
     patterns: [
       /@media \(max-width: 720px\) \{[\s\S]*\.ai-response-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/,
+      /\.ai-context-option:focus-within \{ outline: 2px solid #2563eb;/,
+      /\.ai-conversation-sidebar\.open \{ transform: translateX\(0\); \}/,
     ],
   },
 ];

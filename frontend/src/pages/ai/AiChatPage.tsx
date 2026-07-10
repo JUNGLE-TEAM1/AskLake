@@ -1,4 +1,4 @@
-import { Bot, Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, Plus, Send, Sparkles } from "lucide-react";
+import { Bot, Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Send, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogDataset } from "../../types";
 
@@ -8,26 +8,58 @@ const suggestedQuestions = [
   "최근 실행된 데이터셋의 품질을 비교해줘",
 ];
 
+type SubmissionState = "idle" | "runtime_unavailable";
+
 type UserMessage = {
   id: string;
   content: string;
   contextNames: string[];
 };
 
+type Conversation = {
+  id: string;
+  title: string;
+  messages: UserMessage[];
+  draftPrompt: string;
+  selectedDatasetIds: string[];
+  submissionState: SubmissionState;
+  createdAt: string;
+  updatedAt: string;
+};
+
+function createConversation(): Conversation {
+  const now = new Date().toISOString();
+  return {
+    id: `conversation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: "새 대화",
+    messages: [],
+    draftPrompt: "",
+    selectedDatasetIds: [],
+    submissionState: "idle",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function titleFromQuestion(question: string) {
+  const normalized = question.replace(/\s+/g, " ").trim();
+  return normalized.length > 30 ? `${normalized.slice(0, 30)}...` : normalized || "새 대화";
+}
+
 function AiResponsePendingCard() {
   return (
-    <article className="ai-assistant-message" aria-busy="true" aria-label="AI 응답 대기">
+    <article className="ai-assistant-message" aria-label="AI runtime 미연결">
       <span className="ai-assistant-avatar"><Bot size={16} /></span>
       <div className="ai-response-pending-card">
         <div className="ai-response-pending-heading">
-          <strong>AI runtime 연결 대기</strong>
-          <span>응답을 준비하고 있습니다.</span>
+          <strong>AI runtime 미연결</strong>
+          <span>실제 응답을 생성하지 않았습니다.</span>
         </div>
         <div className="ai-response-blocks" aria-label="응답 구성">
-          <button disabled type="button"><FileText size={15} /><span>근거</span><small>대기</small></button>
-          <button disabled type="button"><Braces size={15} /><span>SQL</span><small>대기</small></button>
-          <button disabled type="button"><Database size={15} /><span>결과</span><small>대기</small></button>
-          <button disabled type="button"><LayoutGrid size={15} /><span>대시보드</span><small>대기</small></button>
+          <button disabled type="button"><FileText size={15} /><span>근거</span><small>미연결</small></button>
+          <button disabled type="button"><Braces size={15} /><span>SQL</span><small>미연결</small></button>
+          <button disabled type="button"><Database size={15} /><span>결과</span><small>미연결</small></button>
+          <button disabled type="button"><LayoutGrid size={15} /><span>대시보드</span><small>미연결</small></button>
         </div>
       </div>
     </article>
@@ -41,146 +73,201 @@ export function AiChatPage({
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string) => void;
 }) {
-  const [messages, setMessages] = useState<UserMessage[]>([]);
-  const [prompt, setPrompt] = useState("");
-  const [awaitingRuntime, setAwaitingRuntime] = useState(false);
+  const initialConversationRef = useRef<Conversation>(createConversation());
+  const [conversations, setConversations] = useState<Conversation[]>(() => [initialConversationRef.current]);
+  const [activeConversationId, setActiveConversationId] = useState(initialConversationRef.current.id);
   const [contextOpen, setContextOpen] = useState(false);
-  const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([]);
+  const [conversationDrawerOpen, setConversationDrawerOpen] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const contextPickerRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const availableDatasets = useMemo(
     () => datasets.filter((dataset) => dataset.status === "available" && dataset.permissions?.canQuery !== false),
     [datasets],
   );
-  const selectedDatasets = availableDatasets.filter((dataset) => selectedDatasetIds.includes(dataset.id));
+  const activeConversation = conversations.find((conversation) => conversation.id === activeConversationId) ?? conversations[0];
+  const selectedDatasets = availableDatasets.filter((dataset) => activeConversation.selectedDatasetIds.includes(dataset.id));
+  const runtimeUnavailable = activeConversation.submissionState === "runtime_unavailable";
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, awaitingRuntime]);
+  }, [activeConversation.id, activeConversation.messages.length, activeConversation.submissionState]);
+
+  useEffect(() => {
+    if (!contextOpen) return undefined;
+    const closeContextOnEscapeOrOutsideClick = (event: KeyboardEvent | MouseEvent) => {
+      if (event instanceof KeyboardEvent && event.key === "Escape") {
+        setContextOpen(false);
+      }
+      if (event instanceof MouseEvent && !contextPickerRef.current?.contains(event.target as Node)) {
+        setContextOpen(false);
+      }
+    };
+    document.addEventListener("keydown", closeContextOnEscapeOrOutsideClick);
+    document.addEventListener("mousedown", closeContextOnEscapeOrOutsideClick);
+    return () => {
+      document.removeEventListener("keydown", closeContextOnEscapeOrOutsideClick);
+      document.removeEventListener("mousedown", closeContextOnEscapeOrOutsideClick);
+    };
+  }, [contextOpen]);
+
+  const updateActiveConversation = (update: (conversation: Conversation) => Conversation) => {
+    setConversations((current) => current.map((conversation) => conversation.id === activeConversation.id ? update(conversation) : conversation));
+  };
 
   const startNewConversation = () => {
-    setMessages([]);
-    setPrompt("");
-    setAwaitingRuntime(false);
-    onAction("ai.chat.new", "/api/ai/conversations", "new");
+    const nextConversation = createConversation();
+    setConversations((current) => [nextConversation, ...current]);
+    setActiveConversationId(nextConversation.id);
+    setContextOpen(false);
+    setConversationDrawerOpen(false);
+    onAction("ai.chat.new", "/api/ai/conversations", nextConversation.id);
     window.setTimeout(() => composerRef.current?.focus(), 0);
   };
 
+  const selectConversation = (conversationId: string) => {
+    setActiveConversationId(conversationId);
+    setContextOpen(false);
+    setConversationDrawerOpen(false);
+    onAction("ai.chat.selected", "/api/ai/conversations", conversationId);
+  };
+
   const chooseSuggestedQuestion = (question: string) => {
-    if (awaitingRuntime) return;
-    setPrompt(question);
+    if (runtimeUnavailable) return;
+    updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: question, updatedAt: new Date().toISOString() }));
     window.setTimeout(() => composerRef.current?.focus(), 0);
   };
 
   const toggleDataset = (datasetId: string) => {
-    if (awaitingRuntime) return;
-    setSelectedDatasetIds((current) => current.includes(datasetId)
-      ? current.filter((id) => id !== datasetId)
-      : [...current, datasetId]);
+    if (runtimeUnavailable) return;
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      selectedDatasetIds: conversation.selectedDatasetIds.includes(datasetId)
+        ? conversation.selectedDatasetIds.filter((id) => id !== datasetId)
+        : [...conversation.selectedDatasetIds, datasetId],
+      updatedAt: new Date().toISOString(),
+    }));
     onAction("ai.context.dataset_toggled", "/api/ai/context", datasetId);
   };
 
   const submitPrompt = () => {
-    const question = prompt.trim();
-    if (!question || awaitingRuntime || selectedDatasets.length === 0) return;
+    const question = activeConversation.draftPrompt.trim();
+    if (!question || runtimeUnavailable || selectedDatasets.length === 0) return;
 
-    setMessages((current) => [...current, {
-      id: `user-${Date.now()}`,
-      content: question,
-      contextNames: selectedDatasets.map((dataset) => dataset.name),
-    }]);
-    setPrompt("");
-    setAwaitingRuntime(true);
+    const contextNames = selectedDatasets.map((dataset) => dataset.name);
+    updateActiveConversation((conversation) => ({
+      ...conversation,
+      title: conversation.messages.length === 0 ? titleFromQuestion(question) : conversation.title,
+      messages: [...conversation.messages, { id: `user-${Date.now()}`, content: question, contextNames }],
+      draftPrompt: "",
+      submissionState: "runtime_unavailable",
+      updatedAt: new Date().toISOString(),
+    }));
     setContextOpen(false);
-    onAction("ai.chat.prompt_drafted", "/api/ai/conversations", selectedDatasetIds.join(","));
+    onAction("ai.chat.prompt_drafted", "/api/ai/conversations", activeConversation.selectedDatasetIds.join(","));
   };
 
   return (
     <section className="ai-chat-page" aria-label="AI 활용">
-      <header className="ai-chat-header">
-        <div className="ai-chat-title">
-          <span><Sparkles size={15} /> AskLake AI</span>
-          <h1>AI 활용</h1>
+      {conversationDrawerOpen ? <button aria-label="대화 목록 닫기" className="ai-conversation-backdrop" type="button" onClick={() => setConversationDrawerOpen(false)} /> : null}
+      <aside className={conversationDrawerOpen ? "ai-conversation-sidebar open" : "ai-conversation-sidebar"} aria-label="대화 목록">
+        <div className="ai-conversation-sidebar-header">
+          <strong>대화</strong>
+          <button aria-label="대화 목록 닫기" className="icon-button ai-conversation-close" type="button" onClick={() => setConversationDrawerOpen(false)}><PanelLeftClose size={17} /></button>
         </div>
-        <div className="ai-chat-actions">
-          <div className="ai-context-picker">
-            <button aria-expanded={contextOpen} className="secondary-button ai-context-trigger" disabled={awaitingRuntime} type="button" onClick={() => setContextOpen((open) => !open)}>
-              <Database size={15} />
-              <span>{selectedDatasets.length > 0 ? `데이터셋 ${selectedDatasets.length}` : "데이터셋 선택"}</span>
-              <ChevronDown size={14} />
+        <button className="ai-sidebar-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
+        <div className="ai-conversation-list">
+          {conversations.map((conversation) => (
+            <button aria-current={conversation.id === activeConversation.id ? "page" : undefined} className={conversation.id === activeConversation.id ? "ai-conversation-item active" : "ai-conversation-item"} key={conversation.id} type="button" onClick={() => selectConversation(conversation.id)}>
+              <span>{conversation.title}</span>
+              <small>{conversation.messages.length > 0 ? `${conversation.messages.length}개 질문` : "빈 대화"}</small>
             </button>
-            {contextOpen ? (
-              <div className="ai-context-menu" role="dialog" aria-label="대화 데이터셋 선택">
-                <div className="ai-context-menu-heading">
-                  <strong>대화 컨텍스트</strong>
-                  <span>질문에 사용할 데이터셋을 선택하세요.</span>
+          ))}
+        </div>
+      </aside>
+
+      <main className="ai-chat-workspace">
+        <header className="ai-chat-header">
+          <div className="ai-chat-title">
+            <span><Sparkles size={15} /> AskLake AI</span>
+            <h1>AI 활용</h1>
+          </div>
+          <div className="ai-chat-actions">
+            <button aria-expanded={conversationDrawerOpen} aria-label="대화 목록 열기" className="icon-button ai-conversation-toggle" type="button" onClick={() => setConversationDrawerOpen(true)}><PanelLeftOpen size={18} /></button>
+            <div className="ai-context-picker" ref={contextPickerRef}>
+              <button aria-expanded={contextOpen} className="secondary-button ai-context-trigger" disabled={runtimeUnavailable} type="button" onClick={() => setContextOpen((open) => !open)}>
+                <Database size={15} />
+                <span>{selectedDatasets.length > 0 ? `데이터셋 ${selectedDatasets.length}` : "데이터셋 선택"}</span>
+                <ChevronDown size={14} />
+              </button>
+              {contextOpen ? (
+                <div className="ai-context-menu" role="dialog" aria-label="대화 데이터셋 선택">
+                  <div className="ai-context-menu-heading">
+                    <strong>대화 컨텍스트</strong>
+                    <span>질문에 사용할 데이터셋을 선택하세요.</span>
+                  </div>
+                  <div className="ai-context-options">
+                    {availableDatasets.map((dataset) => {
+                      const selected = activeConversation.selectedDatasetIds.includes(dataset.id);
+                      return (
+                        <label className={selected ? "ai-context-option selected" : "ai-context-option"} key={dataset.id}>
+                          <input checked={selected} type="checkbox" onChange={() => toggleDataset(dataset.id)} />
+                          <span className="ai-context-option-check">{selected ? <Check size={14} /> : null}</span>
+                          <span className="ai-context-option-copy"><strong>{dataset.name}</strong><small>{dataset.layer} · {dataset.rows}</small></span>
+                        </label>
+                      );
+                    })}
+                    {availableDatasets.length === 0 ? <p className="ai-context-empty">선택 가능한 데이터셋이 없습니다.</p> : null}
+                  </div>
                 </div>
-                <div className="ai-context-options">
-                  {availableDatasets.map((dataset) => {
-                    const selected = selectedDatasetIds.includes(dataset.id);
-                    return (
-                      <label className={selected ? "ai-context-option selected" : "ai-context-option"} key={dataset.id}>
-                        <input checked={selected} type="checkbox" onChange={() => toggleDataset(dataset.id)} />
-                        <span className="ai-context-option-check">{selected ? <Check size={14} /> : null}</span>
-                        <span className="ai-context-option-copy"><strong>{dataset.name}</strong><small>{dataset.layer} · {dataset.rows}</small></span>
-                      </label>
-                    );
-                  })}
-                  {availableDatasets.length === 0 ? <p className="ai-context-empty">선택 가능한 데이터셋이 없습니다.</p> : null}
+              ) : null}
+            </div>
+            <button className="secondary-button ai-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
+          </div>
+        </header>
+
+        <div className="ai-chat-scroll">
+          <div className={activeConversation.messages.length === 0 ? "ai-chat-thread empty" : "ai-chat-thread"}>
+            {activeConversation.messages.length === 0 ? (
+              <div className="ai-chat-empty">
+                <span className="ai-chat-empty-mark"><Bot size={26} /></span>
+                <div>
+                  <h2>데이터에 대해 질문하세요</h2>
+                  <p>답변에 사용할 Lake 데이터셋을 선택한 뒤 질문을 시작할 수 있습니다.</p>
                 </div>
               </div>
             ) : null}
+            {activeConversation.messages.map((message) => (
+              <article className="ai-chat-message user" key={message.id}>
+                <div><p>{message.content}</p><span className="ai-message-context">{message.contextNames.join(" · ")}</span></div>
+                <span className="ai-chat-message-avatar"><CircleUser size={16} /></span>
+              </article>
+            ))}
+            {runtimeUnavailable ? <AiResponsePendingCard /> : null}
+            <div ref={messagesEndRef} />
           </div>
-          <button className="secondary-button ai-new-conversation" type="button" onClick={startNewConversation}>
-            <Plus size={15} />
-            새 대화
-          </button>
         </div>
-      </header>
 
-      <div className="ai-chat-scroll">
-        <div className={messages.length === 0 ? "ai-chat-thread empty" : "ai-chat-thread"}>
-          {messages.length === 0 ? (
-            <div className="ai-chat-empty">
-              <span className="ai-chat-empty-mark"><Bot size={26} /></span>
-              <div>
-                <h2>데이터에 대해 질문하세요</h2>
-                <p>답변에 사용할 Lake 데이터셋을 선택한 뒤 질문을 시작할 수 있습니다.</p>
-              </div>
+        <footer className="ai-chat-composer-shell">
+          {selectedDatasets.length > 0 ? (
+            <div className="ai-selected-context" aria-label="선택된 대화 데이터셋">
+              {selectedDatasets.map((dataset) => <span key={dataset.id}><Database size={13} />{dataset.name}</span>)}
             </div>
           ) : null}
-          {messages.map((message) => (
-            <article className="ai-chat-message user" key={message.id}>
-              <div><p>{message.content}</p><span className="ai-message-context">{message.contextNames.join(" · ")}</span></div>
-              <span className="ai-chat-message-avatar"><CircleUser size={16} /></span>
-            </article>
-          ))}
-          {awaitingRuntime ? (
-            <AiResponsePendingCard />
-          ) : null}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      <footer className="ai-chat-composer-shell">
-        {selectedDatasets.length > 0 ? (
-          <div className="ai-selected-context" aria-label="선택된 대화 데이터셋">
-            {selectedDatasets.map((dataset) => <span key={dataset.id}><Database size={13} />{dataset.name}</span>)}
+          <div className="ai-chat-recommendations" aria-label="추천 질문">
+            {suggestedQuestions.map((question) => <button disabled={runtimeUnavailable} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
           </div>
-        ) : null}
-        <div className="ai-chat-recommendations" aria-label="추천 질문">
-          {suggestedQuestions.map((question) => <button disabled={awaitingRuntime} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
-        </div>
-        <div className="ai-chat-composer" aria-label="AI 질문 입력">
-          <textarea aria-label="AI 질문" disabled={awaitingRuntime} placeholder="Lake 데이터에 대해 질문하세요" ref={composerRef} rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              submitPrompt();
-            }
-          }} />
-          <button aria-label="AI 질문 전송" disabled={!prompt.trim() || awaitingRuntime || selectedDatasets.length === 0} title={selectedDatasets.length === 0 ? "질문에 사용할 데이터셋을 선택하세요." : undefined} type="button" onClick={submitPrompt}><Send size={18} /></button>
-        </div>
-      </footer>
+          <div className="ai-chat-composer" aria-label="AI 질문 입력">
+            <textarea aria-label="AI 질문" disabled={runtimeUnavailable} placeholder="Lake 데이터에 대해 질문하세요" ref={composerRef} rows={2} value={activeConversation.draftPrompt} onChange={(event) => updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: event.target.value, updatedAt: new Date().toISOString() }))} onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                submitPrompt();
+              }
+            }} />
+            <button aria-label="AI 질문 전송" disabled={!activeConversation.draftPrompt.trim() || runtimeUnavailable || selectedDatasets.length === 0} title={selectedDatasets.length === 0 ? "질문에 사용할 데이터셋을 선택하세요." : undefined} type="button" onClick={submitPrompt}><Send size={18} /></button>
+          </div>
+        </footer>
+      </main>
     </section>
   );
 }

@@ -13,7 +13,7 @@ Issue: #471
 UI-only 단계에서 제공하는 것은 다음과 같다.
 
 - Header, empty state, 추천 질문, 대화 thread, 고정 composer
-- 새 대화와 입력값의 in-memory 상태
+- 여러 대화와 입력값의 in-memory 상태
 - Catalog Dataset context 선택 및 선택 표시
 - query 권한이 없는 Dataset 제외
 
@@ -28,27 +28,35 @@ UI-only 단계에서 제공하는 것은 다음과 같다.
 
 화면은 아래 순서를 유지한다.
 
-1. 대화 header: 새 대화와 선택 Dataset context의 진입점
-2. scrollable thread: empty state 또는 사용자 질문/향후 assistant 응답 카드
-3. composer: 추천 질문 chip, textarea, send icon button
+1. compact conversation sidebar: 새 대화 생성과 기존 대화 전환
+2. 대화 header: 선택 Dataset context의 진입점
+3. scrollable thread: empty state 또는 사용자 질문/향후 assistant 응답 카드
+4. composer: 추천 질문 chip, textarea, send icon button
 
 Dataset context는 ChatGPT형 집중 레이아웃을 해치지 않도록 header 또는 composer 상단 chip으로 표현한다. Dataset 탐색은 필요할 때만 여는 compact selector로 제공하며 상시 넓은 우측 패널은 사용하지 않는다.
 
 ## Local State
 
 ```ts
-type AiChatDraft = {
-  messages: Array<{ id: string; role: "user" | "assistant"; content: string }>;
-  prompt: string;
+type Conversation = {
+  id: string;
+  title: string;
+  messages: Array<{ id: string; content: string; contextNames: string[] }>;
+  draftPrompt: string;
   selectedDatasetIds: string[];
-  submissionState: "idle" | "awaiting_runtime";
+  submissionState: "idle" | "runtime_unavailable";
+  createdAt: string;
+  updatedAt: string;
 };
 ```
 
-- `messages`, `prompt`, `selectedDatasetIds`는 화면이 살아 있는 동안에만 유지한다.
-- 질문 전송은 사용자 메시지를 thread에 추가하고 `awaiting_runtime` 상태를 표시할 수 있다.
+- `Conversation[]`와 active conversation ID는 화면이 살아 있는 동안에만 유지한다.
+- 새 대화는 빈 Conversation을 생성하고 active conversation으로 전환한다. 기존 대화는 sidebar 목록에 남는다.
+- 대화 제목은 첫 사용자 질문을 잘라서 사용하며, 첫 질문 전에는 `새 대화`다.
+- 질문 전송은 active conversation의 thread에 사용자 메시지를 추가하고 `runtime_unavailable` 상태를 표시할 수 있다.
 - runtime이 연결되기 전에는 assistant message를 임의로 만들지 않는다.
-- 새 대화는 `messages`, `prompt`, `submissionState`만 초기화하고, 사용자가 고른 Dataset context는 유지한다.
+- Dataset context와 runtime 상태는 Conversation별로 분리한다. 대화를 전환하면 해당 대화의 messages, draft prompt, Dataset context, 상태를 함께 복원한다.
+- 새 대화는 선택 Dataset context를 복사하지 않는다. Dataset context는 새 대화에서 다시 선택한다.
 
 ## Dataset Eligibility
 
@@ -75,6 +83,6 @@ dataset.status === "available" && dataset.permissions?.canQuery !== false
 
 1. AI 활용 메뉴가 ChatGPT형 empty state와 composer를 보여준다.
 2. 사용 가능한 Dataset만 context selector에 표시된다.
-3. Dataset 선택/해제, Enter 전송, Shift+Enter 줄바꿈, 새 대화가 로컬 상태에서 동작한다.
+3. Dataset 선택/해제, Enter 전송, Shift+Enter 줄바꿈, 새 대화 생성과 대화 전환이 로컬 상태에서 동작한다.
 4. backend가 없는 상태에서 가짜 분석 답변이나 근거를 렌더링하지 않는다.
-5. desktop/mobile에서 composer와 message thread가 겹치지 않는다.
+5. keyboard focus, Escape/outside click context close, desktop/mobile에서 composer와 message thread가 겹치지 않는다.
