@@ -44,6 +44,30 @@ class SubmitTrinoQueryRunRequest(CamelModel):
     result_page_size: int | None = Field(default=None, ge=1, le=1000)
 
 
+class QueryRunSubmitRequest(CamelModel):
+    base_dataset_id: str | None = None
+    client_request_id: str | None = None
+    dataset_id: str | None = None
+    limit: int | None = Field(default=None, ge=1, le=500)
+    mode: Literal["preview", "run"] | None = None
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+    result_page_size: int | None = Field(default=None, ge=1, le=1000)
+    validation_key: str | None = None
+
+    def trino_request(self) -> SubmitTrinoQueryRunRequest:
+        base_dataset_id = self.base_dataset_id or self.dataset_id
+        if not base_dataset_id:
+            raise ValueError("baseDatasetId or datasetId is required")
+        return SubmitTrinoQueryRunRequest(
+            baseDatasetId=base_dataset_id,
+            clientRequestId=self.client_request_id,
+            query=self.query,
+            referenceDatasetIds=self.reference_dataset_ids,
+            resultPageSize=self.result_page_size,
+        )
+
+
 class TrinoQueryRunResponse(CamelModel):
     base_dataset_id: str
     completed_at: str | None = None

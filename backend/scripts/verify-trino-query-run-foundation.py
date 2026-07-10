@@ -1,6 +1,6 @@
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
-from app.schemas.trino import SubmitTrinoQueryRunRequest
+from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest
 from app.services.trino_client import parse_trino_page, validate_next_uri
 from app.services.trino_query_run_service import build_run_response
 from app.services.trino_sql_compiler import compile_trino_read_query
@@ -37,6 +37,8 @@ def make_dataset(dataset_id: str, name: str, table: str | None) -> CatalogDatase
 
 
 def verify() -> None:
+    canonical_request = QueryRunSubmitRequest(datasetId="ds_orders", query="SELECT * FROM orders")
+    assert canonical_request.trino_request().base_dataset_id == "ds_orders"
     orders = make_dataset("ds_orders", "orders", "orders_clean")
     customers = make_dataset("ds_customers", "customers", "customers_clean")
     compiled, references = compile_trino_read_query(

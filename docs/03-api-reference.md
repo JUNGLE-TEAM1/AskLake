@@ -47,7 +47,7 @@ TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
-- `TRINO_ENABLED`은 후속 Query Run adapter 전환 전에는 `false`로 유지한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata이며, 현재 DuckDB compatibility runtime의 입력으로 사용하지 않는다.
+- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata다.
 - Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
 
 ## 3) 공통 규칙
