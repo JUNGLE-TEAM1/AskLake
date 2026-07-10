@@ -38,6 +38,7 @@ from app.schemas.etl import (
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
 from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
+from app.services import text_structuring_service
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -45,14 +46,27 @@ ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 
 
-def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
+def create_pipeline(
+    db: Session,
+    request: CreatePipelineRequest,
+    actor: ActorContext | str = "demo-user",
+) -> CreatePipelineResponse:
     validate_create_request(request)
-    created_by = identity_name(request.created_by or actor_name or request.owner)
+    actor_context = actor if isinstance(actor, ActorContext) else ActorContext(name=actor)
+    text_structuring_binding = resolve_text_structuring_binding(db, request, actor_context)
+    created_by = identity_name(request.created_by or actor_context.name or request.owner)
     created_by_profile = request.created_by_profile or identity_profile(created_by)
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
-        update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
+        update_existing_append_job(
+            existing_job,
+            request,
+            dataset_id,
+            created_by,
+            created_by_profile,
+            text_structuring_binding,
+        )
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
             catalog_target={
@@ -108,6 +122,10 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         rag=request.rag,
         transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
         transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
+        text_structuring_spec_id=text_structuring_binding.get("spec_id"),
+        text_structuring_spec_version=text_structuring_binding.get("version"),
+        text_structuring_spec_fingerprint=text_structuring_binding.get("fingerprint"),
+        text_structuring_definition_snapshot=text_structuring_binding.get("definition"),
         quality_invalid_rows=request.quality_invalid_rows,
         quality_rules=[rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules],
         quality_score=request.quality_score,
@@ -507,6 +525,70 @@ def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]
     )
 
 
+def execute_airflow_spark_run(
+    db: Session,
+    job_id: str,
+    run_id: str,
+    command: str,
+) -> dict[str, Any]:
+    job = etl_repository.get_job(db, job_id)
+    run = etl_repository.get_run(db, run_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    if run is None or run.job_id != job_id:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Run not found for job: {run_id}", status.HTTP_404_NOT_FOUND)
+    if run.status == "success" and run.output_path not in {None, "", "-"}:
+        return {
+            "idempotent": True,
+            "inputRows": parse_count_value(run.input_rows),
+            "outputPath": run.output_path,
+            "outputRows": parse_count_value(run.output_rows),
+            "runId": run.run_id,
+            "status": "success",
+        }
+
+    result = run_spark_job(job, command, run_id)
+    completed = run_from_spark_result(job, result)
+    copy_spark_run_result(run, completed)
+    finalize_job_from_spark_result(job, command, result)
+    run_schema = etl_repository.run_to_schema(run)
+    job.dag_steps = dag_steps_from_spark_result(job, command, run_schema.model_dump(by_alias=True), result)
+    job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_id: job.dag_steps}
+    job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
+
+    dataset_model = None
+    if result.get("status") == "success":
+        existing_dataset = etl_repository.get_dataset_by_id(db, job.dataset_id or f"ds_{normalize_column_name(job.target)}")
+        dataset_model = dataset_from_spark_result(job, result, existing_dataset)
+    etl_repository.save_command_result(db, job, run, dataset_model)
+
+    catalog_dataset_ids = []
+    if dataset_model is not None:
+        catalog_dataset_ids.append(dataset_model.id)
+        for artifact_dataset in artifact_datasets_from_spark_result(job, result, dataset_model):
+            existing_artifact = etl_repository.get_dataset_by_id(db, artifact_dataset.id)
+            if existing_artifact is not None:
+                merge_artifact_dataset_history(existing_artifact, artifact_dataset)
+            etl_repository.save_dataset(db, artifact_dataset)
+            catalog_dataset_ids.append(artifact_dataset.id)
+    return {**result, "catalogDatasetIds": catalog_dataset_ids}
+
+
+def copy_spark_run_result(target: ETLRunModel, source: ETLRunModel) -> None:
+    for field in (
+        "status",
+        "started_at",
+        "ended_at",
+        "duration",
+        "input_rows",
+        "output_rows",
+        "output_path",
+        "failed_stage",
+        "error_summary",
+    ):
+        setattr(target, field, getattr(source, field))
+
+
 def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
     submitted_at = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
@@ -575,6 +657,14 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "compression": job.compression,
         "transformOutputColumns": job.transform_output_columns or [],
         "transformSteps": job.transform_steps or [],
+        "textStructuring": {
+            "specRef": {
+                "specId": job.text_structuring_spec_id,
+                "version": job.text_structuring_spec_version,
+                "fingerprint": job.text_structuring_spec_fingerprint,
+            },
+            "definition": job.text_structuring_definition_snapshot,
+        } if job.text_structuring_spec_id and job.text_structuring_definition_snapshot else None,
     }
 
 
@@ -961,6 +1051,125 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
     )
 
 
+def artifact_datasets_from_spark_result(
+    job: ETLJobModel,
+    result: dict[str, Any],
+    main_dataset: CatalogDatasetModel,
+) -> list[CatalogDatasetModel]:
+    artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), list) else []
+    datasets = []
+    for artifact in artifacts:
+        if not isinstance(artifact, dict) or artifact.get("kind") == "main":
+            continue
+        artifact_name = normalize_column_name(artifact.get("name") or artifact.get("kind") or "artifact")
+        if not artifact_name:
+            continue
+        dataset_id = f"{main_dataset.id}__{artifact_name}"
+        dataset_name = f"{job.target}__{artifact_name}"
+        artifact_schema = [
+            [str(field.get("name") or "-"), str(field.get("type") or "string")]
+            for field in artifact.get("schema") or []
+            if isinstance(field, dict)
+        ]
+        artifact_path = str(artifact.get("path") or "-")
+        artifact_kind = str(artifact.get("kind") or "artifact")
+        layer = "BRONZE" if artifact_kind == "quarantine" else job.target_layer
+        row_count = parse_count_value(artifact.get("rows"))
+        storage_size_bytes = dataset_storage_size_bytes(artifact_path)
+        last_updated = str(result.get("endedAt") or iso_now())
+        text_ref = text_structuring_ref_from_job(job)
+        payload = {
+            "artifactKind": artifact_kind,
+            "createdBy": job.created_by or job.owner,
+            "createdByProfile": job.created_by_profile or identity_profile(job.created_by or job.owner),
+            "description": f"{job.target}의 {artifact_name} 텍스트 구조화 산출물",
+            "downstream": ["SQL 분석"],
+            "freshness": "latest",
+            "id": dataset_id,
+            "layer": layer,
+            "lastUpdated": last_updated,
+            "lineageGraph": artifact_lineage_graph(main_dataset, dataset_id, dataset_name, artifact_schema, layer, text_ref),
+            "materializationRuns": [{
+                "createdAt": last_updated,
+                "jobId": job.id,
+                "rowCount": row_count,
+                "runId": str(result.get("runId") or ""),
+                "sourceKind": "etl",
+                "sourceLabel": job.name,
+                "status": "success",
+                "storageLocation": artifact_path,
+                "storageSizeBytes": storage_size_bytes,
+            }],
+            "name": dataset_name,
+            "nextRefresh": job.schedule,
+            "owner": job.owner,
+            "parentDatasetId": main_dataset.id,
+            "permissionGrants": permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "query"]),
+            "permissions": resource_permissions(can_query=True),
+            "quality": "격리 검토 필요" if artifact_kind == "quarantine" else quality_summary_from_spark_result(job, result),
+            "rag": False,
+            "rows": format_rows(row_count),
+            "sampleRows": [],
+            "schema": artifact_schema,
+            "size": format_storage_size(storage_size_bytes) if storage_size_bytes else "Pending",
+            "source": main_dataset.name or job.target,
+            "sourceRunId": result.get("runId"),
+            "status": "available",
+            "storageFormat": "parquet",
+            "storageLocation": artifact_path,
+            "storageSizeBytes": storage_size_bytes,
+            "tags": ["text-structuring", artifact_kind, *target_dataset_tags(job)],
+            "textStructuring": text_ref,
+            "upstream": [main_dataset.id, job.name],
+        }
+        datasets.append(CatalogDatasetModel(
+            id=dataset_id,
+            payload=payload,
+            name=dataset_name,
+            description=payload["description"],
+            owner=job.owner,
+            layer=layer,
+            status="available",
+            freshness="latest",
+            source=payload["source"],
+            rows=payload["rows"],
+            size=payload["size"],
+            quality=payload["quality"],
+            last_updated=last_updated,
+            next_refresh=job.schedule,
+            rag=False,
+            tags=payload["tags"],
+            schema_json=artifact_schema,
+            sample_rows=[],
+            upstream=payload["upstream"],
+            downstream=payload["downstream"],
+            lineage_graph=payload["lineageGraph"],
+        ))
+    return datasets
+
+
+def merge_artifact_dataset_history(
+    existing: CatalogDatasetModel,
+    current: CatalogDatasetModel,
+) -> None:
+    if not existing.payload or not current.payload:
+        return
+    current_runs = current.payload.get("materializationRuns") or []
+    if not current_runs:
+        return
+    runs = append_materialization_run(existing.payload.get("materializationRuns"), current_runs[0])
+    aggregate = aggregate_materialization_runs(runs)
+    current.payload["materializationRuns"] = runs
+    current.payload["lastUpdated"] = aggregate["lastUpdated"] or current.payload.get("lastUpdated")
+    current.payload["rows"] = format_rows(aggregate["rowCount"])
+    current.payload["size"] = format_storage_size(aggregate["storageSizeBytes"]) if aggregate["storageSizeBytes"] else "Pending"
+    current.payload["sourceRunId"] = aggregate["latestRunId"]
+    current.payload["storageSizeBytes"] = aggregate["storageSizeBytes"]
+    current.rows = current.payload["rows"]
+    current.size = current.payload["size"]
+    current.last_updated = current.payload["lastUpdated"]
+
+
 def dataset_payload_from_spark_result(
     job: ETLJobModel,
     result: dict[str, Any],
@@ -972,6 +1181,7 @@ def dataset_payload_from_spark_result(
     output_path = str(result.get("outputPath") or "-")
     storage_size_bytes = dataset_storage_size_bytes(output_path)
     display_size = format_storage_size(storage_size_bytes) if storage_size_bytes > 0 else "Pending"
+    artifacts = [artifact for artifact in (result.get("artifacts") or []) if isinstance(artifact, dict)]
     lineage_graph = etl_dataset_lineage_graph(job, dataset_id, schema_json)
     partition_columns = normalize_string_list(job.partition_columns)
     index_columns = normalize_string_list(job.index_columns)
@@ -993,6 +1203,7 @@ def dataset_payload_from_spark_result(
     aggregate = aggregate_materialization_runs(materialization_runs)
     return {
         "description": target_dataset_description(job),
+        "artifacts": artifacts,
         "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
         "freshness": "latest",
         "id": dataset_id,
@@ -1023,6 +1234,7 @@ def dataset_payload_from_spark_result(
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
+        "textStructuring": text_structuring_ref_from_job(job),
         "upstream": [job.source_label, job.name],
     }
 
@@ -1033,6 +1245,7 @@ def update_existing_append_job(
     dataset_id: str,
     created_by: str,
     created_by_profile: dict[str, Any],
+    text_structuring_binding: dict[str, Any],
 ) -> None:
     dataset_schema = dataset_schema_from_request(request)
     sample_rows = dataset_sample_rows_from_request(request, dataset_schema)
@@ -1070,6 +1283,10 @@ def update_existing_append_job(
     job.rag = request.rag
     job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
     job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
+    job.text_structuring_spec_id = text_structuring_binding.get("spec_id")
+    job.text_structuring_spec_version = text_structuring_binding.get("version")
+    job.text_structuring_spec_fingerprint = text_structuring_binding.get("fingerprint")
+    job.text_structuring_definition_snapshot = text_structuring_binding.get("definition")
     job.quality_invalid_rows = request.quality_invalid_rows
     job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
     job.quality_score = request.quality_score
@@ -1136,7 +1353,11 @@ def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: li
         schema_json,
         "SOURCE",
     )
-    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "BRONZE", schema_json, "SPARK")
+    text_ref = text_structuring_ref_from_job(job)
+    engine = "SPARK / TEXT_STRUCTURING" if text_ref else "SPARK"
+    job_node = lineage_node(normalize_lineage_id(job.id), job.name, "BRONZE", schema_json, engine)
+    if text_ref:
+        job_node["textStructuring"] = text_ref
     target_node = lineage_node(dataset_id, job.target, job.target_layer or "RAW", schema_json, "ICEBERG")
     return {
         "datasetId": dataset_id,
@@ -1145,6 +1366,51 @@ def etl_dataset_lineage_graph(job: ETLJobModel, dataset_id: str, schema_json: li
             *lineage_edges_between(source_node, job_node),
             *lineage_edges_between(job_node, target_node),
         ],
+    }
+
+
+def artifact_lineage_graph(
+    main_dataset: CatalogDatasetModel,
+    artifact_id: str,
+    artifact_name: str,
+    artifact_schema: list[list[str]],
+    layer: str,
+    text_ref: dict[str, Any] | None,
+) -> dict[str, Any]:
+    main_node = lineage_node(
+        main_dataset.id,
+        main_dataset.name or main_dataset.id,
+        main_dataset.layer or "RAW",
+        main_dataset.schema_json or [],
+        "PARQUET",
+    )
+    artifact_node = lineage_node(artifact_id, artifact_name, layer, artifact_schema, "TEXT_STRUCTURING")
+    if text_ref:
+        artifact_node["textStructuring"] = text_ref
+    edges = lineage_edges_between(main_node, artifact_node)
+    source_id = next((column for column in main_node.get("columns", []) if column.get("name") == "_asklake_source_row_id"), None)
+    target_id = next((column for column in artifact_node.get("columns", []) if column.get("name") == "_asklake_source_row_id"), None)
+    if source_id and target_id:
+        edges = [{
+            "fromColumnId": str(source_id["id"]),
+            "fromDatasetId": str(main_node["id"]),
+            "toColumnId": str(target_id["id"]),
+            "toDatasetId": str(artifact_node["id"]),
+        }]
+    return {
+        "datasetId": artifact_id,
+        "datasets": [main_node, artifact_node],
+        "edges": edges,
+    }
+
+
+def text_structuring_ref_from_job(job: ETLJobModel) -> dict[str, Any] | None:
+    if not job.text_structuring_spec_id or not job.text_structuring_spec_version or not job.text_structuring_spec_fingerprint:
+        return None
+    return {
+        "fingerprint": job.text_structuring_spec_fingerprint,
+        "specId": job.text_structuring_spec_id,
+        "version": job.text_structuring_spec_version,
     }
 
 
@@ -1351,6 +1617,23 @@ def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
         if line.startswith(prefix):
             return json.loads(line[len(prefix):])
     return None
+
+
+def resolve_text_structuring_binding(
+    db: Session,
+    request: CreatePipelineRequest,
+    actor: ActorContext,
+) -> dict[str, Any]:
+    spec_ref = request.text_structuring_spec_ref
+    if spec_ref is None:
+        return {}
+    definition, version = text_structuring_service.resolve_published_spec_ref(db, spec_ref, actor)
+    return {
+        "spec_id": version.spec_id,
+        "version": version.version,
+        "fingerprint": version.fingerprint,
+        "definition": definition.model_dump(mode="json", by_alias=True),
+    }
 
 
 def validate_create_request(request: CreatePipelineRequest) -> None:

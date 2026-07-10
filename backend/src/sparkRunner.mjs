@@ -28,6 +28,13 @@ export function runSparkPipeline(job, command, runId) {
   const output = sparkOutputPath(job, runId);
   const reportPath = path.join(reportDir, `${runId}.json`);
   const dockerReportPath = `${reportContainerDir}/${runId}.json`;
+  const manifestPath = path.join(reportDir, `${runId}.manifest.json`);
+  const dockerManifestPath = `${reportContainerDir}/${runId}.manifest.json`;
+  writeFileSync(manifestPath, `${JSON.stringify({
+    manifestVersion: "asklake-spark-job-v2",
+    runId,
+    textStructuring: job.textStructuring ? { ...job.textStructuring, jobId: job.id } : null,
+  }, null, 2)}\n`, "utf8");
   const packageArgs = sparkPackageArgs(source, output);
   const localLlmEndpoint = process.env.ASKLAKE_LOCAL_LLM_ENDPOINT_IN_DOCKER
     || process.env.ASKLAKE_LOCAL_LLM_ENDPOINT
@@ -35,7 +42,14 @@ export function runSparkPipeline(job, command, runId) {
   const localLlmModel = process.env.ASKLAKE_LOCAL_LLM_MODEL || "local-review-analyzer";
   const localLlmTimeoutSeconds = process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS
     || String(Math.ceil(Number(process.env.ASKLAKE_LOCAL_LLM_TIMEOUT_MS || 120000) / 1000));
-  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "local_llm";
+  const reviewAnalysisRuntime = process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable";
+  const textStructuringBatchUrl = process.env.ASKLAKE_TEXT_STRUCTURING_BATCH_URL_IN_DOCKER
+    || process.env.ASKLAKE_TEXT_STRUCTURING_BATCH_URL
+    || process.env.TEXT_STRUCTURING_BATCH_URL
+    || "http://host.docker.internal:8080/api/internal/text-structuring/batch";
+  const textStructuringInternalToken = process.env.ASKLAKE_TEXT_STRUCTURING_INTERNAL_TOKEN
+    || process.env.TEXT_STRUCTURING_INTERNAL_TOKEN
+    || "";
   const dockerArgs = [
     "run",
     "--rm",
@@ -80,6 +94,8 @@ export function runSparkPipeline(job, command, runId) {
     "-e",
     `ASKLAKE_SPARK_REPORT_FILE=${dockerReportPath}`,
     "-e",
+    `ASKLAKE_SPARK_JOB_MANIFEST=${dockerManifestPath}`,
+    "-e",
     `ASKLAKE_SPARK_APP_NAME=asklake-${command}-${job.id}`,
     "-e",
     `ASKLAKE_LOCAL_LLM_ENDPOINT=${localLlmEndpoint}`,
@@ -91,6 +107,10 @@ export function runSparkPipeline(job, command, runId) {
     `ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
     "-e",
     `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
+    "-e",
+    `ASKLAKE_TEXT_STRUCTURING_BATCH_URL=${textStructuringBatchUrl}`,
+    "-e",
+    `ASKLAKE_TEXT_STRUCTURING_INTERNAL_TOKEN=${textStructuringInternalToken}`,
     "-e",
     "HOME=/tmp",
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
@@ -109,6 +129,10 @@ export function runSparkPipeline(job, command, runId) {
     `spark.executorEnv.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS=${process.env.ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS || "9000"}`,
     "--conf",
     `spark.executorEnv.ASKLAKE_REVIEW_ANALYSIS_RUNTIME=${reviewAnalysisRuntime}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_TEXT_STRUCTURING_BATCH_URL=${textStructuringBatchUrl}`,
+    "--conf",
+    `spark.executorEnv.ASKLAKE_TEXT_STRUCTURING_INTERNAL_TOKEN=${textStructuringInternalToken}`,
     ...packageArgs,
     "/work/scripts/spark_job_run.py",
   ];
@@ -122,6 +146,7 @@ export function runSparkPipeline(job, command, runId) {
   }
   if (report.status === "success") {
     copySparkOutputToHost(output);
+    copySparkArtifactsToHost(output, report.artifacts);
   }
   if (report.status !== "success") {
     return {
@@ -378,11 +403,38 @@ function readSparkReport(reportPath, stdout) {
 
 function normalizeSparkReport(report, output) {
   if (!report || typeof report !== "object") return report;
+  const artifacts = Array.isArray(report.artifacts)
+    ? report.artifacts.map((artifact) => {
+      const artifactPath = String(artifact?.path || "");
+      return {
+        ...artifact,
+        path: artifactPath.startsWith(output.sparkPath)
+          ? `${output.displayPath}${artifactPath.slice(output.sparkPath.length)}`
+          : artifactPath,
+      };
+    })
+    : report.artifacts;
   return {
     ...report,
+    artifacts,
     outputPath: report.outputPath === output.sparkPath ? output.displayPath : report.outputPath,
     sparkOutputPath: output.sparkPath,
   };
+}
+
+function copySparkArtifactsToHost(output, artifacts) {
+  if (!output.relativePath || !output.hostPath || !Array.isArray(artifacts)) return;
+  for (const artifact of artifacts) {
+    const artifactPath = String(artifact?.path || "");
+    if (!artifactPath.startsWith(output.displayPath)) continue;
+    const suffix = artifactPath.slice(output.displayPath.length);
+    if (!suffix) continue;
+    copySparkOutputToHost({
+      ...output,
+      hostPath: `${output.hostPath}${suffix}`,
+      relativePath: `${output.relativePath}${suffix}`,
+    });
+  }
 }
 
 function copySparkOutputToHost(output) {

@@ -809,6 +809,13 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["검토 필요", "3개 필드"],
     ["다음 단계", "룰 적용"],
   ],
+  structuring: [
+    ["원문 컬럼", "text"],
+    ["출력 필드", "3개"],
+    ["관점 테이블", "1개"],
+    ["Preview", "검토 필요"],
+    ["다음 단계", "스케줄"],
+  ],
   rules: [
     ["활성 규칙", "5개"],
     ["영향 컬럼", "12/48"],

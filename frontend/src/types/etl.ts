@@ -1,5 +1,6 @@
 import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
+import type { TextStructuringDefinition, TextStructuringDraft, TextStructuringSpecRef } from "./textStructuring";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
@@ -38,6 +39,8 @@ export type JobRowData = {
   targetPath?: string;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
+  textStructuringSpecRef?: TextStructuringSpecRef;
+  textStructuringDefinitionSnapshot?: TextStructuringDefinition;
   qualityInvalidRows?: string[][];
   qualityRules?: QualityRuleDraft[];
   qualityScore?: number;
@@ -92,6 +95,7 @@ export type SchemaColumnDraft = {
   included?: boolean;
   nullable: boolean;
   reviewAnalysisMethod?: string;
+  reviewAnalysisInstruction?: string;
   role?: string;
   sourceName: string;
   targetName: string;
@@ -247,6 +251,7 @@ export type DraftPipeline = {
   source: SourceDraft;
   target: TargetDraft;
   transform: TransformDraft;
+  textStructuring: TextStructuringDraft;
 };
 
 export type CreatePipelineRequest = {
@@ -262,6 +267,7 @@ export type CreatePipelineRequest = {
   ruleSummary: string;
   transformOutputColumns: Array<[string, string]>;
   transformSteps: TransformStepDraft[];
+  textStructuringSpecRef?: TextStructuringSpecRef;
   qualityInvalidRows: string[][];
   qualityRules: QualityRuleDraft[];
   qualityScore?: number;
@@ -306,6 +312,7 @@ export type DraftPipelineSlicePatch = {
   source?: Partial<SourceDraft>;
   target?: Partial<TargetDraft>;
   transform?: Partial<TransformDraft>;
+  textStructuring?: Partial<TextStructuringDraft>;
 };
 
 export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;

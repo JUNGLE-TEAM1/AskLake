@@ -40,7 +40,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Catalog 목록/상세/lineage fallback
 - Dataset 범위의 read-only SQL preview
 - SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
-- 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
+- 수집/처리 Transform은 일반 필드 매핑/quick function과 별개로 `텍스트 구조화` 단계를 제공한다. 사용자는 원문 컬럼, 자유 출력 컬럼, 허용 라벨, 반복 관점 그룹을 정의하고 실제 샘플 Preview를 통과한 버전 명세를 Job에 연결한다.
 - SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
 - Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
 - 감사 로그와 toast feedback
@@ -79,12 +79,14 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ### Flow A. 수집/처리 생성
 
-1. 사용자는 source, schema, rule, schedule, permission, target을 설정한다.
-2. 시스템은 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
-3. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
-4. 사용자가 Job을 실행한다.
-5. 실행이 성공하면 Run, DAG, Catalog dataset이 같은 run 결과 기준으로 갱신된다.
-6. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
+1. 사용자는 source와 schema를 확정한다.
+2. 비정형 텍스트를 가공할 때는 `텍스트 구조화`에서 출력 필드와 반복 관점 그룹을 Preview하고 명세 버전을 게시한다. 사용하지 않을 수도 있다.
+3. 사용자는 rule, schedule, permission, target을 설정한다.
+4. 시스템은 게시된 텍스트 명세 참조를 포함한 draft를 검증하고 `POST /api/etl/jobs` request로 만든다.
+5. 성공 시 Job이 목록에 추가되고 Catalog target은 pending 상태로 안내된다.
+6. 사용자가 Job을 실행한다.
+7. 실행이 성공하면 Run, DAG, main dataset, 반복 관점 dataset이 같은 run 결과 기준으로 갱신된다. 오류 행은 quarantine artifact로 분리된다.
+8. 실패하면 toast와 audit log에 실패 기록을 남기고 optimistic 상태를 되돌린다.
 
 ### Flow B. 카탈로그에서 SQL 분석
 

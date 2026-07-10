@@ -1,7 +1,7 @@
 import { BarChart3, BookOpen, Bot, Database, Settings, TerminalSquare } from "lucide-react";
 import type { FlowId, NavItem } from "../types";
 
-export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검토"];
+export const steps = ["소스", "스키마", "텍스트 구조화", "스케줄", "권한", "타겟", "검토"];
 
 export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> = [
   { id: "jobs", label: "작업 목록", stepIndex: 0 },
@@ -10,13 +10,14 @@ export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> =
   { id: "jobRuns", label: "실행 이력", stepIndex: 0 },
   { id: "source", label: "소스 연결", stepIndex: 0 },
   { id: "schema", label: "스키마 확인", stepIndex: 1 },
+  { id: "structuring", label: "텍스트 구조화", stepIndex: 2 },
   { id: "rules", label: "변환 규칙", stepIndex: 1 },
-  { id: "repeat", label: "반복 실행", stepIndex: 2 },
-  { id: "manual", label: "수동 실행", stepIndex: 2 },
-  { id: "once", label: "1회 실행", stepIndex: 2 },
-  { id: "target", label: "타겟 설정", stepIndex: 4 },
-  { id: "permission", label: "권한 설정", stepIndex: 3 },
-  { id: "review", label: "검토 및 생성", stepIndex: 5 },
+  { id: "repeat", label: "반복 실행", stepIndex: 3 },
+  { id: "manual", label: "수동 실행", stepIndex: 3 },
+  { id: "once", label: "1회 실행", stepIndex: 3 },
+  { id: "target", label: "타겟 설정", stepIndex: 5 },
+  { id: "permission", label: "권한 설정", stepIndex: 4 },
+  { id: "review", label: "검토 및 생성", stepIndex: 6 },
   { id: "login", label: "로그인", stepIndex: 0 },
 ];
 
@@ -29,9 +30,9 @@ export const navItems = [
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
-export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "repeat", "manual", "target", "permission", "review"];
+export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "structuring", "repeat", "manual", "target", "permission", "review"];
 export const jobManagerFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns"];
-export const wizardFlows: FlowId[] = ["source", "schema", "repeat", "manual", "permission", "target", "review"];
+export const wizardFlows: FlowId[] = ["source", "schema", "structuring", "repeat", "manual", "permission", "target", "review"];
 
 export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
   jobs: [
@@ -81,6 +82,13 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["출력 필드", "0개"],
     ["평균 Confidence", "-"],
     ["검토 필요", "-"],
+    ["다음 단계", "스케줄"],
+  ],
+  structuring: [
+    ["원문 컬럼", "선택 전"],
+    ["출력 필드", "0개"],
+    ["관점 테이블", "설정 전"],
+    ["Preview", "실행 전"],
     ["다음 단계", "스케줄"],
   ],
   rules: [

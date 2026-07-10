@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -43,6 +43,10 @@ class ETLJobModel(TimestampMixin, Base):
     rag: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     transform_output_columns: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     transform_steps: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    text_structuring_spec_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    text_structuring_spec_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_structuring_spec_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    text_structuring_definition_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quality_invalid_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     quality_rules: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)

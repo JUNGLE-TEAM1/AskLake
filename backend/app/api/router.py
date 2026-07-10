@@ -12,6 +12,7 @@ from app.api.harness import router as harness_router
 from app.api.health import router as health_router
 from app.api.sql import router as sql_router
 from app.api.sql_test import router as sql_test_router
+from app.api.text_structuring import router as text_structuring_router
 from app.api.users import router as users_router
 
 api_router = APIRouter()
@@ -24,6 +25,7 @@ api_router.include_router(etl_router)
 api_router.include_router(catalog_router)
 api_router.include_router(sql_router)
 api_router.include_router(sql_test_router)
+api_router.include_router(text_structuring_router)
 api_router.include_router(dashboard_card_router)
 api_router.include_router(dashboard_runtime_router)
 api_router.include_router(dashboard_assistant_router)

@@ -119,6 +119,13 @@ function normalizeInitialDraftPipeline(draft: DraftPipeline): DraftPipeline {
       steps: [],
       summary: "변환 규칙을 설정하세요.",
     },
+    textStructuring: {
+      enabled: false,
+      previewRows: [],
+      specName: "",
+      status: "idle",
+      warnings: [],
+    },
   };
 }
 
@@ -186,6 +193,13 @@ const initialDraftPipeline: DraftPipeline = normalizeInitialDraftPipeline({
     outputColumns: [],
     steps: [],
     summary: "변환 규칙과 품질 검사를 설정하세요.",
+  },
+  textStructuring: {
+    enabled: false,
+    previewRows: [],
+    specName: "",
+    status: "idle",
+    warnings: [],
   },
 });
 
@@ -1055,7 +1069,12 @@ export function useAskLakeData({
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
-      showToast(error instanceof ApiError && error.status === 403 ? permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리") : "작업 명령 처리에 실패했습니다.", "info");
+      const failureMessage = error instanceof ApiError
+        ? error.status === 403
+          ? permissionDeniedMessage("작업", command === "run" || command === "retry" ? "실행" : "관리")
+          : error.message || "작업 명령 처리에 실패했습니다."
+        : "작업 명령 처리에 실패했습니다.";
+      showToast(failureMessage, "info");
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {

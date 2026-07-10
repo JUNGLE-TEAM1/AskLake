@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-import time
+import json
+import os
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import pendulum
 
@@ -11,11 +14,34 @@ except ImportError:  # Airflow 2 compatibility for local fallback environments.
     from airflow.decorators import dag, task
 
 
-def sleep_seconds(conf: dict[str, Any], key: str, default: int) -> int:
+def execute_spark_via_asklake(conf: dict[str, Any]) -> dict[str, Any]:
+    base_url = os.environ.get(
+        "ASKLAKE_BACKEND_INTERNAL_URL",
+        "http://host.docker.internal:8080/api",
+    ).rstrip("/")
+    job_id = str(conf["jobId"])
+    run_id = str(conf["runId"])
+    request = Request(
+        f"{base_url}/etl/internal/jobs/{job_id}/runs/{run_id}/spark",
+        data=json.dumps({"command": conf.get("command") or "run"}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-AskLake-Airflow-Token": os.environ.get("ASKLAKE_BACKEND_INTERNAL_TOKEN", ""),
+        },
+        method="POST",
+    )
+    timeout = max(30, int(os.environ.get("ASKLAKE_BACKEND_INTERNAL_TIMEOUT_SECONDS", "1800")))
     try:
-        return max(0, min(int(conf.get(key, default)), 60))
-    except (TypeError, ValueError):
-        return default
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace")[:4000]
+        raise RuntimeError(f"AskLake Spark callback returned HTTP {exc.code}: {body}") from exc
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"AskLake Spark callback failed: {exc}") from exc
+    if payload.get("status") != "success":
+        raise RuntimeError(str(payload.get("error") or "AskLake Spark execution failed."))
+    return payload
 
 
 @dag(
@@ -23,7 +49,7 @@ def sleep_seconds(conf: dict[str, Any], key: str, default: int) -> int:
     schedule=None,
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["asklake", "smoke"],
+    tags=["asklake", "spark", "etl"],
     is_paused_upon_creation=False,
 )
 def asklake_etl_job() -> None:
@@ -34,40 +60,41 @@ def asklake_etl_job() -> None:
         job_id = conf.get("jobId")
         if not run_id or not job_id:
             raise ValueError("AskLake DAG Run conf must include jobId and runId.")
-        time.sleep(sleep_seconds(conf, "smokeReceiveSeconds", 2))
         return conf
 
     @task(task_id="spark_source_read")
     def spark_source_read(conf: dict[str, Any]) -> dict[str, Any]:
-        time.sleep(sleep_seconds(conf, "smokeReadSeconds", 6))
+        job = conf.get("job") if isinstance(conf.get("job"), dict) else {}
+        if not job.get("sourceType") or not job.get("schemaColumns"):
+            raise ValueError("AskLake job manifest requires sourceType and schemaColumns.")
         return {
             "conf": conf,
-            "inputRows": len(conf.get("job", {}).get("schemaSampleRows") or []) or 10,
+            "manifestValidated": True,
         }
 
     @task(task_id="transform_quality_write")
     def transform_quality_write(payload: dict[str, Any]) -> dict[str, Any]:
         conf = payload["conf"]
-        time.sleep(sleep_seconds(conf, "smokeProcessSeconds", 8))
         if conf.get("forceFail"):
-            raise RuntimeError("AskLake smoke forced failure from dag_run.conf.forceFail.")
+            raise RuntimeError("AskLake forced failure from dag_run.conf.forceFail.")
         return {
             **payload,
-            "outputRows": payload.get("inputRows", 0),
-            "outputPath": f"airflow-smoke://{conf.get('jobId')}/{conf.get('runId')}",
+            "sparkResult": execute_spark_via_asklake(conf),
         }
 
     @task(task_id="catalog_update")
     def catalog_update(payload: dict[str, Any]) -> dict[str, Any]:
         conf = payload["conf"]
-        time.sleep(sleep_seconds(conf, "smokeCatalogSeconds", 3))
+        result = payload["sparkResult"]
         return {
             "jobId": conf.get("jobId"),
             "runId": conf.get("runId"),
-            "status": "success",
-            "outputPath": payload.get("outputPath"),
-            "inputRows": payload.get("inputRows"),
-            "outputRows": payload.get("outputRows"),
+            "status": result.get("status"),
+            "outputPath": result.get("outputPath"),
+            "inputRows": result.get("inputRows"),
+            "outputRows": result.get("outputRows"),
+            "catalogDatasetIds": result.get("catalogDatasetIds") or [],
+            "artifacts": result.get("artifacts") or [],
         }
 
     catalog_update(transform_quality_write(spark_source_read(receive_asklake_run())))

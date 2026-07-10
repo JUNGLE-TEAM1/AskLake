@@ -5,6 +5,7 @@ import time
 import hashlib
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 from pyspark.sql import SparkSession
@@ -40,6 +41,7 @@ REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
     "evidence_span": "instruction",
 }
 REVIEW_ROW_ANALYSIS_LLM_CACHE = {}
+TEXT_STRUCTURING_CACHE = OrderedDict()
 
 
 def main():
@@ -60,6 +62,8 @@ def main():
         schema_columns = load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         transform_steps = load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
+        job_manifest = load_json_file(os.environ.get("ASKLAKE_SPARK_JOB_MANIFEST"), {})
+        text_structuring = job_manifest.get("textStructuring") if isinstance(job_manifest, dict) else None
         spark = make_spark()
         source_df = read_source(spark, source_format, source_path, schema_columns)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
@@ -67,7 +71,24 @@ def main():
         normalized_df = normalize_columns(working_df)
         contracted_df = apply_schema_contract(normalized_df, schema_columns, transform_steps)
         transformed_df = apply_transform_steps(spark, contracted_df, transform_steps)
-        output_frame = select_final_schema_columns(transformed_df, schema_columns).cache()
+        selected_df = select_final_schema_columns(transformed_df, schema_columns)
+        repeated_frames = []
+        quarantine_frame = None
+        if text_structuring:
+            structured_df = apply_text_structuring_partition_batches(
+                spark,
+                selected_df,
+                text_structuring,
+                run_id,
+            ).cache()
+            structured_df.count()
+            output_frame, repeated_frames, quarantine_frame = split_text_structuring_artifacts(
+                structured_df,
+                text_structuring.get("definition") or {},
+            )
+        else:
+            output_frame = selected_df
+        output_frame = output_frame.cache()
         output_frame.count()
         quality = evaluate_quality_rules(output_frame, quality_rules)
         classifier_checks = evaluate_custom_csv_classifier_checks(output_frame, transform_steps)
@@ -76,6 +97,11 @@ def main():
         review_analysis_checks = evaluate_review_row_analysis_checks(output_frame, transform_steps)
         if review_analysis_checks:
             quality["reviewRowAnalysisChecks"] = review_analysis_checks
+        if text_structuring:
+            quality["textStructuring"] = text_structuring_quality_summary(
+                structured_df,
+                text_structuring,
+            )
         if quality["status"] == "fail":
             ended_at = now_iso()
             result = {
@@ -103,8 +129,28 @@ def main():
         )
         output_df.write.mode("overwrite").parquet(output_path)
         output_rows = spark.read.parquet(output_path).count()
+        artifacts = [artifact_report("main", "main", output_path, output_df, output_rows)]
+        for group_name, repeated_frame in repeated_frames:
+            repeated_path = artifact_output_path(output_path, group_name)
+            repeated_output = repeated_frame.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
+                "_asklake_ingested_at",
+                F.current_timestamp(),
+            )
+            repeated_output.write.mode("overwrite").parquet(repeated_path)
+            repeated_rows = spark.read.parquet(repeated_path).count()
+            artifacts.append(artifact_report("repeated_group", group_name, repeated_path, repeated_output, repeated_rows))
+        if quarantine_frame is not None:
+            quarantine_path = artifact_output_path(output_path, "quarantine")
+            quarantine_output = quarantine_frame.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
+                "_asklake_ingested_at",
+                F.current_timestamp(),
+            )
+            quarantine_output.write.mode("overwrite").parquet(quarantine_path)
+            quarantine_rows = spark.read.parquet(quarantine_path).count()
+            artifacts.append(artifact_report("quarantine", "quarantine", quarantine_path, quarantine_output, quarantine_rows))
         ended_at = now_iso()
         result = {
+            "artifacts": artifacts,
             "durationMs": int(time.time() * 1000) - started_ms,
             "endedAt": ended_at,
             "format": source_format,
@@ -150,6 +196,400 @@ def main():
     finally:
         if spark is not None:
             spark.stop()
+
+
+def apply_text_structuring_partition_batches(spark, frame, text_structuring, run_id):
+    definition = text_structuring.get("definition") if isinstance(text_structuring, dict) else None
+    spec_ref = text_structuring.get("specRef") if isinstance(text_structuring, dict) else None
+    if not isinstance(definition, dict) or not isinstance(spec_ref, dict):
+        raise ValueError("Text structuring manifest requires definition and specRef.")
+    fingerprint = str(spec_ref.get("fingerprint") or "").strip()
+    if not fingerprint:
+        raise ValueError("Text structuring manifest fingerprint is missing.")
+
+    prepared = ensure_text_structuring_source_row_id(frame)
+    output_schema = text_structuring_output_schema(prepared.schema, definition)
+    batch_size = max(1, min(int((definition.get("routingPolicy") or {}).get("batchSize") or 32), 512))
+    on_error = str((definition.get("routingPolicy") or {}).get("onError") or "quarantine")
+    job_id = str(text_structuring.get("jobId") or "") or None
+
+    def map_partition(rows):
+        return structure_text_partition(
+            rows,
+            definition=definition,
+            spec_ref=spec_ref,
+            run_id=run_id,
+            job_id=job_id,
+            batch_size=batch_size,
+            on_error=on_error,
+        )
+
+    return spark.createDataFrame(prepared.rdd.mapPartitions(map_partition), schema=output_schema)
+
+
+def ensure_text_structuring_source_row_id(frame):
+    if "_asklake_source_row_id" in frame.columns:
+        return frame
+    payload_columns = [F.col(quote_identifier(name)).alias(name) for name in sorted(frame.columns)]
+    row_hash = F.sha2(F.to_json(F.struct(*payload_columns)), 256)
+    unique_suffix = F.monotonically_increasing_id().cast("string")
+    return frame.withColumn(
+        "_asklake_source_row_id",
+        F.concat(F.lit("row_"), row_hash, F.lit("_"), unique_suffix),
+    )
+
+
+def text_structuring_output_schema(base_schema, definition):
+    output_fields = definition.get("fields") if isinstance(definition.get("fields"), list) else []
+    repeated_groups = definition.get("repeatedGroups") if isinstance(definition.get("repeatedGroups"), list) else []
+    reserved = {
+        str(field.get("targetName") or "")
+        for field in output_fields
+        if isinstance(field, dict) and field.get("targetName")
+    }
+    reserved.update(
+        str(group.get("targetName") or "")
+        for group in repeated_groups
+        if isinstance(group, dict) and group.get("targetName")
+    )
+    reserved.update({
+        "_asklake_review_required",
+        "_asklake_review_reasons",
+        "_asklake_route",
+        "_asklake_error",
+        "_asklake_spec_fingerprint",
+    })
+    fields = [field for field in base_schema.fields if field.name not in reserved]
+    for field in output_fields:
+        if not isinstance(field, dict) or not field.get("targetName"):
+            continue
+        fields.append(T.StructField(str(field["targetName"]), spark_type_for_text_field(field), True))
+    for group in repeated_groups:
+        if not isinstance(group, dict) or not group.get("targetName"):
+            continue
+        children = group.get("fields") if isinstance(group.get("fields"), list) else []
+        item_schema = T.StructType([
+            T.StructField(str(field.get("targetName")), spark_type_for_text_field(field), True)
+            for field in children
+            if isinstance(field, dict) and field.get("targetName")
+        ])
+        fields.append(T.StructField(str(group["targetName"]), T.ArrayType(item_schema, True), True))
+    fields.extend([
+        T.StructField("_asklake_review_required", T.BooleanType(), False),
+        T.StructField("_asklake_review_reasons", T.ArrayType(T.StringType(), False), False),
+        T.StructField("_asklake_route", T.StringType(), False),
+        T.StructField("_asklake_error", T.StringType(), True),
+        T.StructField("_asklake_spec_fingerprint", T.StringType(), False),
+    ])
+    return T.StructType(fields)
+
+
+def spark_type_for_text_field(field):
+    task = str(field.get("task") or "")
+    output_type = str(field.get("outputType") or "string").lower()
+    if task == "multi_label":
+        return T.ArrayType(T.StringType(), False)
+    if task == "boolean" or output_type in {"bool", "boolean"}:
+        return T.BooleanType()
+    if task == "extract_scalar" or any(token in output_type for token in ("int", "float", "double", "decimal", "number")):
+        return T.DoubleType()
+    return T.StringType()
+
+
+def structure_text_partition(rows, *, definition, spec_ref, run_id, job_id, batch_size, on_error):
+    batch = []
+    for row in rows:
+        batch.append(row.asDict(recursive=True))
+        if len(batch) >= batch_size:
+            yield from structure_text_batch(
+                batch,
+                definition=definition,
+                spec_ref=spec_ref,
+                run_id=run_id,
+                job_id=job_id,
+                on_error=on_error,
+            )
+            batch = []
+    if batch:
+        yield from structure_text_batch(
+            batch,
+            definition=definition,
+            spec_ref=spec_ref,
+            run_id=run_id,
+            job_id=job_id,
+            on_error=on_error,
+        )
+
+
+def structure_text_batch(batch, *, definition, spec_ref, run_id, job_id, on_error):
+    fingerprint = str(spec_ref.get("fingerprint") or "")
+    source_fields = definition.get("sourceFields") if isinstance(definition.get("sourceFields"), list) else []
+    results_by_id = {}
+    uncached_rows = []
+    cache_keys = {}
+    for row in batch:
+        source_row_id = str(row.get("_asklake_source_row_id") or "")
+        cache_payload = {field: row.get(field) for field in source_fields}
+        cache_key = hashlib.sha256(
+            f"{fingerprint}:{json.dumps(cache_payload, ensure_ascii=False, sort_keys=True, default=str)}".encode("utf-8")
+        ).hexdigest()
+        cache_keys[source_row_id] = cache_key
+        cached = text_structuring_cache_get(cache_key)
+        if cached is not None:
+            results_by_id[source_row_id] = {**cached, "sourceRowId": source_row_id}
+        else:
+            uncached_rows.append({**row, "sourceRowId": source_row_id})
+
+    if uncached_rows:
+        try:
+            response = call_text_structuring_batch_api(
+                definition=definition,
+                spec_ref=spec_ref,
+                rows=uncached_rows,
+                run_id=run_id,
+                job_id=job_id,
+            )
+            response_rows = response.get("rows") if isinstance(response, dict) else None
+            if not isinstance(response_rows, list):
+                raise ValueError("Text structuring batch response did not contain rows.")
+            for result in response_rows:
+                if not isinstance(result, dict):
+                    continue
+                source_row_id = str(result.get("sourceRowId") or "")
+                if not source_row_id:
+                    continue
+                results_by_id[source_row_id] = result
+                cache_key = cache_keys.get(source_row_id)
+                if cache_key:
+                    text_structuring_cache_put(cache_key, {key: value for key, value in result.items() if key != "sourceRowId"})
+        except Exception as exc:
+            if on_error == "fail":
+                raise
+            error = truncate_text(str(exc), 1000)
+            for row in batch:
+                source_row_id = str(row.get("_asklake_source_row_id") or "")
+                if source_row_id not in results_by_id:
+                    results_by_id[source_row_id] = text_structuring_error_result(
+                        definition,
+                        source_row_id,
+                        error,
+                        on_error,
+                    )
+
+    for row in batch:
+        source_row_id = str(row.get("_asklake_source_row_id") or "")
+        result = results_by_id.get(source_row_id)
+        if result is None:
+            if on_error == "fail":
+                raise ValueError(f"Text structuring response omitted row {source_row_id}.")
+            result = text_structuring_error_result(
+                definition,
+                source_row_id,
+                "Text structuring response omitted this row.",
+                on_error,
+            )
+        yield merge_text_structuring_result(row, result, definition, fingerprint)
+
+
+def call_text_structuring_batch_api(*, definition, spec_ref, rows, run_id, job_id=None):
+    endpoint = os.environ.get(
+        "ASKLAKE_TEXT_STRUCTURING_BATCH_URL",
+        "http://host.docker.internal:8080/api/internal/text-structuring/batch",
+    )
+    token = os.environ.get("ASKLAKE_TEXT_STRUCTURING_INTERNAL_TOKEN", "")
+    payload = {
+        "definition": definition,
+        "rows": rows,
+        "runId": run_id,
+        "jobId": job_id,
+        "specRef": spec_ref,
+    }
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-AskLake-Internal-Token"] = token
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    timeout = max(1, int(os.environ.get("ASKLAKE_TEXT_STRUCTURING_TIMEOUT_SECONDS", "180") or "180"))
+    attempts = max(1, int(os.environ.get("ASKLAKE_TEXT_STRUCTURING_MAX_ATTEMPTS", "3") or "3"))
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(min(2 ** attempt, 8))
+    raise ValueError(f"Text structuring batch call failed after {attempts} attempts: {last_error}")
+
+
+def merge_text_structuring_result(row, result, definition, fingerprint):
+    merged = dict(row)
+    output = result.get("output") if isinstance(result.get("output"), dict) else {}
+    repeated = result.get("repeatedGroups") if isinstance(result.get("repeatedGroups"), dict) else {}
+    for field in definition.get("fields") or []:
+        if not isinstance(field, dict) or not field.get("targetName"):
+            continue
+        target = str(field["targetName"])
+        value = output.get(target)
+        if value is None and field.get("task") == "copy":
+            value = row.get(field.get("sourceField") or target)
+        merged[target] = normalize_text_field_value(field, value)
+    for group in definition.get("repeatedGroups") or []:
+        if not isinstance(group, dict) or not group.get("targetName"):
+            continue
+        target = str(group["targetName"])
+        raw_items = repeated.get(target)
+        merged[target] = [
+            {
+                str(field.get("targetName")): normalize_text_field_value(
+                    field,
+                    item.get(str(field.get("targetName"))),
+                )
+                for field in group.get("fields") or []
+                if isinstance(field, dict) and field.get("targetName")
+            }
+            for item in raw_items
+            if isinstance(item, dict)
+        ] if isinstance(raw_items, list) else []
+    merged["_asklake_review_required"] = bool(result.get("reviewRequired"))
+    merged["_asklake_review_reasons"] = [str(reason) for reason in result.get("reviewReasons") or []]
+    merged["_asklake_route"] = str(result.get("route") or "unknown")
+    merged["_asklake_error"] = str(result.get("error")) if result.get("error") else None
+    merged["_asklake_spec_fingerprint"] = fingerprint
+    return merged
+
+
+def normalize_text_field_value(field, value):
+    data_type = spark_type_for_text_field(field)
+    if value is None:
+        return [] if isinstance(data_type, T.ArrayType) else None
+    if isinstance(data_type, T.ArrayType):
+        return [str(item) for item in value] if isinstance(value, list) else [str(value)]
+    if isinstance(data_type, T.BooleanType):
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"true", "1", "yes", "y"}
+    if isinstance(data_type, T.DoubleType):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+    return str(value)
+
+
+def text_structuring_error_result(definition, source_row_id, error, on_error):
+    output = {}
+    for field in definition.get("fields") or []:
+        if not isinstance(field, dict) or not field.get("targetName"):
+            continue
+        output[str(field["targetName"])] = [] if field.get("task") == "multi_label" else None
+    repeated = {
+        str(group.get("targetName")): []
+        for group in definition.get("repeatedGroups") or []
+        if isinstance(group, dict) and group.get("targetName")
+    }
+    return {
+        "sourceRowId": source_row_id,
+        "output": output,
+        "repeatedGroups": repeated,
+        "reviewRequired": True,
+        "reviewReasons": [error],
+        "route": "error_keep_raw" if on_error == "keep_raw" else "quarantine_error",
+        "error": error,
+    }
+
+
+def text_structuring_cache_get(key):
+    value = TEXT_STRUCTURING_CACHE.get(key)
+    if value is not None:
+        TEXT_STRUCTURING_CACHE.move_to_end(key)
+    return value
+
+
+def text_structuring_cache_put(key, value):
+    TEXT_STRUCTURING_CACHE[key] = value
+    TEXT_STRUCTURING_CACHE.move_to_end(key)
+    max_entries = max(0, int(os.environ.get("ASKLAKE_TEXT_STRUCTURING_CACHE_ENTRIES", "10000") or "10000"))
+    while max_entries and len(TEXT_STRUCTURING_CACHE) > max_entries:
+        TEXT_STRUCTURING_CACHE.popitem(last=False)
+
+
+def split_text_structuring_artifacts(frame, definition):
+    route = F.col("_asklake_route")
+    quarantine = frame.filter(route.startswith("quarantine"))
+    valid = frame.filter(~route.startswith("quarantine"))
+    repeated_frames = []
+    child_group_names = []
+    for group in definition.get("repeatedGroups") or []:
+        if not isinstance(group, dict) or group.get("outputMode") != "child_table":
+            continue
+        group_name = str(group.get("targetName") or "").strip()
+        if not group_name or group_name not in valid.columns:
+            continue
+        child_group_names.append(group_name)
+        exploded = valid.select(
+            F.col("_asklake_source_row_id"),
+            F.col("_asklake_route"),
+            F.explode(F.col(quote_identifier(group_name))).alias("_asklake_item"),
+        )
+        child_fields = [
+            F.col(f"_asklake_item.{quote_identifier(str(field.get('targetName')))}").alias(str(field.get("targetName")))
+            for field in group.get("fields") or []
+            if isinstance(field, dict) and field.get("targetName")
+        ]
+        repeated_frames.append((group_name, exploded.select(
+            F.col("_asklake_source_row_id"),
+            *child_fields,
+            F.col("_asklake_route"),
+        )))
+    main = valid.drop(*child_group_names) if child_group_names else valid
+    return main, repeated_frames, quarantine
+
+
+def text_structuring_quality_summary(frame, text_structuring):
+    total_rows = frame.count()
+    review_rows = frame.filter(F.col("_asklake_review_required") == F.lit(True)).count()
+    quarantine_rows = frame.filter(F.col("_asklake_route").startswith("quarantine")).count()
+    distribution = {
+        str(row["_asklake_route"]): int(row["count"])
+        for row in frame.groupBy("_asklake_route").count().collect()
+    }
+    return {
+        "fingerprint": ((text_structuring.get("specRef") or {}).get("fingerprint")),
+        "quarantineRows": quarantine_rows,
+        "reviewRate": (review_rows / total_rows) if total_rows else 0,
+        "reviewRows": review_rows,
+        "routeDistribution": distribution,
+        "specId": ((text_structuring.get("specRef") or {}).get("specId")),
+        "specVersion": ((text_structuring.get("specRef") or {}).get("version")),
+        "totalRows": total_rows,
+    }
+
+
+def artifact_output_path(output_path, name):
+    return f"{str(output_path).rstrip('/')}__{normalize_column_name(name) or 'artifact'}"
+
+
+def artifact_report(kind, name, path, frame, row_count):
+    return {
+        "kind": kind,
+        "name": name,
+        "path": path,
+        "rows": int(row_count),
+        "schema": [
+            {
+                "name": field.name,
+                "nullable": field.nullable,
+                "type": field.dataType.simpleString(),
+            }
+            for field in frame.schema.fields
+        ],
+    }
 
 
 def make_spark():
@@ -581,6 +1021,15 @@ def review_instruction_expression(target, column_config, title, text):
     instruction = str(column_config.get("instruction") or column_config.get("description") or "").lower()
     normalized_target = normalize_column_name(target)
     combined = F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " ")
+    haystack = F.lower(combined)
+    if normalized_target in {"sentiment", "overall_sentiment"} or (
+        "positive" in instruction and "negative" in instruction
+    ):
+        return review_text_sentiment_expression(haystack)
+    if normalized_target in {"severity", "issue_severity"} or "high" in instruction and "medium" in instruction:
+        return review_text_severity_expression(haystack)
+    if "aspect" in normalized_target or "aspect" in instruction:
+        return review_text_aspects_expression(haystack)
     if "summary" in normalized_target or "summar" in instruction or "요약" in instruction:
         return F.substring(combined, 1, 180)
     if (
@@ -592,6 +1041,55 @@ def review_instruction_expression(target, column_config, title, text):
     ):
         return F.substring(combined, 1, 240)
     return F.substring(combined, 1, 240)
+
+
+def review_text_sentiment_expression(haystack):
+    negative = haystack.rlike(
+        "bad|worst|disappoint|waste|hate|awful|terrible|poor|not work|doesn.t work|broke|defect|"
+        "irritat|rash|breakout|acne|allerg|burn|refund|return|leak|greasy|sticky"
+    )
+    positive = haystack.rlike(
+        "good|great|love|best|excellent|perfect|amazing|recommend|favorite|works well|soft|smooth|"
+        "moisturi[sz]|hydrate|glow|beautiful"
+    )
+    return (
+        F.when(negative & positive, F.lit("mixed"))
+        .when(negative, F.lit("negative"))
+        .when(positive, F.lit("positive"))
+        .otherwise(F.lit("neutral"))
+    )
+
+
+def review_text_severity_expression(haystack):
+    high = haystack.rlike(
+        "rash|breakout|acne|allerg|burn|swelling|hives|refund|return|unsafe|blood|hospital|"
+        "not usable|unusable|doesn.t work|does not work|broken|defect"
+    )
+    medium = haystack.rlike(
+        "bad|worst|disappoint|waste|hate|awful|terrible|poor|irritat|leak|greasy|sticky|"
+        "didn.t like|did not like"
+    )
+    low = haystack.rlike("wish|could be better|a little|slightly|minor|small issue")
+    return (
+        F.when(high, F.lit("high"))
+        .when(medium, F.lit("medium"))
+        .when(low, F.lit("low"))
+        .otherwise(F.lit("none"))
+    )
+
+
+def review_text_aspects_expression(haystack):
+    aspects = F.concat_ws(
+        ",",
+        F.when(haystack.rlike("work|effect|result|moisturi[sz]|hydrate|cleanse|soft|smooth|glow"), F.lit("effectiveness")),
+        F.when(haystack.rlike("scent|smell|fragrance|perfume|odor"), F.lit("scent")),
+        F.when(haystack.rlike("texture|sticky|greasy|oily|thick|thin|absorb"), F.lit("texture")),
+        F.when(haystack.rlike("package|packaging|bottle|pump|cap|leak"), F.lit("packaging")),
+        F.when(haystack.rlike("rash|breakout|acne|irritat|burn|allerg|redness|sensitive"), F.lit("skin_reaction")),
+        F.when(haystack.rlike("price|cost|value|expensive|cheap"), F.lit("price")),
+        F.when(haystack.rlike("shipping|deliver|arriv|late|box"), F.lit("delivery")),
+    )
+    return F.when(F.length(aspects) > 0, aspects).otherwise(F.lit("other"))
 
 
 def review_row_analysis_uses_local_llm():
@@ -1401,6 +1899,17 @@ def load_json_env(name, fallback):
         return fallback
     value = json.loads(raw)
     return value if isinstance(value, list) else fallback
+
+
+def load_json_file(path, fallback):
+    if not path:
+        return fallback
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    return value if isinstance(value, dict) else fallback
 
 
 def now_iso():

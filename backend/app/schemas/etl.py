@@ -4,6 +4,7 @@ from pydantic import Field
 
 from app.schemas.common import CamelModel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
+from app.schemas.text_structuring import TextStructuringSpecRef
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
@@ -148,6 +149,8 @@ class JobRowData(CamelModel):
     target_path: str | None = None
     transform_output_columns: SourceFieldRows | None = None
     transform_steps: list[TransformStepDraft] | list[dict[str, Any]] | None = None
+    text_structuring_spec_ref: TextStructuringSpecRef | None = None
+    text_structuring_definition_snapshot: dict[str, Any] | None = None
     quality_invalid_rows: list[list[str]] | None = None
     quality_rules: list[QualityRuleDraft] | list[dict[str, Any]] | None = None
     quality_score: float | None = None
@@ -195,6 +198,10 @@ class CatalogDataset(CamelModel):
     index_columns: list[str] | None = None
     lineage_graph: dict[str, Any] | None = None
     materialization_runs: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
+    text_structuring: dict[str, Any] | None = None
+    parent_dataset_id: str | None = None
+    artifact_kind: str | None = None
 
 
 class DerivedDatasetSpec(CamelModel):
@@ -229,6 +236,7 @@ class CreatePipelineRequest(CamelModel):
     rule_summary: str = ""
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
+    text_structuring_spec_ref: TextStructuringSpecRef | None = None
     quality_invalid_rows: list[list[str]] = Field(default_factory=list)
     quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     quality_score: float | None = None
@@ -281,6 +289,10 @@ class JobCommandResponse(CamelModel):
     run: JobRunSummary | None = None
     dag_steps: list[JobDagStep] | None = None
     processing_result: dict[str, Any] | None = None
+
+
+class InternalSparkExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
 
 
 class ScheduledJobRunRequest(CamelModel):

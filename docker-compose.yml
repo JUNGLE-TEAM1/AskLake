@@ -15,12 +15,17 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW_CONFIG: /opt/airflow/config/airflow.cfg
     _PIP_ADDITIONAL_REQUIREMENTS: ""
+    ASKLAKE_BACKEND_INTERNAL_URL: ${ASKLAKE_BACKEND_INTERNAL_URL:-http://host.docker.internal:8080/api}
+    ASKLAKE_BACKEND_INTERNAL_TOKEN: ${AIRFLOW_CALLBACK_TOKEN:-}
+    ASKLAKE_BACKEND_INTERNAL_TIMEOUT_SECONDS: ${ASKLAKE_BACKEND_INTERNAL_TIMEOUT_SECONDS:-1800}
   volumes:
     - ${AIRFLOW_PROJ_DIR:-./airflow}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-./airflow}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
   user: "${AIRFLOW_UID:-50000}:0"
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   depends_on:
     airflow-postgres:
       condition: service_healthy

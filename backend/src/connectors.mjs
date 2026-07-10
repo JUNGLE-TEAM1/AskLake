@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { GetObjectCommand, ListObjectsV2Command, S3Client } from "@aws-sdk/client-s3";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fieldValue, formatBytes, inferSchemaColumns, parseSourceSample, schemaFingerprint, sourceId, upsertFields } from "./profile.mjs";
@@ -68,7 +68,7 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
   const samplePolicy = samplePolicyForFields(fields, "object");
   const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
   if (shouldPreferMinioContainer(endpoint)) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
+    const fallback = await readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
     if (fallback) return fallback;
   }
   try {
@@ -94,7 +94,7 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
       sourceType,
     });
   } catch (error) {
-    const fallback = readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
+    const fallback = await readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject, sourceType });
     if (fallback) return fallback;
     throw error;
   }
@@ -666,6 +666,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
   ];
 
   let parsedSample = { columns: [], format: "unknown", rows: [] };
+  let parquetSample = null;
   let sampleKey = "";
   let requestedBytes = 0;
   if (sampleObject?.Key && hasTextExtension(sampleObject.Key)) {
@@ -682,6 +683,23 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
     logs.push(`프로파일 스냅샷 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
+  } else if (sampleObject?.Key && hasParquetExtension(sampleObject.Key)) {
+    sampleKey = sampleObject.Key;
+    requestedBytes = Math.min(Number(sampleObject.Size ?? 0), parquetJsMaxBytes());
+    try {
+      if (Number(sampleObject.Size ?? 0) > parquetJsMaxBytes()) {
+        throw new Error(`Parquet interactive preview is limited to ${formatBytes(parquetJsMaxBytes())}.`);
+      }
+      parquetSample = await inspectParquetObjectWithJs({
+        bucket,
+        client,
+        key: sampleObject.Key,
+        rowLimit: samplePolicy.rowLimit,
+      });
+      logs.push(...parquetSample.logs);
+    } catch (error) {
+      logs.push(`Parquet 스키마 샘플을 읽지 못했습니다: ${tailText(error?.message || error)}`);
+    }
   } else if (sampleObject?.Key) {
     sampleKey = sampleObject.Key;
     logs.push(`샘플 오브젝트가 텍스트 오브젝트가 아닙니다: ${sampleObject.Key}`);
@@ -691,9 +709,10 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
 
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const schemaColumns = inferSchemaColumns(parsedSample);
+  const schemaColumns = parquetSample?.schemaColumns ?? inferSchemaColumns(parsedSample);
+  const sampleRows = parquetSample?.sampleRows ?? parsedSample.rows;
   const summary = schemaColumns.length
-    ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
+    ? `MinIO/S3 ${parquetSample ? "Parquet" : parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기 (오브젝트 ${objects.length}개)`;
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["Endpoint URL", endpoint],
@@ -719,7 +738,7 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     draftPatch: {
       schema: {
         columns: schemaColumns,
-        sampleRows: parsedSample.rows,
+        sampleRows,
         schemaFingerprint: schemaFingerprint(schemaColumns),
         summary,
       },
@@ -733,17 +752,19 @@ async function buildObjectStorageAnalysis({ bucket, client, endpoint, fields, fo
     },
     logs,
     message: `MinIO/S3 연결 성공: 오브젝트 ${objects.length}개`,
-    previewColumns: parsedSample.columns.length ? parsedSample.columns : ["Object Key", "Size", "Last Modified"],
+    previewColumns: schemaColumns.length ? schemaColumns.map((column) => column.targetName) : parsedSample.columns.length ? parsedSample.columns : ["Object Key", "Size", "Last Modified"],
     previewNote: sampleKey ? `${sampleKey}에서 가져온 제한 샘플` : `MinIO/S3 오브젝트 ${objects.length}개 목록 조회`,
-    previewRows: parsedSample.rows.length
-      ? parsedSample.rows
+    previewRows: sampleRows.length
+      ? sampleRows
+      : schemaColumns.length
+        ? []
       : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
     testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
   };
 }
 
-function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject = "", sourceType = "File / S3" }) {
+async function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fields, prefix, samplePolicy, secretAccessKey, selectedObject = "", sourceType = "File / S3" }) {
   const objects = selectedObject
     ? listSelectedObjectViaMinioContainer({ accessKeyId, bucket, endpoint, key: selectedObject, secretAccessKey })
     : listDirectObjectsViaMinioContainer({ accessKeyId, bucket, endpoint, prefix, secretAccessKey });
@@ -751,6 +772,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
 
   const sampleObject = selectedObject ? objects.find((item) => item.Key === selectedObject) : immediateSampleObject(objects, prefix);
   let parsedSample = { columns: [], format: "unknown", rows: [] };
+  let parquetSample = null;
   let sampleKey = "";
   let requestedBytes = 0;
   const logs = [
@@ -772,6 +794,22 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     logs.push(`제한 샘플 조회: ${sampleObject.Key}`);
     logs.push(`샘플 범위 적용: ${samplePolicy.label} (${formatBytes(requestedBytes)} 요청, 최대 ${samplePolicy.rowLimit.toLocaleString()}행 프로파일)`);
     logs.push(`프로파일 스키마 추론: ${parsedSample.columns.length}개 필드, 샘플 행 ${parsedSample.rows.length}개`);
+  } else if (sampleObject?.Key && hasParquetExtension(sampleObject.Key)) {
+    sampleKey = sampleObject.Key;
+    requestedBytes = Math.min(Number(sampleObject.Size ?? 0), parquetJsMaxBytes());
+    try {
+      parquetSample = await inspectParquetObjectViaMinioContainer({
+        accessKeyId,
+        bucket,
+        key: sampleObject.Key,
+        rowLimit: samplePolicy.rowLimit,
+        secretAccessKey,
+        size: sampleObject.Size,
+      });
+      logs.push(...parquetSample.logs);
+    } catch (error) {
+      logs.push(`Parquet 스키마 샘플을 읽지 못했습니다: ${tailText(error?.message || error)}`);
+    }
   } else if (sampleObject?.Key) {
     sampleKey = sampleObject.Key;
     logs.push(`샘플 오브젝트가 텍스트 파일이 아닙니다: ${sampleObject.Key}`);
@@ -781,9 +819,10 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
 
   const id = sourceId("source", `${endpoint}:${bucket}:${prefix}`);
   const runId = sourceId("run", `${id}:${Date.now()}`);
-  const schemaColumns = inferSchemaColumns(parsedSample);
+  const schemaColumns = parquetSample?.schemaColumns ?? inferSchemaColumns(parsedSample);
+  const sampleRows = parquetSample?.sampleRows ?? parsedSample.rows;
   const summary = schemaColumns.length
-    ? `MinIO/S3 ${parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
+    ? `MinIO/S3 ${parquetSample ? "Parquet" : parsedSample.format} 샘플에서 ${schemaColumns.length}개 필드 추론 · 프로파일 확인`
     : `MinIO/S3 연결 성공 · 스키마 추론 대기(오브젝트 ${objects.length}개)`;
   const sourceConfig = upsertFields(redactSecretConfigValues(fields), [
     ["Endpoint URL", endpoint],
@@ -809,7 +848,7 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     draftPatch: {
       schema: {
         columns: schemaColumns,
-        sampleRows: parsedSample.rows,
+        sampleRows,
         schemaFingerprint: schemaFingerprint(schemaColumns),
         summary,
       },
@@ -823,10 +862,12 @@ function readObjectStorageViaMinioContainer({ accessKeyId, bucket, endpoint, fie
     },
     logs,
     message: `MinIO/S3 연결 성공: 오브젝트 ${objects.length}개`,
-    previewColumns: parsedSample.columns.length ? parsedSample.columns : ["Object Key", "Size", "Last Modified"],
+    previewColumns: schemaColumns.length ? schemaColumns.map((column) => column.targetName) : parsedSample.columns.length ? parsedSample.columns : ["Object Key", "Size", "Last Modified"],
     previewNote: sampleKey ? `${sampleKey}에서 가져온 제한 샘플` : `MinIO/S3 오브젝트 ${objects.length}개 목록 조회`,
-    previewRows: parsedSample.rows.length
-      ? parsedSample.rows
+    previewRows: sampleRows.length
+      ? sampleRows
+      : schemaColumns.length
+        ? []
       : objects.slice(0, 8).map((item) => [item.Key ?? "-", item.__folder ? "folder" : formatBytes(item.Size ?? 0), item.LastModified?.toISOString() ?? "-"]),
     status: "success",
     testItems: [["Endpoint", endpoint], ["Bucket", bucket], ["Immediate children", String(objects.length)]],
@@ -1201,24 +1242,80 @@ function endpointForDockerNetwork(endpoint) {
 
 async function inspectParquetObjectWithJs({ bucket, client, key, rowLimit }) {
   if (!key) throw new Error("Parquet sample key is required.");
-  const parquet = await import("parquetjs-lite");
   const objectResult = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-  const buffer = await readBodyBufferWithinLimit(objectResult.Body, Number(process.env.ASKLAKE_PARQUET_JS_MAX_BYTES || 64 * 1024 * 1024));
+  const buffer = await readBodyBufferWithinLimit(objectResult.Body, parquetJsMaxBytes());
+  return inspectParquetBuffer(buffer, rowLimit);
+}
+
+async function inspectParquetObjectViaMinioContainer({ accessKeyId, bucket, key, rowLimit, secretAccessKey, size }) {
+  if (!key) throw new Error("Parquet sample key is required.");
+  const maxBytes = parquetJsMaxBytes();
+  if (Number(size ?? 0) > maxBytes) {
+    throw new Error(`Parquet interactive preview is limited to ${formatBytes(maxBytes)}.`);
+  }
+
+  const container = process.env.ASKLAKE_MINIO_CONTAINER || "m3-minio";
+  const suffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const containerPath = `/tmp/asklake-parquet-${suffix}.parquet`;
+  const localPath = path.join(backendDir, "tmp", `asklake-parquet-${suffix}.parquet`);
+  mkdirSync(path.dirname(localPath), { recursive: true });
+
+  try {
+    const copiedToContainer = runMinioClientCommand({
+      accessKeyId,
+      command: `mc cp ${shellQuote(`local/${bucket}/${key}`)} ${shellQuote(containerPath)} >/dev/null`,
+      secretAccessKey,
+    });
+    if (copiedToContainer === null) throw new Error("MinIO container could not download the selected Parquet object.");
+
+    const copiedToHost = spawnSync("docker", ["cp", `${container}:${containerPath}`, localPath], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    });
+    if (copiedToHost.status !== 0) {
+      throw new Error(`MinIO Parquet sample copy failed: ${tailText(copiedToHost.stderr || copiedToHost.stdout)}`);
+    }
+
+    const buffer = readFileSync(localPath);
+    if (buffer.length > maxBytes) throw new Error(`Parquet interactive preview is limited to ${formatBytes(maxBytes)}.`);
+    const inspected = await inspectParquetBuffer(buffer, rowLimit);
+    return {
+      ...inspected,
+      logs: [`MinIO Parquet 제한 샘플 읽기: ${formatBytes(buffer.length)}`, ...inspected.logs],
+    };
+  } finally {
+    rmSync(localPath, { force: true });
+    runMinioClientCommand({
+      accessKeyId,
+      command: `rm -f ${shellQuote(containerPath)}`,
+      secretAccessKey,
+    });
+  }
+}
+
+async function inspectParquetBuffer(buffer, rowLimit) {
+  const parquet = await import("parquetjs-lite");
   const reader = await parquet.default.ParquetReader.openBuffer(buffer);
   try {
     const schema = reader.getSchema();
     const fieldEntries = Object.entries(schema.fields ?? {});
-    const cursor = reader.getCursor();
     const rows = [];
-    for (let index = 0; index < Math.max(1, Math.min(Number(rowLimit) || 10, 100)); index += 1) {
-      const row = await cursor.next();
-      if (!row) break;
-      rows.push(fieldEntries.map(([name]) => stringifyCell(row[name])));
+    let rowSampleError = "";
+    try {
+      const cursor = reader.getCursor();
+      for (let index = 0; index < Math.max(1, Math.min(Number(rowLimit) || 10, 100)); index += 1) {
+        const row = await cursor.next();
+        if (!row) break;
+        rows.push(fieldEntries.map(([name]) => stringifyCell(row[name])));
+      }
+    } catch (error) {
+      rowSampleError = tailText(error?.message || error);
     }
     return {
       logs: [
         `JS Parquet metadata fallback succeeded: ${fieldEntries.length} fields`,
         `제한 샘플 조회: ${rows.length.toLocaleString()}행`,
+        ...(rowSampleError ? [`행 샘플은 이 Parquet 압축을 지원하는 실행 엔진에서 처리합니다: ${rowSampleError}`] : []),
       ],
       sampleRows: rows,
       schemaColumns: fieldEntries.map(([name, field]) => ({
@@ -1347,6 +1444,15 @@ function redactSecretConfigValues(fields) {
 function hasTextExtension(key) {
   const lower = key.toLowerCase();
   return textFileExtensions.some((extension) => lower.endsWith(extension));
+}
+
+function hasParquetExtension(key) {
+  return String(key ?? "").toLowerCase().endsWith(".parquet");
+}
+
+function parquetJsMaxBytes() {
+  const configured = Number(process.env.ASKLAKE_PARQUET_JS_MAX_BYTES || 64 * 1024 * 1024);
+  return Number.isFinite(configured) && configured > 0 ? configured : 64 * 1024 * 1024;
 }
 
 function samplePolicyForFields(fields, kind) {

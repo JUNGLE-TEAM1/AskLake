@@ -48,8 +48,17 @@ import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
 import { runCellphonesReviewAnalysis, suggestReviewAnalysisSchema, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
+import {
+  createTextStructuringSpec,
+  createTextStructuringVersion,
+  previewTextStructuring,
+  publishTextStructuringVersion,
+  suggestTextStructuringDefinition,
+  versionSpecRef,
+} from "../../services/textStructuringApi";
 import { listSourceAssets, testSourceConnector, type SourceAssetsResponse, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
+import type { TextStructuringDefinition, TextStructuringField, TextStructuringSpecVersion, TextStructuringTask } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
 import type { QualityRuleOption, TransformQualityInvalidRow, TransformQualityPreviewSample, TransformQualitySampleRow, TransformQualityStepPreview, TransformQualityValidationResult } from "../../data/transformQualityPreview";
 import { SourceAssetTree } from "./SourceAssetTree";
@@ -3148,6 +3157,530 @@ export function SchemaInferencePage({
     </div>
   );
 }
+
+const TEXT_STRUCTURING_TASK_OPTIONS: Array<{ label: string; value: TextStructuringTask }> = [
+  { label: "단일 분류", value: "classification" },
+  { label: "다중 분류", value: "multi_label" },
+  { label: "순서형", value: "ordinal" },
+  { label: "참/거짓", value: "boolean" },
+  { label: "원문 추출", value: "extract_span" },
+  { label: "숫자 추출", value: "extract_scalar" },
+  { label: "자유 텍스트", value: "free_text" },
+  { label: "값 복사", value: "copy" },
+];
+
+export function TextStructuringPage({
+  draft,
+  onDraftChange,
+  onPrev,
+  onNext,
+  onSave,
+  onAction,
+  onNotify,
+}: {
+  draft: DraftPipeline;
+  onDraftChange: (patch: DraftPipelinePatch) => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onSave: () => void;
+  onAction: (action: string, path: string, targetId: string, result?: AuditResult) => void;
+  onNotify: (message: string) => void;
+}) {
+  const textDraft = draft.textStructuring;
+  const inferredSourceField = useMemo(() => findTextStructuringSourceField(draft), [draft.schema.columns]);
+  const [selectedSourceField, setSelectedSourceField] = useState(
+    textDraft.definition?.sourceFields[0] || inferredSourceField,
+  );
+  const [busyAction, setBusyAction] = useState<"suggest" | "preview" | "publish" | null>(null);
+  const [error, setError] = useState("");
+  const definition = textDraft.definition;
+  const sampleObjects = useMemo(() => textStructuringSampleObjects(draft), [draft.schema.columns, draft.schema.sampleRows]);
+
+  useEffect(() => {
+    if (!selectedSourceField && inferredSourceField) setSelectedSourceField(inferredSourceField);
+  }, [inferredSourceField, selectedSourceField]);
+
+  const patchTextDraft = (patch: Partial<DraftPipeline["textStructuring"]>) => {
+    onDraftChange({ textStructuring: patch });
+  };
+
+  const updateDefinition = (next: TextStructuringDefinition) => {
+    patchTextDraft({
+      definition: next,
+      enabled: true,
+      previewRows: [],
+      status: "suggested",
+      warnings: [],
+    });
+  };
+
+  const generateSuggestion = async () => {
+    if (!selectedSourceField) {
+      onNotify("원문 텍스트 컬럼을 선택하세요.");
+      return;
+    }
+    setBusyAction("suggest");
+    setError("");
+    try {
+      const response = await suggestTextStructuringDefinition({
+        sourceColumns: draft.schema.columns.filter((column) => column.included !== false).map((column) => ({
+          name: column.targetName || column.sourceName,
+          type: column.type,
+        })),
+        sampleRows: sampleObjects.slice(0, 10),
+        sourceFields: [selectedSourceField],
+        locale: "auto",
+        includeAspects: true,
+      });
+      patchTextDraft({
+        definition: response.definition,
+        enabled: true,
+        previewRows: [],
+        specName: textDraft.specName || `${draft.target.datasetName || draft.source.sourceLabel || "텍스트"} 구조화`,
+        status: "suggested",
+        warnings: response.warnings,
+      });
+      onAction("etl.text_structuring.suggested", "/api/text-structuring/suggest", draft.source.sourceLabel || selectedSourceField, "success");
+      onNotify(`출력 필드 ${response.definition.fields.length}개와 관점 그룹 ${response.definition.repeatedGroups.length}개를 만들었습니다.`);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "텍스트 구조화 추천에 실패했습니다.";
+      setError(message);
+      onAction("etl.text_structuring.suggest_failed", "/api/text-structuring/suggest", selectedSourceField, "failed");
+      onNotify(message);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const runPreview = async () => {
+    if (!definition || sampleObjects.length === 0) {
+      onNotify("명세와 샘플 행을 먼저 준비하세요.");
+      return;
+    }
+    setBusyAction("preview");
+    setError("");
+    try {
+      const response = await previewTextStructuring({
+        definition,
+        rows: sampleObjects.slice(0, 20),
+      });
+      patchTextDraft({
+        enabled: true,
+        previewRows: response.rows,
+        status: "previewed",
+        warnings: response.warnings,
+      });
+      onAction("etl.text_structuring.previewed", "/api/text-structuring/preview", draft.source.sourceLabel || "sample", "success");
+      onNotify(`Preview ${response.rows.length}행을 처리했습니다.`);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "텍스트 구조화 Preview에 실패했습니다.";
+      setError(message);
+      onAction("etl.text_structuring.preview_failed", "/api/text-structuring/preview", draft.source.sourceLabel || "sample", "failed");
+      onNotify(message);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const publishDefinition = async () => {
+    if (!definition || textDraft.previewRows.length === 0) {
+      onNotify("Preview를 먼저 실행하세요.");
+      return;
+    }
+    const specName = textDraft.specName.trim() || `${draft.target.datasetName || "텍스트"} 구조화`;
+    setBusyAction("publish");
+    setError("");
+    try {
+      let draftVersion: TextStructuringSpecVersion;
+      if (textDraft.specRef) {
+        draftVersion = await createTextStructuringVersion(textDraft.specRef.specId, definition);
+      } else {
+        const created = await createTextStructuringSpec({
+          name: specName,
+          description: draft.source.sourceLabel || "텍스트 구조화 명세",
+          definition,
+        });
+        const firstVersion = created.versions.find((version) => version.version === 1);
+        if (!firstVersion) throw new Error("생성된 명세 버전을 찾지 못했습니다.");
+        draftVersion = firstVersion;
+      }
+      const published = await publishTextStructuringVersion(draftVersion.specId, draftVersion.version);
+      patchTextDraft({
+        enabled: true,
+        specName,
+        specRef: versionSpecRef(published),
+        status: "published",
+      });
+      onAction("etl.text_structuring.published", `/api/text-structuring/specs/${published.specId}/versions/${published.version}/publish`, published.specId, "success");
+      onNotify(`명세 v${published.version}을 게시했습니다.`);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "텍스트 구조화 명세 게시에 실패했습니다.";
+      setError(message);
+      onAction("etl.text_structuring.publish_failed", "/api/text-structuring/specs", textDraft.specName || "text-structuring", "failed");
+      onNotify(message);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const addField = () => {
+    if (!definition) return;
+    const index = definition.fields.length + 1;
+    updateDefinition({
+      ...definition,
+      fields: [...definition.fields, {
+        fieldId: `field_${index}`,
+        targetName: `field_${index}`,
+        task: "free_text",
+        description: "추출할 값",
+        outputType: "String",
+        allowedValues: [],
+        nullable: true,
+        unknownValue: "unknown",
+      }],
+    });
+  };
+
+  const addRepeatedGroup = () => {
+    if (!definition) return;
+    const index = definition.repeatedGroups.length + 1;
+    updateDefinition({
+      ...definition,
+      outputMode: "child_table",
+      repeatedGroups: [...definition.repeatedGroups, {
+        groupId: `group_${index}`,
+        targetName: `group_${index}`,
+        description: "반복되는 관점별 결과",
+        outputMode: "child_table",
+        fields: [{
+          fieldId: "aspect",
+          targetName: "aspect",
+          task: "free_text",
+          description: "관점",
+          outputType: "String",
+          allowedValues: [],
+          nullable: false,
+          unknownValue: "unknown",
+        }],
+      }],
+    });
+  };
+
+  const continueFlow = () => {
+    if (textDraft.enabled && (!textDraft.specRef || textDraft.status !== "published")) {
+      onNotify("텍스트 구조화 명세를 게시하거나 사용 안 함으로 전환하세요.");
+      return;
+    }
+    onNext();
+  };
+
+  return (
+    <div className="text-structuring-page">
+      <PageTitle title="텍스트 구조화" icon={<Bot size={20} />} />
+
+      <section className="text-structuring-toolbar">
+        <label className="text-structuring-toggle">
+          <input
+            type="checkbox"
+            checked={textDraft.enabled}
+            onChange={(event) => patchTextDraft({ enabled: event.target.checked })}
+          />
+          <span>텍스트 구조화 사용</span>
+        </label>
+        <label>
+          <span>원문 컬럼</span>
+          <select value={selectedSourceField} onChange={(event) => {
+            const sourceField = event.target.value;
+            setSelectedSourceField(sourceField);
+            if (definition) updateDefinition({ ...definition, sourceFields: [sourceField] });
+          }}>
+            {draft.schema.columns.filter((column) => column.included !== false).map((column) => {
+              const name = column.targetName || column.sourceName;
+              return <option value={name} key={name}>{name}</option>;
+            })}
+          </select>
+        </label>
+        <button className="secondary-button" type="button" disabled={busyAction !== null || !selectedSourceField} onClick={generateSuggestion}>
+          <Bot size={15} /> {busyAction === "suggest" ? "추천 중" : "명세 추천"}
+        </button>
+        <span className={`text-structuring-status ${textDraft.status}`}>{textStructuringStatusLabel(textDraft.status)}</span>
+      </section>
+
+      {error && <div className="text-structuring-message error">{error}</div>}
+      {textDraft.warnings.map((warning) => <div className="text-structuring-message" key={warning}>{warning}</div>)}
+
+      {definition ? (
+        <>
+          <section className="text-structuring-section">
+            <div className="text-structuring-section-heading">
+              <div><span>출력 스키마</span><strong>{definition.fields.length}개 필드</strong></div>
+              <button className="icon-button" type="button" title="출력 필드 추가" aria-label="출력 필드 추가" onClick={addField}><Plus size={17} /></button>
+            </div>
+            <div className="text-structuring-table-wrap">
+              <table className="text-structuring-table">
+                <thead><tr><th>컬럼</th><th>판단 방식</th><th>정의</th><th>허용값</th><th aria-label="삭제" /></tr></thead>
+                <tbody>
+                  {definition.fields.map((field, index) => (
+                    <TextStructuringFieldRow
+                      field={field}
+                      key={field.fieldId}
+                      onChange={(nextField) => updateDefinition({
+                        ...definition,
+                        fields: definition.fields.map((item, itemIndex) => itemIndex === index ? nextField : item),
+                      })}
+                      onDelete={() => updateDefinition({
+                        ...definition,
+                        fields: definition.fields.filter((_, itemIndex) => itemIndex !== index),
+                      })}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="text-structuring-section">
+            <div className="text-structuring-section-heading">
+              <div><span>반복 관점</span><strong>{definition.repeatedGroups.length}개 자식 테이블</strong></div>
+              <button className="icon-button" type="button" title="반복 관점 추가" aria-label="반복 관점 추가" onClick={addRepeatedGroup}><Plus size={17} /></button>
+            </div>
+            {definition.repeatedGroups.map((group, groupIndex) => (
+              <div className="text-structuring-group" key={group.groupId}>
+                <div className="text-structuring-group-header">
+                  <input value={group.targetName} aria-label="반복 관점 테이블 이름" onChange={(event) => updateDefinition({
+                    ...definition,
+                    repeatedGroups: definition.repeatedGroups.map((item, index) => index === groupIndex ? {
+                      ...item,
+                      targetName: normalizeTextStructuringIdentifier(event.target.value),
+                    } : item),
+                  })} />
+                  <select value={group.outputMode} aria-label="반복 관점 출력 방식" onChange={(event) => updateDefinition({
+                    ...definition,
+                    repeatedGroups: definition.repeatedGroups.map((item, index) => index === groupIndex ? {
+                      ...item,
+                      outputMode: event.target.value as "nested" | "child_table",
+                    } : item),
+                  })}>
+                    <option value="child_table">자식 테이블</option>
+                    <option value="nested">중첩 배열</option>
+                  </select>
+                  <button className="icon-button" type="button" title="반복 관점 삭제" aria-label="반복 관점 삭제" onClick={() => updateDefinition({
+                    ...definition,
+                    repeatedGroups: definition.repeatedGroups.filter((_, index) => index !== groupIndex),
+                  })}><Trash2 size={16} /></button>
+                </div>
+                <div className="text-structuring-table-wrap">
+                  <table className="text-structuring-table compact">
+                    <thead><tr><th>컬럼</th><th>판단 방식</th><th>정의</th><th>허용값</th><th aria-label="삭제" /></tr></thead>
+                    <tbody>
+                      {group.fields.map((field, fieldIndex) => (
+                        <TextStructuringFieldRow
+                          field={field}
+                          key={`${group.groupId}-${field.fieldId}`}
+                          onChange={(nextField) => updateDefinition({
+                            ...definition,
+                            repeatedGroups: definition.repeatedGroups.map((item, index) => index === groupIndex ? {
+                              ...item,
+                              fields: item.fields.map((child, childIndex) => childIndex === fieldIndex ? nextField : child),
+                            } : item),
+                          })}
+                          onDelete={() => updateDefinition({
+                            ...definition,
+                            repeatedGroups: definition.repeatedGroups.map((item, index) => index === groupIndex ? {
+                              ...item,
+                              fields: item.fields.filter((_, childIndex) => childIndex !== fieldIndex),
+                            } : item),
+                          })}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+            {definition.repeatedGroups.length === 0 && <div className="text-structuring-empty">반복 관점 없음</div>}
+          </section>
+
+          <section className="text-structuring-policy">
+            <label><span>실행 경로</span><select value={definition.routingPolicy.mode} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, mode: event.target.value as TextStructuringDefinition["routingPolicy"]["mode"] },
+            })}><option value="hybrid">전용 모델 + LLM</option><option value="student">전용 모델</option><option value="openai_compatible">LLM</option><option value="heuristic">휴리스틱 검토</option></select></label>
+            <label><span>개인정보</span><select value={definition.routingPolicy.piiMode} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, piiMode: event.target.value as TextStructuringDefinition["routingPolicy"]["piiMode"] },
+            })}><option value="mask">마스킹</option><option value="block_external">외부 전송 차단</option><option value="none">원문 유지</option></select></label>
+            <label><span>오류 처리</span><select value={definition.routingPolicy.onError} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, onError: event.target.value as TextStructuringDefinition["routingPolicy"]["onError"] },
+            })}><option value="quarantine">격리</option><option value="fail">Run 실패</option><option value="keep_raw">원문 유지</option></select></label>
+            <label><span>배치 크기</span><input type="number" min={1} max={512} value={definition.routingPolicy.batchSize} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, batchSize: Math.max(1, Math.min(512, Number(event.target.value) || 1)) },
+            })} /></label>
+            <label><span>자동 승인 기준</span><input type="number" min={0} max={1} step={0.05} value={definition.routingPolicy.acceptThreshold} onChange={(event) => {
+              const acceptThreshold = Math.max(0, Math.min(1, Number(event.target.value) || 0));
+              updateDefinition({
+                ...definition,
+                routingPolicy: {
+                  ...definition.routingPolicy,
+                  acceptThreshold,
+                  humanReviewThreshold: Math.min(definition.routingPolicy.humanReviewThreshold, acceptThreshold),
+                },
+              });
+            }} /></label>
+            <label><span>사람 검토 기준</span><input type="number" min={0} max={definition.routingPolicy.acceptThreshold} step={0.05} value={definition.routingPolicy.humanReviewThreshold} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, humanReviewThreshold: Math.max(0, Math.min(definition.routingPolicy.acceptThreshold, Number(event.target.value) || 0)) },
+            })} /></label>
+            <label><span>최대 LLM 비율</span><input type="number" min={0} max={1} step={0.05} value={definition.routingPolicy.maxLlmFraction} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, maxLlmFraction: Math.max(0, Math.min(1, Number(event.target.value) || 0)) },
+            })} /></label>
+            <label className="text-structuring-policy-check"><input type="checkbox" checked={definition.routingPolicy.externalProviderAllowed} onChange={(event) => updateDefinition({
+              ...definition,
+              routingPolicy: { ...definition.routingPolicy, externalProviderAllowed: event.target.checked },
+            })} /><span>외부 모델 허용</span></label>
+          </section>
+
+          <section className="text-structuring-preview">
+            <div className="text-structuring-section-heading">
+              <div><span>Preview</span><strong>{textDraft.previewRows.length}행</strong></div>
+              <button className="secondary-button" type="button" disabled={busyAction !== null || sampleObjects.length === 0} onClick={runPreview}><PlayCircle size={16} /> {busyAction === "preview" ? "처리 중" : "Preview 실행"}</button>
+            </div>
+            {textDraft.previewRows.length > 0 ? (
+              <div className="text-structuring-table-wrap">
+                <table className="text-structuring-preview-table">
+                  <thead><tr><th>원문</th>{definition.fields.map((field) => <th key={field.fieldId}>{field.targetName}</th>)}<th>관점</th><th>경로</th></tr></thead>
+                  <tbody>{textDraft.previewRows.map((row) => (
+                    <tr key={row.sourceRowId} className={row.reviewRequired ? "needs-review" : ""}>
+                      <td>{String(row.input[selectedSourceField] ?? "")}</td>
+                      {definition.fields.map((field) => <td key={field.fieldId}>{formatTextStructuringValue(row.output[field.targetName])}</td>)}
+                      <td>{formatTextStructuringValue(row.repeatedGroups)}</td>
+                      <td><span className="text-structuring-route">{row.route}</span></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : <div className="text-structuring-empty">Preview 결과 없음</div>}
+          </section>
+
+          <section className="text-structuring-publish">
+            <label><span>명세 이름</span><input value={textDraft.specName} onChange={(event) => patchTextDraft({ specName: event.target.value })} /></label>
+            {textDraft.specRef && <code>{textDraft.specRef.specId} · v{textDraft.specRef.version}</code>}
+            <button className="primary-button" type="button" disabled={busyAction !== null || textDraft.previewRows.length === 0} onClick={publishDefinition}><Save size={16} /> {busyAction === "publish" ? "게시 중" : "명세 게시"}</button>
+          </section>
+        </>
+      ) : (
+        <section className="text-structuring-empty-state">
+          <Bot size={24} />
+          <strong>명세 없음</strong>
+          <button className="primary-button" type="button" disabled={!selectedSourceField || busyAction !== null} onClick={generateSuggestion}>명세 추천</button>
+        </section>
+      )}
+
+      <section className="text-structuring-bottom-bar">
+        <button className="secondary-button" type="button" onClick={onPrev}>이전: 스키마</button>
+        <button className="ghost-button" type="button" onClick={onSave}>설정 저장</button>
+        <button className="primary-button" type="button" onClick={continueFlow}>다음: 스케줄</button>
+      </section>
+    </div>
+  );
+}
+
+function TextStructuringFieldRow({
+  field,
+  onChange,
+  onDelete,
+}: {
+  field: TextStructuringField;
+  onChange: (field: TextStructuringField) => void;
+  onDelete: () => void;
+}) {
+  const usesAllowedValues = ["classification", "multi_label", "ordinal"].includes(field.task);
+  return (
+    <tr>
+      <td><input value={field.targetName} aria-label="출력 컬럼" onChange={(event) => {
+        const targetName = normalizeTextStructuringIdentifier(event.target.value);
+        onChange({ ...field, fieldId: targetName || field.fieldId, targetName });
+      }} /></td>
+      <td><select value={field.task} aria-label={`${field.targetName} 판단 방식`} onChange={(event) => {
+        const task = event.target.value as TextStructuringTask;
+        const allowedValues = ["classification", "multi_label", "ordinal"].includes(task)
+          ? field.allowedValues.length > 0 ? field.allowedValues : defaultTextStructuringLabels(task)
+          : [];
+        onChange({
+          ...field,
+          task,
+          outputType: task === "boolean" ? "Boolean" : task === "extract_scalar" ? "Double" : "String",
+          allowedValues,
+        });
+      }}>{TEXT_STRUCTURING_TASK_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></td>
+      <td><input value={field.description} aria-label={`${field.targetName} 정의`} onChange={(event) => onChange({ ...field, description: event.target.value })} /></td>
+      <td>{usesAllowedValues ? <input value={field.allowedValues.map((label) => label.value).join(", ")} aria-label={`${field.targetName} 허용값`} onChange={(event) => onChange({
+        ...field,
+        allowedValues: event.target.value.split(",").map((value) => value.trim()).filter(Boolean).map((value, index) => ({
+          value,
+          description: field.allowedValues.find((label) => label.value === value)?.description || "",
+          ...(field.task === "ordinal" ? { order: index } : {}),
+        })),
+      })} /> : <span className="text-structuring-na">-</span>}</td>
+      <td><button className="icon-button" type="button" title="필드 삭제" aria-label={`${field.targetName} 삭제`} onClick={onDelete}><Trash2 size={15} /></button></td>
+    </tr>
+  );
+}
+
+function findTextStructuringSourceField(draft: DraftPipeline) {
+  const included = draft.schema.columns.filter((column) => column.included !== false);
+  return included.find((column) => /text|review|body|content|message|description|리뷰|내용/i.test(`${column.targetName} ${column.sourceName}`))?.targetName
+    || included.find((column) => column.type.toLowerCase().includes("string"))?.targetName
+    || included[0]?.targetName
+    || "";
+}
+
+function textStructuringSampleObjects(draft: DraftPipeline): Array<Record<string, unknown>> {
+  const included = draft.schema.columns.filter((column) => column.included !== false);
+  return draft.schema.sampleRows.map((row, rowIndex) => ({
+    sourceRowId: `preview-${rowIndex + 1}`,
+    ...Object.fromEntries(included.map((column) => {
+      const originalIndex = draft.schema.columns.indexOf(column);
+      return [column.targetName || column.sourceName, row[originalIndex] ?? ""];
+    })),
+  }));
+}
+
+function normalizeTextStructuringIdentifier(value: string) {
+  return value.trim().replace(/[^0-9a-zA-Z가-힣_]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function defaultTextStructuringLabels(task: TextStructuringTask) {
+  if (task === "ordinal") return [
+    { value: "unknown", description: "판단 불가", order: 0 },
+    { value: "low", description: "낮음", order: 1 },
+    { value: "medium", description: "중간", order: 2 },
+    { value: "high", description: "높음", order: 3 },
+  ];
+  return [
+    { value: "positive", description: "긍정" },
+    { value: "negative", description: "부정" },
+    { value: "unknown", description: "판단 불가" },
+  ];
+}
+
+function textStructuringStatusLabel(status: DraftPipeline["textStructuring"]["status"]) {
+  return {
+    idle: "설정 전",
+    suggested: "편집 중",
+    previewed: "Preview 완료",
+    published: "게시됨",
+  }[status];
+}
+
+function formatTextStructuringValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
 type RuleCategory = "transform" | "quality";
 type RuleActionHandler = (action: string, path: string, targetId?: string) => void;
 type RuleStepDraft = {
@@ -5856,17 +6389,19 @@ export function ReviewPage({
     ["소스 연결", draft.source.connectionStatus === "success" ? "실제 연결 확인" : "연결 테스트 필요"],
     ["스키마", includedReviewColumns.length > 0 ? "추론 결과 있음" : "추론 필요"],
     ["처리 규칙", request.ruleSummary ? "설정값 저장" : "규칙 없음"],
+    ["텍스트 구조화", !draft.textStructuring.enabled ? "사용 안 함" : draft.textStructuring.status === "published" && request.textStructuringSpecRef ? "게시된 명세 연결" : "명세 게시 필요"],
     ["스케줄", request.scheduleLabel ? "예약 메타데이터 저장" : "확인 필요"],
     ["실패 재시도", request.retryPolicySummary ? "정책 메타데이터 저장" : "기본 정책"],
     ["권한/타겟", request.permissionSummary && request.targetDataset ? "메타데이터 저장" : "확인 필요"],
   ];
-  const readyValidationStatuses = new Set(["실제 연결 확인", "추론 결과 있음", "설정값 저장", "규칙 없음", "예약 메타데이터 저장", "정책 메타데이터 저장", "기본 정책", "메타데이터 저장"]);
+  const readyValidationStatuses = new Set(["실제 연결 확인", "추론 결과 있음", "설정값 저장", "규칙 없음", "사용 안 함", "게시된 명세 연결", "예약 메타데이터 저장", "정책 메타데이터 저장", "기본 정책", "메타데이터 저장"]);
   const canCreate = draft.source.connectionStatus === "success"
     && includedReviewColumns.length > 0
     && Boolean(request.sourceType.trim())
     && Boolean(request.sourceLabel.trim())
     && Boolean(request.targetDataset.trim())
-    && Boolean(request.owner.trim());
+    && Boolean(request.owner.trim())
+    && (!draft.textStructuring.enabled || Boolean(request.textStructuringSpecRef && draft.textStructuring.status === "published"));
   const createDisabled = createPending || !canCreate;
   const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
@@ -5905,6 +6440,20 @@ export function ReviewPage({
               <button className="xflow-review-edit" type="button" onClick={() => onEdit("schema")}><Pencil size={14} /> 수정</button>
             </div>
             <ReviewSchemaTable rows={schemaRows} />
+          </section>
+
+          <section className="xflow-review-card">
+            <div className="xflow-review-card-header">
+              <span className="xflow-review-icon"><Bot size={17} /></span>
+              <div><h2>Text Structuring</h2></div>
+              <button className="xflow-review-edit" type="button" onClick={() => onEdit("structuring")}><Pencil size={14} /> 수정</button>
+            </div>
+            <dl className="xflow-review-kv">
+              <div><dt>상태</dt><dd>{draft.textStructuring.enabled ? textStructuringStatusLabel(draft.textStructuring.status) : "사용 안 함"}</dd></div>
+              <div><dt>명세</dt><dd>{draft.textStructuring.specRef ? `${draft.textStructuring.specRef.specId} v${draft.textStructuring.specRef.version}` : "-"}</dd></div>
+              <div><dt>출력 필드</dt><dd>{draft.textStructuring.definition?.fields.length ?? 0}개</dd></div>
+              <div><dt>관점 테이블</dt><dd>{draft.textStructuring.definition?.repeatedGroups.length ?? 0}개</dd></div>
+            </dl>
           </section>
 
           <section className="xflow-review-card">

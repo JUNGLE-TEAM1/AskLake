@@ -18,6 +18,20 @@ class Settings(BaseSettings):
     openai_assistant_max_sample_rows: int = Field(default=5, ge=0, le=20)
     openai_assistant_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
     openai_query_ai_model: str = "gpt-4.1-mini"
+    text_structuring_enabled: bool = True
+    text_structuring_api_url: str = "https://api.openai.com/v1"
+    text_structuring_api_key: str | None = None
+    text_structuring_model: str = "gpt-4.1-mini"
+    text_structuring_max_output_tokens: int = Field(default=8192, ge=512, le=32768)
+    text_structuring_timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    text_structuring_preview_max_rows: int = Field(default=100, ge=1, le=1000)
+    text_structuring_batch_max_rows: int = Field(default=512, ge=1, le=5000)
+    text_structuring_batch_size: int = Field(default=32, ge=1, le=512)
+    text_structuring_review_sample_rate: float = Field(default=0.01, ge=0, le=1)
+    text_structuring_review_max_per_batch: int = Field(default=10, ge=0, le=512)
+    text_structuring_external_provider_allowed: bool = False
+    text_structuring_internal_token: str | None = None
+    text_structuring_model_dir: str = "backend/tmp/text-structuring-models"
     airflow_api_base_url: str | None = None
     airflow_dag_id: str = "asklake_etl_job"
     airflow_api_token: str | None = None
@@ -25,6 +39,7 @@ class Settings(BaseSettings):
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_ui_base_url: str | None = None
+    airflow_callback_token: str | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

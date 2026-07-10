@@ -75,12 +75,26 @@ Canonical status values:
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
 | `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka review topic batch를 Lake landing에 저장하고 Catalog 등록 | 이 문서 |
+| `POST` | `/api/text-structuring/suggest` | session/header actor | source schema/sample 기반 구조화 명세 초안 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/specs` | session/header actor | version 1 명세 생성 | `docs/api-contract.md` |
+| `GET` | `/api/text-structuring/specs` | session/header actor | 소유 명세 목록 | `docs/api-contract.md` |
+| `GET` | `/api/text-structuring/specs/{specId}` | owner/admin | 명세와 버전 조회 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/specs/{specId}/versions` | owner/admin | immutable 버전 생성 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/specs/{specId}/versions/{version}/publish` | owner/admin | ETL 참조 가능 버전 게시 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/preview` | session/header actor | 최대 100행 실제 추론 Preview | `docs/api-contract.md` |
+| `GET` | `/api/text-structuring/specs/{specId}/reviews` | owner/admin | 사람 검토 queue | `docs/api-contract.md` |
+| `PUT` | `/api/text-structuring/reviews/{itemId}` | owner/admin | 예측 승인/수정/거절 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/training-runs` | owner/admin | 검토 라벨 기반 student 후보 생성 | `docs/api-contract.md` |
+| `GET` | `/api/text-structuring/specs/{specId}/models` | owner/admin | candidate/champion 목록 | `docs/api-contract.md` |
+| `POST` | `/api/text-structuring/models/{modelId}/promote` | owner/admin | champion 승격 | `docs/api-contract.md` |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+
+`POST /api/etl/jobs`의 optional `textStructuringSpecRef`는 `{ specId, version, fingerprint }`이며 published 버전만 허용한다. Backend는 생성 시 definition snapshot을 Job에 저장하므로 이후 새 spec version을 게시해도 기존 Job 의미는 변하지 않는다.
 
 Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. Kafka는 장기 저장소로 보지 않고, `topic -> batch consume -> Lake landing object(jsonl) -> Catalog materializationRuns append` 흐름으로 처리한다. 같은 consumer group을 쓰면 이미 읽은 offset 이후의 새 메시지만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
 

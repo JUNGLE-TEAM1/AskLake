@@ -1,5 +1,6 @@
 import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
+import type { TextStructuringSpecRef } from "./textStructuring";
 
 export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
@@ -63,6 +64,10 @@ export type CatalogDataset = {
   storageSizeBytes?: number;
   tags: string[];
   upstream: string[];
+  artifacts?: Array<Record<string, unknown>>;
+  textStructuring?: TextStructuringSpecRef;
+  parentDatasetId?: string;
+  artifactKind?: string;
 };
 
 export type DatasetMaterializationRun = {

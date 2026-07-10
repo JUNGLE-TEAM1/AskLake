@@ -160,6 +160,7 @@ The validator checks:
 - TXT row read
 - Parquet physical read
 - Transform type fixture: trim, int, long, double, bool, timestamp, JSON path extraction
+- Text Structuring V2 manifest의 `mapPartitions` batch call과 main/repeated-group/quarantine Parquet schema
 
 Set `ASKLAKE_SPARK_FULL_COUNT=true` only when a full count is needed; default validation uses bounded reads for speed.
 
@@ -183,3 +184,23 @@ npm run dev
 ```
 
 The browser calls backend endpoints for source tests and create flow.
+
+## 9. Text Structuring Scale Validation
+
+기본 골든 테스트는 Docker 없이 실행한다.
+
+```bash
+cd backend
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
+```
+
+실제 Spark 검증에서는 published spec을 연결한 Job을 만들고 아래를 확인한다.
+
+1. Spark report manifest fingerprint가 Job snapshot과 일치한다.
+2. executor 호출 수가 row count가 아니라 `ceil(partition_rows / batchSize)`에 가깝다.
+3. mixed-aspect input이 main의 `overall_sentiment=mixed`와 child aspect 2행으로 저장된다.
+4. batch/provider 오류가 `onError=quarantine`일 때 main에서 제외되고 `__quarantine` Parquet에 남는다.
+5. 같은 성공 Airflow Run callback을 재호출해도 materialization과 artifact row가 중복되지 않는다.
+6. 1GB, 10GB, 100GB 단계에서 rows/sec, provider calls/sec, review rate, quarantine rate, executor retry, peak memory를 함께 기록한다.
+
+100GB 완료 판정은 아직 수행되지 않았다. 기능 경로와 골든 테스트 통과만으로 production throughput을 주장하지 않는다.

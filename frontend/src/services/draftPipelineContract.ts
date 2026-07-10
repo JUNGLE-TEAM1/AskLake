@@ -72,6 +72,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     targetLayer: draft.target.layer,
     transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
+    textStructuringSpecRef: draft.textStructuring.enabled ? draft.textStructuring.specRef : undefined,
   };
 }
 
@@ -105,6 +106,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
     source: { ...draft.source, ...patch.source },
     target: { ...draft.target, ...patch.target },
     transform: { ...draft.transform, ...patch.transform },
+    textStructuring: { ...draft.textStructuring, ...patch.textStructuring },
   };
 
   if (patch.id !== undefined) next.id = patch.id;
@@ -118,6 +120,7 @@ export function applyDraftPipelinePatch(draft: DraftPipeline, patch: DraftPipeli
   if (patch.ruleSummary !== undefined) next.transform.summary = patch.ruleSummary;
   if (patch.transformOutputColumns !== undefined) next.transform.outputColumns = patch.transformOutputColumns;
   if (patch.transformSteps !== undefined) next.transform.steps = patch.transformSteps;
+  if (patch.textStructuringSpecRef !== undefined) next.textStructuring.specRef = patch.textStructuringSpecRef;
   if (patch.qualityInvalidRows !== undefined) next.quality.invalidRows = patch.qualityInvalidRows;
   if (patch.qualityRules !== undefined) next.quality.rules = patch.qualityRules;
   if (patch.qualityScore !== undefined) next.quality.score = patch.qualityScore;

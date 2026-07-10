@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 
-export type FlowId = "jobs" | "jobsTableDemo" | "jobDetail" | "jobRuns" | "source" | "schema" | "rules" | "repeat" | "manual" | "once" | "target" | "permission" | "review" | "catalog" | "catalogDetail" | "sql" | "dashboard" | "ai" | "admin" | "profile" | "login";
+export type FlowId = "jobs" | "jobsTableDemo" | "jobDetail" | "jobRuns" | "source" | "schema" | "structuring" | "rules" | "repeat" | "manual" | "once" | "target" | "permission" | "review" | "catalog" | "catalogDetail" | "sql" | "dashboard" | "ai" | "admin" | "profile" | "login";
 export type ScheduleFlowId = Extract<FlowId, "repeat" | "manual" | "once">;
 export type NavId = "ingest" | "catalog" | "sql" | "dashboard" | "ai" | "admin";
 export type NavItem = { id: NavId; label: string; icon: LucideIcon; flow: FlowId };

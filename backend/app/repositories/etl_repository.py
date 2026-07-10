@@ -70,6 +70,10 @@ def ensure_schema(db: Session) -> None:
             "target_tags": "JSON",
             "transform_output_columns": "JSON",
             "transform_steps": "JSON",
+            "text_structuring_spec_id": "VARCHAR(120)",
+            "text_structuring_spec_version": "INTEGER",
+            "text_structuring_spec_fingerprint": "VARCHAR(64)",
+            "text_structuring_definition_snapshot": "JSON",
         }
         for column_name, column_type in column_defs.items():
             if column_name not in existing_columns:
@@ -298,6 +302,11 @@ def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
     ).all()
 
 
+def get_run(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         id=job.id,
@@ -334,6 +343,12 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         target_path=job.target_path,
         transform_output_columns=job.transform_output_columns,
         transform_steps=job.transform_steps,
+        text_structuring_spec_ref={
+            "specId": job.text_structuring_spec_id,
+            "version": job.text_structuring_spec_version,
+            "fingerprint": job.text_structuring_spec_fingerprint,
+        } if job.text_structuring_spec_id and job.text_structuring_spec_version and job.text_structuring_spec_fingerprint else None,
+        text_structuring_definition_snapshot=job.text_structuring_definition_snapshot,
         quality_invalid_rows=job.quality_invalid_rows,
         quality_rules=job.quality_rules,
         quality_score=job.quality_score,
@@ -382,6 +397,10 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
             storage_size_bytes=payload.get("storageSizeBytes"),
             lineage_graph=payload.get("lineageGraph"),
             materialization_runs=payload.get("materializationRuns") or [],
+            artifacts=payload.get("artifacts") or [],
+            text_structuring=payload.get("textStructuring"),
+            parent_dataset_id=payload.get("parentDatasetId"),
+            artifact_kind=payload.get("artifactKind"),
         )
 
     return CatalogDataset(
@@ -410,6 +429,7 @@ def dataset_to_schema(dataset: CatalogDatasetModel) -> CatalogDataset:
         downstream=dataset.downstream or [],
         lineage_graph=dataset.lineage_graph,
         materialization_runs=[],
+        artifacts=[],
     )
 
 

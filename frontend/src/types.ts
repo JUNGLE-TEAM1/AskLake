@@ -42,6 +42,7 @@ export type {
   WatermarkWindowMode,
 } from "./types/etl";
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
+export type { TextStructuringDefinition, TextStructuringDraft, TextStructuringField, TextStructuringLabel, TextStructuringRepeatedGroup, TextStructuringResultRow, TextStructuringRoutingPolicy, TextStructuringSpec, TextStructuringSpecRef, TextStructuringSpecVersion, TextStructuringTask } from "./types/textStructuring";
 export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
 export type { PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
 export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft } from "./types/sql";

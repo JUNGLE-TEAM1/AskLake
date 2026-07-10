@@ -1,13 +1,19 @@
+import hmac
+
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
+from app.core.config import Settings, get_settings
+from app.core.errors import ApiError
+from app.schemas.common import ErrorCode
 from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandRequest,
     JobCommandResponse,
+    InternalSparkExecutionRequest,
     JobRowData,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
@@ -48,9 +54,9 @@ def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngest
 def create_job(
     request: CreatePipelineRequest,
     db: Session = Depends(get_db),
-    actor_name: str = Header(default="demo-user", alias="X-AskLake-User"),
+    actor: ActorContext = Depends(get_actor_context),
 ) -> CreatePipelineResponse:
-    return etl_service.create_pipeline(db, request, actor_name)
+    return etl_service.create_pipeline(db, request, actor)
 
 
 @router.get("/jobs", response_model=list[JobRowData])
@@ -78,6 +84,25 @@ def command_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobCommandResponse:
     return etl_service.command_job(db, job_id, request.command, actor)
+
+
+@router.post("/internal/jobs/{job_id}/runs/{run_id}/spark", response_model=dict)
+def execute_airflow_spark_run(
+    job_id: str,
+    run_id: str,
+    request: InternalSparkExecutionRequest,
+    callback_token: str | None = Header(default=None, alias="X-AskLake-Airflow-Token"),
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    expected = settings.airflow_callback_token
+    if expected and (not callback_token or not hmac.compare_digest(expected, callback_token)):
+        raise ApiError(
+            ErrorCode.UNAUTHORIZED,
+            "Invalid Airflow callback token.",
+            status.HTTP_401_UNAUTHORIZED,
+        )
+    return etl_service.execute_airflow_spark_run(db, job_id, run_id, request.command)
 
 
 @router.post("/schedules/run-due", response_model=ScheduledJobRunResponse)

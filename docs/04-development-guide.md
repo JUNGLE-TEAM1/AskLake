@@ -56,9 +56,9 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
-### Local Airflow smoke runtime
+### Local Airflow Spark runtime
 
-Airflow run polling을 실제로 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local smoke 전용 `airflow` / `airflow`다.
+Airflow run polling과 실제 Spark callback을 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다.
 
 ```bash
 docker compose up airflow-init
@@ -74,6 +74,19 @@ AIRFLOW_DAG_ID=asklake_etl_job
 AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
 AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=airflow
+AIRFLOW_CALLBACK_TOKEN=local-airflow-callback
+TEXT_STRUCTURING_INTERNAL_TOKEN=local-text-structuring
+```
+
+Airflow container에는 같은 `AIRFLOW_CALLBACK_TOKEN`을 전달한다. `docker-compose.yml`의 `ASKLAKE_BACKEND_INTERNAL_URL` 기본값은 `http://host.docker.internal:8080/api`다. Text structuring executor callback의 기본값은 `http://host.docker.internal:8080/api/internal/text-structuring/batch`이며 필요하면 `ASKLAKE_TEXT_STRUCTURING_BATCH_URL_IN_DOCKER`로 덮어쓴다.
+
+`Text Row Analysis`의 로컬 기본 런타임은 `scalable`이다. 로컬 LLM 서버 없이도 `sentiment`, `aspect_analysis`, `severity` 같은 기본 리뷰 컬럼을 빠른 규칙 기반으로 검증할 수 있다. 실제 LLM 행 분석을 사용할 때만 실행 환경에 `ASKLAKE_REVIEW_ANALYSIS_RUNTIME=local_llm`과 접근 가능한 `ASKLAKE_LOCAL_LLM_ENDPOINT`를 설정한다.
+
+Text structuring 골든/수명주기 테스트:
+
+```bash
+cd backend
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
 ```
 
 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Run History와 DAG modal이 `GET /api/etl/jobs/{jobId}` polling으로 Airflow DAG Run/Task Instance 상태를 반영한다.

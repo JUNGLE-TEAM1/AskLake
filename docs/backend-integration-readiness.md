@@ -101,7 +101,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 
 `POST /api/etl/jobs/{jobId}/commands`는 run/retry 요청을 Airflow DAG Run으로 제출하고, `queued` 또는 `running` 상태의 run을 즉시 저장/응답한다. 프론트는 명령 응답을 먼저 Run History와 DAG modal에 반영하고, active run이 있는 동안 `GET /api/etl/jobs/{jobId}`를 polling해 Airflow DAG Run 및 Task Instance 상태를 동기화한다. Terminal 상태(`success`, `failed`, `canceled`)가 되면 polling 대상에서 제외된다.
 
-현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. smoke DAG는 `airflow/dags/asklake_etl_job.py`이며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
+현재 local `docker-compose.yml`에는 Postgres/MinIO와 함께 Airflow API server, scheduler, DAG processor, Airflow metadata Postgres가 포함되어 있다. `airflow/dags/asklake_etl_job.py`는 backend internal callback을 통해 실제 Spark bridge를 실행하며, Airflow 설정이 없으면 backend는 `AIRFLOW_CONFIG_MISSING` 503 error envelope로 실패한다.
 
 필수 Airflow 환경변수:
 
@@ -110,6 +110,7 @@ Backend connector 응답은 secret field를 redacted value로 내려준다. 프�
 - `AIRFLOW_UI_BASE_URL`: Airflow UI link 생성용 optional base URL
 - `AIRFLOW_API_TOKEN` 또는 `AIRFLOW_USERNAME`/`AIRFLOW_PASSWORD`: Airflow API 인증
 - `AIRFLOW_REQUEST_TIMEOUT_SECONDS`: API timeout, 기본값 `10`
+- `AIRFLOW_CALLBACK_TOKEN`: Airflow task -> FastAPI Spark callback shared token
 
 Airflow DAG task는 기존 Spark runner를 호출하는 orchestration boundary로 둔다.
 
@@ -123,6 +124,9 @@ Spark runner 입력:
 - connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
+- `ASKLAKE_SPARK_JOB_MANIFEST`: run별 immutable JSON manifest. Text structuring spec ref와 definition snapshot을 포함한다.
+- `ASKLAKE_TEXT_STRUCTURING_BATCH_URL`: executor가 호출할 FastAPI partition batch endpoint
+- `TEXT_STRUCTURING_INTERNAL_TOKEN`: partition batch shared token
 
 Spark runner 결과:
 
@@ -132,12 +136,22 @@ Spark runner 결과:
 - quality summary
 - run status
 - DAG step status
+- main/repeated_group/quarantine artifact 목록과 각각의 schema/row count/path
 
 Airflow sync 결과:
 
 - `JobRunSummary.airflowDagId`, `airflowDagRunId`, `airflowRunUrl`, `airflowState`
 - `JobRunSummary.taskStates`, `lastSyncedAt`, `syncError`
 - selected run 기준 `dagStepsByRunId`
+
+### Text structuring readiness
+
+- spec/version/review/training/model SQLAlchemy table은 backend 시작 시 생성된다.
+- ETL Job은 published `{specId, version, fingerprint}`와 immutable definition snapshot만 저장한다.
+- Spark V2 경로는 row UDF가 아니라 partition batch HTTP를 사용한다.
+- uncalibrated student model은 champion으로 승격할 수 있지만 자동 승인 confidence로 사용하지 않는다.
+- 외부 provider 기본값은 차단이다. 전역 `TEXT_STRUCTURING_EXTERNAL_PROVIDER_ALLOWED=true`와 spec opt-in이 모두 필요하다.
+- 아직 운영 검증이 필요한 항목은 100GB 처리량, provider rate-limit 환경의 backpressure, executor 재시작 후 distributed cache, holdout calibration/promotion gate다.
 
 ## 6. 검증 명령
 

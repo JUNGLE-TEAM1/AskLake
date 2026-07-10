@@ -2591,7 +2591,77 @@ Response `201 Created`:
 - 날짜는 ISO 8601 UTC 문자열로 내려줍니다.
 - ID는 프론트에서 그대로 저장/표시할 수 있는 문자열로 내려줍니다.
 
-## 11. 프론트 전환 순서
+## 11. Text Structuring V2
+
+텍스트 구조화 명세는 수정 가능한 row가 아니라 immutable version으로 실행한다.
+
+```ts
+type TextStructuringSpecRef = {
+  specId: string;
+  version: number;
+  fingerprint: string;
+};
+
+type TextFieldTask = "copy" | "classification" | "multi_label" | "ordinal" |
+  "boolean" | "extract_span" | "extract_scalar" | "free_text";
+
+type TextStructuringDefinition = {
+  sourceFields: string[];
+  locale: string;
+  outputMode: "flat" | "nested" | "child_table";
+  fields: Array<{
+    fieldId: string;
+    targetName: string;
+    task: TextFieldTask;
+    description: string;
+    outputType: string;
+    allowedValues: Array<{ value: string; description?: string; order?: number }>;
+    nullable: boolean;
+    unknownValue?: string;
+  }>;
+  repeatedGroups: Array<{
+    groupId: string;
+    targetName: string;
+    outputMode: "nested" | "child_table";
+    fields: TextStructuringDefinition["fields"];
+  }>;
+  routingPolicy: {
+    mode: "heuristic" | "openai_compatible" | "student" | "hybrid";
+    acceptThreshold: number;
+    humanReviewThreshold: number;
+    externalProviderAllowed: boolean;
+    piiMode: "none" | "mask" | "block_external";
+    onError: "fail" | "quarantine" | "keep_raw";
+    batchSize: number;
+  };
+};
+```
+
+Public API:
+
+- `POST /api/text-structuring/suggest`
+- `POST|GET /api/text-structuring/specs`
+- `GET /api/text-structuring/specs/{specId}`
+- `POST /api/text-structuring/specs/{specId}/versions`
+- `POST /api/text-structuring/specs/{specId}/versions/{version}/publish`
+- `POST /api/text-structuring/preview`
+- `GET /api/text-structuring/specs/{specId}/reviews`
+- `PUT /api/text-structuring/reviews/{itemId}`
+- `POST /api/text-structuring/training-runs`
+- `GET /api/text-structuring/specs/{specId}/models`
+- `POST /api/text-structuring/models/{modelId}/promote`
+
+`POST /api/text-structuring/preview`는 inline `definition` 또는 `specRef` 중 하나와 `rows`를 받는다. Response row는 `sourceRowId`, `input`, `output`, `repeatedGroups`, `fieldMeta`, `reviewRequired`, `reviewReasons`, `route`를 반환한다. 허용 enum/type 검증을 통과하지 못한 값은 자동 확정하지 않고 review reason을 남긴다.
+
+Executor-only `POST /api/internal/text-structuring/batch`는 `X-AskLake-Internal-Token`으로 보호할 수 있다. 한 요청은 기본 최대 512행이며 Spark partition이 batch size 이하로 나누어 호출한다. Review queue 폭증을 피하기 위해 batch 경로는 quarantine 우선 행과 안정 해시 기반 sample을 batch 상한까지 DB queue에 저장하고, 전체 오류 행은 quarantine Parquet에 남긴다.
+
+`POST /api/etl/jobs`는 optional `textStructuringSpecRef`를 받는다. Backend는 published 상태와 fingerprint를 검증하고 `textStructuringDefinitionSnapshot`을 Job에 저장한다. Job response는 두 값을 모두 반환한다.
+
+성공 Spark report의 `artifacts`는 `main`, `repeated_group`, `quarantine` kind를 사용하며 각각 `name`, `path`, `rows`, `schema`를 포함한다. Catalog child dataset은 `parentDatasetId`, `artifactKind`, `textStructuring` metadata로 main dataset과 연결된다.
+
+Internal Airflow callback `POST /api/etl/internal/jobs/{jobId}/runs/{runId}/spark`는 `X-AskLake-Airflow-Token`으로 보호할 수 있다. 성공한 같은 Run을 다시 호출하면 Spark를 재실행하지 않고 `idempotent: true`를 반환한다.
+
+## 12. 프론트 전환 순서
 
 1. mock mode에서 backend 없이 Source/Schema 연결 테스트, 생성 플로우, Catalog/SQL 화면이 깨지지 않는지 확인합니다.
 2. 백엔드 서버를 실행합니다.
@@ -2603,7 +2673,7 @@ Response `201 Created`:
 8. `POST /api/query/runs` SQL 실행 흐름을 확인합니다.
 9. P1 API를 붙인 뒤 남은 정적 초기 데이터를 서버 hydrate로 교체합니다.
 
-## 12. 열린 결정 사항
+## 13. 열린 결정 사항
 
 백엔드 구현 전에 팀에서 결정하면 좋은 항목입니다.
 
