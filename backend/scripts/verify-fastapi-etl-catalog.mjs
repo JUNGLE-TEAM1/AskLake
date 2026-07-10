@@ -146,7 +146,14 @@ async function runSmoke() {
     "Spark-generated metadata columns should not have source lineage edges.",
   );
   assert(processLineageNode?.engine === "SPARK", "ETL lineage should represent the Spark job as a PROCESS node.");
-  assert(targetLineageNode?.engine === "PARQUET", "ETL lineage target engine should match targetFormat.");
+  assert(targetLineageNode?.engine === "PARQUET", "ETL lineage target engine should match the persisted Spark output format.");
+
+  await del(`/api/catalog/datasets/${encodeURIComponent(materialized.id)}/materialization-runs/${encodeURIComponent(command.run.runId)}`);
+  const jobAfterMaterializationDelete = await get(`/api/etl/jobs/${encodeURIComponent(create.job.id)}`);
+  assert(
+    jobAfterMaterializationDelete.runHistory?.find((run) => run.runId === command.run.runId)?.status === "success",
+    "Deleting an append result should not rewrite the historical Spark run as failed.",
+  );
 
   console.log("verify-fastapi-etl-catalog: ok");
 }
@@ -370,6 +377,11 @@ async function postInternal(route, body) {
     },
     method: "POST",
   });
+  return readResponse(response);
+}
+
+async function del(route) {
+  const response = await fetch(`${baseUrl}${route}`, { method: "DELETE" });
   return readResponse(response);
 }
 

@@ -18,7 +18,7 @@ job = SimpleNamespace(
     source_label="reviews.parquet",
     source_type="File / S3",
     target="review_gold",
-    target_format="Parquet",
+    target_format="csv",
     target_layer="GOLD",
     transform_steps=[
         {"enabled": True, "input": "text", "output": "text"},

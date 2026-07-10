@@ -933,7 +933,7 @@ Response 예시:
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
 - Spark run 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
 - ETL `lineageGraph`의 source node에는 실제 source/transform input 컬럼만 포함합니다. source-to-job edge는 transform step의 `input -> output` 또는 명시적 sourceName-to-targetName mapping으로 만들고, job-to-target edge는 같은 output column name으로 연결합니다. 결과 schema를 source node에 복제하거나 컬럼 순번만으로 연결하지 않습니다. `_asklake_run_id`, `_asklake_ingested_at` 같은 실행 metadata는 source가 아니라 Spark job에서 생성된 것으로 표현합니다.
-- ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 실제 `targetFormat`의 대문자 표기를 사용합니다.
+- ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 요청값이 아니라 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용합니다.
 
 Validation:
 

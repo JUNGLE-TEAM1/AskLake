@@ -50,6 +50,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
+SPARK_OUTPUT_FORMAT = "parquet"
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
@@ -1074,6 +1075,7 @@ def repair_incomplete_airflow_successes(
             run.status == "success"
             and run.airflow_dag_run_id
             and not airflow_run_has_materialization(run, dataset)
+            and not airflow_run_has_persisted_spark_result(run)
         ):
             mark_airflow_success_without_materialization(run)
             repaired = True
@@ -1095,6 +1097,12 @@ def airflow_run_has_materialization(
         and item.get("status") == "success"
         for item in materialization_runs
     )
+
+
+def airflow_run_has_persisted_spark_result(run: ETLRunModel) -> bool:
+    output_rows = str(run.output_rows or "").strip()
+    output_path = str(run.output_path or "").strip()
+    return output_rows not in {"", "-"} and output_path not in {"", "-"}
 
 
 def mark_airflow_success_without_materialization(run: ETLRunModel) -> None:
@@ -1384,7 +1392,7 @@ def dataset_payload_from_spark_result(
         "source": job.name,
         "sourceRunId": aggregate["latestRunId"] or result.get("runId"),
         "status": "available",
-        "storageFormat": "parquet",
+        "storageFormat": SPARK_OUTPUT_FORMAT,
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
         "partition": partition,
@@ -1576,9 +1584,8 @@ def source_lineage_schema(job: ETLJobModel, target_schema: list[list[str]]) -> l
     return [[name, type_by_name.get(name, "string")] for name in source_names]
 
 
-def lineage_target_engine(job: ETLJobModel) -> str:
-    target_format = str(getattr(job, "target_format", "") or "").strip()
-    return target_format.upper() or "STORAGE"
+def lineage_target_engine(_job: ETLJobModel) -> str:
+    return SPARK_OUTPUT_FORMAT.upper()
 
 
 def lineage_source_engine(job: ETLJobModel) -> str:
