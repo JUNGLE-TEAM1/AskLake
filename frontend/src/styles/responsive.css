@@ -88,7 +88,6 @@
   .catalog-detail-grid,
   .sql-page,
   .sql-page.context-collapsed,
-  .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
     grid-template-columns: 1fr;
@@ -116,11 +115,6 @@
 
   .sql-page.context-collapsed .sql-schema-panel {
     order: 3;
-  }
-
-  .sql-schema-panel .sql-card-schema {
-    max-height: 360px;
-    overflow-y: auto;
   }
 
   .sql-dashboard-preview-hero,
@@ -438,9 +432,6 @@
   .dag-output-strip,
   .panel-header,
   .sql-page-header,
-  .sql-editor-header,
-  .sql-result-header,
-  .sql-editor-footer,
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,

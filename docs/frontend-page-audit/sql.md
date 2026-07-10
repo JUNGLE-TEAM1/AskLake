@@ -12,8 +12,8 @@
 
 ## Current Shared Components
 
-- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `Input`, `Slider`, `Tabs`, `Textarea`.
-- AskLake composition: `PageHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `FormFieldGroup`, `NativeSelectField`, `PaginationBar`, `ResultPanel`, `DialogShell`.
+- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `Input`, `NativeSelect`, `Separator`, `Slider`, `Tabs`, `Textarea`.
+- AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
 - `SqlDatasetTree`: `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`, `TreeHoverCard`를 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
 - `SchemaDetailsPanel`: 선택 dataset, JOIN, column insert를 담당하는 도메인 panel이다.
@@ -22,7 +22,7 @@
 ## Weakly Componentized Areas
 
 - SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- dataset tree, schema list, result table에는 도메인 density/overflow/hover 위치 CSS가 남아 있다.
+- dataset tree, SQL editor, autocomplete 위치, result overflow에는 도메인 layout CSS가 남아 있다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
 - `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
 
@@ -43,18 +43,16 @@
 - `SqlDatasetTree`, `SchemaDetailsPanel`: SQL 도메인 composition으로 유지하되 내부 raw action을 `Button`과 공통 feedback primitive로 교체한다.
 - `TreePanel`/`TreeView`: 현재 계층이 단순하고 기존 primitive가 있으므로 유지한다. 대규모 virtual tree가 필요할 때만 `react-arborist` 기반 ReUI style을 검토한다.
 - `SqlPreviewTable`: 이미 `DataTable`을 사용하므로 유지한다.
-- `ResultPanel`, `ActionGroup`, `DialogShell`: AskLake 공통 composition으로 유지하고 variant를 확장한다.
+- `Panel`/`PanelHeader`, `ActionGroup`, `DialogShell`: AskLake 공통 composition으로 유지하고 내부는 shadcn primitive를 사용한다.
 - editor surface는 별도 `SqlEditor` 컴포넌트로 분리해 autocomplete와 keyboard logic을 한 경계에 둔다.
 
 ## Related CSS
 
-- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-sidebar-tab-panel`.
-- 현재 사용 중: `.sql-tree-*`, `.sql-schema-panel`, `.sql-selected-dataset-*`, `.sql-card-schema-*`, `.sql-tree-hover-card`.
-- 현재 사용 중: `.sql-editor-*`, `.sql-autocomplete-popover`, `.sql-check-*`, `.sql-result-*`, `.sql-preview-table-*`.
-- 현재 사용 중: Query AI/editor/result의 배치용 `.sql-ai-*`, `.sql-materialize-*`, embedded Dashboard 크기용 `.sql-dashboard-builder-dialog`.
-- #468에서 `sql.css`를 2,547줄에서 1,255줄로 줄였으며, shadcn이 소유하는 tab/button/status/empty/dialog surface CSS는 제거했다.
+- 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
+- 현재 사용 중: `.sql-tree-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
+- #468 2차 정리까지 `sql.css`를 2,547줄에서 591줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table surface CSS는 제거했다.
 
-## QA Notes
+## Pre-#468 QA Notes
 
 - process 환경에서 `VITE_USE_MOCK_API=true`로 `/sql`을 열었을 때 dataset/schema/editor UI가 API 오류 없이 렌더링된다.
 - 페이지 진입 smoke만 수행했으며 query 실행, CSV download, materialize, dashboard 생성 interaction은 이번 문서 PR에서 재검증하지 않았다.
@@ -113,19 +111,23 @@
 - SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
 - dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
-- `sql.css`는 2,547줄에서 1,255줄로 줄였다. 3-column workspace, dark editor, tree/hover positioning, result table density, embedded Dashboard 크기처럼 도메인 layout에 필요한 selector는 유지했다.
+- `sql.css`는 2,547줄에서 591줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table 기본 surface로 header/form/list/table CSS를 추가 제거했다.
+- 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
+- schema list는 `Panel` + `PanelHeader` + `Separator`, result header는 `PanelHeader`, autocomplete surface는 `Panel` + `Button` + `Badge`로 구성한다.
+- 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification
 
 - `commerce_orders_daily` 선택 후 Slider를 50행으로 조작하고 실행해 `50행 조회됨`, `최대 50행 표시`, 2-page result를 확인했다.
 - Query AI prompt를 실행해 Bubble 안에 생성 SQL과 `SQL에 적용` action이 표시되는 것을 확인했다.
 - Dashboard builder Dialog가 열리고 `Escape`로 닫히는 것을 확인했다.
-- 1024x768 override에서 SQL page/workspace/result toolbar의 horizontal overflow가 없음을 확인했다.
+- 실제 1,200x750 CSS viewport에서 2열 전환 후 SQL page/table의 horizontal overflow가 없음을 확인했다.
+- 처리 Job 모달은 768px 폭에서 field 4개와 RAG checkbox, 기본 close button이 표시되고 body horizontal/vertical overflow가 없음을 확인했다.
 - 360px에서 page-level horizontal overflow는 없지만, 기존 global sidebar가 첫 viewport를 점유하는 문제는 그대로다. App Shell mobile navigation은 #468 범위를 넓히지 않고 별도 작업으로 유지한다.
 - browser console warning/error가 없음을 확인했다.
 
 ### #468 Remaining Deliberate CSS
 
-- SQL autocomplete는 editor focus/selection과 absolute position 계산이 묶여 있어 `Popover`/`Command`로 무리하게 바꾸지 않았다.
-- dataset tree와 schema/result table은 각 도메인 density와 overflow가 있어 구조/layout selector를 유지했다.
+- SQL autocomplete의 surface/action/status는 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
+- dataset tree 연결선/hover 위치, dark editor, result overflow, embedded Dashboard 크기는 도메인 layout이라 유지했다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.

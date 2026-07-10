@@ -282,10 +282,12 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.
 - editor/result/schema/tool surface를 `Panel`, 상태와 metadata를 `Badge`, empty state를 `Empty`, form label을 `Field`, raw action을 `Button`으로 교체했다.
 - dataset의 `+ 추가` action은 custom pill CSS를 제거하고 shadcn `Button size="sm" variant="subtle"`로 맞췄다.
+- 2차 정리에서 header를 `PanelHeader`, schema/list row 구분을 `Separator`, 처리 Job form을 `FieldGroup`/`Field`/`NativeSelect`, SQL result cell surface를 shadcn `Table` 기본값으로 전환했다.
+- SQL result의 legacy `ResultPanel` wrapper를 `Panel` + `PanelHeader` composition으로 줄였다.
 
 CSS/의존성 판단:
 
-- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog backdrop/surface selector를 삭제했다.
-- workspace grid, SQL editor, dataset tree hover, result table density, embedded Dashboard sizing은 도메인 layout이라 유지한다.
+- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector를 삭제해 2,547줄에서 591줄로 줄였다.
+- workspace responsive grid, SQL editor, dataset tree hover/branch, autocomplete position, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
 - Slider는 monolithic `radix-ui`가 아니라 `@radix-ui/react-slider` 직접 의존을 사용한다.
 - autocomplete는 editor focus/selection 회귀 위험 때문에 이번 범위에서 `Popover`/`Command`로 전환하지 않는다.

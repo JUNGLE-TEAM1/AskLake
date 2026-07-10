@@ -11,12 +11,14 @@ const checks = [
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /import \{ Tabs, TabsContent, TabsList, TabsTrigger \} from "@\/components\/ui\/tabs";/,
-      /<TabsList className="sql-sidebar-tabs grid w-full grid-cols-2"/,
+      /<TabsList className="grid w-full grid-cols-2"/,
       /<TabsTrigger value="tables">/,
       /<TabsTrigger value="queryAi">/,
       /<Slider[\s\S]*max=\{PREVIEW_ROW_LIMIT\}[\s\S]*value=\{\[previewRowLimit\]\}/,
       /limit: previewRowLimit,/,
       /<Bubble[\s\S]*variant=\{queryAiSuggestion \? "outline" : queryAiError \? "destructive" : "muted"\}/,
+      /<FieldGroup className="grid-cols-12 gap-3 max-\[860px\]:grid-cols-1">/,
+      /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
     ],
   },
   {

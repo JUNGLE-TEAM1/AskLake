@@ -65,9 +65,9 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
         accessorFn: (row) => row.cells[index] ?? "",
         cell: (info) => {
           const value = String(info.getValue() ?? "");
-          return <span title={value}>{value}</span>;
+          return <span className="block truncate" title={value}>{value}</span>;
         },
-        header: () => <span title={column}>{column}</span>,
+        header: () => <span className="block truncate" title={column}>{column}</span>,
         id: `${index}:${column}`,
         meta,
         sortingFn: buildSqlSortingFn(columnKind),
@@ -94,7 +94,6 @@ export function SqlPreviewTable({ resultDraft }: { resultDraft: SqlResultDraft }
       pagination={{ label: "SQL preview", pageSize: SQL_RESULT_PAGE_SIZE }}
       resetPaginationKey={resultDraft.runId}
       tableClassName="schema-table sql-preview-table"
-      viewportClassName="border-0 bg-transparent"
     />
   );
 }
