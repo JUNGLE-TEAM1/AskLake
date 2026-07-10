@@ -2,10 +2,13 @@ import { Fragment, useCallback, useMemo, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Bot,
   AlertCircle,
+  ArrowLeft,
+  ArrowRight,
   Calendar,
   CalendarOff,
   Check,
@@ -17,7 +20,9 @@ import {
   FileText,
   Filter,
   HardDrive,
+  History,
   Info,
+  ListChecks,
   Pencil,
   Play,
   Plus,
@@ -31,6 +36,7 @@ import {
   ShieldCheck,
   Square,
   Table2,
+  Trash2,
   X,
   Zap,
 } from "lucide-react";
@@ -39,9 +45,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Chip } from "@/components/ui/chip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import {
   DataTableCellPrimary,
@@ -62,17 +67,16 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { FilterToolbar, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
-import { KeyValueList } from "@/components/ui/key-value-list";
+import { KeyValueList, type KeyValueListItem } from "@/components/ui/key-value-list";
+import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { TagList } from "@/components/ui/tag-list";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus } from "../../types";
+import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -91,6 +95,13 @@ const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: st
   blocked: { className: "paused", label: "중단" },
 };
 
+const realtimeHealthMeta: Record<RealtimeOperationalHealth, { label: string; tone: "danger" | "default" | "running" | "scheduled" }> = {
+  healthy: { label: "정상", tone: "running" },
+  degraded: { label: "주의", tone: "scheduled" },
+  unhealthy: { label: "이상", tone: "danger" },
+  unknown: { label: "측정 대기", tone: "default" },
+};
+
 type JobActionButtonVariant = "destructive" | "outline" | "primary" | "subtle";
 
 function getJobStatusTone(status: JobStatus): StatusBadgeTone {
@@ -102,7 +113,8 @@ function getJobStatusTone(status: JobStatus): StatusBadgeTone {
 }
 
 function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
-  if (status === "failed" || status === "canceled") return "danger";
+  if (status === "failed") return "danger";
+  if (status === "canceled") return "muted";
   if (status === "success") return "success";
   if (status === "running") return "success";
   return "muted";
@@ -337,7 +349,7 @@ export function JobsLandingPage({
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
           emptyAction={hasSearchQuery ? <Button type="button" variant="outline" onClick={clearSearch}>검색어 지우기</Button> : undefined}
-          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 검색어를 지우거나 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
+          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 검색어를 지우거나 다른 작업명, 소스명, 타겟 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
           emptyTitle={hasSearchQuery ? "검색 결과가 없습니다." : undefined}
           jobs={filteredJobs}
           onCommand={handleJobCommand}
@@ -446,7 +458,7 @@ function JobsToolbar({
           aria-label="수집/처리 작업 검색"
           autoComplete="off"
           className="text-lg"
-          placeholder="작업명, 소스명, 타깃 데이터셋명 검색"
+          placeholder="작업명, 소스명, 타겟 데이터셋명 검색"
           type="search"
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.target.value)}
@@ -639,6 +651,7 @@ function JobsTableSection({
       enableSorting: false,
       meta: {
         align: "center",
+        cellClassName: "h-px p-0",
         headerClassName: "text-lg",
         widthClassName: "w-[184px]",
       } satisfies DataTableColumnMeta,
@@ -680,7 +693,11 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.nextRun,
-      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatCompactDateTime(row.original.job.nextRun)}</DataTableCellPrimary>,
+      cell: ({ row }) => (
+        <div className="flex min-h-[76px] items-center">
+          <DataTableCellPrimary className="text-lg leading-7">{formatCompactDateTime(row.original.job.nextRun)}</DataTableCellPrimary>
+        </div>
+      ),
       header: "다음 예정 실행",
       id: "nextRun",
       meta: {
@@ -914,7 +931,7 @@ function getIdleExecutionAction(job: JobRowData): IdleExecutionAction {
   return { className: "job-action-button success", kind: "run", label: "즉시 실행" };
 }
 
-function getJobListActionButtonClassName(action: JobListAction) {
+function getJobListActionButtonClassName(action: { className: string }) {
   if (action.className.includes("success")) {
     return "border-violet-200 bg-violet-50 text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-100";
   }
@@ -951,7 +968,7 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
 
   if (job.status === "paused") {
     return [
-      { className: "job-action-button primary", kind: "retry", label: "다시 실행" },
+      { className: "job-action-button retry", kind: "retry", label: "다시 실행" },
       { className: "job-action-button", kind: "edit", label: "수정" },
       { className: "job-action-button danger", kind: "delete", label: "삭제" },
     ];
@@ -961,7 +978,7 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
     if (isRealtimeJob(job)) {
       return [
         {
-          className: "job-action-button primary realtime-start",
+          className: "job-action-button realtime-start",
           kind: getLatestRunOutcome(job) === "failed" ? "retry" : "run",
           label: "실행",
         },
@@ -971,7 +988,7 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
     }
     return [
       {
-        className: "job-action-button primary",
+        className: "job-action-button schedule-resume",
         kind: "resumeSchedule",
         label: "스케줄 재개",
       },
@@ -981,14 +998,31 @@ function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   }
 
   const executionAction = getIdleExecutionAction(job);
-  const detailActions: JobDetailAction[] = [
-    { className: "job-action-button", kind: "edit", label: "수정" },
-  ];
+  const detailActions: JobDetailAction[] = [];
   const scheduleAction = getActiveScheduleAction(job);
   if (scheduleAction) detailActions.push(scheduleAction);
-  detailActions.push({ ...executionAction, className: "job-action-button primary" });
+  detailActions.push(executionAction);
+  detailActions.push({ className: "job-action-button", kind: "edit", label: "수정" });
   detailActions.push({ className: "job-action-button danger", kind: "delete", label: "삭제" });
   return detailActions;
+}
+
+function JobDetailActionIcon({ action, job }: { action: JobDetailAction; job: JobRowData }) {
+  if (action.kind === "edit") return <Pencil aria-hidden="true" />;
+  if (action.kind === "delete") return <Trash2 aria-hidden="true" />;
+  if (action.kind === "cancelRun") return <X aria-hidden="true" />;
+  if (action.kind === "stopSchedule") return isRealtimeJob(job) ? <Square aria-hidden="true" /> : <CalendarOff aria-hidden="true" />;
+  if (action.kind === "resumeSchedule") return <Calendar aria-hidden="true" />;
+  if (action.kind === "retry") return <RefreshCw aria-hidden="true" />;
+  if (isRealtimeJob(job)) return <Play aria-hidden="true" />;
+  return <Zap aria-hidden="true" />;
+}
+
+function getJobDetailActionClassName(action: JobDetailAction) {
+  if (action.kind === "delete" || action.kind === "cancelRun" || action.className.includes("realtime-stop")) {
+    return "border-red-200 bg-red-50 text-red-700 shadow-sm hover:border-red-300 hover:bg-red-100";
+  }
+  return getJobListActionButtonClassName(action);
 }
 
 type JobsTableRow = {
@@ -1126,17 +1160,73 @@ function truncateText(value: string, maxLength: number) {
 }
 
 function StatusPill({ job }: { job: JobRowData }) {
+  const showScheduledBatchProgress = job.status === "running"
+    && hasAutomaticSchedule(job)
+    && !isRealtimeJob(job)
+    && job.progress !== undefined;
+
   return (
-    <StatusBadge className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold" tone={getJobStatusTone(job.status)}>
-      {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
-      {jobStatusMeta[job.status].label}
-    </StatusBadge>
+    <div className={`grid h-full min-w-[184px] content-center justify-items-center gap-3 px-3 py-3 ${showScheduledBatchProgress ? "min-h-[116px]" : "min-h-[100px]"}`}>
+      <StatusBadge
+        className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
+        tone={getJobStatusTone(job.status)}
+      >
+        {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
+        {jobStatusMeta[job.status].label}
+      </StatusBadge>
+      {showScheduledBatchProgress && job.progress ? (
+        <div className="w-full text-left">
+          <Progress
+            aria-label={`${job.progress.label} ${job.progress.value}%`}
+            className="w-full"
+            indicatorClassName="bg-green-500"
+            value={job.progress.value}
+          >
+            <ProgressLabel className="text-left text-sm" title={job.progress.label}>{job.progress.label}</ProgressLabel>
+            <ProgressValue className="text-right text-sm" />
+          </Progress>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function OwnerIdentity({ job }: { job: JobRowData }) {
+function OwnerIdentity({
+  job,
+  layout = "stacked",
+}: {
+  job: JobRowData;
+  layout?: "header" | "stacked";
+}) {
   const timestamp = job.updatedAt ?? job.createdAt;
   const timestampLabel = job.updatedAt ? "최근 수정" : "생성";
+
+  if (layout === "header") {
+    return (
+      <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-5 gap-y-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Avatar size="lg">
+            {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
+            <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
+              {getOwnerInitials(job.owner)}
+            </AvatarFallback>
+          </Avatar>
+          <div className="grid min-w-0 gap-0.5 text-left">
+            <span className="text-sm font-semibold text-slate-500">소유자</span>
+            <span className="truncate text-base font-semibold text-slate-800" title={job.owner}>{job.owner}</span>
+          </div>
+        </div>
+        {timestamp && (
+          <div className="grid shrink-0 gap-0.5 text-right">
+            <span className="text-sm font-semibold text-slate-500">{timestampLabel}</span>
+            <time className="text-base font-medium tabular-nums text-slate-700" dateTime={timestamp} title={`${timestampLabel} ${timestamp}`}>
+              {formatCompactDateTime(timestamp)}
+            </time>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-w-0 items-center gap-2.5 text-left">
@@ -1164,9 +1254,6 @@ function getOwnerInitials(owner: string) {
   return (words[0] ?? "?").slice(0, 2).toUpperCase();
 }
 
-type SchemaDetailRow = [string, string, string, string, string, string];
-type RuleDetailRow = [string, string, string, string];
-
 function fallbackJobStats(job: JobRowData): JobStats {
   const runs = job.runHistory ?? [];
   const successRuns = runs.filter((run) => run.status === "success").length;
@@ -1187,99 +1274,277 @@ function fallbackJobStats(job: JobRowData): JobStats {
   };
 }
 
-function schemaRowsForJob(job: JobRowData, stats: JobStats): SchemaDetailRow[] {
-  const sourcePath = job.source.split(" / ")[1] ?? job.source;
-  const run = job.runHistory?.[0];
-  const issue = job.status === "failed" ? getJobExecutionDisplay(job).summary : job.status === "running" ? "처리 중" : "정상";
-
-  return [
-    ["1", "source", sourcePath, "raw_payload", "String", issue],
-    ["2", "schema columns", stats.schemaColumns, "inferred_schema", "JSON", issue],
-    ["3", "input rows", stats.inputRows, "source_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
-    ["4", "output rows", stats.outputRows, "target_rows", "Integer", run?.status === "failed" ? "실패 run 기준" : "최근 run 기준"],
-    ["5", "sample scope", stats.sampleScope, "sample_window", "String", "생성 시점 metadata"],
-  ];
+function formatOperationalRate(value: number | null) {
+  return value === null ? "-" : `${value.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%`;
 }
 
-function ruleRowsForJob(job: JobRowData): RuleDetailRow[] {
-  const steps = job.dagSteps ?? [];
-  if (steps.length > 0) {
-    return steps.map((step) => [
-      step.title,
-      step.meta,
-      step.note ?? "-",
-      step.status.toUpperCase(),
-    ]);
-  }
-
-  const stage = job.progress?.label ?? jobStatusMeta[job.status].summaryLabel;
-  const state = job.status === "failed" ? "FAILED" : job.status === "running" ? "RUNNING" : job.status === "canceled" ? "CANCELED" : "PENDING";
-
-  return [
-    ["소스 검증", job.source, "백엔드 커넥터 결과", state],
-    ["스키마 추론", stage, "추론된 메타데이터", state],
-    ["Create handoff", job.target, "job/dataset response", state],
-  ];
+function formatOperationalDelay(value: number | null) {
+  if (value === null) return "-";
+  if (value < 1000) return `${value.toLocaleString("ko-KR")}ms`;
+  return `${(value / 1000).toLocaleString("ko-KR", { maximumFractionDigits: 1 })}초`;
 }
 
-const detailKeyValueListClassName = "grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 [&>div]:min-w-0 [&_dt]:mb-1 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:text-slate-500 [&_dd]:m-0 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:leading-6 [&_dd]:text-slate-900 [&_dd]:[overflow-wrap:anywhere]";
+const jobDetailFieldLabelMap: Record<string, string> = {
+  Aggregation: "집계 주기",
+  "Bootstrap Server": "부트스트랩 서버",
+  Bucket: "버킷",
+  "Consumer Group": "컨슈머 그룹",
+  Database: "데이터베이스",
+  Dataset: "데이터셋",
+  Format: "파일 형식",
+  Header: "헤더 포함",
+  Host: "호스트",
+  "Incremental Key": "증분 기준 키",
+  Offset: "시작 오프셋",
+  Prefix: "경로 접두사",
+  Table: "테이블",
+  Topic: "토픽",
+  Window: "집계 범위",
+};
 
-function DetailSummaryStat({ label, tone, value }: { label: string; tone?: "danger" | "running" | "scheduled" | "canceled"; value: string }) {
-  const valueToneClassName = tone === "danger"
-    ? "text-red-700"
-    : tone === "running"
-      ? "text-emerald-700"
-      : tone === "canceled"
-        ? "text-slate-600"
-        : "text-slate-950";
+function getJobDetailFieldLabel(label: string) {
+  return jobDetailFieldLabelMap[label] ?? label;
+}
+
+const ruleActionLabelMap: Record<string, string> = {
+  "Drop Row": "행 제외",
+  "Fail Run": "실행 실패 처리",
+  Quarantine: "격리",
+  "Set Null": "NULL 처리",
+  Warn: "경고 기록",
+};
+
+const validationTypeLabelMap: Record<string, string> = {
+  "Accepted Values": "허용값 검사",
+  "Not Null": "NULL 불가",
+  "Range Check": "범위 검사",
+  "Regex Match": "정규식 검사",
+};
+
+function getRuleActionLabel(value: string) {
+  return ruleActionLabelMap[value] ?? value;
+}
+
+const detailKeyValueListClassName = "grid grid-cols-1 gap-x-5 gap-y-5 sm:grid-cols-2 [&>div]:min-w-0 [&_dt]:mb-1.5 [&_dt]:text-sm [&_dt]:font-bold [&_dt]:text-slate-500 [&_dd]:m-0 [&_dd]:text-base [&_dd]:font-semibold [&_dd]:leading-7 [&_dd]:text-slate-900 [&_dd]:[overflow-wrap:anywhere]";
+const endpointKeyValueListClassName = "grid grid-cols-1 gap-x-8 sm:grid-cols-2 [&>div]:min-w-0 [&>div]:border-b [&>div]:border-slate-100 [&>div]:py-4 [&_dt]:mb-1.5 [&_dt]:text-sm [&_dt]:font-bold [&_dt]:text-slate-500 [&_dd]:m-0 [&_dd]:text-base [&_dd]:font-semibold [&_dd]:leading-7 [&_dd]:text-slate-950 [&_dd]:[overflow-wrap:anywhere]";
+
+function JobEndpointCard({
+  badge,
+  icon,
+  items,
+  tone,
+  title,
+}: {
+  badge: string;
+  icon: React.ReactNode;
+  items: KeyValueListItem[];
+  tone: "source" | "target";
+  title: string;
+}) {
+  const isSource = tone === "source";
 
   return (
-    <Card className="grid min-h-[72px] content-center gap-1.5 border-slate-200 bg-white/80 shadow-none" size="sm">
-      <span className="text-xs font-bold text-slate-500">{label}</span>
-      <strong className={`text-sm font-extrabold leading-snug ${valueToneClassName} [overflow-wrap:anywhere]`}>{value}</strong>
+    <Card
+      className={`relative h-full overflow-hidden border-slate-200 shadow-[0_10px_30px_-24px_rgba(15,23,42,0.45)] before:absolute before:inset-x-0 before:top-0 before:h-0.5 ${isSource ? "before:bg-blue-500" : "before:bg-emerald-500"}`}
+      size="none"
+    >
+      <CardHeader className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-4">
+        <span className={`grid size-11 place-items-center rounded-md ring-1 ring-inset ${isSource ? "bg-blue-50 text-blue-600 ring-blue-100" : "bg-emerald-50 text-emerald-600 ring-emerald-100"}`}>
+          {icon}
+        </span>
+        <CardTitle className="text-lg font-extrabold">{title}</CardTitle>
+        <Badge shape="compact" size="lg" variant={isSource ? "default" : "success"}>{badge}</Badge>
+      </CardHeader>
+      <CardContent className="px-5 pb-5 !pt-3">
+        <KeyValueList className={endpointKeyValueListClassName} items={items} />
+      </CardContent>
     </Card>
   );
 }
 
-type JobNextAction = {
-  kind: "resumeSchedule" | "run" | "retry";
-  label: string;
+type OutputSchemaRow = {
+  field: string;
+  index: number;
+  sample: string;
+  type: string;
 };
 
-function getJobNextAction(job: JobRowData): JobNextAction {
-  if (isRealtimeJob(job)) {
-    return {
-      kind: getLatestRunOutcome(job) === "failed" ? "retry" : "run",
-      label: "실행",
-    };
-  }
-  if (job.status === "failed" || job.status === "canceled") return { kind: "retry", label: "재실행 요청" };
-  if (job.status === "paused") return { kind: "retry", label: "다시 실행" };
-  if (job.status === "stopped") {
-    return {
-      kind: "resumeSchedule",
-      label: isRealtimeJob(job) ? "실행" : "스케줄 재개",
-    };
-  }
-  return { kind: "run", label: "즉시 실행" };
+type TransformRuleRow = {
+  enabled: boolean;
+  index: number;
+  input: string;
+  label: string;
+  onError: string;
+  operation: string;
+  output: string;
+  params: string;
+};
+
+type QualityRuleRow = {
+  enabled: boolean;
+  failureAction: string;
+  severity: string;
+  targetColumn: string;
+  validationType: string;
+};
+
+const outputSchemaColumns: ColumnDef<OutputSchemaRow>[] = [
+  {
+    accessorKey: "index",
+    header: "순서",
+    meta: { align: "center", widthClassName: "w-[80px]" } satisfies DataTableColumnMeta,
+  },
+  {
+    accessorKey: "field",
+    header: "출력 필드",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-bold">{row.original.field}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "type",
+    header: "타입",
+    cell: ({ row }) => <Badge shape="compact" size="lg" variant="muted">{row.original.type}</Badge>,
+  },
+  {
+    accessorKey: "sample",
+    header: "샘플",
+    cell: ({ row }) => (
+      <span className="block max-w-[280px] truncate text-base font-medium text-slate-700" title={row.original.sample}>
+        {row.original.sample}
+      </span>
+    ),
+  },
+];
+
+const transformRuleColumns: ColumnDef<TransformRuleRow>[] = [
+  {
+    accessorKey: "index",
+    header: "순서",
+    meta: { align: "center", widthClassName: "w-[80px]" } satisfies DataTableColumnMeta,
+  },
+  {
+    accessorKey: "label",
+    header: "변환 규칙",
+    cell: ({ row }) => (
+      <DataTableStackedCell className="gap-1">
+        <DataTableCellPrimary className="text-base font-bold">{row.original.label}</DataTableCellPrimary>
+        <DataTableCellSecondary className="text-[13px] font-semibold">{row.original.operation}</DataTableCellSecondary>
+      </DataTableStackedCell>
+    ),
+  },
+  {
+    id: "mapping",
+    header: "입력 → 출력",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-semibold">{row.original.input} → {row.original.output}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "params",
+    header: "설정",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.params || "-"}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "onError",
+    header: "오류 처리",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.onError}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "enabled",
+    header: "상태",
+    cell: ({ row }) => <Badge shape="compact" size="lg" variant={row.original.enabled ? "success" : "muted"}>{row.original.enabled ? "활성" : "비활성"}</Badge>,
+  },
+];
+
+const qualityRuleColumns: ColumnDef<QualityRuleRow>[] = [
+  {
+    accessorKey: "targetColumn",
+    header: "대상 컬럼",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-bold">{row.original.targetColumn}</DataTableCellPrimary>,
+    meta: {
+      cellClassName: "pl-10",
+      headerClassName: "pl-10",
+    } satisfies DataTableColumnMeta,
+  },
+  {
+    accessorKey: "validationType",
+    header: "검증 규칙",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.validationType}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "severity",
+    header: "심각도",
+    cell: ({ row }) => <Badge shape="compact" size="lg" variant={row.original.severity === "오류" ? "destructive" : "warning"}>{row.original.severity}</Badge>,
+  },
+  {
+    accessorKey: "failureAction",
+    header: "실패 시",
+    cell: ({ row }) => <DataTableCellPrimary className="text-base font-medium text-slate-700">{row.original.failureAction}</DataTableCellPrimary>,
+  },
+  {
+    accessorKey: "enabled",
+    header: "상태",
+    cell: ({ row }) => <Badge shape="compact" size="lg" variant={row.original.enabled ? "success" : "muted"}>{row.original.enabled ? "활성" : "비활성"}</Badge>,
+  },
+];
+
+function OperationSummaryItem({
+  detail,
+  label,
+  tone = "default",
+  value,
+}: {
+  detail: string;
+  label: string;
+  tone?: "danger" | "default" | "running" | "scheduled";
+  value: string;
+}) {
+  const accentClassName = tone === "danger"
+    ? "border-red-400"
+    : tone === "running"
+      ? "border-emerald-400"
+      : tone === "scheduled"
+        ? "border-blue-400"
+        : "border-slate-300";
+
+  return (
+    <div className={`grid min-w-0 content-start gap-1 border-l-2 pl-3 ${accentClassName}`}>
+      <span className="text-sm font-bold text-slate-500">{label}</span>
+      <strong className="text-lg font-extrabold leading-snug text-slate-950 [overflow-wrap:anywhere]">{value}</strong>
+      <span className="text-sm font-semibold leading-snug text-slate-500 [overflow-wrap:anywhere]">{detail}</span>
+    </div>
+  );
+}
+
+function PipelineFlowNode({
+  icon,
+  label,
+  value,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="grid min-h-24 min-w-0 grid-cols-[2.5rem_minmax(0,1fr)] items-center gap-3 rounded-md border border-slate-200 bg-white px-5 py-4 shadow-sm">
+      <span className="grid size-10 place-items-center rounded-md bg-blue-50 text-blue-600">
+        {icon}
+      </span>
+      <div className="grid min-w-0 gap-1 text-left">
+        <span className="text-sm font-extrabold text-slate-500">{label}</span>
+        <strong className="text-lg font-extrabold leading-snug text-slate-950 [overflow-wrap:anywhere]">{value}</strong>
+      </div>
+    </div>
+  );
 }
 
 function JobDetailHeader({
-  activeTab,
+  backLabel,
   job,
-  onAction,
+  onBack,
   onCommand,
-  onDetail,
-  onEdit,
-  onRuns,
 }: {
-  activeTab: "detail" | "runs";
+  backLabel: string;
   job: JobRowData;
-  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
-  onDetail: () => void;
-  onEdit: () => void;
-  onRuns: () => void;
 }) {
   const runAction = (action: JobCommand) => {
     onCommand(job, action);
@@ -1287,292 +1552,371 @@ function JobDetailHeader({
 
   return (
     <div className="grid gap-4">
+      <Button className="w-fit justify-start text-slate-500 hover:text-slate-900" size="content" type="button" variant="link" onClick={onBack}>
+        <ArrowLeft aria-hidden="true" />
+        {backLabel}
+      </Button>
       <PageHeader
         actions={(
-          <ActionGroup density="compact">
-            {getJobDetailActions(job).map((action) => (
-              <Button key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
-            ))}
-          </ActionGroup>
-        )}
-        eyebrow={(
-          <Button className="justify-start text-slate-500 hover:text-slate-900" size="content" type="button" variant="link" onClick={onDetail}>
-            수집/처리 / 작업 목록
-          </Button>
+          <div className="grid max-w-full justify-items-end gap-3">
+            <ActionGroup density="compact">
+              {getJobDetailActions(job).map((action) => (
+                <Button
+                  className={getJobDetailActionClassName(action)}
+                  key={action.label}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  onClick={() => runAction(action.kind)}
+                >
+                  <JobDetailActionIcon action={action} job={job} />
+                  {action.label}
+                </Button>
+              ))}
+            </ActionGroup>
+            <OwnerIdentity job={job} layout="header" />
+          </div>
         )}
         icon={<Database aria-hidden="true" size={26} />}
         iconClassName="size-14 rounded-xl"
-        meta={(
-          <TagList density="compact">
-            <StatusPill job={job} />
-            <Chip size="default" tone="outline">Owner: {job.owner}</Chip>
-            <Chip size="default" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
-          </TagList>
+        leadingAlign="center"
+        title={(
+          <>
+            <span>{job.target}</span>
+            <StatusBadge className="min-w-0 justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-semibold" tone={getJobStatusTone(job.status)}>
+              {job.status === "running" && <Spinner className="size-3.5" aria-label="실행 중" />}
+              {jobStatusMeta[job.status].label}
+            </StatusBadge>
+          </>
         )}
-        title={job.name}
-        titleClassName="text-3xl font-bold"
+        titleClassName="flex flex-wrap items-center gap-3 text-3xl font-bold"
         variant="bordered"
       />
-      <Tabs
-        value={activeTab}
-        onValueChange={(value: string) => {
-          if (value === "detail") onDetail();
-          else onRuns();
-        }}
-      >
-        <TabsList aria-label="작업 상세 탭" className="h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-slate-200 bg-transparent p-0">
-          <TabsTrigger className="min-h-10 rounded-none border-b-2 border-transparent px-1 pb-3 pt-2 text-sm shadow-none data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:text-blue-700 data-[state=active]:shadow-none" value="detail">
-            작업 상세 정보
-          </TabsTrigger>
-          <TabsTrigger className="min-h-10 rounded-none border-b-2 border-transparent px-1 pb-3 pt-2 text-sm shadow-none data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:text-blue-700 data-[state=active]:shadow-none" value="runs">
-            실행 이력
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
     </div>
   );
 }
 
 export function JobDetailPage({
   job,
-  onAction,
   onBack,
   onCommand,
-  onEdit,
   onRuns,
 }: {
   job: JobRowData;
-  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
-  onEdit: () => void;
   onRuns: () => void;
 }) {
   const sourceType = job.source.split(" / ")[0] ?? job.source;
   const sourcePath = job.source.split(" / ")[1] ?? job.source;
   const stats = job.stats ?? fallbackJobStats(job);
+  const realtime = isRealtimeJob(job);
+  const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
+  const realtimeMetrics = job.operationalMetrics?.metricType === "realtime" ? job.operationalMetrics : undefined;
+  const realtimeHealth = realtimeHealthMeta[realtimeMetrics?.healthStatus ?? "unknown"];
   const physicalOutputPath = job.targetPath ?? stats.outputPath ?? `lake/${job.target}`;
   const executionDisplay = getJobExecutionDisplay(job);
-  const latestRunId = job.runHistory?.[0]?.runId ?? "-";
-  const primaryAction = getJobNextAction(job);
-  const showPrimaryAction = job.status !== "running";
-  const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
-  const stripTitle = job.status === "failed"
-    ? "최근 실행 실패"
+  const latestRun = job.runHistory?.[0];
+  const activeRun = latestRun?.status === "running" ? latestRun : undefined;
+  const latestRunTimestamp = latestRun?.endedAt || latestRun?.startedAt || job.lastRun;
+  const processSummary = job.transformSteps?.length
+    ? `${job.transformSteps.length}개 변환 규칙`
+    : "처리 설정 적용";
+  const currentStatusTone = job.status === "failed"
+    ? "danger"
     : job.status === "running"
-      ? "현재 실행 중"
+      ? "running"
+      : "scheduled";
+  const currentStatusDetail = job.status === "failed"
+    ? executionDisplay.summary
+    : job.status === "running"
+      ? job.progress?.label ?? "처리 진행 중"
       : job.status === "paused"
-        ? "작업 일시정지"
-        : job.status === "canceled"
-          ? "최근 실행 취소"
-          : job.status === "stopped"
-            ? isRealtimeJob(job) ? "실시간 수집 중지" : "스케줄 일시중지"
-            : "스케줄 정상";
-  const schemaRows = schemaRowsForJob(job, stats);
-  const ruleRows = ruleRowsForJob(job);
-  const summaryToneClassName = stripTone === "danger"
-    ? "border-red-200 bg-red-50"
-    : stripTone === "running"
-      ? "border-emerald-200 bg-emerald-50"
-      : stripTone === "canceled"
-        ? "border-slate-300 bg-slate-50"
-        : "border-blue-200 bg-blue-50";
+        ? "수동 재개 필요"
+        : job.status === "stopped"
+          ? realtime ? "실시간 수집 중지" : "스케줄 일시중지"
+          : job.status === "canceled"
+            ? "최근 실행 취소"
+            : "자동 실행 활성";
+  const outputSchemaRows: OutputSchemaRow[] = (job.transformOutputColumns ?? []).map(([field, type], index) => ({
+    field,
+    index: index + 1,
+    sample: job.schemaSampleValues?.[field] ?? "-",
+    type,
+  }));
+  const transformRuleRows: TransformRuleRow[] = (job.transformSteps ?? []).map((step, index) => ({
+    enabled: step.enabled,
+    index: index + 1,
+    input: step.input,
+    label: step.label,
+    onError: getRuleActionLabel(step.onError),
+    operation: step.operation,
+    output: step.output,
+    params: step.params,
+  }));
+  const qualityRuleRows: QualityRuleRow[] = (job.qualityRules ?? []).map((rule) => ({
+    enabled: rule.enabled,
+    failureAction: getRuleActionLabel(rule.failureAction),
+    severity: rule.severity === "Error" ? "오류" : "경고",
+    targetColumn: rule.targetColumn,
+    validationType: validationTypeLabelMap[rule.validationType] ?? rule.validationType,
+  }));
+  const activePermissionRoles = (job.permissionRoles ?? []).filter((role) => role.checked);
+  const permissionRoleNames = (accessNames: string[]) => activePermissionRoles
+    .filter((role) => accessNames.some((accessName) => role.access.includes(accessName)))
+    .map((role) => role.name)
+    .join(", ") || "설정 없음";
+  const retrySummary = job.retryPolicySummary ?? (job.retryPolicy
+    ? `${job.retryPolicy.maxRetries}회 · ${job.retryPolicy.backoffStrategy === "exponential" ? "지수" : "고정"} 백오프`
+    : "설정 없음");
 
   return (
     <div className="job-detail-page">
-      <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
+      <JobDetailHeader backLabel="작업 목록으로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
 
       <Panel overflow="visible">
-        <PanelHeader icon={<Info aria-hidden="true" size={18} />} title="작업 핵심 정보" />
-        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.85fr)]">
-          <Card className={`grid gap-4 shadow-none ${summaryToneClassName}`} size="sm">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-              <div className="grid min-w-0 gap-1.5">
-                <span className="text-xs font-extrabold text-slate-600">{stripTitle}</span>
-                <h3 className="text-lg font-bold leading-snug text-slate-950 [overflow-wrap:anywhere]">{executionDisplay.summary}</h3>
-              </div>
-              {showPrimaryAction && (
-                <Button size="sm" type="button" variant="primary" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</Button>
-              )}
-            </div>
-            <div className="grid gap-2 sm:grid-cols-3">
-              <DetailSummaryStat label="최근 Run" value={latestRunId} />
-              <DetailSummaryStat label="마지막 실행" value={formatCompactDateTime(job.lastRun)} />
-              <DetailSummaryStat label="다음 실행" value={job.nextRun} />
-            </div>
-          </Card>
-
-          <Card size="sm">
-            <CardHeader>
-              <CardTitle className="text-sm">기본 메타</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4">
-              <KeyValueList
-                className={`${detailKeyValueListClassName} [&>div:nth-child(n+3)]:sm:col-span-2`}
-                items={[
-                  { label: "Job ID", value: job.id },
-                  { label: "Target", value: job.target },
-                  { label: "소스", value: job.source },
-                  { label: "운영 조직", value: job.owner === "admin" ? "Data Platform" : "Analytics Ops" },
-                ]}
+        <PanelHeader
+          actions={(
+            <Button size="sm" type="button" variant="outline" onClick={onRuns}>
+              실행 이력 보기
+              <ArrowRight aria-hidden="true" />
+            </Button>
+          )}
+          icon={<BarChart3 aria-hidden="true" size={18} />}
+          title="운영 요약"
+        />
+        <div className="grid gap-5 p-5">
+          <div className="rounded-lg border border-slate-200 bg-transparent p-3">
+            <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+              <PipelineFlowNode
+                icon={<Database aria-hidden="true" className="size-5" />}
+                label="소스"
+                value={`${sourceType} · ${sourcePath}`}
               />
-            </CardContent>
-          </Card>
+              <span className="hidden items-center justify-center px-1 text-slate-400 md:flex">
+                <ArrowRight aria-hidden="true" className="size-5" />
+              </span>
+              <PipelineFlowNode
+                icon={<Settings aria-hidden="true" className="size-5" />}
+                label="처리"
+                value={processSummary}
+              />
+              <span className="hidden items-center justify-center px-1 text-slate-400 md:flex">
+                <ArrowRight aria-hidden="true" className="size-5" />
+              </span>
+              <PipelineFlowNode
+                icon={<Table2 aria-hidden="true" className="size-5" />}
+                label="타겟"
+                value={job.target}
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+            <OperationSummaryItem
+              detail={currentStatusDetail}
+              label="현재 상태"
+              tone={currentStatusTone}
+              value={jobStatusMeta[job.status].label}
+            />
+            <OperationSummaryItem
+              detail={activeRun
+                ? activeRun.runId
+                : latestRun
+                  ? `${formatCompactDateTime(latestRunTimestamp)} · ${latestRun.duration}`
+                  : "실행 기록 없음"}
+              label={activeRun ? "현재 Run" : "최근 실행"}
+              tone={latestRun?.status === "failed" ? "danger" : latestRun?.status === "running" ? "running" : "default"}
+              value={activeRun ? `${formatCompactDateTime(activeRun.startedAt)} 시작` : latestRun ? runStatusMeta[latestRun.status].label : "-"}
+            />
+            <OperationSummaryItem
+              detail={realtime ? job.scheduleSummary ?? job.schedule : job.schedule}
+              label={realtime ? "수집 방식" : "다음 실행"}
+              tone="scheduled"
+              value={realtime ? "실시간" : formatCompactDateTime(job.nextRun)}
+            />
+            {realtime ? (
+              <OperationSummaryItem
+                detail={realtimeMetrics
+                  ? `가동률 ${formatOperationalRate(realtimeMetrics.availabilityRate)} · 처리 지연 ${formatOperationalDelay(realtimeMetrics.processingDelayMs)}`
+                  : "실시간 지표 API 연동 대기"}
+                label="수집 안정성"
+                tone={realtimeHealth.tone}
+                value={realtimeHealth.label}
+              />
+            ) : (
+              <OperationSummaryItem
+                detail={`${totalRunsLabel} 실행 · 평균 ${stats.averageDuration}`}
+                label="실행 안정성"
+                value={stats.successRate}
+              />
+            )}
+          </div>
         </div>
       </Panel>
 
       <Accordion className="grid gap-4" defaultValue={["source-target", "schema-transform"]} type="multiple">
         <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="source-target">
-          <AccordionTrigger className="min-h-14 px-5 text-base">소스 / 타겟 설정</AccordionTrigger>
-          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle className="text-sm">소스 연결 설정</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <KeyValueList
-                  className={detailKeyValueListClassName}
-                  items={[
-                    { label: "소스 유형", value: sourceType },
-                    { label: "소스 경로", value: sourcePath },
-                    { label: "연결 상태", value: job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료" },
-                    { label: "인증 방식", value: sourceType.includes("S3") || sourceType.includes("File") ? "S3 호환 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector" },
-                    { label: "읽기 방식", value: job.status === "running" ? "Streaming" : "Batch Scan" },
-                  ]}
-                />
-              </CardContent>
-            </Card>
+          <AccordionTrigger className="h-[72px] min-h-0 px-5 py-0 text-base">
+            <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-left">
+              <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
+                <Repeat2 aria-hidden="true" className="size-[18px]" />
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <span className="text-base font-[850] leading-tight text-slate-900">소스 / 타겟</span>
+                <span className="text-sm font-semibold text-slate-500">{sourceType} → {job.targetFormat ?? "데이터셋"}</span>
+              </span>
+            </span>
+          </AccordionTrigger>
+          <AccordionContent className="grid items-stretch gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
+            <JobEndpointCard
+              badge={job.sourceType ?? sourceType}
+              icon={<Database aria-hidden="true" className="size-5" />}
+              items={[
+                { label: "소스 경로", value: job.sourceLabel ?? sourcePath },
+                ...(job.sourceConfig ?? []).map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
+              ]}
+              title="소스"
+              tone="source"
+            />
 
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle className="text-sm">Target 저장 설정</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <KeyValueList
-                  className={detailKeyValueListClassName}
-                  items={[
-                    { label: "타깃 데이터셋", value: job.target },
-                    { label: "Lake 경로", value: physicalOutputPath },
-                    { label: "저장 포맷", value: "Parquet" },
-                    { label: "쓰기 모드", value: job.status === "running" ? "Append Stream" : "Append + compact" },
-                    { label: "품질 체크", value: job.status === "failed" ? "변환 전 중단" : "행 수 / 스키마 검사" },
-                  ]}
-                />
-              </CardContent>
-              <CardFooter className="mt-4 border-t border-slate-100 pt-4 text-xs font-semibold text-slate-500">
-                Downstream: SQL · Dashboard · Catalog
-              </CardFooter>
-            </Card>
+            <JobEndpointCard
+              badge={job.targetFormat ?? "데이터셋"}
+              icon={<Table2 aria-hidden="true" className="size-5" />}
+              items={[
+                { label: "데이터셋", value: job.target },
+                { label: "저장소", value: job.storageType ?? "설정 없음" },
+                { label: "저장 경로", value: job.storagePath ?? physicalOutputPath },
+                { label: "압축", value: job.compression ?? "사용 안 함" },
+                { label: "파티션", value: job.partition ?? "사용 안 함" },
+              ]}
+              title="타겟"
+              tone="target"
+            />
           </AccordionContent>
         </AccordionItem>
 
         <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="schema-transform">
-          <AccordionTrigger className="min-h-14 px-5 text-base">스키마 / 변환</AccordionTrigger>
-          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4">
+          <AccordionTrigger className="h-[72px] min-h-0 px-5 py-0 text-base">
+            <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-left">
+              <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
+                <ShieldCheck aria-hidden="true" className="size-[18px]" />
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <span className="text-base font-[850] leading-tight text-slate-900">스키마 / 변환 / 품질</span>
+                <span className="text-sm font-semibold text-slate-500">{outputSchemaRows.length}개 컬럼 · 변환 {transformRuleRows.length}개 · 품질 규칙 {qualityRuleRows.length}개</span>
+              </span>
+            </span>
+          </AccordionTrigger>
+          <AccordionContent className="grid gap-5 border-t border-slate-100 p-4">
             <DetailTableSection
               className="overflow-hidden rounded-lg border border-slate-200 bg-white"
-              headerClassName="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-slate-950"
-              meta={<Badge variant="muted">5 컬럼</Badge>}
-              scrollClassName="overflow-x-auto"
-              title="스키마 매핑"
+              headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
+              meta={<Badge shape="compact" size="lg" variant="muted">{outputSchemaRows.length}개 컬럼</Badge>}
+              title="출력 스키마"
             >
-              <Table className="min-w-[760px]">
-                <TableHeader className="bg-slate-50">
-                  <TableRow className="hover:bg-slate-50">
-                    <TableHead>순서</TableHead>
-                    <TableHead>소스 필드</TableHead>
-                    <TableHead>타깃 필드</TableHead>
-                    <TableHead>추론 타입</TableHead>
-                    <TableHead>Nullable</TableHead>
-                    <TableHead>이슈</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {schemaRows.map((row) => {
-                    const isDanger = row[5].includes("실패");
-                    const isRunning = row[5].includes("처리") || row[5].includes("대기");
-                    return (
-                      <TableRow className={isDanger ? "bg-red-50 hover:bg-red-50" : isRunning ? "bg-slate-50" : undefined} key={row[0]}>
-                        {row.map((cell, cellIndex) => (
-                          <TableCell className={cellIndex === 5 && isDanger ? "font-bold text-red-700" : cellIndex === 5 && isRunning ? "font-bold text-emerald-700" : undefined} key={`${row[0]}-${cellIndex}`}>{cell}</TableCell>
-                        ))}
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <DataTable
+                bodyRowClassName="[&_td]:py-4"
+                className="[&_th]:text-sm [&_td]:text-base"
+                columns={outputSchemaColumns}
+                data={outputSchemaRows}
+                emptyState={{ title: "저장된 출력 스키마가 없습니다." }}
+                enableSorting={false}
+                pagination={false}
+                tableClassName="min-w-[680px]"
+                viewportClassName="rounded-none border-0"
+              />
             </DetailTableSection>
 
             <DetailTableSection
               className="overflow-hidden rounded-lg border border-slate-200 bg-white"
-              headerClassName="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-slate-950"
-              meta={<Badge variant="muted">{ruleRows.length} rules</Badge>}
-              scrollClassName="overflow-x-auto"
+              headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
+              meta={<Badge shape="compact" size="lg" variant="muted">{transformRuleRows.length}개 규칙</Badge>}
               title="변환 규칙"
             >
-              <Table className="min-w-[680px]">
-                <TableHeader className="bg-slate-50">
-                  <TableRow className="hover:bg-slate-50">
-                    <TableHead>Rule</TableHead>
-                    <TableHead>대상 필드</TableHead>
-                    <TableHead>Config</TableHead>
-                    <TableHead>오류 시</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {ruleRows.map((row) => {
-                    const isDanger = row[3] === "FAILED";
-                    const isRunning = row[3] === "RUNNING" || row[3] === "PENDING";
-                    return (
-                      <TableRow className={isDanger ? "bg-red-50 hover:bg-red-50" : isRunning ? "bg-slate-50" : undefined} key={row[0]}>
-                        {row.map((cell, cellIndex) => (
-                          <TableCell className={cellIndex === 3 && isDanger ? "font-bold text-red-700" : cellIndex === 3 && isRunning ? "font-bold text-emerald-700" : undefined} key={`${row[0]}-${cellIndex}`}>{cell}</TableCell>
-                        ))}
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+              <DataTable
+                bodyRowClassName="[&_td]:py-4"
+                className="[&_th]:text-sm [&_td]:text-base"
+                columns={transformRuleColumns}
+                data={transformRuleRows}
+                emptyState={{ title: "저장된 변환 규칙이 없습니다." }}
+                enableSorting={false}
+                pagination={false}
+                tableClassName="min-w-[980px]"
+                viewportClassName="rounded-none border-0"
+              />
+            </DetailTableSection>
+
+            <DetailTableSection
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+              headerClassName="flex min-h-16 items-center justify-between gap-3 border-b border-slate-200 px-5 [&_h3]:text-base [&_h3]:font-extrabold [&_h3]:text-slate-950"
+              meta={<Badge shape="compact" size="lg" variant="muted">{qualityRuleRows.length}개 규칙</Badge>}
+              title="품질 규칙"
+            >
+              <DataTable
+                bodyRowClassName="[&_td]:py-4"
+                className="[&_th]:text-sm [&_td]:text-base"
+                columns={qualityRuleColumns}
+                data={qualityRuleRows}
+                emptyState={{ title: "저장된 품질 규칙이 없습니다." }}
+                enableSorting={false}
+                pagination={false}
+                tableClassName="min-w-[760px]"
+                viewportClassName="rounded-none border-0"
+              />
             </DetailTableSection>
           </AccordionContent>
         </AccordionItem>
 
         <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="schedule-permission">
-          <AccordionTrigger className="min-h-14 px-5 text-base">Schedule / Permission</AccordionTrigger>
-          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle className="text-sm">Schedule</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <KeyValueList
-                  className={detailKeyValueListClassName}
-                  items={[
-                    { label: "실행 유형", value: job.status === "running" ? "실시간 수집" : "반복 스케줄" },
-                    { label: "주기", value: job.schedule },
-                    { label: "다음 실행", value: job.nextRun },
-                    { label: "재시도 정책", value: job.status === "failed" ? "3회 · backoff 10m" : "3회 · backoff 5m" },
-                  ]}
-                />
-              </CardContent>
-            </Card>
+          <AccordionTrigger className="h-[72px] min-h-0 px-5 py-0 text-base">
+            <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-left">
+              <span className="grid size-8 place-items-center rounded-lg bg-blue-50 text-blue-600">
+                <Calendar aria-hidden="true" className="size-[18px]" />
+              </span>
+              <span className="grid min-w-0 gap-1">
+                <span className="text-base font-[850] leading-tight text-slate-900">스케줄 / 권한</span>
+                <span className="text-sm font-semibold text-slate-500">{job.schedule} · 역할별 접근 권한</span>
+              </span>
+            </span>
+          </AccordionTrigger>
+          <AccordionContent className="grid gap-5 border-t border-slate-100 p-5 lg:grid-cols-2">
+            <section className="grid content-start gap-5 rounded-lg bg-slate-50 p-5 ring-1 ring-inset ring-slate-200">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-9 place-items-center rounded-lg bg-blue-100/70 text-blue-600">
+                  <Calendar className="size-5" aria-hidden="true" />
+                </span>
+                <h3 className="text-lg font-extrabold text-slate-950">스케줄</h3>
+              </div>
+              <KeyValueList
+                className={detailKeyValueListClassName}
+                items={[
+                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : "반복 스케줄" },
+                  { label: "주기", value: job.schedule },
+                  { label: "다음 실행", value: formatCompactDateTime(job.nextRun) },
+                  { label: "재시도 정책", value: retrySummary },
+                ]}
+              />
+            </section>
 
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle className="text-sm">Permission</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-4">
-                <KeyValueList
-                  className={detailKeyValueListClassName}
-                  items={[
-                    { label: "Owner", value: job.owner },
-                    { label: "접근 그룹", value: "Data Platform, Analytics" },
-                    { label: "canRun", value: job.status === "failed" ? "Owner 승인 후 가능" : "true" },
-                    { label: "승인 상태", value: job.status === "failed" ? "재실행 승인 필요" : "승인됨" },
-                  ]}
-                />
-              </CardContent>
-            </Card>
+            <section className="grid content-start gap-5 rounded-lg bg-slate-50 p-5 ring-1 ring-inset ring-slate-200">
+              <div className="flex items-center gap-2.5">
+                <span className="grid size-9 place-items-center rounded-lg bg-blue-100/70 text-blue-600">
+                  <ShieldCheck className="size-5" aria-hidden="true" />
+                </span>
+                <h3 className="text-lg font-extrabold text-slate-950">권한</h3>
+              </div>
+              <KeyValueList
+                className={detailKeyValueListClassName}
+                items={[
+                  { label: "소유자", value: job.owner },
+                  { label: "조회 가능", value: permissionRoleNames(["조회", "view", "read"]) },
+                  { label: "쿼리 실행 가능", value: permissionRoleNames(["쿼리 실행", "query"]) },
+                  { label: "메타데이터 조회", value: permissionRoleNames(["메타데이터", "metadata"]) },
+                  { label: "관리 가능", value: permissionRoleNames(["관리", "manage"]) },
+                ]}
+              />
+            </section>
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -1607,7 +1951,7 @@ export function JobRunsPage({
 
   return (
     <div className="job-detail-page job-runs-page">
-      <JobDetailHeader activeTab="runs" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onBack} onRuns={() => undefined} />
+      <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
 
       <section className="runs-body-content">
         <article className="runs-stats-summary">
