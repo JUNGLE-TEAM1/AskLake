@@ -71,7 +71,10 @@ export type ReviewSchemaSuggestionColumn = {
   instruction?: string;
   label: string;
   method?: string;
+  modelArtifact?: string;
+  modelId?: string;
   nullable: boolean;
+  requireModel?: boolean;
   targetName: string;
   type: string;
 };
@@ -96,7 +99,17 @@ export function suggestReviewAnalysisSchema(request: {
 
 export function runCellphonesReviewAnalysis(
   limit = 50000,
-  schemaColumns?: Array<{ allowedValues?: string[]; instruction?: string; label?: string; method?: string; targetName: string; type?: string }>,
+  schemaColumns?: Array<{
+    allowedValues?: string[];
+    instruction?: string;
+    label?: string;
+    method?: string;
+    modelArtifact?: string;
+    modelId?: string;
+    requireModel?: boolean;
+    targetName: string;
+    type?: string;
+  }>,
 ) {
   return apiClient.post<ReviewAnalysisSummary>("/api/review-analysis/cellphones/run", { limit, schemaColumns });
 }

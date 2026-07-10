@@ -1440,7 +1440,7 @@ export function SourceConnectionPage({
     if (sourceLocked) return;
     const demoFields: Array<[string, string]> = [
       ["Storage Provider", "MinIO"],
-      ["Endpoint URL", "http://127.0.0.1:19000"],
+      ["Endpoint URL", "http://127.0.0.1:9000"],
       ["Region", "us-east-1"],
       ["Bucket / Stage Name", "m3-raw"],
       ["Path / Prefix", ""],
@@ -2280,10 +2280,15 @@ function formatSourceFieldPath(value: string) {
 
 type ReviewStructuringColumnDef = {
   allowedValues?: string[];
+  fallbackAllowed?: boolean;
   instruction?: string;
   label: string;
   method?: string;
+  modelArtifact?: string;
+  modelId?: string;
+  modelSelectionPolicy?: string;
   nullable: boolean;
+  requireModel?: boolean;
   targetName: string;
   type: string;
 };
@@ -2373,11 +2378,17 @@ function buildReviewStructuringTemplateFromSchema(columns: SchemaColumnDraft[], 
       || column.role?.startsWith("text-row-analysis:")
     ))
     .map((column) => ({
-      allowedValues: reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "")),
+      allowedValues: (column as SchemaColumnDraft & { reviewAnalysisAllowedValues?: string[] }).reviewAnalysisAllowedValues
+        || reviewAnalysisAllowedValuesForTarget(column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, "")),
+      fallbackAllowed: Boolean((column as SchemaColumnDraft & { reviewAnalysisFallbackAllowed?: boolean }).reviewAnalysisFallbackAllowed),
       instruction: reviewAnalysisInstructionForColumn(column),
       label: (column.role ?? "").replace(/^(review|text)-row-analysis:/, "") || column.targetName || column.sourceName,
       method: (column as SchemaColumnDraft & { reviewAnalysisMethod?: string }).reviewAnalysisMethod || reviewAnalysisMethodForTarget(column.targetName || column.sourceName),
+      modelArtifact: (column as SchemaColumnDraft & { reviewAnalysisModelArtifact?: string }).reviewAnalysisModelArtifact || "",
+      modelId: (column as SchemaColumnDraft & { reviewAnalysisModelId?: string }).reviewAnalysisModelId || "",
+      modelSelectionPolicy: (column as SchemaColumnDraft & { reviewAnalysisModelSelectionPolicy?: string }).reviewAnalysisModelSelectionPolicy || "auto",
       nullable: column.nullable,
+      requireModel: Boolean((column as SchemaColumnDraft & { reviewAnalysisRequireModel?: boolean }).reviewAnalysisRequireModel),
       targetName: column.targetName || column.sourceName.replace(/^__(review|text)_analysis\./, ""),
       type: column.type || "String",
     }))
@@ -2414,14 +2425,23 @@ function reviewAnalysisAllowedValuesForTarget(value: string) {
 
 function reviewAnalysisParamsForColumns(reviewColumns: ReviewStructuringColumnDef[], sourceField = "text") {
   return JSON.stringify({
-    columns: reviewColumns.map((column) => ({
-      allowedValues: column.allowedValues ?? reviewAnalysisAllowedValuesForTarget(column.targetName),
-      instruction: column.instruction ?? "",
-      method: column.method || reviewAnalysisMethodForTarget(column.targetName),
-      nullable: column.nullable,
-      targetName: column.targetName,
-      type: column.type,
-    })),
+    columns: reviewColumns.map((column) => {
+      const method = column.method || reviewAnalysisMethodForTarget(column.targetName);
+      const isOneOfValues = method === "one_of_values";
+      return {
+        allowedValues: column.allowedValues ?? reviewAnalysisAllowedValuesForTarget(column.targetName),
+        fallbackAllowed: isOneOfValues && Boolean(column.fallbackAllowed),
+        instruction: column.instruction ?? "",
+        method,
+        modelArtifact: isOneOfValues ? column.modelArtifact || "" : "",
+        modelId: isOneOfValues ? column.modelId || "" : "",
+        modelSelectionPolicy: isOneOfValues ? column.modelSelectionPolicy || (column.modelArtifact || column.modelId ? "explicit" : "auto") : "none",
+        nullable: column.nullable,
+        requireModel: isOneOfValues ? !column.fallbackAllowed : Boolean(column.requireModel),
+        targetName: column.targetName,
+        type: column.type,
+      };
+    }),
     asinField: "asin",
     ratingField: "rating",
     sourceField,
@@ -2490,24 +2510,33 @@ function buildReviewStructuringColumns(columns: SchemaColumnDraft[], reviewColum
   ));
   const sourceField = findTextAnalysisSourceField(columns);
   const params = reviewAnalysisParamsForColumns(reviewColumns, sourceField);
-  const generatedColumns = reviewColumns.map((column) => ({
-    included: true,
-    nullable: column.nullable,
-    role: `text-row-analysis:${column.label}`,
-    sourceName: `__text_analysis.${column.targetName}`,
-    targetName: column.targetName,
-    reviewAnalysisInstruction: column.instruction ?? "",
-    reviewAnalysisMethod: column.method || reviewAnalysisMethodForTarget(column.targetName),
-    transformChain: [{
-      display: `텍스트 row 구조화 -> ${column.label}`,
-      expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
-      onError: "Warn",
-      operation: "Text Row Analysis",
-      params,
+  const generatedColumns = reviewColumns.map((column) => {
+    const method = column.method || reviewAnalysisMethodForTarget(column.targetName);
+    const isOneOfValues = method === "one_of_values";
+    return {
+      included: true,
+      nullable: column.nullable,
+      role: `text-row-analysis:${column.label}`,
+      sourceName: `__text_analysis.${column.targetName}`,
+      targetName: column.targetName,
+      reviewAnalysisFallbackAllowed: isOneOfValues && Boolean(column.fallbackAllowed),
+      reviewAnalysisInstruction: column.instruction ?? "",
+      reviewAnalysisMethod: method,
+      reviewAnalysisModelArtifact: isOneOfValues ? column.modelArtifact ?? "" : "",
+      reviewAnalysisModelId: isOneOfValues ? column.modelId ?? "" : "",
+      reviewAnalysisModelSelectionPolicy: isOneOfValues ? column.modelSelectionPolicy || (column.modelArtifact || column.modelId ? "explicit" : "auto") : "none",
+      reviewAnalysisRequireModel: isOneOfValues ? !column.fallbackAllowed : Boolean(column.requireModel),
+      transformChain: [{
+        display: `텍스트 row 구조화 -> ${column.label}`,
+        expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
+        onError: "Warn",
+        operation: "Text Row Analysis",
+        params,
+        type: column.type,
+      }],
       type: column.type,
-    }],
-    type: column.type,
-  } satisfies SchemaColumnDraft));
+    } satisfies SchemaColumnDraft;
+  });
   return [...baseColumns, ...generatedColumns];
 }
 
@@ -5533,6 +5562,13 @@ export function TargetPage({
     setPartitionColumns([columnName]);
   };
 
+  const updateTargetDataset = (value: string) => {
+    setTargetDataset(value);
+    if (!targetIdentityLocked && isDefaultTargetStoragePath(targetStoragePath)) {
+      setTargetStoragePath(buildTargetStoragePath(value, targetLayer));
+    }
+  };
+
   const saveTargetConfig = () => {
     const config = buildConfig();
     const errors = validateTargetConfig(config, activeJsonParseFailed);
@@ -5587,7 +5623,7 @@ export function TargetPage({
           <div className="target-xflow-form-grid basic">
             <label className="field wide">
               <span>데이터셋명</span>
-              <input className="input control-input" readOnly={targetIdentityLocked} value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+              <input className="input control-input" readOnly={targetIdentityLocked} value={targetDataset} onChange={(event) => updateTargetDataset(event.target.value)} />
             </label>
             <label className="field">
               <span>오너</span>
