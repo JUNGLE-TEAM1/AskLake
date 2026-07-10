@@ -758,7 +758,7 @@ export function SqlAnalysisPage({
                   <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
                     <FieldTitle>데이터셋</FieldTitle>
                     <Panel asChild>
-                      <ScrollArea className="h-[250px] min-h-0" type="always">
+                      <ScrollArea className="h-[300px] min-h-0" type="always">
                         <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
                           <SqlDatasetTree
                             datasets={paginatedContextDatasets}
