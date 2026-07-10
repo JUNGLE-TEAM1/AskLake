@@ -2,16 +2,47 @@ import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
+export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "delete";
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type JobRunOutcome = "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
+export type RealtimeOperationalHealth = "healthy" | "degraded" | "unhealthy" | "unknown";
+
+export type BatchOperationalMetrics = {
+  metricType: "batch";
+  windowFrom: string;
+  windowTo: string;
+  totalRuns: number;
+  successfulRuns: number;
+  successRate: number | null;
+  averageDurationMs: number | null;
+};
+
+export type RealtimeOperationalMetrics = {
+  metricType: "realtime";
+  windowFrom: string;
+  windowTo: string;
+  healthStatus: RealtimeOperationalHealth;
+  availabilityRate: number | null;
+  consumerLag: number | null;
+  processingDelayMs: number | null;
+  lastHeartbeatAt: string | null;
+  lastCheckpointAt: string | null;
+  restartCount: number;
+  errorRate: number | null;
+};
+
+export type JobOperationalMetrics = BatchOperationalMetrics | RealtimeOperationalMetrics;
 
 export type JobRowData = {
+  createdAt?: string;
   status: JobStatus;
   name: string;
   id: string;
   owner: string;
+  ownerAvatarUrl?: string;
   createdBy?: string;
   createdByProfile?: IdentityProfile;
   permissionGrants?: PermissionGrant[];
@@ -19,6 +50,7 @@ export type JobRowData = {
   tag: string;
   source: string;
   target: string;
+  updatedAt?: string;
   schedule: string;
   schedulePolicy?: SchedulePolicyDraft;
   scheduleSummary?: string;
@@ -47,6 +79,7 @@ export type JobRowData = {
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
+  schemaSampleValues?: Record<string, string>;
   rag?: boolean;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
@@ -57,6 +90,7 @@ export type JobRowData = {
   lastRun: string;
   lastState: string;
   nextRun: string;
+  operationalMetrics?: JobOperationalMetrics;
   progress?: {
     label: string;
     value: number;
@@ -65,6 +99,25 @@ export type JobRowData = {
   runHistory?: JobRunSummary[];
   dagSteps?: JobDagStep[];
   dagStepsByRunId?: Record<string, JobDagStep[]>;
+};
+
+export type JobListQuery = {
+  lastRunOutcome?: JobRunOutcome;
+  owner?: string;
+  scheduleKind?: JobScheduleKind;
+  statuses?: JobStatus[];
+};
+
+export type JobListFacets = {
+  latestRunOutcomeCounts: Record<JobRunOutcome, number>;
+  owners: string[];
+  statusCounts: Record<JobStatus, number>;
+  total: number;
+};
+
+export type JobListResult = {
+  facets: JobListFacets;
+  jobs: JobRowData[];
 };
 
 export type JobStats = {
@@ -353,7 +406,9 @@ export type JobRunSummary = {
 };
 
 export type JobDagStep = {
+  completedAt?: string;
   details?: Array<[string, string]>;
+  duration?: string;
   id: string;
   logs?: string[];
   meta: string;

@@ -1,4 +1,7 @@
 import { Activity, LogIn, LogOut, RefreshCw } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AuditEntry } from "../../types";
 import type { CurrentUserResponse } from "../../types";
 
@@ -25,12 +28,18 @@ export function Topbar({
   const initials = currentUser?.profile.avatarInitials || displayName.slice(0, 2).toUpperCase();
   return (
     <header className="topbar">
+      <TooltipProvider delayDuration={300}>
       <div className="topbar-actions">
         <div className="audit-menu">
-          <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
-            <Activity size={18} />
-            {auditLogs.length > 0 && <span className="audit-dot" />}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" type="button" onClick={onAuditToggle}>
+                <Activity />
+                {auditLogs.length > 0 && <span className="audit-dot" />}
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>최근 API 호출</TooltipContent>
+          </Tooltip>
           {auditOpen && (
             <section className="audit-popover">
               <div className="audit-popover-header">
@@ -52,24 +61,39 @@ export function Topbar({
             </section>
           )}
         </div>
-        <button className="icon-button" type="button" aria-label="Refresh" onClick={onRefresh}>
-          <RefreshCw size={18} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <IconButton className="icon-button" label="새로고침" type="button" onClick={onRefresh}><RefreshCw /></IconButton>
+          </TooltipTrigger>
+          <TooltipContent>새로고침</TooltipContent>
+        </Tooltip>
         {currentUser ? (
           <>
-            <button className="icon-button" type="button" aria-label="로그아웃" onClick={onLogout}>
-              <LogOut size={18} />
-            </button>
-            <button className="avatar-button" type="button" aria-label="내 프로필" onClick={onAccount}>
-              <span className="avatar">{initials}</span>
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className="icon-button" label="로그아웃" type="button" onClick={onLogout}><LogOut /></IconButton>
+              </TooltipTrigger>
+              <TooltipContent>로그아웃</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className="p-0" label="내 프로필" type="button" onClick={onAccount}>
+                  <Avatar><AvatarFallback>{initials || "AL"}</AvatarFallback></Avatar>
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>내 프로필</TooltipContent>
+            </Tooltip>
           </>
         ) : (
-          <button className="icon-button" type="button" aria-label="로그인" onClick={onLogin}>
-            <LogIn size={18} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="icon-button" label="로그인" type="button" onClick={onLogin}><LogIn /></IconButton>
+            </TooltipTrigger>
+            <TooltipContent>로그인</TooltipContent>
+          </Tooltip>
         )}
       </div>
+      </TooltipProvider>
     </header>
   );
 }
