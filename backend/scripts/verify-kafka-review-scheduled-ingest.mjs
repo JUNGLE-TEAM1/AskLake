@@ -18,6 +18,7 @@ const fixtureMessageCount = 100;
 const env = {
   ...process.env,
   ASKLAKE_KAFKA_BROKER: process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092",
+  ASKLAKE_ENABLE_KAFKA_TEST_HOOKS: "true",
   ASKLAKE_RECREATE_REVIEW_TOPIC: "true",
   ASKLAKE_REVIEW_KAFKA_TOPIC: topic,
   DATABASE_URL: process.env.DATABASE_URL || "postgresql+psycopg://asklake:asklake_dev@127.0.0.1:54328/asklake",
@@ -139,13 +140,39 @@ async function verifyMinimalReviewContractIngest() {
   assert(emptyResult.consumedCount === 0, `Committed offsets should prevent duplicate consume: ${emptyResult.consumedCount}`);
   assert(emptyResult.snapshot.partitions[0].startOffset === "2", `Next snapshot should start at committed offset 2: ${JSON.stringify(emptyResult.snapshot)}`);
   assert(emptyResult.snapshot.partitions[0].endOffset === "2", `Next snapshot should be empty: ${JSON.stringify(emptyResult.snapshot)}`);
+
+  await appendRawKafkaMessages(minimalTopic, [
+    "{invalid json",
+    JSON.stringify({ event_id: `minimal-${suffix}-3`, offset: 3, review: "Valid message after malformed payload.", created_at: "2026-07-09T00:02:00Z" }),
+  ]);
+  const malformedResult = await post("/api/etl/kafka/reviews/ingest", {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: minimalTopic,
+    consumerGroupId: `asklake-minimal-${suffix}`,
+    datasetId: `ds_reviews_raw_minimal_${suffix}`,
+    datasetName: `reviews_raw_minimal_${suffix}`,
+    maxMessages: 10,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: true,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${minimalTopic}/bronze`,
+    targetLayer: "BRONZE",
+    targetFormat: "jsonl",
+  });
+  assert(malformedResult.consumedCount === 1 && malformedResult.failedCount === 1, `Malformed Kafka message should be quarantined, not silently dropped: ${JSON.stringify(malformedResult)}`);
+  assert(malformedResult.quality?.quarantineLocation?.endsWith("quarantine.jsonl"), "Malformed Kafka message should produce a quarantine object.");
+  assert((await readS3Object(malformedResult.quality.quarantineLocation)).includes("{invalid json"), "Malformed quarantine must retain raw payload.");
 }
 
 async function verifyTransformAndQualityIngest() {
   const transformTopic = `reviews.raw.transform.${suffix}`;
   await produceReviewEvents(transformTopic, [
-    { event_id: `transform-${suffix}-1`, offset: 1, review: "  GREAT REVIEW  ", created_at: "2026-07-09T02:00:00Z", raw: { email: "valid@example.com" } },
-    { event_id: `transform-${suffix}-2`, offset: 2, review: "  DROP ME  ", created_at: "2026-07-09T02:01:00Z", raw: { email: "invalid-email" } },
+    { event_id: `transform-${suffix}-1`, offset: 1, review: "  GREAT REVIEW  ", created_at: "2026-07-09T02:00:00Z", raw: { code: "ok-1" } },
+    { event_id: `transform-${suffix}-2`, offset: 2, review: "  DROP ME  ", created_at: "2026-07-09T02:01:00Z", raw: { code: "bad" } },
   ]);
   const result = await post("/api/etl/kafka/reviews/ingest", {
     broker: env.ASKLAKE_KAFKA_BROKER,
@@ -165,7 +192,7 @@ async function verifyTransformAndQualityIngest() {
     targetLayer: "SILVER",
     targetFormat: "jsonl",
     transformSteps: [{ enabled: true, id: "lower-review", input: "review", kind: "trim", label: "lower", onError: "Fail Run", operation: "Trim / Lowercase", output: "normalized_review", params: "" }],
-    qualityRules: [{ enabled: true, failureAction: "Quarantine", id: "valid-email", kind: "regex", severity: "Error", targetColumn: "raw.email", validationType: "Regex Match" }],
+    qualityRules: [{ enabled: true, failureAction: "Quarantine", id: "valid-code", kind: "regex", params: '{"pattern":"^ok-"}', severity: "Error", targetColumn: "raw.code", validationType: "Regex Match" }],
   });
 
   assert(result.status === "success", "Transform and quality ingest should succeed.");
@@ -217,11 +244,16 @@ async function verifyFailRunLeavesOffsetsForRetry() {
   assert(failed.payload?.error?.details?.bridge?.failedStage === "quality", `Failure should report quality stage: ${JSON.stringify(failed)}`);
   assert(failedSnapshot?.partitions?.[0]?.startOffset === "0", "Failed snapshot should begin at the first message.");
   assert(await groupOffset(failureTopic, failureGroup) === "-1", "Fail Run must not commit the consumer group offset.");
+  await appendReviewEvents(failureTopic, [
+    { event_id: `failure-${suffix}-2`, offset: 2, review: "Message appended after failed snapshot", created_at: "2026-07-09T03:00:01Z", raw: { email: "valid@example.com" } },
+  ]);
 
   const retried = await post("/api/etl/kafka/reviews/ingest", { ...baseRequest, qualityRules: [] });
   assert(retried.consumedCount === 1, `Retry should read the uncommitted Kafka message: ${JSON.stringify(retried)}`);
   assert(retried.snapshot?.snapshotId === failedSnapshot.snapshotId, "Retry should reuse the same snapshot identity for the unchanged offset range.");
   assert(await groupOffset(failureTopic, failureGroup) === "1", "Successful retry should commit the snapshot end offset.");
+  const nextSnapshot = await post("/api/etl/kafka/reviews/ingest", { ...baseRequest, qualityRules: [] });
+  assert(nextSnapshot.consumedCount === 1 && nextSnapshot.snapshot?.partitions?.[0]?.startOffset === "1", "Message appended after capture must be processed by the next snapshot.");
 
   const jobFailureTopic = `reviews.raw.job-fail.${suffix}`;
   const jobFailureGroup = `asklake-job-fail-${suffix}`;
@@ -389,6 +421,30 @@ async function produceReviewEvents(targetTopic, records, partitionCount = 1) {
   } finally {
     await producer.disconnect().catch(() => undefined);
     await admin.disconnect().catch(() => undefined);
+  }
+}
+
+async function appendReviewEvents(targetTopic, records) {
+  const { Kafka } = await import("kafkajs");
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-append-review-producer", retry: { retries: 2 } });
+  const producer = kafka.producer();
+  try {
+    await producer.connect();
+    await producer.send({ topic: targetTopic, messages: records.map(({ partition, ...record }) => ({ key: record.event_id, partition, value: JSON.stringify(record) })) });
+  } finally {
+    await producer.disconnect().catch(() => undefined);
+  }
+}
+
+async function appendRawKafkaMessages(targetTopic, values) {
+  const { Kafka } = await import("kafkajs");
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-append-raw-producer", retry: { retries: 2 } });
+  const producer = kafka.producer();
+  try {
+    await producer.connect();
+    await producer.send({ topic: targetTopic, messages: values.map((value, index) => ({ key: `raw-${index}`, value })) });
+  } finally {
+    await producer.disconnect().catch(() => undefined);
   }
 }
 

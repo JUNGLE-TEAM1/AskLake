@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
@@ -295,7 +295,7 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             kafka_request = kafka_ingest_request_from_job(job, run_id)
             db.commit()
             try:
-                result = run_kafka_ingest_request(kafka_request, command)
+                result = run_kafka_ingest_request(db, kafka_request, command, job.id)
             except ApiError as exc:
                 bridge_error = exc.details.get("bridge") if isinstance(exc.details, dict) else None
                 result = kafka_failure_result(kafka_request, run_id, exc, bridge_error if isinstance(bridge_error, dict) else {})
@@ -390,32 +390,64 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return analysis.draft_patch.schema_
 
 
-def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
-    result = run_node_bridge(
-        "ingest-kafka-reviews.mjs",
-        "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-        request.model_dump(by_alias=True, exclude_none=True),
-        error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-        timeout_seconds=max(30, int(request.timeout_ms / 1000) + 30),
-    )
+def ingest_kafka_reviews(db: Session, request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
+    result = run_kafka_ingest_request(db, request.model_dump(by_alias=True, exclude_none=True), "ingest", None)
     return KafkaReviewIngestResponse.model_validate(result)
 
 
-def run_kafka_ingest_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
+def run_kafka_ingest_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
     request = kafka_ingest_request_from_job(job, run_id)
-    return run_kafka_ingest_request(request, command)
+    return run_kafka_ingest_request(db, request, command, job.id)
 
 
-def run_kafka_ingest_request(request: dict[str, Any], command: str) -> dict[str, Any]:
-    result = run_node_bridge(
-        "ingest-kafka-reviews.mjs",
-        "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-        request,
-        error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-        timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
-    )
+def run_kafka_ingest_request(db: Session, request: dict[str, Any], command: str, job_id: str | None) -> dict[str, Any]:
+    snapshot_record, request_with_snapshot = kafka_request_with_durable_snapshot(db, request, job_id)
+    try:
+        result = run_node_bridge(
+            "ingest-kafka-reviews.mjs",
+            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+            request_with_snapshot,
+            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+        )
+    except ApiError as exc:
+        etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", exc.message)
+        raise
+    etl_repository.update_kafka_snapshot(db, snapshot_record, "success")
     result["command"] = command
     return result
+
+
+def kafka_request_with_durable_snapshot(
+    db: Session,
+    request: dict[str, Any],
+    job_id: str | None,
+) -> tuple[KafkaSnapshotModel, dict[str, Any]]:
+    topic = str(request.get("topic") or "reviews.raw")
+    consumer_group_id = str(request.get("consumerGroupId") or "")
+    existing = etl_repository.get_active_kafka_snapshot(db, topic, consumer_group_id, job_id)
+    if existing is None:
+        capture_request = {**request, "snapshotOnly": True}
+        captured = run_node_bridge(
+            "ingest-kafka-reviews.mjs",
+            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
+            capture_request,
+            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
+            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
+        )
+        snapshot = captured.get("snapshot")
+        if not isinstance(snapshot, dict):
+            raise ApiError("KAFKA_SNAPSHOT_BAD_RESPONSE", "Kafka snapshot capture did not return a snapshot.", status.HTTP_502_BAD_GATEWAY)
+        existing = KafkaSnapshotModel(
+            snapshot_id=str(snapshot["snapshotId"]),
+            job_id=job_id,
+            topic=topic,
+            consumer_group_id=consumer_group_id,
+            status="running",
+            snapshot=snapshot,
+        )
+        existing = etl_repository.save_kafka_snapshot(db, existing)
+    return existing, {**request, "snapshot": existing.snapshot}
 
 
 def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, bridge_error: dict[str, Any]) -> dict[str, Any]:
@@ -1442,6 +1474,14 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             ErrorCode.VALIDATION_ERROR,
             f"Missing required fields: {', '.join(missing)}",
             status.HTTP_400_BAD_REQUEST,
+        )
+    if "kafka" in request.source_type.lower() and request.target_layer != "SILVER" and (
+        any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules)
+    ):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Kafka RAW/BRONZE targets cannot apply transform or quality mutation; select SILVER.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 
 

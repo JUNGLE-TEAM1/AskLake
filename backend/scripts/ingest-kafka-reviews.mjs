@@ -24,7 +24,10 @@ const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TAR
 const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
 const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
-const testFailAfterTargetWrite = booleanOption("testFailAfterTargetWrite", false);
+const testFailAfterTargetWrite = process.env.ASKLAKE_ENABLE_KAFKA_TEST_HOOKS === "true"
+  && booleanOption("testFailAfterTargetWrite", false);
+const suppliedSnapshot = isSnapshotPayload(apiPayload.snapshot) ? apiPayload.snapshot : null;
+const snapshotOnly = booleanOption("snapshotOnly", false);
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
 const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
 const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
@@ -69,14 +72,18 @@ async function ingestReviews() {
   if (targetFormat !== "jsonl") {
     throw new Error(`Kafka direct target currently supports jsonl only: ${targetFormat}`);
   }
+  if (targetLayer !== "SILVER" && (transformSteps.some((step) => step.enabled !== false) || qualityRules.some((rule) => rule.enabled !== false))) {
+    throw new Error(`Kafka ${targetLayer} target does not allow transform or quality mutation; use SILVER.`);
+  }
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({
     brokers: [broker],
     clientId: "asklake-review-ingest",
     retry: { retries: 2 },
   });
-  const snapshot = await captureKafkaSnapshot(kafka);
+  const snapshot = suppliedSnapshot || await captureKafkaSnapshot(kafka);
   activeSnapshot = snapshot;
+  if (snapshotOnly) return { snapshot, status: "snapshot" };
   configureTargetOutput(snapshot.snapshotId);
   const consumer = kafka.consumer({ groupId: snapshotReaderGroupId(snapshot) });
   let consumerStarted = false;
@@ -92,6 +99,10 @@ async function ingestReviews() {
     }
 
     const processed = applyPipelineRules(consumed.records);
+    const quarantined = [
+      ...consumed.invalidRecords.map((item) => ({ ...item, stage: "parse" })),
+      ...processed.quarantined,
+    ];
     const jsonl = processed.records.map((record) => JSON.stringify(record)).join("\n");
     const dataBody = processed.records.length > 0 ? `${jsonl}\n` : "";
     const localLocation = writeLocalTarget(dataBody);
@@ -139,14 +150,14 @@ async function ingestReviews() {
       metadata.storageLocation = s3Location.dataLocation;
       metadata.metadataLocation = s3Location.metadataLocation;
       metadata.storageMode = "s3";
-      if (processed.quarantined.length > 0) {
-        metadata.quality.quarantineLocation = await writeS3Quarantine(processed.quarantined);
+      if (quarantined.length > 0) {
+        metadata.quality.quarantineLocation = await writeS3Quarantine(quarantined);
       }
     } else {
       metadata.metadataLocation = metadataPath;
       metadata.storageMode = "local";
-      if (processed.quarantined.length > 0) {
-        metadata.quality.quarantineLocation = writeLocalQuarantine(processed.quarantined);
+      if (quarantined.length > 0) {
+        metadata.quality.quarantineLocation = writeLocalQuarantine(quarantined);
       }
     }
     if (testFailAfterTargetWrite) {
@@ -184,6 +195,16 @@ function configureTargetOutput(snapshotId) {
   targetDir = path.join(targetRoot, safePathSegment(datasetName), targetLayer.toLowerCase(), "snapshots", objectId);
   dataPath = path.join(targetDir, `data.${targetFormat}`);
   metadataPath = path.join(targetDir, "metadata.json");
+}
+
+function isSnapshotPayload(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof value.snapshotId === "string"
+    && Array.isArray(value.partitions)
+    && value.partitions.every((item) => item && Number.isInteger(item.partition) && item.startOffset !== undefined && item.endOffset !== undefined),
+  );
 }
 
 async function captureKafkaSnapshot(kafka) {
@@ -530,18 +551,18 @@ function parseReviewMessage(value, context) {
     const record = JSON.parse(value);
     for (const field of requiredFields) {
       if (record[field] === undefined || record[field] === null || record[field] === "") {
-        return { error: { ...context, field, reason: "missing_required_field" }, valid: false };
+        return { error: { ...context, field, rawPayload: value, reason: "missing_required_field" }, valid: false };
       }
     }
     if (record.schema_version !== undefined && record.schema_version !== "1.0") {
-      return { error: { ...context, reason: "unsupported_schema_version", schemaVersion: record.schema_version }, valid: false };
+      return { error: { ...context, rawPayload: value, reason: "unsupported_schema_version", schemaVersion: record.schema_version }, valid: false };
     }
     if (record.raw !== undefined && (typeof record.raw !== "object" || Array.isArray(record.raw))) {
-      return { error: { ...context, reason: "invalid_raw_payload" }, valid: false };
+      return { error: { ...context, rawPayload: value, reason: "invalid_raw_payload" }, valid: false };
     }
     const numericOffset = Number(record.offset);
     if (!Number.isFinite(numericOffset)) {
-      return { error: { ...context, offset: record.offset, reason: "invalid_offset" }, valid: false };
+      return { error: { ...context, offset: record.offset, rawPayload: value, reason: "invalid_offset" }, valid: false };
     }
     return {
       record: {
@@ -556,7 +577,7 @@ function parseReviewMessage(value, context) {
       valid: true,
     };
   } catch (error) {
-    return { error: { ...context, message: error?.message || String(error), reason: "invalid_json" }, valid: false };
+    return { error: { ...context, message: error?.message || String(error), rawPayload: value, reason: "invalid_json" }, valid: false };
   }
 }
 
@@ -703,12 +724,41 @@ function normalizeFailureAction(value) {
 function qualityFailureReason(value, rule, duplicate = false) {
   const text = value === null || value === undefined ? "" : String(value);
   const validation = String(rule.validationType || rule.kind || "").toLowerCase();
+  const params = qualityRuleParams(rule);
   if (validation.includes("not null") || validation.includes("notnull")) return text.trim() ? "" : "Missing required value";
-  if (validation.includes("range")) return Number.isFinite(Number(text)) && Number(text) > 0 ? "" : "Numeric range check failed";
-  if (validation.includes("regex")) return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? "" : "Email format check failed";
-  if (validation.includes("accepted")) return ["KOR", "JPN", "USA", "KR", "US"].includes(text) ? "" : "Value is outside accepted set";
+  if (validation.includes("range")) {
+    const numeric = Number(text);
+    const minimum = Number(params.min ?? 0);
+    const maximum = params.max === undefined || params.max === "" ? Number.POSITIVE_INFINITY : Number(params.max);
+    const inclusive = params.inclusive !== false;
+    const valid = Number.isFinite(numeric) && Number.isFinite(minimum) && Number.isFinite(maximum)
+      && (inclusive ? numeric >= minimum && numeric <= maximum : numeric > minimum && numeric < maximum);
+    return valid ? "" : "Numeric range check failed";
+  }
+  if (validation.includes("regex")) {
+    try {
+      return new RegExp(String(params.pattern || "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")).test(text) ? "" : "Regex match failed";
+    } catch {
+      return "Invalid regex pattern";
+    }
+  }
+  if (validation.includes("accepted")) {
+    const values = Array.isArray(params.values) ? params.values.map(String) : ["KOR", "JPN", "USA", "KR", "US"];
+    return values.includes(text) ? "" : "Value is outside accepted set";
+  }
   if (validation.includes("unique")) return duplicate ? "Duplicate value" : "";
   return "";
+}
+
+function qualityRuleParams(rule) {
+  if (rule.params && typeof rule.params === "object" && !Array.isArray(rule.params)) return rule.params;
+  if (typeof rule.params !== "string" || !rule.params.trim()) return {};
+  try {
+    const parsed = JSON.parse(rule.params);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function isDuplicateValue(value, rule, valuesByRule) {

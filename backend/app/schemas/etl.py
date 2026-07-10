@@ -61,6 +61,7 @@ class QualityRuleDraft(CamelModel):
     failure_action: str
     id: str
     kind: str
+    params: str = ""
     severity: str
     target_column: str
     validation_type: str

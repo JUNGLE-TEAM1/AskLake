@@ -3542,6 +3542,7 @@ function toDraftQualityRules(rules: QualityRule[]): QualityRuleDraft[] {
     failureAction: rule.failureAction,
     id: rule.id,
     kind: toQualityRuleKind(rule.validationType),
+    params: rule.params,
     severity: rule.severity,
     targetColumn: rule.targetColumn,
     validationType: rule.validationType,
@@ -4236,6 +4237,7 @@ function createQualityRuleFromDraft(draft: RuleStepDraft, id: string): QualityRu
   return {
     failureAction: getQualityFailureAction(draft.onError || fallback.onError),
     id,
+    params: draft.params,
     severity: getQualitySeverity(draft.params || "Warning"),
     targetColumn: draft.input.trim() || fallback.input,
     validationType: getQualityValidationType(draft.operation || fallback.operation),
@@ -4317,6 +4319,7 @@ function RuleStepBuilder({
   const [selectedValidationType, setSelectedValidationType] = useState<QualityRule["validationType"]>(selectedQualityPreset.validationType);
   const [selectedSeverity, setSelectedSeverity] = useState<QualityRule["severity"]>(selectedQualityPreset.severity);
   const [selectedFailureAction, setSelectedFailureAction] = useState<QualityRule["failureAction"]>(selectedQualityPreset.failureAction);
+  const [qualityParams, setQualityParams] = useState(selectedQualityPreset.params ?? "");
   const trimmedOutputColumn = outputColumn.trim();
   const outputColumnMode = trimmedOutputColumn && baseColumnSet.has(trimmedOutputColumn) ? "inPlace" : "derived";
   const getTransformParams = (operation: TransformOperation) => {
@@ -4348,7 +4351,7 @@ function RuleStepBuilder({
         onError: selectedFailureAction,
         operation: selectedValidationType,
         output: "validation_status",
-        params: selectedSeverity,
+        params: qualityParams,
       };
   const presetOptions = isTransform
     ? transformPresets.map((step) => ({ id: step.id, label: `${transformOperationLabel(step.operation)}: ${step.input} -> ${step.output}` }))
@@ -4370,6 +4373,7 @@ function RuleStepBuilder({
     setSelectedValidationType(preset.validationType);
     setSelectedSeverity(preset.severity);
     setSelectedFailureAction(preset.failureAction);
+    setQualityParams(preset.params ?? "");
   };
   const applyTransformDraft = (draft: RuleStepDraft) => {
     const operation = getAllowedTransformOperation(draft.operation);
@@ -4593,6 +4597,12 @@ function RuleStepBuilder({
                 </select>
               )}
             </label>
+            {!isTransform && (
+              <label className="hegun-rule-field">
+                <span>규칙 값 (JSON)</span>
+                <input className="input control-input" value={qualityParams} placeholder='{"pattern":"..."}' onChange={(event) => setQualityParams(event.target.value)} />
+              </label>
+            )}
             {isTransform && (
               <label className="hegun-rule-field">
                 <span>오류 처리</span>

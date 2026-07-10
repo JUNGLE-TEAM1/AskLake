@@ -40,8 +40,11 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
-def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
-    return etl_service.ingest_kafka_reviews(request)
+def ingest_kafka_reviews(
+    request: KafkaReviewIngestRequest,
+    db: Session = Depends(get_db),
+) -> KafkaReviewIngestResponse:
+    return etl_service.ingest_kafka_reviews(db, request)
 
 
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)

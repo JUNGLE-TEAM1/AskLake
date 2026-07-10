@@ -2,7 +2,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
@@ -276,6 +276,43 @@ def create_run(db: Session, run: ETLRunModel) -> JobRunSummary:
     db.commit()
     db.refresh(run)
     return run_to_schema(run)
+
+
+def get_active_kafka_snapshot(
+    db: Session,
+    topic: str,
+    consumer_group_id: str,
+    job_id: str | None,
+) -> KafkaSnapshotModel | None:
+    ensure_schema(db)
+    statement = (
+        select(KafkaSnapshotModel)
+        .where(
+            KafkaSnapshotModel.topic == topic,
+            KafkaSnapshotModel.consumer_group_id == consumer_group_id,
+            KafkaSnapshotModel.status.in_(["running", "failed"]),
+        )
+        .order_by(KafkaSnapshotModel.created_at.desc())
+    )
+    if job_id is None:
+        statement = statement.where(KafkaSnapshotModel.job_id.is_(None))
+    else:
+        statement = statement.where(KafkaSnapshotModel.job_id == job_id)
+    return db.scalars(statement).first()
+
+
+def save_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel) -> KafkaSnapshotModel:
+    ensure_schema(db)
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
+
+
+def update_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel, status: str, error: str | None = None) -> None:
+    snapshot.status = status
+    snapshot.last_error = error
+    db.commit()
 
 
 def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
