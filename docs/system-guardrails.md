@@ -29,6 +29,7 @@
 | Frontend UI checks before merge | GitHub Actions workflow running `cd frontend && npm run verify:ui-regressions && npm run build` | `enabled` | block merge when required check is enabled and the workflow fails | maintainer | PR에서 SQL/Catalog/Dashboard UI regression contract와 Vite build를 함께 확인 |
 | Prod compose config check | CI workflow candidate running `docker compose --env-file deploy/.env.example -f deploy/docker-compose.prod.yml config` | `planned` | block deploy workflow when compose config is invalid | maintainer | Phase 3에서 prod-like compose 파일 추가 |
 | Backend deploy image build | CI/deploy workflow candidate running `docker build -t asklake-backend-deploy-check:local backend` | `planned` | catch Python/package incompatibility before EC2 compose rebuild | maintainer | FastAPI backend uses `python:3.13-slim` and `backend/requirements.txt` |
+| Kafka deploy runtime dependency | manual deploy audit, future deploy dependency check | `planned` | warn when Kafka source demos are claimed but no Kafka-compatible broker and seeded topic exist in deploy stack | maintainer | Phase 0 audit found Kafka code is deployed but EC2 Compose has no Redpanda/Kafka broker or `reviews.raw` topic yet |
 | Secret scanning / push protection | GitHub repository setting | `unknown` | block or warn on secret push | repo admin | repository admin 확인 필요 |
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain | repo admin | `main <- dev`; `dev <- pair1, pair2, pair3` |
@@ -71,6 +72,7 @@
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |
+| Kafka EC2 demo failed | `deploy/docker-compose.prod.yml`에 Redpanda/Kafka broker가 있는지, backend에서 `redpanda:9092`에 접근 가능한지, `reviews.raw` topic과 seed data가 있는지 확인한다. |
 | API contract mismatch | `docs/03-api-reference.md`, `docs/api-contract.md`, frontend types/API adapter를 함께 맞춘다. |
 | PR branch policy failed | base/head 조합을 확인한다. `main <- dev`, `dev <- pair1|pair2|pair3`만 허용된다. |
 | EC2 deploy script failed | `source deploy/ec2.env`, AWS auth, SSH key, instance state, server `deploy/.env`, Compose logs를 순서대로 확인한다. |
@@ -104,6 +106,7 @@ Scenario audit은 새 hard rule을 추가하는 절차가 아니다.
 | Prod compose config | no, local/manual until CI exists | `deploy/docker-compose.prod.yml` | Docker Compose config renders with `deploy/.env.example` |
 | Backend deploy image build | no, local/manual until CI exists | `backend/Dockerfile`, `backend/requirements.txt` | backend Docker image builds with production Python base image |
 | Deploy dependency verification | manual | deploy Compose, local Airflow Compose, backend image, frontend image, Spark image, Airflow image, Airflow DAG import | `scripts/verify-deploy-dependencies.sh` passes before deploy |
+| Kafka deploy dependency audit | no, manual until Redpanda phase is implemented | deploy Compose, backend Kafka scripts, seeded Kafka topic, MinIO landing path | Kafka demos are not marked deployment-complete unless broker, topic seed, ingest, and Catalog registration are verified |
 | PR event checks | no | future GitHub Actions | changed code satisfies required checks |
 | Read-only lifecycle audit | manual | docs, PR, branch status | drift is reported without changing remote state |
 | Admin setting audit | manual | branch protection, secrets, rulesets | actual settings match inventory or gap is recorded |

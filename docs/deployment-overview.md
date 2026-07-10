@@ -285,6 +285,14 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - `apache/airflow:3.3.0`
 - Airflow metadata `postgres:16-alpine`
 
+Phase 0 Kafka deploy audit:
+
+- Kafka review replay/ingest code is present in the backend deploy image through `backend/package.json` and `backend/scripts/*kafka*`.
+- The EC2 production Compose file does not currently declare a Kafka-compatible broker such as Redpanda, Kafka, or Zookeeper.
+- Therefore Kafka source demos are not deployment-complete yet: the UI and backend code can create Kafka source jobs, but the EC2 stack has no internal broker, no `reviews.raw` topic, and no seeded review events.
+- The next infrastructure phase should add a single-node Redpanda service for demo/dev deployment, expose it only inside the Compose network by default, and document `redpanda:9092` as the internal broker endpoint.
+- Kafka demo readiness requires both infrastructure and data: broker running, `reviews.raw` topic seeded, Kafka source connection test passing, ingest job landing JSONL into MinIO, and Catalog dataset registration confirmed.
+
 Airflow orchestration dependencies:
 
 - Production compose declares `apache/airflow:3.3.0`, Airflow API server, scheduler, DAG processor, and Airflow metadata Postgres.

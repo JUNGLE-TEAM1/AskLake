@@ -80,6 +80,21 @@ AIRFLOW_METADATA_DB_PASSWORD=replace-with-strong-airflow-metadata-password
 - public host
 - remote Docker Compose service 상태
 
+### Kafka 배포 감사 상태
+
+현재 `dev` 기준 EC2 배포에는 Kafka source UI와 backend Kafka ingest/replay code가 포함되어 있다. 하지만 `deploy/docker-compose.prod.yml`에는 Kafka-compatible broker가 아직 없다.
+
+| 항목 | 현재 상태 | 메모 |
+| --- | --- | --- |
+| Kafka backend code | 있음 | `backend/package.json`의 `kafkajs`, `backend/scripts/ingest-kafka-reviews.mjs`, `seed-kafka-review-fixture.mjs` |
+| Kafka/Redpanda broker | 없음 | EC2 Compose service로 선언되지 않았다. |
+| `reviews.raw` topic | 없음 | broker가 없으므로 배포 서버 내부 topic도 없다. |
+| Review fixture seed | 없음 | Redpanda 추가 뒤 seed/replay 명령을 운영 절차에 넣는다. |
+| MinIO landing target | 있음 | Kafka ingest 성공 시 `s3://m3-raw/kafka-landing/...` 저장 경로를 사용할 수 있다. |
+| Scheduled ingest trigger | partial | due job endpoint/Airflow 경로는 별도 검증이 필요하다. |
+
+Kafka source를 EC2에서 end-to-end로 시연하려면 후속 phase에서 Redpanda를 Compose에 추가하고, backend 컨테이너가 `redpanda:9092`로 접근할 수 있게 한 뒤 `reviews.raw`에 fixture를 seed해야 한다. 그 전까지는 배포 서버에서 Kafka source 연결 테스트와 Kafka job 실행을 완료 기준으로 보지 않는다.
+
 ## 3. 켜기
 
 ```bash
