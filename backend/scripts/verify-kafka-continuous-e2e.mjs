@@ -69,7 +69,7 @@ function produce(count, offsetStart) {
     event_id: `continuous-${suffix}-${offsetStart + index}`,
     review: `continuous review ${offsetStart + index}`,
     created_at: "2026-07-11T00:00:00Z",
-  })).join("\n");
+  })).join("\n") + "\n";
   rpk(["topic", "produce", topic], lines);
 }
 
@@ -88,7 +88,10 @@ function run(command, args, input = "") {
 }
 
 async function getJob() { return get(`/api/etl/jobs/${encodeURIComponent(jobId)}`); }
-async function datasets() { return get("/api/catalog/datasets"); }
+async function datasets() {
+  const response = await get("/api/catalog/datasets");
+  return Array.isArray(response) ? response : response.datasets ?? [];
+}
 async function get(path) { return request(path); }
 async function post(path, body) { return request(path, { method: "POST", body: JSON.stringify(body) }); }
 async function request(path, options = {}) {

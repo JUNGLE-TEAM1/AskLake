@@ -1749,6 +1749,21 @@ def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
     report_path = continuous_runtime_report_path(job.id)
     worker_status = continuous_worker_status(job, runtime)
     container_state = str(worker_status.get("containerState") or "unknown")
+    if runtime.status in {"pausing", "stopping"} and container_state in {"exited", "missing"}:
+        # Pause and stop intentionally terminate the worker after persisting its
+        # checkpoint. The previous running report can outlive that container,
+        # so the requested control transition is authoritative here.
+        runtime.status = "paused" if runtime.status == "pausing" else "stopped"
+        runtime.last_error = None
+        if runtime.status == "paused":
+            job.status = "paused"
+            job.last_state = "Continuous worker 일시정지됨"
+        else:
+            job.status = "stopped"
+            job.last_state = "Continuous worker 중지됨 · checkpoint 보존"
+        job.progress = None
+        etl_repository.save_kafka_continuous_command(db, job, runtime)
+        return
     if not report_path.exists():
         if runtime.status in {"starting", "running", "pausing", "stopping"} and container_state in {"exited", "missing"}:
             mark_continuous_runtime_failed(job, runtime, f"Continuous worker container is {container_state} without a runtime report.")

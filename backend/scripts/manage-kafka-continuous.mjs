@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CreateBucketCommand, HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
 
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const scriptsDir = path.resolve(process.env.ASKLAKE_SPARK_HOST_SCRIPTS_DIR || path.join(backendDir, "scripts"));
@@ -15,7 +16,7 @@ const masterUrl = process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark
 const payload = readPayload();
 
 try {
-  const result = manage(payload);
+  const result = await manage(payload);
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_RESULT=${JSON.stringify(result)}`);
 } catch (error) {
   console.log(`ASKLAKE_KAFKA_CONTINUOUS_ERROR=${JSON.stringify({
@@ -26,7 +27,7 @@ try {
   process.exitCode = 1;
 }
 
-function manage(request) {
+async function manage(request) {
   const jobId = required(request.jobId, "jobId");
   const action = required(request.action, "action");
   const containerName = workerName(jobId);
@@ -39,7 +40,7 @@ function manage(request) {
   throw new Error(`Unsupported continuous worker action: ${action}`);
 }
 
-function startWorker(request, containerName) {
+async function startWorker(request, containerName) {
   const jobId = required(request.jobId, "jobId");
   const existing = inspectContainer(containerName);
   if (existing?.State?.Running) {
@@ -48,6 +49,7 @@ function startWorker(request, containerName) {
   if (existing) runDocker(["rm", "-f", containerName], true);
 
   ensureSparkServer();
+  await ensureOutputBucket(required(request.outputPath, "outputPath"));
   const report = readReport(jobId);
   if (report?.status === "paused" || report?.status === "stopped") clearCommand(jobId);
   const packages = sparkPackages();
@@ -86,6 +88,25 @@ function startWorker(request, containerName) {
   ];
   const containerId = runDocker(args).trim();
   return { containerId, containerName, containerState: "starting", jobId, report: readReport(jobId), started: true };
+}
+
+async function ensureOutputBucket(outputPath) {
+  const bucket = /^s3a?:\/\/([^/]+)/i.exec(outputPath)?.[1];
+  if (!bucket) return;
+  const client = new S3Client({
+    credentials: {
+      accessKeyId: process.env.MINIO_ACCESS_KEY || "",
+      secretAccessKey: process.env.MINIO_SECRET_KEY || "",
+    },
+    endpoint: process.env.MINIO_ENDPOINT_IN_DOCKER || "http://minio:9000",
+    forcePathStyle: true,
+    region: process.env.MINIO_REGION || "us-east-1",
+  });
+  try {
+    await client.send(new HeadBucketCommand({ Bucket: bucket }));
+  } catch {
+    await client.send(new CreateBucketCommand({ Bucket: bucket }));
+  }
 }
 
 function stopWorker(jobId, action, containerName) {

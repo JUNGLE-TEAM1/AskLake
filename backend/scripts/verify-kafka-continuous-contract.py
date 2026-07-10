@@ -161,10 +161,29 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as report_dir:
             previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
             os.environ["ASKLAKE_SPARK_REPORT_DIR"] = report_dir
+            report_path = etl_service.continuous_runtime_report_path(job.id)
+            report_path.write_text(json.dumps({
+                "status": "running",
+                "heartbeatAt": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "consumedCount": 2,
+                "storedCount": 2,
+                "quarantinedCount": 0,
+                "failedCount": 0,
+            }), encoding="utf-8")
+            runtime.status = "pausing"
+            runtime.failed_count = 0
+            etl_service.continuous_worker_status = lambda _job, _runtime: {"containerState": "exited", "exitCode": 143}
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "paused"
+            assert runtime.failed_count == 0
+
+            runtime.status = "stopping"
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "stopped"
+
             runtime.status = "running"
             job.status = "running"
             heartbeat = (datetime.now(UTC) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
-            report_path = etl_service.continuous_runtime_report_path(job.id)
             report_path.write_text(json.dumps({
                 "status": "running",
                 "heartbeatAt": heartbeat,

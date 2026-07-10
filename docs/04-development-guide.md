@@ -215,11 +215,15 @@ Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
 
-Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog materialization, duplicate-free counter를 검증한다.
+Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog materialization, duplicate-free counter를 검증한다. worker 시작 시 target `s3a://` bucket은 MinIO에 없으면 자동 생성된다. 사용자 요청으로 인한 pause/stop의 SIGTERM 종료는 각각 `paused`/`stopped`로 처리하고, 요청 없이 종료된 worker만 `failed`가 된다.
 
 ```bash
 cd backend
-ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true npm run verify:kafka-continuous-e2e
+ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true \
+ASKLAKE_CONTINUOUS_E2E_BASE_URL=http://127.0.0.1:8080 \
+ASKLAKE_CONTINUOUS_ENV_FILE=../deploy/.env \
+ASKLAKE_CONTINUOUS_COMPOSE_FILE=../deploy/docker-compose.prod.yml \
+npm run verify:kafka-continuous-e2e
 ```
 
 수동 UI 확인에서는 Kafka Source 연결 화면에서 `Continuous`를 선택해 target format이 Parquet로 유지되는지 확인한다. 생성 후 수집/처리 목록과 상세에서 `스트림 시작`, `일시정지`, `체크포인트 재개`, `스트림 중지`가 Snapshot의 run/retry와 섞이지 않는지, runtime counter/heartbeat/checkpoint가 polling으로 갱신되는지 확인한다.

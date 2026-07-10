@@ -3,7 +3,7 @@
 import json
 import os
 import signal
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +32,7 @@ LAST_BATCH_WRITTEN = False
 
 
 def now() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def report(status: str, *, batch_id: int | None = None, error: str | None = None) -> None:
@@ -158,9 +158,16 @@ def main() -> None:
     )
 
     def write_batch(batch: DataFrame, batch_id: int) -> None:
+        global LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
         if STOP_REQUESTED:
             return
         total = batch.count()
+        if total == 0:
+            # Keep the last non-empty batch publication visible to the control
+            # plane. Spark can invoke foreachBatch for empty microbatches while
+            # the stream is idle, and those must not erase Catalog retry state.
+            report("running")
+            return
         valid = batch.where(col("payload").isNotNull())
         invalid = batch.where(col("payload").isNull())
         valid_count = valid.count()
@@ -189,6 +196,13 @@ def main() -> None:
             COUNTERS["consumedCount"] += total
             COUNTERS["storedCount"] += LAST_BATCH_STORED_COUNT
             COUNTERS["quarantinedCount"] += LAST_BATCH_QUARANTINED_COUNT
+        elif total:
+            # A replayed Spark batch finds its stable output path already
+            # committed. It must not increment counters, but it is still a
+            # successful batch that Catalog materialization may need to retry.
+            LAST_BATCH_STORED_COUNT = valid_count
+            LAST_BATCH_QUARANTINED_COUNT = invalid_count
+            LAST_BATCH_WRITTEN = True
         report("running", batch_id=batch_id)
 
     report("starting")
