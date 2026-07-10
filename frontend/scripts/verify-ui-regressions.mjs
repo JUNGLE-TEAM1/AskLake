@@ -97,6 +97,16 @@ const checks = [
       /const normalizedJob = normalizeJobRow\(hydratedJob\);\s*applyHydratedJob\(normalizedJob\);\s*setSelectedJob\(normalizedJob\);\s*setDraftPipeline\(hydrateDraftPipelineFromJob\(normalizedJob, initialDraftPipeline\)\);/s,
     ],
   },
+  {
+    name: "AI chat context uses only queryable available datasets",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /datasets\.filter\(\(dataset\) => dataset\.status === "available" && dataset\.permissions\?\.canQuery !== false\)/,
+      /const \[selectedDatasetIds, setSelectedDatasetIds\] = useState<string\[\]>\(\[\]\);/,
+      /onAction\("ai\.context\.dataset_toggled", "\/api\/ai\/context", datasetId\);/,
+      /disabled=\{!prompt\.trim\(\) \|\| awaitingRuntime \|\| selectedDatasets\.length === 0\}/,
+    ],
+  },
 ];
 
 const failures = [];
