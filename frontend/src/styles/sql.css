@@ -1863,11 +1863,21 @@
   min-height: 36px;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #f8fafc;
   padding: 0 12px;
+}
+
+.sql-result-toolbar.error {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.sql-result-toolbar.error span {
+  color: #b91c1c;
 }
 
 .sql-result-action-group {
@@ -2055,6 +2065,10 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 700;
+}
+
+.sql-result-empty .secondary-button {
+  justify-self: center;
 }
 
 .sql-materialize-card {

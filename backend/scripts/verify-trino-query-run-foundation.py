@@ -1,7 +1,11 @@
+import base64
+from typing import Any
+
+from app.core.config import Settings
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
-from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest
-from app.services.trino_client import parse_trino_page, validate_next_uri
+from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest, TrinoClientPage
+from app.services.trino_client import TrinoClient, parse_trino_page, validate_next_uri
 from app.services.trino_query_run_service import build_run_response
 from app.services.trino_sql_compiler import compile_trino_read_query
 from app.services.trino_materialization import build_trino_materialization_statement
@@ -37,7 +41,48 @@ def make_dataset(dataset_id: str, name: str, table: str | None) -> CatalogDatase
     return CatalogDatasetResponse.model_validate(payload)
 
 
+def assert_client_identity(client: TrinoClient, expected_user: str, expected_password: str) -> None:
+    requests: list[dict[str, Any]] = []
+
+    def record_request(
+        url: str,
+        *,
+        method: str,
+        body: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        allow_empty_response: bool = False,
+    ) -> TrinoClientPage:
+        requests.append({"allowEmpty": allow_empty_response, "body": body, "headers": headers or {}, "method": method, "url": url})
+        return TrinoClientPage(queryId="query_identity_test", rawStats={"state": "RUNNING"})
+
+    client._request = record_request  # type: ignore[method-assign]
+    client.submit("SELECT 1")
+    client.fetch("https://trino.internal:8443/v1/statement/next")
+    client.cancel("https://trino.internal:8443/v1/statement/next")
+
+    assert [request["method"] for request in requests] == ["POST", "GET", "DELETE"]
+    expected_token = base64.b64encode(f"{expected_user}:{expected_password}".encode("utf-8")).decode("ascii")
+    for request in requests:
+        headers = request["headers"]
+        assert headers["X-Trino-User"] == expected_user
+        assert headers["Authorization"] == f"Basic {expected_token}"
+
+
 def verify() -> None:
+    runtime_settings = Settings(
+        _env_file=None,
+        trino_auth_password="api-secret",
+        trino_auth_username="asklake-api",
+        trino_base_url="https://trino.internal:8443",
+        trino_user="fallback-user",
+    )
+    assert_client_identity(TrinoClient(runtime_settings), "asklake-api", "api-secret")
+    assert_client_identity(
+        TrinoClient(runtime_settings, username="asklake-materializer", password="materializer-secret"),
+        "asklake-materializer",
+        "materializer-secret",
+    )
+
     canonical_request = QueryRunSubmitRequest(datasetId="ds_orders", query="SELECT * FROM orders")
     assert canonical_request.trino_request().base_dataset_id == "ds_orders"
     orders = make_dataset("ds_orders", "orders", "orders_clean")

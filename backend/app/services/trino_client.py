@@ -19,7 +19,7 @@ class TrinoClient:
 
     def __init__(self, runtime_settings: Settings | None = None, *, username: str | None = None, password: str | None = None) -> None:
         self.settings = runtime_settings or settings
-        self.username = username
+        self.username = username or self.settings.trino_auth_username or self.settings.trino_user
         self.password = password
         ssl_context = ssl.create_default_context(cafile=self.settings.trino_tls_ca_file) if self.settings.trino_tls_ca_file else None
         handlers: list[object] = [NoRedirectHandler()]
@@ -37,25 +37,26 @@ class TrinoClient:
                 "Content-Type": "text/plain; charset=utf-8",
                 "X-Trino-Catalog": self.settings.trino_catalog,
                 "X-Trino-Schema": self.settings.trino_schema,
-                "X-Trino-User": self.settings.trino_user,
-                **self._auth_headers(),
+                **self._identity_headers(),
             },
         )
 
     def fetch(self, next_uri: str) -> TrinoClientPage:
         validate_next_uri(next_uri, self.settings.trino_base_url)
-        return self._request(next_uri, method="GET", headers=self._auth_headers())
+        return self._request(next_uri, method="GET", headers=self._identity_headers())
 
     def cancel(self, next_uri: str) -> None:
         validate_next_uri(next_uri, self.settings.trino_base_url)
-        self._request(next_uri, method="DELETE", headers=self._auth_headers(), allow_empty_response=True)
+        self._request(next_uri, method="DELETE", headers=self._identity_headers(), allow_empty_response=True)
+
+    def _identity_headers(self) -> dict[str, str]:
+        return {"X-Trino-User": self.username, **self._auth_headers()}
 
     def _auth_headers(self) -> dict[str, str]:
-        username = self.username or self.settings.trino_auth_username or self.settings.trino_user
         password = self.password if self.password is not None else self.settings.trino_auth_password
         if not password:
             return {}
-        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        token = base64.b64encode(f"{self.username}:{password}".encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {token}"}
 
     def _request(

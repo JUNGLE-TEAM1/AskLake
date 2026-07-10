@@ -18,6 +18,17 @@ const checks = [
     ],
   },
   {
+    name: "SQL Trino result and materialization failures expose retries",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /setTrinoResultRetryCursor\(null\);/,
+      /const retryTrinoResultPage = async \(\) => \{/,
+      /const retryTrinoMaterializationStatus = async \(\) => \{/,
+      /결과를 불러오지 못했습니다\./,
+      /상태 다시 확인/,
+    ],
+  },
+  {
     name: "Catalog wide action button keeps icon and label aligned",
     file: "src/styles/catalog.css",
     patterns: [

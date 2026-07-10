@@ -138,7 +138,7 @@ Production Trino는 public port를 열지 않고 backend와만 공유하는 inte
 /opt/asklake/secrets/trino-password.db
 ```
 
-`trino-password.db`에는 bcrypt 또는 PBKDF2 hash만 넣고, `asklake-api`와 `asklake-materializer` service account를 모두 등록한다. `TRINO_S3_*`와 `TRINO_ICEBERG_JDBC_*`는 MinIO root/Postgres application account를 재사용하지 않는 전용 account를 사용한다.
+`trino-password.db`에는 bcrypt 또는 PBKDF2 hash만 넣고, `asklake-api`와 `asklake-materializer` service account를 모두 등록한다. 일반 Query Run은 `asklake-api`, Iceberg CTAS는 `asklake-materializer` identity를 Basic auth와 `X-Trino-User`에 동일하게 사용한다. 실제 로그인 사용자는 AskLake audit actor로 별도 기록한다. `TRINO_S3_*`와 `TRINO_ICEBERG_JDBC_*`는 MinIO root/Postgres application account를 재사용하지 않는 전용 account를 사용한다.
 
 ## 4. 재배포
 

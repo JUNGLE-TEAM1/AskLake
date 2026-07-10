@@ -95,7 +95,10 @@ export function SqlAnalysisPage({
   const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
   const [trinoResultPages, setTrinoResultPages] = useState<TrinoQueryRunResultPage[]>([]);
   const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
+  const [trinoResultError, setTrinoResultError] = useState<string | null>(null);
+  const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
   const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
+  const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
@@ -419,14 +422,26 @@ export function SqlAnalysisPage({
       .then((page) => {
         setTrinoResultPages([page]);
         setTrinoResultPageIndex(0);
+        setTrinoResultError(null);
+        setTrinoResultRetryCursor(undefined);
       })
-      .catch(() => undefined);
+      .catch((error) => {
+        setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 불러오지 못했습니다.");
+        setTrinoResultRetryCursor(null);
+      });
   }, [trinoResultPages.length, trinoRun]);
 
   useEffect(() => {
     if (!trinoMaterialization || !["queued", "running"].includes(trinoMaterialization.status)) return;
     const timeoutId = window.setTimeout(() => {
-      void getTrinoMaterialization(trinoMaterialization.materializationId).then(setTrinoMaterialization).catch(() => undefined);
+      void getTrinoMaterialization(trinoMaterialization.materializationId)
+        .then((nextMaterialization) => {
+          setTrinoMaterialization(nextMaterialization);
+          setTrinoMaterializationError(null);
+        })
+        .catch((error) => {
+          setTrinoMaterializationError(error instanceof Error ? error.message : "Iceberg Dataset 상태를 확인하지 못했습니다.");
+        });
     }, 1000);
     return () => window.clearTimeout(timeoutId);
   }, [trinoMaterialization]);
@@ -437,7 +452,10 @@ export function SqlAnalysisPage({
     setTrinoRun(null);
     setTrinoResultPages([]);
     setTrinoResultPageIndex(0);
+    setTrinoResultError(null);
+    setTrinoResultRetryCursor(undefined);
     setTrinoMaterialization(null);
+    setTrinoMaterializationError(null);
     setExecutionMs(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
@@ -521,6 +539,10 @@ export function SqlAnalysisPage({
           setTrinoRun(response);
           setTrinoResultPages([]);
           setTrinoResultPageIndex(0);
+          setTrinoResultError(null);
+          setTrinoResultRetryCursor(undefined);
+          setTrinoMaterialization(null);
+          setTrinoMaterializationError(null);
           onResultChange(null);
           onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
           return;
@@ -572,9 +594,36 @@ export function SqlAnalysisPage({
 
   const loadNextTrinoResultPage = async () => {
     if (!trinoRun || !activeTrinoPage?.nextCursor) return;
-    const page = await getTrinoQueryRunResultPage(trinoRun.runId, activeTrinoPage.nextCursor);
-    setTrinoResultPages((pages) => [...pages, page]);
-    setTrinoResultPageIndex((index) => index + 1);
+    const nextCursor = activeTrinoPage.nextCursor;
+    setTrinoResultError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(trinoRun.runId, nextCursor);
+      setTrinoResultPages((pages) => [...pages, page]);
+      setTrinoResultPageIndex((index) => index + 1);
+      setTrinoResultRetryCursor(undefined);
+    } catch (error) {
+      setTrinoResultError(error instanceof Error ? error.message : "다음 결과 페이지를 불러오지 못했습니다.");
+      setTrinoResultRetryCursor(nextCursor);
+    }
+  };
+
+  const retryTrinoResultPage = async () => {
+    if (!trinoRun || trinoResultRetryCursor === undefined) return;
+    const retryCursor = trinoResultRetryCursor;
+    setTrinoResultError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(trinoRun.runId, retryCursor);
+      if (retryCursor === null) {
+        setTrinoResultPages([page]);
+        setTrinoResultPageIndex(0);
+      } else {
+        setTrinoResultPages((pages) => [...pages, page]);
+        setTrinoResultPageIndex((index) => index + 1);
+      }
+      setTrinoResultRetryCursor(undefined);
+    } catch (error) {
+      setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 다시 불러오지 못했습니다.");
+    }
   };
 
   const cancelActiveTrinoRun = async () => {
@@ -865,8 +914,19 @@ export function SqlAnalysisPage({
       sourceDatasetId: baseDataset.id,
       sourceRunId: trinoRun.runId,
     };
+    setTrinoMaterializationError(null);
     setTrinoMaterialization(await materializeTrinoQueryRun(trinoRun.runId, request));
     setMaterializeDialogOpen(false);
+  };
+
+  const retryTrinoMaterializationStatus = async () => {
+    if (!trinoMaterialization) return;
+    setTrinoMaterializationError(null);
+    try {
+      setTrinoMaterialization(await getTrinoMaterialization(trinoMaterialization.materializationId));
+    } catch (error) {
+      setTrinoMaterializationError(error instanceof Error ? error.message : "Iceberg Dataset 상태를 다시 확인하지 못했습니다.");
+    }
   };
 
   const openDashboardBuilder = () => {
@@ -1153,7 +1213,18 @@ export function SqlAnalysisPage({
                   )}
                 </div>
               </div>
-              {trinoMaterialization && <div className="sql-result-toolbar"><span>Iceberg Dataset {trinoMaterialization.datasetName}: {trinoMaterialization.status}</span></div>}
+              {trinoResultError && (
+                <div className="sql-result-toolbar error" role="alert">
+                  <span>{trinoResultError}</span>
+                  <button type="button" onClick={() => void retryTrinoResultPage()}><RotateCcw size={14} /> 다시 시도</button>
+                </div>
+              )}
+              {trinoMaterialization && (
+                <div className={trinoMaterializationError ? "sql-result-toolbar error" : "sql-result-toolbar"} role={trinoMaterializationError ? "alert" : undefined}>
+                  <span>{trinoMaterializationError ?? `Iceberg Dataset ${trinoMaterialization.datasetName}: ${trinoMaterialization.status}`}</span>
+                  {trinoMaterializationError && <button type="button" onClick={() => void retryTrinoMaterializationStatus()}><RotateCcw size={14} /> 상태 다시 확인</button>}
+                </div>
+              )}
               <div className="sql-result-scroll">
                 <SqlPreviewTable
                   resultDraft={visibleResult}
@@ -1166,8 +1237,9 @@ export function SqlAnalysisPage({
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>{trinoRun?.status === "failed" ? "실행에 실패했습니다." : "아직 결과가 없습니다."}</strong>
-              <span>{trinoRun?.error?.message ?? (baseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.")}</span>
+              <strong>{trinoResultError ? "결과를 불러오지 못했습니다." : trinoRun?.status === "failed" ? "실행에 실패했습니다." : "아직 결과가 없습니다."}</strong>
+              <span>{trinoResultError ?? trinoRun?.error?.message ?? (baseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.")}</span>
+              {trinoResultError && <button className="secondary-button" type="button" onClick={() => void retryTrinoResultPage()}><RotateCcw size={14} /> 다시 시도</button>}
             </div>
           )}
         </section>
