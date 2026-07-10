@@ -74,6 +74,7 @@ function qaRun({
 function qaDagSteps(
   job: Pick<JobRowData, "source" | "target">,
   states: JobDagStep["status"][],
+  timing?: { durationsSeconds: number[]; startedAt: string },
 ): JobDagStep[] {
   const labels = [
     ["source-connect", "1. Source 연결", job.source],
@@ -86,22 +87,59 @@ function qaDagSteps(
     ["catalog-publish", "8. Catalog 반영", "SQL · Dashboard · Catalog"],
   ];
 
-  return labels.map(([id, title, meta], index) => ({
-    details: [
-      ["Step", title],
-      ["Metadata", meta],
-      ["QA fixture", "frontend mock mode"],
-    ],
-    id,
-    logs: [
-      `[${id}] ${meta}`,
-      `status=${states[index] ?? "pending"}`,
-    ],
-    meta,
-    note: states[index] === "failed" ? "QA용 실패 케이스" : undefined,
-    status: states[index] ?? "pending",
-    title,
-  }));
+  let elapsedSeconds = 0;
+
+  return labels.map(([id, title, meta], index) => {
+    const status = states[index] ?? "pending";
+    const durationSeconds = timing?.durationsSeconds[index] ?? 0;
+    const isFinished = status === "success" || status === "failed";
+
+    if (isFinished) elapsedSeconds += durationSeconds;
+
+    return {
+      completedAt: isFinished && timing ? formatQaStepCompletedAt(timing.startedAt, elapsedSeconds) : undefined,
+      details: [
+        ["Step", title],
+        ["Metadata", meta],
+        ["QA fixture", "frontend mock mode"],
+      ],
+      duration: isFinished ? formatQaStepDuration(durationSeconds) : status === "running" ? "진행 중" : undefined,
+      id,
+      logs: [
+        `[${id}] ${meta}`,
+        `status=${status}`,
+      ],
+      meta,
+      note: status === "failed" ? "QA용 실패 케이스" : undefined,
+      status,
+      title,
+    };
+  });
+}
+
+function formatQaStepCompletedAt(startedAt: string, elapsedSeconds: number) {
+  const completedAt = new Date(new Date(startedAt).getTime() + elapsedSeconds * 1000);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      day: "2-digit",
+      hour: "2-digit",
+      hourCycle: "h23",
+      minute: "2-digit",
+      month: "2-digit",
+      second: "2-digit",
+      timeZone: "Asia/Seoul",
+      year: "numeric",
+    }).formatToParts(completedAt).map(({ type, value }) => [type, value]),
+  );
+
+  return `${parts.year}.${parts.month}.${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+function formatQaStepDuration(seconds: number) {
+  if (seconds < 60) return `${seconds}초`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds ? `${minutes}분 ${remainingSeconds}초` : `${minutes}분`;
 }
 
 function qaStats({
@@ -142,6 +180,11 @@ const logTransformSteps: TransformStepDraft[] = [
   { enabled: true, id: "log-age", input: "age", kind: "cast", label: "나이 타입 변환", onError: "Fail Run", operation: "CAST_INT", output: "age", params: "integer" },
 ];
 
+const orderDagTiming = { durationsSeconds: [3, 24, 2, 78, 45, 542, 35, 15], startedAt: "2026-07-01T00:03:00+09:00" };
+const logDagTiming = { durationsSeconds: [2, 18, 1, 231, 0, 0, 0, 0], startedAt: "2026-07-02T10:10:00+09:00" };
+const realtimeDagTiming = { durationsSeconds: [2, 15, 1, 45, 0, 0, 0, 0], startedAt: "2026-07-03T10:21:00+09:00" };
+const salesDagTiming = { durationsSeconds: [3, 34, 4, 120, 90, 720, 70, 43], startedAt: "2026-07-02T01:05:00+09:00" };
+
 export const etlJobs: JobRowData[] = [
   {
     createdAt: "2026-06-01T09:30:00+09:00",
@@ -159,9 +202,9 @@ export const etlJobs: JobRowData[] = [
     lastState: "성공",
     nextRun: "2026-07-02 00:00",
     compression: "Snappy",
-    dagSteps: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"]),
+    dagSteps: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"], orderDagTiming),
     dagStepsByRunId: {
-      run_20260701_0003: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"]),
+      run_20260701_0003: qaDagSteps({ source: "PostgreSQL / commerce.orders", target: "orders_clean" }, ["success", "success", "success", "success", "success", "success", "success", "success"], orderDagTiming),
     },
     partition: "order_date",
     permissionRoles: qaPermissionRoles,
@@ -225,9 +268,9 @@ export const etlJobs: JobRowData[] = [
     lastState: "Spark 실행 실패: NumberFormatException: For input string \"unknown\" at Transform Rule age TYPE_CAST. Quarantine threshold exceeded.",
     nextRun: "2026-07-02 11:10",
     compression: "Snappy",
-    dagSteps: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"]),
+    dagSteps: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"], logDagTiming),
     dagStepsByRunId: {
-      run_20260702_1010: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"]),
+      run_20260702_1010: qaDagSteps({ source: "S3 / raw/user-log/*.csv", target: "user_activity" }, ["success", "success", "success", "failed", "blocked", "blocked", "blocked", "blocked"], logDagTiming),
     },
     partition: "event_date",
     permissionRoles: qaPermissionRoles,
@@ -298,9 +341,9 @@ export const etlJobs: JobRowData[] = [
       value: 62,
     },
     compression: "Snappy",
-    dagSteps: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"]),
+    dagSteps: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"], realtimeDagTiming),
     dagStepsByRunId: {
-      run_20260703_1021: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"]),
+      run_20260703_1021: qaDagSteps({ source: "Kafka / clickstream.events", target: "clickstream_events" }, ["success", "success", "success", "success", "running", "pending", "pending", "pending"], realtimeDagTiming),
     },
     partition: "event_date",
     permissionRoles: qaPermissionRoles,
@@ -368,9 +411,9 @@ export const etlJobs: JobRowData[] = [
     lastState: "성공",
     nextRun: "2026-07-03 01:00",
     compression: "Snappy",
-    dagSteps: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"]),
+    dagSteps: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"], salesDagTiming),
     dagStepsByRunId: {
-      run_20260702_0105: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"]),
+      run_20260702_0105: qaDagSteps({ source: "Lake / orders_clean", target: "sales_daily_summary" }, ["success", "success", "success", "success", "success", "success", "success", "success"], salesDagTiming),
     },
     partition: "sales_date",
     permissionRoles: qaPermissionRoles,

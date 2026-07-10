@@ -155,6 +155,8 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
 | 2026-07-10 | #468에서 SQL dataset tree에 Shadcnblocks `tree-lines-1` registry와 Kibo UI Tree를 적용하고 `motion` dependency, controlled expand, keyboard trigger, line tree CSS 제거 상태를 반영했다. |
 | 2026-07-10 | #440에서 Jobs 검색을 `FilterToolbarInput`으로 정리하고 `DataTableStackedCell` 계열을 AskLake composition으로 추가했다. row action은 `IconButton` + shadcn `Tooltip`, owner identity는 ReUI `Avatar` fallback으로 정리했고 목록 log modal은 실행 이력 route 이동으로 교체했다. 이어서 작업 현황은 shadcn `Button` 기반의 상호 배타적인 현재 상태 필터 4개로 전환하고, 최근 실행 실패는 shadcn `Alert`와 독립 결과 필터로 분리했다. `DropdownMenu`로 상태/소유자와 매일/매주/매월/실시간/스케줄 없음/기타 실행 주기 filter를 제공하며, 검색 input은 작업 목록 PanelHeader 바로 아래로 이동했다. filter는 live mode에서 `GET /api/etl/jobs` query와 facet response를 사용한다. |
+| 2026-07-11 | #523에서 실행 단계 관측 UI에 ReUI `Timeline` registry component를 추가하고 수제 timeline selector를 제거했다. 상태 indicator와 separator는 ReUI primitive를 사용하고, Badge/Spinner/ScrollArea는 기존 shadcn-style local component를 조합한다. |
+| 2026-07-11 | #523 후속에서 ReUI `c-timeline-10`의 deployment-log layout을 실행 단계에 적용했다. block의 hardcoded example은 추가하지 않고 로컬 `Timeline` primitive와 AskLake `StatusBadge`를 조합해 domain data를 렌더링한다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 

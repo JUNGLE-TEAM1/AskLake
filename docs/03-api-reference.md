@@ -376,6 +376,8 @@ type JobCommandResponse = {
     durationMs?: number;
   };
   dagSteps?: Array<{
+    completedAt?: string;
+    duration?: string;
     id: string;
     title: string;
     status: "pending" | "running" | "success" | "failed" | "blocked";
@@ -405,6 +407,7 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 - 같은 `run.runId`가 다시 들어오면 기존 Run을 교체한다.
 - 새 Run이 들어오면 `selectedRunIdByJobId[job.id]`를 그 `run.runId`로 갱신한다.
 - `dagSteps`는 별도 `runId` 필드를 요구하지 않고, 같은 응답의 `run.runId` 기준으로 `dagStepsByRunId`에 저장한다.
+- 완료된 단계는 가능하면 `duration`과 `completedAt`을 함께 제공한다. 진행·대기 단계에서 아직 확정되지 않은 값은 생략할 수 있다.
 - Run History 안의 실행 흐름 카드는 `runs[0]`이 아니라 `selectedRunIdByJobId[job.id]` 기준으로 단계를 찾는다.
 - History는 `selectRunForJob(jobId, runId)` action으로만 선택 Run을 바꾼다.
 - 초기 hydrate 시 `job.runHistory`는 `runsByJobId[job.id]`로 옮기고, `job.dagSteps`는 최신 Run의 `runId`에 묶는다.
