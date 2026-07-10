@@ -13,7 +13,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
-| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
+| Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회하며, 사용자가 선택한 File / S3 Parquet 객체는 Spark reader로 물리 스키마를 읽음 | Kafka message payload sampling, 다중 Parquet 파일의 통합 스키마 추론 |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
 | Run/DAG | `GET /api/etl/jobs/{jobId}`가 active Airflow DAG Run과 Task Instance를 polling/sync해 runHistory, dagSteps, `dagStepsByRunId`를 갱신 | local Airflow compose/runtime wiring, run detail table과 Spark log object storage 분리 |
@@ -389,7 +389,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 ## 14. 남은 작업
 
 - Kafka message payload schema sampling
-- Parquet physical schema inference endpoint
+- 다중 Parquet 파일의 통합 스키마 추론
 - Run detail table, DAG step table, Spark log object storage 분리
 - 삭제/수정 API persistence
 - SQL engine read-only guard 고도화
