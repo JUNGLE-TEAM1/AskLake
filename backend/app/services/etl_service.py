@@ -35,6 +35,7 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    UpdatePipelineRequest,
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
@@ -197,6 +198,45 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     return with_job_permissions(db, job, actor or ActorContext())
+
+
+def update_pipeline(
+    db: Session,
+    job_id: str,
+    request: UpdatePipelineRequest,
+    actor: ActorContext | None = None,
+) -> JobRowData:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+
+    require_permission(
+        actor or ActorContext(),
+        "manage",
+        owner=job.owner,
+        grants=permission_grants_for_resource(
+            db,
+            "etl_job",
+            job.id,
+            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+        ),
+        resource_label="job",
+    )
+    if job.status == "running":
+        raise ApiError(ErrorCode.CONFLICT, f"Job is running and cannot be updated: {job_id}", status.HTTP_409_CONFLICT)
+
+    validate_update_request(request)
+    target_changed = target_identity_changed(job, request)
+    if target_changed and has_successful_run(db, job.id):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Target dataset, database, layer, format, storage type, and path are immutable after a successful run. Clone the job to change its destination.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    apply_update_request(job, request, target_changed)
+    saved_job = etl_repository.save_job(db, job)
+    return with_job_permissions(db, saved_job, actor or ActorContext())
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -1487,6 +1527,90 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
         )
 
 
+def validate_update_request(request: UpdatePipelineRequest) -> None:
+    missing = []
+    if not request.job_name:
+        missing.append("jobName")
+    if not request.target_dataset:
+        missing.append("targetDataset")
+    if not request.target_layer:
+        missing.append("targetLayer")
+    if not request.owner:
+        missing.append("owner")
+    if not request.schema_columns:
+        missing.append("schemaColumns")
+    elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
+        missing.append("schemaColumns[included]")
+    if missing:
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            f"Missing required fields: {', '.join(missing)}",
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+
+def target_identity_changed(job: ETLJobModel, request: UpdatePipelineRequest) -> bool:
+    return any((
+        str(job.target or "") != request.target_dataset,
+        str(job.target_layer or "") != request.target_layer,
+        str(job.target_format or "") != request.target_format,
+        str(job.target_database or "asklake") != str(request.target_database or "asklake"),
+        str(job.storage_type or "") != str(request.storage_type or ""),
+        str(job.storage_path or "") != str(request.storage_path or ""),
+    ))
+
+
+def has_successful_run(db: Session, job_id: str) -> bool:
+    return any(run.status == "success" for run in etl_repository.list_runs_for_job(db, job_id))
+
+
+def apply_update_request(job: ETLJobModel, request: UpdatePipelineRequest, target_changed: bool) -> None:
+    job.name = request.job_name
+    job.owner = request.owner
+    job.target = request.target_dataset
+    job.schedule = request.schedule_label
+    job.schedule_policy = schedule_policy_from_request(request)
+    job.schedule_summary = request.schedule_summary
+    job.retry_policy = request.retry_policy.model_dump(mode="json", by_alias=True) if request.retry_policy else None
+    job.retry_policy_summary = request.retry_policy_summary
+    job.run_limit_summary = request.run_limit_summary
+    job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
+    job.schema_fingerprint = request.schema_fingerprint
+    job.schema_sample_rows = request.schema_sample_rows
+    job.schema_summary = request.schema_summary
+    job.rule_summary = request.rule_summary
+    job.permission_summary = request.permission_summary
+    job.permission_roles = request.permission_roles
+    job.storage_type = request.storage_type
+    job.partition = request.partition
+    job.partition_columns = normalize_string_list(request.partition_columns)
+    job.index_columns = normalize_string_list(request.index_columns)
+    job.compression = request.compression
+    job.storage_path = request.storage_path
+    job.target_path = request.storage_path
+    job.target_database = normalize_optional_text(request.target_database)
+    job.target_description = normalize_optional_text(request.target_description)
+    job.target_tags = normalize_target_tags(request.target_tags)
+    job.target_format = request.target_format
+    job.target_layer = request.target_layer
+    job.rag = request.rag
+    job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
+    job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]
+    job.quality_invalid_rows = request.quality_invalid_rows
+    job.quality_rules = [rule.model_dump(mode="json", by_alias=True) for rule in request.quality_rules]
+    job.quality_score = request.quality_score
+    job.quality_status = request.quality_status
+    job.last_state = "설정 수정됨"
+    job.next_run = schedule_next_run_label(request.schedule_label, request.next_run_utc or job.next_run)
+    job.stats = {
+        **(job.stats or {}),
+        "currentStage": "설정 수정됨",
+        "schemaColumns": f"{len(dataset_schema_from_request(request)):,}개",
+    }
+    if target_changed:
+        job.dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
+
+
 def schedule_next_run_label(schedule_label: str | None, fallback: str | None = None) -> str:
     schedule = str(schedule_label or "").strip()
     fallback_label = str(fallback or "").strip()
@@ -1504,7 +1628,7 @@ def has_scheduled_label(schedule_label: str | None) -> bool:
     return not any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"])
 
 
-def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, Any]:
+def schedule_policy_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> dict[str, Any]:
     watermark_policy = request.watermark_policy
     if hasattr(watermark_policy, "model_dump"):
         watermark_policy = watermark_policy.model_dump(mode="json", by_alias=True)
@@ -1781,7 +1905,7 @@ def stats_from_runs(job: ETLJobModel, runs: list[Any]) -> dict[str, Any]:
     }
 
 
-def dataset_schema_from_request(request: CreatePipelineRequest) -> list[tuple[str, str]]:
+def dataset_schema_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> list[tuple[str, str]]:
     if request.transform_output_columns:
         return [(name, type_ or "string") for name, type_ in request.transform_output_columns if name]
     return [

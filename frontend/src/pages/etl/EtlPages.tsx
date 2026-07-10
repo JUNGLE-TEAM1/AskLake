@@ -5786,11 +5786,13 @@ export function PermissionPage({
 export function ReviewPage({
   createPending,
   draft,
+  editing = false,
   onCreate,
   onEdit,
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
+  editing?: boolean;
   onCreate: () => void;
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
@@ -5855,14 +5857,14 @@ export function ReviewPage({
     && Boolean(request.targetDataset.trim())
     && Boolean(request.owner.trim());
   const createDisabled = createPending || !canCreate;
-  const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+  const createLabel = createPending ? (editing ? "저장 중..." : "생성 중...") : canCreate ? (editing ? "변경사항 저장" : "파이프라인 생성") : "검증 필요";
 
   return (
     <CreationFlowLayout
       variant="review"
       actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
-        <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
+        <PageTitle title={editing ? "검토 및 저장" : "검토 및 생성"} description={editing ? "변경된 구성을 확인하고 기존 데이터 파이프라인에 저장하세요." : "설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."} />
         <div className="xflow-review-stack">
           <section className="xflow-review-card">
             <div className="xflow-review-card-header">

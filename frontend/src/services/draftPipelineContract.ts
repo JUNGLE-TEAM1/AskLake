@@ -1,4 +1,4 @@
-import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, UpdatePipelineRequest, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
 
 export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
   notify_only: "알림만 남기기",
@@ -152,6 +152,20 @@ export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipe
       summary: transformSummary,
     },
   };
+}
+
+export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineRequest {
+  const {
+    createdBy: _createdBy,
+    createdByProfile: _createdByProfile,
+    id: _id,
+    permissionGrants: _permissionGrants,
+    sourceConfig: _sourceConfig,
+    sourceLabel: _sourceLabel,
+    sourceType: _sourceType,
+    ...request
+  } = toCreatePipelineRequest(draft);
+  return request;
 }
 
 function normalizeStringList(values: string[] | undefined): string[] {

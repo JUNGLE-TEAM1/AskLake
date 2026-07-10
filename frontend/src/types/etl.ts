@@ -311,6 +311,11 @@ export type CreatePipelineRequest = {
   rag: boolean;
 };
 
+export type UpdatePipelineRequest = Omit<
+  CreatePipelineRequest,
+  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "createdBy" | "createdByProfile" | "permissionGrants"
+>;
+
 export type DraftPipelineSlicePatch = {
   id?: string;
   permission?: Partial<PermissionDraft>;

@@ -38,6 +38,7 @@ export type {
   TransformChainStepDraft,
   TransformDraft,
   TransformStepDraft,
+  UpdatePipelineRequest,
   WatermarkPolicyDraft,
   WatermarkWindowMode,
 } from "./types/etl";

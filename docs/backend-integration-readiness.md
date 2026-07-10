@@ -9,7 +9,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시 | 삭제, 수정 저장 API |
+| 수집/처리 목록 | Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시. `PATCH /api/etl/jobs/{jobId}`가 동일 Job ID에 허용된 metadata를 저장 | 삭제, 복제 후 새 Job 생성 UX |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
@@ -72,6 +72,14 @@ type JobCommandResponse = {
   dagSteps?: JobDagStep[];
 };
 ```
+
+Backend update response:
+
+```ts
+type UpdatePipelineResponse = JobRowData;
+```
+
+수정 API는 source config를 받지 않으며 `manage` 권한을 확인한다. 실행 중인 Job과 성공 Run 이후의 target identity 변경을 차단하고, Kafka offset/snapshot state를 변경하지 않는다.
 
 ## 3. Metadata Persistence
 
@@ -151,6 +159,7 @@ npm run verify:permission-dataset
 npm run verify:permission-job-dashboard
 npm run verify:fastapi-etl-catalog
 python3 scripts/verify-etl-job-hydrate-contract.py
+python3 scripts/verify-etl-job-update-contract.py
 npm run verify:sources
 npm run verify:spark-run
 ```
@@ -165,6 +174,7 @@ FastAPI Pair2 smoke:
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
+- `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고, source config를 보존한 채 editable metadata만 반영하는지 확인한다.
 
 Frontend:
 

@@ -61,6 +61,7 @@ Kafka source identity를 바꾸면 consumer group offset과 snapshot 이력이 �
 성공 run 또는 Kafka offset commit이 하나라도 있는 Job은 target identity를 변경할 수 없다.
 
 - `targetDataset`
+- `targetDatabase`
 - `targetLayer`
 - `targetFormat`
 - `storageType`
@@ -70,14 +71,14 @@ Kafka source identity를 바꾸면 consumer group offset과 snapshot 이력이 �
 
 ## 4. API 계약
 
-Issue #460 구현 완료 후 다음 endpoint를 제공한다.
+Issue #460 Phase 3에서 다음 endpoint를 제공한다.
 
 ```text
 PATCH /api/etl/jobs/{jobId}
 ```
 
 - 권한: `manage`
-- request: 생성 request 중 수정 가능 필드만 받는 `UpdatePipelineRequest`
+- request: 생성 request 중 수정 가능 필드만 받는 `UpdatePipelineRequest`; source field는 extra field로 거부
 - response: 최신 `JobRowData`
 - 기존 `source*` 필드가 request에 있거나 target identity 변경이 금지된 상태면 `422`를 반환한다.
 - Job이 `running`이면 `409 JOB_UPDATE_CONFLICT`를 반환한다. 실행을 멈추거나 완료한 뒤 수정해야 한다.
