@@ -93,6 +93,7 @@
   display: grid;
   gap: 8px;
   min-width: 0;
+  border-bottom: 0;
 }
 
 .catalog-result-card {
@@ -133,7 +134,17 @@
 }
 
 .catalog-result-expand {
+  min-height: 32px;
+  width: 32px;
+  flex: 0 0 32px;
+  justify-content: center;
   margin-right: 12px;
+  border-radius: 6px;
+  padding: 0;
+}
+
+.catalog-result-content {
+  padding: 0;
 }
 
 .catalog-result-pin-badge {
@@ -629,7 +640,7 @@
 }
 
 .catalog-modal.lineage-modal .catalog-lineage-card {
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -722,11 +733,6 @@
   flex: 1 1 auto;
 }
 
-.catalog-modal.lineage-modal .catalog-lineage-footer {
-  gap: 18px;
-  padding-top: 10px;
-}
-
 .catalog-modal.lineage-modal .catalog-lineage-flow .react-flow {
   width: 100%;
   height: 100%;
@@ -764,23 +770,6 @@
   background: transparent;
   padding: 0;
   box-shadow: none;
-}
-
-.catalog-lineage-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 16px;
-}
-
-.catalog-lineage-stat {
-  white-space: normal;
-}
-
-.catalog-lineage-stat strong {
-  color: #1e293b;
 }
 
 .catalog-lineage-mini {

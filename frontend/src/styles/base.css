@@ -144,16 +144,6 @@ p {
   gap: 14px;
 }
 
-.etl-builder-avatar {
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 76% 76%, #22c55e 0 12%, #fff 13% 17%, transparent 18%),
-    linear-gradient(135deg, #1f2937, #d1d5db);
-}
-
 .etl-builder-sidebar {
   position: sticky;
   top: 64px;
@@ -516,15 +506,6 @@ p {
   font-size: 12px;
   font-weight: 800;
   padding: 8px 12px;
-}
-
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 70% 70%, #13a16c 0 18%, transparent 19%),
-    linear-gradient(135deg, #262e40, #dee1e6);
 }
 
 .stepper {

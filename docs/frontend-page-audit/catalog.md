@@ -131,6 +131,12 @@
 - 전체 스키마 모달 상단의 레이어 데이터셋 문구와 스키마 헤더의 컬럼 수 표시는 제거한다.
 - 생성/append 결과 헤더의 결과 수, 행 수, 용량 요약은 제거하고 제목만 표시한다.
 - 리니지 edge는 끊겨 보이는 점선을 제거하고 연속 `smoothstep` 실선과 작은 방향 화살표로 표시한다.
+- 검색 입력은 기존 shadcn `InputGroup` 구성을 유지하고 상태 필터를 `FieldSet`으로 묶었다.
+- 정렬은 `DropdownMenu` 대신 shadcn `Select`, 결과 펼치기는 조건부 DOM 대신 화살표 전용 shadcn `Collapsible`로 교체했다.
+- 우측 상세 프레임은 shadcn `Card`로 교체하고 즐겨찾기 아이콘과 긴 데이터셋 이름에 shadcn `Tooltip`을 적용했다.
+- 공통 헤더의 raw 아이콘 버튼과 CSS 원형 계정 표시는 shadcn `IconButton`, `Tooltip`, `Avatar`로 교체했다.
+- 실제 `dataLoading`과 `dataError`를 카탈로그의 shadcn `Skeleton`, `Alert` 상태에 연결했다.
+- 전체 리니지 하단의 상위 데이터셋 수, 레이어, 상태 요약 배지 줄은 제거했다.
 
 ## Conflict Risk
 

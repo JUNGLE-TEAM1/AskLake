@@ -8,7 +8,7 @@ import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   ChevronDown,
-  ChevronUp,
+  AlertCircle,
   ExternalLink,
   LayoutGrid,
   PanelRight,
@@ -22,9 +22,11 @@ import {
   X,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,13 +42,6 @@ import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table"
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   FilterToolbar,
   FilterToolbarActions,
   FilterToolbarCheckbox,
@@ -59,12 +54,16 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Field, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -283,12 +282,16 @@ function compareCatalogDatasetsBySort(
 
 export function CatalogPage({
   datasets,
+  error = null,
+  loading = false,
   onAction,
   onMaterializationRunDelete,
   onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
+  error?: string | null;
+  loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onMaterializationRunDelete: (datasetId: string, runId: string) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
@@ -308,7 +311,6 @@ export function CatalogPage({
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
-  const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -462,24 +464,35 @@ export function CatalogPage({
     <>
       <PanelHeader
         actions={(
-          <Button
-            aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-            aria-pressed={isPreviewPinned}
-            shape="compact"
-            title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-            type="button"
-            size="iconSm"
-            variant={isPreviewPinned ? "subtle" : "ghost"}
-            onClick={togglePinnedDataset}
-          >
-            <Star fill={isPreviewPinned ? "currentColor" : "none"} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+                aria-pressed={isPreviewPinned}
+                shape="compact"
+                type="button"
+                size="iconSm"
+                variant={isPreviewPinned ? "subtle" : "ghost"}
+                onClick={togglePinnedDataset}
+              >
+                <Star fill={isPreviewPinned ? "currentColor" : "none"} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{isPreviewPinned ? "상단 고정 해제" : "상단에 고정"}</TooltipContent>
+          </Tooltip>
         )}
+        bordered={false}
         className="catalog-preview-title"
         icon={<LayoutGrid size={16} />}
         iconVariant="success"
-        title={previewDataset.name}
+        title={(
+          <Tooltip>
+            <TooltipTrigger asChild><span className="block min-w-0 truncate">{previewDataset.name}</span></TooltipTrigger>
+            <TooltipContent>{previewDataset.name}</TooltipContent>
+          </Tooltip>
+        )}
       />
+      <Separator />
       <ScrollArea className="catalog-preview-scroll" type="auto">
         <div className="catalog-preview-body">
           <Accordion className="catalog-preview-accordion" type="multiple">
@@ -548,12 +561,20 @@ export function CatalogPage({
   );
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="catalog-page">
       <PageHeader
         className="catalog-page-header"
         icon={<Search size={18} />}
         title="검색/카탈로그"
       />
+      {error ? (
+        <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
+          <AlertCircle />
+          <AlertTitle>카탈로그를 불러오지 못했습니다.</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
       <div className="catalog-content-grid">
         <div className="catalog-main">
           <Panel className="catalog-search-panel">
@@ -607,55 +628,57 @@ export function CatalogPage({
                 className="grid-cols-[minmax(0,1fr)_max-content] gap-3 py-3 max-xl:grid-cols-1"
                 layout="actions"
               >
-                <FilterToolbarCheckboxGroup>
-                  <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
-                    사용 가능
-                  </FilterToolbarCheckbox>
-                  <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
-                    승인 필요
-                  </FilterToolbarCheckbox>
-                  <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
-                    RAG 여부
-                  </FilterToolbarCheckbox>
-                </FilterToolbarCheckboxGroup>
+                <FieldSet className="gap-0">
+                  <FieldLegend className="sr-only">검색 결과 필터</FieldLegend>
+                  <FilterToolbarCheckboxGroup>
+                    <Field className="gap-0">
+                      <FilterToolbarCheckbox checked={filterState.available} onCheckedChange={(checked) => updateFilter("available", checked)}>
+                        사용 가능
+                      </FilterToolbarCheckbox>
+                    </Field>
+                    <Field className="gap-0">
+                      <FilterToolbarCheckbox checked={filterState.approvalRequired} onCheckedChange={(checked) => updateFilter("approvalRequired", checked)}>
+                        승인 필요
+                      </FilterToolbarCheckbox>
+                    </Field>
+                    <Field className="gap-0">
+                      <FilterToolbarCheckbox checked={filterState.rag} onCheckedChange={(checked) => updateFilter("rag", checked)}>
+                        RAG 여부
+                      </FilterToolbarCheckbox>
+                    </Field>
+                  </FilterToolbarCheckboxGroup>
+                </FieldSet>
                 <FilterToolbarActions>
-                  <DropdownMenu
-                    onOpenChange={(isOpen) => {
-                      if (isOpen) onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort");
-                    }}
-                  >
-                    <DropdownMenuTrigger asChild>
-                      <Button shape="compact" type="button" size="sm" variant="outline">
-                        정렬: {selectedSortOption.label}
-                        <ChevronDown data-icon="inline-end" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" aria-label="정렬 기준">
-                      <DropdownMenuRadioGroup
-                        value={sortMode}
-                        onValueChange={(value) => updateSortMode(value as CatalogSortMode)}
-                      >
+                  <Select value={sortMode} onValueChange={(value) => updateSortMode(value as CatalogSortMode)}>
+                    <SelectTrigger aria-label="정렬 기준" className="w-44" onPointerDown={() => onAction("catalog.sort_opened", "/api/catalog/search/sort", "catalog-sort")} size="sm">
+                      <SelectValue placeholder="정렬 기준" />
+                    </SelectTrigger>
+                    <SelectContent align="end">
+                      <SelectGroup>
                         {catalogSortOptions.map((option) => (
-                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>
-                            {option.label}
-                          </DropdownMenuRadioItem>
+                          <SelectItem key={option.mode} value={option.mode}>{option.label}</SelectItem>
                         ))}
-                      </DropdownMenuRadioGroup>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
                 </FilterToolbarActions>
               </FilterToolbar>
             </div>
 
             <div className="catalog-result-list">
-                {paginatedDatasets.map((dataset) => {
+                {loading ? Array.from({ length: 3 }, (_, index) => (
+                  <Card className="catalog-result-card flex items-center gap-3 p-4" key={`catalog-skeleton-${index}`} size="none">
+                    <Skeleton className="h-5 w-2/5" />
+                    <Skeleton className="ml-auto size-8" />
+                  </Card>
+                )) : paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
                 const isExpanded = expandedDatasetIds.includes(dataset.id);
 
                 return (
-                  <div className={cn("catalog-result-item", isExpanded && "expanded")} key={`${dataset.id}:${dataset.name}`}>
-                    <Panel className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")}>
+                  <Collapsible className={cn("catalog-result-item", isExpanded && "expanded")} key={`${dataset.id}:${dataset.name}`} open={isExpanded}>
+                    <Card className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")} size="none">
                       <Button
                         aria-pressed={isActive}
                         className="catalog-result-select"
@@ -667,7 +690,10 @@ export function CatalogPage({
                       >
                         <div className="catalog-result-summary">
                           <div className="catalog-result-title">
-                            <strong>{dataset.name}</strong>
+                            <Tooltip>
+                              <TooltipTrigger asChild><strong className="truncate" title={undefined}>{dataset.name}</strong></TooltipTrigger>
+                              <TooltipContent>{dataset.name}</TooltipContent>
+                            </Tooltip>
                             <DatasetStatusBadge dataset={dataset} shape="compact" />
                             {isPinned && (
                               <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
@@ -678,21 +704,21 @@ export function CatalogPage({
                           </div>
                         </div>
                       </Button>
-                      <Button
-                        aria-expanded={isExpanded}
-                        aria-label={`${dataset.name} 상세 ${isExpanded ? "닫기" : "열기"}`}
-                        className="catalog-result-expand"
-                        shape="compact"
-                        size="iconSm"
-                        title={isExpanded ? "결과 닫기" : "결과 열기"}
-                        type="button"
-                        variant="ghost"
-                        onClick={() => toggleExpandedDataset(dataset)}
-                      >
-                        {isExpanded ? <ChevronUp /> : <ChevronDown />}
-                      </Button>
-                    </Panel>
-                    {isExpanded && (
+                      <CollapsibleTrigger asChild>
+                        <Button
+                          aria-label={`${dataset.name} 상세 ${isExpanded ? "닫기" : "열기"}`}
+                          className="catalog-result-expand"
+                          shape="compact"
+                          size="iconSm"
+                          type="button"
+                          variant="ghost"
+                          onClick={() => toggleExpandedDataset(dataset)}
+                        >
+                          <ChevronDown className={cn("transition-transform", isExpanded && "rotate-180")} />
+                        </Button>
+                      </CollapsibleTrigger>
+                    </Card>
+                    <CollapsibleContent className="catalog-result-content">
                       <CatalogMaterializationRuns
                         dataset={dataset}
                         onDelete={deleteMaterializationRun}
@@ -701,11 +727,11 @@ export function CatalogPage({
                         page={materializationRunPageByDatasetId[dataset.id] ?? 1}
                         selectedRunId={selectedSqlRunTarget?.runId ?? null}
                       />
-                    )}
-                  </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 );
                 })}
-                {!hasCatalogResults && (
+                {!loading && !hasCatalogResults && (
                   <Empty className="catalog-empty-state" size="sm" variant="bordered">
                     <EmptyIcon><Search /></EmptyIcon>
                     <EmptyHeader>
@@ -716,7 +742,7 @@ export function CatalogPage({
                 )}
             </div>
 
-            {hasCatalogResults && (
+            {!loading && hasCatalogResults && (
               <PaginationBar
                 aria-label="검색 결과 페이지"
                 className="catalog-pagination"
@@ -731,11 +757,9 @@ export function CatalogPage({
         </div>
 
         {hasCatalogResults ? (
-          <Panel asChild className="catalog-preview-panel catalog-preview-desktop">
-            <aside>
-              {renderPreviewContent()}
-            </aside>
-          </Panel>
+          <Card className="catalog-preview-panel catalog-preview-desktop" size="none">
+            {renderPreviewContent()}
+          </Card>
         ) : (
           <Empty className="catalog-preview-panel catalog-preview-panel-empty" size="lg" variant="bordered">
             <EmptyIcon><LayoutGrid /></EmptyIcon>
@@ -757,6 +781,7 @@ export function CatalogPage({
         </CatalogModal>
       )}
     </div>
+    </TooltipProvider>
   );
 }
 
@@ -1190,7 +1215,6 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     ? buildLineageGraph(lineageGraph, selectedColumnKey, selectedDatasetId, setSelectedColumnKey)
     : { edges: [], nodes: [] };
   const selectedLineageDataset = lineageGraph?.datasets.find((item) => item.id === selectedDatasetId) ?? null;
-  const statusMeta = datasetStatusMeta[dataset.status];
 
   useEffect(() => {
     let isActive = true;
@@ -1252,11 +1276,6 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
               <span>백엔드 응답 또는 예시 데이터를 확인해 주세요.</span>
             </div>
           )}
-          <div className="catalog-lineage-footer">
-            <Badge shape="compact" variant="secondary">상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></Badge>
-            <Badge shape="compact" variant="secondary">레이어 <strong>{dataset.layer}</strong></Badge>
-            <Badge shape="compact" variant="secondary">상태 <strong>{statusMeta.label}</strong></Badge>
-          </div>
         </section>
       </Panel>
 
