@@ -20,6 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
+import { Slider } from "@/components/ui/slider";
 import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -561,6 +562,10 @@ export function WidgetConfigPanel({
   }, [editingWidget, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeFloor = Math.min(0, radialRangeStart);
+  const radialRangeCeiling = Math.max(100, radialRangeEnd);
   const colorSlotLabels = useMemo(() => {
     if (type === "metric" || type === "table") return [];
 
@@ -1043,11 +1048,21 @@ export function WidgetConfigPanel({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </WidgetSelectField>
-            <FormFieldGroup label="최솟값">
-              <Input size="sm" type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
-            </FormFieldGroup>
-            <FormFieldGroup label="최댓값">
-              <Input size="sm" type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
+            <FormFieldGroup label="표시 범위">
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between text-sm font-semibold text-slate-600">
+                  <span>최솟값 {radialRangeStart}</span>
+                  <span>최댓값 {radialRangeEnd}</span>
+                </div>
+                <Slider
+                  aria-label="radial chart 표시 범위"
+                  max={radialRangeCeiling}
+                  min={radialRangeFloor}
+                  onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
+                  step={1}
+                  value={[radialRangeStart, radialRangeEnd]}
+                />
+              </div>
             </FormFieldGroup>
           </>
         )}

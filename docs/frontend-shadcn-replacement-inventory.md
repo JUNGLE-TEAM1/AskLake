@@ -20,7 +20,7 @@
 - AskLake composition component는 삭제 대상이 아니라 업무 화면 패턴을 묶는 상위 조립 단위다.
 - composition component 내부도 가능한 한 `Button`, `Input`, `Dialog`, `Table`, `Checkbox`, `Tabs`, `Dropdown Menu` 같은 shadcn primitive로 구성한다.
 - CSS selector 삭제는 primitive 교체와 route QA가 끝난 뒤 별도 cleanup PR에서만 진행한다.
-- Tree 계열은 `react-arborist`를 엔진 표준으로 두고, ReUI의 File Explorer Tree 스타일을 참고한 shadcn-style row/label/icon UI를 입힌다.
+- Tree 계열은 Kibo/shadcn-compatible line tree를 우선 사용하고, 대규모 virtualization이 실제로 필요한 화면만 별도 engine을 유지한다.
 - `TreePanel`은 tree 엔진이 아니라 header/body/footer/loading/error/empty를 감싸는 shell이다.
 - Backend API, 데이터 계약, React Router 구조, 도메인 로직은 이 문서의 범위가 아니다.
 
@@ -75,6 +75,7 @@
 | `Button Group` | action cluster | `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. |
 | `Empty` | empty state | `EmptyState`를 shadcn `Empty` 기준으로 정렬한다. |
 | `Slider` | SQL Preview 최대 행 수 | #468에서 실제 query `limit`을 변경하는 control로 적용했다. |
+| `Slider` | Dashboard radial bar 표시 범위 | #487에서 min/max number input을 두 thumb range control로 교체했다. |
 | `Bubble` | Query AI 응답/안내/오류 | #468에서 제안 결과와 상태 surface에 적용했다. |
 
 ### AskLake composition 유지
@@ -138,7 +139,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 3. Forms/Controls PR: ETL/SQL/Dashboard/S3/DB picker의 input/select/textarea/checkbox/radio를 교체한다.
 4. Navigation/Menu/Overlay PR: tabs, toggle group, dropdown menu, alert dialog, sheet를 적용한다.
 5. Table/List/Search PR: `DataTable` footer, `PaginationBar`, `FilterToolbar` 내부와 Catalog/Dashboard menu를 shadcn primitive 기준으로 정리한다. Catalog result card 자체는 별도 list/card cleanup 후보로 둔다.
-6. Tree Standardization PR: S3/ETL/SQL의 MUI/custom tree를 `react-arborist`로 교체하고 ReUI File Explorer Tree 스타일의 shadcn-style row UI를 적용한다.
+6. Tree Standardization PR: S3/ETL/SQL/Dashboard의 MUI/custom tree를 Kibo/shadcn-compatible line tree로 교체하고 공통 row/label/icon interaction을 적용한다.
 7. Complex Surface Polish PR: dashboard runtime, ETL rule builder, SQL result/editor shell을 화면별로 폴리싱한다.
 8. CSS Cleanup + Visual QA PR: 교체 완료 selector만 삭제하고 주요 route를 검증한다.
 
