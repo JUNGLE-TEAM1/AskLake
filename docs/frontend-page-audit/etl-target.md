@@ -23,7 +23,7 @@
 - `Field`, `FieldLabel`, `InputGroup`, `InputGroupInput`, `InputGroupAddon`, `NativeSelect`: DB/S3 picker toolbar와 검색 입력에 사용된다.
 - `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`: S3 prefix tree row shell에 사용된다.
 - `TagList`, `Chip`: tag row와 interactive tag chip에 사용된다.
-- `CheckableOption`: 파티션 radio option card shell에 사용된다.
+- `CheckableOption`: 파티션 checkbox option card shell에 사용된다. 여러 컬럼을 동시에 선택할 수 있다.
 - `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`: 파일 포맷 선택에 사용된다. Radix 기반 keyboard navigation, `Escape` 닫기, outside click, focus restore를 제공한다.
 
 ## Weakly Componentized Areas
@@ -32,7 +32,7 @@
 - 파일 포맷 선택의 raw `<button>` + custom absolute menu는 shadcn `Select`로 교체됐다.
 - `DatabaseField`와 `S3PathField`는 `PickerDialog`를 쓰지만 내부 list/body density, error row, display row는 `database-*`, `s3-*` 전용 CSS가 많다.
 - tag 선택은 `TagList`/`Chip`을 쓰지만 선택 상태와 rounded pill styling은 `target-chip*` 전용 class에 남아 있다.
-- partition option은 `CheckableOption`을 쓰지만 grid, active/disabled, type label density는 `target-partition-*` selector가 담당한다.
+- partition option은 `CheckableOption`의 checkbox 모드를 쓰지만 grid, active/disabled, type label density는 `target-partition-*` selector가 담당한다.
 - validation alert는 raw `<div role="alert">`와 `target-validation-summary` CSS로만 구성되어 있다.
 - `target-rule-table`, `target-preview-table`, `target-test-*`, `target-lineage`, `target-debug-panel` 등 현재 Target 화면 markup에서 보이지 않는 legacy/확장 selector가 `etl.css`에 남아 있어 삭제 전 사용처 재확인이 필요하다.
 
@@ -41,7 +41,7 @@
 - `Select`: 파일 포맷 custom menu를 Radix/shadcn primitive로 대체했다. 현재는 단일 값 선택이므로 `DropdownMenuRadioGroup`보다 `Select`가 적합하다.
 - `Field` + `Label`: `FormFieldGroup` compatibility wrapper를 점진적으로 흡수한다.
 - `InputGroup`: tag 직접 추가 입력과 add action을 하나의 compact 입력 그룹으로 정리할 수 있다.
-- `RadioGroup`: partition column 선택을 native radio card에서 shadcn radio group 기반으로 정렬할 수 있다.
+- `Checkbox`: partition column은 다중 선택이므로 현재 `CheckableOption` checkbox 모드를 유지하되, 후속 공통화 시 shadcn checkbox primitive를 직접 composition하는 후보로 둔다.
 - `Badge` 또는 `ToggleGroup`: interactive tag chip을 `Chip` 유지, `Badge` variant, `ToggleGroup` 중 하나로 재분류한다.
 - `Alert`: `target-validation-summary`를 semantic alert component로 대체한다.
 - `Dialog` + `ScrollArea`: `PickerDialog` 내부 body overflow와 footer preview를 shadcn dialog composition으로 더 정리할 수 있다.
@@ -54,7 +54,7 @@
 - `DatabaseField`: AskLake composition으로 유지하되 picker body를 `Command`/`ScrollArea` 또는 `Select` 계열로 정리할 수 있다.
 - `S3PathField`: S3 bucket/prefix lazy loading 상태가 있어 AskLake composition으로 유지한다. 내부 row shell은 `TreeView`/`TreeRow` 기준을 계속 사용한다.
 - `TagList`/`Chip`: read-only tag와 interactive tag를 분리한다. Target 화면은 interactive toggle 성격이므로 `Chip` 유지 또는 `ToggleGroup` 검토가 필요하다.
-- `CheckableOption`: partition 선택처럼 form 의미가 있는 option card에는 유지한다. 단, 내부 input은 shadcn `RadioGroup`으로 흡수 가능한지 후속 검토한다.
+- `CheckableOption`: partition 다중 선택처럼 form 의미가 있는 option card에는 유지한다. 내부 input은 checkbox semantics를 사용한다.
 - `target-config-card`: 단순 Card로 바꾸기보다 `Panel` 또는 ETL 전용 section shell을 먼저 설계하는 편이 안전하다.
 
 ## Related CSS
@@ -92,7 +92,7 @@
 - [HIGH] mock mode에서도 DB picker를 열면 `Internal Server Error`가 먼저 노출되고 fallback DB 4개가 함께 표시된다. 사용자는 fallback을 선택할 수 있지만 mock 성공 상태와 backend 실패 상태가 한 dialog에 섞여 신뢰하기 어렵다.
 - [RESOLVED] custom format menu를 shadcn `Select`로 교체해 `Escape`, outside click, keyboard navigation, focus restore를 primitive에 위임했다.
 - [MEDIUM] DB picker는 dialog title, close label, search focus, retry action을 갖추고 있어 overlay 기본 접근성은 양호하다. 문제는 dialog shell보다 mock/backend 상태 분리다.
-- [PASS] 데이터셋명, 오너, 담당자, 설명 input과 partition radio는 실제 `<label>` association이 확인됐다. desktop 1280px에서는 page-level horizontal overflow가 없었다.
+- [PASS] 데이터셋명, 오너, 담당자, 설명 input과 partition checkbox는 실제 `<label>` association이 확인됐다. desktop 1280px에서는 page-level horizontal overflow가 없었다.
 
 ### Narrow Viewport Findings
 
@@ -104,7 +104,8 @@
 
 - 확인함: desktop 1280x900, narrow 360x800, format menu open/Escape, DB picker open, dialog semantics, input label association, console warning/error.
 - 이번 구현 후 확인함: `npm run build`, 설명 문구 제거, shadcn `Select` open/`Escape` close, 좁은 viewport의 partition 1열·label clipping·page overflow.
-- 확인하지 못함: S3 picker tree interaction, copy 완료 feedback, tag 추가/삭제, partition 변경 후 draft persistence, validation failure 후 복구.
+- 다중 partition 구현 후 확인함: `order_date`, `order_count` 동시 checkbox 선택, Target 재진입 시 선택 유지, Review 화면에 두 컬럼 표시.
+- 확인하지 못함: S3 picker tree interaction, copy 완료 feedback, tag 추가/삭제, validation failure 후 복구, Docker/Spark 실제 partition directory 생성.
 
 ### shadcn Review
 
@@ -122,7 +123,7 @@
 
 ## Conflict Risk
 
-- 이번 구현은 Target 화면의 표시 구조와 파일 포맷 control만 변경한다. backend/API 계약, mock fixture, Router 구조, draft payload는 변경하지 않는다.
+- 이번 구현은 Target 화면의 표시 구조, 파일 포맷 control, 다중 partition 선택과 Spark write 연결을 변경한다. API 필드 shape, mock fixture, Router 구조는 변경하지 않는다.
 - #422와 겹칠 수 있는 list/search/table/pagination 구현 영역은 건드리지 않는다.
 - `etl.css`에서는 Target 전용 custom format selector만 제거하고, 공유 selector rename이나 legacy selector 정리는 진행하지 않는다.
 - 후속 구현은 #418, #421, #422에서 이미 추가된 shadcn primitive와 Tree row 표준화 상태를 기준으로 해야 한다.
@@ -132,3 +133,4 @@
 - `타겟 설정` 아래 description과 Basic/Destination/Partition section header의 보조 설명을 제거해 화면 밀도를 낮췄다.
 - 파일 포맷 값과 저장 payload는 기존 `parquet | csv | json`을 유지하고, 표시 control만 shadcn `Select`로 바꿨다.
 - 820px 이하에서 partition option을 1열로 배치해 좁은 viewport의 label clipping을 보완했다.
+- partition option을 checkbox 다중 선택으로 바꾸고, 선택 배열을 `/` 구분 `partition` 값으로 backend metadata와 Spark `partitionBy`까지 전달한다.

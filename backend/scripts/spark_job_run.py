@@ -23,6 +23,7 @@ def main():
         output_path = required_env("ASKLAKE_SPARK_OUTPUT_PATH")
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
         row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
+        partition_columns = parse_partition_columns(os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS"))
         schema_columns = load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
         transform_steps = load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
@@ -59,7 +60,11 @@ def main():
             "_asklake_ingested_at",
             F.current_timestamp(),
         )
-        output_df.write.mode("overwrite").parquet(output_path)
+        resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
+        writer = output_df.write.mode("overwrite")
+        if resolved_partition_columns:
+            writer = writer.partitionBy(*resolved_partition_columns)
+        writer.parquet(output_path)
         output_rows = spark.read.parquet(output_path).count()
         ended_at = now_iso()
         result = {
@@ -148,6 +153,27 @@ def read_source(spark, source_format, source_path, schema_columns):
     if source_format in {"txt", "text"}:
         return spark.read.text(source_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def parse_partition_columns(value):
+    text = str(value or "").strip()
+    if not text or text.lower() in {"-", "none", "null", "없음"}:
+        return []
+    return list(dict.fromkeys(part.strip() for part in text.split("/") if part.strip()))
+
+
+def resolve_partition_columns(frame, partition_columns):
+    resolved = []
+    missing = []
+    for column_name in partition_columns:
+        actual_name = resolve_column_name(frame, column_name)
+        if not actual_name:
+            missing.append(column_name)
+        elif actual_name not in resolved:
+            resolved.append(actual_name)
+    if missing:
+        raise ValueError(f"Partition columns missing from Spark output: {', '.join(missing)}")
+    return resolved
 
 
 def apply_schema_contract(frame, schema_columns):

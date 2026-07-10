@@ -4698,8 +4698,7 @@ export function TargetPage({
   const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
   const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
   const filteredPartitionColumns = partitionColumns
-    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use))
-    .slice(0, 1);
+    .filter((column) => partitionCandidates.some((rule) => rule.name === column && rule.use));
   const previewRows = useMemo(() => activePreviewRows.slice(0, 5).map((row) => {
     const previewRow: Record<string, string> = {};
     usedSchemaRules.forEach((rule) => {
@@ -4793,8 +4792,10 @@ export function TargetPage({
     setCustomTag("");
   };
 
-  const togglePartitionColumn = (columnName: string) => {
-    setPartitionColumns([columnName]);
+  const setPartitionColumnSelected = (columnName: string, selected: boolean) => {
+    setPartitionColumns((currentColumns) => selected
+      ? currentColumns.includes(columnName) ? currentColumns : [...currentColumns, columnName]
+      : currentColumns.filter((column) => column !== columnName));
   };
 
   const saveTargetConfig = () => {
@@ -4819,17 +4820,18 @@ export function TargetPage({
   };
 
   const renderPartitionOption = (rule: TargetSchemaRule) => {
-    const selected = filteredPartitionColumns[0] === rule.name;
+    const selected = filteredPartitionColumns.includes(rule.name);
     const disabled = !rule.use;
     return (
       <CheckableOption
         checked={selected}
         className="target-partition-option"
         disabled={disabled}
-        inputName="target-partition-column"
-        inputType="radio"
+        inputName="target-partition-columns"
+        inputType="checkbox"
+        inputValue={rule.name}
         key={rule.name}
-        onCheckedChange={() => togglePartitionColumn(rule.name)}
+        onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked)}
       >
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
@@ -4941,7 +4943,7 @@ export function TargetPage({
                 <h3>Partition</h3>
               </div>
               <div className="target-partition-settings">
-                <div className="target-partition-grid" role="radiogroup" aria-label="파티션 컬럼 선택">
+                <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
                   {partitionCandidates.map(renderPartitionOption)}
                 </div>
               </div>
