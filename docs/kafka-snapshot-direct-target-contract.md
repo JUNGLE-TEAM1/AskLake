@@ -53,8 +53,7 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 
 The selected target dataset is the only Lake data output for the default path.
 
-- `RAW` and `BRONZE`: snapshot records are written without business transformation or quality mutation. Stored UI rules are not executed for these layers.
-- `SILVER`: supported field transforms and quality rules run before the single target write.
+- `RAW`, `BRONZE`, and `SILVER`: target layer is selected target metadata. Supported Job transform and quality rules run before the single target write regardless of this label.
 - `GOLD`: out of scope until join/aggregation execution semantics are implemented.
 
 The target physical path must be derived from the target dataset and `snapshotId`, rather than the removed `kafka-landing/<topic>/<runId>` convention. The Catalog materialization run must expose the target path, target layer, `sourceKind: "kafka"`, and snapshot metadata.

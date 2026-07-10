@@ -24,8 +24,6 @@ const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TAR
 const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
 const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
-const activeTransformSteps = targetLayer === "SILVER" ? transformSteps : [];
-const activeQualityRules = targetLayer === "SILVER" ? qualityRules : [];
 const testFailAfterTargetWrite = process.env.ASKLAKE_ENABLE_KAFKA_TEST_HOOKS === "true"
   && booleanOption("testFailAfterTargetWrite", false);
 const suppliedSnapshot = isSnapshotPayload(apiPayload.snapshot) ? apiPayload.snapshot : null;
@@ -583,7 +581,7 @@ function parseReviewMessage(value, context) {
 function applyPipelineRules(records) {
   const transform = {
     appliedStepCount: 0,
-    configuredStepCount: activeTransformSteps.filter((step) => step.enabled !== false).length,
+    configuredStepCount: transformSteps.filter((step) => step.enabled !== false).length,
     errorCount: 0,
   };
   const transformed = [];
@@ -592,7 +590,7 @@ function applyPipelineRules(records) {
   for (const sourceRecord of records) {
     let record = structuredClone(sourceRecord);
     let discard = false;
-    for (const step of activeTransformSteps) {
+    for (const step of transformSteps) {
       if (step.enabled === false || !step.output) continue;
       try {
         setRecordValue(record, step.output, applyTransformStep(record, step));
@@ -617,7 +615,7 @@ function applyPipelineRules(records) {
   }
 
   const quality = {
-    configuredRuleCount: activeQualityRules.filter((rule) => rule.enabled !== false).length,
+    configuredRuleCount: qualityRules.filter((rule) => rule.enabled !== false).length,
     droppedCount: 0,
     invalidRowCount: 0,
     quarantinedCount: 0,
@@ -629,7 +627,7 @@ function applyPipelineRules(records) {
   const validRecords = [];
   const uniqueValuesByRule = new Map();
   for (const record of transformed) {
-    const failures = activeQualityRules
+    const failures = qualityRules
       .filter((rule) => rule.enabled !== false)
       .map((rule) => {
         const value = getRecordValue(record, rule.targetColumn);
@@ -822,7 +820,7 @@ function quarantineEntry(record, stage, rule, reason) {
 function targetSchema(records) {
   const base = standardReviewSchema();
   const known = new Set(base.map((column) => column.targetName));
-  for (const step of activeTransformSteps) {
+  for (const step of transformSteps) {
     if (step.enabled !== false && step.output && !known.has(step.output)) {
       base.push({ nullable: true, sourceName: step.output, targetName: step.output, type: "String" });
       known.add(step.output);
