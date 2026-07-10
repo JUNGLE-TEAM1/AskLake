@@ -274,6 +274,20 @@ const checks = [
     ],
   },
   {
+    name: "Frontend defaults to the live dashboard Assistant API",
+    file: "src/services/dashboardAssistantService.ts",
+    patterns: [
+      /VITE_DASHBOARD_ASSISTANT_API_PATH \?\? "\/api\/dashboards\/assistant"/,
+    ],
+  },
+  {
+    name: "Frontend defaults to live API mode",
+    file: "src/services/apiClient.ts",
+    patterns: [
+      /VITE_USE_MOCK_API \?\? "false"/,
+    ],
+  },
+  {
     name: "Dashboard status labels stay Korean",
     file: "src/utils/statusMeta.ts",
     patterns: [
