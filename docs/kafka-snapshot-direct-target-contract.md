@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior. Phase 5 verifies independent multi-partition snapshot ranges and offset commits.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior. Phase 5 verifies independent multi-partition snapshot ranges and offset commits. Phase 6 verifies target-write retry idempotency when Catalog publication fails after the target object exists.
 
 ## 2. Objective
 
@@ -94,3 +94,4 @@ Empty snapshots are valid successful runs. They create no target data file and r
 3. A forced target/Catalog failure leaves group offsets unchanged.
 4. Retrying the same snapshot does not duplicate target rows or Catalog materialization history.
 5. Multi-partition topics record and commit each partition range independently.
+6. A forced post-target-write Catalog failure leaves offsets unchanged; retrying the same snapshot overwrites the target object and creates one Catalog materialization entry.

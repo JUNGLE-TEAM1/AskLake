@@ -159,7 +159,7 @@ npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit
 --no-recreate-topic     기존 topic을 삭제하지 않고 사용
 ```
 
-Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다. Snapshot Phase 5에서는 partition별 `startOffset/endOffset` metadata, 성공 후 consumer group offset 전진, `asklake-output` Bronze target 저장, legacy `kafka-landing` 경로 미사용, transform/quality target object와 quarantine object, `Fail Run`의 offset 미커밋 및 같은 snapshot 재시도, failed Job Run/DAG 저장, 2개 partition의 독립된 max range/offset commit까지 함께 검증한다.
+Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다. Snapshot Phase 6에서는 partition별 `startOffset/endOffset` metadata, 성공 후 consumer group offset 전진, `asklake-output` Bronze target 저장, legacy `kafka-landing` 경로 미사용, transform/quality target object와 quarantine object, `Fail Run`의 offset 미커밋 및 같은 snapshot 재시도, failed Job Run/DAG 저장, 2개 partition의 독립된 max range/offset commit, target write 뒤 Catalog 실패 후 idempotent retry까지 함께 검증한다.
 
 ```bash
 cd backend

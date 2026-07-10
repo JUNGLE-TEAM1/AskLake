@@ -24,6 +24,7 @@ const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TAR
 const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
 const transformSteps = objectArrayOption("transformSteps");
 const qualityRules = objectArrayOption("qualityRules");
+const testFailAfterTargetWrite = booleanOption("testFailAfterTargetWrite", false);
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
 const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
 const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
@@ -147,6 +148,9 @@ async function ingestReviews() {
       if (processed.quarantined.length > 0) {
         metadata.quality.quarantineLocation = writeLocalQuarantine(processed.quarantined);
       }
+    }
+    if (testFailAfterTargetWrite) {
+      throw pipelineError("catalog", "Test-only failure after Kafka target write.");
     }
     if (registerCatalog) {
       const dataset = await registerCatalogDataset(metadata);

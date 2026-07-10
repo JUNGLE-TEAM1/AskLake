@@ -40,6 +40,7 @@ try {
   await verifyTransformAndQualityIngest();
   await verifyFailRunLeavesOffsetsForRetry();
   await verifyMultiPartitionSnapshots();
+  await verifyTargetWriteRetryIsIdempotent();
   console.log("verify-kafka-review-scheduled-ingest: ok");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -279,6 +280,46 @@ async function verifyMultiPartitionSnapshots() {
     assert(partition.startOffset === "2" && partition.endOffset === "3", `Second partition snapshot should be 2..3: ${JSON.stringify(partition)}`);
   }
   assert(JSON.stringify(await groupOffsets(multiTopic, multiGroup)) === JSON.stringify({ 0: "3", 1: "3" }), "Second snapshot should commit each remaining partition offset.");
+}
+
+async function verifyTargetWriteRetryIsIdempotent() {
+  const retryTopic = `reviews.raw.catalog-retry.${suffix}`;
+  const retryGroup = `asklake-catalog-retry-${suffix}`;
+  const request = {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: retryTopic,
+    consumerGroupId: retryGroup,
+    datasetId: `ds_reviews_catalog_retry_${suffix}`,
+    datasetName: `reviews_catalog_retry_${suffix}`,
+    maxMessages: 10,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: false,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${retryTopic}/bronze`,
+    targetLayer: "BRONZE",
+    targetFormat: "jsonl",
+  };
+  await produceReviewEvents(retryTopic, [
+    { event_id: `catalog-retry-${suffix}-1`, offset: 1, review: "Catalog retry first", created_at: "2026-07-09T05:00:00Z" },
+    { event_id: `catalog-retry-${suffix}-2`, offset: 2, review: "Catalog retry second", created_at: "2026-07-09T05:01:00Z" },
+  ]);
+  const failed = await postError("/api/etl/kafka/reviews/ingest", { ...request, testFailAfterTargetWrite: true });
+  assert(failed.status === 502, `Post-target-write test failure should reach the API: ${JSON.stringify(failed)}`);
+  const failedSnapshot = failed.payload?.error?.details?.bridge?.snapshot;
+  assert(failed.payload?.error?.details?.bridge?.failedStage === "catalog", `Failure should be reported at catalog stage: ${JSON.stringify(failed)}`);
+  assert(await groupOffset(retryTopic, retryGroup) === "-1", "Catalog failure after target write must not commit offsets.");
+
+  const retried = await post("/api/etl/kafka/reviews/ingest", request);
+  assert(retried.snapshot?.snapshotId === failedSnapshot?.snapshotId, "Retry must reuse the target object identity for the same offset range.");
+  assert(retried.consumedCount === 2 && retried.storedCount === 2, "Retry should re-read and publish the same two messages.");
+  assert(retried.catalogDataset?.materializationRuns === 1, `Retry should create one Catalog materialization history entry: ${JSON.stringify(retried.catalogDataset)}`);
+  const targetRows = (await readS3Object(retried.storageLocation)).trim().split("\n").filter(Boolean);
+  assert(targetRows.length === 2, "Idempotent retry must overwrite, not duplicate, the snapshot target object.");
+  assert(await groupOffset(retryTopic, retryGroup) === "2", "Successful retry must commit the captured end offset.");
 }
 
 async function readS3Object(location) {

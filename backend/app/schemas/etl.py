@@ -327,6 +327,7 @@ class KafkaReviewIngestRequest(CamelModel):
     register_catalog: bool = True
     run_id: str | None = None
     storage_mode: Literal["local", "s3"] = "s3"
+    test_fail_after_target_write: bool = False
     timeout_ms: int = Field(default=10000, ge=1000, le=300000)
 
 

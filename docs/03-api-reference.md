@@ -109,6 +109,7 @@ type KafkaReviewIngestRequest = {
   targetDescription?: string;
   transformSteps?: TransformStepDraft[]; // Job 실행 시 Job에 저장된 규칙이 전달됨
   qualityRules?: QualityRuleDraft[];
+  testFailAfterTargetWrite?: boolean; // test-only smoke hook; never set by Job execution
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
@@ -184,7 +185,7 @@ partition offset snapshot
   -> offset commit
 ```
 
-현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 같은 snapshot identity는 target object path와 Catalog materialization run deduplication key로 사용한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
+현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 같은 snapshot identity는 target object path와 Catalog materialization run deduplication key로 사용한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다. `testFailAfterTargetWrite`는 smoke에서만 target object write 직후 Catalog 등록 전 실패를 재현하는 test-only hook이다.
 
 `Fail Run` 같은 Kafka bridge 오류가 일반 Job command에서 발생하면 API는 실패 Run을 정상 응답의 `run`으로 반환하며, `run.taskStates.kafkaSnapshot`과 `failedStage`를 보존한다. 직접 `POST /api/etl/kafka/reviews/ingest` 호출은 `502` error response를 반환하고 `error.details.bridge.snapshot` 및 `failedStage`로 동일 진단을 제공한다.
 
