@@ -18,7 +18,7 @@
   align-content: start;
   gap: 18px;
   min-width: 0;
-  background: #202123;
+  background: #12345b;
   padding: 16px 12px;
 }
 
@@ -72,7 +72,7 @@
   font-weight: 650;
 }
 
-.ai-sidebar-new-conversation:hover { background: #303133; }
+.ai-sidebar-new-conversation:hover { background: #1b4776; }
 .ai-conversation-list { display: grid; gap: 3px; max-height: calc(100vh - 260px); overflow-y: auto; }
 
 .ai-conversation-item {
@@ -87,8 +87,8 @@
   text-align: left;
 }
 
-.ai-conversation-item:hover { background: #2b2c2e; }
-.ai-conversation-item.active { background: #343536; }
+.ai-conversation-item:hover { background: #1a426e; }
+.ai-conversation-item.active { background: #245584; }
 .ai-conversation-item span { overflow: hidden; color: #eceff3; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .ai-conversation-item small { color: #9ca3af; font-size: 11px; }
 
