@@ -1183,7 +1183,7 @@ def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
         return
 
     for run in active_runs:
-        sync_airflow_run(job, run, airflow_client)
+        sync_airflow_run(db, job, run, airflow_client)
 
     latest_run = runs[0]
     apply_job_state_from_latest_run(job, latest_run)
@@ -1191,7 +1191,7 @@ def sync_airflow_runs_for_job(db: Session, job: ETLJobModel) -> None:
     etl_repository.save_job(db, job)
 
 
-def sync_airflow_run(job: ETLJobModel, run: ETLRunModel, airflow_client: Any) -> None:
+def sync_airflow_run(db: Session, job: ETLJobModel, run: ETLRunModel, airflow_client: Any) -> None:
     synced_at = iso_now()
     try:
         dag_run = airflow_client.get_dag_run(run.airflow_dag_run_id)
@@ -1201,6 +1201,10 @@ def sync_airflow_run(job: ETLJobModel, run: ETLRunModel, airflow_client: Any) ->
         run.last_synced_at = synced_at
         return
 
+    # Spark/Catalog execution endpoints can commit task evidence while this
+    # polling request is waiting on Airflow. Refresh and lock the Run before
+    # replacing the task snapshot so a stale poll cannot erase that evidence.
+    etl_repository.refresh_run_for_update(db, run)
     run.status = dag_run.asklake_status
     run.airflow_dag_id = dag_run.dag_id or run.airflow_dag_id
     run.airflow_dag_run_id = dag_run.dag_run_id or run.airflow_dag_run_id

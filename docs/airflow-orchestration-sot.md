@@ -27,11 +27,13 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
 - Phase 2 — real Spark execution: complete on the current branch. Airflow calls
   an authenticated FastAPI internal endpoint, PySpark writes Parquet to
   MinIO/S3, and the Spark manifest is reconciled into the AskLake Run.
-- Phase 3 — Catalog reconciliation: contract and FastAPI backend slice complete;
-  Airflow final-task wiring, frontend refresh, and live end-to-end verification
-  remain. The final `publish_run_result` task must reconcile the persisted
-  successful Spark manifest into Catalog before the Airflow DAG Run can become
-  successful.
+- Phase 3 — Catalog reconciliation: contract, FastAPI backend slice, and Airflow
+  final-task wiring are complete on the current branch, and the real
+  Airflow/Spark/MinIO/Catalog success and Spark-failure paths are verified.
+  Frontend terminal-success Catalog refresh remains. For real Spark execution,
+  the final `publish_run_result` task reconciles the persisted successful Spark
+  manifest into Catalog before the Airflow DAG Run can become successful.
+  Synthetic `smoke` execution continues to skip the physical Catalog call.
 - Phase 4 — operational commands and recovery: define and implement retry,
   cancel, and any honest pause semantics across Airflow and Spark.
 - Phase 5 — deployment and operations: define DAG deployment, versioning,
@@ -110,6 +112,9 @@ Failure and recovery:
 - If the database commit succeeds but the HTTP response is lost, the retry reads
   the existing successful `catalogResult` and materialization and returns the
   same success response.
+- Airflow polling refreshes and locks the persisted Run after reading Airflow
+  state and before replacing its task snapshot. A stale polling request cannot
+  erase a concurrently committed `sparkResult` or `catalogResult`.
 
 Phase 3 implementation acceptance:
 

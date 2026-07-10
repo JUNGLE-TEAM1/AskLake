@@ -117,11 +117,41 @@ def main() -> None:
             assert transaction_run is not None
             assert (transaction_run.task_states or {}).get("catalogResult", {}).get("status") == "failed"
             assert len(etl_repository.get_dataset_schema_by_id(db, dataset_id).materialization_runs) == 2
-            sync_airflow_run(job, transaction_run, FailedCatalogAirflowClient())
+            sync_airflow_run(db, job, transaction_run, FailedCatalogAirflowClient())
             assert transaction_run.failed_stage == "Catalog reconciliation"
             assert "injected Catalog transaction failure" in transaction_run.error_summary
             assert (transaction_run.task_states or {}).get("sparkResult", {}).get("status") == "success"
             assert (transaction_run.task_states or {}).get("catalogResult", {}).get("status") == "failed"
+
+            stale_sync_run_id = f"run_catalog_{suffix}_stale_sync"
+            add_run(db, job_id, stale_sync_run_id, None, spark_status=None)
+            stale_sync_run = etl_repository.get_run_model(db, stale_sync_run_id)
+            assert stale_sync_run is not None
+            writer_db = SessionLocal()
+            try:
+                writer_run = etl_repository.get_run_model(writer_db, stale_sync_run_id)
+                assert writer_run is not None
+                writer_run.task_states = {
+                    "sparkResult": {
+                        "error": "quality rule failed",
+                        "failedStage": "Quality",
+                        "runId": stale_sync_run_id,
+                        "status": "failed",
+                    },
+                }
+                writer_db.commit()
+            finally:
+                writer_db.close()
+
+            assert (stale_sync_run.task_states or {}).get("sparkResult") is None
+            sync_airflow_run(db, job, stale_sync_run, FailedSparkAirflowClient())
+            db.commit()
+            db.expire_all()
+            refreshed_sync_run = etl_repository.get_run_model(db, stale_sync_run_id)
+            assert refreshed_sync_run is not None
+            assert (refreshed_sync_run.task_states or {}).get("sparkResult", {}).get("status") == "failed"
+            assert refreshed_sync_run.failed_stage == "Quality"
+            assert refreshed_sync_run.error_summary == "quality rule failed"
 
             assert_fake_s3_inspection()
             print("verify-airflow-catalog-reconciliation: ok")
@@ -281,6 +311,26 @@ class FailedCatalogAirflowClient:
             "dag_run_id": run_id,
             "state": "failed",
             "task_id": "publish_run_result",
+        })]
+
+    def dag_run_url(self, run_id: str) -> str:
+        return f"http://airflow.local/dags/asklake_etl_job/runs/{run_id}"
+
+
+class FailedSparkAirflowClient:
+    def get_dag_run(self, run_id: str) -> AirflowDagRun:
+        return AirflowDagRun.from_payload({
+            "dag_id": "asklake_etl_job",
+            "dag_run_id": run_id,
+            "state": "failed",
+        })
+
+    def list_task_instances(self, run_id: str) -> list[AirflowTaskInstance]:
+        return [AirflowTaskInstance.from_payload({
+            "dag_id": "asklake_etl_job",
+            "dag_run_id": run_id,
+            "state": "failed",
+            "task_id": "spark_process_write",
         })]
 
     def dag_run_url(self, run_id: str) -> str:

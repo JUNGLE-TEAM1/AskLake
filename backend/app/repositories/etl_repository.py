@@ -353,6 +353,11 @@ def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
     return db.get(ETLRunModel, run_id)
 
 
+def refresh_run_for_update(db: Session, run: ETLRunModel) -> None:
+    ensure_schema(db)
+    db.refresh(run, with_for_update=True)
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         id=job.id,

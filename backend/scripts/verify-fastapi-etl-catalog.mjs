@@ -131,6 +131,13 @@ async function runSmoke() {
     assert(latestRun?.taskStates?.sparkResult?.status === "failed", "Failed Spark manifest should be preserved.");
     assert(latestRun?.taskStates?.sparkResult?.failedStage === "Quality", "Spark manifest should identify the Quality stage.");
     assert(syncedJob.status === "failed", "Job should expose failed status after Spark quality failure.");
+    if (!shouldStartAirflowMock) {
+      const catalogList = await get("/api/catalog/datasets");
+      assert(
+        !catalogList.datasets?.some((dataset) => dataset.id === create.catalogTarget.id),
+        "Spark failure must not publish the target Catalog dataset.",
+      );
+    }
     console.log("verify-fastapi-etl-catalog: expected Spark failure ok");
     return;
   }
@@ -141,6 +148,19 @@ async function runSmoke() {
     assert(latestRun?.taskStates?.sparkResult?.status === "success", "Synced run should preserve the Spark result manifest.");
     assert(Number(latestRun?.taskStates?.sparkResult?.outputRows) === 2, "Spark should write the two input rows.");
     await assertPhysicalParquet(latestRun?.outputPath);
+    assert(latestRun?.taskStates?.catalogResult?.status === "success", "Catalog publication should persist a successful catalogResult.");
+    assert(latestRun?.taskStates?.catalogResult?.runId === latestRun.runId, "Catalog result should preserve the AskLake Run id.");
+
+    const catalogDataset = await get(`/api/catalog/datasets/${encodeURIComponent(create.catalogTarget.id)}`);
+    assert(catalogDataset.sourceRunId === latestRun.runId, "Catalog dataset should point to the successful Run id.");
+    assert(catalogDataset.storageLocation === latestRun.outputPath, "Catalog storageLocation should match the Spark outputPath.");
+    assert(catalogDataset.storageFormat === "parquet", "Catalog storage format should be Parquet.");
+    assert(Number(catalogDataset.storageSizeBytes) > 0, "Catalog dataset should persist positive physical bytes.");
+    assert(
+      catalogDataset.materializationRuns?.filter((run) => run.runId === latestRun.runId).length === 1,
+      "Catalog dataset should contain one materialization for the successful Run.",
+    );
+    assert(catalogDataset.lineageGraph?.datasets?.length === 3, "Catalog lineage should contain source, Spark Job, and target nodes.");
   }
   assert(syncedJob.status === "scheduled", "Job should return to scheduled after a successful Airflow sync.");
   assert(syncedJob.dagSteps?.some((step) => step.id === "publish_run_result" && step.status === "success"), "Synced job should expose Airflow task DAG steps.");

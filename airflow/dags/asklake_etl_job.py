@@ -23,26 +23,25 @@ def sleep_seconds(conf: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
-def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
+def post_asklake_execution_api(
+    route: str,
+    body: dict[str, Any],
+    *,
+    operation: str,
+) -> dict[str, Any]:
     base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL", "").rstrip("/")
     token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN", "")
     if not base_url or not token:
         raise RuntimeError(
-            "Spark execution requires ASKLAKE_EXECUTION_API_BASE_URL and "
+            f"{operation} requires ASKLAKE_EXECUTION_API_BASE_URL and "
             "ASKLAKE_EXECUTION_API_TOKEN in the Airflow runtime."
         )
 
-    run_id = str(conf["runId"])
-    url = f"{base_url}/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/execute"
-    body = json.dumps(
-        {
-            "command": str(conf.get("command") or "run"),
-            "jobId": str(conf["jobId"]),
-        }
-    ).encode("utf-8")
+    url = f"{base_url}{route}"
+    encoded_body = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
         url,
-        data=body,
+        data=encoded_body,
         method="POST",
         headers={
             "Accept": "application/json",
@@ -60,14 +59,68 @@ def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
     except urllib.error.HTTPError as exc:
         response_body = exc.read().decode("utf-8", errors="replace")[-2000:]
         raise RuntimeError(
-            f"AskLake Spark execution API returned HTTP {exc.code}: {response_body}"
+            f"AskLake {operation} API returned HTTP {exc.code}: {response_body}"
         ) from exc
     except (TimeoutError, urllib.error.URLError) as exc:
-        raise RuntimeError(f"AskLake Spark execution API request failed: {exc}") from exc
+        raise RuntimeError(f"AskLake {operation} API request failed: {exc}") from exc
 
     if not isinstance(payload, dict):
-        raise RuntimeError("AskLake Spark execution API returned an invalid response.")
+        raise RuntimeError(f"AskLake {operation} API returned an invalid response.")
     return payload
+
+
+def execute_spark_run(conf: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(conf["runId"])
+    return post_asklake_execution_api(
+        f"/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/execute",
+        {
+            "command": str(conf.get("command") or "run"),
+            "jobId": str(conf["jobId"]),
+        },
+        operation="Spark execution",
+    )
+
+
+def reconcile_catalog_run(conf: dict[str, Any]) -> dict[str, Any]:
+    run_id = str(conf["runId"])
+    payload = post_asklake_execution_api(
+        f"/api/internal/airflow/spark-runs/{quote(run_id, safe='')}/catalog",
+        {"jobId": str(conf["jobId"])},
+        operation="Catalog reconciliation",
+    )
+    if payload.get("status") != "success" or str(payload.get("runId") or "") != run_id:
+        raise RuntimeError("AskLake Catalog reconciliation API returned an invalid success response.")
+    dataset = payload.get("dataset")
+    if not isinstance(dataset, dict) or not dataset.get("id"):
+        raise RuntimeError("AskLake Catalog reconciliation response did not include dataset.id.")
+    return payload
+
+
+def publish_catalog_result(conf: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    time.sleep(sleep_seconds(conf, "smokeCatalogSeconds", 0))
+    if result.get("status") != "success" or not result.get("outputPath"):
+        raise RuntimeError("Successful Spark result must include outputPath.")
+
+    run_id = str(conf["runId"])
+    if str(result.get("runId") or "") != run_id:
+        raise RuntimeError("Spark result runId does not match the Airflow DAG Run configuration.")
+
+    published = {
+        "inputRows": result.get("inputRows"),
+        "outputPath": result.get("outputPath"),
+        "outputRows": result.get("outputRows"),
+        "runId": run_id,
+        "status": "success",
+    }
+    if conf.get("executionMode") == "smoke":
+        return published
+
+    catalog = reconcile_catalog_run(conf)
+    return {
+        **published,
+        "catalogDatasetId": catalog["dataset"]["id"],
+        "catalogReconciledAt": catalog.get("reconciledAt"),
+    }
 
 
 @dag(
@@ -124,19 +177,12 @@ def asklake_etl_job() -> None:
         return result
 
     @task(task_id="publish_run_result")
-    def publish_run_result(result: dict[str, Any]) -> dict[str, Any]:
-        time.sleep(sleep_seconds(result, "smokeCatalogSeconds", 0))
-        if result.get("status") != "success" or not result.get("outputPath"):
-            raise RuntimeError("Successful Spark result must include outputPath.")
-        return {
-            "inputRows": result.get("inputRows"),
-            "outputPath": result.get("outputPath"),
-            "outputRows": result.get("outputRows"),
-            "runId": result.get("runId"),
-            "status": "success",
-        }
+    def publish_run_result(conf: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        return publish_catalog_result(conf, result)
 
-    publish_run_result(spark_process_write(validate_spark_request(receive_asklake_run())))
+    validated_conf = validate_spark_request(receive_asklake_run())
+    spark_result = spark_process_write(validated_conf)
+    publish_run_result(validated_conf, spark_result)
 
 
 asklake_etl_job()
