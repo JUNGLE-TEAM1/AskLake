@@ -21,6 +21,7 @@ import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-gr
 import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
 import { SettingsPanel } from "@/components/ui/settings-panel";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
@@ -328,6 +329,7 @@ function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDr
     return "분류와 값 컬럼을 선택해 주세요.";
   }
   if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
   if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
@@ -1043,11 +1045,16 @@ export function WidgetConfigPanel({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </WidgetSelectField>
-            <FormFieldGroup label="최솟값">
-              <Input size="sm" type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
-            </FormFieldGroup>
-            <FormFieldGroup label="최댓값">
-              <Input size="sm" type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
+            <FormFieldGroup label={`표시 범위 (${currentConfig.min ?? 0}–${currentConfig.max ?? 100})`}>
+              <Slider
+                aria-label="방사형 차트 표시 범위"
+                min={0}
+                max={100}
+                minStepsBetweenThumbs={1}
+                step={1}
+                value={[currentConfig.min ?? 0, currentConfig.max ?? 100]}
+                onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
+              />
             </FormFieldGroup>
           </>
         )}

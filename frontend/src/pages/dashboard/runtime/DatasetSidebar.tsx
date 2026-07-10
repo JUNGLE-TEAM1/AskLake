@@ -1,10 +1,18 @@
 import { useMemo, type ReactNode } from "react";
 import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
-import { Tree, type NodeApi, type NodeRendererProps } from "react-arborist";
+import {
+  TreeExpander,
+  TreeIcon,
+  TreeNode,
+  TreeNodeContent,
+  TreeNodeTrigger,
+  TreeProvider,
+  TreeView,
+} from "@/components/kibo-ui/tree";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import { TreePanel } from "@/components/ui/tree-panel";
-import { TreeRow } from "@/components/ui/tree-view";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 type DatasetSidebarProps = {
@@ -22,7 +30,6 @@ const DATASET_ITEM_PREFIX = "dataset:";
 const systemItemId = "dataset-tree-system";
 const schemaItemId = "dataset-tree-schema";
 const tablesItemId = "dataset-tree-tables";
-const datasetTreeRowHeight = 38;
 
 function datasetTreeItemId(datasetId: string) {
   return `${DATASET_ITEM_PREFIX}${datasetId}`;
@@ -88,17 +95,17 @@ function DatasetTreeLabel({
   title,
 }: {
   hoverCard?: ReactNode;
-  icon: ReactNode;
+  icon?: ReactNode;
   meta?: string;
   selected?: boolean;
   title: string;
 }) {
   const label = (
-    <span className={selected ? "asklake-dataset-tree-label selected" : "asklake-dataset-tree-label"}>
-      <span className="asklake-dataset-tree-icon" aria-hidden="true">{icon}</span>
-      <span className="asklake-dataset-tree-copy">
-        <strong>{title}</strong>
-        {meta && <em>{meta}</em>}
+    <span className={selected ? "flex min-w-0 flex-1 items-center gap-2 text-blue-700" : "flex min-w-0 flex-1 items-center gap-2"}>
+      {icon ? <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">{icon}</span> : null}
+      <span className="grid min-w-0 flex-1 gap-0.5">
+        <strong className="truncate text-sm font-semibold text-foreground">{title}</strong>
+        {meta ? <em className="truncate text-xs not-italic text-muted-foreground">{meta}</em> : null}
       </span>
     </span>
   );
@@ -130,40 +137,48 @@ type DatasetTreeNode = {
   title: string;
 };
 
-function DatasetTreeNodeRow({ node, style }: NodeRendererProps<DatasetTreeNode>) {
+function DatasetTreeBranch({
+  level = 0,
+  node,
+  parentPath = [],
+  position,
+  siblingCount,
+}: {
+  level?: number;
+  node: DatasetTreeNode;
+  parentPath?: boolean[];
+  position: number;
+  siblingCount: number;
+}) {
+  const hasChildren = Boolean(node.children?.length);
+  const isLast = position === siblingCount - 1;
+  const nextParentPath = [...parentPath, isLast];
+
   return (
-    <div
-      className={[
-        "asklake-dataset-tree-row",
-        node.isSelected ? "selected" : "",
-        node.isInternal ? "branch" : "leaf",
-      ].filter(Boolean).join(" ")}
-      style={style}
-    >
-      <TreeRow
-        aria-expanded={node.isInternal ? node.isOpen : undefined}
-        className="asklake-dataset-tree-node"
-        expanded={node.isInternal ? node.isOpen : undefined}
-        leaf={!node.isInternal}
-        selected={node.data.selected || node.isSelected}
-        type="button"
-        onClick={() => {
-          if (node.isInternal) node.toggle();
-          node.activate();
-        }}
-      >
-        <span className="asklake-dataset-tree-toggle" aria-hidden="true">
-          {node.isInternal ? (node.isOpen ? "v" : ">") : ""}
-        </span>
+    <TreeNode isLast={isLast} level={level} nodeId={node.id} parentPath={parentPath}>
+      <TreeNodeTrigger className="min-h-9">
+        <TreeExpander hasChildren={hasChildren} />
+        <TreeIcon hasChildren={hasChildren} icon={node.icon} />
         <DatasetTreeLabel
-          hoverCard={node.data.hoverCard}
-          icon={node.data.icon}
-          meta={node.data.meta}
-          selected={node.data.selected || node.isSelected}
-          title={node.data.title}
+          hoverCard={node.hoverCard}
+          meta={node.meta}
+          selected={node.selected}
+          title={node.title}
         />
-      </TreeRow>
-    </div>
+      </TreeNodeTrigger>
+      <TreeNodeContent hasChildren={hasChildren}>
+        {node.children?.map((child, index) => (
+          <DatasetTreeBranch
+            key={child.id}
+            level={level + 1}
+            node={child}
+            parentPath={nextParentPath}
+            position={index}
+            siblingCount={node.children?.length ?? 0}
+          />
+        ))}
+      </TreeNodeContent>
+    </TreeNode>
   );
 }
 
@@ -294,19 +309,24 @@ export function DatasetSidebar({
       title: "system",
     },
   ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
-  const treeHeight = Math.max(260, Math.min(760, 120 + (totalColumnCount + datasets.length) * datasetTreeRowHeight));
+  const handleTreeSelection = (selectedIds: string[]) => {
+    const selectedId = selectedIds.at(-1);
+    if (!selectedId) return;
+    const datasetId = selectedId.startsWith(DATASET_ITEM_PREFIX)
+      ? selectedId.slice(DATASET_ITEM_PREFIX.length)
+      : selectedId.startsWith(COLUMN_ITEM_PREFIX)
+        ? selectedId.slice(COLUMN_ITEM_PREFIX.length).split(":")[0]
+        : null;
+    if (!datasetId) return;
 
-  const handleActivateTreeItem = (node: NodeApi<DatasetTreeNode>) => {
-    const item = node.data;
-
-    if (item.kind === "dataset" && item.datasetId) {
-      onSelectDataset(item.datasetId);
+    if (selectedId.startsWith(DATASET_ITEM_PREFIX)) {
+      onSelectDataset(datasetId);
       return;
     }
 
-    if (item.kind !== "column" || !item.datasetId || !item.columnName) return;
-    const dataset = datasets.find((entry) => entry.id === item.datasetId);
-    const column = dataset?.columns.find((entry) => entry.name === item.columnName);
+    const columnName = selectedId.slice(COLUMN_ITEM_PREFIX.length + datasetId.length + 1);
+    const dataset = datasets.find((entry) => entry.id === datasetId);
+    const column = dataset?.columns.find((entry) => entry.name === columnName);
     if (!dataset || !column) return;
     onSelectColumn?.(dataset, column);
   };
@@ -333,24 +353,31 @@ export function DatasetSidebar({
           loadingState="Loading datasets..."
           stateClassName={error && !isLoading ? "asklake-dataset-sidebar-state error" : "asklake-dataset-sidebar-state"}
         >
-          <Tree<DatasetTreeNode>
-            aria-label="Dashboard dataset tree"
-            className="asklake-dataset-tree"
-            data={treeData}
-            disableDrag
-            disableEdit
-            height={treeHeight}
-            idAccessor="id"
-            indent={18}
-            openByDefault
-            overscanCount={6}
-            rowHeight={datasetTreeRowHeight}
-            selection={selectedDatasetId ? datasetTreeItemId(selectedDatasetId) : undefined}
-            width="100%"
-            onActivate={handleActivateTreeItem}
-          >
-            {DatasetTreeNodeRow}
-          </Tree>
+          <ScrollArea className="asklake-dataset-tree-wrap">
+            <TreeProvider
+              animateExpand={false}
+              defaultExpandedIds={[
+                systemItemId,
+                schemaItemId,
+                tablesItemId,
+                ...datasets.map((dataset) => datasetTreeItemId(dataset.id)),
+              ]}
+              indent={18}
+              selectedIds={selectedDatasetId ? [datasetTreeItemId(selectedDatasetId)] : []}
+              onSelectionChange={handleTreeSelection}
+            >
+              <TreeView aria-label="Dashboard dataset tree" className="asklake-dataset-tree">
+                {treeData.map((node, index) => (
+                  <DatasetTreeBranch
+                    key={node.id}
+                    node={node}
+                    position={index}
+                    siblingCount={treeData.length}
+                  />
+                ))}
+              </TreeView>
+            </TreeProvider>
+          </ScrollArea>
         </TreePanel>
       </TooltipProvider>
     </aside>

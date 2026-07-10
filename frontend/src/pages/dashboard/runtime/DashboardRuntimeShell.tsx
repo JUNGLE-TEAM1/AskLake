@@ -1,4 +1,6 @@
-import type React from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Check, Copy, Database } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -51,11 +53,11 @@ export function DashboardRuntimeShell({
   shareLink,
   title,
 }: {
-  children: React.ReactNode;
-  datasetSidebar?: React.ReactNode;
+  children: ReactNode;
+  datasetSidebar?: ReactNode;
   datasetSidebarOpen?: boolean;
   hasPublishedRevision?: boolean;
-  inspector?: React.ReactNode;
+  inspector?: ReactNode;
   isAddingPage?: boolean;
   isPublishing?: boolean;
   isRenamingTitle?: boolean;
@@ -80,6 +82,7 @@ export function DashboardRuntimeShell({
   shareLink?: string | null;
   title: string;
 }) {
+  const [copyFeedback, setCopyFeedback] = useState<"idle" | "success" | "error">("idle");
   const hasDatasetSidebar = Boolean(datasetSidebar);
   const canToggleDatasetSidebar = hasDatasetSidebar && Boolean(onToggleDatasetSidebar);
   const workspaceClassName = [
@@ -88,6 +91,38 @@ export function DashboardRuntimeShell({
     hasDatasetSidebar && datasetSidebarOpen && "dataset-sidebar-open",
     inspector && "has-inspector",
   ].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    setCopyFeedback("idle");
+  }, [shareLink]);
+
+  const copyShareLink = async () => {
+    if (!shareLink) {
+      setCopyFeedback("error");
+      return;
+    }
+
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API is unavailable");
+      await Promise.race([
+        navigator.clipboard.writeText(shareLink),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error("Clipboard API timed out")), 1200);
+        }),
+      ]);
+      setCopyFeedback("success");
+    } catch {
+      const fallbackInput = document.createElement("textarea");
+      fallbackInput.value = shareLink;
+      fallbackInput.style.position = "fixed";
+      fallbackInput.style.opacity = "0";
+      document.body.appendChild(fallbackInput);
+      fallbackInput.select();
+      const copied = document.execCommand("copy");
+      fallbackInput.remove();
+      setCopyFeedback(copied ? "success" : "error");
+    }
+  };
 
   return (
     <div className="asklake-dashboard-runtime">
@@ -106,9 +141,13 @@ export function DashboardRuntimeShell({
         onShare={onShare}
       />
       {notice && (
-        <div className={`asklake-dashboard-runtime-notice ${notice.tone}`} role="status">
-          {notice.message}
-        </div>
+        <Alert
+          className={`asklake-dashboard-runtime-notice ${notice.tone}`}
+          role="status"
+          variant={notice.tone === "error" ? "destructive" : "default"}
+        >
+          <AlertDescription>{notice.message}</AlertDescription>
+        </Alert>
       )}
       <Sheet
         open={Boolean(shareLink)}
@@ -119,11 +158,20 @@ export function DashboardRuntimeShell({
         <SheetContent className="asklake-dashboard-share-sheet" closeLabel="공유 패널 닫기" side="right">
           <SheetHeader>
             <SheetTitle>대시보드 공유</SheetTitle>
-            <SheetDescription>현재 대시보드 링크를 복사했습니다.</SheetDescription>
+            <SheetDescription>게시 조회 링크를 복사해 공유할 수 있습니다.</SheetDescription>
           </SheetHeader>
           {shareLink && (
             <div className="asklake-dashboard-share-sheet-body">
               <code className="asklake-dashboard-share-link">{shareLink}</code>
+              <Button type="button" onClick={() => void copyShareLink()}>
+                {copyFeedback === "success" ? <Check data-icon="inline-start" /> : <Copy data-icon="inline-start" />}
+                {copyFeedback === "success" ? "복사됨" : "링크 복사"}
+              </Button>
+              {copyFeedback === "error" ? (
+                <Alert variant="destructive">
+                  <AlertDescription>링크를 복사하지 못했습니다. 주소를 직접 선택해 복사해 주세요.</AlertDescription>
+                </Alert>
+              ) : null}
             </div>
           )}
           <SheetFooter className="asklake-dashboard-share-sheet-footer">
@@ -135,28 +183,32 @@ export function DashboardRuntimeShell({
       </Sheet>
       <div className="asklake-dashboard-subnav">
         {canToggleDatasetSidebar && (
-          <button
+          <Button
             aria-controls="asklake-dashboard-dataset-sidebar"
             aria-pressed={datasetSidebarOpen}
             className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
+            size="sm"
             type="button"
+            variant={datasetSidebarOpen ? "secondary" : "ghost"}
             onClick={onToggleDatasetSidebar}
           >
-            <span aria-hidden="true">▦</span>
+            <Database data-icon="inline-start" />
             데이터
-          </button>
+          </Button>
         )}
-        <DashboardPageTabs
-          isAddingPage={isAddingPage}
-          mode={mode}
-          pages={pages}
-          renamingPageId={renamingPageId}
-          selectedPageId={selectedPageId}
-          onAddPage={onAddPage}
-          onDeletePage={onDeletePage}
-          onRenamePage={onRenamePage}
-          onSelectPage={onSelectPage}
-        />
+        {(mode === "draft" || pages.length > 0) ? (
+          <DashboardPageTabs
+            isAddingPage={isAddingPage}
+            mode={mode}
+            pages={pages}
+            renamingPageId={renamingPageId}
+            selectedPageId={selectedPageId}
+            onAddPage={onAddPage}
+            onDeletePage={onDeletePage}
+            onRenamePage={onRenamePage}
+            onSelectPage={onSelectPage}
+          />
+        ) : null}
       </div>
       <div className={workspaceClassName}>
         {datasetSidebar}

@@ -135,6 +135,46 @@ const checks = [
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],
   },
+  {
+    name: "Dashboard published view keeps explicit share copy and shadcn empty actions",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+    patterns: [
+      /const copyShareLink = async \(\) =>/,
+      /navigator\.clipboard\.writeText\(shareLink\)/,
+      /document\.execCommand\("copy"\)/,
+      /<Button type="button" onClick=\{\(\) => void copyShareLink\(\)\}>/,
+      /\{\(mode === "draft" \|\| pages\.length > 0\) \? \(/,
+    ],
+    forbiddenPatterns: [
+      /현재 대시보드 링크를 복사했습니다/,
+    ],
+  },
+  {
+    name: "Dashboard dataset browser uses the composed line tree",
+    file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
+    patterns: [
+      /from "@\/components\/kibo-ui\/tree";/,
+      /<TreeProvider[\s\S]*selectedIds=\{selectedDatasetId/,
+      /<TreeNodeTrigger className="min-h-9">/,
+      /<TreeExpander hasChildren=\{hasChildren\} \/>/,
+      /<TreeNodeContent hasChildren=\{hasChildren\}>/,
+      /<ScrollArea className="asklake-dataset-tree-wrap">/,
+    ],
+    forbiddenPatterns: [
+      /from "react-arborist"/,
+    ],
+  },
+  {
+    name: "Dashboard radial chart uses the shadcn range slider",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ Slider \} from "@\/components\/ui\/slider";/,
+      /aria-label="방사형 차트 표시 범위"/,
+      /minStepsBetweenThumbs=\{1\}/,
+      /value=\{\[currentConfig\.min \?\? 0, currentConfig\.max \?\? 100\]\}/,
+      /최솟값은 최댓값보다 작아야 합니다/,
+    ],
+  },
 ];
 
 const failures = [];

@@ -96,7 +96,7 @@
 - Tokens: pass - editor surface와 form control은 theme과 일치한다.
 - Composition: issues - color picker layer, mobile side panels, feedback state를 `Popover`, `Sheet`, `Alert`, `Skeleton`으로 보완할 수 있다.
 - Responsive/a11y: issues - duplicate treeitem, unnamed swatches, 600px mobile workspace가 높은 우선순위다.
-- Install/search notes: 기존 `Sheet`, `Popover`, `ScrollArea`, `Tabs`, `ToggleGroup`, `Tooltip`로 먼저 정리하고 react-arborist/react-grid-layout은 유지한다.
+- Install/search notes: 기존 `Sheet`, `Popover`, `ScrollArea`, `Tabs`, `ToggleGroup`, `Tooltip`, `Slider`를 우선 사용하고 `react-grid-layout`은 유지한다.
 
 ### Recommended Order
 
@@ -110,4 +110,10 @@
 - dashboard view와 runtime component/CSS를 대부분 공유하므로 edit-only 변경도 published view를 회귀시킬 수 있다.
 - #422의 `DataTable` 변경은 table widget에 영향을 줄 수 있다.
 - runtime API, layout serialization, widget config schema, AI assistant contract는 이번 문서 범위에서 변경하지 않는다.
+
+## Implementation Follow-up
+
+- dataset sidebar는 `react-arborist` row renderer 대신 저장소의 shadcn 스타일 line-tree composition과 `ScrollArea`를 사용한다.
+- radial bar chart의 min/max 설정은 shadcn dual-thumb `Slider`로 조작하며 `min < max` validation을 유지한다.
+- 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
 
