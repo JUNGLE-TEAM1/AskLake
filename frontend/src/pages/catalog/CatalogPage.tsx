@@ -780,7 +780,6 @@ function CatalogModal({
       bodyScrollArea={variant === "schema"}
       closeLabel="닫기"
       contentClassName={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`}
-      eyebrow={`${dataset.layer} 데이터셋`}
       headerActions={<IconButton label="닫기" size="xs" type="button" variant="ghost" onClick={onClose}><X /></IconButton>}
       headerClassName="catalog-modal-header"
       onClose={onClose}
@@ -901,7 +900,6 @@ function CatalogMaterializationRuns({
     <Panel className="catalog-materialization-panel" onClick={(event) => event.stopPropagation()}>
       <div className="catalog-materialization-header">
         <strong>생성/append 결과</strong>
-        <span>{runs.length}개 결과 · {dataset.rows} · {dataset.size}</span>
       </div>
       {visibleRuns.length > 0 ? (
         <ScrollArea
@@ -1021,7 +1019,6 @@ function CatalogSchema({ dataset }: { dataset: CatalogDataset }) {
       <section>
         <div className="catalog-section-header">
           <h2>스키마</h2>
-          <span>{dataset.schema.length} 컬럼</span>
         </div>
         <CatalogSchemaTable dataset={dataset} />
       </section>
@@ -1493,16 +1490,17 @@ function buildColumnEdge({
   target: string;
   targetHandle: string;
 }): Edge {
+  const strokeColor = selected && active ? "#2563eb" : "#64748b";
+
   return {
     animated: false,
     id,
-    markerEnd: { color: "#fb923c", type: MarkerType.ArrowClosed },
+    markerEnd: { color: strokeColor, height: 16, type: MarkerType.ArrowClosed, width: 16 },
     source,
     sourceHandle,
     style: {
       opacity: selected && !active ? 0.28 : 1,
-      stroke: "#fb923c",
-      strokeDasharray: selected && active ? "0" : "6 5",
+      stroke: strokeColor,
       strokeWidth: selected && active ? 2.4 : 1.5,
     },
     target,
