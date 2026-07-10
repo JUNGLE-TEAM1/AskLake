@@ -467,6 +467,8 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "targetPrefix": target["prefix"],
         "timeoutMs": timeout_ms,
         "topic": topic,
+        "transformSteps": job.transform_steps or [],
+        "qualityRules": job.quality_rules or [],
     }
 
 
@@ -649,7 +651,11 @@ def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         output_path=result.get("storageLocation") or "-",
         failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
         error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
-        task_states={"kafkaSnapshot": result.get("snapshot")} if result.get("snapshot") else None,
+        task_states={
+            "kafkaSnapshot": result.get("snapshot"),
+            "transform": result.get("transform"),
+            "quality": result.get("quality"),
+        } if result.get("snapshot") else None,
     )
 
 
@@ -1251,6 +1257,8 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
     snapshot = result.get("snapshot") or {}
+    transform = result.get("transform") or {}
+    quality = result.get("quality") or {}
     snapshot_ranges = ", ".join(
         f"p{item.get('partition')}:{item.get('startOffset')}~{item.get('endOffset')}"
         for item in snapshot.get("partitions", [])
@@ -1267,13 +1275,24 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
         ], ["Kafka 메시지를 batch 단위로 읽었습니다." if not failed else f"Kafka consume 실패: {run.get('errorSummary')}"]),
-        dag_step("target", "3. Direct target 저장", storage_location, "blocked" if failed else "success", [
+        dag_step("transform", "3. 변환 규칙 적용", f"{transform.get('appliedStepCount', 0)}개 규칙", "blocked" if failed else "success", [
+            ["Configured", str(transform.get("configuredStepCount", 0))],
+            ["Applied", str(transform.get("appliedStepCount", 0))],
+            ["Transform errors", str(transform.get("errorCount", 0))],
+        ], ["이전 단계 실패로 변환이 수행되지 않았습니다." if failed else "Kafka snapshot 레코드에 변환 규칙을 적용했습니다."]),
+        dag_step("quality", "4. 품질 검증", str(quality.get("summary") or "규칙 없음"), "blocked" if failed else "success", [
+            ["Configured", str(quality.get("configuredRuleCount", 0))],
+            ["Invalid", str(quality.get("invalidRowCount", 0))],
+            ["Quarantined", str(quality.get("quarantinedCount", 0))],
+            ["Dropped", str(quality.get("droppedCount", 0))],
+        ], ["이전 단계 실패로 품질 검증이 수행되지 않았습니다." if failed else str(quality.get("summary") or "품질 규칙 없음")]),
+        dag_step("target", "5. Direct target 저장", storage_location, "blocked" if failed else "success", [
             ["Storage", str(result.get("storageMode") or "s3")],
             ["Format", str(result.get("storageFormat") or "jsonl")],
             ["Layer", str(result.get("targetLayer") or job.target_layer)],
             ["Stored", format_rows(result.get("storedCount"))],
         ], ["이전 단계 실패로 target 저장이 수행되지 않았습니다." if failed else f"Kafka snapshot 결과를 target에 저장했습니다: {storage_location}"]),
-        dag_step("catalog", "4. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
+        dag_step("catalog", "6. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
             ["Dataset", dataset_id],
             ["Run ID", run.get("runId", "-")],
         ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),

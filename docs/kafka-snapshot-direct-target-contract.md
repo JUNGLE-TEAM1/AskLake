@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write.
 
 ## 2. Objective
 
@@ -14,7 +14,7 @@ Kafka Job runs must process a deterministic, bounded Kafka range and write the n
 Kafka topic
   -> capture partition offset snapshot
   -> consume the fixed range
-  -> normalize review event shape
+  -> normalize review event shape and apply configured rules
   -> write selected Bronze/Silver/Gold target once
   -> register Catalog run
   -> commit Kafka offsets
@@ -22,7 +22,7 @@ Kafka topic
 
 The offset snapshot is metadata, not a copied message payload.
 
-Current Phase 2 behavior writes JSONL directly to `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/`. It uses the same snapshot metadata and commits the configured consumer group only after target storage and Catalog registration succeed. User-configured transform/quality rule execution is a later phase.
+Current Phase 3 behavior writes JSONL directly to `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/`. It applies supported field transforms and quality actions before writing and commits the configured consumer group only after target storage and Catalog registration succeed.
 
 ## 3. Snapshot Boundary
 
@@ -54,10 +54,12 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 The selected target dataset is the only Lake data output for the default path.
 
 - `BRONZE`: snapshot records are written without business transformation.
-- `SILVER`: target layer metadata is supported; user-configured field transforms and quality rules are a later execution phase.
+- `SILVER`: supported field transforms and quality rules run before the single target write.
 - `GOLD`: out of scope until join/aggregation execution semantics are implemented.
 
 The target physical path must be derived from the target dataset and `snapshotId`, rather than the removed `kafka-landing/<topic>/<runId>` convention. The Catalog materialization run must expose the target path, target layer, `sourceKind: "kafka"`, and snapshot metadata.
+
+Supported transform operations follow the existing pipeline rule semantics: copy/rename, trim/lowercase, numeric and timestamp casts, JSONPath extraction, default/null guard, and phone masking. Supported quality checks are not-null, positive numeric range, email regex, accepted values, and batch-range uniqueness. Unsupported expression-style transforms preserve the input value until an expression runtime is added. `Fail Run` stops before target write and offset commit. `Warn` retains the row, `Set Null` clears the invalid target field, `Drop Row` excludes it, and `Quarantine` writes the rejected row to `snapshots/{snapshotId}/quarantine.jsonl` beside the direct target object.
 
 ## 5. Completion and Failure Semantics
 

@@ -22,6 +22,8 @@ const datasetId = stringOption("datasetId", process.env.ASKLAKE_REVIEW_DATASET_I
 const targetLayer = stringOption("targetLayer", process.env.ASKLAKE_REVIEW_TARGET_LAYER || "BRONZE").toUpperCase();
 const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TARGET_FORMAT || "jsonl").toLowerCase();
 const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
+const transformSteps = objectArrayOption("transformSteps");
+const qualityRules = objectArrayOption("qualityRules");
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
 const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
 const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
@@ -29,6 +31,7 @@ const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || proces
 const s3Prefix = normalizePrefix(stringOption("targetPrefix", apiPayload.landingPrefix || process.env.ASKLAKE_REVIEW_TARGET_PREFIX || `${normalizeColumnName(datasetName)}/${targetLayer.toLowerCase()}`));
 let s3DataKey = "";
 let s3MetadataKey = "";
+let s3QuarantineKey = "";
 let targetDir = "";
 let dataPath = "";
 let metadataPath = "";
@@ -77,14 +80,15 @@ async function ingestReviews() {
       throw new Error(`No valid review messages consumed from ${topic} at ${broker}.`);
     }
 
-    const jsonl = consumed.records.map((record) => JSON.stringify(record)).join("\n");
-    const dataBody = consumed.records.length > 0 ? `${jsonl}\n` : "";
+    const processed = applyPipelineRules(consumed.records);
+    const jsonl = processed.records.map((record) => JSON.stringify(record)).join("\n");
+    const dataBody = processed.records.length > 0 ? `${jsonl}\n` : "";
     const localLocation = writeLocalTarget(dataBody);
 
     const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
     const inferredSchemaColumns = inferSchemaColumns(parsedSample);
-    const schemaColumns = standardReviewSchema();
+    const schemaColumns = targetSchema(processed.records);
     const metadata = {
       broker,
       consumedCount: consumed.records.length,
@@ -93,7 +97,7 @@ async function ingestReviews() {
       datasetId: registerCatalog ? datasetId : null,
       datasetName: registerCatalog ? datasetName : null,
       endedAt,
-      failedCount: consumed.invalidRecords.length,
+      failedCount: consumed.invalidRecords.length + processed.transform.errorCount,
       invalidRecords: consumed.invalidRecords.slice(0, 10),
       maxMessages,
       metadataPath,
@@ -101,7 +105,7 @@ async function ingestReviews() {
       runId,
       snapshot,
       inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
-      sampleRows: consumed.records.slice(0, 10).map(reviewSampleRow),
+      sampleRows: processed.records.slice(0, 10).map((record) => reviewSampleRow(record, schemaColumns)),
       schema: schemaColumns.map((column) => [column.targetName, column.type]),
       schemaFingerprint: schemaFingerprint(schemaColumns),
       startedAt,
@@ -109,22 +113,30 @@ async function ingestReviews() {
       storageFormat: "jsonl",
       storageLocation: localLocation,
       storageSizeBytes: statSync(dataPath).size,
-      storedCount: consumed.records.length,
+      storedCount: processed.records.length,
       targetBucket: s3Bucket,
       targetFormat,
       targetLayer,
       targetPrefix: s3Prefix.replace(/\/$/, ""),
       timeoutMs,
       topic,
+      transform: processed.transform,
+      quality: processed.quality,
     };
     if (landingMode === "s3") {
       const s3Location = await writeS3Landing(dataBody, metadata);
       metadata.storageLocation = s3Location.dataLocation;
       metadata.metadataLocation = s3Location.metadataLocation;
       metadata.storageMode = "s3";
+      if (processed.quarantined.length > 0) {
+        metadata.quality.quarantineLocation = await writeS3Quarantine(processed.quarantined);
+      }
     } else {
       metadata.metadataLocation = metadataPath;
       metadata.storageMode = "local";
+      if (processed.quarantined.length > 0) {
+        metadata.quality.quarantineLocation = writeLocalQuarantine(processed.quarantined);
+      }
     }
     if (registerCatalog) {
       const dataset = await registerCatalogDataset(metadata);
@@ -154,6 +166,7 @@ function configureTargetOutput(snapshotId) {
   const objectId = safePathSegment(snapshotId);
   s3DataKey = `${s3Prefix}snapshots/${objectId}/data.${targetFormat}`;
   s3MetadataKey = `${s3Prefix}snapshots/${objectId}/metadata.json`;
+  s3QuarantineKey = `${s3Prefix}snapshots/${objectId}/quarantine.jsonl`;
   targetDir = path.join(targetRoot, safePathSegment(datasetName), targetLayer.toLowerCase(), "snapshots", objectId);
   dataPath = path.join(targetDir, `data.${targetFormat}`);
   metadataPath = path.join(targetDir, "metadata.json");
@@ -348,6 +361,23 @@ async function writeS3Landing(dataBody, metadata) {
   return { dataLocation, metadataLocation };
 }
 
+function writeLocalQuarantine(records) {
+  const quarantinePath = path.join(targetDir, "quarantine.jsonl");
+  writeFileSync(quarantinePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+  return quarantinePath;
+}
+
+async function writeS3Quarantine(records) {
+  const client = s3LandingClient();
+  await client.send(new PutObjectCommand({
+    Body: Buffer.from(`${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8"),
+    Bucket: s3Bucket,
+    ContentType: "application/x-ndjson",
+    Key: s3QuarantineKey,
+  }));
+  return `s3://${s3Bucket}/${s3QuarantineKey}`;
+}
+
 async function writeS3Metadata(metadata) {
   const client = s3LandingClient();
   await putS3Json(client, s3MetadataKey, metadata);
@@ -384,7 +414,7 @@ async function ensureBucket(client, bucket) {
 
 async function registerCatalogDataset(metadata) {
   const previous = await getDataset(datasetId);
-  const schema = standardReviewSchema().map((column) => [column.targetName, column.type]);
+  const schema = metadata.schema;
   const run = {
     createdAt: metadata.endedAt,
     jobId: "kafka-review-ingest",
@@ -411,7 +441,7 @@ async function registerCatalogDataset(metadata) {
     name: datasetName,
     nextRefresh: "-",
     owner: process.env.ASKLAKE_REVIEW_DATASET_OWNER || "AskLake",
-    quality: metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료",
+    quality: metadata.quality?.summary || (metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료"),
     rag: false,
     rows: String(aggregate.rowCount),
     sampleRows: metadata.sampleRows,
@@ -516,6 +546,236 @@ function parseReviewMessage(value, context) {
   }
 }
 
+function applyPipelineRules(records) {
+  const transform = {
+    appliedStepCount: 0,
+    configuredStepCount: transformSteps.filter((step) => step.enabled !== false).length,
+    errorCount: 0,
+  };
+  const transformed = [];
+  const quarantined = [];
+
+  for (const sourceRecord of records) {
+    let record = structuredClone(sourceRecord);
+    let discard = false;
+    for (const step of transformSteps) {
+      if (step.enabled === false || !step.output) continue;
+      try {
+        setRecordValue(record, step.output, applyTransformStep(record, step));
+        transform.appliedStepCount += 1;
+      } catch (error) {
+        transform.errorCount += 1;
+        const failure = transformFailure(step, error);
+        if (failure.action === "Fail Run") throw new Error(`Transform rule ${step.id || step.output} failed: ${failure.reason}`);
+        if (failure.action === "Drop Row") {
+          discard = true;
+          break;
+        }
+        if (failure.action === "Quarantine") {
+          quarantined.push(quarantineEntry(record, "transform", step, failure.reason));
+          discard = true;
+          break;
+        }
+        setRecordValue(record, step.output, failure.action === "Set Null" ? null : getRecordValue(record, step.input));
+      }
+    }
+    if (!discard) transformed.push(record);
+  }
+
+  const quality = {
+    configuredRuleCount: qualityRules.filter((rule) => rule.enabled !== false).length,
+    droppedCount: 0,
+    invalidRowCount: 0,
+    quarantinedCount: 0,
+    setNullCount: 0,
+    status: "pass",
+    summary: "품질 규칙 없음",
+    warnCount: 0,
+  };
+  const validRecords = [];
+  const uniqueValuesByRule = new Map();
+  for (const record of transformed) {
+    const failures = qualityRules
+      .filter((rule) => rule.enabled !== false)
+      .map((rule) => {
+        const value = getRecordValue(record, rule.targetColumn);
+        const duplicate = isDuplicateValue(value, rule, uniqueValuesByRule);
+        return { reason: qualityFailureReason(value, rule, duplicate), rule };
+      })
+      .filter((item) => item.reason);
+    if (failures.length === 0) {
+      validRecords.push(record);
+      continue;
+    }
+    quality.invalidRowCount += 1;
+    let discard = false;
+    for (const { rule, reason } of failures) {
+      const action = normalizeFailureAction(rule.failureAction);
+      if (action === "Fail Run") throw new Error(`Quality rule ${rule.id || rule.targetColumn} failed: ${reason}`);
+      if (action === "Drop Row") {
+        quality.droppedCount += 1;
+        discard = true;
+        break;
+      }
+      if (action === "Quarantine") {
+        quarantined.push(quarantineEntry(record, "quality", rule, reason));
+        quality.quarantinedCount += 1;
+        discard = true;
+        break;
+      }
+      if (action === "Set Null") {
+        setRecordValue(record, rule.targetColumn, null);
+        quality.setNullCount += 1;
+      } else {
+        quality.warnCount += 1;
+      }
+    }
+    if (!discard) validRecords.push(record);
+  }
+  const invalidTotal = quality.invalidRowCount;
+  const inputCount = records.length;
+  const passRate = inputCount ? Number((((inputCount - invalidTotal) / inputCount) * 100).toFixed(1)) : 100;
+  quality.status = invalidTotal > 0 ? "warn" : "pass";
+  quality.summary = quality.configuredRuleCount > 0
+    ? `Quality score ${passRate}% - invalid rows ${invalidTotal} - dropped ${quality.droppedCount} - quarantined ${quality.quarantinedCount}`
+    : "품질 규칙 없음";
+  return { quarantined, records: validRecords, transform, quality };
+}
+
+function applyTransformStep(record, step) {
+  const input = getRecordValue(record, step.input);
+  const value = input === null || input === undefined ? "" : String(input);
+  const operation = `${step.kind || ""} ${step.operation || ""}`.toLowerCase();
+  if (operation.includes("default")) return value.trim() ? input : step.params ?? "";
+  if (operation.includes("null guard") || operation.includes("not null")) {
+    if (!value.trim()) throw new Error("Missing required value");
+    return input;
+  }
+  if (operation.includes("json")) return readJsonPath(input, step.params);
+  if (operation.includes("lower") || operation.includes("trim")) return value.trim().toLowerCase();
+  if (operation.includes("decimal") || operation.includes("cast")) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) throw new Error("Numeric cast failed");
+    return numeric.toFixed(2);
+  }
+  if (operation.includes("timestamp") || operation.includes("date")) {
+    const timestamp = new Date(value);
+    if (Number.isNaN(timestamp.getTime())) throw new Error("Timestamp cast failed");
+    return timestamp.toISOString();
+  }
+  if (operation.includes("mask")) return maskPhoneNumber(value);
+  return input;
+}
+
+function transformFailure(step, error) {
+  return { action: normalizeFailureAction(step.onError), reason: error?.message || String(error) };
+}
+
+function normalizeFailureAction(value) {
+  const text = String(value || "Warn").trim().toLowerCase();
+  if (text.includes("fail")) return "Fail Run";
+  if (text.includes("drop")) return "Drop Row";
+  if (text.includes("quarantine")) return "Quarantine";
+  if (text.includes("null")) return "Set Null";
+  return "Warn";
+}
+
+function qualityFailureReason(value, rule, duplicate = false) {
+  const text = value === null || value === undefined ? "" : String(value);
+  const validation = String(rule.validationType || rule.kind || "").toLowerCase();
+  if (validation.includes("not null") || validation.includes("notnull")) return text.trim() ? "" : "Missing required value";
+  if (validation.includes("range")) return Number.isFinite(Number(text)) && Number(text) > 0 ? "" : "Numeric range check failed";
+  if (validation.includes("regex")) return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? "" : "Email format check failed";
+  if (validation.includes("accepted")) return ["KOR", "JPN", "USA", "KR", "US"].includes(text) ? "" : "Value is outside accepted set";
+  if (validation.includes("unique")) return duplicate ? "Duplicate value" : "";
+  return "";
+}
+
+function isDuplicateValue(value, rule, valuesByRule) {
+  const validation = String(rule.validationType || rule.kind || "").toLowerCase();
+  if (!validation.includes("unique")) return false;
+  const normalized = value === null || value === undefined ? "" : String(value);
+  if (!normalized) return false;
+  const key = rule.id || rule.targetColumn || "unique";
+  const values = valuesByRule.get(key) || new Set();
+  const duplicate = values.has(normalized);
+  values.add(normalized);
+  valuesByRule.set(key, values);
+  return duplicate;
+}
+
+function getRecordValue(record, field) {
+  const pathParts = String(field || "").split(".").filter(Boolean);
+  if (pathParts.length === 0) return undefined;
+  if (Object.hasOwn(record, field)) return record[field];
+  let value = record;
+  for (const part of pathParts) {
+    if (!value || typeof value !== "object") return undefined;
+    value = value[part];
+  }
+  if (value !== undefined) return value;
+  if (record.raw && typeof record.raw === "object") {
+    const rawField = String(field).replace(/^raw[_.]/, "");
+    return record.raw[rawField] ?? record.raw[field];
+  }
+  return undefined;
+}
+
+function setRecordValue(record, field, value) {
+  const parts = String(field || "").split(".").filter(Boolean);
+  if (parts.length === 0) return;
+  if (parts.length === 1) {
+    record[parts[0]] = value;
+    return;
+  }
+  let target = record;
+  for (const part of parts.slice(0, -1)) {
+    if (!target[part] || typeof target[part] !== "object") target[part] = {};
+    target = target[part];
+  }
+  target[parts.at(-1)] = value;
+}
+
+function readJsonPath(input, expression) {
+  const source = typeof input === "string" ? JSON.parse(input) : input;
+  const pathParts = String(expression || "$").replace(/^\$\.?/, "").split(".").filter(Boolean);
+  return pathParts.reduce((value, part) => value?.[part], source);
+}
+
+function maskPhoneNumber(value) {
+  return value.replace(/(\d{3})-?\d{4}-?(\d{4})/, "$1-****-$2");
+}
+
+function quarantineEntry(record, stage, rule, reason) {
+  return { reason, record, ruleId: rule.id || "", stage, targetColumn: rule.targetColumn || rule.output || "" };
+}
+
+function targetSchema(records) {
+  const base = standardReviewSchema();
+  const known = new Set(base.map((column) => column.targetName));
+  for (const step of transformSteps) {
+    if (step.enabled !== false && step.output && !known.has(step.output)) {
+      base.push({ nullable: true, sourceName: step.output, targetName: step.output, type: "String" });
+      known.add(step.output);
+    }
+  }
+  for (const record of records) {
+    for (const [name, value] of Object.entries(record)) {
+      if (known.has(name)) continue;
+      base.push({ nullable: value === null || value === undefined, sourceName: name, targetName: name, type: inferRecordType(value) });
+      known.add(name);
+    }
+  }
+  return base;
+}
+
+function inferRecordType(value) {
+  if (typeof value === "boolean") return "Boolean";
+  if (typeof value === "number") return Number.isInteger(value) ? "Integer" : "Float";
+  if (value && typeof value === "object") return "Object";
+  return "String";
+}
+
 function standardReviewSchema() {
   return [
     { nullable: false, sourceName: "schema_version", targetName: "schema_version", type: "String" },
@@ -528,16 +788,11 @@ function standardReviewSchema() {
   ];
 }
 
-function reviewSampleRow(record) {
-  return [
-    String(record.schema_version ?? ""),
-    String(record.event_id ?? ""),
-    String(record.source ?? ""),
-    String(record.offset ?? ""),
-    String(record.review ?? ""),
-    String(record.created_at ?? ""),
-    JSON.stringify(record.raw ?? {}),
-  ];
+function reviewSampleRow(record, schema = standardReviewSchema()) {
+  return schema.map((column) => {
+    const value = getRecordValue(record, column.targetName);
+    return value && typeof value === "object" ? JSON.stringify(value) : String(value ?? "");
+  });
 }
 
 function makeRunId() {
@@ -585,4 +840,9 @@ function booleanOption(key, fallback) {
   if (typeof value === "boolean") return value;
   const text = String(value ?? fallback ?? "").trim().toLowerCase();
   return !["false", "0", "no", "off"].includes(text);
+}
+
+function objectArrayOption(key) {
+  const value = apiPayload[key];
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") : [];
 }

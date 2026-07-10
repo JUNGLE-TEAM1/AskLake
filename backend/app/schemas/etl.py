@@ -316,6 +316,8 @@ class KafkaReviewIngestRequest(CamelModel):
     target_format: str = "jsonl"
     target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
     target_prefix: str = ""
+    transform_steps: list[TransformStepDraft] = Field(default_factory=list)
+    quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"
     landing_endpoint: str = "http://127.0.0.1:19000"
     landing_prefix: str = "kafka-landing"
@@ -361,6 +363,8 @@ class KafkaReviewIngestResponse(CamelModel):
     stored_count: int
     target_layer: Literal["RAW", "BRONZE", "SILVER"]
     topic: str
+    transform: dict[str, Any] | None = None
+    quality: dict[str, Any] | None = None
 
 
 class QueryRunRequest(CamelModel):

@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 const backendDir = fileURLToPath(new URL("..", import.meta.url));
 process.env.KAFKAJS_NO_PARTITIONER_WARNING = process.env.KAFKAJS_NO_PARTITIONER_WARNING || "1";
@@ -36,6 +37,7 @@ try {
   await waitForHealth();
   await verifyScheduledKafkaIngest();
   await verifyMinimalReviewContractIngest();
+  await verifyTransformAndQualityIngest();
   console.log("verify-kafka-review-scheduled-ingest: ok");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -136,6 +138,62 @@ async function verifyMinimalReviewContractIngest() {
   assert(emptyResult.snapshot.partitions[0].endOffset === "2", `Next snapshot should be empty: ${JSON.stringify(emptyResult.snapshot)}`);
 }
 
+async function verifyTransformAndQualityIngest() {
+  const transformTopic = `reviews.raw.transform.${suffix}`;
+  await produceReviewEvents(transformTopic, [
+    { event_id: `transform-${suffix}-1`, offset: 1, review: "  GREAT REVIEW  ", created_at: "2026-07-09T02:00:00Z", raw: { email: "valid@example.com" } },
+    { event_id: `transform-${suffix}-2`, offset: 2, review: "  DROP ME  ", created_at: "2026-07-09T02:01:00Z", raw: { email: "invalid-email" } },
+  ]);
+  const result = await post("/api/etl/kafka/reviews/ingest", {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: transformTopic,
+    consumerGroupId: `asklake-transform-${suffix}`,
+    datasetId: `ds_reviews_transform_${suffix}`,
+    datasetName: `reviews_transform_${suffix}`,
+    maxMessages: 10,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: false,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${transformTopic}/silver`,
+    targetLayer: "SILVER",
+    targetFormat: "jsonl",
+    transformSteps: [{ enabled: true, id: "lower-review", input: "review", kind: "trim", label: "lower", onError: "Fail Run", operation: "Trim / Lowercase", output: "normalized_review", params: "" }],
+    qualityRules: [{ enabled: true, failureAction: "Quarantine", id: "valid-email", kind: "regex", severity: "Error", targetColumn: "raw.email", validationType: "Regex Match" }],
+  });
+
+  assert(result.status === "success", "Transform and quality ingest should succeed.");
+  assert(result.storedCount === 1, `Quality quarantine should retain one target row: ${result.storedCount}`);
+  assert(result.transform?.appliedStepCount === 2, `Transform should run for both rows: ${JSON.stringify(result.transform)}`);
+  assert(result.quality?.invalidRowCount === 1, `Quality should mark one invalid row: ${JSON.stringify(result.quality)}`);
+  assert(result.quality?.quarantinedCount === 1, `Quality should quarantine one invalid row: ${JSON.stringify(result.quality)}`);
+  assert(result.quality?.quarantineLocation?.endsWith("quarantine.jsonl"), "Quality quarantine should have a snapshot-local object.");
+  assert(result.catalogDataset?.layer === "SILVER", "Transform test should retain the selected SILVER target.");
+
+  const targetBody = await readS3Object(result.storageLocation);
+  const targetRecords = targetBody.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  assert(targetRecords.length === 1, "Direct target object should contain only the valid row.");
+  assert(targetRecords[0].normalized_review === "great review", `Transform output should be written to direct target: ${targetBody}`);
+  const quarantineBody = await readS3Object(result.quality.quarantineLocation);
+  assert(quarantineBody.includes(`transform-${suffix}-2`), "Quarantine object should contain the rejected Kafka row.");
+}
+
+async function readS3Object(location) {
+  const match = String(location || "").match(/^s3:\/\/([^/]+)\/(.+)$/);
+  assert(match, `Expected an S3 location: ${location}`);
+  const client = new S3Client({
+    credentials: { accessKeyId: env.MINIO_ACCESS_KEY, secretAccessKey: env.MINIO_SECRET_KEY },
+    endpoint: env.MINIO_ENDPOINT,
+    forcePathStyle: true,
+    region: "us-east-1",
+  });
+  const response = await client.send(new GetObjectCommand({ Bucket: match[1], Key: match[2] }));
+  return response.Body.transformToString();
+}
+
 async function produceMinimalReviewEvents() {
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({
@@ -171,6 +229,22 @@ async function produceMinimalReviewEvents() {
         value: JSON.stringify(record),
       })),
     });
+  } finally {
+    await producer.disconnect().catch(() => undefined);
+    await admin.disconnect().catch(() => undefined);
+  }
+}
+
+async function produceReviewEvents(targetTopic, records) {
+  const { Kafka } = await import("kafkajs");
+  const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-transform-review-producer", retry: { retries: 2 } });
+  const admin = kafka.admin();
+  const producer = kafka.producer();
+  try {
+    await admin.connect();
+    await createFreshTopic(admin, targetTopic);
+    await producer.connect();
+    await producer.send({ topic: targetTopic, messages: records.map((record) => ({ key: record.event_id, value: JSON.stringify(record) })) });
   } finally {
     await producer.disconnect().catch(() => undefined);
     await admin.disconnect().catch(() => undefined);

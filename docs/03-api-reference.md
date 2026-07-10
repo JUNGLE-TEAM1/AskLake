@@ -107,6 +107,8 @@ type KafkaReviewIngestRequest = {
   targetLayer?: "RAW" | "BRONZE" | "SILVER";
   targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
   targetDescription?: string;
+  transformSteps?: TransformStepDraft[]; // Job 실행 시 Job에 저장된 규칙이 전달됨
+  qualityRules?: QualityRuleDraft[];
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
@@ -131,6 +133,8 @@ type KafkaReviewIngestResponse = {
   storageFormat: "jsonl";
   storageLocation: string;
   targetLayer: "RAW" | "BRONZE" | "SILVER";
+  transform?: { configuredStepCount: number; appliedStepCount: number; errorCount: number };
+  quality?: { configuredRuleCount: number; invalidRowCount: number; droppedCount: number; quarantinedCount: number; quarantineLocation?: string; summary: string };
   metadataLocation: string;
   datasetId?: string;
   datasetName?: string;
@@ -165,11 +169,11 @@ type KafkaReviewEvent = {
 };
 ```
 
-필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
+필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. direct target object는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형태이며, metadata는 같은 snapshot directory의 `metadata.json`에 저장한다.
 
 ### Kafka snapshot direct target
 
-Issue #455 Phase 2는 아래 direct target 계약을 구현한다. 저장 경로는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형식이며 중간 `kafka-landing/...` RAW object를 만들지 않는다.
+Issue #455 Phase 3는 아래 direct target 계약을 구현한다. 저장 경로는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형식이며 중간 `kafka-landing/...` RAW object를 만들지 않는다.
 
 ```text
 partition offset snapshot
@@ -182,7 +186,7 @@ partition offset snapshot
 
 현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 같은 snapshot identity는 target object path와 Catalog materialization run deduplication key로 사용한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
 
-target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. 현재 direct bridge는 normalized review event를 JSONL로 저장하고, user-configured transform/quality rule 실행과 `GOLD` join/aggregation은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. 현재 direct bridge는 normalized review event에 지원되는 field transform과 quality action을 적용한 뒤 JSONL로 저장한다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 
 ### Scheduled job tick
 
