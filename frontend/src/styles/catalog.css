@@ -301,6 +301,22 @@
   overflow-wrap: anywhere;
 }
 
+.catalog-preview-title h2 {
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-preview-title h2 > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .catalog-overview-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
