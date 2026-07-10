@@ -1,17 +1,22 @@
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "delete";
+export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "delete";
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
+export type JobRunOutcome = "success" | "failed" | "canceled";
 export type JobDagStepStatus = "pending" | "running" | "success" | "failed" | "blocked";
 
 export type JobRowData = {
+  createdAt?: string;
   status: JobStatus;
   name: string;
   id: string;
   owner: string;
+  ownerAvatarUrl?: string;
   tag: string;
   source: string;
   target: string;
+  updatedAt?: string;
   schedule: string;
   schedulePolicy?: SchedulePolicyDraft;
   scheduleSummary?: string;
@@ -46,6 +51,25 @@ export type JobRowData = {
   runHistory?: JobRunSummary[];
   dagSteps?: JobDagStep[];
   dagStepsByRunId?: Record<string, JobDagStep[]>;
+};
+
+export type JobListQuery = {
+  lastRunOutcome?: JobRunOutcome;
+  owner?: string;
+  scheduleKind?: JobScheduleKind;
+  statuses?: JobStatus[];
+};
+
+export type JobListFacets = {
+  latestRunOutcomeCounts: Record<JobRunOutcome, number>;
+  owners: string[];
+  statusCounts: Record<JobStatus, number>;
+  total: number;
+};
+
+export type JobListResult = {
+  facets: JobListFacets;
+  jobs: JobRowData[];
 };
 
 export type JobStats = {

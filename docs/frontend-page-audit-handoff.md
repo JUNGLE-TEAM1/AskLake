@@ -24,7 +24,6 @@
 
 - `/ai`
 - `/admin`
-- `/jobs-table-demo`
 
 ## Target Pages
 

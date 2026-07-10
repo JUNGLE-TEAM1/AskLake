@@ -94,6 +94,20 @@
 2. overview content hierarchy와 breadcrumb/header composition을 정리한다.
 3. mobile header action과 long metadata wrapping을 검증한다.
 
+## Implementation Update - Issue #466 shadcn Re-audit
+
+- 상세 화면의 raw 탭 버튼을 Radix 기반 shadcn `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent`로 교체했다.
+- owner, layer, tag의 raw chip span을 shadcn `Badge`로 통일했다.
+- overview, schema, sample, lineage surface는 shadcn `Panel`, preview 지표는 shadcn `Card`를 사용한다.
+- sample의 native table markup을 shadcn `Table` 계열로 교체하고 기존 Slider 스크롤 연동은 유지했다.
+- lineage column raw button과 type pill을 shadcn `Button`, `Badge`로 교체했다.
+- ReactFlow canvas, handle, node 좌표와 크기, responsive grid 및 overflow CSS는 도메인 레이아웃이므로 유지했다.
+- 브라우저에서 탭 4개와 ArrowRight 전환, sample Slider 0→100, lineage column Button/Badge 렌더링을 확인했다.
+- 상세 lineage node surface를 shadcn `Card`, footer status를 shadcn `Badge`, header를 `PanelHeader`로 교체했다.
+- 상세 lineage graph 높이는 viewport에 맞춰 줄어들고 modal에서는 기존 full-height를 유지하도록 분리했다.
+- ReactFlow 기본 확대·축소 컨트롤은 제거하고 shadcn `ButtonGroup`, `IconButton`, `Tooltip` 조합으로 교체했다.
+- lineage modal의 텍스트 닫기 버튼은 shadcn X 아이콘 버튼으로 축소하고 중복 설명 줄을 제거했다.
+
 ## Conflict Risk
 
 - catalog list와 같은 `CatalogPage.tsx`, `catalog.css`를 공유한다.
