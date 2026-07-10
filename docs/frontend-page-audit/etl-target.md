@@ -134,3 +134,6 @@
 - 파일 포맷 값과 저장 payload는 기존 `parquet | csv | json`을 유지하고, 표시 control만 shadcn `Select`로 바꿨다.
 - 820px 이하에서 partition option을 1열로 배치해 좁은 viewport의 label clipping을 보완했다.
 - partition option을 checkbox 다중 선택으로 바꾸고, 선택 배열을 `/` 구분 `partition` 값으로 backend metadata와 Spark `partitionBy`까지 전달한다.
+- Target 상단 action, DB/S3 picker action, tag action은 shadcn `Button` variant를 사용하고 Target 전용 custom button class를 적용하지 않는다.
+- partition option은 raw checkbox 대신 shadcn `Checkbox`를 사용한다.
+- Basic Information, Destination Settings, Partition & Tags 관련 화면 제목은 한국어로 표시한다.

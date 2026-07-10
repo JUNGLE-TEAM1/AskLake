@@ -8,6 +8,7 @@ import { listTargetDatabases, type TargetDatabaseOption } from "../../services/t
 
 type DatabaseFieldProps = {
   onChange: (databaseName: string) => void;
+  useShadcnStyles?: boolean;
   value: string;
 };
 
@@ -24,7 +25,7 @@ function mergeCurrentDatabase(databases: TargetDatabaseOption[], currentName: st
   return [{ description: "현재 설정된 DB", name: normalizedName }, ...databases];
 }
 
-export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
+export function DatabaseField({ onChange, useShadcnStyles = false, value }: DatabaseFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -32,13 +33,14 @@ export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
       <div className="database-display" title={value}>
         {value.trim() ? <span>{value}</span> : <em>DB를 선택하세요</em>}
       </div>
-      <Button className="secondary-button database-field-action" type="button" variant="outline" onClick={() => setPickerOpen(true)}>
-        <Database size={14} />
+      <Button className={useShadcnStyles ? undefined : "secondary-button database-field-action"} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+        <Database data-icon="inline-start" />
         찾아보기
       </Button>
       {pickerOpen ? (
         <DatabasePicker
           value={value}
+          useShadcnStyles={useShadcnStyles}
           onCancel={() => setPickerOpen(false)}
           onSelect={(databaseName) => {
             onChange(databaseName);
@@ -53,10 +55,12 @@ export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
 function DatabasePicker({
   onCancel,
   onSelect,
+  useShadcnStyles,
   value,
 }: {
   onCancel: () => void;
   onSelect: (databaseName: string) => void;
+  useShadcnStyles: boolean;
   value: string;
 }) {
   const [databases, setDatabases] = useState<TargetDatabaseOption[]>(() => mergeCurrentDatabase(FALLBACK_DATABASES, value));
@@ -101,8 +105,8 @@ function DatabasePicker({
       footer={(
         <>
           <div className="s3-picker-preview" title={selectedName}>{selectedName ? `선택 DB: ${selectedName}` : "선택된 DB가 없습니다."}</div>
-          <Button className="secondary-button" type="button" variant="outline" onClick={onCancel}>취소</Button>
-          <Button className="primary-button" disabled={!selectedName} type="button" onClick={() => onSelect(selectedName)}>선택</Button>
+          <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onCancel}>취소</Button>
+          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={!selectedName} type="button" onClick={() => onSelect(selectedName)}>선택</Button>
         </>
       )}
       footerClassName="s3-picker-footer"
@@ -125,10 +129,10 @@ function DatabasePicker({
       error={error ? (
         <div className="s3-picker-error">
           <span>{error}</span>
-          <button type="button" onClick={loadDatabases}>
-            <RefreshCw size={13} />
+          <Button size="sm" type="button" variant="link" onClick={loadDatabases}>
+            <RefreshCw data-icon="inline-start" />
             다시 시도
-          </button>
+          </Button>
         </div>
       ) : null}
     >
@@ -140,19 +144,20 @@ function DatabasePicker({
               {filteredDatabases.map((database) => {
                 const selected = selectedName === database.name;
                 return (
-                  <button
+                  <Button
                     className={selected ? "database-picker-option active" : "database-picker-option"}
                     key={database.name}
                     type="button"
+                    variant="outline"
                     onClick={() => setSelectedName(database.name)}
                   >
-                    <Database size={15} />
+                    <Database data-icon="inline-start" />
                     <span>
                       <strong>{database.name}</strong>
                       <em>{database.description}</em>
                     </span>
-                    {selected ? <Check size={15} /> : null}
-                  </button>
+                    {selected ? <Check data-icon="inline-end" /> : null}
+                  </Button>
                 );
               })}
             </div>

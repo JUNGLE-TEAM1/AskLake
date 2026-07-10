@@ -43,8 +43,8 @@ import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CheckableOption } from "@/components/ui/checkable-option";
-import { Chip } from "@/components/ui/chip";
 import { CommandBar } from "@/components/ui/command-bar";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,7 @@ import {
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { TagList } from "@/components/ui/tag-list";
 import { ValidationList } from "@/components/ui/validation-list";
+import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
@@ -4823,25 +4824,26 @@ export function TargetPage({
   const renderPartitionOption = (rule: TargetSchemaRule) => {
     const selected = filteredPartitionColumns.includes(rule.name);
     const disabled = !rule.use;
+    const checkboxId = `target-partition-${rule.name}`;
     return (
-      <CheckableOption
-        checked={selected}
-        className="target-partition-option"
-        disabled={disabled}
-        inputName="target-partition-columns"
-        inputType="checkbox"
-        inputValue={rule.name}
+      <label
+        className={cn("target-partition-option", selected && "active", disabled && "disabled")}
         key={rule.name}
-        onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked)}
       >
+        <Checkbox
+          checked={selected}
+          disabled={disabled}
+          id={checkboxId}
+          onCheckedChange={(checked) => setPartitionColumnSelected(rule.name, checked === true)}
+        />
         <span className="target-partition-name">{rule.name}</span>
         <span className="target-partition-type">{formatPartitionColumnType(rule)}</span>
-      </CheckableOption>
+      </label>
     );
   };
 
   return (
-    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
+    <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" useShadcnStyles onPrev={onPrev} onNext={handleNext} />}>
       <PageHeader
         className="etl-flow-page-header"
         icon={<HardDrive size={18} />}
@@ -4857,7 +4859,7 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon"><FileText size={17} /></span>
             <div>
-              <h2>Basic Information</h2>
+              <h2>기본 정보</h2>
             </div>
           </div>
           <div className="target-config-form-grid basic">
@@ -4880,12 +4882,12 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon destination"><HardDrive size={17} /></span>
             <div>
-              <h2>Destination Settings</h2>
+              <h2>저장 위치 설정</h2>
             </div>
           </div>
           <div className="target-config-form-grid destination">
             <FormFieldGroup className="field target-db-field" label="DB 선택">
-              <DatabaseField value={databaseName} onChange={setDatabaseName} />
+              <DatabaseField useShadcnStyles value={databaseName} onChange={setDatabaseName} />
             </FormFieldGroup>
             <FormFieldGroup className="field target-format-field" label="포맷">
               <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
@@ -4900,7 +4902,7 @@ export function TargetPage({
               </Select>
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장경로">
-              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField useShadcnStyles value={targetStoragePath} onChange={setTargetStoragePath} />
             </FormFieldGroup>
           </div>
         </section>
@@ -4908,23 +4910,21 @@ export function TargetPage({
           <div className="etl-review-card-header">
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
-              <h2>Partition & Tags</h2>
+              <h2>파티션 및 태그</h2>
             </div>
           </div>
           <div className="target-config-split">
             <div className="target-config-subsection">
               <div className="target-config-subheader">
                 <BookOpen size={16} />
-                <h3>Tags</h3>
+                <h3>태그</h3>
               </div>
               {targetTags.length > 0 ? (
                 <TagList className="target-chip-grid" density="compact" role="group" aria-label="타겟 태그">
                   {targetTags.map((tag) => (
-                    <Chip asChild className={targetTags.includes(tag) ? "target-chip active" : "target-chip"} key={tag} selected={targetTags.includes(tag)} tone="secondary">
-                      <button type="button" onClick={() => toggleTag(tag)}>
-                        {tag}
-                      </button>
-                    </Chip>
+                    <Button aria-pressed={targetTags.includes(tag)} key={tag} size="sm" type="button" variant="secondary" onClick={() => toggleTag(tag)}>
+                      {tag}
+                    </Button>
                   ))}
                 </TagList>
               ) : null}
@@ -4935,13 +4935,13 @@ export function TargetPage({
                     addCustomTag();
                   }
                 }} />
-                <Button className="secondary-button" type="button" variant="outline" onClick={addCustomTag}><Plus size={14} />추가</Button>
+                <Button type="button" variant="outline" onClick={addCustomTag}><Plus data-icon="inline-start" />추가</Button>
               </div>
             </div>
             <div className="target-config-subsection">
               <div className="target-config-subheader">
                 <SlidersHorizontal size={16} />
-                <h3>Partition</h3>
+                <h3>파티션</h3>
               </div>
               <div className="target-partition-settings">
                 <div className="target-partition-grid" role="group" aria-label="파티션 컬럼 다중 선택">
