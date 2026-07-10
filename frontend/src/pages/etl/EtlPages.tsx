@@ -1653,14 +1653,19 @@ export function SourceConnectionPage({
                         rows={displayPreviewRows}
                       />
                     ) : (
-                      <div className="hegun-table-scroll source-preview-scroll">
+                      <ScrollArea
+                        type="always"
+                        scrollbars="horizontal"
+                        horizontalScrollBarClassName="h-3 border-t-0 bg-slate-100 p-1 [&>div]:rounded-sm [&>div]:bg-slate-400 hover:[&>div]:bg-slate-500"
+                        className="source-preview-scroll w-full min-w-0"
+                      >
                         <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
                           <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
                           <tbody>
                             {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
                           </tbody>
                         </table>
-                      </div>
+                      </ScrollArea>
                     )
                   ) : (
                     <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
