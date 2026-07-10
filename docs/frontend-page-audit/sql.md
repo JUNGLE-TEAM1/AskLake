@@ -12,32 +12,32 @@
 
 ## Current Shared Components
 
-- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `Input`, `NativeSelect`, `ScrollArea`, `Separator`, `Slider`, `Tabs`, `Textarea`.
+- shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Command`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `HoverCard`, `Input`, `NativeSelect`, `Popover`, `Resizable`, `ScrollArea`, `Separator`, `Slider`, `Tabs`, `Textarea`.
 - shadcn registry component: Shadcnblocks `tree-lines-1`이 설치한 Kibo UI `TreeProvider`, `TreeView`, `TreeNode`, `TreeNodeTrigger`, `TreeExpander`, `TreeIcon`, `TreeLabel`, `TreeNodeContent`.
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
-- `SqlDatasetTree`: Shadcnblocks line tree와 `TreeHoverCard`, shadcn `Button`을 조합한 dataset browser다.
+- `SqlDatasetTree`: Shadcnblocks line tree와 shadcn `HoverCard`, `Button`을 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
 - `SchemaDetailsPanel`: 선택 dataset, JOIN, column insert를 담당하는 도메인 panel이다.
 - `DashboardPage`: SQL 결과로 dashboard draft를 만드는 embedded flow에 재사용된다.
 
 ## Weakly Componentized Areas
 
-- SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- SQL editor와 autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
+- SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete 후보와 overlay는 shadcn `Command`/`Popover`가 소유하고 editor cursor 문맥 계산은 route logic으로 유지한다.
+- SQL editor의 dark surface와 line-number 정렬에는 도메인 layout CSS가 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
 - `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
 
 ## shadcn/ReUI Replacement Candidates
 
 - `Tabs`: #468에서 table browser와 Query AI panel 전환에 적용하고, useLayouts Discrete Tabs 패턴을 참고한 shared `layoutId` indicator를 추가했다.
-- `Popover` + `Command`: SQL autocomplete list의 focus 이동, active option, dismiss behavior를 정리한다.
+- `Popover` + `Command`: 이번 보완에서 SQL autocomplete list의 active option, dismiss, keyboard 후보 이동을 적용했다.
 - `Dialog`: #468에서 raw dashboard builder backdrop를 accessible dialog composition으로 교체했다.
 - `ScrollArea`: #468에서 dataset panel, schema panel, autocomplete, result table의 독립 scroll 영역에 적용했다.
 - Shadcnblocks `tree-lines-1`: #468에서 SQL dataset branch/table/column tree에 적용했다. `showLines`, controlled expand, single dataset preview, keyboard Enter/Space 동작을 사용한다.
 - `Alert`: preflight error, Query AI error, execution error를 공통 feedback 구조로 표시한다.
 - `Badge`: #468에서 layer, RAG, preflight tone, selected dataset metadata에 적용했다.
 - `Empty`: #468에서 schema 미선택과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
-- `ResizablePanelGroup`: 좌측 dataset, editor, 우측 schema panel 폭 조절이 제품 요구에 포함될 때 검토한다.
+- `ResizablePanelGroup`: 이번 보완에서 좌측 dataset, editor, 우측 schema panel에 적용했다. 1,240px 이하에서는 drag handle을 숨기고 기존 2열/1열 responsive layout으로 전환한다.
 - 전문 SQL editor가 필요해지면 shadcn으로 억지 구현하지 말고 CodeMirror 또는 Monaco 같은 검증된 editor engine을 별도 결정한다.
 
 ## Design Options For Existing Components
@@ -51,14 +51,14 @@
 ## Related CSS
 
 - 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
-- 현재 사용 중: `.sql-tree-hover-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
-- #468 Tree/viewport 정리까지 `sql.css`를 2,547줄에서 401줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface CSS는 제거했다.
+- 현재 사용 중: `.sql-resizable-*`, `.sql-editor-surface`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
+- #468 보완까지 `sql.css`를 2,547줄에서 328줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree/autocomplete/hover surface CSS는 제거했다.
 
 ## Pre-#468 QA Notes
 
 - process 환경에서 `VITE_USE_MOCK_API=true`로 `/sql`을 열었을 때 dataset/schema/editor UI가 API 오류 없이 렌더링된다.
 - 페이지 진입 smoke만 수행했으며 query 실행, CSV download, materialize, dashboard 생성 interaction은 이번 문서 PR에서 재검증하지 않았다.
-- autocomplete keyboard, editor focus, sidebar collapse, nested dialog focus trap이 후속 구현의 핵심 QA다.
+- autocomplete keyboard, editor focus, sidebar collapse, nested dialog focus trap을 route QA의 핵심 항목으로 유지한다.
 - mobile에서는 세 column workspace가 순차 layout으로 바뀔 때 editor와 schema가 겹치지 않는지 확인한다.
 
 ## Pre-#468 Rendered Audit Findings
@@ -114,7 +114,7 @@
 - SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
 - dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
-- `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.
+- 최초 #468 구현에서 `sql.css`를 2,547줄에서 401줄로 줄였고, 보완에서 `Command`/`HoverCard`/`Resizable`을 적용해 328줄로 더 줄였다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
 - schema list는 `Panel` + `PanelHeader` + `Separator`, result header는 `PanelHeader`, autocomplete surface는 `Panel` + `Button` + `Badge`로 구성한다.
 - dataset/schema/autocomplete/result의 native `overflow: auto`를 제거하고 shadcn `ScrollArea`를 실제 scroll container로 사용한다. SQL 영역은 `type="always"`로 thumb를 명확히 노출하고 result는 vertical/horizontal scrollbar를 모두 제공한다.
@@ -122,7 +122,7 @@
 - SQL 도구의 후보/검색 건수와 schema의 선택 건수 badge를 제거하고, Page/Panel/Dialog title 아래의 반복 설명문을 제거해 heading hierarchy를 한 줄로 정리했다.
 - Query AI panel의 `Query AI 생성`, `테이블 선택 필요` badge도 제거해 탭 아래에서 같은 상태를 반복하지 않는다.
 - SQL dataset tree를 Shadcnblocks `tree-lines-1` registry로 교체하고 Kibo UI Tree source를 프로젝트에 설치했다. `motion`은 registry의 expand/collapse animation 의존성으로 추가했다.
-- 기존 `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` selector는 제거하고 fixed hover card selector만 유지했다.
+- 기존 `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` selector를 제거했고, 보완에서 fixed hover card selector도 제거했다.
 - SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
 - 중앙 `sql-workspace`의 auto row는 `max-content`로 고정해 제한된 viewport 안에서도 editor/result Panel이 내부 콘텐츠보다 작아지거나 서로 겹치지 않게 했다.
 - 다크 SQL editor에서는 shadcn `Textarea`의 파란 focus ring/offset을 제거해 line-number gutter 옆에 이중 세로선이 생기지 않게 했다. 다른 form control의 focus ring은 유지한다.
@@ -149,6 +149,14 @@
 
 ### #468 Remaining Deliberate CSS
 
-- SQL autocomplete의 surface/action/status/scroll은 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
-- dataset hover card의 fixed 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다. Tree 연결선/row/expand surface는 registry component가 소유한다.
+- SQL autocomplete의 surface/action/list/overlay는 `Popover` + `Command`로 바꾸고 editor focus/selection 문맥 계산만 유지했다.
+- dataset hover detail은 `HoverCard`로 바꿔 fixed 위치 계산과 전용 hover selector를 제거했다. dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다.
+- 3열 폭은 `ResizablePanelGroup`이 소유하며 `.sql-resizable-*`는 inline panel sizing을 desktop/2열/1열 breakpoint에 맞게 전환하는 layout CSS만 담당한다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.
+
+### #468 Shadcn Follow-up
+
+- SQL 자동완성을 shadcn `Popover` + `Command`로 교체하고 ArrowUp/ArrowDown, Tab 삽입, Escape dismiss와 editor focus 계약을 유지했다.
+- dataset/table/column 상세를 shadcn `HoverCard`로 교체해 mouse 좌표와 viewport를 직접 계산하던 fixed overlay를 제거했다.
+- dataset/editor/schema 3열을 shadcn `ResizablePanelGroup`으로 교체했다. 데스크톱에서는 두 handle로 폭을 조절하고, 1,240px 이하에서는 2열, 860px 이하에서는 1열로 안전하게 전환한다.
+- 전역 앱 Sidebar, API 로그 Popover, 프로필 Avatar는 SQL route 범위를 넘어 기존 화면과 충돌할 수 있어 별도 App Shell PR로 분리한다.

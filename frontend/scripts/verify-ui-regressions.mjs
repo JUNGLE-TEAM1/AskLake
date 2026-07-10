@@ -26,6 +26,10 @@ const checks = [
       /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
       /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
       /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
+      /import \{ Command, CommandEmpty, CommandGroup, CommandItem, CommandList \} from "@\/components\/ui\/command";/,
+      /<Popover open=\{autocompleteCandidates\.length > 0\}>[\s\S]*<Command[\s\S]*shouldFilter=\{false\}/,
+      /<ResizablePanelGroup className="sql-resizable-group h-auto" orientation="horizontal">/,
+      /<ResizablePanel[\s\S]*className="sql-resizable-workspace-pane"/,
     ],
   },
   {
@@ -58,6 +62,9 @@ const checks = [
       /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
       /<TreeExpander hasChildren \/>/,
       /<TreeNodeContent className="pb-2" hasChildren>/,
+      /import \{ HoverCard, HoverCardContent, HoverCardTrigger \} from "@\/components\/ui\/hover-card";/,
+      /<HoverCardTrigger asChild>[\s\S]*<TreeNodeTrigger/,
+      /<HoverCardContent[\s\S]*side="right"/,
     ],
   },
   {

@@ -11,7 +11,8 @@ import {
   TreeView,
 } from "@/components/kibo-ui/tree";
 import { Button } from "@/components/ui/button";
-import { TreeHoverCard } from "@/components/ui/tree-hover-card";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { cn } from "@/lib/utils";
 import type { CatalogDataset } from "../../types";
 
 type SqlDatasetTreeProps = {
@@ -22,8 +23,8 @@ type SqlDatasetTreeProps = {
 };
 
 type HoverInfo =
-  | { dataset: CatalogDataset; kind: "table"; position: { left: number; top: number } }
-  | { columnName: string; columnType: string; dataset: CatalogDataset; kind: "column"; position: { left: number; top: number } };
+  | { dataset: CatalogDataset; kind: "table" }
+  | { columnName: string; columnType: string; dataset: CatalogDataset; kind: "column" };
 
 const SYSTEM_NODE_ID = "sql-tree:system";
 const DATASETS_NODE_ID = "sql-tree:datasets";
@@ -123,20 +124,6 @@ function SqlDatasetTreeRow({
   isLast: boolean;
   onSelect: (dataset: CatalogDataset) => void;
 }) {
-  const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
-  const showTableInfo = (target: HTMLElement) => setHoverInfo({
-    dataset,
-    kind: "table",
-    position: getHoverPosition(target),
-  });
-  const showColumnInfo = (target: HTMLElement, columnName: string, columnType: string) => setHoverInfo({
-    columnName,
-    columnType,
-    dataset,
-    kind: "column",
-    position: getHoverPosition(target),
-  });
-
   return (
     <TreeNode
       data-sql-dataset-node=""
@@ -145,37 +132,38 @@ function SqlDatasetTreeRow({
       nodeId={getDatasetNodeId(dataset.id)}
       parentPath={[true, true, isLast]}
     >
-      <TreeNodeTrigger
-        aria-expanded={expanded}
-        aria-level={4}
-        className="min-h-14 pr-2"
-        data-sql-dataset-row=""
-        onBlur={() => setHoverInfo(null)}
-        onFocus={(event) => showTableInfo(event.currentTarget)}
-        onMouseEnter={(event) => showTableInfo(event.currentTarget)}
-        onMouseLeave={() => setHoverInfo(null)}
-      >
-        <TreeExpander hasChildren />
-        <TreeIcon hasChildren icon={<Table2 />} />
-        <TreeLabel className="grid min-w-0 gap-1">
-          <strong className="truncate text-sm font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
-          <span className="text-xs font-semibold text-slate-500">{dataset.schema.length} columns</span>
-        </TreeLabel>
-        <Button
-          aria-label={`${dataset.name} 선택 테이블에 추가`}
-          className="ml-auto min-w-[58px]"
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect(dataset);
-          }}
-          onKeyDown={(event) => event.stopPropagation()}
-          size="sm"
-          type="button"
-          variant="subtle"
-        >
-          <Plus data-icon="inline-start" /> 추가
-        </Button>
-      </TreeNodeTrigger>
+      <HoverCard closeDelay={100} openDelay={250}>
+        <HoverCardTrigger asChild>
+          <TreeNodeTrigger
+            aria-expanded={expanded}
+            aria-level={4}
+            className="min-h-14 pr-2"
+            data-sql-dataset-row=""
+          >
+            <TreeExpander hasChildren />
+            <TreeIcon hasChildren icon={<Table2 />} />
+            <TreeLabel className="grid min-w-0 gap-1">
+              <strong className="truncate text-sm font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
+              <span className="text-xs font-semibold text-slate-500">{dataset.schema.length} columns</span>
+            </TreeLabel>
+            <Button
+              aria-label={`${dataset.name} 선택 테이블에 추가`}
+              className="ml-auto min-w-[58px]"
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelect(dataset);
+              }}
+              onKeyDown={(event) => event.stopPropagation()}
+              size="sm"
+              type="button"
+              variant="subtle"
+            >
+              <Plus data-icon="inline-start" /> 추가
+            </Button>
+          </TreeNodeTrigger>
+        </HoverCardTrigger>
+        <SqlDatasetHoverCard info={{ dataset, kind: "table" }} />
+      </HoverCard>
       <TreeNodeContent className="pb-2" hasChildren>
         {dataset.schema.map(([name, type], index) => {
           const Icon = getColumnIcon(type);
@@ -188,26 +176,23 @@ function SqlDatasetTreeRow({
               nodeId={`${getDatasetNodeId(dataset.id)}:column:${name}:${index}`}
               parentPath={[true, true, isLast, columnIsLast]}
             >
-              <TreeNodeTrigger
-                aria-level={5}
-                className="min-h-10 py-1.5"
-                onBlur={() => setHoverInfo(null)}
-                onFocus={(event) => showColumnInfo(event.currentTarget, name, type)}
-                onMouseEnter={(event) => showColumnInfo(event.currentTarget, name, type)}
-                onMouseLeave={() => setHoverInfo(null)}
-              >
-                <TreeExpander />
-                <TreeIcon icon={<Icon />} />
-                <TreeLabel className="grid min-w-0 gap-0.5">
-                  <strong className="truncate text-sm font-bold text-slate-900" title={name}>{name}</strong>
-                  <span className="text-xs font-semibold text-slate-500">{formatColumnType(type)}</span>
-                </TreeLabel>
-              </TreeNodeTrigger>
+              <HoverCard closeDelay={100} openDelay={250}>
+                <HoverCardTrigger asChild>
+                  <TreeNodeTrigger aria-level={5} className="min-h-10 py-1.5">
+                    <TreeExpander />
+                    <TreeIcon icon={<Icon />} />
+                    <TreeLabel className="grid min-w-0 gap-0.5">
+                      <strong className="truncate text-sm font-bold text-slate-900" title={name}>{name}</strong>
+                      <span className="text-xs font-semibold text-slate-500">{formatColumnType(type)}</span>
+                    </TreeLabel>
+                  </TreeNodeTrigger>
+                </HoverCardTrigger>
+                <SqlDatasetHoverCard info={{ columnName: name, columnType: type, dataset, kind: "column" }} />
+              </HoverCard>
             </TreeNode>
           );
         })}
       </TreeNodeContent>
-      {hoverInfo && <SqlDatasetHoverCard info={hoverInfo} />}
     </TreeNode>
   );
 }
@@ -226,30 +211,36 @@ function SqlDatasetHoverCard({ info }: { info: HoverInfo }) {
     ];
 
   return (
-    <TreeHoverCard
-      as="aside"
-      bodyClassName="sql-tree-hover-body"
-      className="sql-tree-hover-card"
-      description={info.kind === "table" ? info.dataset.description : getColumnDescription(info.columnType)}
-      icon={info.kind === "table" ? <Table2 size={22} /> : renderColumnIcon(info.columnType)}
-      iconClassName={`sql-tree-hover-icon ${iconClassName}`}
-      rowLayout="flat"
-      rows={rows}
-      style={{ left: info.position.left, top: info.position.top }}
-      subtitle={`system.datasets.${info.dataset.name}`}
-      title={info.kind === "table" ? info.dataset.name : info.columnName}
-    />
+    <HoverCardContent align="start" className="grid w-[360px] grid-cols-[48px_minmax(0,1fr)] gap-3" side="right" sideOffset={12}>
+      <div
+        aria-hidden="true"
+        className={cn(
+          "grid size-12 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600",
+          iconClassName === "date" && "text-blue-600",
+          iconClassName === "number" && "text-slate-700",
+        )}
+      >
+        {info.kind === "table" ? <Table2 size={22} /> : renderColumnIcon(info.columnType)}
+      </div>
+      <div className="grid min-w-0 gap-2.5">
+        <div className="grid min-w-0 gap-1">
+          <strong className="truncate text-base font-black">{info.kind === "table" ? info.dataset.name : info.columnName}</strong>
+          <span className="truncate text-xs font-semibold text-slate-500">{`system.datasets.${info.dataset.name}`}</span>
+        </div>
+        <dl className="grid grid-cols-[64px_minmax(0,1fr)] gap-x-2.5 gap-y-1.5 text-xs">
+          {rows.map((row) => (
+            <div className="contents" key={row.label}>
+              <dt className="font-bold text-slate-500">{row.label}</dt>
+              <dd className="m-0 truncate font-bold text-slate-900">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="m-0 text-xs font-semibold leading-relaxed text-slate-500">
+          {info.kind === "table" ? info.dataset.description : getColumnDescription(info.columnType)}
+        </p>
+      </div>
+    </HoverCardContent>
   );
-}
-
-function getHoverPosition(target: HTMLElement) {
-  const rect = target.getBoundingClientRect();
-  const cardWidth = 360;
-  const cardHeight = 210;
-  const left = Math.min(rect.right + 16, window.innerWidth - cardWidth - 16);
-  const top = Math.min(Math.max(16, rect.top - 8), window.innerHeight - cardHeight - 16);
-
-  return { left, top };
 }
 
 function getColumnIcon(type: string) {
