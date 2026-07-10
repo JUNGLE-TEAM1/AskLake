@@ -82,8 +82,7 @@
 }
 
 .run-dag-modal-header > button,
-.airflow-runtime-heading a,
-.dag-flow-controls button {
+.airflow-runtime-heading a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -212,41 +211,13 @@
 .dag-timeline-panel { min-width: 0; border-right: 1px solid #e7edf5; background: #fbfcfe; }
 
 .dag-flow-topbar {
-  min-height: 88px;
+  min-height: 64px;
   gap: 16px;
   border-bottom: 1px solid #e7edf5;
   padding: 16px 18px;
 }
 
 .dag-flow-topbar h2 { color: #0f172a; font-size: 16px; line-height: 1.25; }
-
-.dag-flow-controls button { width: 32px; height: 32px; color: #475569; }
-.dag-flow-controls button.active { border-color: #93c5fd; background: #eff6ff; color: #2563eb; }
-
-.dag-search-panel {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  border-bottom: 1px solid #e7edf5;
-  background: #fff;
-  color: #64748b;
-  padding: 10px 14px;
-}
-
-.dag-search-panel input {
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: #0f172a;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  outline: 0;
-}
-
-.dag-search-panel input::placeholder { color: #94a3b8; }
-.dag-search-panel span { border-radius: 999px; background: #eff6ff; color: #2563eb; font-size: 10px; font-weight: 800; padding: 3px 7px; }
 
 .dag-timeline {
   display: grid;

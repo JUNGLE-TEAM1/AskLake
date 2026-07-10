@@ -1265,15 +1265,12 @@ function RunDagModal({
   onClose: () => void;
   run: JobRunSummary;
 }) {
-  const [dagSearchOpen, setDagSearchOpen] = useState(false);
-  const [dagQuery, setDagQuery] = useState("");
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const dagSteps = evidence?.dagSteps.length ? evidence.dagSteps : job.dagSteps ?? [];
   const currentRun = run;
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);
-  const filteredDagSteps = useMemo(() => filterDagSteps(dagSteps, dagQuery), [dagQuery, dagSteps]);
   const hasAirflowContext = Boolean(
     currentRun.airflowDagId
     || currentRun.airflowDagRunId
@@ -1281,11 +1278,6 @@ function RunDagModal({
     || currentRun.airflowState
     || currentRun.lastSyncedAt,
   );
-  const toggleSearch = () => {
-    setDagSearchOpen((open) => !open);
-    onAction("etl.dag.search_opened", `/api/etl/jobs/${job.id}/dag/search`, job.id);
-  };
-
   return (
     <div className="run-dag-modal" role="dialog" aria-modal="true" aria-label={`${currentRun.runId} 실행 상세`} onClick={onClose}>
       <section onClick={(event) => event.stopPropagation()}>
@@ -1350,22 +1342,11 @@ function RunDagModal({
                   <div>
                     <span>EXECUTION TIMELINE</span>
                     <h2>실행 단계</h2>
-                    <p>실제 실행 순서와 상태를 기준으로 표시합니다.</p>
-                  </div>
-                  <div className="dag-flow-controls">
-                    <button className={dagSearchOpen ? "active" : ""} type="button" aria-label="실행 단계 검색" onClick={toggleSearch}><Search size={16} /></button>
                   </div>
                 </div>
-                {dagSearchOpen && (
-                  <label className="dag-search-panel">
-                    <Search size={15} />
-                    <input aria-label="실행 단계 검색" onChange={(event) => setDagQuery(event.target.value)} placeholder="단계명, 상태, 메시지 검색" type="search" value={dagQuery} />
-                    <span>{filteredDagSteps.length}/{dagSteps.length}</span>
-                  </label>
-                )}
 
                 <div className="dag-timeline" role="list">
-                  {filteredDagSteps.map((step) => {
+                  {dagSteps.map((step) => {
                     const stepIndex = dagSteps.findIndex((candidate) => candidate.id === step.id);
                     return (
                       <DagTimelineItem
@@ -1380,7 +1361,6 @@ function RunDagModal({
                       />
                     );
                   })}
-                  {filteredDagSteps.length === 0 && <p className="dag-timeline-empty">검색어와 일치하는 실행 단계가 없습니다.</p>}
                 </div>
               </section>
 
@@ -1468,20 +1448,6 @@ function DagStepInspector({ currentRun, step }: { currentRun: JobRunSummary; ste
       </section>
     </aside>
   );
-}
-
-function filterDagSteps(steps: JobDagStep[], query: string) {
-  const normalizedQuery = normalizeWhitespace(query).toLowerCase();
-  if (!normalizedQuery) return steps;
-
-  return steps.filter((step) => [
-    step.title,
-    step.meta,
-    step.note,
-    dagStepStatusMeta[step.status].label,
-    ...(step.logs ?? []),
-    ...(step.details ?? []).flat(),
-  ].filter(Boolean).join(" ").toLowerCase().includes(normalizedQuery));
 }
 
 function getSelectedDagStep(steps: JobDagStep[], selectedStepId: string | null) {
