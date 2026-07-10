@@ -22,6 +22,7 @@ export { default as BookOpen } from "lucide-react/dist/esm/icons/book-open.mjs";
 export { default as Bot } from "lucide-react/dist/esm/icons/bot.mjs";
 export { default as Boxes } from "lucide-react/dist/esm/icons/boxes.mjs";
 export { default as Braces } from "lucide-react/dist/esm/icons/braces.mjs";
+export { default as Cable } from "lucide-react/dist/esm/icons/cable.mjs";
 export { default as Calendar } from "lucide-react/dist/esm/icons/calendar.mjs";
 export { default as CalendarDays } from "lucide-react/dist/esm/icons/calendar-days.mjs";
 export { default as ChartArea } from "lucide-react/dist/esm/icons/chart-area.mjs";

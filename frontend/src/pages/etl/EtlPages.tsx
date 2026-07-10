@@ -10,6 +10,7 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Cable,
   Calendar,
   Check,
   ChevronDown,
@@ -60,7 +61,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { TagList } from "@/components/ui/tag-list";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
@@ -369,14 +372,6 @@ const sourceValueLabels: Record<string, string> = {
   Verified: "검증됨",
 };
 
-const sourceActionLabels: Record<string, string> = {
-  "Download CSV": "CSV 다운로드",
-  "Fetch Metadata": "메타데이터 조회",
-  "Full Screen": "전체 화면",
-  "Refresh Preview": "미리보기 새로고침",
-  "Show Advanced Configuration": "고급 설정 보기",
-};
-
 function sourceTypeLabel(value: string) {
   return sourceTypeLabels[value] ?? value;
 }
@@ -393,10 +388,6 @@ function sourceValueLabel(value: string) {
   if (/^leader \d+$/i.test(value)) return value.replace(/^leader/i, "리더");
   if (/^\d+ bytes$/i.test(value)) return value.replace("bytes", "바이트");
   return sourceValueLabels[value] ?? value;
-}
-
-function sourceActionLabel(value: string) {
-  return sourceActionLabels[value] ?? value;
 }
 
 function isInternalSourceField(label: string) {
@@ -1052,14 +1043,14 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
-  const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
-    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { desc: "Apache Kafka 스트림 데이터를 연결합니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
+  const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
+    "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
+    PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
+    MongoDB: { icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "SQL Result": { icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
+    "Stream / Kafka": { icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1073,7 +1064,6 @@ export function SourceConnectionPage({
     previewNote: string;
     previewColumns: string[];
     previewRows: string[][];
-    actions?: string[];
     info?: string;
   }> = {
     "SQL Result": {
@@ -1167,7 +1157,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Data Lake": {
       title: "데이터 레이크 소스",
@@ -1193,7 +1182,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Event Timestamp", "User ID", "Transaction ID", "Region", "Action Type", "Latency"],
       previewRows: [],
-      actions: ["Fetch Metadata", "Download CSV", "Full Screen"],
     },
     "REST API": {
       title: "REST API 소스",
@@ -1218,7 +1206,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Stream / Kafka": {
       title: "스트림 소스 설정",
@@ -1240,7 +1227,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
       previewRows: [],
-      actions: ["Show Advanced Configuration"],
     },
   };
   const selectedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
@@ -1335,7 +1321,6 @@ export function SourceConnectionPage({
     setSourceType(value);
     setSourceRuntime(null);
     setSelectedAssetPath("");
-    setSourceStage("connect");
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
@@ -1352,32 +1337,6 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-  };
-
-  const fillMinioDemoFields = () => {
-    const demoFields: Array<[string, string]> = [
-      ["Storage Provider", "MinIO"],
-      ["Endpoint URL", "http://127.0.0.1:19000"],
-      ["Region", "us-east-1"],
-      ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", ""],
-      ["Access Key", "m3admin"],
-      ["Secret Key", "wishuponastar"],
-      ["Use Path Style", "true"],
-      ["File Type", "auto"],
-      ["Delimiter", ","],
-      ["Encoding", "UTF-8"],
-      ["Header", "Treat first row as header"],
-    ];
-    const nextFields = mergeFieldRows(editableFields, demoFields);
-    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
-    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
-    setSourceRuntime(null);
-    setSelectedAssetPath("");
-    setConnectionStatus("idle");
-    setConnectionMessage(nextMessage);
-    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
-    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1543,6 +1502,10 @@ export function SourceConnectionPage({
       onNotify("먼저 소스를 선택하세요.");
       return;
     }
+    if (sourceStage === "choose") {
+      setSourceStage("connect");
+      return;
+    }
     if (connectionStatus !== "success") {
       onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
       return;
@@ -1551,56 +1514,50 @@ export function SourceConnectionPage({
     onNext();
   };
 
-  const fetchMetadata = () => {
-    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
-  };
-
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceStage === "choose" && !hasSelectedSource} useShadcnStyles onPrev={onPrev} onNext={goNext} />}
     >
         <PageHeader
-          className="etl-flow-page-header"
-          description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."}
-          icon={<Database size={18} />}
+          className="etl-flow-page-header etl-source-page-header"
+          icon={<Cable size={18} />}
           title="소스 연결"
         />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <SegmentedTabs
-            ariaLabel="소스 연결 단계"
-            className="source-stage-tabs"
-            items={[
-              { label: "1. 소스 선택", value: "choose" },
-              { disabled: !hasSelectedSource, label: "2. 연결 설정", value: "connect" },
-              { disabled: connectionStatus !== "success" || !hasDetectedAssets, label: "3. 데이터 탐색", value: "browse" },
-            ]}
+          <Tabs
             value={sourceStage}
-            onValueChange={setSourceStage}
-          />
+            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+          >
+            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+              <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
+              <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>
+              <TabsTrigger disabled={connectionStatus !== "success" || !hasDetectedAssets} value="browse">3. 데이터 탐색</TabsTrigger>
+            </TabsList>
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
               <div className="source-select-heading">
-                <h2>Select a data source</h2>
-                <p>Choose the type of data source you want to connect</p>
+                <h2>데이터 소스 선택</h2>
               </div>
               <div className="source-choice-grid">
                 {sourceChoiceConnectors.map((connector) => {
                   const meta = connectorMeta[connector];
                   return (
-                    <SelectableCard
-                      aria-label={`${meta.label} ${meta.desc}`}
-                      className="source-choice-card"
-                      description={meta.desc}
-                      icon={<span className="source-choice-icon">{meta.icon}</span>}
+                    <Button
+                      aria-label={`${meta.label} 소스 선택`}
+                      aria-pressed={sourceType === connector}
+                      className="source-choice-button relative grid h-auto min-h-28 w-full grid-cols-[56px_minmax(0,1fr)] items-center justify-items-start gap-4 whitespace-normal px-8 py-6 text-left"
                       key={connector}
-                      selected={sourceType === connector}
-                      selectedIndicator={<span className="source-choice-check"><Check size={18} /></span>}
-                      title={meta.label}
+                      type="button"
+                      variant={sourceType === connector ? "subtle" : "outline"}
                       onClick={() => selectSource(connector)}
-                    />
+                    >
+                      {sourceType === connector && <span className="absolute right-4 top-4 inline-flex size-7 items-center justify-center rounded-full bg-blue-600 text-white"><Check /></span>}
+                      <span className="inline-flex size-14 items-center justify-center">{meta.icon}</span>
+                      <span className="text-base font-semibold text-slate-950">{meta.label}</span>
+                    </Button>
                   );
                 })}
               </div>
@@ -1608,7 +1565,8 @@ export function SourceConnectionPage({
           )}
 
           {sourceStage === "connect" && hasSelectedSource && (
-            <div className="source-stage-screen">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen">
               <section className="source-step-section active">
                 <div className="source-step-header">
                   <em>1</em>
@@ -1616,16 +1574,13 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <Button className="secondary-button" type="button" variant="outline" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</Button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</Button>}
-                  {current.actions?.includes("Fetch Metadata") && <Button className="secondary-button" type="button" variant="outline" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</Button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <FormFieldGroup className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`} label={sourceFieldLabel(label)}>
-                      <Input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                      <Input readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                     </FormFieldGroup>
                   ))}
                 </div>
@@ -1634,13 +1589,12 @@ export function SourceConnectionPage({
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
-                  <div className="hegun-status-copy">
+                  <div className="hegun-status-copy single-line">
                     {sourceStatusIcon(connectionStatus)}
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-                    <span className="panel-note">{publicConnectionMessage}</span>
                   </div>
                   <div className="hegun-status-actions">
-                    {connectionStatus === "success" && hasDetectedAssets && <Button className="secondary-button" type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
+                    {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
                     {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
@@ -1654,11 +1608,13 @@ export function SourceConnectionPage({
                   ))}
                 </div>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
 
           {sourceStage === "browse" && hasSelectedSource && (
-            <div className="source-stage-screen source-browser-layout">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen source-browser-layout">
               <section className="source-from-panel">
                 <div className="source-browser-heading">
                   <LayoutGrid size={18} />
@@ -1697,22 +1653,29 @@ export function SourceConnectionPage({
                         rows={displayPreviewRows}
                       />
                     ) : (
-                      <div className="hegun-table-scroll source-preview-scroll">
+                      <ScrollArea
+                        type="always"
+                        scrollbars="horizontal"
+                        horizontalScrollBarClassName="h-3 border-t-0 bg-slate-100 p-1 [&>div]:rounded-sm [&>div]:bg-slate-400 hover:[&>div]:bg-slate-500"
+                        className="source-preview-scroll w-full min-w-0"
+                      >
                         <table className="schema-table" style={{ minWidth: previewTableMinWidth }}>
                           <thead><tr>{displayPreviewColumns.map((column, index) => <th key={`${column}-${index}`}>{sourceColumnLabel(column)}</th>)}</tr></thead>
                           <tbody>
                             {displayPreviewRows.map((row, rowIndex) => <tr key={`${activeSourceType}-preview-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}
                           </tbody>
                         </table>
-                      </div>
+                      </ScrollArea>
                     )
                   ) : (
                     <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
                   )}
                 </section>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
+          </Tabs>
         </section>
     </CreationFlowLayout>
   );
@@ -1782,7 +1745,7 @@ function isVisibleSourceField(sourceType: string, label: string) {
 function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" | "lake" | "kafka" }) {
   if (kind === "s3") {
     return (
-      <svg className="source-brand-icon source-brand-s3" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-s3 size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#ff9900" d="M14 17.5 32 8l18 9.5v29L32 56l-18-9.5v-29Z" />
         <path fill="#f58518" d="m32 8 18 9.5-18 9.4-18-9.4L32 8Z" opacity=".72" />
         <path fill="#d95b00" d="M32 26.9 50 17.5v29L32 56V26.9Z" opacity=".36" />
@@ -1793,7 +1756,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "postgres") {
     return (
-      <svg className="source-brand-icon source-brand-postgres" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-postgres size-14" viewBox="0 0 64 64" aria-hidden="true">
         <circle cx="32" cy="32" r="29" fill="#336791" />
         <path fill="#fff" d="M18.8 29.2c.2-8.7 5.7-14.5 14.2-14.2 8.9.3 14 6.7 12.5 15.4l-1.9 10.8c-.6 3.6-4.4 5.6-7.5 3.9l-4.2-2.3-5 6.6c-2.2 2.9-6.8 1.3-6.7-2.4l.2-8.7-1.5-.7c-3.2-1.5-4.8-4.6-4.2-8.1l4.1-.3Z" opacity=".96" />
         <path fill="#336791" d="M25.1 30.4c-.6-5.8 2.2-9.1 7.2-9.1 5.7 0 8.3 4.3 7.1 10.7l-1.1 5.9-6.3-3.3-4.8 6.4.4-8.2-2.5-2.4Z" />
@@ -1804,7 +1767,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "mongo") {
     return (
-      <svg className="source-brand-icon source-brand-mongo" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-mongo size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#47a248" d="M33.2 4.8c10.1 7.9 14.5 16.6 13.1 26.3-1.2 8.5-6.1 15.6-14.3 28.1-8.3-12.5-13.1-19.6-14.3-28.1-1.4-9.7 3-18.4 13.1-26.3l1.2-.9 1.2.9Z" />
         <path fill="#2f7d32" d="M32 3.9v55.3c8.2-12.5 13.1-19.6 14.3-28.1C47.7 21.4 43.3 12.7 33.2 4.8L32 3.9Z" opacity=".4" />
         <path fill="none" stroke="#e7f7ea" strokeLinecap="round" strokeWidth="3.2" d="M32 12.5v36.8" />
@@ -1814,7 +1777,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "rest") {
     return (
-      <svg className="source-brand-icon source-brand-rest" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-rest size-14" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="9" y="11" width="46" height="42" rx="10" fill="#eff6ff" stroke="#2563eb" strokeWidth="3" />
         <path fill="none" stroke="#2563eb" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M24 27.5 17.5 34 24 40.5M40 27.5 46.5 34 40 40.5M35.8 24.5l-7.6 19" />
         <path fill="#2563eb" d="M18 18.5h28a2 2 0 0 1 2 2v1.2H16v-1.2a2 2 0 0 1 2-2Z" opacity=".18" />
@@ -1825,7 +1788,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
   }
   if (kind === "lake") {
     return (
-      <svg className="source-brand-icon source-brand-lake" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="source-brand-icon source-brand-lake size-14" viewBox="0 0 64 64" aria-hidden="true">
         <path fill="#e0f2fe" d="M8 23c0-6.6 10.7-12 24-12s24 5.4 24 12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" />
         <ellipse cx="32" cy="23" fill="#38bdf8" rx="24" ry="12" />
         <path fill="#0284c7" d="M8 23c0 6.6 10.7 12 24 12s24-5.4 24-12v18c0 6.6-10.7 12-24 12S8 47.6 8 41V23Z" opacity=".7" />
@@ -1835,7 +1798,7 @@ function SourceBrandIcon({ kind }: { kind: "s3" | "postgres" | "mongo" | "rest" 
     );
   }
   return (
-    <svg className="source-brand-icon source-brand-kafka" viewBox="0 0 64 64" aria-hidden="true">
+    <svg className="source-brand-icon source-brand-kafka size-14" viewBox="0 0 64 64" aria-hidden="true">
       <circle cx="19" cy="18" r="8" fill="#111827" />
       <circle cx="45" cy="18" r="8" fill="#111827" />
       <circle cx="32" cy="46" r="8" fill="#111827" />
