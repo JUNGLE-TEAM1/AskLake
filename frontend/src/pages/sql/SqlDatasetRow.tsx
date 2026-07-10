@@ -73,21 +73,21 @@ export function SqlDatasetTree({
     >
       <TreeView aria-label="분석 데이터셋 트리" className="p-2 pr-3">
         <TreeNode isLast level={0} nodeId={SYSTEM_NODE_ID}>
-          <TreeNodeTrigger aria-expanded={expandedIds.includes(SYSTEM_NODE_ID)} aria-level={1} className="min-h-9">
+          <TreeNodeTrigger aria-expanded={expandedIds.includes(SYSTEM_NODE_ID)} aria-level={1} className="min-h-9" toggleOnClick={false}>
             <TreeExpander hasChildren />
             <TreeIcon hasChildren icon={<Server />} />
             <TreeLabel>system</TreeLabel>
           </TreeNodeTrigger>
           <TreeNodeContent hasChildren>
             <TreeNode isLast level={1} nodeId={DATASETS_NODE_ID} parentPath={[true]}>
-              <TreeNodeTrigger aria-expanded={expandedIds.includes(DATASETS_NODE_ID)} aria-level={2} className="min-h-9">
+              <TreeNodeTrigger aria-expanded={expandedIds.includes(DATASETS_NODE_ID)} aria-level={2} className="min-h-9" toggleOnClick={false}>
                 <TreeExpander hasChildren />
                 <TreeIcon hasChildren icon={<Database />} />
                 <TreeLabel>datasets</TreeLabel>
               </TreeNodeTrigger>
               <TreeNodeContent hasChildren>
                 <TreeNode isLast level={2} nodeId={TABLES_NODE_ID} parentPath={[true, true]}>
-                  <TreeNodeTrigger aria-expanded={expandedIds.includes(TABLES_NODE_ID)} aria-level={3} className="min-h-9">
+                  <TreeNodeTrigger aria-expanded={expandedIds.includes(TABLES_NODE_ID)} aria-level={3} className="min-h-9" toggleOnClick={false}>
                     <TreeExpander hasChildren />
                     <TreeIcon hasChildren icon={<Table2 />} />
                     <TreeLabel>{`테이블(${datasets.length})`}</TreeLabel>
@@ -153,7 +153,7 @@ function SqlDatasetTreeRow({
         aria-expanded={expanded}
         aria-level={4}
         aria-pressed={selected}
-        className="min-h-14 pr-2"
+        className={selected ? "min-h-14 border border-blue-200 bg-blue-50 pr-2" : "min-h-14 pr-2"}
         data-sql-dataset-row=""
         data-sql-dataset-selected={selected ? "" : undefined}
         onBlur={() => setHoverInfo(null)}
@@ -161,6 +161,7 @@ function SqlDatasetTreeRow({
         onMouseEnter={(event) => showTableInfo(event.currentTarget)}
         onMouseLeave={() => setHoverInfo(null)}
         onClick={() => onSelect(dataset)}
+        toggleOnClick={false}
       >
         <TreeExpander hasChildren />
         <TreeIcon hasChildren icon={<Table2 />} />
@@ -189,6 +190,7 @@ function SqlDatasetTreeRow({
                 onFocus={(event) => showColumnInfo(event.currentTarget, name, type)}
                 onMouseEnter={(event) => showColumnInfo(event.currentTarget, name, type)}
                 onMouseLeave={() => setHoverInfo(null)}
+                toggleOnClick={false}
               >
                 <TreeExpander />
                 <TreeIcon icon={<Icon />} />

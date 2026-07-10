@@ -47,6 +47,7 @@ const checks = [
       /from "@\/components\/kibo-ui\/tree";/,
       /<TreeProvider[\s\S]*expandedIds=\{expandedIds\}[\s\S]*showLines/,
       /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
+      /onClick=\{\(\) => onSelect\(dataset\)\}[\s\S]*toggleOnClick=\{false\}/,
       /<TreeExpander hasChildren \/>/,
       /<TreeNodeContent className="pb-2" hasChildren>/,
       /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,

@@ -246,7 +246,9 @@ export const TreeNode = ({
   );
 };
 
-export type TreeNodeTriggerProps = ComponentProps<typeof motion.button>;
+export type TreeNodeTriggerProps = ComponentProps<typeof motion.button> & {
+  toggleOnClick?: boolean;
+};
 
 export const TreeNodeTrigger = ({
   children,
@@ -255,6 +257,7 @@ export const TreeNodeTrigger = ({
   onKeyDown,
   role = "treeitem",
   tabIndex = 0,
+  toggleOnClick = true,
   ...props
 }: TreeNodeTriggerProps) => {
   const { selectedIds, toggleExpanded, handleSelection, indent } = useTree();
@@ -270,7 +273,7 @@ export const TreeNodeTrigger = ({
         className
       )}
       onClick={(e) => {
-        toggleExpanded(nodeId);
+        if (toggleOnClick) toggleExpanded(nodeId);
         handleSelection(nodeId, e.ctrlKey || e.metaKey);
         onClick?.(e);
       }}
@@ -283,7 +286,7 @@ export const TreeNodeTrigger = ({
           return;
         }
         event.preventDefault();
-        toggleExpanded(nodeId);
+        if (toggleOnClick) toggleExpanded(nodeId);
         handleSelection(nodeId, event.ctrlKey || event.metaKey);
       }}
       role={role}
