@@ -846,6 +846,7 @@ export function useAskLakeData({
       const hydratedJob = apiConfig.useMock ? job : await getLiveJob(job.id);
       const normalizedJob = normalizeJobRow(hydratedJob);
       applyHydratedJob(normalizedJob);
+      setSelectedJob(normalizedJob);
       setDraftPipeline(hydrateDraftPipelineFromJob(normalizedJob, initialDraftPipeline));
       setEditingJobId(normalizedJob.id);
       writeAuditLog("etl.job.edit_started", `/api/etl/jobs/${normalizedJob.id}`, normalizedJob.id);

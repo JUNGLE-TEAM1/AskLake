@@ -90,6 +90,13 @@ const checks = [
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],
   },
+  {
+    name: "Job edit selects the hydrated job before opening the edit flow",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const normalizedJob = normalizeJobRow\(hydratedJob\);\s*applyHydratedJob\(normalizedJob\);\s*setSelectedJob\(normalizedJob\);\s*setDraftPipeline\(hydrateDraftPipelineFromJob\(normalizedJob, initialDraftPipeline\)\);/s,
+    ],
+  },
 ];
 
 const failures = [];
