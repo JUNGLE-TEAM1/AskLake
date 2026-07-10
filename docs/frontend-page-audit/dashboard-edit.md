@@ -16,7 +16,7 @@
 - `DashboardCanvas`: `react-grid-layout`을 사용해 widget drag/resize와 collision validation을 처리한다.
 - `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
 - `WidgetConfigPanel`: `SettingsPanel`, `FieldGroup`, `Field`, `Select`, `Input`, `Textarea`, `ToggleGroup`, `Tooltip`, `Checkbox`, `Button`을 조합한다.
-- `DashboardAssistantPanel`: `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
+- `DashboardAssistantPanel`: shadcn `Bubble`, `BubbleGroup`, `BubbleContent`, `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
 - `ActionGroup`: undo/redo, assistant, cursor, widget 생성 toolbar의 layout을 담당한다.
 - `WidgetFrame`, `WidgetRenderer`: widget selection, delete, preview, chart/table/metric 렌더링을 담당한다.
 - shadcn `Sheet`: share panel에 사용한다.
@@ -29,7 +29,7 @@
 - widget inspector의 color slot, palette, custom color popover는 `react-colorful`과 전용 absolute layer/CSS로 구성된다.
 - draft loading/error/no-revision 상태 wrapper가 반복되고 `EmptyDashboardCanvas`가 여러 상태를 동시에 담당한다.
 - inspector, dataset sidebar, canvas column layout과 open/closed 상태가 대형 `dashboard-runtime.css` selector에 의존한다.
-- assistant message, working overlay, error feedback이 전용 markup이며 공통 Alert/Skeleton을 사용하지 않는다.
+- assistant working overlay와 error feedback이 전용 markup이며 공통 Alert/Skeleton을 사용하지 않는다.
 - `WidgetConfigPanel.tsx`가 widget type별 form rule과 color UI를 한 파일에 포함해 크기가 크다.
 
 ## shadcn/ReUI Replacement Candidates

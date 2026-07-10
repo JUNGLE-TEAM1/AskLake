@@ -1337,15 +1337,23 @@
 
 .asklake-widget-config-heading span {
   color: var(--dash-text-muted);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .asklake-widget-config-heading strong {
   color: var(--dash-text);
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1.3;
+}
+
+.asklake-widget-dataset-field label {
+  font-size: 14px;
+}
+
+.asklake-widget-dataset-field button {
+  font-size: 16px;
 }
 
 .asklake-widget-config-heading em {
@@ -1793,46 +1801,11 @@
   line-height: 1.12;
 }
 
-.asklake-assistant-hero span {
-  color: var(--dash-text-muted);
-  font-size: 13px;
-  font-weight: 850;
-  line-height: 1.3;
-}
-
 .asklake-assistant-messages {
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
-}
-
-.asklake-assistant-messages p {
-  max-width: calc(100% - 24px);
-  border: 1px solid #dbe4ee;
-  border-radius: 10px;
-  background: #ffffff;
-  color: var(--dash-text);
-  font-size: 13px;
-  font-weight: 750;
-  line-height: 1.45;
-  margin: 0;
-  padding: 10px 12px;
-  text-align: left;
-  white-space: pre-wrap;
-  word-break: normal;
-  overflow-wrap: anywhere;
-}
-
-.asklake-assistant-messages p.user {
-  align-self: flex-end;
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.asklake-assistant-messages p.assistant {
-  align-self: flex-start;
 }
 
 .asklake-assistant-form {
