@@ -179,7 +179,7 @@ function DashboardDatasetTreeItems({
         >
           <TreeExpander hasChildren={hasChildren} />
           <TreeIcon hasChildren={hasChildren} icon={item.icon} />
-          <TreeLabel className="min-w-0">
+          <TreeLabel className="w-full min-w-0 overflow-hidden">
             <DatasetTreeLabel
               hoverCard={item.hoverCard}
               meta={item.meta}
