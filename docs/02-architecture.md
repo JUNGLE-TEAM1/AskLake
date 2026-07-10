@@ -73,11 +73,11 @@ Kafka source의 현재 구현은 `persist partition offset snapshot -> fixed-ran
 
 상세 계약과 성공/실패 순서는 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다. 현재 기본 target은 `BRONZE`이며, 중간 `kafka-landing/...` object를 만들지 않는다.
 
-### Kafka Continuous Ingestion 계획
+### Kafka Continuous Ingestion
 
 Issue #500은 Snapshot direct-target 경로를 제거하지 않고, Kafka Job 생성 시 선택하는 별도 `continuous` execution mode를 추가한다. Continuous mode는 장기 실행 Spark Structured Streaming query가 checkpoint 기반 micro-batch를 반복해 동일 target dataset에 append하는 준실시간 적재 경로다. 초기 checkpoint가 없으면 Job의 `earliest` 또는 `latest` 정책에서 시작하고, 이후 restart/resume은 checkpoint에서 이어받는다.
 
-Continuous target은 V1에서 Parquet append와 별도 compaction을 사용한다. `RAW`, `BRONZE`, `SILVER` target layer 선택과 Job transform/quality 적용 모델은 Snapshot과 동일하게 유지한다. Snapshot과 Continuous는 broker/topic/consumer group/target/checkpoint identity를 공유한 상태로 동시 실행할 수 없으며, mode나 identity 변경은 Job copy로 분리한다. 상세 계약은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
+Continuous target은 V1에서 batch ID별 idempotent Parquet output과 별도 compaction을 사용한다. 첫 성공 batch는 Catalog dataset/materialization run을 만들고 이후 batch를 append한다. 현재 streaming-safe schema projection과 malformed JSON quarantine만 지원하므로 enabled transform/quality rule은 Continuous Job 생성에서 거절한다. Snapshot과 Continuous는 같은 broker/topic/consumer group을 공유한 상태로 동시 실행할 수 없으며, worker container 상태와 heartbeat 만료를 함께 확인해 고아 `running` 상태를 `failed`로 전이한다. 상세 계약은 [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md)를 따른다.
 
 ### ETL Job 수정 계약
 

@@ -68,6 +68,7 @@ function startWorker(request, containerName) {
     "-e", `ASKLAKE_CONTINUOUS_OFFSET_POLICY=${request.initialOffsetPolicy || "earliest"}`,
     "-e", `ASKLAKE_CONTINUOUS_TRIGGER_SECONDS=${positiveInt(request.triggerIntervalSeconds, 30)}`,
     "-e", `ASKLAKE_CONTINUOUS_MAX_OFFSETS=${positiveInt(request.maxOffsetsPerTrigger, 10000)}`,
+    "-e", `ASKLAKE_CONTINUOUS_INITIAL_COUNTS=${JSON.stringify(request.initialCounts || {})}`,
     "-e", `ASKLAKE_CONTINUOUS_SCHEMA_COLUMNS=${JSON.stringify(request.schemaColumns || [])}`,
     "-e", `ASKLAKE_CONTINUOUS_REPORT_FILE=${reportContainerDir}/${reportFileName(jobId)}`,
     "-e", `ASKLAKE_CONTINUOUS_COMMAND_FILE=${reportContainerDir}/${commandFileName(jobId)}`,

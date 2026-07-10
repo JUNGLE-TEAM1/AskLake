@@ -215,6 +215,13 @@ Phase 2부터 prod-like Compose는 내부 broker `redpanda:9092`를 제공한다
 
 Continuous worker는 Spark 4.0.1/Scala 2.13 Kafka connector를 사용한다. `ASKLAKE_SPARK_KAFKA_PACKAGE=org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.1`과 `ASKLAKE_SPARK_HADOOP_AWS_PACKAGE`을 함께 설정하고, backend Docker socket 및 `ASKLAKE_SPARK_REPORT_DIR` 공유 mount를 유지해야 한다.
 
+Production-like Continuous E2E는 Compose를 먼저 올린 뒤 opt-in으로 실행한다. retained backlog, 신규 이벤트, pause/resume, worker kill 후 checkpoint restart, Catalog materialization, duplicate-free counter를 검증한다.
+
+```bash
+cd backend
+ASKLAKE_RUN_KAFKA_CONTINUOUS_E2E=true npm run verify:kafka-continuous-e2e
+```
+
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest

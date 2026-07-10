@@ -545,11 +545,11 @@ Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
-### Planned Kafka Continuous Runtime
+### Kafka Continuous Runtime
 
-Issue #500 Phase 0 defines a planned `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
+Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
 
-Phase 1 implements `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` as command extensions of `POST /api/etl/jobs/{jobId}/commands`. It persists the control intent and rejects a conflicting active Continuous consumer identity with `409`. Responses remain `controlPlaneOnly` until the Phase 2 worker exists. The later runtime uses a durable Spark checkpoint as source-progress authority and appends Parquet target output in micro-batches. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch uses a stable batch-ID Parquet subpath to avoid duplicate output after a checkpoint retry. Job hydrate verifies Docker worker liveness and heartbeat freshness; an exited/missing/stale active worker becomes `failed`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 ### LineageGraph
 

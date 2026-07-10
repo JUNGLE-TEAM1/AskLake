@@ -26,6 +26,7 @@
     "kafka:reviews-replay": "node scripts/seed-kafka-review-fixture.mjs",
     "verify:kafka-review-scheduled-ingest": "node scripts/verify-kafka-review-scheduled-ingest.mjs",
     "verify:kafka-continuous-contract": "python3 scripts/verify-kafka-continuous-contract.py",
+    "verify:kafka-continuous-e2e": "node scripts/verify-kafka-continuous-e2e.mjs",
     "sources:rest-fixture": "node scripts/source-rest-fixture-server.mjs",
     "sources:fixtures": "node scripts/setup-source-fixtures.mjs",
     "spark:start": "node scripts/start-spark-server.mjs",

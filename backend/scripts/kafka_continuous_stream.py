@@ -3,7 +3,6 @@
 import json
 import os
 import signal
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -18,9 +17,18 @@ REPORT_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_REPORT_FILE"])
 COMMAND_FILE = Path(os.environ["ASKLAKE_CONTINUOUS_COMMAND_FILE"])
 STOP_REQUESTED = False
 QUERY = None
-COUNTERS = {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0, "failedCount": 0}
+INITIAL_COUNTS = json.loads(os.environ.get("ASKLAKE_CONTINUOUS_INITIAL_COUNTS", "{}"))
+COUNTERS = {
+    "consumedCount": int(INITIAL_COUNTS.get("consumedCount") or 0),
+    "storedCount": int(INITIAL_COUNTS.get("storedCount") or 0),
+    "quarantinedCount": int(INITIAL_COUNTS.get("quarantinedCount") or 0),
+    "failedCount": int(INITIAL_COUNTS.get("failedCount") or 0),
+}
 LAST_BATCH_ID: int | None = None
 LAST_FLUSH_AT: str | None = None
+LAST_BATCH_STORED_COUNT = 0
+LAST_BATCH_QUARANTINED_COUNT = 0
+LAST_BATCH_WRITTEN = False
 
 
 def now() -> str:
@@ -38,6 +46,9 @@ def report(status: str, *, batch_id: int | None = None, error: str | None = None
         "heartbeatAt": now(),
         "lastFlushAt": LAST_FLUSH_AT,
         "lastBatchId": str(LAST_BATCH_ID) if LAST_BATCH_ID is not None else None,
+        "lastBatchStoredCount": LAST_BATCH_STORED_COUNT,
+        "lastBatchQuarantinedCount": LAST_BATCH_QUARANTINED_COUNT,
+        "lastBatchWritten": LAST_BATCH_WRITTEN,
         "lag": None,
         **COUNTERS,
         "lastError": error,
@@ -111,16 +122,18 @@ def batch_output_exists(spark: SparkSession, output_path: str) -> bool:
     return bool(path.getFileSystem(hadoop).exists(path))
 
 
-def write_batch_once(spark: SparkSession, frame: DataFrame, root: str, batch_id: int) -> None:
+def write_batch_once(spark: SparkSession, frame: DataFrame, root: str, batch_id: int) -> bool:
     # Spark retries the same batch ID after a failed checkpoint commit. A stable
     # batch directory turns that retry into an idempotent target publication.
     batch_path = f"{root.rstrip('/')}/_batches/batch_id={batch_id}"
-    if not batch_output_exists(spark, batch_path):
-        frame.write.mode("errorifexists").parquet(batch_path)
+    if batch_output_exists(spark, batch_path):
+        return False
+    frame.write.mode("errorifexists").parquet(batch_path)
+    return True
 
 
 def main() -> None:
-    global QUERY
+    global QUERY, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
     signal.signal(signal.SIGTERM, on_signal)
     signal.signal(signal.SIGINT, on_signal)
     schema, aliases = source_schema()
@@ -152,24 +165,30 @@ def main() -> None:
         invalid = batch.where(col("payload").isNull())
         valid_count = valid.count()
         invalid_count = total - valid_count
+        valid_written = False
+        invalid_written = False
         if valid_count:
             selected = [col(f"payload.`{source}`").alias(target) for source, target in aliases]
-            write_batch_once(
+            valid_written = write_batch_once(
                 spark,
                 valid.select(*selected, col("kafka_timestamp"), col("partition").alias("kafka_partition"), col("offset").alias("kafka_offset"), current_timestamp().alias("ingested_at")),
                 output_path,
                 batch_id,
             )
         if invalid_count:
-            write_batch_once(
+            invalid_written = write_batch_once(
                 spark,
                 invalid.select("topic", "partition", "offset", "kafka_timestamp", "raw_payload", current_timestamp().alias("quarantined_at")),
                 quarantine_path,
                 batch_id,
             )
-        COUNTERS["consumedCount"] += total
-        COUNTERS["storedCount"] += valid_count
-        COUNTERS["quarantinedCount"] += invalid_count
+        LAST_BATCH_STORED_COUNT = valid_count if valid_written else 0
+        LAST_BATCH_QUARANTINED_COUNT = invalid_count if invalid_written else 0
+        LAST_BATCH_WRITTEN = valid_written or invalid_written
+        if LAST_BATCH_WRITTEN:
+            COUNTERS["consumedCount"] += total
+            COUNTERS["storedCount"] += LAST_BATCH_STORED_COUNT
+            COUNTERS["quarantinedCount"] += LAST_BATCH_QUARANTINED_COUNT
         report("running", batch_id=batch_id)
 
     report("starting")
@@ -177,6 +196,8 @@ def main() -> None:
         .option("checkpointLocation", checkpoint_path)
         .trigger(processingTime=f"{trigger_seconds} seconds")
         .start())
+    if STOP_REQUESTED:
+        QUERY.stop()
     report("running")
     while QUERY.isActive:
         QUERY.awaitTermination(5)

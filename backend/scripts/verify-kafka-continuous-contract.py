@@ -1,4 +1,8 @@
+import json
+import os
 import sys
+import tempfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -85,13 +89,18 @@ def main() -> None:
 
     original_get = etl_repository.get_kafka_continuous_runtime
     original_find = etl_repository.find_conflicting_kafka_continuous_runtime
+    original_snapshot_find = etl_repository.find_conflicting_kafka_snapshot
     original_list_runs = etl_repository.list_runs_for_job
     original_save = etl_repository.save_kafka_continuous_command
     original_permissions = etl_service.with_job_permissions
     original_worker = etl_service.run_kafka_continuous_worker
+    original_status = etl_service.continuous_worker_status
+    original_dataset_get = etl_repository.get_dataset_by_id
+    original_dataset_save = etl_repository.save_dataset
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
+        etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: None
         etl_repository.list_runs_for_job = lambda _db, _job_id: []
         etl_repository.save_kafka_continuous_command = lambda _db, saved_job, _runtime: etl_repository.job_to_schema(None, saved_job)
         etl_service.with_job_permissions = lambda _db, job_schema, _actor: job_schema
@@ -111,13 +120,78 @@ def main() -> None:
             assert exc.status_code == 409
         else:
             raise AssertionError("Starting an active continuous Job must conflict.")
+
+        runtime.status = "stopped"
+        job.status = "stopped"
+        etl_repository.find_conflicting_kafka_snapshot = lambda _db, **_kwargs: type("Snapshot", (), {"job_id": "JOB-SNAPSHOT", "snapshot_id": "snapshot-conflict"})()
+        try:
+            etl_service.command_kafka_continuous_job(None, job, "startContinuous", ActorContext())
+        except ApiError as exc:
+            assert exc.status_code == 409
+            assert exc.details["activeSnapshotId"] == "snapshot-conflict"
+        else:
+            raise AssertionError("Starting against an active Snapshot must conflict.")
+
+        etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: runtime
+        try:
+            etl_service.kafka_request_with_durable_snapshot(None, {
+                "broker": runtime.broker,
+                "consumerGroupId": runtime.consumer_group_id,
+                "timeoutMs": 1000,
+                "topic": runtime.topic,
+            }, "JOB-SNAPSHOT")
+        except ApiError as exc:
+            assert exc.status_code == 409
+            assert exc.details["activeJobId"] == runtime.job_id
+        else:
+            raise AssertionError("Starting a Snapshot against an active Continuous worker must conflict.")
+        etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
+
+        captured_dataset = {}
+        etl_repository.get_dataset_by_id = lambda _db, _dataset_id: None
+        etl_repository.save_dataset = lambda _db, dataset: captured_dataset.setdefault("dataset", dataset)
+        etl_service.materialize_continuous_batch(None, job, runtime, {
+            "lastBatchId": "7",
+            "lastBatchStoredCount": 2,
+            "lastBatchWritten": True,
+        })
+        assert captured_dataset["dataset"].payload["materializationRuns"][0]["sourceKind"] == "kafka_continuous"
+        assert captured_dataset["dataset"].payload["storageLocation"].endswith("/_batches")
+
+        with tempfile.TemporaryDirectory() as report_dir:
+            previous_report_dir = os.environ.get("ASKLAKE_SPARK_REPORT_DIR")
+            os.environ["ASKLAKE_SPARK_REPORT_DIR"] = report_dir
+            runtime.status = "running"
+            job.status = "running"
+            heartbeat = (datetime.now(UTC) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+            report_path = etl_service.continuous_runtime_report_path(job.id)
+            report_path.write_text(json.dumps({
+                "status": "running",
+                "heartbeatAt": heartbeat,
+                "consumedCount": 2,
+                "storedCount": 2,
+                "quarantinedCount": 0,
+                "failedCount": 0,
+            }), encoding="utf-8")
+            etl_service.continuous_worker_status = lambda _job, _runtime: {"containerState": "running"}
+            etl_service.refresh_kafka_continuous_runtime(None, job)
+            assert runtime.status == "failed"
+            assert "heartbeat expired" in runtime.last_error
+            if previous_report_dir is None:
+                os.environ.pop("ASKLAKE_SPARK_REPORT_DIR", None)
+            else:
+                os.environ["ASKLAKE_SPARK_REPORT_DIR"] = previous_report_dir
     finally:
         etl_repository.get_kafka_continuous_runtime = original_get
         etl_repository.find_conflicting_kafka_continuous_runtime = original_find
+        etl_repository.find_conflicting_kafka_snapshot = original_snapshot_find
         etl_repository.list_runs_for_job = original_list_runs
         etl_repository.save_kafka_continuous_command = original_save
         etl_service.with_job_permissions = original_permissions
         etl_service.run_kafka_continuous_worker = original_worker
+        etl_service.continuous_worker_status = original_status
+        etl_repository.get_dataset_by_id = original_dataset_get
+        etl_repository.save_dataset = original_dataset_save
 
     print("verify-kafka-continuous-contract: ok")
 

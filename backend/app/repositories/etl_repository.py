@@ -308,6 +308,36 @@ def get_active_kafka_snapshot(
     return db.scalars(statement).first()
 
 
+def find_conflicting_kafka_snapshot(
+    db: Session,
+    *,
+    broker: str,
+    topic: str,
+    consumer_group_id: str,
+    excluded_job_id: str | None,
+) -> KafkaSnapshotModel | None:
+    """Return an in-flight snapshot using the same Kafka consumer identity."""
+    ensure_schema(db)
+    snapshots = db.scalars(
+        select(KafkaSnapshotModel)
+        .where(
+            KafkaSnapshotModel.topic == topic,
+            KafkaSnapshotModel.consumer_group_id == consumer_group_id,
+            KafkaSnapshotModel.status == "running",
+        )
+        .order_by(KafkaSnapshotModel.created_at.desc())
+    ).all()
+    for snapshot in snapshots:
+        if excluded_job_id is not None and snapshot.job_id == excluded_job_id:
+            continue
+        snapshot_broker = str((snapshot.snapshot or {}).get("broker") or "")
+        # Older records predate the broker field; blocking them is safer than
+        # allowing two consumers to advance an unknown shared identity.
+        if not snapshot_broker or snapshot_broker == broker:
+            return snapshot
+    return None
+
+
 def save_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel) -> KafkaSnapshotModel:
     ensure_schema(db)
     db.add(snapshot)

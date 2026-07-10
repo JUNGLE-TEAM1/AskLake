@@ -46,7 +46,7 @@ type KafkaContinuousConfig = {
 - `executionMode` is selected on creation and becomes immutable after creation. Changing the mode, source identity, consumer group, target identity, or checkpoint identity requires Job copy and new Job creation.
 - A fresh continuous Job with `initialOffsetPolicy: "earliest"` first consumes retained Kafka backlog and then tails new messages. `latest` processes only messages available after the streaming query begins.
 - Continuous Job source progress is owned by the durable Spark checkpoint. `consumerGroupId` remains source identity metadata and must not be shared with another active Snapshot or Continuous Job.
-- `RAW`, `BRONZE`, and `SILVER` remain valid target layer choices. Target layer is Catalog/target metadata and does not independently enable or disable configured transform or quality rules. `GOLD` streaming join/aggregation remains excluded.
+- `RAW`, `BRONZE`, and `SILVER` remain valid target layer choices. `GOLD` streaming join/aggregation remains excluded. Current V1 only supports schema projection and malformed-JSON quarantine, so enabled transform or quality rules are rejected at Continuous Job creation instead of being ignored.
 
 ## 4. Continuous Runtime Contract
 
@@ -77,7 +77,7 @@ type KafkaContinuousRuntime = {
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
 - Each successful micro-batch appends the selected target dataset and advances the checkpoint. Phase 3 supports schema projection and malformed-JSON quarantine; enabled visual transform and quality rules are rejected for Continuous Job creation until they are made streaming-safe in a later phase.
-- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. Restart resumes from that point; Phase 3 writes each Spark batch ID to a stable target subpath so a retried batch does not create another Parquet output. Catalog materialization run publication remains a later phase.
+- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. Restart resumes from that point; each Spark batch ID uses a stable target subpath so a retried batch does not create another Parquet output or counter increment. A successful batch is materialized into the Catalog with its own batch run ID.
 - Malformed payloads and `Quarantine` quality results preserve raw payload plus Kafka context in a target-adjacent quarantine output. A quarantined micro-batch must not silently drop source progress.
 - Continuous writes use append-oriented Parquet output in V1. Compaction is a separate maintenance operation; JSONL snapshot direct targets remain supported for Snapshot Jobs.
 
@@ -98,18 +98,18 @@ type JobCommand =
   | "stopContinuous";
 ```
 
-- `startContinuous`: persists a long-running stream start request.
-- `pauseContinuous`: persists a request to stop source consumption after the current committed micro-batch.
+- `startContinuous`: starts a long-running stream worker.
+- `pauseContinuous`: records pause intent and signals the worker to stop after its current checkpointed micro-batch.
 - `resumeContinuous`: persists a resume request for the durable checkpoint.
 - `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
-- Phase 3 command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads. A `starting`, `pausing`, or `stopping` state remains transitional until the worker report confirms the terminal or running state.
+- Command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads together with Docker container liveness. An exited, missing, or stale active worker transitions to `failed`.
 
 ## 6. Mutual Exclusion and Backfill
 
 - A broker/topic/consumer group has at most one active Continuous consumer. Independent fan-out targets must use distinct consumer groups.
-- Snapshot and Continuous Jobs cannot run concurrently when they share the same broker/topic/consumer group.
+- Snapshot and Continuous Jobs cannot run concurrently when they share the same broker/topic/consumer group. Both start paths reject the conflict with `409`.
 - Backfill is normally handled by first starting a continuous Job with `earliest`, which drains retained backlog before tailing new events. Snapshot Jobs remain available for controlled historical replay, deterministic range retry, and manual/scheduled ingestion.
 - The system must reject a conflicting command with `409` and identify the active Job/runtime in the error details.
 
