@@ -108,8 +108,7 @@
 .ai-chat-actions { display: flex; align-items: center; gap: 8px; }
 .ai-context-picker { position: relative; }
 
-.ai-context-trigger,
-.ai-new-conversation {
+.ai-context-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -249,9 +248,6 @@
   .ai-chat-actions { gap: 6px; }
   .ai-context-trigger span,
   .ai-context-trigger svg:last-child { display: none; }
-  .ai-context-trigger,
-  .ai-new-conversation { width: 34px; justify-content: center; padding: 0; }
-  .ai-new-conversation { font-size: 0; }
-  .ai-new-conversation svg { width: 16px; height: 16px; }
+  .ai-context-trigger { width: 34px; justify-content: center; padding: 0; }
   .ai-empty-suggestions { grid-template-columns: 1fr; }
 }

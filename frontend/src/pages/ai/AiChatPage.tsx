@@ -227,7 +227,6 @@ export function AiChatPage({
                 </div>
               ) : null}
             </div>
-            <button className="secondary-button ai-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
           </div>
         </header>
 
