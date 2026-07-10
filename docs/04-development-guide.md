@@ -33,7 +33,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 SQL 분석의 shadcn `Tabs`/실제 `Slider`/`Bubble`, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -78,14 +78,11 @@ AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
 ```
 
 Local Compose의 Airflow task에는 `AIRFLOW_INTERNAL_BASE_URL=http://host.docker.internal:8080`과 같은 내부 토큰이 기본 주입된다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Airflow가 backend의 실 Spark runner를 호출하고, Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다. Spark 성공 뒤에는 같은 `runId`의 Catalog dataset materialization도 확인한다.
-
-
-대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 기본적으로 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API 경로 또는 origin이 필요할 때만 아래 값을 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
-설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
 
 ```bash
-VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+# VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 ```
 
 대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.
@@ -115,7 +112,9 @@ cd backend
 npm run verify:dashboard-assistant-guard
 ```
 
-Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 Airflow 접수 직후 non-terminal 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Airflow task와 Spark 처리 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
+
+Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd backend && npm run verify:job-list`로 먼저 확인한다. 전체 `npm run verify`는 PostgreSQL, MinIO, REST fixture를 포함한다.
 
 ### AI 활용 UI Skeleton
 
