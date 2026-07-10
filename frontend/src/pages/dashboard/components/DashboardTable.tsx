@@ -10,7 +10,7 @@ import {
   DataTableStackedCell,
 } from "@/components/ui/data-table-stacked-cell";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
+import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
 
@@ -57,7 +57,8 @@ export function DashboardTable({
         accessorKey: "name",
         cell: ({ row }) => {
           const dashboard = row.original;
-          const tags = splitDashboardTags(dashboard.tags);
+          const tags = localizeDashboardTags(dashboard.tags);
+          const dashboardName = localizeDashboardName(dashboard);
           return (
             <DataTableStackedCell className="gap-1.5">
               <Button
@@ -66,7 +67,7 @@ export function DashboardTable({
                 variant="link"
                 onClick={() => onOpenDetail(dashboard)}
               >
-                {dashboard.name}
+                {dashboardName}
               </Button>
               <DataTableCellSecondary className="text-base" title={tags.join(" · ")}>
                 {tags.length ? tags.join(" · ") : "태그 없음"}
@@ -112,15 +113,16 @@ export function DashboardTable({
         accessorKey: "owner",
         cell: ({ row }) => {
           const dashboard = row.original;
+          const owner = localizeDashboardOwner(dashboard.owner);
           return (
             <div className="flex min-w-0 items-center gap-2.5 text-left">
               <Avatar size="lg">
                 <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
-                  {getOwnerInitials(dashboard.owner)}
+                  {getOwnerInitials(owner)}
                 </AvatarFallback>
               </Avatar>
               <div className="grid min-w-0 gap-1">
-                <span className="truncate text-lg font-semibold text-slate-800" title={dashboard.owner}>{dashboard.owner}</span>
+                <span className="truncate text-lg font-semibold text-slate-800" title={owner}>{owner}</span>
                 <span className="truncate text-base font-medium text-slate-500" title={dashboard.updated}>
                   최근 수정 {dashboard.updated}
                 </span>
@@ -155,7 +157,7 @@ export function DashboardTable({
       viewportClassName="dashboard-table-viewport"
       renderRowActions={(row) => (
         <Button
-          aria-label={`${row.original.name} 삭제`}
+          aria-label={`${localizeDashboardName(row.original)} 삭제`}
           className="text-slate-500 hover:text-red-600"
           disabled={deletingDashboardId === row.original.id}
           title="대시보드 삭제"
