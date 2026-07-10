@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -10,7 +10,13 @@ from app.schemas.etl import (
     AirflowRunExecutionResponse,
     JobCommandRequest,
     JobCommandResponse,
+    JobListResponse,
     JobRowData,
+    JobRunOutcome,
+    JobScheduleKind,
+    JobStatus,
+    ReviewPipelineRequest,
+    ReviewSnapshot,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     ScheduledJobRunRequest,
@@ -40,6 +46,11 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
 @router.post("/schema-inference", response_model=SchemaDraft)
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
+
+
+@router.post("/review", response_model=ReviewSnapshot)
+def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+    return etl_service.review_pipeline(request)
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
@@ -73,12 +84,23 @@ def create_job(
     return etl_service.create_pipeline(db, request, actor_name)
 
 
-@router.get("/jobs", response_model=list[JobRowData])
+@router.get("/jobs", response_model=JobListResponse)
 def list_jobs(
+    last_run_outcome: JobRunOutcome | None = Query(default=None, alias="lastRunOutcome"),
+    owner: str | None = Query(default=None),
+    status_filter: list[JobStatus] = Query(default_factory=list, alias="status"),
+    schedule_kind: JobScheduleKind | None = Query(default=None, alias="scheduleKind"),
     db: Session = Depends(get_db),
     actor: ActorContext = Depends(get_actor_context),
-) -> list[JobRowData]:
-    return etl_service.list_jobs(db, actor)
+) -> JobListResponse:
+    return etl_service.list_jobs(
+        db,
+        actor,
+        last_run_outcome=last_run_outcome,
+        owner=owner,
+        statuses=status_filter,
+        schedule_kind=schedule_kind,
+    )
 
 
 @router.get("/jobs/{job_id}", response_model=JobRowData)

@@ -86,7 +86,7 @@ async function runSmoke() {
     sourceType: "REST API",
     targetDataset,
     compression: "Snappy",
-    partition: "none",
+    partition: "customer_id/amount",
     storagePath: "",
     storageType: "Local",
     targetFormat: "Parquet",
@@ -94,6 +94,7 @@ async function runSmoke() {
   });
 
   assert(create.job?.id, "ETL job create response should include job.id.");
+  assert(create.job?.partition === "customer_id/amount", "ETL job should preserve multi-column partition metadata.");
   assert(create.catalogTarget?.id, "ETL job create response should include catalogTarget.id.");
   smokeJobId = create.job.id;
   smokeDatasetId = create.catalogTarget.id;

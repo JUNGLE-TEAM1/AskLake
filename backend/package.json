@@ -7,6 +7,7 @@
     "dev": "node src/server.mjs",
     "start": "node src/server.mjs",
     "verify": "node scripts/verify-backend.mjs",
+    "verify:job-list": "node scripts/verify-job-list.mjs",
     "verify:fastapi-etl-catalog": "node scripts/verify-fastapi-etl-catalog.mjs",
     "verify:etl-lineage": "node scripts/verify-etl-text-lineage.mjs",
     "verify:identity-admin": "node scripts/verify-identity-admin.mjs",
