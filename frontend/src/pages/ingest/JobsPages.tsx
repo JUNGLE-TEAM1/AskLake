@@ -91,12 +91,14 @@ import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutio
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
-  queued: { className: "scheduled", label: "대기 중" },
+  queued: { className: "scheduled", label: "실행 대기" },
   running: { className: "running", label: "실행 중" },
   failed: { className: "failed", label: "실패" },
   success: { className: "success", label: "성공" },
-  canceled: { className: "canceled", label: "취소됨" },
+  canceled: { className: "canceled", label: "취소" },
 };
+
+const runStatusFilterOrder: JobRunStatus[] = ["queued", "running", "success", "failed", "canceled"];
 
 const dagStepStatusMeta: Record<JobDagStepStatus, { label: string }> = {
   pending: { label: "대기" },
@@ -129,6 +131,14 @@ function getRunStatusTone(status: JobRunStatus): StatusBadgeTone {
   if (status === "success") return "success";
   if (status === "running") return "success";
   return "muted";
+}
+
+function getRunStatusFilterDotClassName(status: JobRunStatus) {
+  if (status === "success") return "bg-emerald-500";
+  if (status === "failed") return "bg-red-500";
+  if (status === "running") return "bg-blue-500";
+  if (status === "queued") return "bg-sky-400";
+  return "bg-slate-400";
 }
 
 function getDagStatusTone(status: JobDagStepStatus): StatusBadgeTone {
@@ -542,12 +552,18 @@ function JobStatusFilter({
 }
 
 function RunStatusFilter({
+  counts,
   onValueChange,
+  statuses,
   value,
 }: {
+  counts: Record<JobRunStatus, number>;
   onValueChange: (status: "all" | JobRunStatus) => void;
+  statuses: JobRunStatus[];
   value: "all" | JobRunStatus;
 }) {
+  const totalCount = Object.values(counts).reduce((total, count) => total + count, 0);
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -562,16 +578,22 @@ function RunStatusFilter({
           <Filter className="size-4" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className="min-w-40">
+      <DropdownMenuContent align="center" className="min-w-48">
         <DropdownMenuLabel>실행 상태 필터</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup value={value} onValueChange={(nextValue) => onValueChange(nextValue as "all" | JobRunStatus)}>
-          <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="queued">대기 중</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="running">실행 중</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="success">성공</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="failed">실패</DropdownMenuRadioItem>
-          <DropdownMenuRadioItem value="canceled">취소됨</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem className="gap-2 text-base" value="all">
+            <span className="size-2 rounded-full bg-slate-500" aria-hidden="true" />
+            <span>전체</span>
+            <span className="ml-auto text-sm font-semibold tabular-nums text-slate-500">{totalCount}</span>
+          </DropdownMenuRadioItem>
+          {statuses.map((status) => (
+            <DropdownMenuRadioItem className="gap-2 text-base" key={status} value={status}>
+              <span className={cn("size-2 rounded-full", getRunStatusFilterDotClassName(status))} aria-hidden="true" />
+              <span>{runStatusMeta[status].label}</span>
+              <span className="ml-auto text-sm font-semibold tabular-nums text-slate-500">{counts[status]}</span>
+            </DropdownMenuRadioItem>
+          ))}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -1989,6 +2011,12 @@ export function JobRunsPage({
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");
   const runs = evidence?.runs.length ? evidence.runs : job.runHistory ?? [];
+  const runStatusCounts = useMemo(() => {
+    const counts: Record<JobRunStatus, number> = { canceled: 0, failed: 0, queued: 0, running: 0, success: 0 };
+    runs.forEach((run) => { counts[run.status] += 1; });
+    return counts;
+  }, [runs]);
+  const availableRunStatuses = runStatusFilterOrder.filter((status) => runStatusCounts[status] > 0);
   const filteredRuns = runStatusFilter === "all" ? runs : runs.filter((run) => run.status === runStatusFilter);
   const latestRun = runs[0];
   const totalRunsValue = job.stats?.totalRuns
@@ -2019,12 +2047,20 @@ export function JobRunsPage({
     },
     {
       accessorKey: "status",
-      header: () => <RunStatusFilter value={runStatusFilter} onValueChange={changeRunStatusFilter} />,
+      header: () => (
+        <RunStatusFilter
+          counts={runStatusCounts}
+          onValueChange={changeRunStatusFilter}
+          statuses={availableRunStatuses}
+          value={runStatusFilter}
+        />
+      ),
       cell: ({ row }) => <RunStatusPill status={row.original.status} />,
       enableSorting: false,
       meta: { align: "center", cellClassName: "h-px p-0", headerClassName: "text-base", widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
     },
     {
+      accessorFn: (run) => run.status === "running" ? Number.MAX_SAFE_INTEGER : getRunStartedAtSortValue(run.startedAt),
       id: "executionTime",
       header: "실행 시간",
       cell: ({ row }) => (
@@ -2109,8 +2145,9 @@ export function JobRunsPage({
             columns={runColumns}
             data={filteredRuns}
             emptyState={{ title: runStatusFilter === "all" ? "아직 실행 이력이 없습니다." : "선택한 상태의 실행 이력이 없습니다." }}
-            enableSorting={false}
+            enableSorting
             getRowClassName={(row) => row.original.status === "failed" ? "bg-red-50/45 hover:bg-red-50/70" : row.original.status === "canceled" ? "bg-slate-50/80" : undefined}
+            initialSorting={[{ desc: true, id: "executionTime" }]}
             pagination={{ label: "실행 이력", pageSize: 5, showSummary: false }}
             renderRowActions={(row) => (
               <div className="grid w-full justify-items-center gap-1.5 text-center">
@@ -2161,6 +2198,12 @@ function getRunResultSummary(run: JobRunSummary) {
   if (run.status === "running") return { detail: "현재 단계 정보를 실행 단계에서 확인할 수 있습니다.", title: run.failedStage !== "-" ? run.failedStage : "진행 중" };
   if (run.status === "queued") return { detail: "실행 리소스 할당을 기다리고 있습니다.", title: "실행 대기" };
   return { detail: "모든 실행 단계가 정상적으로 완료되었습니다.", title: "정상 완료" };
+}
+
+function getRunStartedAtSortValue(startedAt: string) {
+  const normalized = startedAt.includes("T") ? startedAt : startedAt.replace(" ", "T");
+  const timestamp = Date.parse(normalized);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
 function RunLogModal({ job, onClose, run }: { job: JobRowData; onClose: () => void; run: JobRunSummary }) {

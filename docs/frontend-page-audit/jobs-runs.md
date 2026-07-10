@@ -34,6 +34,9 @@
 - 페이지당 5개 Run을 표시합니다.
 - 표 밖의 독립 상태 필터는 제거했습니다.
 - `/jobs` 목록과 같은 방식으로 상태 column header에 `DropdownMenu` filter를 결합했습니다.
+- 상태 filter option은 현재 Run 목록에 실제로 존재하는 상태만 표시하고 각 상태의 건수를 함께 노출합니다.
+- 상태 문구는 `실행 대기`, `실행 중`, `성공`, `실패`, `취소`를 `runStatusMeta` 한 곳에서 공유합니다.
+- `실행 ID`와 `실행 시간`은 TanStack sorting을 제공하며 기본 정렬은 실행 시간 내림차순입니다.
 - `/jobs` 목록과 같은 header/filter/action/pagination 시각 체계를 사용하되, 실행 이력은 정보 밀도에 맞춰 860px 최소 table, 48px header, 96px row의 compact density를 사용합니다.
 - 공통 컴포넌트 사용은 동일한 물리 크기를 뜻하지 않으며, 일반 데스크톱에서는 모든 열과 action이 한 화면에 보이도록 폭을 제한합니다.
 - 날짜 선택처럼 기능이 없는 가짜 버튼은 제거했습니다.
@@ -158,6 +161,8 @@ Airflow DAG ID, DAG Run ID, Airflow URL, 동기화 시각은 현재 계약에 �
 - `/jobs/JOB-001/runs`: 성공 Run과 통계 카드
 - `/jobs/JOB-002/runs`: 실패 Run, 빨간 badge, 실패 요약
 - 상태 column header filter 선택 및 해제
+- 현재 Run 목록에 없는 상태 option이 filter에서 제외되는지 확인
+- 실행 ID 오름차순/내림차순 및 실행 시간 최신순/과거순 정렬 확인
 - `/jobs` 목록과 실행 이력의 header, action, pagination 시각 체계 비교
 - 일반 데스크톱에서 실행 이력 전체 열과 action이 가로 scroll 없이 보이는지 확인
 - 페이지당 5개 pagination
