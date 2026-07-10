@@ -169,6 +169,20 @@ def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData
     return [job for job in jobs if job.permissions.can_view]
 
 
+def sync_active_kafka_continuous_runtimes() -> None:
+    """Persist continuous worker progress without depending on UI polling."""
+    from app.core.database import SessionLocal
+
+    active_statuses = {"starting", "running", "pausing", "stopping"}
+    with SessionLocal() as db:
+        for job in etl_repository.list_job_models(db):
+            if job.execution_mode != "continuous":
+                continue
+            runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+            if runtime is not None and runtime.status in active_statuses:
+                refresh_kafka_continuous_runtime(db, job)
+
+
 def run_due_scheduled_jobs(
     db: Session,
     request: ScheduledJobRunRequest,

@@ -15,15 +15,16 @@ let jobId = "";
 
 try {
   rpk(["topic", "create", topic]);
-  produce(3, 0);
+  produce(2, 0);
+  produceMalformed();
   const created = await post("/api/etl/jobs", jobPayload());
   jobId = created.job.id;
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "startContinuous" });
-  await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 3, "retained backlog consumption");
   await waitFor(async () => (await datasets()).some((dataset) => dataset.id === `ds_${target}`), "Catalog materialization");
+  await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 2, "retained backlog consumption");
 
-  produce(2, 3);
-  await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 5, "new Kafka event consumption");
+  produce(2, 2);
+  await waitFor(async () => (await getJob()).continuousRuntime?.storedCount >= 4, "new Kafka event consumption");
   await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pauseContinuous" });
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "paused", "pause");
 
@@ -35,7 +36,9 @@ try {
   await waitFor(async () => (await getJob()).continuousRuntime?.status === "running", "checkpoint restart");
 
   const afterRestart = await getJob();
-  assert(afterRestart.continuousRuntime.storedCount === 5, "Restart must not duplicate completed batch rows or reset counters.");
+  assert(afterRestart.continuousRuntime.consumedCount === 5, "Restart must preserve consumed count.");
+  assert(afterRestart.continuousRuntime.storedCount === 4, "Restart must not duplicate completed batch rows or reset counters.");
+  assert(afterRestart.continuousRuntime.quarantinedCount === 1, "Malformed payload count must survive restart.");
   console.log("verify-kafka-continuous-e2e: ok");
 } finally {
   if (jobId) await post(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "stopContinuous" }).catch(() => undefined);
@@ -71,6 +74,10 @@ function produce(count, offsetStart) {
     created_at: "2026-07-11T00:00:00Z",
   })).join("\n") + "\n";
   rpk(["topic", "produce", topic], lines);
+}
+
+function produceMalformed() {
+  rpk(["topic", "produce", topic], "{not-json}\n");
 }
 
 function killWorker() {

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,8 +50,8 @@ async function startWorker(request, containerName) {
 
   ensureSparkServer();
   await ensureOutputBucket(required(request.outputPath, "outputPath"));
-  const report = readReport(jobId);
-  if (report?.status === "paused" || report?.status === "stopped") clearCommand(jobId);
+  clearCommand(jobId);
+  if (existsSync(reportFile(jobId))) unlinkSync(reportFile(jobId));
   const packages = sparkPackages();
   const args = [
     "run", "-d", "--name", containerName, "--network", network,

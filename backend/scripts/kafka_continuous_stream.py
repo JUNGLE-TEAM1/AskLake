@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import col, current_timestamp, from_json
+from pyspark.sql.functions import col, current_timestamp, from_json, sum as spark_sum
 from pyspark.sql.types import BooleanType, DoubleType, LongType, StringType, StructField, StructType, TimestampType
 
 
@@ -132,6 +132,41 @@ def write_batch_once(spark: SparkSession, frame: DataFrame, root: str, batch_id:
     return True
 
 
+def manifest_path(root: str, batch_id: int) -> str:
+    return f"{root.rstrip('/')}/_batch-manifests/batch_id={batch_id}"
+
+
+def read_batch_manifest(spark: SparkSession, root: str, batch_id: int) -> dict[str, int] | None:
+    path = manifest_path(root, batch_id)
+    if not batch_output_exists(spark, path):
+        return None
+    row = spark.read.json(path).first()
+    if row is None:
+        return None
+    return {
+        "consumedCount": int(row["consumedCount"] or 0),
+        "storedCount": int(row["storedCount"] or 0),
+        "quarantinedCount": int(row["quarantinedCount"] or 0),
+    }
+
+
+def write_batch_manifest(spark: SparkSession, root: str, batch_id: int, counts: dict[str, int]) -> None:
+    spark.createDataFrame([counts]).write.mode("errorifexists").json(manifest_path(root, batch_id))
+
+
+def recover_published_counts(spark: SparkSession, root: str) -> dict[str, int]:
+    manifest_root = f"{root.rstrip('/')}/_batch-manifests"
+    if not batch_output_exists(spark, manifest_root):
+        return {"consumedCount": 0, "storedCount": 0, "quarantinedCount": 0}
+    row = (spark.read.json(f"{manifest_root}/*")
+        .agg(
+            spark_sum("consumedCount").alias("consumedCount"),
+            spark_sum("storedCount").alias("storedCount"),
+            spark_sum("quarantinedCount").alias("quarantinedCount"),
+        ).first())
+    return {key: int(row[key] or 0) for key in ("consumedCount", "storedCount", "quarantinedCount")}
+
+
 def main() -> None:
     global QUERY, LAST_BATCH_STORED_COUNT, LAST_BATCH_QUARANTINED_COUNT, LAST_BATCH_WRITTEN
     signal.signal(signal.SIGTERM, on_signal)
@@ -144,6 +179,8 @@ def main() -> None:
 
     spark = SparkSession.builder.appName(f"asklake-kafka-continuous-{JOB_ID}").getOrCreate()
     configure_s3a(spark)
+    for key, value in recover_published_counts(spark, output_path).items():
+        COUNTERS[key] = max(COUNTERS[key], value)
     source = (spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", os.environ["ASKLAKE_CONTINUOUS_BROKER"])
         .option("subscribe", os.environ["ASKLAKE_CONTINUOUS_TOPIC"])
@@ -168,6 +205,13 @@ def main() -> None:
             # the stream is idle, and those must not erase Catalog retry state.
             report("running")
             return
+        published = read_batch_manifest(spark, output_path, batch_id)
+        if published is not None:
+            LAST_BATCH_STORED_COUNT = published["storedCount"]
+            LAST_BATCH_QUARANTINED_COUNT = published["quarantinedCount"]
+            LAST_BATCH_WRITTEN = True
+            report("running", batch_id=batch_id)
+            return
         valid = batch.where(col("payload").isNotNull())
         invalid = batch.where(col("payload").isNull())
         valid_count = valid.count()
@@ -189,20 +233,20 @@ def main() -> None:
                 quarantine_path,
                 batch_id,
             )
-        LAST_BATCH_STORED_COUNT = valid_count if valid_written else 0
-        LAST_BATCH_QUARANTINED_COUNT = invalid_count if invalid_written else 0
-        LAST_BATCH_WRITTEN = valid_written or invalid_written
-        if LAST_BATCH_WRITTEN:
-            COUNTERS["consumedCount"] += total
-            COUNTERS["storedCount"] += LAST_BATCH_STORED_COUNT
-            COUNTERS["quarantinedCount"] += LAST_BATCH_QUARANTINED_COUNT
-        elif total:
-            # A replayed Spark batch finds its stable output path already
-            # committed. It must not increment counters, but it is still a
-            # successful batch that Catalog materialization may need to retry.
-            LAST_BATCH_STORED_COUNT = valid_count
-            LAST_BATCH_QUARANTINED_COUNT = invalid_count
-            LAST_BATCH_WRITTEN = True
+        # The manifest is published only after both valid and quarantine paths
+        # are durable. It is the accounting authority across worker restarts.
+        published_counts = {
+            "consumedCount": total,
+            "storedCount": valid_count,
+            "quarantinedCount": invalid_count,
+        }
+        write_batch_manifest(spark, output_path, batch_id, published_counts)
+        LAST_BATCH_STORED_COUNT = valid_count
+        LAST_BATCH_QUARANTINED_COUNT = invalid_count
+        LAST_BATCH_WRITTEN = True
+        COUNTERS["consumedCount"] += total
+        COUNTERS["storedCount"] += valid_count
+        COUNTERS["quarantinedCount"] += invalid_count
         report("running", batch_id=batch_id)
 
     report("starting")
