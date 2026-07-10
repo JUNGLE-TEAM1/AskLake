@@ -62,7 +62,7 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL preview, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다.
+현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. 현재 SQL runtime은 DuckDB Preview 호환 구현이며, 목표 Trino 계약은 `docs/trino-query-run-contract.md`를 따른다.
 Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ### Kafka Snapshot Direct Target 전환 계획
@@ -100,7 +100,7 @@ Kafka Job의 source identity(`sourceType`, `sourceLabel`, `sourceConfig`)는 bro
 - AI 활용 Chat UI 계약: `docs/ai-chat-ui-contract.md`
 - dashboard list/runtime API adapter와 fallback: `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts`
 - SQL 결과 저장 UI는 `useAskLakeData.prepareSqlDatasetJobDraft`에서 SQL Result metadata를 `DraftPipeline`으로 변환한 뒤 ETL Review 화면으로 이동한다.
-- SQL 결과 대시보드 생성은 SQL 화면의 모달 안에 `DashboardPage`의 `source: "sql"`, `view: "runtime"`, `runtimeMode: "draft"` entry를 렌더링해, 현재 페이지를 떠나지 않고 대시보드 builder에서 SQL 결과 컬럼과 row sample을 직접 시각화하도록 한다.
+- SQL 결과 대시보드 생성은 SQL 화면의 모달 안에 `DashboardPage`의 `source: "sql"`, `view: "runtime"`, `runtimeMode: "draft"` entry를 렌더링한다. Trino 전환 후 draft는 완료된 Query Run의 retention 결과를 임시 source로 쓰며, publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
 - SQL 분석 화면은 Catalog에서 넘어온 dataset과 사용자가 추가한 dataset을 오른쪽 `선택 테이블` 사이드바에 단일 목록으로 표시한다. 왼쪽 `분석 테이블`은 schema preview를 펼쳐 확인한 뒤 선택할 수 있고, 오른쪽 schema 영역은 선택 테이블 목록에서 클릭한 단일 dataset의 schema만 표시한다. schema column 클릭은 SQL editor 커서 위치에 column reference를 삽입하는 보조 동작이며, 같은 column name이 여러 선택 테이블에 있으면 `table.column` 형태로 삽입한다. SQL editor의 사용자가 직접 작성한 query text가 실행 기준 source of truth이며 UI 선택 상태로 역동기화하지 않는다. 선택 테이블을 제거해도 SQL text는 자동 재작성하지 않고, 제거된 table을 계속 참조하면 preview 전 table context 검증에서 차단한다. UI에서는 base/reference를 구분하지 않고, 내부 API payload만 기존 `sourceDatasetId`/`referenceDatasetIds` 계약을 유지한다.
 - SQL 분석 구현은 `SqlAnalysisPage.tsx`가 화면 상태와 큰 레이아웃을 맡고, `sqlLogic.ts`가 SQL 검증/자동완성/format helper를, `queryAiService.ts`가 Query AI 생성 요청을, `SqlPreviewTable.tsx`, `SqlSchemaPanel.tsx`, `SqlDatasetRow.tsx`, `SqlDatasetSchemaPreview.tsx`가 표시 컴포넌트를 맡는다.
 - Query AI 생성 기능은 SQL editor 주변에서만 동작한다. live mode에서는 `frontend/src/services/queryAiService.ts`가 `POST /api/query/ai-suggestions`를 호출하고, FastAPI가 backend env의 `OPENAI_API_KEY`로 OpenAI Responses API에 요청한다. mock mode에서는 같은 request shape로 프론트 로컬 SQL 초안 fallback을 사용한다. AI는 선택 테이블 context 안에서만 SQL 초안을 만들 수 있고, backend는 AI 응답도 read-only SQL과 선택 dataset scope로 재검증한다. AI가 만든 SQL은 자동 실행하지 않고 editor 적용 후 기존 read-only/preflight 검증을 다시 통과해야 실행된다.
@@ -145,9 +145,9 @@ FastAPI가 현재 소유하는 책임:
 - Job hydrate와 Run hydrate
 - Catalog dataset hydrate
 - Catalog lineage fallback
-- SQL preview 실행
-- SQL preview 결과 기반 derived dataset 저장
-- SQL preview 결과 기반 ETL job draft handoff
+- SQL query compatibility runtime (DuckDB current, Trino Query Run target)
+- SQL 결과 기반 derived dataset 저장
+- SQL 결과 기반 ETL job draft handoff
 - Dashboard list/query/create/delete
 - Dashboard draft/published runtime
 - Dashboard page/widget/layout persistence
@@ -164,7 +164,7 @@ FastAPI가 현재 소유하는 책임:
 
 권한 판정은 공통 `ActorContext`와 permission engine을 기준으로 한다. `ActorContext`는 세션 쿠키가 있으면 session user를 우선 사용하고, 로컬 smoke/수동 검증 호환을 위해 세션이 없을 때만 `X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups` 임시 header fallback을 사용한다.
 
-권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, 현재 allow-only 우선순위는 `user/group blocked 차단 -> resource lock 차단 -> admin 전체 허용 -> owner fallback -> user/group/role/public grant 허용 -> 차단`이다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 설명하며, 로컬 demo admin 계정의 groups는 빈 배열로 유지한다. Group grant/block은 일반 사용자 권한 운영 단위다. 명시적 deny grant는 아직 지원하지 않고, 여러 grant는 합산된다. Resource lock은 `view`는 유지하고 `query/run/manage/delete/share` action만 차단한다. 목록 API는 block 상태를 반영해 해당 actor에게 resource를 숨기고, resource lock은 목록 노출을 유지하되 응답 `permissions`의 실행/변경 action을 false로 내려 프론트 버튼 상태와 backend 403이 같은 기준을 보도록 한다. Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command/update, Dashboard 삭제/runtime 편집은 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
+권한 모델을 확장할 때는 identity metadata와 access control을 분리한다. `createdBy`, `owner`, profile/avatar는 화면 표시와 감사 로그 문맥을 위한 값이고, 실제 허용 여부는 `actor -> resource -> action` 형태의 permission check에서 계산한다. Job/Dataset/Dashboard 응답은 optional `permissionGrants`와 `permissions` 계약을 받을 수 있다. Backend에는 `ActorContext`와 공통 `can(actor, action, resource)` 판정기가 있으며, 현재 allow-only 우선순위는 `user/group blocked 차단 -> resource lock 차단 -> admin 전체 허용 -> owner fallback -> user/group/role/public grant 허용 -> 차단`이다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 설명하며, 로컬 demo admin 계정의 groups는 빈 배열로 유지한다. Group grant/block은 일반 사용자 권한 운영 단위다. 명시적 deny grant는 아직 지원하지 않고, 여러 grant는 합산된다. Resource lock은 `view`는 유지하고 `query/run/manage/delete/share` action만 차단한다. 목록 API는 block 상태를 반영해 해당 actor에게 resource를 숨기고, resource lock은 목록 노출을 유지하되 응답 `permissions`의 실행/변경 action을 false로 내려 프론트 버튼 상태와 backend 403이 같은 기준을 보도록 한다. Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command/update, Dashboard 삭제/runtime 편집은 공통 permission check를 거쳐 `403 FORBIDDEN`을 반환할 수 있다.
 
 Frontend는 resource별 `permissions`를 읽어 권한 없는 SQL 실행, Query AI 생성, Job command, Dataset materialization-run 삭제, Dashboard 삭제/편집 버튼을 비활성화하고, backend `403`은 권한 안내 toast/preflight message로 표시한다. 프론트의 비활성화는 사용성 보조이며 보안 근거는 backend enforcement다. Query AI 생성도 선택 dataset 전체에 대해 backend `query` permission check를 통과해야 하며, 권한 없는 dataset metadata는 AI 프롬프트 context로 전달하지 않는다. Dashboard runtime draft 생성, page/widget/layout 변경, publish는 dashboard `manage` permission check를 통과해야 한다.
 
@@ -189,7 +189,7 @@ RAG 검색과 action 자동 적용 고도화는 후속 작업 범위다.
 | ETL Run | `JobRunSummary` | FastAPI persisted run resource |
 | Dataset | `CatalogDataset` | FastAPI catalog dataset resource |
 | Dataset Lineage | `LineageGraph` | FastAPI 저장 graph 또는 fallback graph |
-| SQL Run | `SqlResultDraft` | FastAPI query preview resource |
+| SQL Run | `QueryRun` (target), `SqlResultDraft` (legacy) | Trino Query Run resource와 DuckDB 전환 호환 snapshot |
 | Dashboard | `DashboardEntry`, runtime response | FastAPI dashboard card/runtime resource |
 | Audit Log | `useAuditLogs` local/localStorage state | future audit log resource |
 | Identity Metadata | `owner`, optional `createdBy`/`createdByProfile` 표시 값 | display/audit context metadata |
@@ -266,7 +266,7 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 - Mock data는 demo baseline이며 최종 persistence model로 간주하지 않는다.
 - API response shape는 frontend type과 문서가 함께 바뀌어야 한다.
 - API, mock fixture, frontend internal state의 status 값은 영어 canonical value를 유지하고 UI label mapper에서 한국어로 표시한다.
-- SQL runtime은 read-only guard를 가져야 하며, 선택된 catalog dataset을 DuckDB table context로 등록해 projection/filter/group/order/limit/JOIN을 실제 preview SQL로 실행한다.
+- SQL runtime은 read-only guard를 가져야 하며, 선택된 Catalog Dataset의 physical mapping을 Trino catalog/schema/table로 해석해 전체 SQL 실행을 제출한다. lifecycle, cursor 결과 조회, retention, materialization 기준은 `docs/trino-query-run-contract.md`를 따른다.
 - 빈 backend state는 정상 상태다. 상세/SQL/builder처럼 실제 resource가 필요한 화면만 방어한다.
 - Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위한 local fallback은 실패/404 경로로만 사용한다.
 
@@ -280,9 +280,8 @@ Demo/reference endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/dem
 ## 12) SQL 결과 기반 Dashboard Builder
 
 - SQL 분석에서 Dashboard builder로 진입할 때는 `DashboardEntry.source = "sql"`과 함께 `sqlRunId`, `baseDatasetId`, `sqlResultDatasetId`를 전달한다.
-- Dashboard builder는 SQL entry에서 일치하는 `SqlResultDraft`가 없으면 일반 dataset builder로 fallback하지 않고 SQL 분석에서 다시 실행하라는 안내 상태를 보여준다.
-- SQL entry가 유효하면 Dashboard runtime dataset sidebar는 일반 Catalog dataset 목록을 숨기고 `SQL 실행 결과` 하나만 데이터 소스로 노출한다.
-- SQL entry의 draft runtime이 비어 있으면 SQL 결과 row/column snapshot을 사용해 결과 테이블과 기본 차트 1개를 자동 생성한다. 숫자 컬럼이 없으면 깨진 차트를 만들지 않고 결과 테이블만 생성한다.
-- SQL 결과 mode의 위젯 생성/편집/Assistant 적용은 현재 노출된 SQL 결과 데이터소스의 컬럼만 사용할 수 있다. 기존 위젯이나 AI patch가 없는 컬럼 또는 다른 dataset id를 들고 오면 저장 전에 현재 SQL 결과 컬럼으로 정규화한다.
-- `/dashboards/dash_<baseDatasetId>_<sqlRunId>/edit` 같은 SQL 결과 dashboard route는 `sqlRunId`를 복원해 SQL entry로 취급한다. 브라우저 새로고침이나 직접 URL 진입으로 `SqlResultDraft`가 없으면 `GET /api/query/runs/{sqlRunId}`로 저장된 SQL Preview snapshot을 복구한다. 복구 실패 시 일반 dashboard로 fallback하지 않고 SQL 분석 재실행 안내와 복귀 액션을 보여준다.
-- 이 단계는 SQL result snapshot을 대시보드 입력으로 고정하는 UX 범위이며, run 단위 snapshot을 별도 persistent dashboard dataset으로 저장하는 기능은 후속 범위다.
+- Dashboard builder는 SQL entry에서 retention 내의 완료된 Query Run 또는 materialized Dataset을 찾지 못하면 일반 dataset builder로 fallback하지 않고 SQL 분석 재실행 또는 materialization 안내 상태를 보여준다.
+- SQL result draft는 완료된 run의 결과 page를 읽어 임시 데이터 source로 노출할 수 있다. publish 또는 반복 refresh는 materialized Dataset을 source로 전환해야 한다.
+- SQL 결과 mode의 위젯 생성/편집/Assistant 적용은 현재 노출된 SQL result 또는 materialized Dataset의 컬럼만 사용할 수 있다.
+- `/dashboards/dash_<baseDatasetId>_<sqlRunId>/edit` 같은 SQL 결과 dashboard route는 `sqlRunId`를 복원해 SQL entry로 취급한다. run 결과 retention이 만료되면 일반 dashboard로 fallback하지 않고 재실행 또는 materialization 안내와 복귀 액션을 보여준다.
+- dashboard가 frontend에 적재된 SQL 결과 한 page를 persistent source로 저장하는 것은 금지한다.

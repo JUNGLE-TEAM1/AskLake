@@ -18,9 +18,9 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
 | Run/DAG | `GET /api/etl/jobs/{jobId}`가 active Airflow DAG Run과 Task Instance를 polling/sync해 runHistory, dagSteps, `dagStepsByRunId`를 갱신 | local Airflow compose/runtime wiring, run detail table과 Spark log object storage 분리 |
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
-| SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
+| SQL 분석 | Phase 0 target은 Trino Query Run 제출/상태/취소/cursor 결과 조회와 Query AI SQL 초안 생성이다. 현재 `sql_runs.payload` snapshot/DuckDB Preview는 전환 전 호환 구현으로 남아 있다 | Trino/Iceberg runtime 구현, Query Run migration, 결과 retention |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
-| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, demo admin groups는 빈 배열로 동기화함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. `principal_controls`와 `resource_locks`로 user/group 차단 및 Dataset/Job/Dashboard 잠금 API를 제공함. 관리 콘솔 UI는 user 차단을 사용자 탭, group 차단을 그룹 탭, resource lock을 권한 탭에 배치하고 차단/잠금 사유는 관리자 내부 표시와 감사 로그용으로만 사용함. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
+| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, demo admin groups는 빈 배열로 동기화함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. `principal_controls`와 `resource_locks`로 user/group 차단 및 Dataset/Job/Dashboard 잠금 API를 제공함. 관리 콘솔 UI는 user 차단을 사용자 탭, group 차단을 그룹 탭, resource lock을 권한 탭에 배치하고 차단/잠금 사유는 관리자 내부 표시와 감사 로그용으로만 사용함. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
 | Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그 | audit export/retention 정책 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
@@ -167,10 +167,10 @@ npm run verify:spark-run
 FastAPI Pair2 smoke:
 
 - `npm run verify:fastapi-pair2`는 `orders_clean` demo dataset을 seed한 뒤 별도 포트에서 FastAPI를 띄운다.
-- Catalog 목록/상세/lineage, SQL preview, SQL run snapshot hydrate, SQL read-only guard, derived dataset 생성, 생성 dataset 재조회, derived lineage를 한 번에 확인한다.
+- Catalog 목록/상세/lineage, legacy DuckDB Preview, SQL run snapshot hydrate, SQL read-only guard, derived dataset 생성, 생성 dataset 재조회, derived lineage를 한 번에 확인한다. Trino Query Run 검증은 후속 Phase에서 추가한다.
 - 기본 포트는 `18084`이며 `ASKLAKE_FASTAPI_SMOKE_PORT`로 바꿀 수 있다.
 - 이미 실행 중인 FastAPI를 대상으로 볼 때는 `ASKLAKE_FASTAPI_SMOKE_START_SERVER=false`와 `ASKLAKE_FASTAPI_SMOKE_BASE_URL`을 지정한다.
-- `npm run verify:permission-dataset`는 권한 없는 viewer의 dataset 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다. 기본 포트는 `18087`이며 `ASKLAKE_PERMISSION_DATASET_PORT`로 바꿀 수 있다.
+- `npm run verify:permission-dataset`는 권한 없는 viewer의 dataset 목록/상세/legacy DuckDB Preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다. Trino Query Run에도 같은 `query` enforcement를 적용한다. 기본 포트는 `18087`이며 `ASKLAKE_PERMISSION_DATASET_PORT`로 바꿀 수 있다.
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
 - `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
@@ -230,16 +230,16 @@ Phase 7 local verification on 2026-07-09:
 | 기능 | 현재 동작 | 필요한 백엔드 |
 | --- | --- | --- |
 | SQL 점검 | SQL/context 변경 시 frontend가 PostgreSQL parser 기반으로 read-only/select-only, 문법 오류, unknown table을 자동 검사하고 footer compact indicator로 표시. CTE, JOIN, comma-separated table도 context 검증 대상에 포함. 테이블 alias는 문법상 허용하되 LIMIT 오타 가능성을 compact warning으로 표시 | backend SQL guard와 query validation response |
-| Preview 실행 | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | `POST /api/query/runs` preview mode |
+| Preview 실행 (legacy current) | 자동 SQL 점검 통과 후 `POST /api/query/runs` 호출. mock mode에서는 fixture result 생성 | Trino target: `POST /api/query/runs`, `GET /api/query/runs/{runId}` |
 | Query AI 생성 | 선택 테이블 context와 자연어 prompt로 SQL 초안을 요청한다. frontend는 체크된 모든 dataset metadata를 전달하며, live mode에서는 FastAPI가 backend env의 OpenAI key로 제안 생성, 선택 reference JOIN 누락 시 프론트 로컬 JOIN SQL fallback 사용 | `POST /api/query/ai-suggestions` |
 | Base Dataset 변경 | SQL 화면 내부 base dataset 상태를 바꾸고 query/result를 해당 dataset 기준으로 reset | 없음, `datasetId` 유지 또는 SQL context API |
 | 참조 테이블 | SQL 화면 내부에서 여러 참조 dataset id를 선택하고 editor context에 표시 | `POST /api/query/runs` payload에 `baseDatasetId`, `referenceDatasetIds`, `query` 포함 |
 | 테이블 검색/자동완성 | 검색 사이드바는 접근 가능한 mock dataset을 보여주고, editor autocomplete는 base/reference context의 table/column과 SQL keyword만 후보로 표시 | `GET /api/catalog/datasets?q=` 또는 권한 필터링된 SQL context API |
 | SQL 저장 | 현재 SQL 화면에서는 제외 | `POST /api/query/saved` |
-| 결과 Lake 저장 | Preview 성공 후 생성 대상 이름/설명/태그/레이어/RAG 여부를 받아 현재 UI에서는 ETL Review draft로 넘겨 처리 Job 생성을 준비한다. backend direct materialize API는 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
-| CSV 다운로드 | 현재 브라우저에서 실행 결과 CSV를 생성해 다운로드 | `GET /api/query/runs/{runId}/download` |
+| 결과 Lake 저장 | 완료된 Query Run의 전체 결과를 materialize해 Dataset을 만들고, 이후 Dashboard의 지속 source로 사용한다 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
+| 결과 페이지/다운로드 | cursor 결과 페이지를 서버에서 조회하며, 전체 다운로드는 retention과 권한을 확인하는 별도 backend export API로 확장한다 | `GET /api/query/runs/{runId}/results?cursor=` |
 | 대시보드 생성 | 후속 Pair C handoff에서 재연결 | `POST /api/dashboards` |
-| 새 Lake Dataset 저장 | Preview runId/source dataset/query와 dataset metadata를 기반으로 SQL Result source의 `DraftPipeline`을 만들고 Review에서 기존 Job 생성 경로를 사용한다. direct materialize API 응답을 Catalog에 반영하는 경로는 backend 호환으로 유지 | `POST /api/etl/jobs` 또는 `POST /api/catalog/derived-datasets` |
+| 새 Lake Dataset 저장 | 완료된 Query Run과 source Dataset/query metadata를 기반으로 SQL Result source의 `DraftPipeline`을 만들고 Review에서 기존 Job 생성 경로를 사용한다. direct materialize API 응답을 Catalog에 반영하는 경로는 backend 호환으로 유지 | `POST /api/etl/jobs` 또는 `POST /api/catalog/derived-datasets` |
 
 한국어 identifier UX는 frontend에서 먼저 방어한다. Dataset/column 표시명은 한국어와 공백을 허용하되, 기본 쿼리·자동완성·컬럼 삽입·JOIN 초안은 double-quoted identifier를 사용한다. 사용자가 따옴표 없이 한글/공백 table reference를 입력하면 preflight가 실행 전에 감지하고 자동 보정 액션을 제공한다. Backend는 이후에도 selected dataset id context를 기준으로 SQL table scope를 재검증한다.
 
@@ -247,18 +247,18 @@ Mock mode에서는 수집/처리 pipeline 생성 dataset과 backend direct SQL d
 
 FastAPI Catalog persistence는 `catalog_datasets.payload`를 canonical dataset 계약으로 사용합니다. Spark run 성공으로 생성된 ETL dataset과 SQL derived dataset은 같은 payload shape로 저장하며, payload가 없는 기존 컬럼 기반 row는 목록/상세 조회에서 payload shape로 변환해 읽기 호환만 유지합니다. 두 생성 경로 모두 `size`는 표시용 저장 크기 문자열로 사용하고, 물리 저장 정보는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 둡니다. ETL dataset은 source -> Spark job -> target 기본 `lineageGraph`를 저장하고, SQL derived dataset은 source dataset lineage를 이어받아 source -> derived column edge를 저장합니다. 같은 Job 또는 같은 `targetDataset` 결과는 새 Catalog row를 만들지 않고 `materializationRuns` append history에 idempotent하게 누적합니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run history 기준으로 계산합니다.
 
-SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. 현재 frontend preflight는 데모 안전장치이며, backend가 같은 기준을 서버 validation과 query runtime에서 재검증합니다. Preview runtime은 선택된 catalog dataset을 DuckDB 인메모리 테이블로 등록한 뒤 projection/filter/group/order/limit/JOIN을 실제 SQL로 실행합니다. `baseDatasetId`와 `referenceDatasetIds`에 포함되지 않은 physical table 참조는 실행 전에 차단합니다. Preview 실행은 원본 SQL을 저장용으로 바꾸지 않고 서버 쪽에서 row limit을 한 번 더 적용합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. Join builder와 join key recommendation은 이번 범위에서 제외합니다.
+SQL 실행 백엔드는 반드시 read-only guard를 둬야 합니다. frontend preflight는 사용성 보조이며, backend가 같은 기준을 Trino 제출 전에 재검증합니다. Query Run은 선택된 Catalog Dataset의 physical mapping을 Trino catalog/schema/table로 해석하고, `baseDatasetId`와 `referenceDatasetIds`에 포함되지 않은 physical table 참조는 실행 전에 차단합니다. 결과 행은 전체를 frontend에 적재하지 않고 server cursor page로 조회합니다. Query AI가 생성한 SQL도 같은 backend read-only guard와 선택 dataset scope 검증을 통과해야 합니다. SQL 결과로 만든 derived dataset은 `lineageGraph`에 source dataset lineage와 derived node/column edge를 포함해야 합니다. payload lineage가 없는 기존 row만 `upstream` fallback을 사용합니다. lifecycle, retention, materialization 기준은 `docs/trino-query-run-contract.md`를 따릅니다.
 
 Pair2 FastAPI 5단계 완료 기준:
 
 - `npm run verify:fastapi-pair2`가 통과한다.
 - live mode frontend는 `VITE_USE_MOCK_API=false`에서 Catalog 목록을 hydrate한다.
 - Catalog 상세에서 lineage modal이 `GET /api/catalog/datasets/{datasetId}/lineage` 결과로 열린다.
-- SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
-- SQL Preview는 단일 테이블 projection/filter와 선택된 참조 테이블 JOIN을 실제 실행 결과로 반환한다.
-- `GET /api/query/runs/{runId}`는 SQL Preview snapshot의 query, columns, rows를 다시 반환한다.
+- legacy SQL Preview 실행은 `POST /api/query/runs`를 호출하고 read-only guard 실패를 toast/audit failure로 처리한다.
+- legacy `GET /api/query/runs/{runId}`는 SQL Preview snapshot의 query, columns, rows를 다시 반환한다.
+- legacy Preview는 단일 테이블 projection/filter와 선택된 참조 테이블 JOIN을 실제 DuckDB 실행으로 반환한다. Trino Query Run 검증은 후속 Phase에서 추가한다.
 - Query AI 생성은 `POST /api/query/ai-suggestions`로 SQL 초안을 받고, 선택 dataset metadata 전체를 request에 포함하며, 자동 실행 없이 editor 적용 후 기존 점검을 다시 거친다.
-- SQL 화면의 처리 Job 생성은 SQL Preview metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
+- SQL 화면의 처리 Job 생성은 완료된 Query Run metadata를 ETL Review draft에 반영하고, `POST /api/etl/jobs` 생성 흐름으로 이어진다.
 - Direct Lake Dataset 생성 API는 `POST /api/catalog/derived-datasets` 응답 dataset을 Catalog에 반영하고, 재조회 후에도 유지된다.
 - 생성 dataset의 `lineageGraph`는 원본 dataset -> derived dataset 관계를 표시한다.
 

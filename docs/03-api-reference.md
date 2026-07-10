@@ -13,6 +13,7 @@
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
+- Issue #488 Phase 0의 Trino Query Run endpoint/response는 목표 계약이다. 현재 구현된 `/api/query/runs` DuckDB Preview 호환 runtime과 결과 snapshot은 후속 Phase에서 전환한다.
 
 ## 2) 환경 변수
 
@@ -76,8 +77,11 @@ Canonical status values:
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
 | `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
-| `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
-| `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
+| `POST` | `/api/query/runs` | `query` | Trino read-only SQL 실행 접수 | `docs/trino-query-run-contract.md` |
+| `GET` | `/api/query/runs/{runId}` | `query` | Trino SQL run 상태와 실행 통계 조회 | `docs/trino-query-run-contract.md` |
+| `GET` | `/api/query/runs/{runId}/results` | `query` | Trino SQL 결과 cursor 페이지 조회 | `docs/trino-query-run-contract.md` |
+| `POST` | `/api/query/runs/{runId}/cancel` | `query` | queued/running Trino SQL run 취소 | `docs/trino-query-run-contract.md` |
+| `POST` | `/api/query/estimates` | `query` | 실행 전 Trino plan 기반 처리량/위험도 추정 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
@@ -242,7 +246,7 @@ type ScheduledJobRunResponse = {
 | `GET` | `/api/s3/buckets` | TBD | Target 저장경로 선택용 허용 bucket 목록 | `docs/api-contract.md` |
 | `GET` | `/api/s3/prefixes` | TBD | Target 저장경로 선택용 S3 prefix lazy 조회 | `docs/api-contract.md` |
 | `GET` | `/api/target/databases` | TBD | Target 기본정보 DB 선택용 허용 DB 목록 | `docs/api-contract.md` |
-| `POST` | `/api/catalog/derived-datasets` | TBD | SQL preview 결과 기반 dataset 생성 | `docs/api-contract.md` |
+| `POST` | `/api/catalog/derived-datasets` | `manage` | 완료된 SQL run 결과의 materialized dataset 생성 | `docs/api-contract.md` |
 
 현재 P1 API의 `Auth` 값은 local session actor 또는 임시 actor header fallback을 기준으로 확장 중이다. Create flow의 Permission 입력값과 `owner` 표시는 governance/identity metadata이며, 실제 접근 제어는 `ActorContext`와 resource별 `permissionGrants`를 기준으로 판정한다. Catalog/SQL/Job/Dashboard runtime의 공통 권한 계약은 `docs/api-contract.md`의 Permission/Governance 용어를 따른다.
 
@@ -309,7 +313,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | `executeQueryPreview` mock/live, `executeQueryDraft` 호환 wrapper | `POST /api/query/runs` preview mode |
+| SQL 분석 | Trino Query Run 제출, 상태 polling, cursor 결과 페이지 조회 | `POST /api/query/runs`, `GET /api/query/runs/{runId}/results` |
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 `prepareSqlDatasetJobDraft`로 Review에 넘긴 뒤 `POST /api/etl/jobs`; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
@@ -578,16 +582,16 @@ type DagStepsByRunId = Record<string, JobDagStep[]>;
 ### Pair B -> Pair C
 
 ```ts
-type QueryRunResponse = SqlResultDraft;
+type QueryRunResponse = QueryRun;
 ```
 
 필수 확인:
 
-- `columns`와 `rows`가 Table Widget의 데이터가 된다.
+- `GET /api/query/runs/{runId}/results`의 cursor page가 Table Widget의 현재 표시 데이터를 제공한다.
 - `runId`는 Dashboard `sourceRunId`가 된다.
 - `datasetId`는 Dashboard `datasetId`와 같아야 한다.
-- `mode: "preview"`와 `previewLimit`이 있으면 전체 materialize가 아니라 SQL Preview 결과로 취급한다.
-- Dashboard route가 `dash_<baseDatasetId>_<runId>` 형태로 직접 열리면 프론트는 `GET /api/query/runs/{runId}`로 SQL result snapshot을 복구한다.
+- `runId`는 Trino Query Run을 식별한다. 결과 행은 `GET /api/query/runs/{runId}/results`의 cursor page로만 조회한다.
+- Dashboard route가 `dash_<baseDatasetId>_<runId>` 형태로 직접 열리면 프론트는 run retention과 materialized Dataset 연결 상태를 확인한다. publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
 
 ### Pair B -> Pair C: Lineage Context
 

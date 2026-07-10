@@ -19,7 +19,7 @@
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
 | 10 | P2 | `GET /api/admin/audit-logs` | 서버 감사 로그 조회/검색 |
 
-현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
+현재 Pair A Source/Schema/Create/Run/Catalog/SQL runtime과 Dashboard card/runtime 흐름은 live backend API를 호출합니다. SQL의 Trino 실제 실행 target contract는 `docs/trino-query-run-contract.md`를 따르며, 현재 DuckDB Preview 구현은 전환 전 호환 runtime입니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
 
 ## 2. 프론트 연결 위치
@@ -97,11 +97,11 @@ Phase 0 기준에서 identity metadata와 access control은 별도 개념입니�
 | `permissionGrants` | Job/Dataset/Dashboard에 optional response/request metadata로 제공 | user/group/role/public별 resource action 허용 목록 |
 | `permissions` | Job/Dataset/Dashboard에 optional response metadata로 제공 | backend가 현재 actor 기준 `canView`, `canQuery`, `canManage` 등을 계산해 내려주는 값 |
 
-Catalog 목록/상세, SQL preview, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
+Catalog 목록/상세, SQL Query Run, Query AI, ETL job command API, Dashboard card/runtime API는 `permissionSummary`나 `permissionRoles`만으로 접근 권한을 판정하지 않습니다. 이 값들은 표시용 governance metadata이고, 실제 허용 여부는 `ActorContext`와 resource별 `permissionGrants`로 계산합니다. Dashboard 삭제 API의 `X-AskLake-User`, `X-AskLake-Role` header는 초기 dashboard 전용 입력에서 시작했지만, 이후 공통 actor header로 해석됩니다.
 
 `permissionGrants`와 `permissions`는 UI 표시와 backend enforcement를 함께 설명하는 계약 필드입니다. `permissions.enforced=false`이면 프론트는 버튼 비활성화/경고에만 참고하고, 실제 보안 차단으로 해석하지 않습니다. `permissions.enforced=true`이면 같은 기준으로 backend가 `403 FORBIDDEN`을 반환할 수 있습니다.
 
-Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하고, 세션이 없을 때만 아래 임시 actor header를 공통 `ActorContext` fallback으로 해석할 수 있습니다. 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command, Dashboard runtime 편집에도 사용됩니다.
+Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하고, 세션이 없을 때만 아래 임시 actor header를 공통 `ActorContext` fallback으로 해석할 수 있습니다. 공통 판정기는 Dashboard 삭제뿐 아니라 Catalog dataset 조회/lineage/materialization-run 삭제, SQL Query Run 제출/결과 조회/취소, Query AI 생성, Job command, Dashboard runtime 편집에도 사용됩니다.
 
 | Header | 기본값 | 설명 |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ Resource/action 기준:
 | Resource type | 주요 action | 의미 |
 | --- | --- | --- |
 | `dataset` | `view` | Catalog 목록/상세/lineage에서 조회 가능 |
-| `dataset` | `query` | SQL Preview, Query AI, SQL 결과 기반 후속 작업에서 dataset 사용 가능 |
+| `dataset` | `query` | Trino SQL Query Run, Query AI, SQL 결과 기반 후속 작업에서 dataset 사용 가능 |
 | `dataset` | `manage`, `delete` | materialization-run 삭제 등 dataset metadata 변경 가능 |
 | `dataset` | `delete` | dataset 삭제 가능. 별도 삭제 API 도입 시 사용 |
 | `etl_job` | `view` | Job 목록/상세 조회 가능 |
@@ -161,7 +161,7 @@ Resource/action 기준:
 
 Frontend 기준:
 
-- `permissions.canQuery=false`: SQL Preview 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
+- `permissions.canQuery=false`: SQL 실행, Query AI 생성, Catalog -> SQL 이동, SQL 결과 기반 Job 생성 버튼을 비활성화합니다.
 - `permissions.canRun=false`: Job `run`/`retry` 버튼을 비활성화합니다.
 - `permissions.canManage=false`: Job pause/cancel/stop 버튼을 비활성화합니다. Dataset materialization-run 삭제 버튼은 `canManage` 또는 `canDelete` 중 하나가 없으면 비활성화합니다.
 - `permissions.canManage=false`: Dashboard runtime 편집 모드 진입, page/widget/layout 변경, publish 버튼을 비활성화합니다.
@@ -574,7 +574,7 @@ type LineageGraph = {
 백엔드는 dataset/column/edge 관계만 반환하고, 프론트는 이를 React Flow node/edge와 column row handle로 변환합니다.
 `CatalogDataset.upstream`과 `CatalogDataset.downstream`은 요약/fallback context로 유지할 수 있습니다.
 
-### SqlResultDraft
+### SqlResultDraft (legacy DuckDB compatibility)
 
 ```ts
 type SqlResultDraft = {
@@ -593,6 +593,8 @@ type SqlResultDraft = {
   validationKey?: string;
 };
 ```
+
+새 Trino Query Run의 canonical type은 7.3과 `docs/trino-query-run-contract.md`를 따릅니다. 이 type은 전환 전 DuckDB snapshot/기존 Dashboard 호환에만 사용합니다.
 
 ## 7. P0 API
 
@@ -1086,113 +1088,90 @@ type GetJobResponse = JobRowData;
 
 실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
 
-### 7.3 읽기 전용 SQL 실행
+### 7.3 Trino 읽기 전용 SQL 실행 (Phase 0 target contract)
+
+상세 lifecycle, Dataset physical mapping, cursor 결과 계약, 감사 기준은 `docs/trino-query-run-contract.md`를 canonical source로 둡니다. 이 절은 후속 Phase 구현의 API boundary를 고정합니다. 현재 DuckDB Preview 구현은 이 target contract가 구현되기 전의 호환 runtime이며, 새 API 의미로 해석하지 않습니다.
 
 `POST /api/query/runs`
 
-프론트 함수:
-
-- `executeQueryPreview(dataset, query, { limit, validationKey })`
-- `executeQueryDraft(dataset, query)`는 기존 화면 연결을 위한 호환 wrapper로 유지
-
-Request:
-
 ```ts
-type ExecuteQueryRequest = {
-  baseDatasetId?: string;
-  datasetId: string;
-  mode?: "preview" | "run";
-  limit?: number;
-  query: string;
+type SubmitQueryRunRequest = {
+  baseDatasetId: string;
   referenceDatasetIds?: string[];
-  validationKey?: string;
+  query: string;
+  resultPageSize?: number;
+  clientRequestId?: string;
+};
+
+type SubmitQueryRunResponse = {
+  runId: string;
+  engine: "trino";
+  status: "queued";
+  submittedAt: string;
 };
 ```
 
-Request 예시:
-
-```json
-{
-  "baseDatasetId": "ds_customer_review_silver",
-  "datasetId": "ds_customer_review_silver",
-  "mode": "preview",
-  "limit": 100,
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
-  "referenceDatasetIds": ["ds_product_master"],
-  "validationKey": "frontend-generated-context-key"
-}
-```
-
-Response `200 OK`:
-
-```ts
-type ExecuteQueryResponse = SqlResultDraft;
-```
-
-Response 예시:
-
-```json
-{
-  "runId": "sql_01J1Z8W2V7KX",
-  "baseDatasetId": "ds_customer_review_silver",
-  "datasetId": "ds_customer_review_silver",
-  "datasetName": "customer_review_silver",
-  "query": "SELECT review_id, rating, sentiment FROM customer_review_silver",
-  "referenceDatasetIds": ["ds_product_master"],
-  "mode": "preview",
-  "previewLimit": 100,
-  "columns": ["review_id", "rating", "sentiment"],
-  "rows": [
-    ["10001", "5", "positive"],
-    ["10002", "3", "neutral"],
-    ["10003", "1", "negative"]
-  ],
-  "rowCount": 3,
-  "executedAt": "2026-07-03T11:35:00.000Z",
-  "validationKey": "frontend-generated-context-key"
-}
-```
-
-Validation:
-
-- `datasetId`, `query`는 필수입니다.
-- `mode: "preview"`일 때 백엔드는 원본 SQL을 저장/변경하지 않고 서버 쪽에서 preview row limit을 적용해야 합니다.
-- Preview runtime은 선택된 catalog dataset을 DuckDB table context로 등록하고 projection/filter/group/order/limit/JOIN을 실제 SQL로 실행합니다.
-- `baseDatasetId`와 `referenceDatasetIds`는 접근 권한 검증과 SQL table context 검증에 사용합니다.
-- frontend preflight는 PostgreSQL parser로 `SELECT` 단일 문장, CTE, `FROM`/`JOIN` table context를 검사합니다. backend는 같은 기준을 서버에서 다시 검증해야 합니다.
-- 선택 테이블 UI 변경은 SQL text를 자동 재작성하지 않습니다. SQL이 `baseDatasetId`/`referenceDatasetIds`에 포함되지 않은 table을 참조하면 preview 전 검증에서 실패해야 합니다.
-- live backend는 DuckDB in-memory connection을 query runtime으로 사용합니다. 선택된 Catalog dataset과 `referenceDatasetIds` dataset을 DuckDB table/view로 등록한 뒤 projection, filter, order, limit, selected-context JOIN을 실행합니다.
-- Catalog payload에 로컬 `storageLocation`과 `storageFormat`(`jsonl`, `parquet`)이 있으면 DuckDB가 해당 물리 파일을 우선 읽고, 파일이 없거나 읽을 수 없으면 `schema`/`sampleRows` 기반 임시 table로 fallback합니다.
-- 한국어, 공백, 특수문자가 포함된 dataset/column 표시명은 금지하지 않습니다. frontend가 기본 쿼리, 자동완성, 컬럼 삽입, JOIN 초안을 만들 때 SQL text에는 double-quoted identifier(`"월별 매출 데이터"`, `"주문 ID"`)를 사용해야 합니다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력한 경우 frontend preflight는 실행 전에 감지하고 quoted identifier 자동 보정을 제안합니다.
-- DuckDB preview와 향후 Trino full run 모두 같은 quoted identifier 정책을 따른다. 실행 context 검증은 quoted 표시명만이 아니라 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 기준으로 재검증합니다.
-- 읽기 전용 SQL만 허용합니다.
-- `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `MERGE` 등 변경 쿼리는 `403 FORBIDDEN` 또는 `422 VALIDATION_ERROR`를 권장합니다.
-- SQL 문법 오류는 `422 SQL_SYNTAX_ERROR`.
-- 결과 row는 데모 단계에서 최대 500행 이하를 권장합니다.
-
-프론트 기대 동작:
-
-- `columns`, `rows`를 SQL 결과 테이블에 표시합니다.
-- 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
-- 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
+- `202 Accepted`를 반환하고 결과 행은 반환하지 않습니다.
+- backend는 read-only SQL, selected Dataset context, `query` 권한, user/group block, resource lock을 확인한 뒤에만 Trino에 제출합니다.
+- 모든 참조 Dataset은 `catalog/schema/table` physical mapping이 있어야 합니다.
 
 `GET /api/query/runs/{runId}`
 
-Response `200 OK`:
-
 ```ts
-type GetQueryRunResponse = SqlResultDraft;
+type GetQueryRunResponse = {
+  runId: string;
+  engine: "trino";
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  trinoQueryId?: string;
+  query: string;
+  baseDatasetId: string;
+  referenceDatasetIds: string[];
+  submittedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  stats?: {
+    elapsedMs?: number;
+    queuedMs?: number;
+    cpuMs?: number;
+    processedRows?: number;
+    processedBytes?: number;
+    peakMemoryBytes?: number;
+  };
+  result?: {
+    columns: string[];
+    rowCount?: number;
+    nextCursor?: string | null;
+    retentionExpiresAt?: string;
+  };
+  error?: { code: string; message: string };
+};
 ```
 
-Validation:
+`GET /api/query/runs/{runId}/results?cursor=<opaque>&pageSize=<n>`
 
-- 존재하지 않는 `runId`는 `404 NOT_FOUND`.
-- 응답은 `POST /api/query/runs`가 저장한 SQL Preview snapshot과 같은 shape를 반환합니다.
+```ts
+type QueryRunResultPage = {
+  runId: string;
+  columns: string[];
+  rows: Array<Array<string | number | boolean | null>>;
+  pageSize: number;
+  nextCursor: string | null;
+  rowCount?: number;
+};
+```
+
+- 결과 행은 이 endpoint에서만 cursor page로 조회합니다.
+- frontend는 전체 결과를 memory에 적재하거나 offset SQL을 생성하지 않습니다.
+- 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
+
+`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 plan/metadata 기반 예상 처리량과 위험도를 반환하는 선택 endpoint입니다. 예상값은 실제 Query Run stats를 대체하지 않습니다.
 
 프론트 기대 동작:
 
-- SQL 결과 기반 dashboard route가 직접 열리거나 새로고침되어 메모리의 `SqlResultDraft`가 없으면 이 endpoint로 snapshot을 복구합니다.
-- 복구에 실패하면 일반 dashboard로 fallback하지 않고 SQL 분석에서 Preview를 다시 실행하라는 안내를 표시합니다.
+- `실행` 클릭은 Trino 전체 실행을 제출하고 status polling을 시작합니다.
+- 결과 table은 server cursor page를 요청해 렌더링합니다.
+- Dashboard draft는 retention 내 completed run을 임시 source로 쓸 수 있으나, publish 또는 반복 사용은 materialized Dataset을 source로 사용합니다.
+- 실패·취소·권한 차단은 Query Run 상태와 admin audit log에 기록합니다.
 
 ### 7.4 Query AI SQL 초안 생성
 
@@ -1333,7 +1312,7 @@ Request 예시:
 ```json
 {
   "dataset": {
-    "description": "일별 매출 SQL Preview 결과로 생성한 분석 데이터셋",
+    "description": "일별 매출 SQL 실행 결과로 생성한 분석 데이터셋",
     "layer": "GOLD",
     "name": "sales_daily_summary_analysis",
     "rag": true,
@@ -1363,7 +1342,7 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 - 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
 - mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
-- `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
+- `sampleRows`, `schema`, `upstream`에는 materialized SQL 실행 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.
 - `lineageGraph`가 있으면 카탈로그의 데이터 흐름도 확인에서 원본 dataset -> SQL derived dataset 관계를 표시합니다.
 - 응답 dataset에 `lineageGraph`가 있으면 Catalog lineage modal은 이를 우선 사용합니다.
 - `lineageGraph`에는 source dataset의 기존 upstream graph와 새 derived dataset node, source column -> derived column edge가 포함되어야 합니다.
@@ -2759,7 +2738,7 @@ type AuditEntry = {
 - Auth/session table의 Alembic migration.
 - 권한 모델: deny policy, 조건부 정책, dataset 생성/삭제 전체 enforcement, group membership 편집 범위.
 - 실제 ETL 실행 엔진: Airflow, Dagster, 자체 worker, Spark job 중 선택.
-- SQL 실행 엔진: Trino, Spark SQL, DuckDB, warehouse API 중 선택.
+- Trino 실행의 Iceberg catalog/metastore, 결과 retention/cursor, estimate/guardrail 정책 구체화.
 - dataset row count/size 표기: 문자열로 내려줄지 숫자와 단위를 분리할지.
 - audit log 저장 실패 시 사용자에게 노출할지 여부.
 - dashboard widget 저장 모델을 `dashboards`, `dashboard_widgets`로 분리할지 여부.

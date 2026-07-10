@@ -38,11 +38,11 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
-- Dataset 범위의 read-only SQL preview
+- Dataset 범위의 read-only SQL 실행. 목표 runtime은 Trino 기반 실제 전체 실행이며, Phase 0 계약은 `docs/trino-query-run-contract.md`를 따른다.
 - SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
 - AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
-- SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
+- SQL 실행 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
 - Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
 - 감사 로그와 toast feedback
 
@@ -57,9 +57,9 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
-| SQL run | read-only SQL preview 결과 반환 | Medium | `docs/api-contract.md` |
+| SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, 결과 페이지 조회 | Medium | `docs/trino-query-run-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
-| SQL derived dataset | SQL preview 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
+| SQL derived dataset | 완료된 SQL run 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
 
 FastAPI Pair3 이전에 아직 live target으로 보지 않는 범위:
 
@@ -91,12 +91,12 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 1. 사용자는 Catalog dataset을 연다.
 2. 시스템은 schema, sample rows, lineage를 보여준다.
-3. 사용자는 SQL 화면으로 이동해 read-only preview를 실행한다.
+3. 사용자는 SQL 화면으로 이동해 read-only SQL을 Trino에 실제 실행한다.
 4. 사용자는 선택 테이블과 schema context를 기반으로 Query AI 생성 기능에서 SQL 초안을 받을 수 있다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
-6. Preview 결과는 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-7. Preview 결과는 Dashboard builder로 넘겨 SQL 결과 컬럼과 row sample을 직접 시각화할 수 있다.
-8. Dashboard builder 진입은 실제 dataset 또는 SQL preview 결과가 있을 때만 허용한다.
+6. 완료된 SQL run은 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
+7. 완료된 run 결과는 retention 안에서 임시 Dashboard draft source로 쓸 수 있고, publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
+8. Dashboard builder 진입은 실제 Dataset 또는 완료된 SQL run이 있을 때만 허용한다.
 
 ### Flow C. FastAPI live backend 연결
 
@@ -117,14 +117,14 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ## 8) 4일 데모 마일스톤
 
-단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL Preview -> Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
+단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL 실행 -> Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
 이 마일스톤은 demo readiness 기준이며, 실제 production runtime 완성 범위를 과장하지 않는다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |
 | --- | --- | --- |
 | Day 1 | 생성 결과를 ETL 목록에 연결하고 실행 성공 후 Catalog dataset 생성 | 새 Job, 성공 Run, 새 Dataset, 기본 lineage가 보인다. |
 | Day 2 | Job 실행 상태를 History/DAG에 연결하고 Dataset을 SQL context로 전달 | 같은 Run ID가 History/DAG에 보이고 SQL 화면에 선택 Dataset query가 채워진다. |
-| Day 3 | SQL Preview와 derived dataset 저장을 보강 | SQL Preview 결과와 새 Catalog dataset이 확인된다. |
+| Day 3 | SQL 실행 계약과 derived dataset 저장을 보강 | 완료된 SQL run과 새 Catalog dataset이 연결된다. |
 | Day 4 | 전체 흐름을 반복 QA하고 Dashboard fallback을 확인 | 발표자가 5분 안에 전체 흐름을 재현하고 Dashboard 화면이 404 없이 열린다. |
 
 ## 9) 보류 범위
