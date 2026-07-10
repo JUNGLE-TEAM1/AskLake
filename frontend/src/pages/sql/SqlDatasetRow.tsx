@@ -148,17 +148,17 @@ function SqlDatasetTreeRow({
             </TreeLabel>
             <Button
               aria-label={`${dataset.name} 선택 테이블에 추가`}
-              className="ml-auto min-w-[58px]"
+              className="ml-auto size-8"
               onClick={(event) => {
                 event.stopPropagation();
                 onSelect(dataset);
               }}
               onKeyDown={(event) => event.stopPropagation()}
-              size="sm"
+              size="icon"
               type="button"
-              variant="subtle"
+              variant="ghost"
             >
-              <Plus data-icon="inline-start" /> 추가
+              <Plus data-icon="inline-start" />
             </Button>
           </TreeNodeTrigger>
         </HoverCardTrigger>

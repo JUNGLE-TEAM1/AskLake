@@ -14,14 +14,12 @@ export function SchemaDetailsPanel({
   dataset,
   selectedDatasets,
   onColumnClick,
-  onJoinDataset,
   onSelectedDatasetRemove,
   onSchemaSelect,
 }: {
   dataset: CatalogDataset | null;
   selectedDatasets: CatalogDataset[];
   onColumnClick: (dataset: CatalogDataset, columnName: string) => void;
-  onJoinDataset: (dataset: CatalogDataset) => void;
   onSelectedDatasetRemove: (dataset: CatalogDataset) => void;
   onSchemaSelect: (dataset: CatalogDataset) => void;
 }) {
@@ -65,38 +63,25 @@ export function SchemaDetailsPanel({
               <Panel className="grid min-w-0 gap-0">
                 {selectedDatasets.map((item, index) => {
                   const active = item.id === dataset.id;
-                  const isBaseDataset = index === 0;
                   return (
                     <Fragment key={item.id}>
                       {index > 0 && <Separator />}
                       <div
                         className={cn(
-                          "grid min-h-14 grid-cols-[minmax(0,1fr)_64px_40px] items-center rounded-lg transition-colors hover:bg-blue-50",
+                          "grid min-h-14 grid-cols-[minmax(0,1fr)_40px] items-center rounded-lg transition-colors hover:bg-blue-50",
                           active && "bg-blue-50",
                         )}
                         data-sql-selected-dataset-row=""
                       >
                         <Button
                           aria-pressed={active}
-                          className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)_auto] gap-2 bg-transparent px-2.5 text-left hover:bg-transparent"
+                          className="grid min-h-14 grid-cols-[auto_minmax(0,1fr)] gap-2 bg-transparent px-2.5 text-left hover:bg-transparent"
                           type="button"
                           variant="ghost"
                           onClick={() => onSchemaSelect(item)}
                         >
                           <Badge size="sm" variant={active ? "default" : "secondary"}>{index + 1}</Badge>
                           <FieldTitle className="truncate" title={item.name}>{item.name}</FieldTitle>
-                          <Badge size="sm" variant="secondary">{item.schema.length}컬럼</Badge>
-                        </Button>
-                        <Button
-                          aria-label={`${item.name} JOIN SQL 생성`}
-                          disabled={isBaseDataset}
-                          onClick={() => onJoinDataset(item)}
-                          title={isBaseDataset ? "기준 테이블입니다" : "이 테이블을 SQL에 JOIN"}
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                        >
-                          JOIN
                         </Button>
                         <Button
                           aria-label={`${item.name} 선택 해제`}
@@ -123,7 +108,6 @@ export function SchemaDetailsPanel({
               meta={(
                 <>
                   <Badge size="sm" variant="secondary">{dataset.layer}</Badge>
-                  <Badge size="sm" variant="secondary">{dataset.schema.length} 컬럼</Badge>
                   {dataset.rag && <Badge size="sm" variant="default">RAG</Badge>}
                 </>
               )}

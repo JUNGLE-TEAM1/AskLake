@@ -283,7 +283,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - Query AI 안내/결과/오류를 공식 `Bubble` composition으로 교체했다.
 - embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.
 - editor/result/schema/tool surface를 `Panel`, 상태와 metadata를 `Badge`, empty state를 `Empty`, form label을 `Field`, raw action을 `Button`으로 교체했다.
-- dataset의 `+ 추가` action은 custom pill CSS를 제거하고 shadcn `Button size="sm" variant="subtle"`로 맞췄다.
+- dataset 추가 action은 shadcn `Button size="icon" variant="ghost"`의 회색 `+`로 단순화했다. 우측 선택 테이블 row/schema header의 컬럼 수 badge와 자동 JOIN action은 제거했다.
 - 2차 정리에서 header를 `PanelHeader`, schema/list row 구분을 `Separator`, 처리 Job form을 `FieldGroup`/`Field`/`NativeSelect`, SQL result cell surface를 shadcn `Table` 기본값으로 전환했다.
 - SQL result의 legacy `ResultPanel` wrapper를 `Panel` + `PanelHeader` composition으로 줄였다.
 

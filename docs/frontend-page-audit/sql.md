@@ -7,7 +7,7 @@
 ## Screen Purpose
 
 - catalog dataset을 선택하고 schema를 참고해 SQL을 작성, preflight 검증, preview 실행, CSV 다운로드를 수행한다.
-- Query AI 제안, autocomplete, 다중 dataset JOIN 보조, derived dataset Job 생성, dashboard draft 진입을 제공한다.
+- Query AI 제안, autocomplete, 다중 dataset 선택, derived dataset Job 생성, dashboard draft 진입을 제공한다.
 - mock dataset과 query preview fixture를 사용해 editor, result, empty, dialog 상태를 확인할 수 있다.
 
 ## Current Shared Components
@@ -17,7 +17,7 @@
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
 - `SqlDatasetTree`: Shadcnblocks line tree와 shadcn `HoverCard`, `Button`을 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
-- `SchemaDetailsPanel`: 선택 dataset, JOIN, column insert를 담당하는 도메인 panel이다.
+- `SchemaDetailsPanel`: 선택 dataset 전환·해제와 column insert를 담당하는 도메인 panel이다.
 - `DashboardPage`: SQL 결과로 dashboard draft를 만드는 embedded flow에 재사용된다.
 
 ## Weakly Componentized Areas
@@ -112,7 +112,7 @@
 - Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
 - SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
-- dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
+- dataset 추가, 제거, column 삽입 action을 `Button`으로 통일했다. dataset 추가는 회색 `ghost` 아이콘 버튼으로 단순화했다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
 - 최초 #468 구현에서 `sql.css`를 2,547줄에서 401줄로 줄였고, 보완에서 `Command`/`HoverCard`/`Resizable`을 적용해 328줄로 더 줄였다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
@@ -126,7 +126,8 @@
 - SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
 - 중앙 `sql-workspace`의 auto row는 `max-content`로 고정해 제한된 viewport 안에서도 editor/result Panel이 내부 콘텐츠보다 작아지거나 서로 겹치지 않게 했다.
 - 다크 SQL editor에서는 shadcn `Textarea`의 파란 focus ring/offset을 제거해 line-number gutter 옆에 이중 세로선이 생기지 않게 했다. 다른 form control의 focus ring은 유지한다.
-- 선택 테이블 row의 연한 파란 hover/active 배경을 정보 버튼에만 두지 않고 JOIN/해제 action까지 포함한 전체 row wrapper에 적용했다.
+- 선택 테이블 row의 연한 파란 hover/active 배경을 정보 버튼과 해제 action을 포함한 전체 row wrapper에 적용했다.
+- 우측 선택 테이블 row와 schema header의 반복 컬럼 수 badge, 자동 JOIN action을 제거해 테이블명과 선택/해제 흐름에 집중하도록 정리했다. 사용자가 SQL editor에 직접 작성한 JOIN 문법 지원은 유지한다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification

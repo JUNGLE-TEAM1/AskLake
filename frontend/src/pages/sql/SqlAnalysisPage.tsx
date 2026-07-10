@@ -51,7 +51,6 @@ import {
   buildDefaultDerivedDatasetDescription,
   buildDefaultDerivedDatasetName,
   buildDefaultDerivedDatasetTags,
-  buildJoinDraftQuery,
   buildDefaultQuery,
   escapeCsvCell,
   formatDuration,
@@ -601,41 +600,6 @@ export function SqlAnalysisPage({
     );
   };
 
-  const joinSelectedDataset = (targetDataset: CatalogDataset) => {
-    if (!baseDataset || targetDataset.id === baseDataset.id) {
-      selectSchemaDataset(targetDataset);
-      return;
-    }
-    const joinDraft = buildJoinDraftQuery({
-      allDatasets: sqlCandidateDatasets,
-      query,
-      selectedDatasets: selectedContextDatasets.filter((item) => item.id !== targetDataset.id),
-      targetDataset,
-    });
-    setReferenceDatasetIds((ids) => {
-      const nextIds = new Set(ids);
-      nextIds.add(targetDataset.id);
-      joinDraft.addedDatasetIds.forEach((id) => {
-        if (id !== baseDataset.id) nextIds.add(id);
-      });
-      return Array.from(nextIds);
-    });
-    updateQuery(joinDraft.query);
-    setCursorIndex(joinDraft.query.length);
-    setOpenSchemaDatasetId(targetDataset.id);
-    setExpandedDatasetId(null);
-    onAction(
-      joinDraft.joined ? "analysis.context.dataset_joined" : "analysis.context.dataset_selected",
-      `/api/query/context/datasets/${targetDataset.id}/join`,
-      targetDataset.id,
-    );
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(joinDraft.query.length, joinDraft.query.length);
-      syncLineNumberScroll();
-    });
-  };
-
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
     const selectedIds = selectedContextDatasets.map((item) => item.id);
     const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
@@ -1112,7 +1076,6 @@ export function SqlAnalysisPage({
           dataset={schemaDataset}
           selectedDatasets={selectedContextDatasets}
           onColumnClick={insertColumnName}
-          onJoinDataset={joinSelectedDataset}
           onSelectedDatasetRemove={removeSelectedDataset}
           onSchemaSelect={selectSchemaDataset}
         />
