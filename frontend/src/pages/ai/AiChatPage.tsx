@@ -1,5 +1,6 @@
-import { Bot, Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Send, Sparkles } from "lucide-react";
+import { Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
 import type { CatalogDataset } from "../../types";
 
 const suggestedQuestions = [
@@ -46,13 +47,17 @@ function titleFromQuestion(question: string) {
   return normalized.length > 30 ? `${normalized.slice(0, 30)}...` : normalized || "새 대화";
 }
 
+function NessiMark({ className = "" }: { className?: string }) {
+  return <img alt="" aria-hidden="true" className={`ai-nessi-mark ${className}`.trim()} src={askLakeNessiIconUrl} />;
+}
+
 function AiResponsePendingCard() {
   return (
     <article className="ai-assistant-message" aria-label="AI runtime 미연결">
-      <span className="ai-assistant-avatar"><Bot size={16} /></span>
+      <span className="ai-assistant-avatar"><NessiMark /></span>
       <div className="ai-response-pending-card">
         <div className="ai-response-pending-heading">
-          <strong>AI runtime 미연결</strong>
+          <strong>Nessie runtime 미연결</strong>
           <span>실제 응답을 생성하지 않았습니다.</span>
         </div>
         <div className="ai-response-blocks" aria-label="응답 구성">
@@ -172,7 +177,7 @@ export function AiChatPage({
       {conversationDrawerOpen ? <button aria-label="대화 목록 닫기" className="ai-conversation-backdrop" type="button" onClick={() => setConversationDrawerOpen(false)} /> : null}
       <aside className={conversationDrawerOpen ? "ai-conversation-sidebar open" : "ai-conversation-sidebar"} aria-label="대화 목록">
         <div className="ai-conversation-sidebar-header">
-          <strong><Sparkles size={15} /> AskLake</strong>
+          <strong><NessiMark /> Nessie</strong>
           <button aria-label="대화 목록 닫기" className="icon-button ai-conversation-close" type="button" onClick={() => setConversationDrawerOpen(false)}><PanelLeftClose size={17} /></button>
         </div>
         <button className="ai-sidebar-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
@@ -189,7 +194,7 @@ export function AiChatPage({
       <main className="ai-chat-workspace">
         <header className="ai-chat-header">
           <div className="ai-chat-title">
-            <span><Sparkles size={15} /> AskLake AI</span>
+            <span><NessiMark /> Nessie</span>
             <h1>AI 활용</h1>
           </div>
           <div className="ai-chat-actions">
@@ -230,9 +235,9 @@ export function AiChatPage({
           <div className={activeConversation.messages.length === 0 ? "ai-chat-thread empty" : "ai-chat-thread"}>
             {activeConversation.messages.length === 0 ? (
               <div className="ai-chat-empty">
-                <span className="ai-chat-empty-mark"><Bot size={26} /></span>
+                <span className="ai-chat-empty-mark"><NessiMark /></span>
                 <div>
-                  <h2>무엇을 도와드릴까요?</h2>
+                  <h2>Nessie에게 무엇이든 물어보세요</h2>
                   <p>Lake 데이터셋을 선택하고 질문을 시작하세요.</p>
                 </div>
                 <div className="ai-empty-suggestions" aria-label="추천 질문">

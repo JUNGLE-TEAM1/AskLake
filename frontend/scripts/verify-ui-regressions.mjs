@@ -108,12 +108,12 @@ const checks = [
     ],
   },
   {
-    name: "AI chat creates local conversations and shows no mock response",
+    name: "Nessie chat creates local conversations and shows no mock response",
     file: "src/pages/ai/AiChatPage.tsx",
     patterns: [
       /function createConversation\(\): Conversation/,
       /setConversations\(\(current\) => \[nextConversation, \.\.\.current\]\);/,
-      /<strong>AI runtime 미연결<\/strong>/,
+      /<strong>Nessie runtime 미연결<\/strong>/,
       /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>미연결<\/small><\/button>/,
       /aria-current=\{conversation\.id === activeConversation\.id \? "page" : undefined\}/,
     ],

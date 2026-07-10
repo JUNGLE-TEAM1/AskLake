@@ -33,10 +33,25 @@
 .ai-conversation-sidebar-header strong {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   color: #f8fafc;
   font-size: 14px;
   font-weight: 750;
+}
+
+.ai-nessi-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.ai-conversation-sidebar-header .ai-nessi-mark {
+  width: 23px;
+  height: 23px;
+  border-radius: 6px;
+  background: #f7f7f8;
+  padding: 3px;
 }
 
 .ai-conversation-close,
@@ -87,7 +102,7 @@
 
 .ai-chat-title { display: inline-flex; align-items: center; gap: 8px; }
 .ai-chat-title > span { display: inline-flex; align-items: center; gap: 6px; color: #374151; font-size: 14px; font-weight: 750; }
-.ai-chat-title > span svg { color: #10a37f; }
+.ai-chat-title > span .ai-nessi-mark { width: 21px; height: 21px; }
 .ai-chat-title h1 { display: none; }
 
 .ai-chat-actions { display: flex; align-items: center; gap: 8px; }
@@ -154,7 +169,7 @@
 .ai-chat-thread.empty { align-items: center; justify-content: center; }
 
 .ai-chat-empty { display: grid; justify-items: center; gap: 18px; width: min(100%, 660px); color: #6b7280; text-align: center; }
-.ai-chat-empty-mark { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 12px; background: #10a37f; color: #fff; }
+.ai-chat-empty-mark { display: grid; width: 58px; height: 58px; place-items: center; border: 1px solid #e2e2e7; border-radius: 14px; background: #fff; padding: 8px; }
 .ai-chat-empty h2 { color: #202123; font-size: 28px; line-height: 1.25; }
 .ai-chat-empty p { margin-top: 8px; font-size: 14px; line-height: 1.55; }
 
@@ -188,9 +203,8 @@
 .ai-chat-message-avatar,
 .ai-assistant-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; }
 .ai-chat-message-avatar { background: #565869; color: #fff; }
-
 .ai-assistant-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: start; gap: 10px; margin: 0 0 18px; }
-.ai-assistant-avatar { background: #10a37f; color: #fff; }
+.ai-assistant-avatar { border: 1px solid #e2e2e7; background: #fff; padding: 4px; }
 .ai-response-pending-card { width: min(100%, 540px); border-left: 2px solid #10a37f; background: #fff; padding: 13px 14px; }
 .ai-response-pending-heading { display: grid; gap: 3px; }
 .ai-response-pending-heading strong { color: #30323b; font-size: 13px; }
