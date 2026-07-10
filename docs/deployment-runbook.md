@@ -82,15 +82,16 @@ AIRFLOW_METADATA_DB_PASSWORD=replace-with-strong-airflow-metadata-password
 
 ### Kafka 배포 감사 상태
 
-현재 `dev` 기준 EC2 배포에는 Kafka source UI와 backend Kafka ingest/replay code가 포함되어 있다. `deploy/docker-compose.prod.yml`에는 demo/dev용 단일 Redpanda broker가 포함되며, 외부 포트를 열지 않고 Compose 내부 네트워크에서 `redpanda:9092`로 접근한다.
+현재 Kafka 배포 브랜치 기준 EC2 배포에는 Kafka source UI와 backend Kafka ingest/replay code가 포함되어 있다. `deploy/docker-compose.prod.yml`에는 demo/dev용 단일 Redpanda broker가 포함되며, 외부 포트를 열지 않고 Compose 내부 네트워크에서 `redpanda:9092`로 접근한다.
 
 | 항목 | 현재 상태 | 메모 |
 | --- | --- | --- |
 | Kafka backend code | 있음 | `backend/package.json`의 `kafkajs`, `backend/scripts/ingest-kafka-reviews.mjs`, `seed-kafka-review-fixture.mjs` |
 | Kafka/Redpanda broker | Compose 선언됨 | service name은 `redpanda`, internal broker는 `redpanda:9092` |
 | `reviews.raw` topic | seed 전 없음 | Redpanda 기동 뒤 seed/replay 명령으로 생성한다. |
-| Review fixture seed | 후속 phase | seed/replay 운영 명령을 별도 절차에 넣는다. |
+| Review fixture seed | 있음 | `scripts/seed-kafka-demo-data.sh`가 기본 fixture 100건을 replay한다. |
 | MinIO landing target | 있음 | Kafka ingest 성공 시 `s3://m3-raw/kafka-landing/...` 저장 경로를 사용할 수 있다. |
+| Kafka source -> Lake -> Catalog | 검증됨 | EC2에서 source test, job 실행, MinIO JSONL, Catalog `sourceKind: kafka`를 확인했다. |
 | Scheduled ingest trigger | partial | due job endpoint/Airflow 경로는 별도 검증이 필요하다. |
 
 Kafka source를 EC2에서 end-to-end로 시연하려면 Redpanda 기동 후 `reviews.raw`에 fixture를 seed해야 한다. topic seed 전까지는 배포 서버에서 Kafka source 연결 테스트와 Kafka job 실행을 완료 기준으로 보지 않는다.
@@ -129,6 +130,37 @@ ASKLAKE_KAFKA_DEMO_RATE=100 \
 ASKLAKE_KAFKA_DEMO_BATCH_SIZE=10 \
 scripts/seed-kafka-demo-data.sh
 ```
+
+### Kafka 배포 후 수동 smoke
+
+아래 순서로 seed부터 Catalog 등록까지 확인한다. 이 절차는 배포 서버의 UI 또는 API를 통해 수행하며, `redpanda:9092`는 서버 컨테이너 내부 endpoint이므로 브라우저의 `127.0.0.1:19092`를 입력하지 않는다.
+
+1. 배포 상태와 broker를 확인한다.
+
+```bash
+scripts/deploy.sh health
+ssh -i "$ASKLAKE_SSH_KEY" "${ASKLAKE_EC2_USER:-ec2-user}@${ASKLAKE_EC2_HOST}" \
+  "cd ${ASKLAKE_DEPLOY_PATH:-/opt/asklake} && docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml ps redpanda backend minio"
+```
+
+2. `reviews.raw`를 fixture 100건으로 초기화한다.
+
+```bash
+ssh -i "$ASKLAKE_SSH_KEY" "${ASKLAKE_EC2_USER:-ec2-user}@${ASKLAKE_EC2_HOST}" \
+  "cd ${ASKLAKE_DEPLOY_PATH:-/opt/asklake} && scripts/seed-kafka-demo-data.sh"
+```
+
+3. UI의 Kafka source 설정에서 broker `redpanda:9092`, topic `reviews.raw`, offset `Earliest`, JSON 형식을 입력하고 연결 테스트를 실행한다. schema preview가 반환되어야 한다.
+
+4. Kafka pipeline을 만들고, target dataset과 매번 새 consumer group ID를 지정해 실행한다. 같은 group은 이미 commit된 offset 이후만 읽으므로, seed한 100건을 처음부터 다시 확인하려면 예를 들어 `asklake-ec2-smoke-20260710`처럼 새 group을 사용한다.
+
+5. Job 실행 결과에서 consumed/stored count가 0보다 큰지 확인한다. 이후 Catalog target dataset에서 다음을 모두 확인한다.
+
+   - `rows`가 실행 적재 건수만큼 증가한다.
+   - 최신 `materializationRuns`의 `sourceKind`가 `kafka`다.
+   - `storageLocation`이 `s3://m3-raw/kafka-landing/reviews.raw/<runId>/data.jsonl` 형식이다.
+
+Kafka는 메시지를 consumer가 읽었다고 삭제하지 않는다. 성공한 consumer group의 offset만 전진한다. 따라서 증분 흐름은 기존 topic에 `ASKLAKE_KAFKA_DEMO_RECREATE_TOPIC=false`로 새 메시지를 추가하고, 같은 group으로 job을 다시 실행해 확인한다.
 
 ## 3. 켜기
 
