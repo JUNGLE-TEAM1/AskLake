@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousRuntimeModel, KafkaSnapshotModel
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
@@ -56,6 +56,18 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     dataset_id = f"ds_{normalize_column_name(request.target_dataset)}"
     existing_job = etl_repository.get_job_by_dataset_id(db, dataset_id) or etl_repository.get_job_by_target(db, request.target_dataset)
     if existing_job is not None:
+        if existing_job.execution_mode != request.execution_mode:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Kafka execution mode cannot change on an existing target. Copy the Job to use another mode.",
+                status.HTTP_409_CONFLICT,
+            )
+        if request.execution_mode == "continuous":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Continuous Job configuration is immutable. Copy the Job to create another continuous stream.",
+                status.HTTP_409_CONFLICT,
+            )
         update_existing_append_job(existing_job, request, dataset_id, created_by, created_by_profile)
         saved_job = etl_repository.save_job(db, existing_job)
         return CreatePipelineResponse(
@@ -95,6 +107,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         source_config=tuple_rows_to_lists(request.source_config),
         source_label=request.source_label,
         source_type=request.source_type,
+        execution_mode=request.execution_mode,
+        continuous_config=continuous_config_from_request(request, job_id),
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_fingerprint=request.schema_fingerprint,
         schema_sample_rows=request.schema_sample_rows,
@@ -131,6 +145,9 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     )
 
     saved_job = etl_repository.create_job(db, job)
+    if request.execution_mode == "continuous":
+        etl_repository.save_kafka_continuous_runtime(db, continuous_runtime_from_job(job))
+        saved_job = etl_repository.get_job_schema(db, job_id) or saved_job
     return CreatePipelineResponse(
         catalog_target={
             "id": dataset_id,
@@ -315,10 +332,11 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
-    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
+    continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
+    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
     actor_context = actor or ActorContext()
-    required_action = "run" if command in {"run", "retry"} else "manage"
+    required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
     require_governed_access(
         db,
         actor_context,
@@ -358,6 +376,14 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             target_type="etl_job",
         )
         raise
+    if job.execution_mode == "continuous" and command not in continuous_commands:
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Continuous Jobs accept only continuous lifecycle commands.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if command in continuous_commands:
+        return command_kafka_continuous_job(db, job, command, actor_context)
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
     if command == "pause" and job.status != "running":
@@ -437,6 +463,81 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
         job=with_job_permissions(db, saved_job, actor or ActorContext()),
         run=run_schema,
         dag_steps=[JobDagStep(**step) for step in job.dag_steps] if job.dag_steps else None,
+    )
+
+
+def command_kafka_continuous_job(
+    db: Session,
+    job: ETLJobModel,
+    command: str,
+    actor: ActorContext,
+) -> JobCommandResponse:
+    if job.execution_mode != "continuous" or not is_kafka_job(job):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            "Continuous commands require a Kafka Job created with executionMode=continuous.",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is None:
+        runtime = continuous_runtime_from_job(job)
+
+    action_by_command = {
+        "startContinuous": "etl.continuous.start_requested",
+        "pauseContinuous": "etl.continuous.pause_requested",
+        "resumeContinuous": "etl.continuous.resume_requested",
+        "stopContinuous": "etl.continuous.stop_requested",
+    }
+    active_statuses = {"starting", "running", "pausing", "stopping"}
+
+    if command in {"startContinuous", "resumeContinuous"}:
+        if runtime.status in active_statuses:
+            raise ApiError(ErrorCode.CONFLICT, f"Continuous Job is already active: {job.id}", status.HTTP_409_CONFLICT)
+        conflict = etl_repository.find_conflicting_kafka_continuous_runtime(
+            db,
+            broker=runtime.broker,
+            topic=runtime.topic,
+            consumer_group_id=runtime.consumer_group_id,
+            excluded_job_id=job.id,
+        )
+        if conflict is not None:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                f"Continuous consumer identity is already active on Job: {conflict.job_id}",
+                status.HTTP_409_CONFLICT,
+                {"activeJobId": conflict.job_id, "runtimeStatus": conflict.status},
+            )
+        runtime.status = "starting"
+        runtime.last_error = None
+        job.status = "running"
+        job.last_state = "Continuous worker start 요청 기록 · worker 연결 대기"
+        job.progress = {"label": "Continuous worker 시작 요청", "value": 5}
+    elif command == "pauseContinuous":
+        if runtime.status not in {"starting", "running"}:
+            raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot pause from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        runtime.status = "paused"
+        job.status = "paused"
+        job.last_state = "Continuous worker pause 요청 기록 · worker 연결 대기"
+        job.progress = None
+    else:
+        if runtime.status in {"stopped", "stopping"}:
+            raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot stop from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        runtime.status = "stopped"
+        job.status = "stopped"
+        job.last_state = "Continuous worker stop 요청 기록 · worker 연결 대기"
+        job.progress = None
+
+    saved_job = etl_repository.save_kafka_continuous_command(db, job, runtime)
+    return JobCommandResponse(
+        action=action_by_command[command],
+        api_path=f"/api/etl/jobs/{job.id}/commands",
+        job=with_job_permissions(db, saved_job, actor),
+        processing_result={
+            "controlPlaneOnly": True,
+            "runtimeStatus": runtime.status,
+            "worker": "not_connected",
+        },
     )
 
 
@@ -1230,6 +1331,8 @@ def update_existing_append_job(
     job.source_config = tuple_rows_to_lists(request.source_config)
     job.source_label = request.source_label
     job.source_type = request.source_type
+    job.execution_mode = request.execution_mode
+    job.continuous_config = continuous_config_from_request(request, job.id)
     job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
     job.schema_fingerprint = request.schema_fingerprint
     job.schema_sample_rows = request.schema_sample_rows
@@ -1574,6 +1677,11 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
         missing.append("targetLayer")
     if not request.owner:
         missing.append("owner")
+    if request.execution_mode == "continuous":
+        if "kafka" not in request.source_type.lower():
+            missing.append("continuousKafkaSource")
+        if request.target_format.lower() != "parquet":
+            missing.append("continuousTargetFormat=parquet")
     if not request.schema_columns:
         missing.append("schemaColumns")
     elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
@@ -2007,6 +2115,45 @@ def field_value(fields: list[tuple[str, str]], label: str) -> str:
         if field_label == label:
             return str(value).strip()
     return ""
+
+
+def kafka_field_value(fields: list[tuple[str, str]], *labels: str) -> str:
+    for label in labels:
+        value = field_value(fields, label)
+        if value:
+            return value
+    return ""
+
+
+def continuous_config_from_request(request: CreatePipelineRequest, job_id: str) -> dict[str, Any] | None:
+    if request.execution_mode != "continuous":
+        return None
+    config = request.continuous_config
+    base_path = (request.storage_path or f"s3a://asklake-output/{normalize_column_name(request.target_dataset)}/").rstrip("/")
+    return {
+        "initialOffsetPolicy": config.initial_offset_policy if config else "earliest",
+        "triggerIntervalSeconds": config.trigger_interval_seconds if config else 30,
+        "maxOffsetsPerTrigger": config.max_offsets_per_trigger if config else 10000,
+        "checkpointPath": f"{base_path}/_checkpoints/{job_id}",
+    }
+
+
+def continuous_runtime_from_job(job: ETLJobModel) -> KafkaContinuousRuntimeModel:
+    fields = job.source_config or []
+    broker = kafka_field_value(fields, "Broker / Endpoint", "BROKER / ENDPOINT") or "127.0.0.1:19092"
+    topic = kafka_field_value(fields, "TOPIC / QUEUE NAME", "Topic") or "reviews.raw"
+    consumer_group_id = kafka_field_value(fields, "Consumer Group ID", "CONSUMER GROUP ID") or f"asklake-stream-{job.id.lower()}"
+    config = job.continuous_config or {}
+    checkpoint_path = str(config.get("checkpointPath") or f"s3a://asklake-output/{normalize_column_name(job.target)}/_checkpoints/{job.id}")
+    return KafkaContinuousRuntimeModel(
+        job_id=job.id,
+        broker=broker,
+        topic=topic,
+        consumer_group_id=consumer_group_id,
+        target_identity=str(job.storage_path or job.target_path or job.target),
+        checkpoint_path=checkpoint_path,
+        status="stopped",
+    )
 
 
 def source_unit_label(source_type: str) -> str:

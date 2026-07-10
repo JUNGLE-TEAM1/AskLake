@@ -9,7 +9,9 @@ TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
-JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule"]
+KafkaExecutionMode = Literal["snapshot", "continuous"]
+ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
+JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
 SourceFieldRows = list[tuple[str, str]]
 
@@ -85,6 +87,26 @@ class WatermarkPolicyDraft(CamelModel):
     mode: str = "last_success_to_scheduled_at"
 
 
+class KafkaContinuousConfigDraft(CamelModel):
+    initial_offset_policy: Literal["earliest", "latest"] = "earliest"
+    trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
+    max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
+
+
+class KafkaContinuousRuntime(CamelModel):
+    status: ContinuousRuntimeStatus
+    checkpoint_path: str
+    heartbeat_at: str | None = None
+    last_flush_at: str | None = None
+    last_batch_id: str | None = None
+    lag: int | None = None
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    failed_count: int = 0
+    last_error: str | None = None
+
+
 class JobRunSummary(CamelModel):
     airflow_dag_id: str | None = None
     airflow_dag_run_id: str | None = None
@@ -132,6 +154,9 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    execution_mode: KafkaExecutionMode = "snapshot"
+    continuous_config: dict[str, Any] | None = None
+    continuous_runtime: KafkaContinuousRuntime | None = None
     schema_columns: list[SchemaColumnDraft] | list[dict[str, Any]] | None = None
     schema_fingerprint: str | None = None
     schema_sample_rows: list[list[str]] | None = None
@@ -233,6 +258,8 @@ class CreatePipelineRequest(CamelModel):
     source_config: SourceFieldRows = Field(default_factory=list)
     source_type: str
     source_label: str
+    execution_mode: KafkaExecutionMode = "snapshot"
+    continuous_config: KafkaContinuousConfigDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
     transform_output_columns: SourceFieldRows = Field(default_factory=list)

@@ -2,10 +2,10 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaContinuousRuntimeModel, KafkaSnapshotModel
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
-from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
+from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary, KafkaContinuousRuntime
 
 _schema_ready_bind_ids: set[int] = set()
 
@@ -24,11 +24,13 @@ def ensure_schema(db: Session) -> None:
             connection.execute(text("ALTER TABLE etl_jobs ALTER COLUMN payload DROP NOT NULL"))
         column_defs = {
             "compression": "VARCHAR(64)",
+            "continuous_config": "JSON",
             "created_by": "VARCHAR(255)",
             "created_by_profile": "JSON",
             "dag_steps": "JSON",
             "dag_steps_by_run_id": "JSON",
             "dataset_id": "VARCHAR(120)",
+            "execution_mode": "VARCHAR(32)",
             "last_run": "VARCHAR(64)",
             "last_state": "TEXT",
             "name": "VARCHAR(255)",
@@ -81,6 +83,7 @@ def ensure_schema(db: Session) -> None:
 
         job_defaults = {
             "dag_steps": "[]",
+            "execution_mode": "snapshot",
             "last_run": "-",
             "last_state": "대기",
             "name": "Untitled ETL Job",
@@ -319,6 +322,50 @@ def update_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel, status: str
     db.commit()
 
 
+def get_kafka_continuous_runtime(db: Session, job_id: str) -> KafkaContinuousRuntimeModel | None:
+    ensure_schema(db)
+    return db.get(KafkaContinuousRuntimeModel, job_id)
+
+
+def find_conflicting_kafka_continuous_runtime(
+    db: Session,
+    *,
+    broker: str,
+    topic: str,
+    consumer_group_id: str,
+    excluded_job_id: str,
+) -> KafkaContinuousRuntimeModel | None:
+    ensure_schema(db)
+    return db.scalars(
+        select(KafkaContinuousRuntimeModel)
+        .where(
+            KafkaContinuousRuntimeModel.job_id != excluded_job_id,
+            KafkaContinuousRuntimeModel.broker == broker,
+            KafkaContinuousRuntimeModel.topic == topic,
+            KafkaContinuousRuntimeModel.consumer_group_id == consumer_group_id,
+            KafkaContinuousRuntimeModel.status.in_(["starting", "running", "pausing", "stopping"]),
+        )
+        .order_by(KafkaContinuousRuntimeModel.updated_at.desc())
+    ).first()
+
+
+def save_kafka_continuous_runtime(db: Session, runtime: KafkaContinuousRuntimeModel) -> KafkaContinuousRuntimeModel:
+    ensure_schema(db)
+    db.add(runtime)
+    db.commit()
+    db.refresh(runtime)
+    return runtime
+
+
+def save_kafka_continuous_command(db: Session, job: ETLJobModel, runtime: KafkaContinuousRuntimeModel) -> JobRowData:
+    ensure_schema(db)
+    db.add(job)
+    db.add(runtime)
+    db.commit()
+    db.refresh(job)
+    return job_to_schema(db, job)
+
+
 def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     ensure_schema(db)
     runs = db.scalars(
@@ -340,6 +387,7 @@ def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
 
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
+    runtime = get_kafka_continuous_runtime(db, job.id) if db is not None and job.execution_mode == "continuous" else None
     return JobRowData(
         id=job.id,
         name=job.name or job.target or job.id,
@@ -358,6 +406,9 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        execution_mode=job.execution_mode or "snapshot",
+        continuous_config=job.continuous_config,
+        continuous_runtime=continuous_runtime_to_schema(runtime),
         schema_columns=job.schema_columns,
         schema_fingerprint=job.schema_fingerprint,
         schema_sample_rows=job.schema_sample_rows,
@@ -394,6 +445,24 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         run_history=list_runs_for_job(db, job.id),
         dag_steps=job.dag_steps,
         dag_steps_by_run_id=job.dag_steps_by_run_id,
+    )
+
+
+def continuous_runtime_to_schema(runtime: KafkaContinuousRuntimeModel | None) -> KafkaContinuousRuntime | None:
+    if runtime is None:
+        return None
+    return KafkaContinuousRuntime(
+        status=runtime.status,
+        checkpoint_path=runtime.checkpoint_path,
+        heartbeat_at=runtime.heartbeat_at,
+        last_flush_at=runtime.last_flush_at,
+        last_batch_id=runtime.last_batch_id,
+        lag=runtime.lag,
+        consumed_count=runtime.consumed_count,
+        stored_count=runtime.stored_count,
+        quarantined_count=runtime.quarantined_count,
+        failed_count=runtime.failed_count,
+        last_error=runtime.last_error,
     )
 
 

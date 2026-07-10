@@ -549,7 +549,7 @@ Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `task
 
 Issue #500 Phase 0 defines a planned `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
 
-Continuous commands are planned extensions of `POST /api/etl/jobs/{jobId}/commands`: `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous`. The runtime uses a durable Spark checkpoint as its source-progress authority, appends Parquet target output in micro-batches, and must reject a conflicting active Snapshot/Continuous consumer identity with `409`. This section is a contract target only; no continuous endpoint or response field is implemented by Phase 0. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+Phase 1 implements `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` as command extensions of `POST /api/etl/jobs/{jobId}/commands`. It persists the control intent and rejects a conflicting active Continuous consumer identity with `409`. Responses remain `controlPlaneOnly` until the Phase 2 worker exists. The later runtime uses a durable Spark checkpoint as source-progress authority and appends Parquet target output in micro-batches. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
 
 ### LineageGraph
 

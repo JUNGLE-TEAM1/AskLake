@@ -204,6 +204,13 @@ Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 �
 
 Kafka Continuous Ingestion은 Issue #500 Phase 0에서 계약만 정의된 상태다. 구현 후에는 별도 smoke에서 continuous Job 시작, retained backlog 처리, 새 이벤트 자동 append, pause/resume, checkpoint restart, lag/heartbeat, conflicting consumer identity `409`을 검증한다. Snapshot smoke는 계속 유지하며 Continuous 검증으로 대체하지 않는다.
 
+Phase 1에서는 아래 control-plane 검증을 추가로 실행한다. 이 검증은 Spark worker를 시작하지 않으며, Continuous Job의 기본 config/runtime identity, start request 상태, 중복 start `409`만 확인한다.
+
+```bash
+cd backend
+.venv/bin/python scripts/verify-kafka-continuous-contract.py
+```
+
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-ingest

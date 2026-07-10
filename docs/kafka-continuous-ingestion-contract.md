@@ -4,7 +4,7 @@ Issue: #500
 
 ## 1. Status
 
-Phase 0 defines the product and interface boundary only. The current production path remains the bounded Kafka snapshot direct-target bridge defined in `kafka-snapshot-direct-target-contract.md`. No continuous worker, Spark Structured Streaming query, new API command, or target format change is implemented by this phase.
+Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. The current production data path remains the bounded Kafka snapshot direct-target bridge defined in `kafka-snapshot-direct-target-contract.md`. No continuous worker, Spark Structured Streaming query, automatic target append, or target format change is implemented yet.
 
 ## 2. Objective
 
@@ -98,17 +98,18 @@ type JobCommand =
   | "stopContinuous";
 ```
 
-- `startContinuous`: creates or resumes the long-running stream application.
-- `pauseContinuous`: stops source consumption after the currently committed micro-batch and preserves checkpoint state.
-- `resumeContinuous`: resumes from the durable checkpoint.
-- `stopContinuous`: stops the application and leaves checkpoint state available for a later explicit resume or Job copy policy.
+- `startContinuous`: persists a long-running stream start request.
+- `pauseContinuous`: persists a request to stop source consumption after the current committed micro-batch.
+- `resumeContinuous`: persists a resume request for the durable checkpoint.
+- `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
+- Phase 1 command responses identify `controlPlaneOnly: true` and `worker: "not_connected"`. Phase 2 connects these requests to an actual streaming worker; until then a `starting`, `pausing`, or `stopping` runtime state is not evidence that Kafka is being consumed.
 
 ## 6. Mutual Exclusion and Backfill
 
-- A Kafka source identity tuple of broker, topic, consumer group, target identity, and checkpoint path has at most one active consumer.
-- Snapshot and Continuous Jobs cannot run concurrently when they share that identity.
+- A broker/topic/consumer group has at most one active Continuous consumer. Independent fan-out targets must use distinct consumer groups.
+- Snapshot and Continuous Jobs cannot run concurrently when they share the same broker/topic/consumer group.
 - Backfill is normally handled by first starting a continuous Job with `earliest`, which drains retained backlog before tailing new events. Snapshot Jobs remain available for controlled historical replay, deterministic range retry, and manual/scheduled ingestion.
 - The system must reject a conflicting command with `409` and identify the active Job/runtime in the error details.
 

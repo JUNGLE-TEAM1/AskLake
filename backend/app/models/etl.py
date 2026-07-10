@@ -25,6 +25,8 @@ class ETLJobModel(TimestampMixin, Base):
     source_config: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
     source_label: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    execution_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="snapshot")
+    continuous_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     schema_columns: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
     schema_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     schema_sample_rows: Mapped[list[list[str]]] = mapped_column(JSON, nullable=False, default=list)
@@ -96,4 +98,36 @@ class KafkaSnapshotModel(TimestampMixin, Base):
     consumer_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
     snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class KafkaContinuousRuntimeModel(TimestampMixin, Base):
+    __tablename__ = "kafka_continuous_runtimes"
+    __table_args__ = (
+        Index(
+            "ix_kafka_continuous_runtimes_identity",
+            "broker",
+            "topic",
+            "consumer_group_id",
+            "target_identity",
+            "checkpoint_path",
+            "status",
+        ),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(120), ForeignKey("etl_jobs.id"), primary_key=True)
+    broker: Mapped[str] = mapped_column(String(512), nullable=False)
+    topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumer_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_identity: Mapped[str] = mapped_column(String(1024), nullable=False)
+    checkpoint_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="stopped")
+    heartbeat_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_flush_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_batch_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lag: Mapped[int | None] = mapped_column(nullable=True)
+    consumed_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    stored_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    quarantined_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
