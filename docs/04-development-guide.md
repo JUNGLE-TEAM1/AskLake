@@ -372,6 +372,13 @@ pip install -r requirements.txt
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 ```
 
+Issue #488 Phase 2의 Trino protocol parser, Query Run lifecycle mapping, Dataset physical table compiler는 coordinator 없이 아래 unit verification으로 확인한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+```
+
 Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.
 
 ```bash

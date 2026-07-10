@@ -49,7 +49,14 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 
 `POST /api/query/runs` live mode는 현재 DuckDB in-memory compatibility runtime을 사용한다. Catalog dataset의 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 없으면 catalog `schema`/`sampleRows`를 DuckDB 임시 table로 등록해 preview SQL을 실행한다.
 
-Issue #488 Phase 1은 `docker compose up -d trino`로 사용할 Trino 482 single-node coordinator와 Iceberg JDBC catalog configuration을 추가했다. table data는 MinIO S3-compatible warehouse를 사용하고, Catalog Dataset에는 optional `queryEngineTable` mapping (`catalog`, `schema`, `table`, `format`, `partitionColumns`)을 저장할 수 있다. 아직 API runtime을 Trino로 전환하지 않았으므로 `TRINO_ENABLED`은 기본 `false`로 둔다.
+Issue #488 Phase 1은 `docker compose up -d trino`로 사용할 Trino 482 single-node coordinator와 Iceberg JDBC catalog configuration을 추가했다. table data는 MinIO S3-compatible warehouse를 사용하고, Catalog Dataset에는 optional `queryEngineTable` mapping (`catalog`, `schema`, `table`, `format`, `partitionColumns`)을 저장할 수 있다. Phase 2는 Trino HTTP client protocol adapter와 canonical Query Run service를 추가했다. 아직 `/api/query/runs` routing을 Trino로 전환하지 않았으므로 `TRINO_ENABLED`은 기본 `false`로 둔다.
+
+Trino client protocol/compiler unit verification:
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+```
 
 Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
 

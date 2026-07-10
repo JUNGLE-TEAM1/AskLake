@@ -13,6 +13,7 @@
     "verify:permission-dataset": "node scripts/verify-permission-dataset-access.mjs",
     "verify:permission-job-dashboard": "node scripts/verify-permission-job-dashboard.mjs",
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
+    "verify:trino-query-foundation": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-foundation.py",
     "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
     "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",

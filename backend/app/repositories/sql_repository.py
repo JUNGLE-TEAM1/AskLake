@@ -20,7 +20,9 @@ class SqlRepository:
     def save_run_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         ensure_sql_schema(self.db)
         run_id = str(payload["runId"])
-        dataset_id = str(payload["datasetId"])
+        dataset_id = str(payload.get("datasetId") or payload.get("baseDatasetId") or "")
+        if not dataset_id:
+            raise ValueError("SQL run payload requires datasetId or baseDatasetId")
         query = str(payload["query"])
         model = self.db.get(SqlRunModel, run_id)
 

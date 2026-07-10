@@ -136,4 +136,6 @@ Trino 제출 전에 backend는 다음 순서로 검증합니다.
 
 ## 9. Phase Boundary
 
-Phase 1은 Trino single-node coordinator와 Iceberg JDBC catalog, MinIO S3 warehouse 구성, Catalog `queryEngineTable` mapping schema와 backend configuration을 추가합니다. `scripts/verify-deploy-dependencies.sh`는 Trino image availability도 확인합니다. 아직 backend adapter, Query Run migration, UI 전환, current DuckDB 제거는 포함하지 않습니다.
+Phase 1은 Trino single-node coordinator와 Iceberg JDBC catalog, MinIO S3 warehouse 구성, Catalog `queryEngineTable` mapping schema와 backend configuration을 추가합니다. `scripts/verify-deploy-dependencies.sh`는 Trino image availability도 확인합니다.
+
+Phase 2는 `TrinoClient`의 statement/nextUri/cancel protocol adapter, canonical Trino Query Run payload persistence, Dataset display name -> physical table compiler, Trino submit/refresh/cancel service를 추가합니다. 기존 `/api/query/runs`와 frontend는 아직 DuckDB compatibility runtime을 사용한다. API routing 전환, cursor result retention, UI polling과 current DuckDB 제거는 후속 Phase다.

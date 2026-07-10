@@ -62,7 +62,7 @@ flowchart LR
     API --> AUDIT[(Audit Log)]
 ```
 
-현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. Issue #488 Phase 1은 Compose 내부 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse와 Catalog `queryEngineTable` physical mapping을 추가했다. 현재 SQL runtime은 여전히 DuckDB Preview 호환 구현이며, 목표 Trino 계약은 `docs/trino-query-run-contract.md`를 따른다.
+현재 FastAPI가 직접 소유하는 영역은 ETL, Run, Catalog hydrate, Catalog lineage fallback, SQL query compatibility runtime, SQL derived dataset 저장, Dashboard card/list, Dashboard draft/published runtime이다. Issue #488 Phase 1은 Compose 내부 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse와 Catalog `queryEngineTable` physical mapping을 추가했다. Phase 2는 Trino HTTP adapter와 canonical Query Run persistence/compiler를 추가했다. 현재 API routing과 SQL runtime은 여전히 DuckDB Preview 호환 구현이며, 목표 Trino 계약은 `docs/trino-query-run-contract.md`를 따른다.
 Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 ### Kafka Snapshot Direct Target 전환 계획
