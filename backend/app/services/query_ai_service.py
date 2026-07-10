@@ -13,6 +13,7 @@ from app.repositories.catalog_repository import CatalogRepository
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.common import ErrorCode
 from app.schemas.sql import QueryAiSuggestionRequest, QueryAiSuggestionResponse
+from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
 from app.services.sql_service import (
     build_dataset_context_map,
@@ -71,6 +72,17 @@ class QueryAiService:
             for dataset_id in context_dataset_ids
         ]
         for dataset in datasets:
+            require_governed_access(
+                self.repository.db,
+                actor_context,
+                action="query",
+                api_path="/api/query/ai/suggestions",
+                http_method="POST",
+                metadata={"owner": dataset.owner},
+                resource_id=dataset.id,
+                resource_name=dataset.name,
+                resource_type="dataset",
+            )
             require_permission(
                 actor_context,
                 "query",

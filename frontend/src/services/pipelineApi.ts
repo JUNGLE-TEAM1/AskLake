@@ -1,5 +1,5 @@
 import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft } from "../types";
-import { toCreatePipelineRequest } from "./draftPipelineContract";
+import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
 export type PipelineCreationResult = {
@@ -29,6 +29,10 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline): Promise
 
 export async function getJob(jobId: string): Promise<JobRowData> {
   return apiClient.get<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function updatePipelineDraft(jobId: string, draftPipeline: DraftPipeline): Promise<JobRowData> {
+  return apiClient.patch<JobRowData>(`/api/etl/jobs/${encodeURIComponent(jobId)}`, toUpdatePipelineRequest(draftPipeline));
 }
 
 export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand, "edit" | "delete">): Promise<JobCommandResult> {

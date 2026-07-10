@@ -18,6 +18,7 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    UpdatePipelineRequest,
 )
 from app.services import etl_service
 
@@ -40,8 +41,11 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
 
 
 @router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
-def ingest_kafka_reviews(request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
-    return etl_service.ingest_kafka_reviews(request)
+def ingest_kafka_reviews(
+    request: KafkaReviewIngestRequest,
+    db: Session = Depends(get_db),
+) -> KafkaReviewIngestResponse:
+    return etl_service.ingest_kafka_reviews(db, request)
 
 
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
@@ -68,6 +72,16 @@ def get_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobRowData:
     return etl_service.get_job(db, job_id, actor)
+
+
+@router.patch("/jobs/{job_id}", response_model=JobRowData)
+def update_job(
+    job_id: str,
+    request: UpdatePipelineRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobRowData:
+    return etl_service.update_pipeline(db, job_id, request, actor)
 
 
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)

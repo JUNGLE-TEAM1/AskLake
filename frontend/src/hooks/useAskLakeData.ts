@@ -3,7 +3,7 @@ import { ApiError } from "../types";
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { apiConfig } from "../services/apiClient";
 import { deleteDatasetMaterializationRun } from "../services/catalogApi";
-import { applyDraftPipelinePatch } from "../services/draftPipelineContract";
+import { applyDraftPipelinePatch, hydrateDraftPipelineFromJob } from "../services/draftPipelineContract";
 import {
   createPipelineDraft as createMockPipelineDraft,
   getDatasets,
@@ -14,6 +14,7 @@ import {
   createPipelineDraft as createLivePipelineDraft,
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
+  updatePipelineDraft as updateLivePipelineDraft,
 } from "../services/pipelineApi";
 import { canQueryDatasetAs, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
@@ -728,6 +729,7 @@ export function useAskLakeData({
   const [jobs, setJobs] = useState<JobRowData[]>(getInitialJobs);
   const [datasets, setDatasets] = useState<CatalogDataset[]>(getInitialDatasets);
   const [draftPipeline, setDraftPipeline] = useState<DraftPipeline>(initialDraftPipeline);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [selectedDataset, setSelectedDataset] = useState<CatalogDataset>(() => getInitialDatasets()[0] ?? emptySelectedDataset);
   const [selectedJob, setSelectedJob] = useState<JobRowData>(() => getInitialJobs()[0] ?? emptySelectedJob);
   const [runsByJobId, setRunsByJobId] = useState<RunsByJobId>({});
@@ -871,7 +873,67 @@ export function useAskLakeData({
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
   };
 
+  const startNewPipeline = () => {
+    setEditingJobId(null);
+    setDraftPipeline(initialDraftPipeline);
+    onFlowChange("source");
+  };
+
+  const cancelJobEdit = () => {
+    setEditingJobId(null);
+    setDraftPipeline(initialDraftPipeline);
+    onFlowChange("jobDetail");
+  };
+
+  const startJobEdit = async (job: JobRowData) => {
+    setApiPending(true);
+    try {
+      const hydratedJob = apiConfig.useMock ? job : await getLiveJob(job.id);
+      const normalizedJob = normalizeJobRow(hydratedJob);
+      applyHydratedJob(normalizedJob);
+      setSelectedJob(normalizedJob);
+      setDraftPipeline(hydrateDraftPipelineFromJob(normalizedJob, initialDraftPipeline));
+      setEditingJobId(normalizedJob.id);
+      writeAuditLog("etl.job.edit_started", `/api/etl/jobs/${normalizedJob.id}`, normalizedJob.id);
+      onFlowChange("source");
+    } catch (error) {
+      writeAuditLog("etl.job.edit_hydrate_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
+      showToast(error instanceof ApiError ? error.message : "저장된 작업 설정을 불러오지 못했습니다.", "info");
+    } finally {
+      setApiPending(false);
+    }
+  };
+
   const createPipeline = async () => {
+    if (editingJobId) {
+      if (createPendingRef.current) {
+        showToast("이미 저장 요청이 처리 중입니다.", "info");
+        return;
+      }
+      if (apiConfig.useMock) {
+        showToast("Mock mode에서는 Job 수정 저장을 지원하지 않습니다.", "info");
+        return;
+      }
+      createPendingRef.current = true;
+      setApiPending(true);
+      try {
+        const updatedJob = normalizeJobRow(await updateLivePipelineDraft(editingJobId, draftPipeline));
+        applyHydratedJob(updatedJob);
+        setEditingJobId(null);
+        setDraftPipeline(initialDraftPipeline);
+        writeAuditLog("etl.job.updated", `/api/etl/jobs/${updatedJob.id}`, updatedJob.id);
+        showToast("기존 Job 설정을 저장했습니다.");
+        onFlowChange("jobDetail");
+      } catch (error) {
+        writeAuditLog("etl.job.update_failed", `/api/etl/jobs/${editingJobId}`, editingJobId, "failed");
+        const message = error instanceof ApiError ? error.message : "Job 설정 저장에 실패했습니다.";
+        showToast(message, "info");
+      } finally {
+        createPendingRef.current = false;
+        setApiPending(false);
+      }
+      return;
+    }
     if (createPendingRef.current) {
       showToast("이미 생성 요청이 처리 중입니다.", "info");
       return;
@@ -992,9 +1054,7 @@ export function useAskLakeData({
 
   const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
     if (command === "edit") {
-      writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
-      setSelectedJob(job);
-      onFlowChange("source");
+      await startJobEdit(job);
       return;
     }
 
@@ -1143,12 +1203,14 @@ export function useAskLakeData({
 
   return {
     apiPending,
+    cancelJobEdit,
     commandPendingByJobId,
     createPipeline,
     dataError,
     dataLoading,
     datasets,
     draftPipeline,
+    editingJobId,
     handleJobCommand,
     dagStepsByRunId,
     jobExecutionEvidence,
@@ -1167,6 +1229,8 @@ export function useAskLakeData({
     setSelectedDataset,
     setSqlResultDraft,
     sqlResultDraft,
+    startJobEdit,
+    startNewPipeline,
     updateDraftPipeline,
   };
 }

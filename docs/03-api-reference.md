@@ -72,9 +72,10 @@ Canonical status values:
 | `POST` | `/api/etl/sources/test` | TBD | Source 연결 테스트와 schema draft patch 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schema-inference` | TBD | Source 테스트 결과 기반 schema 반환 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
+| `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
-| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka review topic batch를 Lake landing에 저장하고 Catalog 등록 | 이 문서 |
+| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
@@ -82,11 +83,15 @@ Canonical status values:
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
-Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. Kafka는 장기 저장소로 보지 않고, `topic -> batch consume -> Lake landing object(jsonl) -> Catalog materializationRuns append` 흐름으로 처리한다. 같은 consumer group을 쓰면 이미 읽은 offset 이후의 새 메시지만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
+`GET /api/etl/jobs/{jobId}`는 Job 상세와 실행 polling뿐 아니라 향후 수정 화면 hydrate의 source of truth다. 응답은 source config, schema columns/fingerprint/sample/summary, transform/quality, schedule/retry/watermark, permission summary/roles, target database/metadata를 함께 유지한다. Issue #460의 update endpoint 구현 전에는 이 응답을 수정 저장에 사용하지 않는다.
+
+`PATCH /api/etl/jobs/{jobId}`는 `manage` 권한이 필요하다. request는 source field를 허용하지 않으며, 실행 중인 Job은 `409`, 성공 Run이 있는 Job의 target dataset/database/layer/format/storage identity 변경은 `422`로 차단한다. update는 Job metadata만 바꾸고 Kafka consumer group offset 및 durable snapshot은 변경하지 않는다.
+
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> direct target object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장되고, lag가 없으면 0건 JSONL target run도 성공으로 남긴다.
 
 ### Kafka review ingest
 
-`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 Lake landing에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
+`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 선택 target에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
 
 Request:
 
@@ -95,19 +100,26 @@ type KafkaReviewIngestRequest = {
   broker?: string; // default "127.0.0.1:19092"
   topic?: string; // default "reviews.raw"
   consumerGroupId?: string;
-  maxMessages?: number; // default 100
+  maxMessages?: number; // default 100, snapshot maximum per partition
   timeoutMs?: number; // default 10000
   offsetPolicy?: "earliest" | "latest";
   allowEmpty?: boolean;
   registerCatalog?: boolean;
   datasetId?: string;
   datasetName?: string;
+  targetBucket?: string; // default "asklake-output"
+  targetPrefix?: string; // default "{datasetName}/{targetLayer}"
+  targetLayer?: "RAW" | "BRONZE" | "SILVER";
+  targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
+  targetDescription?: string;
+  transformSteps?: TransformStepDraft[]; // Job 실행 시 Job에 저장된 규칙이 전달됨
+  qualityRules?: QualityRuleDraft[];
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
-  landingEndpoint?: string; // MinIO default "http://127.0.0.1:19000"
-  landingBucket?: string; // default "m3-raw"
-  landingPrefix?: string; // default "kafka-landing"
+  landingEndpoint?: string; // legacy name for the S3-compatible target endpoint
+  landingBucket?: string; // deprecated compatibility fallback for targetBucket
+  landingPrefix?: string; // deprecated compatibility fallback for targetPrefix
 };
 ```
 
@@ -125,10 +137,26 @@ type KafkaReviewIngestResponse = {
   storageMode: "local" | "s3";
   storageFormat: "jsonl";
   storageLocation: string;
+  targetLayer: "RAW" | "BRONZE" | "SILVER";
+  transform?: { configuredStepCount: number; appliedStepCount: number; errorCount: number };
+  quality?: { configuredRuleCount: number; invalidRowCount: number; droppedCount: number; quarantinedCount: number; quarantineLocation?: string; summary: string };
   metadataLocation: string;
   datasetId?: string;
   datasetName?: string;
   catalogDataset?: CatalogDataset;
+  snapshot: {
+    snapshotId: string;
+    capturedAt: string;
+    topic: string;
+    consumerGroupId: string;
+    offsetPolicy: "earliest" | "latest";
+    partitions: Array<{
+      partition: number;
+      startOffset: string;
+      highWatermark: string;
+      endOffset: string; // exclusive
+    }>;
+  };
 };
 ```
 
@@ -146,7 +174,27 @@ type KafkaReviewEvent = {
 };
 ```
 
-필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
+필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. direct target object는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형태이며, metadata는 같은 snapshot directory의 `metadata.json`에 저장한다.
+
+### Kafka snapshot direct target
+
+Issue #455 Phase 3는 아래 direct target 계약을 구현한다. 저장 경로는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형식이며 중간 `kafka-landing/...` RAW object를 만들지 않는다.
+
+```text
+partition offset snapshot
+  -> fixed-range consume with auto-commit disabled
+  -> transform/quality
+  -> selected target dataset write
+  -> Catalog materialization run
+  -> offset commit
+```
+
+현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 같은 snapshot identity는 target object path와 Catalog materialization run deduplication key로 사용한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다. post-target-write failure smoke hook은 production endpoint 계약에 포함하지 않으며 `ASKLAKE_ENABLE_KAFKA_TEST_HOOKS=true`인 test process에서만 활성화된다.
+
+`Fail Run` 같은 Kafka bridge 오류가 일반 Job command에서 발생하면 API는 실패 Run을 정상 응답의 `run`으로 반환하며, `run.taskStates.kafkaSnapshot`과 `failedStage`를 보존한다. 직접 `POST /api/etl/kafka/reviews/ingest` 호출은 `502` error response를 반환하고 `error.details.bridge.snapshot` 및 `failedStage`로 동일 진단을 제공한다.
+
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. 현재 direct bridge는 normalized review event에 지원되는 field transform과 quality action을 적용한 뒤 JSONL로 저장한다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. target layer는 Catalog/target metadata이며 Kafka bridge의 transform/quality 실행 여부를 임의로 바꾸지 않는다. bridge는 Job에 저장된 지원 field transform과 quality action을 적용한 뒤 사용자가 선택한 target에 저장한다. `Fail Run`은 offset commit 전에 실행을 실패시키며, `Quarantine`은 snapshot directory의 `quarantine.jsonl`로 분리한다. malformed payload도 raw payload와 Kafka context를 보존해 quarantine한다. `GOLD` join/aggregation과 범용 SQL expression runtime은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 
 ### Scheduled job tick
 
@@ -228,12 +276,14 @@ type ScheduledJobRunResponse = {
 | `POST` | `/api/admin/permissions` | permission grant 생성. admin role 필요 |
 | `PATCH` | `/api/admin/permissions/{grantId}` | permission grant principal/actions 수정. admin role 필요 |
 | `DELETE` | `/api/admin/permissions/{grantId}` | permission grant 삭제. admin role 필요 |
-| `GET` | `/api/admin/audit-logs` | 관리자 감사 로그 조회. admin role 필요 |
-| `POST` | `/api/audit-logs` | audit log 서버 저장 |
+| `GET` | `/api/admin/governance-controls` | 사용자/그룹 차단과 resource lock 상태 조회. admin role 필요 |
+| `PATCH` | `/api/admin/governance/principals` | 사용자 또는 그룹 차단/해제. admin role 필요 |
+| `PATCH` | `/api/admin/governance/resource-locks` | Dataset/Job/Dashboard 잠금/해제. admin role 필요 |
+| `GET` | `/api/admin/audit-logs` | 관리자 감사 로그 조회/검색. admin role 필요 |
 
 Dataset 기반 widget 생성은 top-level `datasetId`, `type`, type별 `config`를 함께 전송한다. 지원 runtime widget type은 `metric`, `table`, ApexCharts 차트 8종(`bar_chart`, `line_chart`, `area_chart`, `donut_chart`, `pie_chart`, `radial_bar_chart`, `heatmap_chart`, `treemap_chart`)으로 둔다. Draft runtime 응답은 각 widget의 `queryId`, `datasetId`, `type`, `config`, `data` snapshot을 유지해야 한다.
 
-Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 `dataset`, `etl_job`, `dashboard` resource에 대해 `user`, `group`, `role`, `public` principal grant를 저장할 수 있다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이며, 운영 기본 흐름은 group grant와 user 예외 grant를 우선 사용한다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용한다.
+Profile/Admin Console API는 `asklake_session` 쿠키가 있으면 session actor를 우선 사용하고, 세션이 없으면 임시 actor header(`X-AskLake-User`, `X-AskLake-Role`, `X-AskLake-Groups`) fallback으로 동작한다. `/api/users/me`는 모든 actor가 호출할 수 있고, `/api/admin/*`는 admin role이 아니면 `403 FORBIDDEN`을 반환한다. 관리 콘솔 권한 편집 API는 `dataset`, `etl_job`, `dashboard` resource에 대해 `user`, `group`, `role`, `public` principal grant를 저장할 수 있다. 지원 action은 `view`, `query`, `run`, `manage`, `delete`, `share`이며, 운영 UI의 기본 흐름은 group grant와 user 예외 grant를 우선 사용한다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여되며, 로컬 demo admin 계정은 groups를 비워 둔다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않는다. Governance controls는 user/group principal을 `blocked`로 전환하거나 resource를 잠글 수 있다. 관리 콘솔에서는 user 차단은 사용자 탭, group 차단은 그룹 탭, resource lock은 권한 탭의 선택 resource action으로 배치한다. 차단/잠금 사유는 관리자 내부 표시와 감사 로그용이며 일반 사용자-facing 메시지에는 노출하지 않는다. 차단된 actor는 grant가 있어도 resource 접근/실행에서 403을 받고, 잠긴 resource는 view를 제외한 `query/run/manage/delete/share` action을 403으로 차단한다.
 
 Dashboard FastAPI 구현은 두 lane으로 나눈다.
 
@@ -263,7 +313,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 `prepareSqlDatasetJobDraft`로 Review에 넘긴 뒤 `POST /api/etl/jobs`; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |
-| 감사 로그 | local/localStorage state | `POST /api/audit-logs` |
+| 감사 로그 | 서버 `audit_events` 조회 + local/localStorage 최근 호출 | `GET /api/admin/audit-logs` |
 
 SQL 화면은 한국어/공백 dataset·column 표시명을 금지하지 않는다. 자동완성, 기본 쿼리, 컬럼 삽입, JOIN 초안 생성은 SQL 실행명으로 `"월별 매출 데이터"`처럼 double-quoted identifier를 사용한다. 사용자가 따옴표 없이 한글/공백 table reference를 직접 입력하면 frontend preflight가 실행 전에 감지하고 quoted identifier 자동 보정을 제안한다. backend table context 검증은 표시명 문자열만 믿지 않고 `baseDatasetId`와 `referenceDatasetIds`로 선택된 dataset 범위를 계속 source of truth로 사용한다.
 

@@ -23,6 +23,7 @@ export type RecommendedTransformStep = {
 export type QualityRuleOption = {
   failureAction: TransformQualityFailureAction;
   id: string;
+  params?: string;
   severity: TransformQualitySeverity;
   targetColumn: string;
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";

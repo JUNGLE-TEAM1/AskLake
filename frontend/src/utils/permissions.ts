@@ -27,7 +27,8 @@ export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard
 }
 
 export function canRunJobCommand(job: JobRowData, command: JobCommand) {
-  if (command === "edit" || command === "delete") return true;
+  if (command === "edit") return permissionValue(job, "canManage", false);
+  if (command === "delete") return permissionValue(job, "canDelete", false);
   if (command === "run" || command === "retry") return permissionValue(job, "canRun", true);
   return permissionValue(job, "canManage", false);
 }

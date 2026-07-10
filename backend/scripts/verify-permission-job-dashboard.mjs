@@ -46,8 +46,9 @@ async function runSmoke() {
   await cleanupPrincipalGrants(viewerHeaders["X-AskLake-User"]);
 
   const suffix = Date.now().toString(36);
-  const job = await createSmokeJob(suffix);
-  await verifyJobPermissions(job.id);
+  const jobPayload = buildSmokeJobPayload(suffix);
+  const job = await createSmokeJob(jobPayload);
+  await verifyJobPermissions(job.id, jobPayload);
 
   const dashboard = await post("/api/dashboards", {
     owner: "admin",
@@ -61,7 +62,7 @@ async function runSmoke() {
   console.log("verify-permission-job-dashboard: ok");
 }
 
-async function verifyJobPermissions(jobId) {
+async function verifyJobPermissions(jobId, jobPayload) {
   const blockedCommand = await postExpectError(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pause" }, 403, viewerHeaders);
   assert(blockedCommand.error?.code === "FORBIDDEN", "Viewer without manage grant should be denied from job command.");
 
@@ -84,6 +85,53 @@ async function verifyJobPermissions(jobId) {
 
   const allowedCommand = await postExpectError(`/api/etl/jobs/${encodeURIComponent(jobId)}/commands`, { command: "pause" }, 422, viewerHeaders);
   assert(allowedCommand.error?.code === "INVALID_JOB_STATE", "Viewer with manage grant should pass permission check and reach job state validation.");
+
+  await patch("/api/admin/governance/resource-locks", {
+    locked: true,
+    reason: "Permission job smoke lock",
+    resourceId: jobId,
+    resourceType: "etl_job",
+  });
+  const lockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  const lockedJob = lockedJobs.find((item) => item.id === jobId);
+  assert(lockedJob?.permissions?.canRun === false, "Locked job should report canRun=false.");
+  assert(lockedJob?.permissions?.canManage === false, "Locked job should report canManage=false.");
+  const lockedUpdate = await patchExpectError(`/api/etl/jobs/${encodeURIComponent(jobId)}`, {
+    ...buildSmokeJobUpdatePayload(jobPayload),
+    jobName: `${jobPayload.jobName} Locked Update`,
+  }, 403, viewerHeaders);
+  assert(lockedUpdate.error?.details?.resourceType === "etl_job", "Locked job update should return a governance 403.");
+
+  await patch("/api/admin/governance/resource-locks", {
+    locked: false,
+    reason: "Permission job smoke unlock",
+    resourceId: jobId,
+    resourceType: "etl_job",
+  });
+  const unlockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  const unlockedJob = unlockedJobs.find((item) => item.id === jobId);
+  assert(unlockedJob?.permissions?.canManage === true, "Unlocked job should restore manage permission.");
+
+  await patch("/api/admin/governance/principals", {
+    principalId: viewerHeaders["X-AskLake-User"],
+    principalType: "user",
+    reason: "Permission job smoke user block",
+    status: "blocked",
+  });
+  const blockedJobs = await get("/api/etl/jobs", viewerHeaders);
+  assert(!blockedJobs.some((item) => item.id === jobId), "Blocked actor should not see granted job in list.");
+  await patch("/api/admin/governance/principals", {
+    principalId: viewerHeaders["X-AskLake-User"],
+    principalType: "user",
+    reason: "Permission job smoke user unblock",
+    status: "active",
+  });
+
+  const forbiddenJobAudits = await get(`/api/admin/audit-logs?resourceType=etl_job&result=forbidden&q=${encodeURIComponent(jobId)}&limit=20`);
+  assert(
+    forbiddenJobAudits.logs.some((log) => log.targetId === jobId && log.action === "etl_job.command.forbidden"),
+    "Job command 403 should be recorded in admin audit logs.",
+  );
 }
 
 async function verifyDashboardPermissions(dashboardId) {
@@ -128,6 +176,39 @@ async function verifyDashboardPermissions(dashboardId) {
   const draft = await post(`/api/dashboards/${encodeURIComponent(dashboardId)}/draft/ensure`, {}, viewerHeaders);
   assert(draft.dashboard?.permissions?.canManage === true, "Viewer with manage grant should ensure draft runtime.");
 
+  await patch("/api/admin/governance/resource-locks", {
+    locked: true,
+    reason: "Permission dashboard smoke lock",
+    resourceId: dashboardId,
+    resourceType: "dashboard",
+  });
+  const lockedList = await get("/api/dashboards", viewerHeaders);
+  const lockedDashboard = lockedList.items.find((item) => item.id === dashboardId);
+  assert(lockedDashboard?.permissions?.canView === true, "Locked dashboard should remain visible to actors with view grant.");
+  assert(lockedDashboard?.permissions?.canManage === false, "Locked dashboard should report canManage=false.");
+  assert(lockedDashboard?.permissions?.canDelete === false, "Locked dashboard should report canDelete=false.");
+  await patch("/api/admin/governance/resource-locks", {
+    locked: false,
+    reason: "Permission dashboard smoke unlock",
+    resourceId: dashboardId,
+    resourceType: "dashboard",
+  });
+
+  await patch("/api/admin/governance/principals", {
+    principalId: viewerHeaders["X-AskLake-User"],
+    principalType: "user",
+    reason: "Permission dashboard smoke user block",
+    status: "blocked",
+  });
+  const blockedGrantedList = await get("/api/dashboards", viewerHeaders);
+  assert(!blockedGrantedList.items.some((item) => item.id === dashboardId), "Blocked actor should not see granted dashboard in list.");
+  await patch("/api/admin/governance/principals", {
+    principalId: viewerHeaders["X-AskLake-User"],
+    principalType: "user",
+    reason: "Permission dashboard smoke user unblock",
+    status: "active",
+  });
+
   const blockedDelete = await delExpectError(`/api/dashboards/${encodeURIComponent(dashboardId)}`, 403, viewerHeaders);
   assert(blockedDelete.error?.code === "FORBIDDEN", "Viewer without delete grant should not delete dashboard.");
 
@@ -136,11 +217,25 @@ async function verifyDashboardPermissions(dashboardId) {
   const deleted = await del(`/api/dashboards/${encodeURIComponent(dashboardId)}`, viewerHeaders);
   assert(deleted.deletedDashboardId === dashboardId, "Viewer with delete grant should delete dashboard.");
   createdDashboardId = null;
+
+  const forbiddenDashboardAudits = await get(`/api/admin/audit-logs?resourceType=dashboard&result=forbidden&q=${encodeURIComponent(dashboardId)}&limit=20`);
+  assert(
+    forbiddenDashboardAudits.logs.some((log) => log.targetId === dashboardId && log.action === "dashboard.access.forbidden"),
+    "Dashboard runtime 403 should be recorded in admin audit logs.",
+  );
+  assert(
+    forbiddenDashboardAudits.logs.some((log) => log.targetId === dashboardId && log.action === "dashboard.update.forbidden"),
+    "Dashboard update 403 should be recorded in admin audit logs.",
+  );
+  assert(
+    forbiddenDashboardAudits.logs.some((log) => log.targetId === dashboardId && log.action === "dashboard.delete.forbidden"),
+    "Dashboard delete 403 should be recorded in admin audit logs.",
+  );
 }
 
-async function createSmokeJob(suffix) {
+function buildSmokeJobPayload(suffix) {
   const targetDataset = `permission_job_dashboard_smoke_${suffix}`;
-  const create = await post("/api/etl/jobs", {
+  return {
     id: `permission-job-dashboard-${suffix}`,
     jobName: `Permission Job Dashboard Smoke ${suffix}`,
     owner: "admin",
@@ -174,7 +269,16 @@ async function createSmokeJob(suffix) {
     storageType: "Local",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
-  });
+  };
+}
+
+function buildSmokeJobUpdatePayload(payload) {
+  const { id, sourceConfig, sourceLabel, sourceType, ...updatePayload } = payload;
+  return updatePayload;
+}
+
+async function createSmokeJob(payload) {
+  const create = await post("/api/etl/jobs", payload);
   assert(create.job?.id, "ETL job create response should include job.id.");
   return create.job;
 }

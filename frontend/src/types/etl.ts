@@ -25,17 +25,29 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  schemaColumns?: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows?: string[][];
+  schemaSummary?: string;
+  ruleSummary?: string;
   retryPolicy?: RetryPolicyDraft;
   retryPolicySummary?: string;
   runLimitSummary?: string;
   permissionRoles?: PermissionDraft["roles"];
+  permissionSummary?: string;
   compression?: "Snappy" | "Gzip" | "None";
   partition?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
+  targetDatabase?: string;
+  targetDescription?: string;
+  targetTags?: string[];
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
+  rag?: boolean;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
   qualityInvalidRows?: string[][];
@@ -133,6 +145,7 @@ export type QualityRuleDraft = {
   failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;
   kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+  params?: string;
   severity: "Warning" | "Error";
   targetColumn: string;
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
@@ -293,6 +306,7 @@ export type CreatePipelineRequest = {
   compression?: "Snappy" | "Gzip" | "None";
   storagePath?: string;
   targetDataset: string;
+  targetDatabase?: string;
   targetDescription?: string;
   targetTags?: string[];
   targetLayer: TargetLayer;
@@ -300,6 +314,11 @@ export type CreatePipelineRequest = {
   owner: string;
   rag: boolean;
 };
+
+export type UpdatePipelineRequest = Omit<
+  CreatePipelineRequest,
+  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "createdBy" | "createdByProfile" | "permissionGrants"
+>;
 
 export type DraftPipelineSlicePatch = {
   id?: string;

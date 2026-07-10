@@ -88,7 +88,7 @@ function jobCreatorLabel(job: JobRowData) {
 }
 
 function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
-  if (action === "detail" || action === "runs" || action === "edit" || action === "delete") return false;
+  if (action === "detail" || action === "runs") return false;
   return !canRunJobCommand(job, action);
 }
 

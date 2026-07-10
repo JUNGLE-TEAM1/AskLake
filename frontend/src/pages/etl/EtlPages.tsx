@@ -772,16 +772,16 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
-function buildKafkaLandingPath(topic: string) {
-  return `s3://m3-raw/kafka-landing/${topic || "reviews.raw"}`;
-}
-
 function normalizeKafkaDatasetName(topic: string) {
   return (topic || "reviews.raw").trim().replace(/[^0-9A-Za-z_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "reviews_raw";
 }
 
 function isDefaultTargetStoragePath(value: string | undefined) {
   return !value || value.includes("asklake-output/");
+}
+
+function isLegacyKafkaLandingPath(value: string | undefined) {
+  return Boolean(value?.includes("kafka-landing/"));
 }
 
 function isDefaultTargetDataset(value: string | undefined) {
@@ -796,9 +796,9 @@ function isDefaultTargetDescription(value: string | undefined) {
   return !value || value.includes("고객 리뷰 분석용");
 }
 
-function kafkaTargetTags(tags: string[] | undefined) {
+function kafkaTargetTags(tags: string[] | undefined, layer: TargetLayer) {
   const visibleTags = filterVisibleTargetTags(tags);
-  return visibleTags.length > 0 ? visibleTags : ["#kafka", "#raw"];
+  return visibleTags.length > 0 ? visibleTags : ["#kafka", `#${layer.toLowerCase()}`];
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
@@ -1046,15 +1046,17 @@ function getTargetDraftValues(draft: DraftPipeline) {
     : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
   const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
-    ? "RAW"
+    ? "BRONZE"
     : normalizeTargetLayer(rawTargetLayer);
   const storedPath = target?.storagePath ?? draft.target.storagePath;
-  const defaultTargetPath = isKafkaSource ? buildKafkaLandingPath(kafkaTopic) : buildTargetStoragePath(targetDataset, targetLayer);
-  const storagePath = isKafkaSource && isDefaultTargetStoragePath(storedPath) ? defaultTargetPath : getDisplayText(storedPath, defaultTargetPath);
+  const defaultTargetPath = buildTargetStoragePath(targetDataset, targetLayer);
+  const storagePath = isKafkaSource && (isDefaultTargetStoragePath(storedPath) || isLegacyKafkaLandingPath(storedPath))
+    ? defaultTargetPath
+    : getDisplayText(storedPath, defaultTargetPath);
 
   return {
     description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? "Kafka 원본 이벤트 Lake landing 데이터셋"
+      ? "Kafka snapshot direct target 데이터셋"
       : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
@@ -1064,7 +1066,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
     tableName: isKafkaSource && isDefaultTargetTable(target?.tableName ?? draft.target.tableName)
       ? targetDataset
       : getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
+    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags, targetLayer) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
@@ -1085,6 +1087,7 @@ export function SourceConnectionPage({
   onNotify,
   onPrev,
   onNext,
+  sourceLocked = false,
 }: {
   draft: DraftPipeline;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -1093,13 +1096,14 @@ export function SourceConnectionPage({
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
+  sourceLocked?: boolean;
 }) {
   const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
-  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
+  const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => sourceLocked ? "connect" : getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const sourceAssetCacheRef = useRef<Map<string, SourceAssetsResponse>>(new Map());
@@ -1277,9 +1281,9 @@ export function SourceConnectionPage({
       fields: [
         ["Stream Type", "Apache Kafka"],
         ["Broker / Endpoint", "127.0.0.1:19092"],
-        ["TOPIC / QUEUE NAME", "asklake-source-events"],
-        ["CONSUMER GROUP ID", "asklake-source-events-preview"],
-        ["Batch Max Messages", "100"],
+        ["TOPIC / QUEUE NAME", "reviews.raw"],
+        ["CONSUMER GROUP ID", "asklake-reviews-raw-job"],
+        ["Batch Max Messages (per partition)", "100"],
         ["Timeout Ms", "10000"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
@@ -1395,6 +1399,7 @@ export function SourceConnectionPage({
   };
 
   const selectSource = (value: string) => {
+    if (sourceLocked) return;
     const nextFields = value === activeSourceType
       ? editableFields
       : mergeSourceFieldsWithDefaults(sourceConfigs[value].fields, sourceFields[value]);
@@ -1418,6 +1423,7 @@ export function SourceConnectionPage({
   };
 
   const updateSourceField = (label: string, value: string) => {
+    if (sourceLocked) return;
     const nextFields = editableFields.map(([fieldLabel, fieldValue]) => [fieldLabel, fieldLabel === label ? value : fieldValue] as [string, string]);
     const nextMessage = isSqlResultSource ? connectionMessage : "소스 설정이 변경되었습니다. 연결 테스트를 다시 실행하세요.";
     const nextStatus = isSqlResultSource ? connectionStatus : "idle";
@@ -1428,6 +1434,33 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
+  };
+
+  const fillMinioDemoFields = () => {
+    if (sourceLocked) return;
+    const demoFields: Array<[string, string]> = [
+      ["Storage Provider", "MinIO"],
+      ["Endpoint URL", "http://127.0.0.1:19000"],
+      ["Region", "us-east-1"],
+      ["Bucket / Stage Name", "m3-raw"],
+      ["Path / Prefix", ""],
+      ["Access Key", "m3admin"],
+      ["Secret Key", "wishuponastar"],
+      ["Use Path Style", "true"],
+      ["File Type", "auto"],
+      ["Delimiter", ","],
+      ["Encoding", "UTF-8"],
+      ["Header", "Treat first row as header"],
+    ];
+    const nextFields = mergeFieldRows(editableFields, demoFields);
+    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setSourceRuntime(null);
+    setSelectedAssetPath("");
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1508,6 +1541,7 @@ export function SourceConnectionPage({
   };
 
   const runSourceConnectionTest = async (fieldsForTest = editableFields) => {
+    if (sourceLocked) return;
     if (!hasSelectedSource) {
       onNotify("먼저 소스를 선택하세요.");
       return;
@@ -1640,10 +1674,10 @@ export function SourceConnectionPage({
     <CreationFlowLayout
       actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
     >
-        <PageTitle title="소스 연결" description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
+        <PageTitle title="소스 연결" description={sourceLocked ? "저장된 Job의 소스 설정입니다. 소스를 바꾸려면 복제 후 새 Job을 생성하세요." : isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."} />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
           <div className="source-stage-tabs" role="tablist" aria-label="소스 연결 단계">
-            <button className={sourceStage === "choose" ? "active" : ""} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
+            <button className={sourceStage === "choose" ? "active" : ""} disabled={sourceLocked} title={sourceLocked ? "수정 모드에서는 소스가 고정됩니다." : undefined} type="button" onClick={() => setSourceStage("choose")}>1. 소스 선택</button>
             <button className={sourceStage === "connect" ? "active" : ""} type="button" disabled={!hasSelectedSource} onClick={() => setSourceStage("connect")}>2. 연결 설정</button>
             <button className={sourceStage === "browse" ? "active" : ""} type="button" disabled={connectionStatus !== "success" || !hasDetectedAssets} onClick={() => setSourceStage("browse")}>3. 데이터 탐색</button>
           </div>
@@ -1670,7 +1704,7 @@ export function SourceConnectionPage({
                         const config = sourceConfigs[connector];
                         const selected = sourceType === connector;
                         return (
-                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} key={connector} type="button" onClick={() => selectSource(connector)}>
+                          <button aria-label={`${group.title} ${meta.label} ${meta.desc}`} className={selected ? "source-choice-row active" : "source-choice-row"} disabled={sourceLocked} key={connector} type="button" onClick={() => selectSource(connector)}>
                             <span className="source-choice-icon">{meta.icon}</span>
                             <span className="source-choice-main">
                               <strong>{meta.label}</strong>
@@ -1701,16 +1735,17 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
-                  {current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
+                  {!sourceLocked && activeSourceType === "File / S3" && <button className="secondary-button" type="button" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</button>}
+                  {!sourceLocked && current.actions?.includes("Show Advanced Configuration") && <button className="secondary-button" type="button" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</button>}
+                  {!sourceLocked && current.actions?.includes("Fetch Metadata") && <button className="secondary-button" type="button" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</button>}
+                    {sourceLocked ? <span className="panel-note">저장된 소스 고정</span> : isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <label className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`}>
                       <span>{sourceFieldLabel(label)}</span>
-                      <input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                      <input className="input control-input" readOnly={isSqlResultSource || sourceLocked} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                     </label>
                   ))}
                 </div>
@@ -3606,6 +3641,7 @@ function toDraftQualityRules(rules: QualityRule[]): QualityRuleDraft[] {
     failureAction: rule.failureAction,
     id: rule.id,
     kind: toQualityRuleKind(rule.validationType),
+    params: rule.params,
     severity: rule.severity,
     targetColumn: rule.targetColumn,
     validationType: rule.validationType,
@@ -4300,6 +4336,7 @@ function createQualityRuleFromDraft(draft: RuleStepDraft, id: string): QualityRu
   return {
     failureAction: getQualityFailureAction(draft.onError || fallback.onError),
     id,
+    params: draft.params,
     severity: getQualitySeverity(draft.params || "Warning"),
     targetColumn: draft.input.trim() || fallback.input,
     validationType: getQualityValidationType(draft.operation || fallback.operation),
@@ -4381,6 +4418,7 @@ function RuleStepBuilder({
   const [selectedValidationType, setSelectedValidationType] = useState<QualityRule["validationType"]>(selectedQualityPreset.validationType);
   const [selectedSeverity, setSelectedSeverity] = useState<QualityRule["severity"]>(selectedQualityPreset.severity);
   const [selectedFailureAction, setSelectedFailureAction] = useState<QualityRule["failureAction"]>(selectedQualityPreset.failureAction);
+  const [qualityParams, setQualityParams] = useState(selectedQualityPreset.params ?? "");
   const trimmedOutputColumn = outputColumn.trim();
   const outputColumnMode = trimmedOutputColumn && baseColumnSet.has(trimmedOutputColumn) ? "inPlace" : "derived";
   const getTransformParams = (operation: TransformOperation) => {
@@ -4412,7 +4450,7 @@ function RuleStepBuilder({
         onError: selectedFailureAction,
         operation: selectedValidationType,
         output: "validation_status",
-        params: selectedSeverity,
+        params: qualityParams,
       };
   const presetOptions = isTransform
     ? transformPresets.map((step) => ({ id: step.id, label: `${transformOperationLabel(step.operation)}: ${step.input} -> ${step.output}` }))
@@ -4434,6 +4472,7 @@ function RuleStepBuilder({
     setSelectedValidationType(preset.validationType);
     setSelectedSeverity(preset.severity);
     setSelectedFailureAction(preset.failureAction);
+    setQualityParams(preset.params ?? "");
   };
   const applyTransformDraft = (draft: RuleStepDraft) => {
     const operation = getAllowedTransformOperation(draft.operation);
@@ -4657,6 +4696,12 @@ function RuleStepBuilder({
                 </select>
               )}
             </label>
+            {!isTransform && (
+              <label className="hegun-rule-field">
+                <span>규칙 값 (JSON)</span>
+                <input className="input control-input" value={qualityParams} placeholder='{"pattern":"..."}' onChange={(event) => setQualityParams(event.target.value)} />
+              </label>
+            )}
             {isTransform && (
               <label className="hegun-rule-field">
                 <span>오류 처리</span>
@@ -5345,12 +5390,14 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
+  targetIdentityLocked = false,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
+  targetIdentityLocked?: boolean;
 }) {
   const initialTarget = getTargetDraftValues(draft);
   const draftTarget = (draft as DraftPipelineWithSlices).target;
@@ -5521,7 +5568,8 @@ export function TargetPage({
 
   return (
     <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
-      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
+      <PageTitle title="타겟 설정" description={targetIdentityLocked ? "성공 Run이 있어 목적지 식별값은 고정됩니다. metadata와 파티션은 수정할 수 있습니다." : "최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다."} />
+      {targetIdentityLocked ? <InfoBox title="저장 목적지 고정" body="성공한 데이터가 있는 Job은 데이터셋, DB, 포맷, 저장 경로를 바꿀 수 없습니다. 다른 목적지가 필요하면 Job을 복제하세요." /> : null}
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
@@ -5539,7 +5587,7 @@ export function TargetPage({
           <div className="target-xflow-form-grid basic">
             <label className="field wide">
               <span>데이터셋명</span>
-              <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+              <input className="input control-input" readOnly={targetIdentityLocked} value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
             </label>
             <label className="field">
               <span>오너</span>
@@ -5567,7 +5615,7 @@ export function TargetPage({
           <div className="target-xflow-form-grid destination">
             <label className="field target-db-field">
               <span>DB 선택</span>
-              <DatabaseField value={databaseName} onChange={setDatabaseName} />
+              <DatabaseField disabled={targetIdentityLocked} value={databaseName} onChange={setDatabaseName} />
             </label>
             <label className="field target-format-field">
               <span>포맷</span>
@@ -5575,13 +5623,14 @@ export function TargetPage({
                 <button
                   aria-expanded={formatOptionsOpen}
                   className="target-format-trigger"
+                  disabled={targetIdentityLocked}
                   type="button"
                   onClick={() => setFormatOptionsOpen((open) => !open)}
                 >
                   <span>{targetFormat}</span>
                   {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </button>
-                {formatOptionsOpen ? (
+                {formatOptionsOpen && !targetIdentityLocked ? (
                   <div className="target-format-menu">
                     {TARGET_FORMAT_OPTIONS.map((format) => (
                       <button
@@ -5603,7 +5652,7 @@ export function TargetPage({
             </label>
             <label className="field wide target-storage-field">
               <span>저장경로</span>
-              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField disabled={targetIdentityLocked} value={targetStoragePath} onChange={setTargetStoragePath} />
             </label>
           </div>
         </section>
@@ -5834,11 +5883,13 @@ export function PermissionPage({
 export function ReviewPage({
   createPending,
   draft,
+  editing = false,
   onCreate,
   onEdit,
 }: {
   createPending?: boolean;
   draft: DraftPipeline;
+  editing?: boolean;
   onCreate: () => void;
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
@@ -5903,14 +5954,14 @@ export function ReviewPage({
     && Boolean(request.targetDataset.trim())
     && Boolean(request.owner.trim());
   const createDisabled = createPending || !canCreate;
-  const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+  const createLabel = createPending ? (editing ? "저장 중..." : "생성 중...") : canCreate ? (editing ? "변경사항 저장" : "파이프라인 생성") : "검증 필요";
 
   return (
     <CreationFlowLayout
       variant="review"
       actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
-        <PageTitle title="검토 및 생성" description="설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요." />
+        <PageTitle title={editing ? "검토 및 저장" : "검토 및 생성"} description={editing ? "변경된 구성을 확인하고 기존 데이터 파이프라인에 저장하세요." : "설정된 모든 구성을 확인하고 데이터 파이프라인 생성을 완료하세요."} />
         <div className="xflow-review-stack">
           <section className="xflow-review-card">
             <div className="xflow-review-card-header">

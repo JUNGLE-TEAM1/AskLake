@@ -9,7 +9,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
-| 수집/처리 목록 | `GET /api/etl/jobs` hydrate. Postgres `etl_jobs.payload`가 비어 있으면 빈 목록으로 시작 | 삭제, 수정 저장 API |
+| 수집/처리 목록 | Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시. `PATCH /api/etl/jobs/{jobId}`가 동일 Job ID에 허용된 metadata를 저장 | 삭제, 복제 후 새 Job 생성 UX |
 | 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
@@ -20,8 +20,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
-| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
-| Audit | local 기록 중심 | `POST /api/audit-logs` 서버 저장 |
+| Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, demo admin groups는 빈 배열로 동기화함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. `principal_controls`와 `resource_locks`로 user/group 차단 및 Dataset/Job/Dashboard 잠금 API를 제공함. 관리 콘솔 UI는 user 차단을 사용자 탭, group 차단을 그룹 탭, resource lock을 권한 탭에 배치하고 차단/잠금 사유는 관리자 내부 표시와 감사 로그용으로만 사용함. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
+| Audit | `audit_events` table 기반 admin 조회/필터 UI + auth login/logout/login 실패 + permission grant 변경 + principal/resource control 변경 + Dataset/Job/Dashboard 403 접근 시도 기록 + frontend local 최근 호출 로그 | audit export/retention 정책 |
 
 FastAPI 1차 scaffold의 범위는 서버 실행, CORS, PostgreSQL 연결, 공통 error envelope, `/api/health` 확인이었다.
 현재 브랜치는 ETL/Catalog/SQL live endpoint와 Dashboard card/runtime FastAPI endpoint를 함께 포함한다.
@@ -41,7 +41,7 @@ Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode
 - Schema: `schemaColumns`, `schemaSampleRows`, `schemaSummary`, `schemaFingerprint`
 - Transform: `transformSteps`, `transformOutputColumns`
 - Quality: `qualityRules`, `qualityScore`, `qualityStatus`, `qualityInvalidRows`
-- Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `targetDataset`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `storageType`, `storagePath`, `partition`, `partitionColumns`, `indexColumns`, `compression`
+- Schedule/Permission/Target: `scheduleLabel`, `scheduleSummary`, `startDate`, optional `endDate`, `nextRunUtc`, `overlapPolicy`, `timezone`, `watermarkPolicy`, `retryPolicy`, `retryPolicySummary`, `runLimitSummary`, `owner`, `permissionSummary`, `targetDataset`, optional `targetDatabase`, `targetDescription`, `targetTags`, `targetLayer`, `targetFormat`, `storageType`, `storagePath`, `partition`, `partitionColumns`, `indexColumns`, `compression`
 
 Schedule UI 문구는 `수동/자동/1회 실행` 대신 `스케줄링 건너뛰기`, `반복 실행`을 사용한다. `스케줄링 건너뛰기`는 저장만 하고 나중에 목록에서 직접 실행하는 상태이며, 즉시 실행은 스케줄 생성 옵션이 아니라 기존 Job command API의 `run` action으로 분리한다. 반복 실행 화면은 반복 주기, 실행 시각, IANA `timezone`, 실패 재시도만 노출한다. `startDate`, 빈 값이면 종료일 없음으로 처리하는 `endDate`, 기본 `skip_if_running` 겹침 처리, watermark 수집 기준, 2배 지수 백오프 재시도 정책은 생성 payload와 Job hydrate 응답에 보존하되 UI에서는 기본값으로 처리한다. 현재 Run 취소는 `cancelRun`, 다음 반복 예약 제거는 `stopSchedule`로 분리한다.
 
@@ -72,6 +72,14 @@ type JobCommandResponse = {
   dagSteps?: JobDagStep[];
 };
 ```
+
+Backend update response:
+
+```ts
+type UpdatePipelineResponse = JobRowData;
+```
+
+수정 API는 source config를 받지 않으며 `manage` 권한을 확인한다. 실행 중인 Job과 성공 Run 이후의 target identity 변경을 차단하고, Kafka offset/snapshot state를 변경하지 않는다.
 
 ## 3. Metadata Persistence
 
@@ -150,6 +158,8 @@ npm run verify:fastapi-pair2
 npm run verify:permission-dataset
 npm run verify:permission-job-dashboard
 npm run verify:fastapi-etl-catalog
+python3 scripts/verify-etl-job-hydrate-contract.py
+python3 scripts/verify-etl-job-update-contract.py
 npm run verify:sources
 npm run verify:spark-run
 ```
@@ -163,6 +173,8 @@ FastAPI Pair2 smoke:
 - `npm run verify:permission-dataset`는 권한 없는 viewer의 dataset 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다. 기본 포트는 `18087`이며 `ASKLAKE_PERMISSION_DATASET_PORT`로 바꿀 수 있다.
 - `npm run verify:permission-job-dashboard`는 권한 없는 viewer의 Job command, Dashboard 목록/runtime/title/draft/delete 차단과 user grant 변경 후 즉시 허용되는 흐름을 검증한다. 기본 포트는 `18088`이며 `ASKLAKE_PERMISSION_JOB_DASHBOARD_PORT`로 바꿀 수 있다.
 - `npm run verify:fastapi-etl-catalog`는 Docker/Spark 환경에서 FastAPI ETL job을 실제 실행하고 Catalog payload의 `sourceRunId`, `storageLocation`, `storageFormat`, `storageSizeBytes`, `lineageGraph`를 확인한다. 이어서 같은 dataset으로 Dashboard draft widget을 생성해 catalog `schema`/`sampleRows`가 widget `data` snapshot으로 변환되는지 확인한다. 기본 포트는 `18085`이며 `ASKLAKE_FASTAPI_ETL_SMOKE_PORT`로 바꿀 수 있다.
+- `python3 scripts/verify-etl-job-hydrate-contract.py`는 저장된 Kafka source/schema/rule/permission/target metadata가 `JobRowData` hydrate 응답에서 손실되지 않는지 확인한다.
+- `python3 scripts/verify-etl-job-update-contract.py`는 update request가 source field를 거부하고 source config를 보존한 채 editable metadata만 반영하는지, 성공 Run 뒤 target identity 변경이 `422`로 막히는지, 실행 중 update가 `409`로 막히는지 확인한다.
 
 Frontend:
 
@@ -358,7 +370,7 @@ Permission/Governance 기준으로, 프로필/만든 사람 표시는 identity m
 | 1 | `getJobs`, `getDatasets`, `getDatasetLineageGraph` API adapter 추가 | `frontend/src/services/mockApi.ts` |
 | 2 | 초기 hydrate loading/error 상태 추가 | `frontend/src/hooks/useAskLakeData.ts` |
 | 3 | dashboard list/runtime adapter와 FastAPI fallback 경로 확인 | `frontend/src/services/mockApi.ts`, `frontend/src/services/dashboardApi.ts`, `frontend/src/services/dashboardRuntimeApi.ts` |
-| 4 | audit log 서버 저장 옵션 추가 | `frontend/src/hooks/useAuditLogs.ts` |
+| 4 | audit export/retention 정책 정의 | docs/admin console |
 | 5 | 삭제/저장/게시 실패 시 rollback 처리 | `frontend/src/hooks/useAskLakeData.ts`, dashboard page |
 
 ## 13. 인수 기준

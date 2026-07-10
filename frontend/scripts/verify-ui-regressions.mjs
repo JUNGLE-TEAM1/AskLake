@@ -90,6 +90,54 @@ const checks = [
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
     ],
   },
+  {
+    name: "Job edit selects the hydrated job before opening the edit flow",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const normalizedJob = normalizeJobRow\(hydratedJob\);\s*applyHydratedJob\(normalizedJob\);\s*setSelectedJob\(normalizedJob\);\s*setDraftPipeline\(hydrateDraftPipelineFromJob\(normalizedJob, initialDraftPipeline\)\);/s,
+    ],
+  },
+  {
+    name: "AI chat context uses only queryable available datasets",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /datasets\.filter\(\(dataset\) => dataset\.status === "available" && dataset\.permissions\?\.canQuery !== false\)/,
+      /type Conversation = \{[\s\S]*selectedDatasetIds: string\[\];[\s\S]*submissionState: SubmissionState;/,
+      /onAction\("ai\.context\.dataset_toggled", "\/api\/ai\/context", datasetId\);/,
+      /disabled=\{!activeConversation\.draftPrompt\.trim\(\) \|\| runtimeUnavailable \|\| selectedDatasets\.length === 0\}/,
+    ],
+  },
+  {
+    name: "Nessie chat creates local conversations and shows no mock response",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /function createConversation\(\): Conversation/,
+      /setConversations\(\(current\) => \[nextConversation, \.\.\.current\]\);/,
+      /<strong>Nessie runtime 미연결<\/strong>/,
+      /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>미연결<\/small><\/button>/,
+      /aria-current=\{conversation\.id === activeConversation\.id \? "page" : undefined\}/,
+      /const deleteConversation = \(conversationId: string\) => \{/,
+      /onAction\("ai\.chat\.deleted", "\/api\/ai\/conversations", conversationId\);/,
+      /className="ai-conversation-delete"/,
+    ],
+  },
+  {
+    name: "AI chat context selector supports keyboard and outside close",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /event instanceof KeyboardEvent && event\.key === "Escape"/,
+      /!contextPickerRef\.current\?\.contains\(event\.target as Node\)/,
+    ],
+  },
+  {
+    name: "AI conversation controls remain usable on mobile",
+    file: "src/styles/ai.css",
+    patterns: [
+      /@media \(max-width: 720px\) \{[\s\S]*\.ai-response-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/,
+      /\.ai-context-option:focus-within \{ outline: 2px solid #[0-9a-f]{6};/,
+      /\.ai-conversation-sidebar\.open \{ transform: translateX\(0\); \}/,
+    ],
+  },
 ];
 
 const failures = [];

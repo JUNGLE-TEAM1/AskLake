@@ -2,7 +2,7 @@ from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
-from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel
+from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
 from app.models.base import Base
 from app.repositories.catalog_repository import ensure_catalog_schema
 from app.schemas.etl import CatalogDataset, JobRowData, JobRunSummary
@@ -38,6 +38,7 @@ def ensure_schema(db: Session) -> None:
             "partition_columns": "JSON",
             "index_columns": "JSON",
             "permission_roles": "JSON",
+            "permission_summary": "TEXT",
             "progress": "JSON",
             "quality_invalid_rows": "JSON",
             "quality_rules": "JSON",
@@ -53,6 +54,8 @@ def ensure_schema(db: Session) -> None:
             "schema_columns": "JSON",
             "schema_fingerprint": "TEXT",
             "schema_sample_rows": "JSON",
+            "schema_summary": "TEXT",
+            "rule_summary": "TEXT",
             "source": "VARCHAR(255)",
             "source_config": "JSON",
             "source_label": "VARCHAR(255)",
@@ -64,6 +67,7 @@ def ensure_schema(db: Session) -> None:
             "tag": "VARCHAR(64)",
             "target": "VARCHAR(255)",
             "target_description": "TEXT",
+            "target_database": "VARCHAR(255)",
             "target_format": "VARCHAR(120)",
             "target_layer": "VARCHAR(32)",
             "target_path": "VARCHAR(512)",
@@ -278,6 +282,43 @@ def create_run(db: Session, run: ETLRunModel) -> JobRunSummary:
     return run_to_schema(run)
 
 
+def get_active_kafka_snapshot(
+    db: Session,
+    topic: str,
+    consumer_group_id: str,
+    job_id: str | None,
+) -> KafkaSnapshotModel | None:
+    ensure_schema(db)
+    statement = (
+        select(KafkaSnapshotModel)
+        .where(
+            KafkaSnapshotModel.topic == topic,
+            KafkaSnapshotModel.consumer_group_id == consumer_group_id,
+            KafkaSnapshotModel.status.in_(["running", "failed"]),
+        )
+        .order_by(KafkaSnapshotModel.created_at.desc())
+    )
+    if job_id is None:
+        statement = statement.where(KafkaSnapshotModel.job_id.is_(None))
+    else:
+        statement = statement.where(KafkaSnapshotModel.job_id == job_id)
+    return db.scalars(statement).first()
+
+
+def save_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel) -> KafkaSnapshotModel:
+    ensure_schema(db)
+    db.add(snapshot)
+    db.commit()
+    db.refresh(snapshot)
+    return snapshot
+
+
+def update_kafka_snapshot(db: Session, snapshot: KafkaSnapshotModel, status: str, error: str | None = None) -> None:
+    snapshot.status = status
+    snapshot.last_error = error
+    db.commit()
+
+
 def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
     ensure_schema(db)
     runs = db.scalars(
@@ -317,10 +358,16 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         source_config=job.source_config,
         source_label=job.source_label,
         source_type=job.source_type,
+        schema_columns=job.schema_columns,
+        schema_fingerprint=job.schema_fingerprint,
+        schema_sample_rows=job.schema_sample_rows,
+        schema_summary=job.schema_summary,
+        rule_summary=job.rule_summary,
         retry_policy=job.retry_policy,
         retry_policy_summary=job.retry_policy_summary,
         run_limit_summary=job.run_limit_summary,
         permission_roles=job.permission_roles,
+        permission_summary=job.permission_summary,
         storage_type=job.storage_type,
         partition=job.partition,
         partition_columns=job.partition_columns,
@@ -328,6 +375,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         compression=job.compression,
         storage_path=job.storage_path,
         target_description=job.target_description,
+        target_database=job.target_database,
         target_tags=job.target_tags,
         target_format=job.target_format,
         target_layer=job.target_layer,

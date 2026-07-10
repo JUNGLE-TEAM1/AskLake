@@ -8,6 +8,7 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
+| 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
@@ -16,7 +17,7 @@
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
-| 10 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 10 | P2 | `GET /api/admin/audit-logs` | 서버 감사 로그 조회/검색 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -79,7 +80,7 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
+현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
 ### Permission/Governance Phase 0 용어
 
@@ -118,7 +119,9 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
 5. 위 조건이 모두 아니면 `403 FORBIDDEN`
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+Governance control은 위 allow-only 판정 앞에서 적용됩니다. `principal_controls`에서 actor의 user id/email/display name 또는 소속 group이 `blocked`이면 grant가 있어도 `403 FORBIDDEN`입니다. `resource_locks`에서 resource가 잠겨 있으면 `view`는 유지하고 `query`, `run`, `manage`, `delete`, `share` action은 `403 FORBIDDEN`입니다. 목록 API는 blocked actor에게 해당 resource를 숨깁니다. Resource lock은 목록 노출을 막지 않고, 응답 `permissions`에서 `canQuery`, `canRun`, `canManage`, `canDelete`, `canShare`를 `false`로 내려 UI preflight와 backend enforcement가 같은 상태를 보게 합니다.
+
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
 
 Resource/action 기준:
 
@@ -147,6 +150,7 @@ Resource/action 기준:
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
@@ -170,8 +174,8 @@ Profile/Admin Console Phase 0 기준:
 - `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
-- 관리 콘솔은 사용자/그룹/감사 로그 조회와 permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
-- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 자동 생성하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
+- 관리 콘솔은 사용자/그룹/감사 로그 조회, 사용자/그룹 차단, resource lock, permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
@@ -389,6 +393,31 @@ type JobRowData = {
     watermarkPolicy?: WatermarkPolicyDraft;
   };
   scheduleSummary?: string;
+  sourceConfig?: Array<[string, string]>;
+  sourceLabel?: string;
+  sourceType?: string;
+  schemaColumns?: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows?: string[][];
+  schemaSummary?: string;
+  ruleSummary?: string;
+  permissionSummary?: string;
+  permissionRoles?: PermissionDraft["roles"];
+  targetDatabase?: string;
+  targetDescription?: string;
+  targetTags?: string[];
+  targetFormat?: string;
+  targetLayer?: "RAW" | "BRONZE" | "SILVER" | "GOLD";
+  storageType?: "S3" | "Local" | "HDFS";
+  storagePath?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
+  transformOutputColumns?: Array<[string, string]>;
+  transformSteps?: TransformStepDraft[];
+  qualityRules?: QualityRuleDraft[];
+  qualityInvalidRows?: string[][];
+  qualityScore?: number;
+  qualityStatus?: "idle" | "pass" | "warn" | "fail";
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -401,6 +430,8 @@ type JobRowData = {
   };
 };
 ```
+
+`GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
 `schedule`/`scheduleSummary`의 화면 문구는 `수동/자동/1회 실행`이 아니라 `스케줄링 건너뛰기`와 `반복 실행` 두 기준으로 표현한다. 스케줄링을 건너뛰면 즉시 실행 command `run`으로 1회 Run을 만들며, `1회 실행`은 schedule 값으로 저장하지 않는다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 실패 재시도만 노출한다. ISO date `startDate`, optional `endDate`, 겹침 처리, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
 
@@ -476,7 +507,7 @@ type CatalogDataset = {
     rowCount: number;
     storageSizeBytes: number;
     storageLocation?: string;
-    sourceKind: "etl" | "sql";
+    sourceKind: "etl" | "sql" | "kafka";
     sourceLabel: string;
   }>;
   upstream: string[];
@@ -487,6 +518,32 @@ type CatalogDataset = {
 
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
+
+### Kafka Snapshot Metadata and Direct Target
+
+Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+
+```ts
+type KafkaPartitionSnapshot = {
+  partition: number;
+  startOffset: string;
+  highWatermark: string;
+  endOffset: string; // exclusive
+};
+
+type KafkaSnapshot = {
+  snapshotId: string;
+  capturedAt: string; // ISO 8601
+  topic: string;
+  consumerGroupId: string;
+  offsetPolicy: "earliest" | "latest";
+  partitions: KafkaPartitionSnapshot[];
+};
+```
+
+Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
+
+Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
 ### LineageGraph
 
@@ -743,6 +800,7 @@ type CreatePipelineRequest = {
   compression: "Snappy" | "Gzip" | "None";
   storagePath: string;
   targetDataset: string;
+  targetDatabase?: string;
   targetDescription?: string;
   targetTags?: string[];
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -889,7 +947,32 @@ Validation:
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
-### 7.3 작업 명령
+### 7.3 파이프라인 수정
+
+`PATCH /api/etl/jobs/{jobId}`
+
+프론트 함수:
+
+- `updatePipelineDraft(jobId, draftPipeline)`
+
+Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`, `permissionGrants`를 제외한 `UpdatePipelineRequest`다. source field가 body에 포함되면 `422` validation error로 거부한다.
+
+Response `200 OK`:
+
+```ts
+type UpdatePipelineResponse = JobRowData;
+```
+
+Rules:
+
+- `manage` 권한이 필요하다.
+- `running` Job은 `409 CONFLICT`로 수정할 수 없다.
+- 성공 Run이 하나라도 있으면 `targetDataset`, `targetDatabase`, `targetLayer`, `targetFormat`, `storageType`, `storagePath` 변경을 `422`로 차단한다.
+- source config와 Kafka consumer group offset, `kafka_snapshots` row는 update 대상이 아니다.
+- 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
+- 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
+
+### 7.4 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 
@@ -2507,30 +2590,121 @@ Response `200 OK`:
 - `X-AskLake-Role=admin` 필요.
 - admin이 아니면 `403 FORBIDDEN`.
 
+Query:
+
+- `q?: string`: action, actor, api path, target, metadata text 검색.
+- `actorId?: string`: actor id/name 부분 검색.
+- `resourceType?: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group"`.
+- `result?: "success" | "failed" | "forbidden"`.
+- `from?: ISO datetime`.
+- `to?: ISO datetime`.
+- `limit?: number`: 기본 100, 최대 500.
+
 Response `200 OK`:
 
 ```json
 {
   "logs": [
     {
-      "action": "etl.job.command_requested",
-      "actor_id": "Admin User",
-      "api_path": "/api/etl/jobs/JOB-001/commands",
+      "action": "admin.permission_grant.created",
+      "actor_id": "admin-user",
+      "actor_name": "Admin User",
+      "actor_role": "admin",
+      "actor_groups": ["data-platform", "analytics", "ops"],
+      "api_path": "/api/admin/permissions",
       "created_at": "2026-07-09T06:30:00.000Z",
-      "request_id": "req_demo_001",
+      "http_method": "POST",
+      "metadata": {
+        "grantId": "grant_abc123",
+        "principalId": "temporary.editor@asklake.local",
+        "principalType": "user",
+        "actions": ["view"]
+      },
+      "request_id": "req_01J1Z8W8EFGH",
       "result": "success",
-      "target_id": "JOB-001",
-      "target_type": "etl_job"
+      "status_code": 201,
+      "target_id": "ds_customer_orders_gold",
+      "target_name": "Customer Orders Gold",
+      "target_type": "dataset"
     }
   ]
 }
 ```
 
-초기 구현은 frontend local audit log와 backend demo audit snapshot을 합치지 않습니다. 서버 API는 backend가 알고 있는 demo log만 반환하고, Topbar의 local audit log는 별도 UI 상태로 유지합니다.
+Backend 저장 기준:
 
-### 9.6 감사 로그 저장
+- 서버 감사 로그는 `audit_events` table에 저장합니다.
+- 현재 기록 범위는 admin permission grant 생성/수정/삭제, governance control 변경, auth login/logout/login 실패, Dataset 상세/SQL query/materialization 삭제 403, Job command/update 403, Dashboard runtime/편집/삭제 403입니다.
+- 감사 저장 실패는 주요 사용자 액션을 막지 않고 서버 transaction rollback 후 액션 응답을 유지합니다.
+- Topbar의 local audit log는 별도 UI 상태로 유지하며, `/api/admin/audit-logs` 응답과 합치지 않습니다.
 
-`POST /api/audit-logs`
+### 9.6 관리자 Governance Controls
+
+`GET /api/admin/governance-controls`
+
+- admin이 아니면 `403 FORBIDDEN`.
+- 사용자/그룹 차단 상태와 resource lock 상태를 반환합니다.
+- 관리 콘솔 UI는 user 차단을 사용자 탭에, group 차단을 그룹 탭에, resource lock을 권한 탭의 선택 resource action에 표시합니다.
+- `reason`은 관리자 내부 표시와 감사 로그용입니다. 일반 사용자-facing 오류 메시지에는 차단/잠금 사유를 그대로 노출하지 않습니다.
+
+Response:
+
+```json
+{
+  "principalControls": [
+    {
+      "id": "principal_control_...",
+      "principalType": "group",
+      "principalId": "analytics",
+      "status": "blocked",
+      "reason": "incident response",
+      "updatedBy": "Admin User",
+      "updatedAt": "2026-07-10T00:00:00Z"
+    }
+  ],
+  "resourceLocks": [
+    {
+      "id": "resource_lock_...",
+      "resourceType": "dataset",
+      "resourceId": "ds_orders_clean",
+      "locked": true,
+      "reason": "schema freeze",
+      "updatedBy": "Admin User",
+      "updatedAt": "2026-07-10T00:00:00Z"
+    }
+  ]
+}
+```
+
+`PATCH /api/admin/governance/principals`
+
+```json
+{
+  "principalType": "user",
+  "principalId": "demo-user",
+  "status": "blocked",
+  "reason": "temporary investigation"
+}
+```
+
+`principalType`은 `user` 또는 `group`, `status`는 `active` 또는 `blocked`입니다. 성공 시 `admin.principal_control.updated` audit event를 저장합니다. 운영자 계정은 UI에서 차단 action을 노출하지 않으며, 일반 사용자에게는 내부 `reason` 대신 중립적인 접근 제한 메시지만 보여줍니다.
+
+`PATCH /api/admin/governance/resource-locks`
+
+```json
+{
+  "resourceType": "dataset",
+  "resourceId": "ds_orders_clean",
+  "locked": true,
+  "reason": "schema freeze"
+}
+```
+
+`resourceType`은 `dataset`, `etl_job`, `dashboard`입니다. 성공 시 `admin.resource_lock.updated` audit event를 저장합니다. 잠긴 resource는 `view`를 제외한 `query/run/manage/delete/share` action에서 backend가 `403 FORBIDDEN`을 반환하고 `*.governance_forbidden` audit event를 저장합니다.
+
+### 9.7 Frontend 최근 호출 로그
+
+서버 감사 로그와 별도로 frontend는 사용자 피드백용 최근 호출 로그를 브라우저 안에 저장합니다. 현재 `POST /api/audit-logs` endpoint는 구현하지 않습니다.
 
 현재 프론트 내부 저장 위치:
 
@@ -2547,37 +2721,11 @@ type AuditEntry = {
   api_path: string;
   created_at: string;
   request_id: string;
-  result: "success" | "failed";
+  result: "success" | "failed" | "forbidden";
   target_id: string;
-  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui";
+  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
 };
 ```
-
-Request 예시:
-
-```json
-{
-  "action": "etl.pipeline.created",
-  "actor_id": "demo-user",
-  "api_path": "/api/etl/jobs",
-  "created_at": "2026-07-03T11:40:00.000Z",
-  "request_id": "req_01J1Z8W8EFGH",
-  "result": "success",
-  "target_id": "JOB-001",
-  "target_type": "etl_job"
-}
-```
-
-Response `201 Created`:
-
-```json
-{
-  "id": "audit_01J1Z8W8IJKL",
-  "stored": true
-}
-```
-
-감사 로그 API는 실패해도 주요 사용자 액션을 막지 않는 것을 권장합니다.
 
 ## 10. 백엔드 구현 체크리스트
 
