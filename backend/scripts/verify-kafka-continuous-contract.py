@@ -88,20 +88,20 @@ def main() -> None:
     original_list_runs = etl_repository.list_runs_for_job
     original_save = etl_repository.save_kafka_continuous_command
     original_permissions = etl_service.with_job_permissions
+    original_worker = etl_service.run_kafka_continuous_worker
     try:
         etl_repository.get_kafka_continuous_runtime = lambda _db, _job_id: runtime
         etl_repository.find_conflicting_kafka_continuous_runtime = lambda _db, **_kwargs: None
         etl_repository.list_runs_for_job = lambda _db, _job_id: []
         etl_repository.save_kafka_continuous_command = lambda _db, saved_job, _runtime: etl_repository.job_to_schema(None, saved_job)
         etl_service.with_job_permissions = lambda _db, job_schema, _actor: job_schema
+        etl_service.run_kafka_continuous_worker = lambda _job, _runtime, action: {"action": action, "containerState": "starting"}
 
         response = etl_service.command_kafka_continuous_job(None, job, "startContinuous", ActorContext())
         assert response.action == "etl.continuous.start_requested"
-        assert response.processing_result == {
-            "controlPlaneOnly": True,
-            "runtimeStatus": "starting",
-            "worker": "not_connected",
-        }
+        assert response.processing_result["controlPlaneOnly"] is False
+        assert response.processing_result["runtimeStatus"] == "starting"
+        assert response.processing_result["worker"] == "spark_structured_streaming"
         assert job.status == "running"
         assert runtime.status == "starting"
 
@@ -117,6 +117,7 @@ def main() -> None:
         etl_repository.list_runs_for_job = original_list_runs
         etl_repository.save_kafka_continuous_command = original_save
         etl_service.with_job_permissions = original_permissions
+        etl_service.run_kafka_continuous_worker = original_worker
 
     print("verify-kafka-continuous-contract: ok")
 

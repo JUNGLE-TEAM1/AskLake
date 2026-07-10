@@ -4,7 +4,7 @@ Issue: #500
 
 ## 1. Status
 
-Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. Phase 2 adds the Redpanda broker prerequisite to prod-like Compose so the backend and future Spark submit containers share one internal Kafka endpoint. The current production data path remains the bounded Kafka snapshot direct-target bridge defined in `kafka-snapshot-direct-target-contract.md`. No continuous worker, Spark Structured Streaming query, automatic target append, or target format change is implemented yet.
+Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. Phase 2 adds the Redpanda broker prerequisite to prod-like Compose so the backend and Spark submit containers share one internal Kafka endpoint. Phase 3 connects lifecycle commands to an isolated Spark Structured Streaming submit container: it reads Kafka with a durable checkpoint, projects the approved source schema, appends valid JSON payloads as Parquet, and writes malformed payloads to a target-adjacent Parquet quarantine path. The bounded Snapshot bridge remains unchanged.
 
 ## 2. Objective
 
@@ -76,8 +76,8 @@ type KafkaContinuousRuntime = {
 ```
 
 - A continuous query runs as a long-lived Spark Structured Streaming application. It processes Kafka as micro-batches; it does not write a Lake object per source event.
-- Each successful micro-batch applies supported transform and quality rules, appends the selected target dataset, records a Catalog materialization run, and advances the checkpoint.
-- Target write, Catalog publication, or checkpoint failure leaves the previous successful checkpoint authoritative. Restart resumes from that point; output publication must be idempotent for the streaming batch identity.
+- Each successful micro-batch appends the selected target dataset and advances the checkpoint. Phase 3 supports schema projection and malformed-JSON quarantine; enabled visual transform and quality rules are rejected for Continuous Job creation until they are made streaming-safe in a later phase.
+- Target write or checkpoint failure leaves the previous successful checkpoint authoritative. Restart resumes from that point; Phase 3 writes each Spark batch ID to a stable target subpath so a retried batch does not create another Parquet output. Catalog materialization run publication remains a later phase.
 - Malformed payloads and `Quarantine` quality results preserve raw payload plus Kafka context in a target-adjacent quarantine output. A quarantined micro-batch must not silently drop source progress.
 - Continuous writes use append-oriented Parquet output in V1. Compaction is a separate maintenance operation; JSONL snapshot direct targets remain supported for Snapshot Jobs.
 
@@ -104,7 +104,7 @@ type JobCommand =
 - `stopContinuous`: persists a stop request while leaving checkpoint state available for a later explicit resume or Job copy policy.
 - `run` and `retry` remain Snapshot-only commands. A continuous Job never creates a one-time snapshot run through those commands.
 - `GET /api/etl/jobs/{jobId}` includes `executionMode`, `continuousConfig`, and `continuousRuntime` after implementation.
-- Phase 1 command responses identify `controlPlaneOnly: true` and `worker: "not_connected"`. Phase 2 connects these requests to an actual streaming worker; until then a `starting`, `pausing`, or `stopping` runtime state is not evidence that Kafka is being consumed.
+- Phase 3 command responses identify `controlPlaneOnly: false` and `worker: "spark_structured_streaming"`. Worker heartbeats and counters are written to the Spark report volume, then hydrated by Job reads. A `starting`, `pausing`, or `stopping` state remains transitional until the worker report confirms the terminal or running state.
 
 ## 6. Mutual Exclusion and Backfill
 

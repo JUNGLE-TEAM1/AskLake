@@ -160,6 +160,8 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
 
 
 def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
+    for job in etl_repository.list_job_models(db):
+        refresh_kafka_continuous_runtime(db, job)
     jobs = [
         with_job_permissions(db, job, actor or ActorContext())
         for job in etl_repository.list_jobs(db)
@@ -215,6 +217,7 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
     sync_airflow_runs_for_job(db, job_model)
+    refresh_kafka_continuous_runtime(db, job_model)
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -508,25 +511,37 @@ def command_kafka_continuous_job(
                 status.HTTP_409_CONFLICT,
                 {"activeJobId": conflict.job_id, "runtimeStatus": conflict.status},
             )
+        try:
+            worker_result = run_kafka_continuous_worker(job, runtime, "start")
+        except ApiError as exc:
+            runtime.status = "failed"
+            runtime.failed_count += 1
+            runtime.last_error = exc.message
+            job.status = "failed"
+            job.last_state = "Continuous worker 시작 실패"
+            etl_repository.save_kafka_continuous_command(db, job, runtime)
+            raise
         runtime.status = "starting"
         runtime.last_error = None
         job.status = "running"
-        job.last_state = "Continuous worker start 요청 기록 · worker 연결 대기"
+        job.last_state = "Continuous Spark worker 시작 요청"
         job.progress = {"label": "Continuous worker 시작 요청", "value": 5}
     elif command == "pauseContinuous":
         if runtime.status not in {"starting", "running"}:
             raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot pause from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
-        runtime.status = "paused"
-        job.status = "paused"
-        job.last_state = "Continuous worker pause 요청 기록 · worker 연결 대기"
-        job.progress = None
+        worker_result = run_kafka_continuous_worker(job, runtime, "pause")
+        runtime.status = "pausing"
+        job.status = "running"
+        job.last_state = "Continuous worker 마이크로배치 종료 대기"
+        job.progress = {"label": "일시정지 중", "value": 95}
     else:
         if runtime.status in {"stopped", "stopping"}:
             raise ApiError(ErrorCode.INVALID_JOB_STATE, f"Continuous Job cannot stop from: {runtime.status}", status.HTTP_422_UNPROCESSABLE_ENTITY)
-        runtime.status = "stopped"
-        job.status = "stopped"
-        job.last_state = "Continuous worker stop 요청 기록 · worker 연결 대기"
-        job.progress = None
+        worker_result = run_kafka_continuous_worker(job, runtime, "stop")
+        runtime.status = "stopping"
+        job.status = "running"
+        job.last_state = "Continuous worker 중지 요청"
+        job.progress = {"label": "중지 중", "value": 95}
 
     saved_job = etl_repository.save_kafka_continuous_command(db, job, runtime)
     return JobCommandResponse(
@@ -534,9 +549,10 @@ def command_kafka_continuous_job(
         api_path=f"/api/etl/jobs/{job.id}/commands",
         job=with_job_permissions(db, saved_job, actor),
         processing_result={
-            "controlPlaneOnly": True,
+            "controlPlaneOnly": False,
             "runtimeStatus": runtime.status,
-            "worker": "not_connected",
+            "worker": "spark_structured_streaming",
+            "workerResult": worker_result,
         },
     )
 
@@ -1663,6 +1679,99 @@ def marker_payload(output: str, marker: str) -> dict[str, Any] | None:
     return None
 
 
+def run_kafka_continuous_worker(job: ETLJobModel, runtime: KafkaContinuousRuntimeModel, action: str) -> dict[str, Any]:
+    config = job.continuous_config or {}
+    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
+    output_path = f"s3a://{target['bucket']}/{target['prefix'].strip('/')}"
+    return run_node_bridge(
+        "manage-kafka-continuous.mjs",
+        "ASKLAKE_KAFKA_CONTINUOUS_RESULT",
+        {
+            "action": action,
+            "broker": runtime.broker,
+            "checkpointPath": runtime.checkpoint_path,
+            "consumerGroupId": runtime.consumer_group_id,
+            "initialOffsetPolicy": config.get("initialOffsetPolicy", "earliest"),
+            "jobId": job.id,
+            "maxOffsetsPerTrigger": config.get("maxOffsetsPerTrigger", 10000),
+            "outputPath": output_path,
+            "schemaColumns": job.schema_columns or [],
+            "topic": runtime.topic,
+            "triggerIntervalSeconds": config.get("triggerIntervalSeconds", 30),
+        },
+        error_marker="ASKLAKE_KAFKA_CONTINUOUS_ERROR",
+        timeout_seconds=90 if action == "start" else 20,
+    )
+
+
+def refresh_kafka_continuous_runtime(db: Session, job: ETLJobModel) -> None:
+    if job.execution_mode != "continuous":
+        return
+    runtime = etl_repository.get_kafka_continuous_runtime(db, job.id)
+    if runtime is None:
+        return
+    report_path = continuous_runtime_report_path(job.id)
+    if not report_path.exists():
+        return
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    runtime_status = str(payload.get("status") or runtime.status)
+    if runtime_status not in {"starting", "running", "pausing", "paused", "stopping", "stopped", "failed"}:
+        return
+    runtime.status = runtime_status
+    runtime.heartbeat_at = optional_string(payload.get("heartbeatAt")) or runtime.heartbeat_at
+    runtime.last_flush_at = optional_string(payload.get("lastFlushAt")) or runtime.last_flush_at
+    runtime.last_batch_id = optional_string(payload.get("lastBatchId")) or runtime.last_batch_id
+    runtime.lag = optional_int(payload.get("lag"))
+    runtime.consumed_count = nonnegative_int(payload.get("consumedCount"), runtime.consumed_count)
+    runtime.stored_count = nonnegative_int(payload.get("storedCount"), runtime.stored_count)
+    runtime.quarantined_count = nonnegative_int(payload.get("quarantinedCount"), runtime.quarantined_count)
+    runtime.failed_count = nonnegative_int(payload.get("failedCount"), runtime.failed_count)
+    runtime.last_error = optional_string(payload.get("lastError"))
+    if runtime_status == "running":
+        job.status = "running"
+        job.last_state = f"Continuous Spark streaming · {runtime.stored_count:,}건 적재"
+        job.progress = {"label": "Continuous micro-batch 실행 중", "value": 66}
+    elif runtime_status == "paused":
+        job.status = "paused"
+        job.last_state = "Continuous worker 일시정지됨"
+        job.progress = None
+    elif runtime_status == "stopped":
+        job.status = "stopped"
+        job.last_state = "Continuous worker 중지됨 · checkpoint 보존"
+        job.progress = None
+    elif runtime_status == "failed":
+        job.status = "failed"
+        job.last_state = "Continuous worker 실패"
+        job.progress = None
+    etl_repository.save_kafka_continuous_command(db, job, runtime)
+
+
+def continuous_runtime_report_path(job_id: str) -> Path:
+    safe_job_id = re.sub(r"[^a-z0-9_.-]+", "-", job_id.lower()).strip("-") or "job"
+    report_dir = Path(os.environ.get("ASKLAKE_SPARK_REPORT_DIR") or BACKEND_DIR / "tmp" / "spark-runs")
+    return report_dir / f"kafka-continuous-{safe_job_id}.json"
+
+
+def optional_string(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def optional_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def nonnegative_int(value: Any, fallback: int) -> int:
+    parsed = optional_int(value)
+    return parsed if parsed is not None and parsed >= 0 else fallback
+
+
 def validate_create_request(request: CreatePipelineRequest) -> None:
     missing = []
     if not request.job_name:
@@ -1682,6 +1791,8 @@ def validate_create_request(request: CreatePipelineRequest) -> None:
             missing.append("continuousKafkaSource")
         if request.target_format.lower() != "parquet":
             missing.append("continuousTargetFormat=parquet")
+        if any(step.enabled for step in request.transform_steps) or any(rule.enabled for rule in request.quality_rules):
+            missing.append("continuousTransformAndQualityRules=unsupported")
     if not request.schema_columns:
         missing.append("schemaColumns")
     elif not any(column.included and column.target_name.strip() for column in request.schema_columns):
