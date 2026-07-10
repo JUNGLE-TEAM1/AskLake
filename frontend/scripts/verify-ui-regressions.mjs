@@ -174,6 +174,24 @@ const checks = [
       /\.ai-conversation-sidebar\.open \{ transform: translateX\(0\); \}/,
     ],
   },
+  {
+    name: "Auth page uses AskLake-owned review class names",
+    file: "src/pages/auth/AuthPage.tsx",
+    patterns: [/asklake-review-card/, /asklake-review-card-header/, /asklake-review-icon/],
+    forbiddenPatterns: [/xflow-/],
+  },
+  {
+    name: "Profile page uses AskLake-owned review class names",
+    file: "src/pages/profile/ProfilePage.tsx",
+    patterns: [/asklake-review-stack/, /profile-review-stack/, /asklake-review-card/],
+    forbiddenPatterns: [/xflow-/],
+  },
+  {
+    name: "Admin page uses AskLake-owned review class names",
+    file: "src/pages/admin/AdminConsolePage.tsx",
+    patterns: [/asklake-review-card/, /asklake-review-card-header/, /asklake-review-icon/],
+    forbiddenPatterns: [/xflow-/],
+  },
 ];
 
 const failures = [];
@@ -183,6 +201,11 @@ for (const check of checks) {
   check.patterns.forEach((pattern, index) => {
     if (!pattern.test(contents)) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
+    }
+  });
+  check.forbiddenPatterns?.forEach((pattern, index) => {
+    if (pattern.test(contents)) {
+      failures.push(`${check.name}: forbidden pattern #${index + 1} in ${check.file}`);
     }
   });
 }
