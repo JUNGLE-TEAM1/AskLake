@@ -440,7 +440,7 @@ export function CatalogPage({
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-          <TagList className="catalog-preview-tags" density="compact">
+          <TagList align="center" className="catalog-preview-tags" density="compact">
             {previewDataset.tags.map((tag) => (
               <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
             ))}

@@ -54,6 +54,7 @@
 - 현재 사용 중: `frontend/src/styles/catalog.css`의 `.catalog-page`, `.catalog-content-grid`, `.catalog-main`, `.catalog-search-panel`, `.catalog-results-section`.
 - 현재 사용 중: `.catalog-result-list`, `.catalog-result-item`, `.catalog-result-card`, `.catalog-result-summary`, `.catalog-result-tags`, `.catalog-empty-state`, `.catalog-pagination`.
 - 현재 사용 중: `.catalog-preview-panel`, `.catalog-preview-card`, `.catalog-overview-metrics`, `.catalog-lineage-teaser`, `.catalog-sql-target-hint`.
+- preview 하단의 `catalog-preview-tags`는 `TagList align="center"`를 사용해 카드 폭 안에서 태그를 중앙 정렬한다.
 - 현재 사용 중: `.catalog-materialization-*`, `.catalog-run-status`, `.catalog-sort-*`, `.catalog-favorite-button`.
 - 주의: lineage selector는 catalog detail과 modal에서도 공유하므로 목록 화면만 보고 삭제하면 안 된다.
 
