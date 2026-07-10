@@ -13,7 +13,7 @@
 ## Current Shared Components
 
 - `CreationFlowLayout`, `CreationTopActions`: wizard shell과 상단 이전/다음 action을 담당한다.
-- `PageHeader`: route title, description, icon을 공통 header로 표시한다.
+- `PageHeader`: route title과 icon을 공통 header로 표시한다. Target 화면에서는 요청된 compact 구성을 위해 description을 노출하지 않는다.
 - `FormFieldGroup`: Basic Information과 Destination Settings의 label/control wrapper로 사용된다.
 - `Input`: 데이터셋명, 오너, 담당자, 설명, 직접 태그 추가 입력에 사용된다.
 - `Button`: 태그 추가, DB/S3 picker 열기, S3 경로 복사, picker footer action에 사용된다.
@@ -24,11 +24,12 @@
 - `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`: S3 prefix tree row shell에 사용된다.
 - `TagList`, `Chip`: tag row와 interactive tag chip에 사용된다.
 - `CheckableOption`: 파티션 radio option card shell에 사용된다.
+- `Select`, `SelectTrigger`, `SelectValue`, `SelectContent`, `SelectItem`: 파일 포맷 선택에 사용된다. Radix 기반 keyboard navigation, `Escape` 닫기, outside click, focus restore를 제공한다.
 
 ## Weakly Componentized Areas
 
 - Basic/Destination/Partition section은 아직 `etl-review-card`, `target-config-card`, `target-config-form-grid`, `target-config-split` 같은 ETL 전용 CSS shell에 의존한다.
-- 파일 포맷 선택은 raw `<button>` + custom absolute menu(`target-format-trigger`, `target-format-menu`, `target-format-option`)로 구현되어 있어 shadcn `Select` 또는 `DropdownMenu`와 아직 다르다.
+- 파일 포맷 선택의 raw `<button>` + custom absolute menu는 shadcn `Select`로 교체됐다.
 - `DatabaseField`와 `S3PathField`는 `PickerDialog`를 쓰지만 내부 list/body density, error row, display row는 `database-*`, `s3-*` 전용 CSS가 많다.
 - tag 선택은 `TagList`/`Chip`을 쓰지만 선택 상태와 rounded pill styling은 `target-chip*` 전용 class에 남아 있다.
 - partition option은 `CheckableOption`을 쓰지만 grid, active/disabled, type label density는 `target-partition-*` selector가 담당한다.
@@ -37,7 +38,7 @@
 
 ## shadcn/ReUI Replacement Candidates
 
-- `Select` 또는 `DropdownMenu`: 파일 포맷 custom menu를 Radix/shadcn primitive로 대체한다. 단순 값 선택이면 `Select`, 메뉴형 radio 상태를 유지하려면 `DropdownMenuRadioGroup`이 맞다.
+- `Select`: 파일 포맷 custom menu를 Radix/shadcn primitive로 대체했다. 현재는 단일 값 선택이므로 `DropdownMenuRadioGroup`보다 `Select`가 적합하다.
 - `Field` + `Label`: `FormFieldGroup` compatibility wrapper를 점진적으로 흡수한다.
 - `InputGroup`: tag 직접 추가 입력과 add action을 하나의 compact 입력 그룹으로 정리할 수 있다.
 - `RadioGroup`: partition column 선택을 native radio card에서 shadcn radio group 기반으로 정렬할 수 있다.
@@ -61,7 +62,7 @@
 - 현재 사용 중:
   - `frontend/src/styles/etl.css`: `.target-config-stack`, `.target-config-card .field`, `.target-config-form-grid`, `.target-config-split`, `.target-config-subsection`, `.target-config-subheader`
   - `frontend/src/styles/etl.css`: `.target-chip-grid`, `.target-chip`, `.target-inline-controls`
-  - `frontend/src/styles/etl.css`: `.target-format-toggle`, `.target-format-trigger`, `.target-format-menu`, `.target-format-option`
+  - `frontend/src/styles/etl.css`: `.target-format-select`
   - `frontend/src/styles/etl.css`: `.target-validation-summary`
   - `frontend/src/styles/etl.css`: `.s3-path-field`, `.s3-path-display`, `.s3-path-action`, `.s3-picker-*`, `.s3-tree-*`
   - `frontend/src/styles/etl.css`: `.database-field`, `.database-display`, `.database-picker-*`
@@ -80,7 +81,7 @@
 - Target 화면 확인 포인트:
   - 좁은 화면에서는 `.target-config-form-grid`와 `.target-config-split`이 `responsive.css`에서 1열로 내려간다.
   - S3 경로가 길면 `.s3-path-text` ellipsis 처리에 의존한다.
-  - 파일 포맷 custom menu는 keyboard focus, outside click close, escape close가 shadcn menu 수준으로 정리되어 있지 않다.
+  - 파일 포맷은 shadcn `Select`로 전환되어 keyboard focus, outside click close, escape close를 Radix primitive에 위임한다.
   - validation summary는 alert role은 있으나 `Alert` component 기준의 title/description 구조는 아니다.
   - S3/DB picker API 실패 시 fallback/error row가 보이지만, loading skeleton은 아직 없다.
 
@@ -89,38 +90,45 @@
 ### Desktop Findings
 
 - [HIGH] mock mode에서도 DB picker를 열면 `Internal Server Error`가 먼저 노출되고 fallback DB 4개가 함께 표시된다. 사용자는 fallback을 선택할 수 있지만 mock 성공 상태와 backend 실패 상태가 한 dialog에 섞여 신뢰하기 어렵다.
-- [HIGH] custom format menu는 trigger의 `aria-expanded`와 option의 pressed state는 제공하지만 `Escape`를 눌러도 닫히지 않았다. shadcn `Select` 또는 `DropdownMenuRadioGroup`으로 옮겨 keyboard close/focus restore를 맡기는 것이 우선이다.
+- [RESOLVED] custom format menu를 shadcn `Select`로 교체해 `Escape`, outside click, keyboard navigation, focus restore를 primitive에 위임했다.
 - [MEDIUM] DB picker는 dialog title, close label, search focus, retry action을 갖추고 있어 overlay 기본 접근성은 양호하다. 문제는 dialog shell보다 mock/backend 상태 분리다.
 - [PASS] 데이터셋명, 오너, 담당자, 설명 input과 partition radio는 실제 `<label>` association이 확인됐다. desktop 1280px에서는 page-level horizontal overflow가 없었다.
 
 ### Narrow Viewport Findings
 
 - [HIGH] 360px에서 app sidebar가 접히지 않고 첫 viewport 대부분을 차지한다. wizard stepper도 별도 horizontal scrollbar를 만들기 때문에 핵심 Target form이 화면 아래로 크게 밀린다.
-- [MEDIUM] page-level overflow는 없지만 `order_date`, `order_count`, `gross_sales` partition label이 좁은 option card 안에서 잘린다.
+- [RESOLVED] 820px 이하에서 partition grid를 1열로 전환해 `order_date`, `order_count`, `gross_sales` label이 option card 안에서 잘리지 않도록 했다.
 - [LOW] 긴 S3 path는 ellipsis로 제한되어 page 폭을 늘리지는 않는다. tooltip 또는 copy affordance로 전체 값을 확인할 수 있어야 한다.
 
 ### Verification Coverage
 
 - 확인함: desktop 1280x900, narrow 360x800, format menu open/Escape, DB picker open, dialog semantics, input label association, console warning/error.
+- 이번 구현 후 확인함: `npm run build`, 설명 문구 제거, shadcn `Select` open/`Escape` close, 좁은 viewport의 partition 1열·label clipping·page overflow.
 - 확인하지 못함: S3 picker tree interaction, copy 완료 feedback, tag 추가/삭제, partition 변경 후 draft persistence, validation failure 후 복구.
 
 ### shadcn Review
 
-- Structure: issues - format menu와 feedback state가 custom UI에 남아 있다.
+- Structure: partial pass - format menu는 shadcn `Select`로 전환했고 validation feedback은 아직 custom UI에 남아 있다.
 - Tokens: pass - 주요 surface와 control은 현재 theme 안에서 일관된다.
-- Composition: issues - 이미 설치된 `Select`, `DropdownMenu`, `Alert`로 줄일 수 있는 custom 코드가 있다.
-- Responsive/a11y: issues - Escape close 실패, mobile sidebar/stepper, partition text clipping이 있다.
+- Composition: partial pass - 설치된 `Select`를 재사용했다. validation feedback은 후속 `Alert` 전환 후보로 남는다.
+- Responsive/a11y: partial pass - format `Escape` close와 partition text clipping은 해결했다. mobile sidebar/stepper는 app shell 공통 범위라 남아 있다.
 - Install/search notes: `Select`, `DropdownMenu`, `Tooltip`은 설치돼 있다. `Alert`를 선택하면 추가 설치가 필요하며 기존 `InfoBox`/status composition 확장과 비교한다.
 
 ### Recommended Order
 
 1. mock mode의 DB/S3 request를 backend error와 분리하고 fallback 사용 시 error banner를 숨기거나 명확한 fallback 상태로 바꾼다.
-2. format custom menu를 shadcn primitive로 교체해 Escape, outside click, focus restore를 보장한다.
-3. mobile shell/stepper와 partition option의 최소 폭 및 wrapping을 수정한다.
+2. 완료: format custom menu를 shadcn `Select`로 교체해 Escape, outside click, focus restore를 보장한다.
+3. 부분 완료: partition option은 좁은 화면에서 1열로 전환했다. mobile shell/stepper는 공통 layout 작업으로 분리한다.
 
 ## Conflict Risk
 
-- 이번 작업은 문서 추가만 하며 frontend/backend 코드, API 계약, mock fixture, Router 구조는 변경하지 않는다.
+- 이번 구현은 Target 화면의 표시 구조와 파일 포맷 control만 변경한다. backend/API 계약, mock fixture, Router 구조, draft payload는 변경하지 않는다.
 - #422와 겹칠 수 있는 list/search/table/pagination 구현 영역은 건드리지 않는다.
-- `etl.css`는 ETL 여러 route가 공유하므로 Target 문서화 단계에서 CSS 삭제나 selector rename을 진행하지 않는다.
+- `etl.css`에서는 Target 전용 custom format selector만 제거하고, 공유 selector rename이나 legacy selector 정리는 진행하지 않는다.
 - 후속 구현은 #418, #421, #422에서 이미 추가된 shadcn primitive와 Tree row 표준화 상태를 기준으로 해야 한다.
+
+## Applied Changes
+
+- `타겟 설정` 아래 description과 Basic/Destination/Partition section header의 보조 설명을 제거해 화면 밀도를 낮췄다.
+- 파일 포맷 값과 저장 payload는 기존 `parquet | csv | json`을 유지하고, 표시 control만 shadcn `Select`로 바꿨다.
+- 820px 이하에서 partition option을 1열로 배치해 좁은 viewport의 label clipping을 보완했다.

@@ -52,6 +52,13 @@ import { KeyValueList } from "@/components/ui/key-value-list";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { TagList } from "@/components/ui/tag-list";
 import { ValidationList } from "@/components/ui/validation-list";
@@ -4679,7 +4686,6 @@ export function TargetPage({
   const [schemaRules, setSchemaRules] = useState<TargetSchemaRule[]>(inferredTarget.schemaRules);
   const lastTestRun = draftTarget?.lastTestRun ?? { status: "idle", logs: [] };
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
-  const [formatOptionsOpen, setFormatOptionsOpen] = useState(false);
 
   const shouldUseSampleTargetSchema = useMemo(
     () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
@@ -4835,7 +4841,6 @@ export function TargetPage({
     <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
       <PageHeader
         className="etl-flow-page-header"
-        description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다."
         icon={<HardDrive size={18} />}
         title="타겟 설정"
       />
@@ -4850,7 +4855,6 @@ export function TargetPage({
             <span className="etl-review-icon"><FileText size={17} /></span>
             <div>
               <h2>Basic Information</h2>
-              <p>타겟 데이터셋의 이름과 소유 정보를 설정합니다.</p>
             </div>
           </div>
           <div className="target-config-form-grid basic">
@@ -4874,7 +4878,6 @@ export function TargetPage({
             <span className="etl-review-icon destination"><HardDrive size={17} /></span>
             <div>
               <h2>Destination Settings</h2>
-              <p>Lake 저장 위치와 데이터셋 물리 저장 방식을 설정합니다.</p>
             </div>
           </div>
           <div className="target-config-form-grid destination">
@@ -4882,35 +4885,16 @@ export function TargetPage({
               <DatabaseField value={databaseName} onChange={setDatabaseName} />
             </FormFieldGroup>
             <FormFieldGroup className="field target-format-field" label="포맷">
-              <div className="target-format-toggle" role="group" aria-label="파일 포맷 선택">
-                <button
-                  aria-expanded={formatOptionsOpen}
-                  className="target-format-trigger"
-                  type="button"
-                  onClick={() => setFormatOptionsOpen((open) => !open)}
-                >
-                  <span>{targetFormat}</span>
-                  {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                </button>
-                {formatOptionsOpen ? (
-                  <div className="target-format-menu">
-                    {TARGET_FORMAT_OPTIONS.map((format) => (
-                      <button
-                        aria-pressed={targetFormat === format}
-                        className={targetFormat === format ? "target-format-option active" : "target-format-option"}
-                        key={format}
-                        type="button"
-                        onClick={() => {
-                          setTargetFormat(format);
-                          setFormatOptionsOpen(false);
-                        }}
-                      >
-                        {format}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+              <Select value={targetFormat} onValueChange={(format) => setTargetFormat(format as TargetFileFormat)}>
+                <SelectTrigger aria-label="파일 포맷 선택" className="target-format-select" size="sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TARGET_FORMAT_OPTIONS.map((format) => (
+                    <SelectItem key={format} value={format}>{format.toUpperCase()}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </FormFieldGroup>
             <FormFieldGroup className="field wide target-storage-field" label="저장경로">
               <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
@@ -4922,7 +4906,6 @@ export function TargetPage({
             <span className="etl-review-icon permission"><SlidersHorizontal size={17} /></span>
             <div>
               <h2>Partition & Tags</h2>
-              <p>검색, 저장, 운영 기준으로 사용할 태그와 파티션을 설정합니다.</p>
             </div>
           </div>
           <div className="target-config-split">
