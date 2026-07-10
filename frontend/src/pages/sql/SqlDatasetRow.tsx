@@ -1,4 +1,4 @@
-import { Calendar, Database, Hash, Plus, Server, Table2, Type } from "lucide-react";
+import { Calendar, Database, Hash, Server, Table2, Type } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import {
   TreeExpander,
@@ -10,7 +10,7 @@ import {
   TreeProvider,
   TreeView,
 } from "@/components/kibo-ui/tree";
-import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
 import type { CatalogDataset } from "../../types";
 
@@ -19,6 +19,7 @@ type SqlDatasetTreeProps = {
   expandedDatasetId: string | null;
   onSelect: (dataset: CatalogDataset) => void;
   onToggle: (dataset: CatalogDataset) => void;
+  selectedDatasetIds: ReadonlySet<string>;
 };
 
 type HoverInfo =
@@ -40,6 +41,7 @@ export function SqlDatasetTree({
   expandedDatasetId,
   onSelect,
   onToggle,
+  selectedDatasetIds,
 }: SqlDatasetTreeProps) {
   const [expandedStructureIds, setExpandedStructureIds] = useState<string[]>(STRUCTURAL_NODE_IDS);
   const expandedIds = useMemo(
@@ -58,7 +60,6 @@ export function SqlDatasetTree({
 
     setExpandedStructureIds(nextExpandedIds.filter((nodeId) => STRUCTURAL_NODE_IDS.includes(nodeId)));
   }, [datasets, onToggle]);
-
   if (datasets.length === 0) return null;
 
   return (
@@ -99,6 +100,7 @@ export function SqlDatasetTree({
                         isLast={index === datasets.length - 1}
                         key={dataset.id}
                         onSelect={onSelect}
+                        selected={selectedDatasetIds.has(dataset.id)}
                       />
                     ))}
                   </TreeNodeContent>
@@ -117,11 +119,13 @@ function SqlDatasetTreeRow({
   expanded,
   isLast,
   onSelect,
+  selected,
 }: {
   dataset: CatalogDataset;
   expanded: boolean;
   isLast: boolean;
   onSelect: (dataset: CatalogDataset) => void;
+  selected: boolean;
 }) {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const showTableInfo = (target: HTMLElement) => setHoverInfo({
@@ -148,12 +152,15 @@ function SqlDatasetTreeRow({
       <TreeNodeTrigger
         aria-expanded={expanded}
         aria-level={4}
+        aria-pressed={selected}
         className="min-h-14 pr-2"
         data-sql-dataset-row=""
+        data-sql-dataset-selected={selected ? "" : undefined}
         onBlur={() => setHoverInfo(null)}
         onFocus={(event) => showTableInfo(event.currentTarget)}
         onMouseEnter={(event) => showTableInfo(event.currentTarget)}
         onMouseLeave={() => setHoverInfo(null)}
+        onClick={() => onSelect(dataset)}
       >
         <TreeExpander hasChildren />
         <TreeIcon hasChildren icon={<Table2 />} />
@@ -161,20 +168,7 @@ function SqlDatasetTreeRow({
           <strong className="truncate text-sm font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
           <span className="text-xs font-semibold text-slate-500">{dataset.schema.length} columns</span>
         </TreeLabel>
-        <Button
-          aria-label={`${dataset.name} 선택 테이블에 추가`}
-          className="ml-auto min-w-[58px]"
-          onClick={(event) => {
-            event.stopPropagation();
-            onSelect(dataset);
-          }}
-          onKeyDown={(event) => event.stopPropagation()}
-          size="sm"
-          type="button"
-          variant="subtle"
-        >
-          <Plus data-icon="inline-start" /> 추가
-        </Button>
+        {selected && <StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨</StatusBadge>}
       </TreeNodeTrigger>
       <TreeNodeContent className="pb-2" hasChildren>
         {dataset.schema.map(([name, type], index) => {

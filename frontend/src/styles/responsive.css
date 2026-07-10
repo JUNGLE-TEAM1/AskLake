@@ -92,28 +92,20 @@
     grid-template-columns: 1fr;
   }
 
-  .sql-schema-panel {
-    order: 2;
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
   .sql-dataset-panel {
+    grid-column: 1;
+    grid-row: auto;
     order: 1;
   }
 
   .sql-workspace {
-    order: 3;
+    grid-column: 1;
+    grid-row: auto;
+    order: 2;
   }
 
   .sql-page.context-collapsed .sql-workspace {
     order: 2;
-  }
-
-  .sql-page.context-collapsed .sql-schema-panel {
-    order: 3;
   }
 
   .sql-dashboard-preview-hero,

@@ -29,6 +29,7 @@ import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -41,20 +42,17 @@ import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, Dashboar
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import { SqlPreviewTable } from "./SqlPreviewTable";
-import { SchemaDetailsPanel } from "./SqlSchemaPanel";
 import {
   PREVIEW_ROW_LIMIT,
   buildAutocompleteCandidates,
   buildDefaultDerivedDatasetDescription,
   buildDefaultDerivedDatasetName,
   buildDefaultDerivedDatasetTags,
-  buildJoinDraftQuery,
   buildDefaultQuery,
   escapeCsvCell,
   formatDuration,
   formatResultTimestamp,
   getAutocompleteContext,
-  getColumnInsertText,
   getPreflightSummary,
   parseDerivedDatasetTags,
   runSqlPreflight,
@@ -100,7 +98,6 @@ export function SqlAnalysisPage({
   const [datasetSearch, setDatasetSearch] = useState("");
   const [contextPage, setContextPage] = useState(1);
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
-  const [openSchemaDatasetId, setOpenSchemaDatasetId] = useState<string | null>(null);
   const [expandedDatasetId, setExpandedDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
   const [executionMs, setExecutionMs] = useState<number | null>(null);
@@ -161,10 +158,6 @@ export function SqlAnalysisPage({
     () => datasets.filter(isSqlCandidateDataset),
     [datasets],
   );
-  const schemaDataset = useMemo(
-    () => selectedContextDatasets.find((item) => item.id === openSchemaDatasetId) ?? selectedContextDatasets[0] ?? null,
-    [openSchemaDatasetId, selectedContextDatasets],
-  );
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
     dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
@@ -191,7 +184,7 @@ export function SqlAnalysisPage({
   }, [autocompleteContext, baseDataset, dismissedAutocompleteKey, referenceDatasetIdSet, sqlCandidateDatasets]);
   const filteredDatasets = useMemo(() => {
     const keyword = datasetSearch.trim().toLowerCase();
-    const contextDatasets = sqlCandidateDatasets.filter((item) => !selectedDatasetIdSet.has(item.id));
+    const contextDatasets = sqlCandidateDatasets;
     const searchableDatasets = keyword
       ? contextDatasets.filter((item) => {
           const searchableText = [
@@ -219,14 +212,12 @@ export function SqlAnalysisPage({
     if (!dataset) {
       setBaseDatasetId(null);
       setReferenceDatasetIds([]);
-      setOpenSchemaDatasetId(null);
       setExpandedDatasetId(null);
       return;
     }
 
     setBaseDatasetId(dataset.id);
     setReferenceDatasetIds([]);
-    setOpenSchemaDatasetId(dataset.id);
     setExpandedDatasetId(null);
   }, [dataset?.id]);
 
@@ -252,7 +243,6 @@ export function SqlAnalysisPage({
       setQueryAiPrompt("");
       setQueryAiSuggestion(null);
       setQueryAiError(null);
-      setOpenSchemaDatasetId(null);
       setReferenceDatasetIds([]);
       onResultChange(null);
       return;
@@ -275,7 +265,6 @@ export function SqlAnalysisPage({
     setQueryAiPrompt("");
     setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setOpenSchemaDatasetId(baseDataset.id);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
     onResultChange(null);
   }, [baseDataset, canRestoreCachedResult, defaultQuery]);
@@ -296,7 +285,6 @@ export function SqlAnalysisPage({
     setDashboardDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
-    setOpenSchemaDatasetId(baseDataset.id);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
 
   const queryContextPath = (mode: "preflight" | "preview" = "preview") => {
@@ -571,13 +559,12 @@ export function SqlAnalysisPage({
 
   const addSelectedDataset = (targetDataset: CatalogDataset) => {
     if (selectedDatasetIdSet.has(targetDataset.id)) {
-      selectSchemaDataset(targetDataset);
+      removeSelectedDataset(targetDataset);
       return;
     }
     if (!baseDataset) {
       setBaseDatasetId(targetDataset.id);
       setReferenceDatasetIds([]);
-      setOpenSchemaDatasetId(targetDataset.id);
       setExpandedDatasetId(null);
       resetResultState();
       onAction(
@@ -588,7 +575,6 @@ export function SqlAnalysisPage({
       return;
     }
     setReferenceDatasetIds((ids) => (ids.includes(targetDataset.id) ? ids : [...ids, targetDataset.id]));
-    setOpenSchemaDatasetId(targetDataset.id);
     setExpandedDatasetId(null);
     resetResultState();
     onAction(
@@ -596,41 +582,6 @@ export function SqlAnalysisPage({
       `/api/query/context/datasets/${targetDataset.id}/select`,
       targetDataset.id,
     );
-  };
-
-  const joinSelectedDataset = (targetDataset: CatalogDataset) => {
-    if (!baseDataset || targetDataset.id === baseDataset.id) {
-      selectSchemaDataset(targetDataset);
-      return;
-    }
-    const joinDraft = buildJoinDraftQuery({
-      allDatasets: sqlCandidateDatasets,
-      query,
-      selectedDatasets: selectedContextDatasets.filter((item) => item.id !== targetDataset.id),
-      targetDataset,
-    });
-    setReferenceDatasetIds((ids) => {
-      const nextIds = new Set(ids);
-      nextIds.add(targetDataset.id);
-      joinDraft.addedDatasetIds.forEach((id) => {
-        if (id !== baseDataset.id) nextIds.add(id);
-      });
-      return Array.from(nextIds);
-    });
-    updateQuery(joinDraft.query);
-    setCursorIndex(joinDraft.query.length);
-    setOpenSchemaDatasetId(targetDataset.id);
-    setExpandedDatasetId(null);
-    onAction(
-      joinDraft.joined ? "analysis.context.dataset_joined" : "analysis.context.dataset_selected",
-      `/api/query/context/datasets/${targetDataset.id}/join`,
-      targetDataset.id,
-    );
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(joinDraft.query.length, joinDraft.query.length);
-      syncLineNumberScroll();
-    });
   };
 
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
@@ -645,9 +596,6 @@ export function SqlAnalysisPage({
     }
 
     setReferenceDatasetIds(nextReferenceDatasetIds);
-    setOpenSchemaDatasetId(
-      openSchemaDatasetId && nextSelectedIds.includes(openSchemaDatasetId) ? openSchemaDatasetId : nextBaseDatasetId,
-    );
     if (nextSelectedIds.length === 0) {
       setQuery("");
       setCursorIndex(0);
@@ -664,15 +612,6 @@ export function SqlAnalysisPage({
     );
   };
 
-  const selectSchemaDataset = (targetDataset: CatalogDataset) => {
-    setOpenSchemaDatasetId(targetDataset.id);
-    onAction(
-      "analysis.context.schema_opened",
-      `/api/query/context/datasets/${targetDataset.id}/schema`,
-      targetDataset.id,
-    );
-  };
-
   const toggleDatasetPreview = (targetDataset: CatalogDataset) => {
     setExpandedDatasetId((id) => (id === targetDataset.id ? null : targetDataset.id));
     onAction(
@@ -680,12 +619,6 @@ export function SqlAnalysisPage({
       `/api/query/context/datasets/${targetDataset.id}/schema-preview`,
       targetDataset.id,
     );
-  };
-
-  const insertColumnName = (targetDataset: CatalogDataset, columnName: string) => {
-    const insertText = getColumnInsertText(targetDataset, columnName, selectedContextDatasets);
-    insertSqlText(insertText);
-    onAction("analysis.context.column_inserted", `/api/query/context/datasets/${targetDataset.id}/columns/${columnName}`, targetDataset.id);
   };
 
   const downloadCsv = () => {
@@ -832,12 +765,13 @@ export function SqlAnalysisPage({
                             expandedDatasetId={expandedDatasetId}
                             onSelect={addSelectedDataset}
                             onToggle={toggleDatasetPreview}
+                            selectedDatasetIds={selectedDatasetIdSet}
                           />
                           {filteredDatasets.length === 0 && (
                             <Empty size="sm" variant="bordered">
                               <EmptyHeader>
                                 <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
-                                <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "선택된 테이블을 해제하면 다시 표시됩니다."}</EmptyDescription>
+                                <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "SQL에 사용할 테이블이 없습니다."}</EmptyDescription>
                               </EmptyHeader>
                             </Empty>
                           )}
@@ -987,12 +921,12 @@ export function SqlAnalysisPage({
           <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
               {preflightSummary && (
-                <Badge
+                <StatusBadge
                   size="sm"
-                  variant={preflightSummary.tone === "success" ? "success" : preflightSummary.tone === "warning" ? "warning" : "destructive"}
+                  tone={preflightSummary.tone === "success" ? "success" : preflightSummary.tone === "warning" ? "warning" : "danger"}
                 >
                   {preflightSummary.label}
-                </Badge>
+                </StatusBadge>
               )}
               {preflightSummary?.detail && (
                 <Badge
@@ -1030,9 +964,9 @@ export function SqlAnalysisPage({
           <PanelHeader
             actions={(
               <ActionGroup density="compact">
-                <Badge size="sm" variant={queryPending ? "default" : executed ? "success" : "muted"}>
+                <StatusBadge size="sm" tone={queryPending ? "default" : executed ? "success" : "muted"}>
                   {queryPending ? "실행 중" : executed ? "완료" : "대기 중"}
-                </Badge>
+                </StatusBadge>
                 {executionMs !== null && <Badge size="sm" variant="secondary">{formatDuration(executionMs)}</Badge>}
               </ActionGroup>
             )}
@@ -1174,14 +1108,6 @@ export function SqlAnalysisPage({
           </DialogContent>
         </Dialog>
       )}
-      <SchemaDetailsPanel
-        dataset={schemaDataset}
-        selectedDatasets={selectedContextDatasets}
-        onColumnClick={insertColumnName}
-        onJoinDataset={joinSelectedDataset}
-        onSelectedDatasetRemove={removeSelectedDataset}
-        onSchemaSelect={selectSchemaDataset}
-      />
     </div>
   );
 }

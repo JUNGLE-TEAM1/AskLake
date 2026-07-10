@@ -96,7 +96,7 @@
 | `SettingsPanel` | dashboard/ETL/SQL 설정 panel shell pattern이다. | form body는 `Field`, `Input Group`, `Native Select`, `Checkbox`로 교체한다. |
 | `DetailTableSection` | 상세 화면의 table title/body/footer shell pattern이다. | table body는 `DataTable` 또는 shadcn `Table` 기준으로 유지한다. |
 | `TreePanel` | S3/ETL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | route별 engine을 유지하며 row UI를 shadcn-style file explorer pattern으로 정리한다. SQL은 #468에서 Shadcnblocks/Kibo Tree로 이동했다. |
-| Shadcnblocks `tree-lines-1` / Kibo UI Tree | SQL dataset branch/table/column tree의 connector line, icon, expand/collapse, keyboard trigger를 담당한다. | SQL의 single dataset preview와 `+ 추가` action은 도메인 adapter에서 유지한다. drag-and-drop은 적용하지 않는다. |
+| Shadcnblocks `tree-lines-1` / Kibo UI Tree | SQL dataset branch/table/column tree의 connector line, icon, expand/collapse, keyboard trigger를 담당한다. | SQL은 tree row click과 `선택됨` StatusBadge로 선택 상태를 표시한다. drag-and-drop은 적용하지 않는다. |
 | `SelectableCard` | 아이콘, 설명, selected/check 상태가 있는 업무 선택 card pattern이다. | checkbox/radio 의미가 있으면 `Radio Group`/`Checkbox` 기반으로 재설계한다. |
 | `IconOptionGrid` | dashboard widget/chart type icon grid pattern이다. | `Tooltip`, `Toggle Group`, `Button` 기반으로 내부를 정리한다. |
 
@@ -109,7 +109,7 @@
 | `FormFieldGroup` | `Field` + `Label` + `Input Group` | deprecated 후보로 두고 신규 form은 shadcn field 기준으로 작성한다. |
 | `NativeSelectField` | `Native Select` + `Field` | native select가 필요한 곳만 유지하고 wrapper 이름은 shadcn 기준으로 맞춘다. |
 | `Chip` | `Badge` variant 또는 `Toggle` | read-only chip은 `Badge`, 선택 chip은 `Toggle`/`Checkbox` 기반으로 나눈다. |
-| `StatusBadge` | `Badge` variant | status tone mapper만 남기고 visual component는 `Badge`로 흡수한다. |
+| `StatusBadge` | `Badge` variant | Jobs의 status tone mapper를 공통 visual component로 유지한다. #482에서 Catalog dataset status와 SQL preflight/result status까지 사용처를 확장했다. |
 | `IconButton` | `Button size="icon"` + `Tooltip` | 접근성 label helper가 필요하면 thin wrapper만 남긴다. |
 | `DialogShell` | `Dialog` / `Alert Dialog` / `Sheet` | 일반 dialog, destructive confirm, side panel을 분리한다. |
 | `PickerDialog` | `Dialog` + `Command`/`Scroll Area`/tree wrapper | S3/DB picker shell만 유지할지 후속 tree/picker PR에서 판단한다. |

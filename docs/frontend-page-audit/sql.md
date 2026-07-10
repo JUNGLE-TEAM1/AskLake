@@ -7,7 +7,7 @@
 ## Screen Purpose
 
 - catalog dataset을 선택하고 schema를 참고해 SQL을 작성, preflight 검증, preview 실행, CSV 다운로드를 수행한다.
-- Query AI 제안, autocomplete, 다중 dataset JOIN 보조, derived dataset Job 생성, dashboard draft 진입을 제공한다.
+- Query AI 제안, autocomplete, 다중 dataset 선택, derived dataset Job 생성, dashboard draft 진입을 제공한다.
 - mock dataset과 query preview fixture를 사용해 editor, result, empty, dialog 상태를 확인할 수 있다.
 
 ## Current Shared Components
@@ -17,7 +17,7 @@
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
 - `SqlDatasetTree`: Shadcnblocks line tree와 `TreeHoverCard`, shadcn `Button`을 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
-- `SchemaDetailsPanel`: 선택 dataset, JOIN, column insert를 담당하는 도메인 panel이다.
+- `SchemaDetailsPanel`: 선택 dataset 전환·해제와 column insert를 담당하는 도메인 panel이다.
 - `DashboardPage`: SQL 결과로 dashboard draft를 만드는 embedded flow에 재사용된다.
 
 ## Weakly Componentized Areas
@@ -36,7 +36,7 @@
 - Shadcnblocks `tree-lines-1`: #468에서 SQL dataset branch/table/column tree에 적용했다. `showLines`, controlled expand, single dataset preview, keyboard Enter/Space 동작을 사용한다.
 - `Alert`: preflight error, Query AI error, execution error를 공통 feedback 구조로 표시한다.
 - `Badge`: #468에서 layer, RAG, preflight tone, selected dataset metadata에 적용했다.
-- `Empty`: #468에서 schema 미선택과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
+- `Empty`: #468에서 선택 테이블 없음과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
 - `ResizablePanelGroup`: 좌측 dataset, editor, 우측 schema panel 폭 조절이 제품 요구에 포함될 때 검토한다.
 - 전문 SQL editor가 필요해지면 shadcn으로 억지 구현하지 말고 CodeMirror 또는 Monaco 같은 검증된 editor engine을 별도 결정한다.
 
@@ -52,6 +52,7 @@
 
 - `/sql` 본문과 처리 Job/Dashboard Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다. SQL editor와 line-number gutter의 monospace는 코드 가독성을 위해 유지한다.
 - 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
+- SQL preflight와 결과 실행 상태는 Jobs 기준 `StatusBadge`를 사용한다. SQL editor의 직접 작성 JOIN 문법은 유지하지만 선택 테이블의 자동 JOIN action은 제공하지 않는다.
 - 현재 사용 중: `.sql-tree-hover-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
 - #468 Tree/viewport 정리까지 `sql.css`를 2,547줄에서 401줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface CSS는 제거했다.
 
@@ -112,8 +113,9 @@
 - editor footer에 `Slider`를 추가해 Preview 최대 행 수를 10~100, 10행 단위로 실제 변경한다. 선택값은 preflight key와 `executeQueryPreview`의 `limit`에 함께 반영된다.
 - Query AI 안내, 응답, 오류 surface를 `Bubble`/`BubbleContent`로 교체했다.
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
-- SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
-- dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
+- SQL 도구, editor, schema, result surface는 `Panel`, 실행 상태는 Jobs 기준 `StatusBadge`, metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
+- 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택·해제한다. 선택 행은 Jobs 기준 `StatusBadge`의 `선택됨` 상태를 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
+- desktop 2열 layout의 content row는 오른쪽 editor/result 높이를 기준으로 잡아, 왼쪽 SQL 도구 panel이 결과 Preview 하단까지 같은 높이로 이어진다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
 - `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
@@ -127,7 +129,7 @@
 - SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
 - 중앙 `sql-workspace`의 auto row는 `max-content`로 고정해 제한된 viewport 안에서도 editor/result Panel이 내부 콘텐츠보다 작아지거나 서로 겹치지 않게 했다.
 - 다크 SQL editor에서는 shadcn `Textarea`의 파란 focus ring/offset을 제거해 line-number gutter 옆에 이중 세로선이 생기지 않게 했다. 다른 form control의 focus ring은 유지한다.
-- 선택 테이블 row의 연한 파란 hover/active 배경을 정보 버튼에만 두지 않고 JOIN/해제 action까지 포함한 전체 row wrapper에 적용했다.
+- 선택된 tree table row는 전체 행의 연한 파란 배경과 `선택됨` 상태로 구분한다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification
@@ -135,7 +137,7 @@
 - `commerce_orders_daily` 선택 후 Slider를 50행으로 조작하고 실행해 `50행 조회됨`, `최대 50행 표시`, 2-page result를 확인했다.
 - Slider track, blue range, thumb가 모두 표시되고 keyboard로 설정한 50행이 label과 실행 limit에 반영되는 것을 확인했다.
 - dataset/schema/result의 scrollbar가 shadcn `ScrollArea` thumb로 렌더링되고 native scrollbar가 중첩되지 않는 것을 확인했다.
-- Shadcnblocks Tree에서 connector line과 icon이 표시되고 table row mouse click, Enter key 접기, column group 노출, `+ 추가` 후 editor/schema 활성화를 확인했다.
+- Shadcnblocks Tree에서 connector line과 icon이 표시되고 table row click으로 선택 상태가 바뀌며, 선택 후 SQL editor가 활성화되는 것을 확인한다.
 - 720px viewport에서 panel 하단 634px, pagination 하단 613px, footer 시작 658px로 `이전`/`다음`이 잘리지 않음을 확인하고 실제 1→2→1 page 이동을 검증했다.
 - Query AI 탭에서 `Query AI 생성`, `테이블 선택 필요` 문구가 렌더링되지 않는 것을 확인했다.
 - 720px viewport에서 editor Panel 462px, result Panel 250px의 자체 높이를 확보하고 두 Panel 사이 12px gap이 유지되며 Tree 펼침 후에도 overlap이 없음을 확인했다.

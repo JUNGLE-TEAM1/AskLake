@@ -26,6 +26,8 @@ const checks = [
       /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
       /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
       /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
+      /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
+      /<StatusBadge size="sm" tone=\{queryPending \? "default" : executed \? "success" : "muted"\}>/,
     ],
   },
   {
@@ -38,18 +40,6 @@ const checks = [
     ],
   },
   {
-    name: "SQL panels use shadcn scroll areas instead of native overflow",
-    file: "src/pages/sql/SqlSchemaPanel.tsx",
-    patterns: [
-      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
-      /<aside className="sql-schema-panel">[\s\S]*<ScrollArea className="h-full" type="always">/,
-      /<SelectedSchemaColumnList dataset=\{dataset\}/,
-      /data-sql-selected-dataset-row=""/,
-      /hover:bg-blue-50[\s\S]*active && "bg-blue-50"/,
-      /bg-transparent px-2\.5 text-left hover:bg-transparent/,
-    ],
-  },
-  {
     name: "SQL dataset browser uses the Shadcnblocks line tree",
     file: "src/pages/sql/SqlDatasetRow.tsx",
     patterns: [
@@ -58,6 +48,19 @@ const checks = [
       /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
       /<TreeExpander hasChildren \/>/,
       /<TreeNodeContent className="pb-2" hasChildren>/,
+      /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
+      /selectedDatasetIds: ReadonlySet<string>;/,
+      /data-sql-dataset-selected=\{selected \? "" : undefined\}/,
+      /onClick=\{\(\) => onSelect\(dataset\)\}/,
+      /<StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨<\/StatusBadge>/,
+    ],
+  },
+  {
+    name: "Catalog dataset status uses the Jobs StatusBadge primitive",
+    file: "src/pages/catalog/CatalogPage.tsx",
+    patterns: [
+      /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
+      /<StatusBadge shape=\{shape\} size="sm" tone=\{statusTone\}>\{statusMeta\.label\}<\/StatusBadge>/,
     ],
   },
   {
@@ -140,6 +143,11 @@ for (const check of checks) {
   check.patterns.forEach((pattern, index) => {
     if (!pattern.test(contents)) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
+    }
+  });
+  check.forbiddenPatterns?.forEach((pattern, index) => {
+    if (pattern.test(contents)) {
+      failures.push(`${check.name}: forbidden pattern #${index + 1} found in ${check.file}`);
     }
   });
 }
