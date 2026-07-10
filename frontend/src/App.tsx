@@ -15,7 +15,7 @@ import { AdminConsolePage } from "./pages/admin/AdminConsolePage";
 import { AuthPage } from "./pages/auth/AuthPage";
 import { AiChatPage } from "./pages/ai/AiChatPage";
 import { ProfilePage } from "./pages/profile/ProfilePage";
-import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "./pages/ingest/JobsPages";
+import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
@@ -131,7 +131,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const [area, id, action] = segments;
 
   if (!area) return { dashboardRoute: null, flow: "jobs" };
-  if (area === "jobs-table-demo") return { dashboardRoute: null, flow: "jobsTableDemo" };
   if (area === "jobs") {
     const jobId = decodePathSegment(id);
     if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
@@ -164,7 +163,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
 
 function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "jobs") return "/jobs";
-  if (flow === "jobsTableDemo") return "/jobs-table-demo";
   if (flow === "jobDetail" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}`;
   if (flow === "jobRuns" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}/runs`;
   if (flow === "source") return "/etl/source";
@@ -309,7 +307,7 @@ export function App() {
     return "ingest";
   }, [activeFlow, canAccessAdmin]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
-  const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
+  const isIngestShellFlow = activeFlow === "jobs";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
   const shouldBlockForInitialError = !dataLoading && Boolean(dataError) && !hasShellRows && !isIngestShellFlow;
   const pendingMessage = dataLoading ? "DB 데이터 동기화 중..." : "API 요청 처리 중...";
@@ -492,16 +490,6 @@ export function App() {
   const navigateIngestLanding = () => {
     writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
     setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
-    moveToFlow("jobs");
-  };
-
-  const openJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_opened", "/jobs-table-demo", "jobs-table-demo", "success", { targetType: "ui" });
-    moveToFlow("jobsTableDemo");
-  };
-
-  const closeJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
     moveToFlow("jobs");
   };
 
@@ -696,9 +684,8 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={startNewPipeline} onDetail={openJobDetailWithRoute} onRuns={openJobRunsWithRoute} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
-          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={startNewPipeline} onRuns={openJobRunsWithRoute} onDetail={openJobDetailWithRoute} onAction={writeAuditLog} />}
-          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => void startJobEdit(selectedJob)} onRuns={() => openJobRunsWithRoute(selectedJob)} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={startNewPipeline} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onRuns={openJobRunsWithRoute} onAction={writeAuditLog} />}
+          {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onRuns={() => openJobRunsWithRoute(selectedJob)} />}
           {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} sourceLocked={Boolean(editingJobId)} onDraftChange={updateDraftPipeline} onPrev={editingJobId ? cancelJobEdit : () => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
           {activeFlow === "schema" && <SchemaInferencePage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("source")} onNext={() => moveToFlow(lastScheduleFlow)} onSave={() => saveDraft("schema")} onAction={writeAuditLog} onNotify={showToast} />}
