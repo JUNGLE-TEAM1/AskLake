@@ -7,7 +7,6 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdat
 import type { Edge, Node as FlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  ChevronDown,
   AlertCircle,
   ExternalLink,
   LayoutGrid,
@@ -18,7 +17,6 @@ import {
   Share2,
   Table2,
   TerminalSquare,
-  Trash2,
   X,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
@@ -26,18 +24,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
@@ -65,7 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
 
@@ -123,7 +109,6 @@ const catalogSortOptions: Array<{ label: string; mode: CatalogSortMode }> = [
 ];
 
 const catalogPageSize = 5;
-const materializationRunPageSize = 5;
 const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
@@ -162,35 +147,6 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
-}
-
-function formatRunCreatedAt(value: string) {
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return value || "-";
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(parsed));
-}
-
-function formatRunStorageSize(sizeBytes: number) {
-  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0B";
-  if (sizeBytes < 1024) return `${sizeBytes}B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let size = sizeBytes;
-  for (const unit of units) {
-    size /= 1024;
-    if (size < 1024) return `${size.toFixed(1)}${unit}`;
-  }
-  return `${size.toFixed(1)}PB`;
-}
-
-function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
-  if (status === "success") return "성공";
-  if (status === "failed") return "실패";
-  if (status === "canceled") return "취소";
-  if (status === "running") return "실행 중";
-  return "대기";
 }
 
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
@@ -285,27 +241,20 @@ export function CatalogPage({
   error = null,
   loading = false,
   onAction,
-  onMaterializationRunDelete,
-  onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onMaterializationRunDelete: (datasetId: string, runId: string) => void;
-  onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
   const [activeModal, setActiveModal] = useState<"lineage" | "schema" | null>(null);
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
-  const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
-  const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
-  const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
@@ -408,48 +357,6 @@ export function CatalogPage({
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
   };
 
-  const toggleExpandedDataset = (dataset: CatalogDataset) => {
-    const isExpanded = expandedDatasetIds.includes(dataset.id);
-    setExpandedDatasetIds((ids) => isExpanded
-      ? ids.filter((id) => id !== dataset.id)
-      : [...ids, dataset.id]);
-    onAction(
-      isExpanded ? "catalog.dataset.results_collapsed" : "catalog.dataset.results_expanded",
-      `/api/catalog/datasets/${dataset.id}/materialization-runs`,
-      dataset.id,
-    );
-  };
-
-  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
-    const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
-    const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
-    setMaterializationRunPageByDatasetId((state) => ({
-      ...state,
-      [dataset.id]: normalizedPage,
-    }));
-    onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
-  };
-
-  const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
-    event.stopPropagation();
-    if (run.status !== "success") return;
-    setPreviewDataset(dataset);
-    setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
-    onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
-  };
-
-  const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
-    event.stopPropagation();
-    setSelectedSqlRunTarget((target) => target?.datasetId === dataset.id && target.datasetName === dataset.name && target.runId === runId ? null : target);
-    onMaterializationRunDelete(dataset.id, runId);
-  };
-
-  const openSelectedSqlDataset = () => {
-    if (!selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
-    onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
-    onOpenSql(previewDataset);
-  };
-
   const openPreviewModal = (variant: "lineage" | "schema", fromMobileSheet = false) => {
     if (fromMobileSheet) setMobilePreviewOpen(false);
     onAction(
@@ -533,28 +440,11 @@ export function CatalogPage({
               </AccordionContent>
             </AccordionItem>
           </Accordion>
-          <div className="catalog-preview-actions">
-            <Button
-              className="catalog-wide-button"
-              disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-              shape="compact"
-              title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "성공한 실행 결과를 먼저 선택해 주세요."}
-              type="button"
-              size="sm"
-              variant="primary"
-              onClick={() => {
-                if (fromMobileSheet) setMobilePreviewOpen(false);
-                openSelectedSqlDataset();
-              }}
-            >
-              <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
-            </Button>
-            <TagList className="catalog-preview-tags" density="compact">
-              {previewDataset.tags.map((tag) => (
-                <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
-              ))}
-            </TagList>
-          </div>
+          <TagList className="catalog-preview-tags" density="compact">
+            {previewDataset.tags.map((tag) => (
+              <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
+            ))}
+          </TagList>
         </div>
       </ScrollArea>
     </>
@@ -674,10 +564,8 @@ export function CatalogPage({
                 )) : paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
-                const isExpanded = expandedDatasetIds.includes(dataset.id);
-
                 return (
-                  <Collapsible className={cn("catalog-result-item", isExpanded && "expanded")} key={`${dataset.id}:${dataset.name}`} open={isExpanded}>
+                  <div className="catalog-result-item" key={`${dataset.id}:${dataset.name}`}>
                     <Card className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")} size="none">
                       <Button
                         aria-pressed={isActive}
@@ -704,31 +592,8 @@ export function CatalogPage({
                           </div>
                         </div>
                       </Button>
-                      <CollapsibleTrigger asChild>
-                        <Button
-                          aria-label={`${dataset.name} 상세 ${isExpanded ? "닫기" : "열기"}`}
-                          className="catalog-result-expand"
-                          shape="compact"
-                          size="iconSm"
-                          type="button"
-                          variant="ghost"
-                          onClick={() => toggleExpandedDataset(dataset)}
-                        >
-                          <ChevronDown className={cn("transition-transform", isExpanded && "rotate-180")} />
-                        </Button>
-                      </CollapsibleTrigger>
                     </Card>
-                    <CollapsibleContent className="catalog-result-content">
-                      <CatalogMaterializationRuns
-                        dataset={dataset}
-                        onDelete={deleteMaterializationRun}
-                        onPageChange={updateMaterializationRunPage}
-                        onSelectRun={selectSqlMaterializationRun}
-                        page={materializationRunPageByDatasetId[dataset.id] ?? 1}
-                        selectedRunId={selectedSqlRunTarget?.runId ?? null}
-                      />
-                    </CollapsibleContent>
-                  </Collapsible>
+                  </div>
                 );
                 })}
                 {!loading && !hasCatalogResults && (
@@ -897,127 +762,6 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
       <span>{label}</span>
       <strong>{value}</strong>
     </Card>
-  );
-}
-
-function CatalogMaterializationRuns({
-  dataset,
-  onDelete,
-  onPageChange,
-  onSelectRun,
-  page,
-  selectedRunId,
-}: {
-  dataset: CatalogDataset;
-  onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
-  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
-  onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
-  page: number;
-  selectedRunId: string | null;
-}) {
-  const runs = dataset.materializationRuns ?? [];
-  const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
-  const currentPage = Math.min(Math.max(page, 1), totalPages);
-  const pageStartIndex = (currentPage - 1) * materializationRunPageSize;
-  const visibleRuns = runs.slice(pageStartIndex, pageStartIndex + materializationRunPageSize);
-
-  return (
-    <Panel className="catalog-materialization-panel" onClick={(event) => event.stopPropagation()}>
-      {visibleRuns.length > 0 ? (
-        <ScrollArea
-          className="catalog-materialization-scroll-area"
-          style={{ height: Math.min(visibleRuns.length * 72, 178) }}
-        >
-          <div className="catalog-materialization-list">
-            {visibleRuns.map((run) => {
-            const isSelectable = run.status === "success";
-            const isSelected = run.runId === selectedRunId;
-
-            return (
-            <Panel
-              className={cn("catalog-materialization-row", isSelectable ? "selectable" : "disabled", isSelected && "selected")}
-              key={run.runId}
-            >
-              <Button
-                aria-pressed={isSelected}
-                className="catalog-materialization-select"
-                disabled={!isSelectable}
-                shape="compact"
-                size="content"
-                title={isSelectable ? "SQL 분석 대상으로 선택" : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
-                type="button"
-                variant="ghost"
-                onClick={(event) => onSelectRun(event, dataset, run)}
-              >
-                <Badge
-                  className="catalog-run-status"
-                  shape="compact"
-                  size="sm"
-                  variant={run.status === "success" ? "success" : run.status === "failed" ? "destructive" : run.status === "canceled" ? "muted" : "default"}
-                >
-                  {materializationRunStatusLabel(run.status)}
-                </Badge>
-                <div className="catalog-materialization-main">
-                  <strong title={run.runId}>{run.runId}</strong>
-                  <div className="catalog-materialization-meta">
-                    <span>{formatRunCreatedAt(run.createdAt)}</span>
-                    <span>{run.rowCount.toLocaleString()} rows</span>
-                    <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
-                    <span title={run.sourceLabel}>{run.sourceLabel}</span>
-                  </div>
-                </div>
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    aria-label={`${run.runId} append 결과 삭제`}
-                    className="catalog-delete-button"
-                    shape="compact"
-                    size="iconSm"
-                    title="append 결과 삭제"
-                    type="button"
-                    variant="outline"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <Trash2 />
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent className="rounded-md" onClick={(event) => event.stopPropagation()}>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>append 결과를 삭제할까요?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      {run.runId} 결과가 데이터셋에서 제거됩니다.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel className="rounded-md" onClick={(event) => event.stopPropagation()}>취소</AlertDialogCancel>
-                    <AlertDialogAction asChild>
-                      <Button shape="compact" type="button" variant="destructive" onClick={(event) => onDelete(event, dataset, run.runId)}>
-                        삭제
-                      </Button>
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </Panel>
-              );
-            })}
-          </div>
-        </ScrollArea>
-      ) : (
-        <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
-      )}
-      {runs.length > materializationRunPageSize && (
-        <PaginationBar
-          className="catalog-materialization-pagination"
-          currentPage={currentPage}
-          onNext={() => onPageChange(dataset, currentPage + 1)}
-          onPrevious={() => onPageChange(dataset, currentPage - 1)}
-          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
-          totalPages={totalPages}
-        />
-      )}
-    </Panel>
   );
 }
 

@@ -137,6 +137,7 @@
 - 공통 헤더의 raw 아이콘 버튼과 CSS 원형 계정 표시는 shadcn `IconButton`, `Tooltip`, `Avatar`로 교체했다.
 - 실제 `dataLoading`과 `dataError`를 카탈로그의 shadcn `Skeleton`, `Alert` 상태에 연결했다.
 - 전체 리니지 하단의 상위 데이터셋 수, 레이어, 상태 요약 배지 줄은 제거했다.
+- 검색 결과 행의 펼치기 화살표와 실행 결과 목록을 제거하고, 목록 클릭은 우측 미리보기 선택만 수행하도록 변경했다.
 
 ## Conflict Risk
 
