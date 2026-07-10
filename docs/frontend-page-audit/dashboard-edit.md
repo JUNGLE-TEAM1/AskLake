@@ -127,3 +127,4 @@
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
 - 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.
 - 위젯 설정의 데이터셋·제목·설명을 `FieldGroup`과 `Select`/`Input`/`Textarea`로 통일하고, 차트 타입 아이콘은 `ToggleGroup type="single"` 및 `Tooltip`로 교체한다.
+- 시각화 요청 widget의 직접 `Input`/실행 버튼 markup을 `VisualizationPromptInput` 모듈과 shadcn `InputGroupTextarea`/`Button` composition으로 교체한다.

@@ -1,11 +1,10 @@
 import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type MouseEvent } from "react";
 import type { ApexOptions } from "apexcharts";
 import type { ColumnDef } from "@tanstack/react-table";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
 import Chart from "react-apexcharts";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
-import { Input } from "@/components/ui/input";
 import { ResultPanel } from "@/components/ui/preview-panel";
 import { Textarea } from "@/components/ui/textarea";
 import type {
@@ -27,7 +26,7 @@ import {
   requestDashboardAssistant,
 } from "../../../services/dashboardAssistantService";
 import type { DashboardAssistantRuntimeContext } from "./dashboardRuntimeTypes";
-import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
+import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type SimpleRow = Record<string, unknown>;
 type ChartPoint = {
@@ -701,7 +700,7 @@ function VisualizationRequestWidget({
   const [prompt, setPrompt] = useState(() => savedPrompt);
   const [requestTone, setRequestTone] = useState<"error" | "info" | "success" | null>(null);
   const processedPromptInsertionIdRef = useRef<number | null>(null);
-  const promptInputRef = useRef<HTMLInputElement | null>(null);
+  const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
 
   useEffect(() => {
     setPrompt(savedPrompt);
@@ -724,8 +723,7 @@ function VisualizationRequestWidget({
     requestAnimationFrame(() => promptInputRef.current?.focus());
   }, [assistantContext?.promptInsertion]);
 
-  const savePrompt = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const savePrompt = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || !onPatchConfig || isSaving) return;
 
@@ -802,28 +800,21 @@ function VisualizationRequestWidget({
 
   return (
     <div className="asklake-visualization-request-widget">
-      <form className="asklake-visualization-request-form" onSubmit={(event) => void savePrompt(event)}>
-        <Input
-          aria-label="시각화 요청"
-          className={isPromptEditing ? "widget-control" : undefined}
-          placeholder="어시스턴트 Nessie에게 이 차트의 생성을 요청하세요."
-          ref={promptInputRef}
-          value={prompt}
-          onBlur={() => setIsPromptEditing(false)}
-          onChange={(event) => setPrompt(event.target.value)}
-          onClick={() => setIsPromptEditing(true)}
-          onFocus={() => setIsPromptEditing(true)}
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            setPrompt(savedPrompt);
-            setIsPromptEditing(false);
-            event.currentTarget.blur();
-          }}
-        />
-        <Button aria-label="Assistant 요청" disabled={!prompt.trim() || !onPatchConfig || isSaving} type="submit">
-          {isSaving ? <Loader2 className="spin" size={18} /> : <img alt="" aria-hidden="true" className="asklake-visualization-request-nessi-icon" src={askLakeNessiIconUrl} />}
-        </Button>
-      </form>
+      <VisualizationPromptInput
+        disabled={!onPatchConfig}
+        isSubmitting={isSaving}
+        placeholder="어시스턴트 Nessie에게 이 차트의 생성을 요청하세요."
+        ref={promptInputRef}
+        value={prompt}
+        onBlur={() => setIsPromptEditing(false)}
+        onCancel={() => {
+          setPrompt(savedPrompt);
+          setIsPromptEditing(false);
+        }}
+        onFocus={() => setIsPromptEditing(true)}
+        onSubmit={() => void savePrompt()}
+        onValueChange={setPrompt}
+      />
       <p>필드를 선택하거나 요청을 입력하면 시각화 편집 흐름으로 이어집니다.</p>
       {message && (
         <div className={`asklake-visualization-request-status ${requestTone ?? "info"}`}>

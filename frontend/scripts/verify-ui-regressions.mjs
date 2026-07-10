@@ -103,6 +103,28 @@ const checks = [
     ],
   },
   {
+    name: "Visualization request widget uses a reusable shadcn prompt input",
+    file: "src/pages/dashboard/runtime/VisualizationPromptInput.tsx",
+    patterns: [
+      /import \{ InputGroup, InputGroupTextarea \} from "@\/components\/ui\/input-group";/,
+      /<InputGroup className="items-end p-1\.5">/,
+      /<InputGroupTextarea/,
+      /<Button aria-label="Assistant 요청" disabled=\{!canSubmit\} size="icon" type="submit">/,
+      /if \(event\.key === "Escape"\)/,
+    ],
+  },
+  {
+    name: "Visualization request widget delegates prompt UI to the reusable module",
+    file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
+    patterns: [
+      /import \{ VisualizationPromptInput, type VisualizationPromptInputHandle \} from "\.\/VisualizationPromptInput";/,
+      /<VisualizationPromptInput[\s\S]*onSubmit=\{\(\) => void savePrompt\(\)\}/s,
+    ],
+    forbiddenPatterns: [
+      /asklake-visualization-request-nessi-icon/,
+    ],
+  },
+  {
     name: "Dashboard widget basics use shadcn form and single ToggleGroup composition",
     file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
     patterns: [

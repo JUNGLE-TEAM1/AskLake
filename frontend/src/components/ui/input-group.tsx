@@ -2,6 +2,7 @@ import * as React from "react";
 
 import { Button, type ButtonProps } from "@/components/ui/button";
 import { Input, type InputProps } from "@/components/ui/input";
+import { Textarea, type TextareaProps } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 export const InputGroup = React.forwardRef<
@@ -29,6 +30,17 @@ export const InputGroupInput = React.forwardRef<HTMLInputElement, InputProps>(
   ),
 );
 InputGroupInput.displayName = "InputGroupInput";
+
+export const InputGroupTextarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
+  ({ className, ...props }, ref) => (
+    <Textarea
+      className={cn("min-h-10 flex-1 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0 focus-visible:ring-offset-0", className)}
+      ref={ref}
+      {...props}
+    />
+  ),
+);
+InputGroupTextarea.displayName = "InputGroupTextarea";
 
 export const InputGroupAddon = React.forwardRef<
   HTMLSpanElement,
@@ -64,4 +76,3 @@ export const InputGroupButton = React.forwardRef<HTMLButtonElement, InputGroupBu
   ),
 );
 InputGroupButton.displayName = "InputGroupButton";
-
