@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from "react";
+import { Children, isValidElement, useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   Boxes,
@@ -24,6 +24,7 @@ import { SettingsPanel } from "@/components/ui/settings-panel";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { DashboardFieldCombobox, type DashboardComboboxOption } from "./DashboardFieldCombobox";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
@@ -106,8 +107,34 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
 ];
 const multiColorFallbackCount = 6;
 
-function WidgetSelectField({ selectClassName, ...props }: ComponentProps<typeof NativeSelectField>) {
-  return <NativeSelectField selectClassName={cn("asklake-widget-select", selectClassName)} {...props} />;
+function WidgetSelectField({
+  children,
+  onChange,
+  selectClassName,
+  value,
+  ...props
+}: Omit<ComponentProps<typeof NativeSelectField>, "children" | "onChange" | "value"> & {
+  children: ReactNode;
+  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
+  value: string;
+}) {
+  const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
+    if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
+    const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
+    return [{ label, value: child.props.value ?? label }];
+  });
+
+  return (
+    <DashboardFieldCombobox
+      className={cn("asklake-widget-select", selectClassName)}
+      disabled={props.disabled}
+      fieldClassName={props.fieldClassName}
+      label={String(props.label)}
+      options={options}
+      value={value}
+      onValueChange={(nextValue) => onChange?.({ target: { value: nextValue } } as ChangeEvent<HTMLSelectElement>)}
+    />
+  );
 }
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
