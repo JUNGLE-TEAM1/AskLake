@@ -545,6 +545,12 @@ Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
+### Planned Kafka Continuous Runtime
+
+Issue #500 Phase 0 defines a planned `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
+
+Continuous commands are planned extensions of `POST /api/etl/jobs/{jobId}/commands`: `startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous`. The runtime uses a durable Spark checkpoint as its source-progress authority, appends Parquet target output in micro-batches, and must reject a conflicting active Snapshot/Continuous consumer identity with `409`. This section is a contract target only; no continuous endpoint or response field is implemented by Phase 0. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+
 ### LineageGraph
 
 ```ts

@@ -131,7 +131,7 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 - 모든 source type의 production 연결
 - 대용량 처리 성능 검증
-- Kafka 실시간 스트리밍 완성
+- Kafka continuous ingestion 구현: Issue #500에서 Phase 0 계약만 정의했으며, 지속 실행 worker와 Spark runtime은 후속 구현 범위
 - Spark, Trino, Kafka, Airflow 전체 운영 완성
 - 완전한 인증/인가 시스템
 - Dashboard 권한 공유 실제 저장
