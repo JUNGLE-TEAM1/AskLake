@@ -118,6 +118,20 @@ const checks = [
       /<button disabled type="button"><Database size=\{15\} \/><span>결과<\/span><small>대기<\/small><\/button>/,
     ],
   },
+  {
+    name: "AI chat keeps dataset context and stacks response blocks on mobile",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /const startNewConversation = \(\) => \{\s*setMessages\(\[\]\);\s*setPrompt\(""\);\s*setAwaitingRuntime\(false\);/s,
+    ],
+  },
+  {
+    name: "AI pending response blocks remain readable on mobile",
+    file: "src/styles/ai.css",
+    patterns: [
+      /@media \(max-width: 720px\) \{[\s\S]*\.ai-response-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/,
+    ],
+  },
 ];
 
 const failures = [];

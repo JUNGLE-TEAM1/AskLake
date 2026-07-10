@@ -48,6 +48,7 @@ type AiChatDraft = {
 - `messages`, `prompt`, `selectedDatasetIds`는 화면이 살아 있는 동안에만 유지한다.
 - 질문 전송은 사용자 메시지를 thread에 추가하고 `awaiting_runtime` 상태를 표시할 수 있다.
 - runtime이 연결되기 전에는 assistant message를 임의로 만들지 않는다.
+- 새 대화는 `messages`, `prompt`, `submissionState`만 초기화하고, 사용자가 고른 Dataset context는 유지한다.
 
 ## Dataset Eligibility
 

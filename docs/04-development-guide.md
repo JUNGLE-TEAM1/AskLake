@@ -116,6 +116,24 @@ npm run verify:dashboard-assistant-guard
 
 Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다. run/retry 명령은 먼저 `running` 상태를 응답하고, 프론트는 `GET /api/etl/jobs/{jobId}` polling으로 Spark 완료 상태를 반영한다. 백엔드가 꺼져 있으면 연결 실패 상태를 확인하고, 백엔드를 켠 뒤 실제 connector와 Spark run 경로로 재검증한다.
 
+### AI 활용 UI Skeleton
+
+`AI 활용` 메뉴의 대화형 화면은 현재 UI-only 범위다. 실제 OpenAI/RAG runtime을 호출하지 않으며, 질문을 전송하면 사용자 메시지와 `AI runtime 연결 대기` 상태만 표시한다. 답변, 근거, SQL, 결과 미리보기는 가짜 데이터로 만들지 않는다.
+
+수동 확인은 다음 순서로 한다.
+
+1. `AI 활용` 메뉴를 열어 empty state와 composer가 겹치지 않는지 확인한다.
+2. `데이터셋 선택`에서 `available`이며 query 권한이 있는 Catalog Dataset을 선택한다.
+3. 추천 질문을 누르거나 질문을 입력한 뒤 Enter로 전송한다. Shift+Enter는 줄바꿈으로 유지돼야 한다.
+4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드는 대기 상태만 보이는지 확인한다.
+5. `새 대화`를 눌러 질문/대기 상태가 사라지고 선택 Dataset context가 유지되는지 확인한다.
+
+```bash
+cd frontend
+npm run verify:ui-regressions
+npm run build
+```
+
 생성된 Job의 수정 hydrate 계약은 아래 명령으로 별도 확인한다. 이 검증은 Kafka source와 schema/rule/permission/target metadata가 `GET /api/etl/jobs/{jobId}` 형태의 `JobRowData`로 다시 나오는지 확인한다.
 
 ```bash
