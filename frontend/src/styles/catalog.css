@@ -3,6 +3,13 @@
   width: 100%;
   gap: 20px;
   max-width: none;
+  font-family: var(--jobs-font-family);
+}
+
+.catalog-detail-page,
+.catalog-preview-sheet,
+.catalog-modal {
+  font-family: var(--jobs-font-family);
 }
 
 .catalog-page-header > div > div:first-child {

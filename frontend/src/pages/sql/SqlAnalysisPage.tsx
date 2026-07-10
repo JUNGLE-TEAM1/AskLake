@@ -1072,6 +1072,7 @@ export function SqlAnalysisPage({
       </main>
       {resultDraft && materializeDialogOpen && (
         <DialogShell
+          contentClassName="sql-materialize-dialog"
           eyebrow="처리 작업"
           footer={(
             <Badge size="sm" variant="secondary">
