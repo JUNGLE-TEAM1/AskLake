@@ -3,6 +3,7 @@ import {
   BarChart3,
   Database,
   Download,
+  History,
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
@@ -14,13 +15,13 @@ import {
 } from "lucide-react";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
-import { cancelTrinoQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, materializeTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
+import { cancelTrinoQueryRun, estimateSqlQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, listTrinoQueryRuns, materializeTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
 import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
@@ -55,12 +56,80 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
   return !normalizedName.includes("legacy") && !normalizedTags.includes("#legacy");
 }
 
+function getTrinoResultStatusLabel(run: TrinoQueryRun | null) {
+  if (!run) return "대기 중";
+  if (run.result?.storageStatus === "collecting") return "결과 수집 중";
+  if (run.result?.storageStatus === "available") return "결과 준비됨";
+  if (run.result?.storageStatus === "expired") return "보관 기간 만료";
+  if (run.result?.storageStatus === "unavailable") return "결과 저장 실패";
+  if (run.status === "failed") return "실행 실패";
+  if (run.status === "cancelled") return "실행 취소됨";
+  return run.status === "queued" ? "실행 대기 중" : "실행 중";
+}
+
+function getTrinoHistoryStatusLabel(run: TrinoQueryRunHistoryItem) {
+  if (run.result?.storageStatus === "collecting") return "결과 수집 중";
+  if (run.result?.storageStatus === "available") return "결과 준비됨";
+  if (run.result?.storageStatus === "expired") return "보관 기간 만료";
+  if (run.result?.storageStatus === "unavailable") return "결과 저장 실패";
+  if (run.status === "failed") return "실행 실패";
+  if (run.status === "cancelled") return "실행 취소됨";
+  return run.status === "queued" ? "실행 대기 중" : "실행 중";
+}
+
+function toTrinoHistoryItem(run: TrinoQueryRun): TrinoQueryRunHistoryItem {
+  return {
+    baseDatasetId: run.baseDatasetId,
+    completedAt: run.completedAt,
+    query: run.query,
+    result: run.result ? {
+      rowCount: run.result.rowCount,
+      storageStatus: run.result.storageStatus,
+    } : null,
+    runId: run.runId,
+    stats: run.stats ? { processedBytes: run.stats.processedBytes } : null,
+    status: run.status,
+    submittedAt: run.submittedAt,
+  };
+}
+
+function getTrinoResultEmptyTitle(run: TrinoQueryRun | null) {
+  if (run?.result?.storageStatus === "expired") return "결과 보관 기간이 만료되었습니다.";
+  if (run?.result?.storageStatus === "collecting") return "결과를 수집하고 있습니다.";
+  if (run?.status === "failed") return "실행에 실패했습니다.";
+  if (run?.status === "cancelled") return "실행이 취소되었습니다.";
+  return "아직 결과가 없습니다.";
+}
+
+function getTrinoResultEmptyMessage(run: TrinoQueryRun | null, hasBaseDataset: boolean) {
+  if (run?.result?.storageStatus === "expired") return "보관 기간이 지난 결과는 다시 실행하거나 Iceberg Dataset으로 생성해 주세요.";
+  if (run?.result?.storageStatus === "collecting") return "서버가 결과 페이지를 저장하는 중입니다. 완료되는 대로 첫 페이지를 표시합니다.";
+  return hasBaseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.";
+}
+
+function formatEstimateBytes(bytes: number | null | undefined) {
+  if (bytes == null) return "추정 불가";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 || unitIndex === 0 ? Math.round(value) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatMetricNumber(value: number | null | undefined) {
+  return value == null ? "-" : new Intl.NumberFormat("ko-KR").format(value);
+}
+
 export function SqlAnalysisPage({
   cachedResult,
   currentUser,
   dataset,
   datasets,
   onAction,
+  onNotify,
   onPrepareDatasetJob,
   onResultChange,
 }: {
@@ -69,6 +138,7 @@ export function SqlAnalysisPage({
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onNotify: (message: string, tone?: "success" | "info") => void;
   onPrepareDatasetJob: (request: CreateDerivedDatasetRequest) => boolean;
   onResultChange: (result: SqlResultDraft | null) => void;
 }) {
@@ -93,12 +163,16 @@ export function SqlAnalysisPage({
   const [cursorIndex, setCursorIndex] = useState(defaultQuery.length);
   const [resultDraft, setResultDraft] = useState<SqlResultDraft | null>(null);
   const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
+  const [trinoRunHistory, setTrinoRunHistory] = useState<TrinoQueryRunHistoryItem[]>([]);
+  const [trinoRunHistoryError, setTrinoRunHistoryError] = useState<string | null>(null);
   const [trinoResultPages, setTrinoResultPages] = useState<TrinoQueryRunResultPage[]>([]);
   const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
   const [trinoResultError, setTrinoResultError] = useState<string | null>(null);
   const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
   const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
   const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
+  const [queryEstimate, setQueryEstimate] = useState<TrinoQueryEstimate | null>(null);
+  const [estimateDialogOpen, setEstimateDialogOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
@@ -221,6 +295,22 @@ export function SqlAnalysisPage({
   const paginatedContextDatasets = filteredDatasets.slice(contextPageStartIndex, contextPageStartIndex + contextPageSize);
   const cachedResultBaseDatasetId = cachedResult ? cachedResult.baseDatasetId ?? cachedResult.datasetId : null;
   const canRestoreCachedResult = Boolean(cachedResult && baseDataset && cachedResultBaseDatasetId === baseDataset.id);
+  const refreshTrinoRunHistory = async () => {
+    if (apiConfig.useMock) return;
+    try {
+      const response = await listTrinoQueryRuns();
+      setTrinoRunHistory(response.items);
+      setTrinoRunHistoryError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "최근 실행 목록을 불러오지 못했습니다.";
+      setTrinoRunHistoryError(message);
+      onNotify(message, "info");
+    }
+  };
+
+  useEffect(() => {
+    void refreshTrinoRunHistory();
+  }, []);
   useEffect(() => {
     if (!dataset) {
       setBaseDatasetId(null);
@@ -417,7 +507,7 @@ export function SqlAnalysisPage({
   }, [queryValidationKey, trinoRun]);
 
   useEffect(() => {
-    if (!trinoRun || trinoResultPages.length > 0 || !trinoRun.result?.columns.length) return;
+    if (!trinoRun || trinoResultPages.length > 0 || !trinoRun.result || (trinoRun.result.availablePageCount ?? 0) < 1) return;
     void getTrinoQueryRunResultPage(trinoRun.runId)
       .then((page) => {
         setTrinoResultPages([page]);
@@ -456,6 +546,8 @@ export function SqlAnalysisPage({
     setTrinoResultRetryCursor(undefined);
     setTrinoMaterialization(null);
     setTrinoMaterializationError(null);
+    setQueryEstimate(null);
+    setEstimateDialogOpen(false);
     setExecutionMs(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
@@ -522,7 +614,7 @@ export function SqlAnalysisPage({
     }
   };
 
-  const executePreview = async () => {
+  const executePreview = async (confirmationToken?: string) => {
     if (!baseDataset || !canRunPreview) {
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
@@ -531,7 +623,15 @@ export function SqlAnalysisPage({
     setQueryPending(true);
     try {
       if (!apiConfig.useMock) {
-        const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
+        if (!confirmationToken) {
+          const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
+          setQueryEstimate(estimate);
+          if (estimate.confirmationRequired) {
+            setEstimateDialogOpen(true);
+            return;
+          }
+        }
+        const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort(), confirmationToken);
         if (isTrinoQueryRun(response)) {
           setExecuted(true);
           setExecutionMs(Math.round(performance.now() - startedAt));
@@ -543,6 +643,7 @@ export function SqlAnalysisPage({
           setTrinoResultRetryCursor(undefined);
           setTrinoMaterialization(null);
           setTrinoMaterializationError(null);
+          setTrinoRunHistory((items) => [toTrinoHistoryItem(response), ...items.filter((item) => item.runId !== response.runId)].slice(0, 8));
           onResultChange(null);
           onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
           return;
@@ -561,6 +662,16 @@ export function SqlAnalysisPage({
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
     } catch (error) {
+      if (!apiConfig.useMock && error instanceof ApiError && error.code === "QUERY_CONFIRMATION_REQUIRED") {
+        try {
+          const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
+          setQueryEstimate(estimate);
+          setEstimateDialogOpen(estimate.confirmationRequired);
+          return;
+        } catch {
+          // Fall through to the regular error state when the estimate cannot be refreshed.
+        }
+      }
       const message = error instanceof Error ? error.message : "실행에 실패했습니다. 쿼리 또는 데이터셋 상태를 확인해 주세요.";
       setPreflightResult({
         key: queryValidationKey,
@@ -573,7 +684,15 @@ export function SqlAnalysisPage({
     }
   };
 
+  const confirmEstimatedQueryRun = () => {
+    const confirmationToken = queryEstimate?.confirmationToken;
+    if (!confirmationToken) return;
+    setEstimateDialogOpen(false);
+    void executePreview(confirmationToken);
+  };
+
   const activeTrinoPage = trinoResultPages[trinoResultPageIndex] ?? null;
+  const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
     return {
@@ -630,8 +749,46 @@ export function SqlAnalysisPage({
     if (!trinoRun) return;
     setQueryPending(true);
     try {
-      setTrinoRun(await cancelTrinoQueryRun(trinoRun.runId));
+      const cancelledRun = await cancelTrinoQueryRun(trinoRun.runId);
+      setTrinoRun(cancelledRun);
+      setTrinoRunHistory((items) => items.map((item) => item.runId === cancelledRun.runId ? toTrinoHistoryItem(cancelledRun) : item));
       onAction("analysis.query.run_cancelled", `/api/query/runs/${trinoRun.runId}/cancel`, trinoRun.baseDatasetId);
+    } finally {
+      setQueryPending(false);
+    }
+  };
+
+  const openTrinoRunHistoryItem = async (summary: TrinoQueryRunHistoryItem) => {
+    setQueryPending(true);
+    try {
+      const selectedRun = await getTrinoQueryRun(summary.runId);
+      if (baseDatasetId !== selectedRun.baseDatasetId) {
+        skipNextBaseDatasetResetRef.current = true;
+        setBaseDatasetId(selectedRun.baseDatasetId);
+      }
+      setReferenceDatasetIds(selectedRun.referenceDatasetIds.filter((id) => id !== selectedRun.baseDatasetId));
+      setOpenSchemaDatasetId(selectedRun.baseDatasetId);
+      setExpandedDatasetId(null);
+      setQuery(selectedRun.query);
+      setCursorIndex(selectedRun.query.length);
+      setExecuted(true);
+      setExecutionMs(null);
+      setResultDraft(null);
+      setTrinoRun(selectedRun);
+      setTrinoResultPages([]);
+      setTrinoResultPageIndex(0);
+      setTrinoResultError(null);
+      setTrinoResultRetryCursor(undefined);
+      setTrinoMaterialization(null);
+      setTrinoMaterializationError(null);
+      setQueryEstimate(null);
+      setPreflightResult(null);
+      onResultChange(null);
+      onAction("analysis.query.history_opened", `/api/query/runs/${selectedRun.runId}`, selectedRun.baseDatasetId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "이전 실행을 열지 못했습니다.";
+      setTrinoRunHistoryError(message);
+      onNotify(message, "info");
     } finally {
       setQueryPending(false);
     }
@@ -1108,7 +1265,7 @@ export function SqlAnalysisPage({
               <h2>선택 데이터셋 기준 SQL</h2>
             </div>
             <div className="sql-editor-actions">
-              <button className="primary-button" title={hasQueryPermission ? "선택 데이터셋 전체에 SQL을 실행합니다." : queryPermissionMessage} type="button" onClick={executePreview} disabled={!canRunPreview || queryPending || ["queued", "running"].includes(trinoRun?.status ?? "")}>
+              <button className="primary-button" title={hasQueryPermission ? "선택 데이터셋 전체에 SQL을 실행합니다." : queryPermissionMessage} type="button" onClick={() => void executePreview()} disabled={!canRunPreview || queryPending || ["queued", "running"].includes(trinoRun?.status ?? "")}>
                 <PlayCircle size={16} /> {queryPending ? "실행 중" : "실행"}
               </button>
             </div>
@@ -1172,6 +1329,16 @@ export function SqlAnalysisPage({
               </button>
             )}
           </div>
+          {queryEstimate && (
+            <div className={`sql-result-toolbar query-estimate ${queryEstimate.riskLevel}`}>
+              <span>
+                예상 처리량 {formatEstimateBytes(queryEstimate.estimatedBytes)}
+                {queryEstimate.estimatedDurationSeconds != null ? ` · 약 ${formatDuration(queryEstimate.estimatedDurationSeconds * 1000)}` : ""}
+              </span>
+              <span>{queryEstimate.estimateSource === "trino_plan" ? "Trino plan 기준" : "Catalog 크기 기준"}</span>
+              {queryEstimate.warnings.length > 0 && <span>{queryEstimate.warnings[0]}</span>}
+            </div>
+          )}
         </section>
 
         <section className={visibleResult ? "sql-result-card result-ready" : "sql-result-card"}>
@@ -1181,13 +1348,50 @@ export function SqlAnalysisPage({
               <h2>{visibleResult ? `${visibleResult.rowCount}행 조회됨` : trinoRun ? "실행 상태 확인 중" : "결과 대기 중"}</h2>
             </div>
             <div className="sql-result-status">
-              <span>{trinoRun ? trinoRun.status : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
+              <span>{trinoRun ? trinoResultStatusLabel : queryPending ? "실행 중" : executed ? "완료" : "대기 중"}</span>
               {trinoRun && ["queued", "running"].includes(trinoRun.status) && (
                 <button type="button" onClick={cancelActiveTrinoRun} disabled={queryPending}><Square size={14} /> 취소</button>
               )}
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
+          {!apiConfig.useMock && (
+            <section className="sql-run-history" aria-label="내 최근 실행">
+              <div className="sql-run-history-header">
+                <span><History size={14} /> 내 최근 실행</span>
+                <button type="button" onClick={() => void refreshTrinoRunHistory()} disabled={queryPending}>새로고침</button>
+              </div>
+              {trinoRunHistory.length > 0 ? (
+                <div className="sql-run-history-list">
+                  {trinoRunHistory.slice(0, 5).map((item) => (
+                    <button
+                      className={item.runId === trinoRun?.runId ? "active" : ""}
+                      key={item.runId}
+                      type="button"
+                      onClick={() => void openTrinoRunHistoryItem(item)}
+                      disabled={queryPending}
+                    >
+                      <span className={`sql-run-history-status ${item.status}`}>{getTrinoHistoryStatusLabel(item)}</span>
+                      <strong>{item.query.replace(/\s+/g, " ").trim()}</strong>
+                      <em>{formatResultTimestamp(item.submittedAt)}</em>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="sql-run-history-empty">{trinoRunHistoryError ?? "최근 실행이 없습니다."}</span>
+              )}
+            </section>
+          )}
+          {trinoRun && (trinoRun.stats || queryEstimate) && (
+            <div className="sql-execution-metrics" aria-label="쿼리 실행 지표">
+              <div><span>대기</span><strong>{trinoRun.stats?.queuedMs != null ? formatDuration(trinoRun.stats.queuedMs) : "-"}</strong></div>
+              <div><span>경과</span><strong>{trinoRun.stats?.elapsedMs != null ? formatDuration(trinoRun.stats.elapsedMs) : "-"}</strong></div>
+              <div><span>실제 처리량</span><strong>{formatEstimateBytes(trinoRun.stats?.processedBytes)}</strong></div>
+              <div><span>피크 메모리</span><strong>{formatEstimateBytes(trinoRun.stats?.peakMemoryBytes)}</strong></div>
+              <div><span>처리 행</span><strong>{formatMetricNumber(trinoRun.stats?.processedRows)}</strong></div>
+              {queryEstimate && <div><span>예상 처리량</span><strong>{formatEstimateBytes(queryEstimate.estimatedBytes)}</strong></div>}
+            </div>
+          )}
           {visibleResult ? (
             <>
               <div className="sql-result-toolbar">
@@ -1237,8 +1441,8 @@ export function SqlAnalysisPage({
             </>
           ) : (
             <div className="sql-result-empty">
-              <strong>{trinoResultError ? "결과를 불러오지 못했습니다." : trinoRun?.status === "failed" ? "실행에 실패했습니다." : "아직 결과가 없습니다."}</strong>
-              <span>{trinoResultError ?? trinoRun?.error?.message ?? (baseDataset ? "SQL을 실행하면 실제 실행 결과가 여기에 페이지 단위로 표시됩니다." : "먼저 분석 테이블에서 데이터셋을 선택해 주세요.")}</span>
+              <strong>{trinoResultError ? "결과를 불러오지 못했습니다." : getTrinoResultEmptyTitle(trinoRun)}</strong>
+              <span>{trinoResultError ?? trinoRun?.error?.message ?? getTrinoResultEmptyMessage(trinoRun, Boolean(baseDataset))}</span>
               {trinoResultError && <button className="secondary-button" type="button" onClick={() => void retryTrinoResultPage()}><RotateCcw size={14} /> 다시 시도</button>}
             </div>
           )}
@@ -1318,6 +1522,28 @@ export function SqlAnalysisPage({
             </div>
             <div className="sql-materialize-summary">
               <span>실행 {(trinoRun ?? resultDraft)?.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {trinoRun?.result?.columns.length ?? resultDraft?.columns.length ?? 0}개</span>
+            </div>
+          </section>
+        </div>
+      )}
+      {estimateDialogOpen && queryEstimate && (
+        <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setEstimateDialogOpen(false)}>
+          <section className="sql-materialize-dialog sql-query-estimate-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-query-estimate-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header className="sql-materialize-dialog-header">
+              <div>
+                <span>실행 확인</span>
+                <h2 id="sql-query-estimate-title">대용량 쿼리를 실행할까요?</h2>
+              </div>
+              <button type="button" onClick={() => setEstimateDialogOpen(false)} aria-label="쿼리 실행 확인 닫기">닫기</button>
+            </header>
+            <div className="sql-materialize-summary">
+              <span>예상 처리량 {formatEstimateBytes(queryEstimate.estimatedBytes)}</span>
+              <span>{queryEstimate.estimatedDurationSeconds != null ? `예상 시간 약 ${formatDuration(queryEstimate.estimatedDurationSeconds * 1000)}` : "예상 시간을 계산할 수 없습니다."}</span>
+              {queryEstimate.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+            </div>
+            <div className="sql-result-actions">
+              <button className="secondary-button" type="button" onClick={() => setEstimateDialogOpen(false)}>취소</button>
+              <button className="primary-button" type="button" onClick={confirmEstimatedQueryRun}>실행</button>
             </div>
           </section>
         </div>

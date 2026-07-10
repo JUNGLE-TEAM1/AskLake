@@ -49,6 +49,19 @@ class TrinoClient:
         validate_next_uri(next_uri, self.settings.trino_base_url)
         self._request(next_uri, method="DELETE", headers=self._identity_headers(), allow_empty_response=True)
 
+    def explain(self, query: str) -> str:
+        """Return a bounded distributed plan without running the user query."""
+        page = self.submit(f"EXPLAIN (TYPE DISTRIBUTED) {query}")
+        plan_lines = page_rows_as_text(page)
+        for _ in range(20):
+            if page.error is not None:
+                raise ApiError(ErrorCode.CONFLICT, page.error.message, status.HTTP_422_UNPROCESSABLE_ENTITY)
+            if not page.next_uri:
+                return "\n".join(plan_lines)
+            page = self.fetch(page.next_uri)
+            plan_lines.extend(page_rows_as_text(page))
+        raise ApiError(ErrorCode.BACKEND_TIMEOUT, "Trino explain exceeded the page limit", status.HTTP_503_SERVICE_UNAVAILABLE)
+
     def _identity_headers(self) -> dict[str, str]:
         return {"X-Trino-User": self.username, **self._auth_headers()}
 
@@ -150,6 +163,10 @@ def parse_trino_page(payload: dict[str, Any]) -> TrinoClientPage:
 def string_or_none(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def page_rows_as_text(page: TrinoClientPage) -> list[str]:
+    return [str(row[0]) for row in page.rows if row and row[0] is not None]
 
 
 class NoRedirectHandler(HTTPRedirectHandler):

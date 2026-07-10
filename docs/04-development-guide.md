@@ -35,6 +35,8 @@ npm run build
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
 `npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
 
+Trino Query Run 이력 repository filter는 `cd backend && ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-history`로 확인한다. 이 검증은 임시 실행 레코드를 만들고 현재 사용자 ID/name 필터가 다른 사용자의 run을 반환하지 않는지 확인한 뒤 정리한다.
+
 ## 3) Backend Live Mode
 
 프론트는 기본적으로 live backend API를 호출한다. local backend는 Postgres metadata DB를 필요로 하므로 먼저 `docker-compose.yml`의 Postgres를 올린다.
@@ -46,6 +48,36 @@ docker compose up -d postgres
 cd backend
 npm install
 npm run dev
+```
+
+Trino Query Run 결과 page storage를 로컬에서 확인할 때는 MinIO도 함께 올리고 FastAPI에 MinIO credential을 준다. 결과 object는 `asklake-query-results` bucket에 gzip JSON으로 저장되고, metadata DB에는 object key/checksum만 남는다.
+
+```bash
+docker compose up -d postgres minio trino
+cd backend
+MINIO_ENDPOINT=http://127.0.0.1:9000 \\
+MINIO_ACCESS_KEY=m3admin \\
+MINIO_SECRET_KEY=wishuponastar \\
+TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=true \\
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run trino:cleanup-results
+```
+
+Production cleanup은 scheduler/cron에서 같은 `npm run trino:cleanup-results`를 실행한다. 결과 retention은 `TRINO_RESULT_RETENTION_SECONDS`이며, cleanup은 만료 object와 metadata page를 지우고 Query Run audit metadata는 유지한다.
+
+Collector retry는 `5s -> 15s -> 60s -> max 5m` backoff를 사용한다. `trino:collect-results`를 반복 실행해도 `nextAttemptAt` 전의 실패 run은 다시 claim하지 않는다. cancel은 collector generation을 무효화하므로 이미 진행 중인 fetch가 취소된 run을 다시 running/succeeded로 저장할 수 없다.
+
+Collector fencing, retry backoff, active-run retention cleanup 경계는 아래 검증으로 확인한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
+```
+
+Trino Query Run collector는 API request와 분리된 worker다. local에서 query를 제출한 뒤 브라우저 polling 없이 한 번 수집하려면 아래 명령을 실행한다. production Compose의 `trino-result-collector` service는 같은 명령을 poll loop로 계속 실행하며, DB lease가 만료된 run을 다른 worker가 재시작 뒤 이어받는다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run trino:collect-results
 ```
 
 `frontend/.env` 또는 로컬 env에는 API base URL만 둔다.

@@ -1136,7 +1136,7 @@ type CatalogDatasetResponse = {
 
 `GET /api/query/runs/{runId}`
 
-아래 `result.storage*`와 page count field는 Query Result Phase 1 target contract다. 현재 PostgreSQL transitional storage 응답은 해당 field를 아직 생략할 수 있다.
+`result.storage*`와 page count field는 Query Result Phase 1 구현 계약이다. 새 Trino run은 private MinIO page storage를 사용하며 기존 PostgreSQL row page만 migration compatibility read에서 이 field를 생략할 수 있다.
 
 ```ts
 type GetQueryRunResponse = {
@@ -1172,6 +1172,28 @@ type GetQueryRunResponse = {
 };
 ```
 
+`GET /api/query/runs?limit=10`
+
+```ts
+type ListQueryRunsResponse = {
+  items: Array<{
+    runId: string;
+    baseDatasetId: string;
+    query: string;
+    status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+    submittedAt: string;
+    completedAt?: string;
+    result?: { storageStatus?: "collecting" | "available" | "expired" | "unavailable"; rowCount?: number };
+    stats?: { processedBytes?: number };
+  }>;
+};
+```
+
+- 현재 세션 사용자가 제출한 Trino Query Run만 `submittedAt` 내림차순으로 반환합니다. `limit` 기본값은 10이며 최대 50입니다.
+- 현재 actor에 user ID가 있으면 `submittedByUserId`가 일치하는 run만 반환한다. ID가 없는 legacy run만 동일 display name fallback을 허용한다.
+- 이력 목록은 과거 실행을 찾는 용도이며, 항목을 다시 열 때 `GET /api/query/runs/{runId}`가 현재 Dataset `query` 권한, 차단, 리소스 잠금을 다시 검증합니다.
+- 다른 사용자의 실행과 Trino continuation URL, object storage 위치는 반환하지 않습니다. 조회 자체는 `query_run.history.view` 감사 로그로 남습니다.
+
 `GET /api/query/runs/{runId}/results?cursor=<opaque>`
 
 ```ts
@@ -1186,17 +1208,47 @@ type QueryRunResultPage = {
 ```
 
 - 결과 행은 이 endpoint에서만 cursor page로 조회합니다.
+- `GET /api/query/runs/{runId}`는 durable collector state만 반환하며 Trino continuation URL을 fetch하지 않습니다. 결과 retention이 만료되어도 run의 SQL, 상태, 통계, `storageStatus=expired` metadata는 조회할 수 있습니다.
+- `nextCursor`는 page index를 노출하지 않는 signed opaque token이다. token은 해당 `runId`와 `retentionExpiresAt`에만 유효하며 변조, 다른 run 재사용, 만료 후 사용은 거절한다.
 - frontend는 전체 결과를 memory에 적재하거나 offset SQL을 생성하지 않습니다.
 - result page는 private MinIO object에서 backend가 읽어 반환하며, browser에 storage URL 또는 credential을 노출하지 않습니다.
 - requested page가 아직 수집되지 않았으면 `409 RESULT_PAGE_NOT_READY`, retention 만료면 `410 RESULT_EXPIRED`, storage 장애면 `503 RESULT_STORAGE_UNAVAILABLE`을 반환합니다.
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 
-`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 plan/metadata 기반 예상 처리량과 위험도를 반환하는 선택 endpoint입니다. 예상값은 실제 Query Run stats를 대체하지 않습니다.
+`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Catalog metadata heuristic 기반 예상 처리량과 위험도를 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다.
+
+`POST /api/query/estimates`
+
+```ts
+type QueryEstimateRequest = {
+  baseDatasetId: string;
+  referenceDatasetIds?: string[];
+  query: string;
+};
+
+type QueryEstimateResponse = {
+  estimatedBytes?: number;
+  estimatedDurationSeconds?: number;
+  estimateSource: "trino_plan" | "catalog_heuristic";
+  knownInputBytes: number;
+  riskLevel: "low" | "medium" | "high";
+  warnings: string[];
+  confirmationRequired: boolean;
+  confirmationToken?: string;
+};
+```
+
+- backend는 먼저 `EXPLAIN (TYPE DISTRIBUTED)`의 byte estimate를 사용하고, Trino plan을 읽지 못하면 Catalog 저장 크기와 JOIN 복잡도 heuristic으로 fallback한다. `estimateSource`는 어느 경로가 사용됐는지 표시한다. 어느 경우도 actual Trino stats나 청구 금액은 아니다.
+- `TRINO_QUERY_WARNING_BYTES` 이상이면 `confirmationRequired=true`와 query/actor/dataset/TTL-bound signed token을 반환한다.
+- 같은 조건에서 `POST /api/query/runs`는 `confirmationToken` 없이는 `409 QUERY_CONFIRMATION_REQUIRED`를 반환한다. token은 다른 SQL, 다른 사용자, 다른 Dataset에 재사용할 수 없다.
+- `TRINO_QUERY_MAX_ESTIMATED_BYTES`가 0보다 크고 estimate를 넘으면 확인 여부와 무관하게 `409 CONFLICT`로 실행을 차단한다.
 
 프론트 기대 동작:
 
 - `실행` 클릭은 Trino 전체 실행을 제출하고 status polling을 시작합니다.
+- SQL 분석 화면은 최대 5개의 내 최근 실행을 표시하며, 항목을 선택하면 저장된 Query Run과 cursor 결과 첫 페이지를 다시 엽니다.
 - 결과 table은 server cursor page를 요청해 렌더링합니다.
+- 실행 결과 영역은 `stats.queuedMs`, `elapsedMs`, `processedBytes`, `processedRows`, `peakMemoryBytes`를 표시하며, estimate가 있으면 예상 처리량과 실제 처리량을 함께 비교합니다.
 - Dashboard draft는 retention 내 completed run을 임시 source로 쓸 수 있으나, publish 또는 반복 사용은 materialized Dataset을 source로 사용합니다.
 - 실패·취소·권한 차단은 Query Run 상태와 admin audit log에 기록합니다.
 

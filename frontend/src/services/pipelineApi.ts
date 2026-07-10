@@ -1,4 +1,4 @@
-import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft, TrinoMaterializationRun, TrinoQueryRun, TrinoQueryRunResultPage } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunListResponse, TrinoQueryRunResultPage } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -53,9 +53,10 @@ export function isTrinoQueryRun(response: SqlQueryRunResponse): response is Trin
   return "engine" in response && response.engine === "trino";
 }
 
-export async function submitSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[]): Promise<SqlQueryRunResponse> {
+export async function submitSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[], confirmationToken?: string): Promise<SqlQueryRunResponse> {
   return apiClient.post<SqlQueryRunResponse>("/api/query/runs", {
     baseDatasetId: dataset.id,
+    confirmationToken,
     datasetId: dataset.id,
     query,
     referenceDatasetIds,
@@ -63,8 +64,20 @@ export async function submitSqlQueryRun(dataset: CatalogDataset, query: string, 
   });
 }
 
+export async function estimateSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[]): Promise<TrinoQueryEstimate> {
+  return apiClient.post<TrinoQueryEstimate>("/api/query/estimates", {
+    baseDatasetId: dataset.id,
+    query,
+    referenceDatasetIds,
+  });
+}
+
 export async function getTrinoQueryRun(runId: string): Promise<TrinoQueryRun> {
   return apiClient.get<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(runId)}`);
+}
+
+export async function listTrinoQueryRuns(limit = 8): Promise<TrinoQueryRunListResponse> {
+  return apiClient.get<TrinoQueryRunListResponse>(`/api/query/runs?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function getTrinoQueryRunResultPage(runId: string, cursor?: string | null): Promise<TrinoQueryRunResultPage> {

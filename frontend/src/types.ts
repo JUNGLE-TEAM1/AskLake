@@ -45,4 +45,4 @@ export type {
 export type { FlowId, NavId, NavItem, ScheduleFlowId } from "./types/navigation";
 export type { CurrentUserResponse, IdentityGroup, IdentityProfile, PermissionSummary } from "./types/identity";
 export type { PermissionAction, PermissionGrant, PermissionPrincipalType, ResourcePermissions } from "./types/permissions";
-export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryRun, TrinoQueryRunResultPage, TrinoQueryRunStatus } from "./types/sql";
+export type { CreateDerivedDatasetRequest, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunListResponse, TrinoQueryRunResultPage, TrinoQueryRunStatus } from "./types/sql";

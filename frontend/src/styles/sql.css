@@ -1858,6 +1858,116 @@
   padding: 5px 8px;
 }
 
+.sql-run-history {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 14px;
+}
+
+.sql-run-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sql-run-history-header > span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.sql-run-history-header button {
+  min-height: 28px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.sql-run-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 6px;
+}
+
+.sql-run-history-list button {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 5px 8px;
+  min-width: 0;
+  min-height: 56px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.sql-run-history-list button:not(:disabled):hover,
+.sql-run-history-list button.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.sql-run-history-list button:disabled,
+.sql-run-history-header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sql-run-history-status {
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 850;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+.sql-run-history-status.succeeded { background: #ecfdf5; color: #047857; }
+.sql-run-history-status.failed,
+.sql-run-history-status.cancelled { background: #fef2f2; color: #b91c1c; }
+.sql-run-history-status.running,
+.sql-run-history-status.queued { background: #eff6ff; color: #1d4ed8; }
+
+.sql-run-history-list strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-run-history-list em {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.sql-run-history-empty {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .sql-result-toolbar {
   display: flex;
   min-height: 36px;
@@ -1871,6 +1981,37 @@
   padding: 0 12px;
 }
 
+.sql-execution-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.sql-execution-metrics > div {
+  display: grid;
+  min-height: 58px;
+  align-content: center;
+  gap: 4px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.sql-execution-metrics span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sql-execution-metrics strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .sql-result-toolbar.error {
   border-color: #fecaca;
   background: #fef2f2;
@@ -1878,6 +2019,16 @@
 
 .sql-result-toolbar.error span {
   color: #b91c1c;
+}
+
+.sql-result-toolbar.query-estimate.high {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.sql-result-toolbar.query-estimate.medium {
+  border-color: #fde68a;
+  background: #fffbeb;
 }
 
 .sql-result-action-group {
@@ -2235,6 +2386,16 @@
   color: #64748b;
   font-size: 12px;
   font-weight: 800;
+}
+
+.sql-query-estimate-dialog .sql-materialize-summary {
+  display: grid;
+  gap: 6px;
+  align-items: start;
+}
+
+.sql-query-estimate-dialog .sql-result-actions {
+  justify-content: flex-end;
 }
 
 .sql-materialize-dialog-backdrop {

@@ -20,6 +20,17 @@ export type SqlResultDraft = {
 
 export type TrinoQueryRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
+export type TrinoQueryEstimate = {
+  confirmationRequired: boolean;
+  confirmationToken?: string | null;
+  estimatedBytes?: number | null;
+  estimatedDurationSeconds?: number | null;
+  estimateSource: "trino_plan" | "catalog_heuristic";
+  knownInputBytes: number;
+  riskLevel: "low" | "medium" | "high";
+  warnings: string[];
+};
+
 export type TrinoQueryRun = {
   baseDatasetId: string;
   completedAt?: string;
@@ -28,10 +39,15 @@ export type TrinoQueryRun = {
   query: string;
   referenceDatasetIds: string[];
   result?: {
+    availablePageCount?: number;
+    byteSize?: number;
     columns: string[];
     nextCursor?: string | null;
+    pageCount?: number;
     retentionExpiresAt?: string;
     rowCount?: number;
+    storage?: "postgres" | "minio";
+    storageStatus?: "collecting" | "available" | "expired" | "unavailable";
   };
   runId: string;
   startedAt?: string;
@@ -46,6 +62,26 @@ export type TrinoQueryRun = {
   status: TrinoQueryRunStatus;
   submittedAt: string;
   trinoQueryId?: string;
+};
+
+export type TrinoQueryRunHistoryItem = {
+  baseDatasetId: string;
+  completedAt?: string;
+  query: string;
+  result?: {
+    rowCount?: number | null;
+    storageStatus?: "collecting" | "available" | "expired" | "unavailable" | null;
+  } | null;
+  runId: string;
+  stats?: {
+    processedBytes?: number | null;
+  } | null;
+  status: TrinoQueryRunStatus;
+  submittedAt: string;
+};
+
+export type TrinoQueryRunListResponse = {
+  items: TrinoQueryRunHistoryItem[];
 };
 
 export type TrinoQueryRunResultPage = {

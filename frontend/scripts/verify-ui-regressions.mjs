@@ -29,6 +29,29 @@ const checks = [
     ],
   },
   {
+    name: "SQL Trino execution metrics expose actual runtime stats",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /className="sql-execution-metrics"/,
+      /trinoRun\.stats\?\.processedBytes/,
+      /trinoRun\.stats\?\.peakMemoryBytes/,
+      /trinoRun\.stats\?\.processedRows/,
+      /예상 처리량/,
+    ],
+  },
+  {
+    name: "SQL Query Run history reopens persisted runs without rendering every result",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /listTrinoQueryRuns\(\)/,
+      /const openTrinoRunHistoryItem = async \(summary: TrinoQueryRunHistoryItem\) => \{/,
+      /className="sql-run-history"/,
+      /내 최근 실행/,
+      /getTrinoQueryRun\(summary\.runId\)/,
+      /onNotify\(message, "info"\)/,
+    ],
+  },
+  {
     name: "Catalog wide action button keeps icon and label aligned",
     file: "src/styles/catalog.css",
     patterns: [

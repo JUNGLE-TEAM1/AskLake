@@ -34,11 +34,27 @@ TRINO_QUERY_TIMEOUT_SECONDS=300
 TRINO_MAX_RESPONSE_BYTES=2000000
 TRINO_MAX_RESULT_BYTES=50000000
 TRINO_MAX_RESULT_PAGES=1000
-TRINO_RESULT_RETENTION_SECONDS=3600
+TRINO_RESULT_RETENTION_SECONDS=86400
 TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
+TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
+TRINO_RESULT_STORAGE_PREFIX=query-results
+TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
+TRINO_RESULT_CURSOR_SECRET=<server-only random secret>
+TRINO_QUERY_CONFIRMATION_SECRET=<server-only random secret>
+TRINO_QUERY_CONFIRMATION_TTL_SECONDS=300
+TRINO_QUERY_WARNING_BYTES=1073741824
+TRINO_QUERY_MAX_ESTIMATED_BYTES=0
+TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND=268435456
+TRINO_COLLECTOR_LEASE_SECONDS=60
+TRINO_COLLECTOR_PAGES_PER_LEASE=100
+TRINO_COLLECTOR_POLL_SECONDS=1
+MINIO_ENDPOINT=http://localhost:9000
+MINIO_ACCESS_KEY=<server-only value>
+MINIO_SECRET_KEY=<server-only value>
+MINIO_REGION=us-east-1
 ```
 
-`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`, `TRINO_RESULT_RETENTION_SECONDS=3600`은 현재 PostgreSQL result row storage의 전환기 값이다. Query Result Phase 1부터 일반 결과는 private MinIO page storage로 전환하며, target retention 기본값은 24시간이다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
+`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`는 legacy PostgreSQL page read의 호환 설정으로만 남겨 둔다. Trino Query Run 일반 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 manifest/page metadata만 저장한다. `TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET`은 local smoke 환경에서만 `true`로 쓴다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
@@ -49,9 +65,9 @@ TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
-- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata다.
+- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs`(현재 사용자 실행 이력), `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata다.
 - Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
-- 현재 Trino result row는 transitional PostgreSQL storage에 남아 있다. Query Result Phase 0의 목표는 backend collector가 private MinIO page object로 전체 결과를 저장하고, PostgreSQL에는 manifest만 보관하는 구조다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
+- 현재 Trino result page는 private MinIO object로 저장하고 PostgreSQL에는 metadata만 남긴다. 기존 PostgreSQL page row는 migration compatibility read 경로로만 유지한다. `GET /api/query/runs/{runId}`는 collector가 저장한 상태만 읽고, Trino continuation fetch는 `trino-result-collector` worker만 수행한다. signed cursor는 다음 Phase에서 진행한다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 ## 3) 공통 규칙
 
@@ -94,6 +110,7 @@ Canonical status values:
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
 | `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | `query` | Trino read-only SQL 실행 접수 | `docs/trino-query-run-contract.md` |
+| `GET` | `/api/query/runs` | session | 현재 사용자가 제출한 Trino SQL 실행 이력 조회 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | `query` | Trino SQL run 상태와 실행 통계 조회 | `docs/trino-query-run-contract.md` |
 | `GET` | `/api/query/runs/{runId}/results` | `query` | Trino SQL 결과 cursor 페이지 조회 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/runs/{runId}/cancel` | `query` | queued/running Trino SQL run 취소 | `docs/trino-query-run-contract.md` |
@@ -329,7 +346,7 @@ Runtime lane은 `DashboardRuntimeResponse`와 `DashboardRuntimeWidget`을 기준
 | 카탈로그 | Postgres JSONB-backed live backend hydrate | `GET /api/catalog/datasets` |
 | 카탈로그 상세 | selected dataset state | `GET /api/catalog/datasets/{datasetId}` |
 | Lineage | `LineageGraph` mock/fallback | `GET /api/catalog/datasets/{datasetId}/lineage` |
-| SQL 분석 | Trino Query Run 제출, 상태 polling, cursor 결과 페이지 조회 | `POST /api/query/runs`, `GET /api/query/runs/{runId}/results` |
+| SQL 분석 | Trino Query Run 제출, 내 실행 이력 재열기, 상태 polling, cursor 결과 페이지 조회 | `POST /api/query/runs`, `GET /api/query/runs`, `GET /api/query/runs/{runId}/results` |
 | Query AI 생성 | mock mode는 선택 metadata 기반 로컬 JOIN 초안 fallback, live mode는 선택 metadata를 포함해 FastAPI/OpenAI 호출 후 선택 JOIN 누락 시 로컬 fallback | `POST /api/query/ai-suggestions` |
 | SQL 결과 Dataset 생성 | UI는 `prepareSqlDatasetJobDraft`로 Review에 넘긴 뒤 `POST /api/etl/jobs`; backend direct materialize API는 `createDerivedDatasetFromSql` 호환 유지 | `POST /api/etl/jobs`, `POST /api/catalog/derived-datasets` |
 | 대시보드 | FastAPI dashboard adapter, 404 local/mock fallback | `GET /api/dashboards`, `POST /api/dashboards/query`, draft/published runtime APIs |

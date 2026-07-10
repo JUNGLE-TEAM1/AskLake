@@ -6,9 +6,10 @@ from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest, TrinoClientPage
 from app.services.trino_client import TrinoClient, parse_trino_page, validate_next_uri
-from app.services.trino_query_run_service import build_run_response
+from app.services.trino_query_run_service import build_run_response, decode_cursor, encode_cursor
 from app.services.trino_sql_compiler import compile_trino_read_query
 from app.services.trino_materialization import build_trino_materialization_statement
+from app.services.trino_query_estimate import build_query_estimate, parse_plan_estimated_bytes, require_estimate_confirmation
 
 
 def make_dataset(dataset_id: str, name: str, table: str | None) -> CatalogDatasetResponse:
@@ -137,6 +138,61 @@ def verify() -> None:
     assert run.stats and run.stats.processed_rows == 3
     assert run.result and run.result.columns == ["order_id"]
     assert run.submitted_by_user_id == "user_1"
+    assert run.result and run.result.retention_expires_at
+    opaque_cursor = encode_cursor(
+        2,
+        run_id=run.run_id,
+        retention_expires_at=run.result.retention_expires_at,
+        secret="verify-secret",
+    )
+    assert not opaque_cursor.startswith("page:")
+    assert decode_cursor(
+        opaque_cursor,
+        run_id=run.run_id,
+        retention_expires_at=run.result.retention_expires_at,
+        secret="verify-secret",
+    ) == 2
+    try:
+        decode_cursor(
+            opaque_cursor,
+            run_id="trino_other",
+            retention_expires_at=run.result.retention_expires_at,
+            secret="verify-secret",
+        )
+    except ApiError:
+        pass
+    else:
+        raise AssertionError("cursor must be bound to its Query Run")
+
+    estimate_dataset = orders.model_copy(update={"size": "2 GB"})
+    estimate_settings = Settings(
+        _env_file=None,
+        trino_query_confirmation_secret="verify-confirmation-secret",
+        trino_query_warning_bytes=1_000_000_000,
+    )
+    estimate_actor = type("Actor", (), {"id": "user_1", "email": None, "name": "Demo User"})()
+    estimate = build_query_estimate(
+        actor=estimate_actor,
+        context_datasets=[estimate_dataset],
+        query="SELECT * FROM orders",
+        runtime_settings=estimate_settings,
+    )
+    assert estimate.confirmation_required and estimate.confirmation_token
+    require_estimate_confirmation(
+        actor=estimate_actor,
+        confirmation_token=estimate.confirmation_token,
+        context_datasets=[estimate_dataset],
+        query="SELECT * FROM orders",
+        runtime_settings=estimate_settings,
+    )
+    unknown_size_estimate = build_query_estimate(
+        actor=estimate_actor,
+        context_datasets=[orders.model_copy(update={"size": "Trino managed"})],
+        query="SELECT * FROM orders",
+        runtime_settings=estimate_settings,
+    )
+    assert unknown_size_estimate.confirmation_required
+    assert parse_plan_estimated_bytes("Estimates: {rows: 230 (9.00kB), cpu: 9.00k}") == 9 * 1024
 
     completed_run = run.model_copy(update={"status": "succeeded"})
     materialization_sql = build_trino_materialization_statement(

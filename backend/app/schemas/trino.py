@@ -22,10 +22,15 @@ class TrinoQueryRunStats(CamelModel):
 
 
 class TrinoQueryRunResult(CamelModel):
+    available_page_count: int | None = None
+    byte_size: int | None = None
     columns: list[str] = Field(default_factory=list)
     next_cursor: str | None = None
+    page_count: int | None = None
     retention_expires_at: str | None = None
     row_count: int | None = None
+    storage: Literal["postgres", "minio"] | None = None
+    storage_status: Literal["collecting", "available", "expired", "unavailable"] | None = None
 
 
 class TrinoQueryRunResultPage(CamelModel):
@@ -48,14 +53,33 @@ class TrinoMaterializationRunResponse(CamelModel):
 class SubmitTrinoQueryRunRequest(CamelModel):
     base_dataset_id: str
     client_request_id: str | None = None
+    confirmation_token: str | None = None
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)
     result_page_size: int | None = Field(default=None, ge=1, le=1000)
 
 
+class TrinoQueryEstimateRequest(CamelModel):
+    base_dataset_id: str
+    query: str
+    reference_dataset_ids: list[str] = Field(default_factory=list)
+
+
+class TrinoQueryEstimate(CamelModel):
+    confirmation_required: bool = False
+    confirmation_token: str | None = None
+    estimated_bytes: int | None = None
+    estimated_duration_seconds: int | None = None
+    estimate_source: Literal["trino_plan", "catalog_heuristic"] = "catalog_heuristic"
+    known_input_bytes: int = 0
+    risk_level: Literal["low", "medium", "high"]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class QueryRunSubmitRequest(CamelModel):
     base_dataset_id: str | None = None
     client_request_id: str | None = None
+    confirmation_token: str | None = None
     dataset_id: str | None = None
     limit: int | None = Field(default=None, ge=1, le=500)
     mode: Literal["preview", "run"] | None = None
@@ -71,6 +95,7 @@ class QueryRunSubmitRequest(CamelModel):
         return SubmitTrinoQueryRunRequest(
             baseDatasetId=base_dataset_id,
             clientRequestId=self.client_request_id,
+            confirmationToken=self.confirmation_token,
             query=self.query,
             referenceDatasetIds=self.reference_dataset_ids,
             resultPageSize=self.result_page_size,
@@ -93,6 +118,30 @@ class TrinoQueryRunResponse(CamelModel):
     submitted_by_user_id: str | None = None
     submitted_at: str
     trino_query_id: str | None = None
+
+
+class TrinoQueryRunHistoryResult(CamelModel):
+    row_count: int | None = None
+    storage_status: Literal["collecting", "available", "expired", "unavailable"] | None = None
+
+
+class TrinoQueryRunHistoryStats(CamelModel):
+    processed_bytes: int | None = None
+
+
+class TrinoQueryRunHistoryItem(CamelModel):
+    base_dataset_id: str
+    completed_at: str | None = None
+    query: str
+    result: TrinoQueryRunHistoryResult | None = None
+    run_id: str
+    stats: TrinoQueryRunHistoryStats | None = None
+    status: TrinoQueryRunStatus
+    submitted_at: str
+
+
+class TrinoQueryRunListResponse(CamelModel):
+    items: list[TrinoQueryRunHistoryItem] = Field(default_factory=list)
 
 
 class TrinoClientPage(CamelModel):

@@ -106,12 +106,17 @@ MINIO_ACCESS_KEY=replace-with-minio-access-key
 MINIO_SECRET_KEY=replace-with-strong-minio-secret-key
 MINIO_BUCKET=m3-raw
 MINIO_REGION=us-east-1
+TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
+TRINO_RESULT_STORAGE_PREFIX=query-results
+TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
 S3_ENDPOINT=http://minio:9000
 S3_FORCE_PATH_STYLE=true
 S3_ALLOWED_BUCKETS=m3-raw,asklake-output
 ```
 
 Trino는 Issue #488 Phase 1부터 같은 Compose stack의 내부 service로 실행한다. 외부에 포트를 열지 않고 backend가 `http://trino:8080`으로 접근한다. Iceberg catalog metadata는 AskLake Postgres에, table data는 MinIO warehouse에 저장한다. server `deploy/.env`에는 아래 값도 확인한다.
+
+`trino-result-collector`는 backend와 같은 image/environment로 실행되는 별도 Compose worker다. API request가 아닌 worker만 Trino continuation을 소비하며, worker restart는 DB lease expiry를 통해 recover한다.
 
 ```bash
 TRINO_ENABLED=false
@@ -120,6 +125,16 @@ TRINO_CATALOG=iceberg
 TRINO_SCHEMA=asklake
 TRINO_USER=asklake-api
 TRINO_QUERY_TIMEOUT_SECONDS=300
+TRINO_RESULT_RETENTION_SECONDS=86400
+TRINO_RESULT_CURSOR_SECRET=replace-with-a-long-random-production-secret
+TRINO_QUERY_CONFIRMATION_SECRET=replace-with-a-long-random-production-secret
+TRINO_QUERY_CONFIRMATION_TTL_SECONDS=300
+TRINO_QUERY_WARNING_BYTES=1073741824
+TRINO_QUERY_MAX_ESTIMATED_BYTES=0
+TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND=268435456
+TRINO_COLLECTOR_LEASE_SECONDS=60
+TRINO_COLLECTOR_PAGES_PER_LEASE=100
+TRINO_COLLECTOR_POLL_SECONDS=1
 TRINO_IMAGE=trinodb/trino:482
 TRINO_ICEBERG_CATALOG_NAME=asklake
 TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-warehouse

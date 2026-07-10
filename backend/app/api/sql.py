@@ -16,7 +16,7 @@ from app.schemas.sql import (
     QueryRunResponse,
 )
 from app.schemas.common import ErrorCode
-from app.schemas.trino import QueryRunSubmitRequest, TrinoQueryRunResponse, TrinoQueryRunResultPage
+from app.schemas.trino import QueryRunSubmitRequest, TrinoQueryEstimate, TrinoQueryEstimateRequest, TrinoQueryRunListResponse, TrinoQueryRunResponse, TrinoQueryRunResultPage
 from app.services.query_ai_service import QueryAiService
 from app.services.sql_service import SqlService
 from app.services.trino_query_run_service import TrinoQueryRunService
@@ -63,6 +63,26 @@ def create_query_run(
     if not request.dataset_id:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "datasetId is required while DuckDB compatibility mode is active", status.HTTP_422_UNPROCESSABLE_ENTITY)
     return service.create_query_run(QueryRunRequest.model_validate(request.model_dump(by_alias=True)), actor)
+
+
+@router.post("/estimates", response_model=TrinoQueryEstimate)
+def create_query_estimate(
+    request: TrinoQueryEstimateRequest,
+    trino_service: Annotated[TrinoQueryRunService, Depends(get_trino_query_run_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+) -> TrinoQueryEstimate:
+    return trino_service.estimate(request, actor)
+
+
+@router.get("/runs", response_model=TrinoQueryRunListResponse)
+def list_query_runs(
+    trino_service: Annotated[TrinoQueryRunService, Depends(get_trino_query_run_service)],
+    actor: Annotated[ActorContext, Depends(get_actor_context)],
+    limit: int = 10,
+) -> TrinoQueryRunListResponse:
+    if not settings.trino_enabled:
+        return TrinoQueryRunListResponse()
+    return trino_service.list_for_actor(actor, limit=limit)
 
 
 @router.get("/runs/{run_id}", response_model=QueryRunResponse | TrinoQueryRunResponse)

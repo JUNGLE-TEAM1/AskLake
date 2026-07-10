@@ -927,7 +927,9 @@ export function escapeCsvCell(value: string) {
 
 export function formatDuration(ms: number) {
   if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3_600_000) return `${(ms / 60_000).toFixed(1)}m`;
+  return `${(ms / 3_600_000).toFixed(1)}h`;
 }
 
 export function formatResultTimestamp(value: string) {

@@ -80,6 +80,8 @@ type QueryRun = {
 
 - `POST /api/query/runs`는 `202 Accepted`와 `runId`, 초기 `queued` 상태를 반환한다.
 - `GET /api/query/runs/{runId}`는 lifecycle, Trino query ID, 실행 통계, 오류, 결과 metadata를 반환한다.
+- `GET /api/query/runs`는 현재 submitter의 최근 실행 요약만 반환한다. actor user ID가 있으면 ID를 기준으로 분리하고, ID 없는 legacy run에만 display name fallback을 적용한다.
+- SQL 분석 UI는 polling 응답의 queued/elapsed time, processed bytes/rows, peak memory를 실행 중과 완료 뒤에 함께 표시한다. 실행 전 estimate는 참고값이고 실제 stats가 우선한다.
 - `POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소할 수 있다.
 - terminal state는 `succeeded`, `failed`, `cancelled`다.
 - run 상태는 poll 또는 후속 event transport로 갱신한다. Phase 0에서는 polling을 canonical client 흐름으로 둔다.
@@ -101,8 +103,8 @@ type QueryRunResultPage = {
 - cursor는 opaque value이며 frontend가 offset 또는 SQL을 조합하지 않는다.
 - 실행 결과 전체를 API response 또는 frontend memory에 적재하지 않는다.
 - row count는 Trino가 확정할 수 있을 때만 반환하며, pagination을 위해 별도 `COUNT(*)`를 강제하지 않는다.
-- 결과 retention 만료 또는 cursor 만료는 명시적 오류로 응답한다. 재실행 여부는 사용자에게 선택하게 한다.
-- 현재 PostgreSQL JSONB page storage는 전환 중인 구현이다. 목표 MinIO result page storage와 browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
+- 결과 retention 만료 또는 cursor 만료는 결과 page endpoint에서 명시적 오류로 응답한다. run metadata 조회는 만료 후에도 유지해 사용자가 SQL, 상태, 통계를 확인할 수 있게 한다. 재실행 여부는 사용자에게 선택하게 한다.
+- 새 Trino Query Run 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 page metadata만 남긴다. 기존 PostgreSQL JSONB page storage는 migration read compatibility로만 유지한다. browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
 
 ## 6. Validation, Governance, Audit
 
@@ -123,10 +125,11 @@ Trino 제출 전에 backend는 다음 순서로 검증합니다.
 
 ## 7. Estimate And Guardrail
 
-- `POST /api/query/estimates`는 SQL을 실행하지 않고 Trino plan/metadata 기반의 예상 처리량, 위험도, 경고를 반환하는 선택 API다.
+- `POST /api/query/estimates`는 SQL을 실행하지 않고 우선 `EXPLAIN (TYPE DISTRIBUTED)` plan의 byte estimate를 사용한다. plan을 읽지 못하면 Catalog size/JOIN complexity heuristic으로 fallback하며, UI는 source를 표시한다. 이 값은 actual Trino run stats나 청구 금액이 아니다.
 - 예상값은 보장 비용이 아니며, 실제 처리량과 실행 시간은 완료된 Query Run stats를 source of truth로 한다.
 - UI는 editor 아래에 estimate를 표시한다. 확인 모달은 조직의 bytes/time/concurrency 정책 임계치를 넘는 경우에만 사용한다.
-- backend는 사용자/조직별 동시 실행 수, timeout, 최대 처리량 등의 guardrail을 적용할 수 있다.
+- backend는 사용자/조직별 동시 실행 수, timeout, 최대 처리량 등의 guardrail을 적용한다. warning threshold 이상은 actor/query/dataset/TTL-bound confirmation token을 요구하며, hard byte limit은 backend가 차단한다.
+- Dataset 크기가 없거나 `Trino managed`처럼 추정할 수 없으면 차단하지 않되, 보수적으로 confirmation을 요구하고 불확실성을 UI에 표시한다.
 
 ## 8. Dashboard And Materialization
 

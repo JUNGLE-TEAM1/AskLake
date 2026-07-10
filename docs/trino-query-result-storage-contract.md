@@ -1,6 +1,6 @@
 # Trino Query Result Storage Contract
 
-이 문서는 Query Result Phase 0에서 확정한 대용량 결과 lifecycle을 정의한다. 현재 Trino 결과 행을 PostgreSQL JSONB에 직접 저장하는 구현을 대체하는 목표 계약이다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
+이 문서는 Query Result Phase 0에서 확정한 대용량 결과 lifecycle을 정의한다. Query Result Phase 1은 일반 Trino 결과 행을 private MinIO page object로 전환했으며, PostgreSQL JSONB row는 migration read compatibility로만 남아 있다. SQL 검증, runtime identity, Query Run의 상위 동작은 `docs/trino-query-run-contract.md`를 따른다.
 
 ## 1. 핵심 결정
 
@@ -26,7 +26,7 @@ Trino pages
 
 ### 2.1 PostgreSQL metadata
 
-Phase 1은 `sql_run_result_pages`의 row storage를 아래와 동등한 metadata-only shape로 전환한다.
+Phase 1은 `sql_run_result_pages`의 새 row를 아래 metadata-only shape로 저장한다.
 
 ```ts
 type QueryResultPageMetadata = {
@@ -36,6 +36,7 @@ type QueryResultPageMetadata = {
   rowCount: number;
   compressedBytes: number;
   checksum: string;
+  sourceNextUri?: string;
   createdAt: string;
 };
 
@@ -56,7 +57,7 @@ Run이 수집 중이면 `availablePageCount`는 계속 증가할 수 있다. `ro
 ### 2.2 Object lifecycle
 
 - Page object는 temporary key로 쓰고 checksum을 검증한 뒤 final key로 승격한다. 페이지 metadata는 그 이후에만 commit한다.
-- Cleanup은 idempotent하다. cleanup 중 없는 object는 이미 삭제된 것으로 처리한다.
+- Cleanup은 idempotent하다. cleanup 중 없는 object는 이미 삭제된 것으로 처리한다. terminal(`succeeded`, `failed`, `cancelled`) run만 retention cleanup 대상이며 collector가 동작 중인 run은 건드리지 않는다.
 - Expiry는 page object를 지우고 manifest를 `expired`로 표시한다. Query Run metadata와 감사 증거는 유지한다.
 - Failed 또는 cancelled run은 운영자가 investigation hold를 걸지 않은 한 자신이 만든 모든 page object와 metadata row를 정리한다.
 
@@ -69,8 +70,11 @@ Result storage: collecting -> available | unavailable | expired
 
 - `queued`, `running`은 Query Run state다. `collecting`은 새 public Query Run status가 아니라 `result.storageStatus`로 표현한다.
 - Collector lease는 Query Run과 함께 durable하게 저장한다. 한 run은 한 worker만 소유할 수 있다.
+- Collector lease에는 generation을 둔다. cancel은 generation을 증가시켜 이미 fetch 중인 이전 collector가 결과 metadata나 run payload를 다시 저장하지 못하게 한다.
 - Backend 재시작 뒤 lease가 만료되면 한 worker가 lease를 다시 얻고, 마지막 durable continuation URL과 저장된 page index부터 수집을 재개한다.
-- Cancel은 먼저 Trino cancel을 요청하고 collector를 멈춘 뒤 partial result object를 정리한다.
+- Collector는 page metadata의 `sourceNextUri`를 확인한다. worker가 page object commit 뒤 manifest를 쓰기 전에 중단돼도 같은 continuation을 다시 읽어 duplicate page를 만들지 않는다.
+- Trino/MinIO 오류는 5초, 15초, 60초, 최대 5분 backoff로 재시도한다. retry 시각 전에는 worker가 같은 run을 다시 claim하지 않는다.
+- Cancel은 먼저 collector generation을 무효화한 뒤 Trino cancel을 요청하고 partial result object를 정리한다.
 - 같은 actor, 선택 Dataset context, normalized query의 같은 client request id는 idempotent하다. 다른 요청에 재사용하면 `409 CONFLICT`를 반환한다.
 
 ## 4. 결과 API 계약
@@ -114,15 +118,15 @@ type QueryRunResultPage = {
 
 ### Phase 1: Storage migration
 
-MinIO page storage, metadata-only page row, manifest persistence, integrity check, expiry cleanup primitive을 추가한다. Migration 중 기존 PostgreSQL row page는 backward compatibility를 위해 read만 허용한다.
+완료: MinIO page storage, metadata-only page row, manifest persistence, integrity check, expiry cleanup primitive을 추가했다. Migration 중 기존 PostgreSQL row page는 backward compatibility를 위해 read만 허용한다.
 
 ### Phase 2: Collector worker
 
-Trino continuation 소비를 frontend polling에서 분리한다. Durable lease, restart recovery, idempotent submit, cancellation cleanup, collector audit event를 추가한다.
+완료: Trino continuation 소비를 frontend polling에서 분리했다. `trino-result-collector`는 `sql_runs`의 durable lease를 claim하고 terminal state까지 수집한다. lease 만료 run은 다음 worker가 recover하며, source continuation metadata로 page write retry를 idempotent하게 처리한다. collector start/recovery/retry/terminal audit event를 남긴다.
 
 ### Phase 3: Cursor API and UI
 
-`page:<index>`를 signed opaque cursor로 교체하고, MinIO에서 page를 읽으며, collecting/expired state를 노출하고, 기존 PostgreSQL row-page path를 제거한다.
+완료: `page:<index>`를 run-bound, retention-bound signed opaque cursor로 교체했다. API는 MinIO page를 읽고, SQL 분석 UI는 collecting/available/expired/unavailable 상태를 구분해 표시한다. 기존 PostgreSQL row-page read는 migration compatibility로만 남는다.
 
 ## 8. Phase 0 완료 기준
 
