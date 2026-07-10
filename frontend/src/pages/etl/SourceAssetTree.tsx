@@ -7,6 +7,7 @@ export type SourceAsset = [path: string, meta: string, status: string];
 
 type SourceAssetTreeProps = {
   assets: SourceAsset[];
+  disabled?: boolean;
   /** Folder paths the parent already fetched, including empty folders. */
   loadedFolderPaths?: readonly string[];
   loadingPath?: string;
@@ -75,6 +76,7 @@ const TREE_FIXED_ITEM_STYLE: React.CSSProperties = {
 
 export function SourceAssetTree({
   assets,
+  disabled = false,
   loadedFolderPaths,
   loadingPath = "",
   selectedPath,
@@ -131,6 +133,7 @@ export function SourceAssetTree({
 
   const renderNode = (node: SourceAssetTreeNode): React.ReactNode => {
     const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
+    const isFileDisabled = canSelectFile && disabled;
     const isSelected = canSelectFile && node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const folderMeta = node.path === loadingPath
@@ -141,10 +144,11 @@ export function SourceAssetTree({
 
     const label = (
       <div
-        className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
+        aria-disabled={isFileDisabled || undefined}
+        className={`source-asset-tree-label${isSelected ? " active" : ""}${isFileDisabled ? " disabled" : ""}`}
         role="button"
         style={TREE_LABEL_STYLE}
-        tabIndex={0}
+        tabIndex={isFileDisabled ? -1 : 0}
         title={node.path}
         onClick={(event) => {
           event.stopPropagation();
@@ -152,7 +156,7 @@ export function SourceAssetTree({
             toggleFolder(node);
             return;
           }
-          if (canSelectFile) {
+          if (canSelectFile && !isFileDisabled) {
             void onSelect(node.path);
           }
         }}
@@ -164,7 +168,7 @@ export function SourceAssetTree({
             toggleFolder(node);
             return;
           }
-          if (canSelectFile) {
+          if (canSelectFile && !isFileDisabled) {
             void onSelect(node.path);
           }
         }}
