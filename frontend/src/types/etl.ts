@@ -129,6 +129,7 @@ export type QualityRuleDraft = {
   failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;
   kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
+  params?: string;
   severity: "Warning" | "Error";
   targetColumn: string;
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";

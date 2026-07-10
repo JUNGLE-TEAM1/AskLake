@@ -476,7 +476,7 @@ type CatalogDataset = {
     rowCount: number;
     storageSizeBytes: number;
     storageLocation?: string;
-    sourceKind: "etl" | "sql";
+    sourceKind: "etl" | "sql" | "kafka";
     sourceLabel: string;
   }>;
   upstream: string[];
@@ -487,6 +487,32 @@ type CatalogDataset = {
 
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
+
+### Kafka Snapshot Metadata and Direct Target
+
+Issue #455 Phase 3부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge applies supported configured transforms and quality actions before writing normalized review JSONL.
+
+```ts
+type KafkaPartitionSnapshot = {
+  partition: number;
+  startOffset: string;
+  highWatermark: string;
+  endOffset: string; // exclusive
+};
+
+type KafkaSnapshot = {
+  snapshotId: string;
+  capturedAt: string; // ISO 8601
+  topic: string;
+  consumerGroupId: string;
+  offsetPolicy: "earliest" | "latest";
+  partitions: KafkaPartitionSnapshot[];
+};
+```
+
+Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
+
+Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
 
 ### LineageGraph
 

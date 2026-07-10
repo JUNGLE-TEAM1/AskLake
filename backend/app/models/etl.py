@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Boolean, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -78,3 +78,18 @@ class ETLRunModel(TimestampMixin, Base):
     task_states: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_synced_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sync_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class KafkaSnapshotModel(TimestampMixin, Base):
+    __tablename__ = "kafka_snapshots"
+    __table_args__ = (
+        Index("ix_kafka_snapshots_active", "topic", "consumer_group_id", "status"),
+    )
+
+    snapshot_id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    job_id: Mapped[str | None] = mapped_column(String(120), ForeignKey("etl_jobs.id"), nullable=True, index=True)
+    topic: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumer_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

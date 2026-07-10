@@ -61,6 +61,7 @@ class QualityRuleDraft(CamelModel):
     failure_action: str
     id: str
     kind: str
+    params: str = ""
     severity: str
     target_column: str
     validation_type: str
@@ -311,6 +312,13 @@ class KafkaReviewIngestRequest(CamelModel):
     consumer_group_id: str | None = None
     dataset_id: str | None = None
     dataset_name: str = "reviews_raw"
+    target_bucket: str = "asklake-output"
+    target_description: str | None = None
+    target_format: str = "jsonl"
+    target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
+    target_prefix: str = ""
+    transform_steps: list[TransformStepDraft] = Field(default_factory=list)
+    quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"
     landing_endpoint: str = "http://127.0.0.1:19000"
     landing_prefix: str = "kafka-landing"
@@ -320,7 +328,24 @@ class KafkaReviewIngestRequest(CamelModel):
     register_catalog: bool = True
     run_id: str | None = None
     storage_mode: Literal["local", "s3"] = "s3"
+    test_fail_after_target_write: bool = False
     timeout_ms: int = Field(default=10000, ge=1000, le=300000)
+
+
+class KafkaPartitionSnapshot(CamelModel):
+    end_offset: str
+    high_watermark: str
+    partition: int
+    start_offset: str
+
+
+class KafkaSnapshot(CamelModel):
+    captured_at: str
+    consumer_group_id: str
+    offset_policy: Literal["earliest", "latest"]
+    partitions: list[KafkaPartitionSnapshot]
+    snapshot_id: str
+    topic: str
 
 
 class KafkaReviewIngestResponse(CamelModel):
@@ -332,12 +357,16 @@ class KafkaReviewIngestResponse(CamelModel):
     failed_count: int
     metadata_location: str
     run_id: str
+    snapshot: KafkaSnapshot
     status: Literal["success"]
     storage_format: str
     storage_location: str
     storage_mode: Literal["local", "s3"]
     stored_count: int
+    target_layer: Literal["RAW", "BRONZE", "SILVER"]
     topic: str
+    transform: dict[str, Any] | None = None
+    quality: dict[str, Any] | None = None
 
 
 class QueryRunRequest(CamelModel):

@@ -742,16 +742,16 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
-function buildKafkaLandingPath(topic: string) {
-  return `s3://m3-raw/kafka-landing/${topic || "reviews.raw"}`;
-}
-
 function normalizeKafkaDatasetName(topic: string) {
   return (topic || "reviews.raw").trim().replace(/[^0-9A-Za-z_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "reviews_raw";
 }
 
 function isDefaultTargetStoragePath(value: string | undefined) {
   return !value || value.includes("asklake-output/");
+}
+
+function isLegacyKafkaLandingPath(value: string | undefined) {
+  return Boolean(value?.includes("kafka-landing/"));
 }
 
 function isDefaultTargetDataset(value: string | undefined) {
@@ -766,9 +766,9 @@ function isDefaultTargetDescription(value: string | undefined) {
   return !value || value.includes("고객 리뷰 분석용");
 }
 
-function kafkaTargetTags(tags: string[] | undefined) {
+function kafkaTargetTags(tags: string[] | undefined, layer: TargetLayer) {
   const visibleTags = filterVisibleTargetTags(tags);
-  return visibleTags.length > 0 ? visibleTags : ["#kafka", "#raw"];
+  return visibleTags.length > 0 ? visibleTags : ["#kafka", `#${layer.toLowerCase()}`];
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
@@ -1016,15 +1016,17 @@ function getTargetDraftValues(draft: DraftPipeline) {
     : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
   const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
-    ? "RAW"
+    ? "BRONZE"
     : normalizeTargetLayer(rawTargetLayer);
   const storedPath = target?.storagePath ?? draft.target.storagePath;
-  const defaultTargetPath = isKafkaSource ? buildKafkaLandingPath(kafkaTopic) : buildTargetStoragePath(targetDataset, targetLayer);
-  const storagePath = isKafkaSource && isDefaultTargetStoragePath(storedPath) ? defaultTargetPath : getDisplayText(storedPath, defaultTargetPath);
+  const defaultTargetPath = buildTargetStoragePath(targetDataset, targetLayer);
+  const storagePath = isKafkaSource && (isDefaultTargetStoragePath(storedPath) || isLegacyKafkaLandingPath(storedPath))
+    ? defaultTargetPath
+    : getDisplayText(storedPath, defaultTargetPath);
 
   return {
     description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? "Kafka 원본 이벤트 Lake landing 데이터셋"
+      ? "Kafka snapshot direct target 데이터셋"
       : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
@@ -1034,7 +1036,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
     tableName: isKafkaSource && isDefaultTargetTable(target?.tableName ?? draft.target.tableName)
       ? targetDataset
       : getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
+    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags, targetLayer) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
@@ -1248,7 +1250,7 @@ export function SourceConnectionPage({
         ["Broker / Endpoint", "127.0.0.1:19092"],
         ["TOPIC / QUEUE NAME", "reviews.raw"],
         ["CONSUMER GROUP ID", "asklake-reviews-raw-job"],
-        ["Batch Max Messages", "100"],
+        ["Batch Max Messages (per partition)", "100"],
         ["Timeout Ms", "10000"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],
@@ -3540,6 +3542,7 @@ function toDraftQualityRules(rules: QualityRule[]): QualityRuleDraft[] {
     failureAction: rule.failureAction,
     id: rule.id,
     kind: toQualityRuleKind(rule.validationType),
+    params: rule.params,
     severity: rule.severity,
     targetColumn: rule.targetColumn,
     validationType: rule.validationType,
@@ -4234,6 +4237,7 @@ function createQualityRuleFromDraft(draft: RuleStepDraft, id: string): QualityRu
   return {
     failureAction: getQualityFailureAction(draft.onError || fallback.onError),
     id,
+    params: draft.params,
     severity: getQualitySeverity(draft.params || "Warning"),
     targetColumn: draft.input.trim() || fallback.input,
     validationType: getQualityValidationType(draft.operation || fallback.operation),
@@ -4315,6 +4319,7 @@ function RuleStepBuilder({
   const [selectedValidationType, setSelectedValidationType] = useState<QualityRule["validationType"]>(selectedQualityPreset.validationType);
   const [selectedSeverity, setSelectedSeverity] = useState<QualityRule["severity"]>(selectedQualityPreset.severity);
   const [selectedFailureAction, setSelectedFailureAction] = useState<QualityRule["failureAction"]>(selectedQualityPreset.failureAction);
+  const [qualityParams, setQualityParams] = useState(selectedQualityPreset.params ?? "");
   const trimmedOutputColumn = outputColumn.trim();
   const outputColumnMode = trimmedOutputColumn && baseColumnSet.has(trimmedOutputColumn) ? "inPlace" : "derived";
   const getTransformParams = (operation: TransformOperation) => {
@@ -4346,7 +4351,7 @@ function RuleStepBuilder({
         onError: selectedFailureAction,
         operation: selectedValidationType,
         output: "validation_status",
-        params: selectedSeverity,
+        params: qualityParams,
       };
   const presetOptions = isTransform
     ? transformPresets.map((step) => ({ id: step.id, label: `${transformOperationLabel(step.operation)}: ${step.input} -> ${step.output}` }))
@@ -4368,6 +4373,7 @@ function RuleStepBuilder({
     setSelectedValidationType(preset.validationType);
     setSelectedSeverity(preset.severity);
     setSelectedFailureAction(preset.failureAction);
+    setQualityParams(preset.params ?? "");
   };
   const applyTransformDraft = (draft: RuleStepDraft) => {
     const operation = getAllowedTransformOperation(draft.operation);
@@ -4591,6 +4597,12 @@ function RuleStepBuilder({
                 </select>
               )}
             </label>
+            {!isTransform && (
+              <label className="hegun-rule-field">
+                <span>규칙 값 (JSON)</span>
+                <input className="input control-input" value={qualityParams} placeholder='{"pattern":"..."}' onChange={(event) => setQualityParams(event.target.value)} />
+              </label>
+            )}
             {isTransform && (
               <label className="hegun-rule-field">
                 <span>오류 처리</span>
