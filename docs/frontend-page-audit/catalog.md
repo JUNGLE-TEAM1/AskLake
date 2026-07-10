@@ -81,7 +81,7 @@
 
 ### Verification Coverage
 
-- 확인함: desktop mock 13건, 첫 page 5건, materialization success/running/failed 상태, 삭제 `AlertDialog`, 결과 목록·append 목록 shadcn `ScrollArea`, no-result search, preview empty synchronization, console warning/error.
+- 확인함: desktop mock 13건, 첫 page 5건, materialization success/running/failed 상태, 삭제 `AlertDialog`, append 목록 shadcn `ScrollArea`, no-result search, preview empty synchronization, console warning/error.
 - 확인하지 못함: checkbox 전체 조합, sort 각 option, schema/lineage dialog keyboard loop, pin persistence.
 
 ### shadcn Review
@@ -108,7 +108,7 @@
 - dataset status, RAG, row/size/run metric, dataset tag, schema type, materialization status를 shadcn `Badge`로 통일했다.
 - 카탈로그의 badge와 action은 기본 pill 대신 `compact` shape를 사용해 작은 반경의 사각형으로 표시한다.
 - 검색 결과 없음과 preview 없음은 shadcn `Empty`, append 결과 삭제 확인은 shadcn `AlertDialog`를 사용한다.
-- 결과 목록, append 결과 목록, sample table, schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
+- append 결과 목록, sample table, schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
 - 공통 `Button`/`Badge`의 기본 variant와 shape는 유지하고, 선택형 `compact` shape만 추가해 다른 화면의 기본 UI는 변경하지 않는다.
 
 - 검색 조건의 빠른 태그 버튼 영역을 제거하고 텍스트 검색만 유지했다. 결과 카드 안의 데이터셋 태그는 식별 정보이므로 유지한다.
@@ -120,8 +120,10 @@
 - ReactFlow 좌표·핸들, grid, overflow, 긴 텍스트 줄바꿈처럼 컴포넌트로 대체할 수 없는 레이아웃 CSS만 유지했다.
 - 결과 카드 태그는 제거하고 우측 미리보기의 `SQL 분석에서 열기` 아래 마지막 영역으로 이동해 shadcn `Badge`와 `TagList`로 표시한다.
 - 상세 리니지의 고정 그래프 높이를 viewport 대응 높이로 바꾸고 node surface와 footer status를 shadcn `Card`, `Badge`로 교체했다.
-- 우측 미리보기는 shadcn `Accordion`을 사용해 기본 정보, 스키마 미리보기, 리니지, SQL 분석이 연결된 세로 목록으로 펼쳐지도록 구성했다.
-- 여러 항목을 동시에 열 수 있고 기본 정보는 초기 표시한다. 태그는 마지막 SQL 분석 항목의 버튼 아래에 유지한다.
+- 우측 미리보기는 shadcn `Accordion`을 사용해 기본 정보, 스키마 미리보기, 리니지가 연결된 세로 목록으로 펼쳐지도록 구성했다.
+- 여러 항목을 동시에 열 수 있다. `SQL 분석에서 열기`와 태그는 접힘 상태와 관계없이 보이도록 Accordion 아래 고정 action 영역에 유지한다.
+- lineage 확대·축소·화면 맞춤은 ReactFlow 기본 control 대신 shadcn `ButtonGroup`, `IconButton`, `Tooltip`로 제공한다.
+- 페이지당 5개인 결과 목록의 고정 높이와 내부 ScrollArea를 제거해 카드 바로 아래에 페이지네이션이 붙도록 했다.
 
 ## Conflict Risk
 

@@ -105,6 +105,8 @@
 - 브라우저에서 탭 4개와 ArrowRight 전환, sample Slider 0→100, lineage column Button/Badge 렌더링을 확인했다.
 - 상세 lineage node surface를 shadcn `Card`, footer status를 shadcn `Badge`, header를 `PanelHeader`로 교체했다.
 - 상세 lineage graph 높이는 viewport에 맞춰 줄어들고 modal에서는 기존 full-height를 유지하도록 분리했다.
+- ReactFlow 기본 확대·축소 컨트롤은 제거하고 shadcn `ButtonGroup`, `IconButton`, `Tooltip` 조합으로 교체했다.
+- lineage modal의 텍스트 닫기 버튼은 shadcn X 아이콘 버튼으로 축소하고 중복 설명 줄을 제거했다.
 
 ## Conflict Risk
 

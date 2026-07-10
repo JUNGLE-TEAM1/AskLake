@@ -16,7 +16,7 @@
 .catalog-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 420px);
-  align-items: stretch;
+  align-items: start;
   gap: 20px;
   min-width: 0;
 }
@@ -43,8 +43,8 @@
 
 .catalog-results-section {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  min-height: 834px;
+  grid-template-rows: auto auto auto;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -56,14 +56,8 @@
   padding: 0;
 }
 
-.catalog-result-scroll-area {
-  height: 720px;
-  min-height: 720px;
-}
-
 .catalog-result-list {
   display: grid;
-  min-height: 720px;
   gap: 12px;
   align-content: start;
   padding: 16px 20px;
@@ -349,8 +343,8 @@
   display: grid;
   align-content: start;
   gap: 18px;
-  height: 100%;
-  min-height: 865px;
+  height: auto;
+  min-height: 0;
   min-width: 0;
   padding: 24px;
 }
@@ -383,10 +377,16 @@
   color: #2563eb;
 }
 
-.catalog-preview-accordion-content,
-.catalog-preview-sql-content {
+.catalog-preview-accordion-content {
   display: grid;
   gap: 12px;
+}
+
+.catalog-preview-actions {
+  display: grid;
+  width: calc(100% - 40px);
+  gap: 10px;
+  margin-inline: 20px;
 }
 
 .catalog-preview-accordion [data-slot="accordion-content"][data-state="open"] {
@@ -665,6 +665,7 @@
 }
 
 .catalog-lineage-flow {
+  position: relative;
   width: 100%;
   height: clamp(260px, calc(100dvh - 32rem), 560px);
   min-height: 260px;
@@ -961,11 +962,11 @@
   animation-duration: 1.4s;
 }
 
-.catalog-lineage-flow .react-flow__controls {
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 10px 24px rgb(15 23 42 / 10%);
+.catalog-lineage-controls {
+  position: absolute;
+  z-index: 5;
+  left: 12px;
+  bottom: 12px;
 }
 
 .catalog-lineage-footer {

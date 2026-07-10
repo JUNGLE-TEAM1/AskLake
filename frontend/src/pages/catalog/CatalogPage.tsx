@@ -3,7 +3,7 @@ import type React from "react";
 import {
   type ColumnDef,
 } from "@tanstack/react-table";
-import { Background, Controls, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
+import { Background, Handle, MarkerType, Position, ReactFlow, useUpdateNodeInternals } from "@xyflow/react";
 import type { Edge, Node as FlowNode, ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -11,16 +11,21 @@ import {
   ChevronUp,
   ExternalLink,
   LayoutGrid,
+  Maximize2,
+  Minus,
   Pin,
+  Plus,
   Star,
   Search,
   Share2,
   Table2,
   TerminalSquare,
   Trash2,
+  X,
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Card } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import {
@@ -60,6 +65,8 @@ import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
@@ -527,8 +534,7 @@ export function CatalogPage({
               </FilterToolbar>
             </div>
 
-            <ScrollArea className="catalog-result-scroll-area">
-              <div className="catalog-result-list">
+            <div className="catalog-result-list">
                 {paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
@@ -595,8 +601,7 @@ export function CatalogPage({
                     </EmptyHeader>
                   </Empty>
                 )}
-              </div>
-            </ScrollArea>
+            </div>
 
             {hasCatalogResults && (
               <PaginationBar
@@ -635,7 +640,7 @@ export function CatalogPage({
                 iconVariant="success"
                 title={previewDataset.name}
               />
-              <Accordion className="catalog-preview-accordion" defaultValue={["overview"]} type="multiple">
+              <Accordion className="catalog-preview-accordion" type="multiple">
                 <AccordionItem value="overview">
                   <AccordionTrigger>
                     <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
@@ -686,31 +691,26 @@ export function CatalogPage({
                   </AccordionContent>
                 </AccordionItem>
 
-                <AccordionItem value="sql">
-                  <AccordionTrigger>
-                    <span className="catalog-preview-accordion-label"><ExternalLink /> SQL 분석</span>
-                  </AccordionTrigger>
-                  <AccordionContent className="catalog-preview-sql-content">
-                    <Button
-                      className="catalog-wide-button"
-                      disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-                      shape="compact"
-                      title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
-                      type="button"
-                      size="sm"
-                      variant="primary"
-                      onClick={openSelectedSqlDataset}
-                    >
-                      <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
-                    </Button>
-                    <TagList className="catalog-preview-tags" density="compact">
-                      {previewDataset.tags.map((tag) => (
-                        <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
-                      ))}
-                    </TagList>
-                  </AccordionContent>
-                </AccordionItem>
               </Accordion>
+              <div className="catalog-preview-actions">
+                <Button
+                  className="catalog-wide-button"
+                  disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+                  shape="compact"
+                  title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+                  type="button"
+                  size="sm"
+                  variant="primary"
+                  onClick={openSelectedSqlDataset}
+                >
+                  <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+                </Button>
+                <TagList className="catalog-preview-tags" density="compact">
+                  {previewDataset.tags.map((tag) => (
+                    <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
+                  ))}
+                </TagList>
+              </div>
             </aside>
           </Panel>
         ) : (
@@ -757,9 +757,8 @@ function CatalogModal({
       bodyScrollArea={variant === "schema"}
       closeLabel="닫기"
       contentClassName={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`}
-      description={title}
       eyebrow={`${dataset.layer} 데이터셋`}
-      headerActions={<Button type="button" onClick={onClose} size="sm" variant="outline">닫기</Button>}
+      headerActions={<IconButton label="닫기" size="xs" type="button" variant="ghost" onClick={onClose}><X /></IconButton>}
       headerClassName="catalog-modal-header"
       onClose={onClose}
       showCloseButton={false}
@@ -1219,6 +1218,18 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
     };
   }, [flowInstance, lineageGraph]);
 
+  const zoomLineageIn = () => {
+    if (flowInstance) void flowInstance.zoomIn({ duration: 180 });
+  };
+
+  const zoomLineageOut = () => {
+    if (flowInstance) void flowInstance.zoomOut({ duration: 180 });
+  };
+
+  const fitLineageView = () => {
+    if (flowInstance) void flowInstance.fitView({ ...lineageFitViewOptions, duration: 220 });
+  };
+
   return (
     <Panel asChild className={compact ? "catalog-lineage-card compact" : "catalog-lineage-card"}>
       <section>
@@ -1248,8 +1259,29 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
             proOptions={{ hideAttribution: true }}
           >
             <Background color="#d5dde8" gap={22} />
-            <Controls showInteractive={false} />
           </ReactFlow>
+          <TooltipProvider delayDuration={200}>
+            <ButtonGroup aria-label="리니지 화면 제어" className="catalog-lineage-controls" orientation="vertical">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton label="리니지 확대" size="xs" type="button" variant="outline" onClick={zoomLineageIn}><Plus /></IconButton>
+                </TooltipTrigger>
+                <TooltipContent side="right">확대</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton label="리니지 축소" size="xs" type="button" variant="outline" onClick={zoomLineageOut}><Minus /></IconButton>
+                </TooltipTrigger>
+                <TooltipContent side="right">축소</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <IconButton label="리니지 화면 맞춤" size="xs" type="button" variant="outline" onClick={fitLineageView}><Maximize2 /></IconButton>
+                </TooltipTrigger>
+                <TooltipContent side="right">화면 맞춤</TooltipContent>
+              </Tooltip>
+            </ButtonGroup>
+          </TooltipProvider>
         </div>
       ) : (
         <div className="catalog-lineage-empty">
