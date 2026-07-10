@@ -64,6 +64,41 @@
 - autocomplete keyboard, editor focus, sidebar collapse, nested dialog focus trap이 후속 구현의 핵심 QA다.
 - mobile에서는 세 column workspace가 순차 layout으로 바뀔 때 editor와 schema가 겹치지 않는지 확인한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [PASS] initial state는 editor와 실행 button을 disabled하고 `먼저 분석 테이블에서 데이터셋을 선택`하라는 empty guidance를 제공한다.
+- [PASS] `commerce_orders_daily`를 선택하면 default SQL, `점검 통과`, enabled 실행 button, selected schema panel이 함께 갱신됐다.
+- [MEDIUM] SQL editor textarea는 초기 placeholder가 accessible name처럼 노출되지만 지속적인 visible/ARIA label이 없다. query 입력 후에도 유지되는 `aria-label="SQL editor"` 또는 실제 label이 필요하다.
+- [PASS] `분석 테이블`/`Query AI`는 `tablist`, `tab`, `aria-selected`를 제공한다. dataset tree와 column insert button도 구체적인 accessible name을 제공한다.
+- [MEDIUM] browser click가 두 번 timeout되어 Preview 실행 결과는 이번 감사에서 확인하지 못했다. 제품 오류로 단정하지 않고 coverage limitation으로 남긴다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 global app sidebar가 첫 viewport를 차지해 SQL workspace가 아래로 밀린다.
+- [HIGH] dataset tree의 긴 이름이 약 48px 폭으로 줄어 12개 후보 대부분이 심하게 잘린다. dataset browser를 mobile `Sheet`로 이동하거나 최소 폭/ellipsis/tooltip 정책을 적용해야 한다.
+- [PASS] page-level horizontal overflow는 없었지만 이는 column을 좁혀 숨긴 결과에 가깝다. 정보 가독성 기준으로는 통과가 아니다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, initial empty/disabled state, dataset 선택, default query, preflight pass, selected schema, tab semantics, console warning/error.
+- 확인하지 못함: Preview result table, CSV download, materialize dialog, Query AI response, dashboard builder overlay, execution error/retry.
+
+### shadcn Review
+
+- Structure: mixed - route composition은 분리돼 있지만 editor/autocomplete/dashboard overlay 책임이 크다.
+- Tokens: pass - form/action/result surface는 현재 theme과 일치한다.
+- Composition: issues - editor label, autocomplete popover, raw embedded dashboard dialog를 기존 primitive로 보완할 수 있다.
+- Responsive/a11y: issues - mobile dataset browser clipping과 editor persistent label이 핵심이다.
+- Install/search notes: `Tabs`, `Popover`, `Dialog`, `ScrollArea`는 설치돼 있다. `Alert`는 추가 설치 또는 기존 feedback composition 확장 중 선택하고 editor engine 교체는 별도 결정한다.
+
+### Recommended Order
+
+1. mobile dataset browser를 Sheet/overlay pattern으로 전환하고 long-name policy를 적용한다.
+2. SQL editor에 지속적인 accessible label과 execution feedback을 추가한다.
+3. autocomplete와 embedded dashboard overlay를 shadcn primitive로 정리한다.
+
 ## Conflict Risk
 
 - #422의 list/search/table/pagination 변경이 dataset browser와 result table에 영향을 줄 수 있다.

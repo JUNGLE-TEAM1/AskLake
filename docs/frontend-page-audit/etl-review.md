@@ -59,6 +59,39 @@
 - 스키마가 비어 있을 때 table empty row, 검증 미완료 상태, 생성 버튼 disabled 사유를 후속 구현 QA에서 함께 확인해야 한다.
 - 좁은 화면에서 key/value grid와 스키마 table의 horizontal overflow가 겹치지 않는지 확인이 필요하다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [HIGH] 상단 생성 action은 `검증 필요`로 disabled되지만 가까운 위치에서 원인을 설명하지 않는다. 실제 원인은 아래 validation list의 소스 연결, 스키마, 권한/타겟 항목을 내려가며 찾아야 한다.
+- [MEDIUM] 네 section의 action이 모두 accessible name `수정`으로 노출된다. `기본 정보 수정`, `출력 스키마 수정`, `저장 위치 수정`, `권한 수정`처럼 목적을 포함해야 한다.
+- [MEDIUM] mock draft에서 `Job ID`는 빈 definition이고 `Source`는 `·`만 표시된다. 미완료 값은 `미설정`으로 표시하거나 validation summary에 포함하는 편이 낫다.
+- [PASS] key/value는 `dt`/`dd`, 출력 스키마는 table semantics로 노출되고 desktop page overflow와 console error는 없었다.
+
+### Narrow Viewport Findings
+
+- [HIGH] Target과 동일하게 app sidebar와 wizard stepper가 첫 viewport를 점유해 Review 핵심 정보가 아래로 밀린다.
+- [MEDIUM] 360px에서 `Null 허용` header와 empty row 안내 문구가 cell 폭보다 길어 잘린다. table scroll affordance 또는 mobile key/value view가 필요하다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, disabled create state, validation list, semantic table/key-value structure, duplicate edit accessible names.
+- 확인하지 못함: 모든 wizard 조건을 충족한 create enabled/submitting 상태, create failure/rollback, 각 수정 버튼의 route 복귀 결과.
+
+### shadcn Review
+
+- Structure: issues - validation summary와 table rendering이 route-local 구조다.
+- Tokens: pass - card와 status tone은 기존 ETL theme와 일치한다.
+- Composition: issues - `Alert`, `StatusBadge`, `DataTable`로 disabled reason과 table 상태를 더 명확히 만들 수 있다.
+- Responsive/a11y: issues - 반복되는 `수정` name과 mobile table clipping이 있다.
+- Install/search notes: `DataTable` 기반 primitive와 `StatusBadge`는 이미 있다. `Alert`를 선택하면 추가 설치하거나 기존 `InfoBox`를 확장한다.
+
+### Recommended Order
+
+1. 생성 버튼 근처에 `Alert` 기반 blocking reason summary와 첫 미완료 단계 이동 action을 제공한다.
+2. edit button의 accessible name을 section별로 구체화한다.
+3. blank definition 처리와 mobile schema table overflow를 보완한다.
+
 ## Conflict Risk
 
 - 이번 문서는 UI/API/router를 변경하지 않는다.

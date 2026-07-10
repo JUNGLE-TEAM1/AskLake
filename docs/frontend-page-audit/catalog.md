@@ -63,6 +63,41 @@
 - keyboard QA는 result card Enter/Space, dropdown menu, lineage teaser, run 선택을 포함해야 한다.
 - loading/error는 현재 목록 영역의 표현이 약하므로 후속 구현에서 layout shift와 focus 복귀를 확인한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [PASS] mock dataset 13건이 5개 단위로 pagination되고, 검색 결과와 우측 preview가 같은 선택 상태를 사용한다. desktop 1280px에서 page overflow와 console error는 없었다.
+- [PASS] 존재하지 않는 검색어를 입력했을 때 결과 목록과 preview가 각각 `검색 결과가 없습니다`, `선택할 데이터셋이 없습니다`로 함께 전환된다.
+- [MEDIUM] preview title `commerce_orders_daily`가 좁은 우측 panel에서 여러 줄로 크게 꺾인다. 긴 dataset name에 대한 `min-width: 0`, wrapping, tooltip 정책을 통일해야 한다.
+- [MEDIUM] result card 전체 accessible name이 status, metrics, tags를 모두 합친 긴 문자열이다. card 진입 name과 보조 metadata를 분리하면 screen reader 탐색이 짧아진다.
+- [PASS] 검색, checkbox filter, sort menu, pagination, pin icon button은 accessible name을 제공한다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 global app sidebar가 접히지 않아 catalog content가 첫 viewport 아래로 밀린다.
+- [PASS] catalog 자체는 360px에서 page-level horizontal overflow를 만들지 않았다. 목록과 preview stack 전략은 유지할 수 있다.
+- [MEDIUM] mobile에서 tag quick filter 수가 많아 검색 form이 길어진다. horizontal scroll보다 `Collapsible` 또는 상위 빈도 제한+전체 보기 방식이 적합하다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, mock 13건, 첫 page 5건, no-result search, preview empty synchronization, console warning/error.
+- 확인하지 못함: checkbox 조합, sort 각 option, materialization run 선택/삭제, schema/lineage dialog keyboard loop, pin persistence.
+
+### shadcn Review
+
+- Structure: mostly pass - `Panel`, `FilterToolbar`, `DropdownMenu`, `PaginationBar`, `DataTable`, `DialogShell` composition이 잘 적용돼 있다.
+- Tokens: pass - surface와 status 색상이 theme 안에서 일관된다.
+- Composition: issues - result card/tag/metric/materialization row는 custom CSS 의존도가 높다.
+- Responsive/a11y: follow-up - global mobile shell과 긴 accessible name/title wrapping을 보완해야 한다.
+- Install/search notes: `Panel`, `Badge`, `TagList`, `Chip`, `ScrollArea`는 현재 사용 가능하다. `Collapsible`은 설치돼 있지 않아 도입 이점이 분명할 때만 추가한다.
+
+### Recommended Order
+
+1. global mobile sidebar 문제를 해결한다.
+2. result card accessible name과 long-title policy를 정리한다.
+3. materialization run과 tag quick filter를 공통 primitive로 축소한다.
+
 ## Conflict Risk
 
 - #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이다. 이 문서 PR에서는 구현을 변경하지 않는다.

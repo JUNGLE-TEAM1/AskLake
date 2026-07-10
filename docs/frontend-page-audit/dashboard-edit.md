@@ -68,6 +68,43 @@
 - 후속 구현 QA는 dataset 선택, widget 생성, drag/resize, collision rollback, undo/redo, page rename/delete, publish 순서로 진행한다.
 - mobile/narrow viewport에서는 sidebar와 inspector가 canvas를 가리거나 keyboard focus를 가두지 않는지 확인한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [HIGH] dataset tree에서 react-arborist node wrapper와 내부 `TreeRow`가 모두 `treeitem`으로 노출되어 각 node가 중첩·중복 announcement된다. 하나의 semantic treeitem owner만 남겨야 한다.
+- [HIGH] widget color palette의 기본 swatch button 여러 개가 accessible name을 제공하지 않는다. 이번 snapshot에서 직접 색상 action을 제외한 swatch 11개가 이름 없는 button으로 노출됐다.
+- [MEDIUM] `openByDefault`로 11개 dataset과 column group이 다수 펼쳐져 처음부터 tree density가 높다. long dataset name도 sidebar 폭에서 잘리므로 default open level과 tooltip/search 정책을 조정한다.
+- [MEDIUM] H1은 list의 friendly title 대신 raw ID `dash_sales_demo`를 표시한다.
+- [PASS] edit toolbar의 assistant/cursor/add/undo/redo icon button은 모두 aria-label과 title을 제공한다.
+- [PASS] dataset을 선택하면 inspector의 dataset, title, description, widget type, axis, aggregation form이 활성화되고 label/combobox/radiogroup semantics가 제공된다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 workspace container가 약 `288px`인데 내부 scroll width는 `600px`로 유지된다. dataset/canvas/inspector 3-column editor가 horizontal scroll에 의존해 primary editing workflow가 어렵다.
+- [HIGH] page tab strip도 별도 horizontal scrollbar를 만들며 global app sidebar가 첫 viewport를 차지한다.
+- [MEDIUM] mobile은 dataset과 inspector를 동시에 두기보다 각각 `Sheet`로 열고 canvas를 primary surface로 유지하는 구조가 적합하다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, draft empty state, dataset tree, dataset 선택, inspector 활성화, toolbar names, tab semantics, color swatch names, overflow measurement, console warning/error.
+- 확인하지 못함: widget 생성, drag/resize, collision rollback, color picker interaction, undo/redo, page rename/delete, publish, assistant response.
+
+### shadcn Review
+
+- Structure: mixed - domain composition은 적절하지만 tree semantics와 대형 inspector file의 책임이 크다.
+- Tokens: pass - editor surface와 form control은 theme과 일치한다.
+- Composition: issues - color picker layer, mobile side panels, feedback state를 `Popover`, `Sheet`, `Alert`, `Skeleton`으로 보완할 수 있다.
+- Responsive/a11y: issues - duplicate treeitem, unnamed swatches, 600px mobile workspace가 높은 우선순위다.
+- Install/search notes: 기존 `Sheet`, `Popover`, `ScrollArea`, `Tabs`, `ToggleGroup`, `Tooltip`로 먼저 정리하고 react-arborist/react-grid-layout은 유지한다.
+
+### Recommended Order
+
+1. color swatch accessible name과 duplicate treeitem semantics를 수정한다.
+2. mobile에서 dataset/inspector를 Sheet로 분리하고 canvas 중심 layout으로 바꾼다.
+3. tree default expansion/long-name 정책과 raw dashboard title을 정리한다.
+4. populated widget flow를 추가로 검증한다.
+
 ## Conflict Risk
 
 - dashboard view와 runtime component/CSS를 대부분 공유하므로 edit-only 변경도 published view를 회귀시킬 수 있다.
