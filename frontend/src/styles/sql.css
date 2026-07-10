@@ -10,6 +10,12 @@
   align-items: stretch;
   gap: 12px;
   max-width: none;
+  font-family: var(--jobs-font-family);
+}
+
+.sql-materialize-dialog,
+.sql-dashboard-builder-dialog {
+  font-family: var(--jobs-font-family);
 }
 
 .sql-page.context-collapsed {

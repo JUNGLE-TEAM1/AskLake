@@ -50,6 +50,7 @@
 
 ## Related CSS
 
+- `/catalog` 목록·상세·Sheet·Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다.
 - 현재 사용 중: `frontend/src/styles/catalog.css`의 `.catalog-page`, `.catalog-content-grid`, `.catalog-main`, `.catalog-search-panel`, `.catalog-results-section`.
 - 현재 사용 중: `.catalog-result-list`, `.catalog-result-item`, `.catalog-result-card`, `.catalog-result-summary`, `.catalog-result-tags`, `.catalog-empty-state`, `.catalog-pagination`.
 - 현재 사용 중: `.catalog-preview-panel`, `.catalog-preview-card`, `.catalog-overview-metrics`, `.catalog-lineage-teaser`, `.catalog-sql-target-hint`.
@@ -145,4 +146,3 @@
 - #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이므로 list/search/pagination 데이터 흐름은 유지한다.
 - catalog list와 detail이 `CatalogPage.tsx` 및 `catalog.css`를 공유하므로 분리 작업 전에 두 route를 함께 회귀 확인한다.
 - API, React Router, ReactFlow graph contract는 이번 범위에서 변경하지 않는다. mock fixture는 materialization 상태 UI 확인을 위한 success/running/failed 예시만 추가한다.
-
