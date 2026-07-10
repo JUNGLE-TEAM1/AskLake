@@ -4,6 +4,7 @@ from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest
 from app.services.trino_client import parse_trino_page, validate_next_uri
 from app.services.trino_query_run_service import build_run_response
 from app.services.trino_sql_compiler import compile_trino_read_query
+from app.services.trino_materialization import build_trino_materialization_statement
 
 
 def make_dataset(dataset_id: str, name: str, table: str | None) -> CatalogDatasetResponse:
@@ -91,6 +92,14 @@ def verify() -> None:
     assert run.stats and run.stats.processed_rows == 3
     assert run.result and run.result.columns == ["order_id"]
     assert run.submitted_by_user_id == "user_1"
+
+    completed_run = run.model_copy(update={"status": "succeeded"})
+    materialization_sql = build_trino_materialization_statement(
+        completed_run,
+        orders.query_engine_table,
+        'SELECT * FROM "iceberg"."asklake"."orders_clean"',
+    )
+    assert materialization_sql.startswith('CREATE TABLE "iceberg"."asklake"."orders_clean"')
 
     validate_next_uri("https://trino.internal:8443/v1/statement/next", "https://trino.internal:8443")
     try:

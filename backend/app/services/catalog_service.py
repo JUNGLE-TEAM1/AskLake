@@ -308,6 +308,13 @@ class CatalogService:
                 status.HTTP_404_NOT_FOUND,
                 {"sourceRunId": run_id},
             )
+        if payload.get("engine") == "trino":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Trino query runs require Iceberg materialization and cannot use the legacy derived dataset path",
+                status.HTTP_409_CONFLICT,
+                {"sourceRunId": run_id},
+            )
         return QueryRunResponse.model_validate(payload)
 
 

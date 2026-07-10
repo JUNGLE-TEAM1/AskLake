@@ -1117,6 +1117,8 @@ type SubmitQueryRunResponse = {
 
 Catalog Dataset response는 Phase 1부터 아래 optional mapping을 저장하고 응답할 수 있습니다. 이 field가 없는 기존 Dataset은 현재 DuckDB compatibility runtime과 호환되며, Phase 2 Trino Query Run service는 mapping 없는 Dataset을 실행 대상으로 허용하지 않습니다. compiler는 AST 기준으로 selected Dataset display name/ID만 `catalog.schema.table`로 치환하고 직접 physical reference와 table function을 차단합니다. Phase 3부터 `TRINO_ENABLED=true`인 backend는 `/api/query/runs` routing을 이 service로 전환합니다.
 
+Trino run은 legacy `POST /api/catalog/derived-datasets` JSONL materialization input이 아니다. succeeded run의 persisted `compiledQuery`로 Iceberg CTAS를 실행한 뒤 Catalog Dataset과 lineage를 등록하는 별도 materialization lifecycle을 사용한다.
+
 ```ts
 type QueryEngineTableRef = {
   catalog: string;
