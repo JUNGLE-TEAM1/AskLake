@@ -56,6 +56,15 @@ export type TrinoQueryRunResultPage = {
   runId: string;
 };
 
+export type TrinoMaterializationRun = {
+  datasetId: string;
+  datasetName: string;
+  materializationId: string;
+  sourceRunId: string;
+  status: TrinoQueryRunStatus;
+  trinoQueryId?: string;
+};
+
 export type CreateDerivedDatasetRequest = {
   dataset: {
     description: string;

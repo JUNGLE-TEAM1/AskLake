@@ -14,13 +14,13 @@ import {
 } from "lucide-react";
 import { apiConfig } from "../../services/apiClient";
 import { executeQueryPreview } from "../../services/mockApi";
-import { cancelTrinoQueryRun, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
+import { cancelTrinoQueryRun, getTrinoMaterialization, getTrinoQueryRun, getTrinoQueryRunResultPage, isTrinoQueryRun, materializeTrinoQueryRun, submitSqlQueryRun } from "../../services/pipelineApi";
 import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryRun, TrinoQueryRunResultPage } from "../../types";
 import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
@@ -95,6 +95,7 @@ export function SqlAnalysisPage({
   const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
   const [trinoResultPages, setTrinoResultPages] = useState<TrinoQueryRunResultPage[]>([]);
   const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
+  const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
   const [queryAiSuggestion, setQueryAiSuggestion] = useState<QueryAiSuggestion | null>(null);
@@ -422,12 +423,21 @@ export function SqlAnalysisPage({
       .catch(() => undefined);
   }, [trinoResultPages.length, trinoRun]);
 
+  useEffect(() => {
+    if (!trinoMaterialization || !["queued", "running"].includes(trinoMaterialization.status)) return;
+    const timeoutId = window.setTimeout(() => {
+      void getTrinoMaterialization(trinoMaterialization.materializationId).then(setTrinoMaterialization).catch(() => undefined);
+    }, 1000);
+    return () => window.clearTimeout(timeoutId);
+  }, [trinoMaterialization]);
+
   const resetResultState = () => {
     setExecuted(false);
     setResultDraft(null);
     setTrinoRun(null);
     setTrinoResultPages([]);
     setTrinoResultPageIndex(0);
+    setTrinoMaterialization(null);
     setExecutionMs(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
@@ -846,6 +856,19 @@ export function SqlAnalysisPage({
     }
   };
 
+  const materializeTrinoRun = async () => {
+    if (!baseDataset || !trinoRun) return;
+    const request: CreateDerivedDatasetRequest = {
+      dataset: { description: derivedDatasetDescription.trim() || buildDefaultDerivedDatasetDescription(baseDataset), layer: derivedDatasetLayer, name: derivedDatasetName.trim(), rag: derivedDatasetRag, refreshPolicy: "manual", tags: derivedDatasetTagList },
+      query: trinoRun.query,
+      referenceDatasetIds: trinoRun.referenceDatasetIds,
+      sourceDatasetId: baseDataset.id,
+      sourceRunId: trinoRun.runId,
+    };
+    setTrinoMaterialization(await materializeTrinoQueryRun(trinoRun.runId, request));
+    setMaterializeDialogOpen(false);
+  };
+
   const openDashboardBuilder = () => {
     if (!dashboardBaseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
@@ -1116,7 +1139,7 @@ export function SqlAnalysisPage({
                 </span>
                 <div className="sql-result-actions">
                   {!trinoRun && <button type="button" onClick={downloadCsv}><Download size={14} /> CSV 다운로드</button>}
-                  {!trinoRun && <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> 처리 Job 생성</button>}
+                  {(!trinoRun || trinoRun.status === "succeeded") && <button type="button" onClick={() => setMaterializeDialogOpen(true)}><Database size={14} /> {trinoRun ? "Iceberg Dataset 생성" : "처리 Job 생성"}</button>}
                   {!trinoRun && (
                     <button
                       disabled={!dashboardBaseDataset}
@@ -1130,6 +1153,7 @@ export function SqlAnalysisPage({
                   )}
                 </div>
               </div>
+              {trinoMaterialization && <div className="sql-result-toolbar"><span>Iceberg materialization: {trinoMaterialization.status}</span></div>}
               <div className="sql-result-scroll">
                 <SqlPreviewTable
                   resultDraft={visibleResult}
@@ -1148,7 +1172,7 @@ export function SqlAnalysisPage({
           )}
         </section>
       </main>
-      {resultDraft && materializeDialogOpen && (
+      {(resultDraft || trinoRun) && materializeDialogOpen && (
         <div className="sql-materialize-dialog-backdrop" role="presentation" onMouseDown={() => setMaterializeDialogOpen(false)}>
           <section className="sql-materialize-dialog" role="dialog" aria-modal="true" aria-labelledby="sql-materialize-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
             <header className="sql-materialize-dialog-header">
@@ -1213,15 +1237,15 @@ export function SqlAnalysisPage({
               <button
                 className="primary-button"
                 disabled={!hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
-                onClick={prepareDerivedDatasetJob}
-                title={hasQueryPermission ? "처리 Job 생성 검토로 이동합니다." : queryPermissionMessage}
+                onClick={trinoRun ? () => void materializeTrinoRun() : prepareDerivedDatasetJob}
+                title={hasQueryPermission ? trinoRun ? "Iceberg Dataset을 생성합니다." : "처리 Job 생성 검토로 이동합니다." : queryPermissionMessage}
                 type="button"
               >
-                <Database size={15} /> Job 생성 검토로 이동
+                <Database size={15} /> {trinoRun ? "Iceberg Dataset 생성" : "Job 생성 검토로 이동"}
               </button>
             </div>
             <div className="sql-materialize-summary">
-              <span>실행 {resultDraft.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {resultDraft.columns.length}개 · 검토 단계에서 생성 요청</span>
+              <span>실행 {(trinoRun ?? resultDraft)?.runId} · 태그 {derivedDatasetTagList.length}개 · 컬럼 {trinoRun?.result?.columns.length ?? resultDraft?.columns.length ?? 0}개</span>
             </div>
           </section>
         </div>

@@ -1,4 +1,4 @@
-import type { CatalogDataset, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft, TrinoQueryRun, TrinoQueryRunResultPage } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, SqlResultDraft, TrinoMaterializationRun, TrinoQueryRun, TrinoQueryRunResultPage } from "../types";
 import { toCreatePipelineRequest, toUpdatePipelineRequest } from "./draftPipelineContract";
 import { apiClient } from "./apiClient";
 
@@ -74,4 +74,12 @@ export async function getTrinoQueryRunResultPage(runId: string, cursor?: string 
 
 export async function cancelTrinoQueryRun(runId: string): Promise<TrinoQueryRun> {
   return apiClient.post<TrinoQueryRun>(`/api/query/runs/${encodeURIComponent(runId)}/cancel`, {});
+}
+
+export async function materializeTrinoQueryRun(runId: string, request: CreateDerivedDatasetRequest): Promise<TrinoMaterializationRun> {
+  return apiClient.post<TrinoMaterializationRun>(`/api/catalog/trino-runs/${encodeURIComponent(runId)}/materializations`, request);
+}
+
+export async function getTrinoMaterialization(materializationId: string): Promise<TrinoMaterializationRun> {
+  return apiClient.get<TrinoMaterializationRun>(`/api/catalog/trino-materializations/${encodeURIComponent(materializationId)}`);
 }
