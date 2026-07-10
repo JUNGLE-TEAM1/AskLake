@@ -107,6 +107,17 @@ const checks = [
       /disabled=\{!prompt\.trim\(\) \|\| awaitingRuntime \|\| selectedDatasets\.length === 0\}/,
     ],
   },
+  {
+    name: "AI chat shows pending response blocks without mock content",
+    file: "src/pages/ai/AiChatPage.tsx",
+    patterns: [
+      /function AiResponsePendingCard\(\)/,
+      /<strong>AI runtime 연결 대기<\/strong>/,
+      /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>대기<\/small><\/button>/,
+      /<button disabled type="button"><Braces size=\{15\} \/><span>SQL<\/span><small>대기<\/small><\/button>/,
+      /<button disabled type="button"><Database size=\{15\} \/><span>결과<\/span><small>대기<\/small><\/button>/,
+    ],
+  },
 ];
 
 const failures = [];

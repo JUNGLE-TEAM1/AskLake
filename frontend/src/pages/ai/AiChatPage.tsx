@@ -1,4 +1,4 @@
-import { Bot, Check, ChevronDown, CircleUser, Database, Plus, Send, Sparkles } from "lucide-react";
+import { Bot, Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, Plus, Send, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CatalogDataset } from "../../types";
 
@@ -13,6 +13,26 @@ type UserMessage = {
   content: string;
   contextNames: string[];
 };
+
+function AiResponsePendingCard() {
+  return (
+    <article className="ai-assistant-message" aria-busy="true" aria-label="AI 응답 대기">
+      <span className="ai-assistant-avatar"><Bot size={16} /></span>
+      <div className="ai-response-pending-card">
+        <div className="ai-response-pending-heading">
+          <strong>AI runtime 연결 대기</strong>
+          <span>응답을 준비하고 있습니다.</span>
+        </div>
+        <div className="ai-response-blocks" aria-label="응답 구성">
+          <button disabled type="button"><FileText size={15} /><span>근거</span><small>대기</small></button>
+          <button disabled type="button"><Braces size={15} /><span>SQL</span><small>대기</small></button>
+          <button disabled type="button"><Database size={15} /><span>결과</span><small>대기</small></button>
+          <button disabled type="button"><LayoutGrid size={15} /><span>대시보드</span><small>대기</small></button>
+        </div>
+      </div>
+    </article>
+  );
+}
 
 export function AiChatPage({
   datasets,
@@ -136,10 +156,7 @@ export function AiChatPage({
             </article>
           ))}
           {awaitingRuntime ? (
-            <div className="ai-runtime-pending" role="status">
-              <Bot size={16} />
-              <span>AI runtime 연결 대기</span>
-            </div>
+            <AiResponsePendingCard />
           ) : null}
           <div ref={messagesEndRef} />
         </div>
