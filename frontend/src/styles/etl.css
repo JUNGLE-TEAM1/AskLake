@@ -200,39 +200,10 @@
 .source-stage-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  height: auto;
   gap: 5px;
-  border-bottom: 1px solid #e2e8f0;
-  padding-bottom: 12px;
-}
-
-.source-stage-tabs button {
-  height: 40px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  color: #64748b;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.source-stage-tabs button:focus {
-  outline: none;
-}
-
-.source-stage-tabs button:focus-visible {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
-}
-
-.source-stage-tabs button.active {
-  border-color: #6366f1;
-  background: #eef2ff;
-  color: #4338ca;
-}
-
-.source-stage-tabs button:disabled {
-  cursor: not-allowed;
-  opacity: .48;
+  margin-bottom: 12px;
 }
 
 .source-stage-screen {
@@ -286,9 +257,10 @@
 .source-choice-card {
   position: relative;
   display: grid;
-  align-content: center;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
   justify-items: start;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
   min-height: 204px;
   border: 1px solid #dfe3ea;
@@ -630,6 +602,12 @@
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.source-step-header .hegun-status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .source-step-header strong {
@@ -1469,6 +1447,10 @@
   background: #eff6ff;
   color: #1d4ed8;
   padding: 8px;
+}
+
+.hegun-status-copy.single-line > svg {
+  grid-row: auto;
 }
 
 .hegun-source-status-bar.success .hegun-status-copy > svg {
@@ -6025,15 +6007,18 @@
   white-space: nowrap;
 }
 
-.etl-review-page-header > div > div:first-child {
+.etl-review-page-header > div > div:first-child,
+.etl-source-page-header > div > div:first-child {
   align-items: center;
 }
 
-.etl-review-page-header > div > div:first-child > span {
+.etl-review-page-header > div > div:first-child > span,
+.etl-source-page-header > div > div:first-child > span {
   margin-top: 0;
 }
 
-.etl-review-page-header h1 {
+.etl-review-page-header h1,
+.etl-source-page-header h1 {
   display: flex;
   align-items: center;
   min-height: 36px;

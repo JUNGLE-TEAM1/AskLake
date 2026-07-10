@@ -10,6 +10,7 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  Cable,
   Calendar,
   Check,
   ChevronDown,
@@ -20,6 +21,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FolderOpen,
   HardDrive,
   Info,
   LayoutGrid,
@@ -35,6 +37,7 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Table2,
   TerminalSquare,
   Trash2,
@@ -61,6 +64,7 @@ import {
 } from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
 import { TagList } from "@/components/ui/tag-list";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
 import { cn } from "@/lib/utils";
 import { S3PathField } from "../../components/s3/S3PathField";
@@ -1052,14 +1056,14 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
-  const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
-    "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
-    PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
-    MongoDB: { desc: "컬렉션 목록, 문서 샘플, 중첩 필드 추론", icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
-    "REST API": { desc: "HTTP 응답 샘플을 백엔드에서 수집", icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
-    "Data Lake": { desc: "MinIO 경로의 Parquet 오브젝트 목록", icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
-    "SQL Result": { desc: "SQL Preview 결과를 처리 Job 입력으로 사용", icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
-    "Stream / Kafka": { desc: "Apache Kafka 스트림 데이터를 연결합니다.", icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
+  const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
+    "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
+    PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
+    MongoDB: { icon: <SourceBrandIcon kind="mongo" />, label: "MongoDB", status: "실제 연결" },
+    "REST API": { icon: <SourceBrandIcon kind="rest" />, label: "REST API", status: "실제 연결" },
+    "Data Lake": { icon: <SourceBrandIcon kind="lake" />, label: "레이크", status: "목록 조회" },
+    "SQL Result": { icon: <TerminalSquare size={20} />, label: "SQL Result", status: "검증 완료" },
+    "Stream / Kafka": { icon: <SourceBrandIcon kind="kafka" />, label: "Kafka", status: "메타데이터" },
   };
   const sourceConfigs: Record<string, {
     title: string;
@@ -1559,41 +1563,36 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions useShadcnStyles onPrev={onPrev} onNext={goNext} />}
     >
         <PageHeader
-          className="etl-flow-page-header"
-          description={isSqlResultSource ? "SQL Preview 결과를 처리 Job 입력으로 확인합니다." : "소스를 선택하고 실제 연결 테스트로 샘플을 가져옵니다."}
-          icon={<Database size={18} />}
+          className="etl-flow-page-header etl-source-page-header"
+          icon={<Cable size={18} />}
           title="소스 연결"
         />
         <section className="panel hegun-console-panel source-connect-panel" aria-label="소스 선택 및 연결">
-          <SegmentedTabs
-            ariaLabel="소스 연결 단계"
-            className="source-stage-tabs"
-            items={[
-              { label: "1. 소스 선택", value: "choose" },
-              { disabled: !hasSelectedSource, label: "2. 연결 설정", value: "connect" },
-              { disabled: connectionStatus !== "success" || !hasDetectedAssets, label: "3. 데이터 탐색", value: "browse" },
-            ]}
+          <Tabs
             value={sourceStage}
-            onValueChange={setSourceStage}
-          />
+            onValueChange={(value) => setSourceStage(value as "choose" | "connect" | "browse")}
+          >
+            <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
+              <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
+              <TabsTrigger disabled={!hasSelectedSource} value="connect">2. 연결 설정</TabsTrigger>
+              <TabsTrigger disabled={connectionStatus !== "success" || !hasDetectedAssets} value="browse">3. 데이터 탐색</TabsTrigger>
+            </TabsList>
 
           {sourceStage === "choose" && (
             <div className="source-stage-screen source-choice-screen">
               <div className="source-select-heading">
-                <h2>Select a data source</h2>
-                <p>Choose the type of data source you want to connect</p>
+                <h2>데이터 소스 선택</h2>
               </div>
               <div className="source-choice-grid">
                 {sourceChoiceConnectors.map((connector) => {
                   const meta = connectorMeta[connector];
                   return (
                     <SelectableCard
-                      aria-label={`${meta.label} ${meta.desc}`}
+                      aria-label={`${meta.label} 소스 선택`}
                       className="source-choice-card"
-                      description={meta.desc}
                       icon={<span className="source-choice-icon">{meta.icon}</span>}
                       key={connector}
                       selected={sourceType === connector}
@@ -1616,16 +1615,16 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <Button className="secondary-button" type="button" variant="outline" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</Button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <Button className="secondary-button" type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</Button>}
-                  {current.actions?.includes("Fetch Metadata") && <Button className="secondary-button" type="button" variant="outline" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</Button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button className="primary-button" type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
+                  {activeSourceType === "File / S3" && <Button type="button" variant="outline" onClick={fillMinioDemoFields}><Sparkles data-icon="inline-start" />데모용 MinIO 값 채우기</Button>}
+                  {current.actions?.includes("Show Advanced Configuration") && <Button type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}><SlidersHorizontal data-icon="inline-start" />{sourceActionLabel("Show Advanced Configuration")}</Button>}
+                  {current.actions?.includes("Fetch Metadata") && <Button type="button" variant="outline" onClick={fetchMetadata}><RefreshCw data-icon="inline-start" />{sourceActionLabel("Fetch Metadata")}</Button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}><Cable data-icon="inline-start" />연결 테스트</Button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
                   {visibleEditableFields.map(([label, value]) => (
                     <FormFieldGroup className={value.length > 38 ? "field wide" : "field"} key={`${activeSourceType}-${label}`} label={sourceFieldLabel(label)}>
-                      <Input className="input control-input" readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
+                      <Input readOnly={isSqlResultSource} value={value} onChange={(event) => updateSourceField(label, event.target.value)} />
                     </FormFieldGroup>
                   ))}
                 </div>
@@ -1634,13 +1633,13 @@ export function SourceConnectionPage({
 
               <section className={`hegun-source-status-bar ${connectionStatus}`} aria-label="연결 테스트 상태">
                 <div className="hegun-status-head">
-                  <div className="hegun-status-copy">
+                  <div className={cn("hegun-status-copy", !publicConnectionMessage && "single-line")}>
                     {sourceStatusIcon(connectionStatus)}
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
-                    <span className="panel-note">{publicConnectionMessage}</span>
+                    {publicConnectionMessage && <span className="panel-note">{publicConnectionMessage}</span>}
                   </div>
                   <div className="hegun-status-actions">
-                    {connectionStatus === "success" && hasDetectedAssets && <Button className="secondary-button" type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
+                    {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}><FolderOpen data-icon="inline-start" />데이터 탐색 열기</Button>}
                     {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
@@ -1713,6 +1712,7 @@ export function SourceConnectionPage({
               </section>
             </div>
           )}
+          </Tabs>
         </section>
     </CreationFlowLayout>
   );
