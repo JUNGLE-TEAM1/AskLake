@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -449,6 +450,8 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
             or field_value(fields, "Target Endpoint URL")
+            or os.environ.get("MINIO_ENDPOINT_IN_DOCKER")
+            or os.environ.get("MINIO_ENDPOINT")
             or "http://127.0.0.1:19000"
         ),
         "landingPrefix": landing["prefix"],
