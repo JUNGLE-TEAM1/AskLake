@@ -5717,17 +5717,6 @@
   background: #94a3b8;
 }
 
-.catalog-lineage-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  border-top: 1px solid #eef2f7;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-  padding-top: 14px;
-}
-
 .permission-list {
   display: grid;
   gap: 12px;

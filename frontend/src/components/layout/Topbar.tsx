@@ -1,5 +1,7 @@
 import { Activity, RefreshCw } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { IconButton } from "@/components/ui/icon-button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AuditEntry } from "../../types";
 
 export function Topbar({
@@ -15,12 +17,18 @@ export function Topbar({
 }) {
   return (
     <header className="topbar">
+      <TooltipProvider delayDuration={300}>
       <div className="topbar-actions">
         <div className="audit-menu">
-          <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" type="button" onClick={onAuditToggle}>
-            <Activity size={18} />
-            {auditLogs.length > 0 && <span className="audit-dot" />}
-          </IconButton>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" type="button" onClick={onAuditToggle}>
+                <Activity />
+                {auditLogs.length > 0 && <span className="audit-dot" />}
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>최근 API 호출</TooltipContent>
+          </Tooltip>
           {auditOpen && (
             <section className="audit-popover">
               <div className="audit-popover-header">
@@ -42,11 +50,15 @@ export function Topbar({
             </section>
           )}
         </div>
-        <IconButton className="icon-button" label="새로고침" type="button" onClick={onRefresh}>
-          <RefreshCw size={18} />
-        </IconButton>
-        <div className="avatar" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <IconButton className="icon-button" label="새로고침" type="button" onClick={onRefresh}><RefreshCw /></IconButton>
+          </TooltipTrigger>
+          <TooltipContent>새로고침</TooltipContent>
+        </Tooltip>
+        <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
       </div>
+      </TooltipProvider>
     </header>
   );
 }

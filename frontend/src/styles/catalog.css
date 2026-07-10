@@ -93,6 +93,7 @@
   display: grid;
   gap: 8px;
   min-width: 0;
+  border-bottom: 0;
 }
 
 .catalog-result-card {
@@ -132,10 +133,6 @@
   white-space: normal;
 }
 
-.catalog-result-expand {
-  margin-right: 12px;
-}
-
 .catalog-result-pin-badge {
   pointer-events: none;
   white-space: nowrap;
@@ -161,174 +158,6 @@
   font-weight: 850;
   line-height: 1.35;
   overflow-wrap: anywhere;
-}
-
-.catalog-materialization-panel {
-  display: grid;
-  gap: 10px;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 12px;
-  cursor: default;
-}
-
-.catalog-materialization-header,
-.catalog-materialization-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.catalog-materialization-header strong {
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.catalog-materialization-header {
-  flex-wrap: wrap;
-}
-
-.catalog-materialization-header span,
-.catalog-materialization-pagination span,
-.catalog-materialization-pagination strong {
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.catalog-materialization-header span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
-}
-
-.catalog-materialization-list {
-  display: grid;
-  gap: 6px;
-  padding-right: 4px;
-}
-
-.catalog-materialization-scroll-area {
-  min-height: 0;
-  min-width: 0;
-}
-
-.catalog-materialization-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0;
-  min-width: 0;
-  padding: 0;
-}
-
-.catalog-materialization-select {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  align-items: center;
-  justify-content: stretch;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  align-self: stretch;
-  border-radius: inherit;
-  padding: 8px;
-  text-align: left;
-  white-space: normal;
-}
-
-.catalog-materialization-select:hover,
-.catalog-materialization-select:focus-visible {
-  border-color: #93c5fd;
-  background: #eff6ff;
-}
-
-.catalog-materialization-row.selected {
-  border-color: #2563eb;
-  background: #eff6ff;
-  box-shadow: 0 0 0 2px rgb(37 99 235 / 16%);
-}
-
-.catalog-materialization-row.disabled {
-  cursor: default;
-}
-
-.catalog-materialization-main {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-}
-
-.catalog-materialization-main > strong,
-.catalog-materialization-meta span {
-  min-width: 0;
-  overflow: hidden;
-  color: #475569;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.catalog-materialization-main > strong {
-  color: #0f172a;
-}
-
-.catalog-materialization-meta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-}
-
-.catalog-materialization-meta span:last-child {
-  max-width: min(100%, 220px);
-}
-
-.catalog-run-status {
-  justify-content: center;
-  text-align: center;
-}
-
-.catalog-delete-button {
-  border-color: #ef4444;
-  background: transparent;
-  color: #dc2626;
-}
-
-.catalog-delete-button:hover {
-  border-color: #dc2626;
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.catalog-materialization-empty {
-  border: 1px dashed #cbd5e1;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #64748b;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 12px;
-}
-
-.catalog-materialization-pagination {
-  border: 0;
-  border-top: 1px solid #eef2f7;
-  border-radius: 0;
-  box-shadow: none;
-  padding-top: 8px;
-}
-
-.catalog-materialization-pagination [data-slot="pagination-actions"] {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .catalog-help-text,
@@ -629,7 +458,7 @@
 }
 
 .catalog-modal.lineage-modal .catalog-lineage-card {
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -722,14 +551,13 @@
   flex: 1 1 auto;
 }
 
-.catalog-modal.lineage-modal .catalog-lineage-footer {
-  gap: 18px;
-  padding-top: 10px;
-}
-
 .catalog-modal.lineage-modal .catalog-lineage-flow .react-flow {
   width: 100%;
   height: 100%;
+}
+
+.catalog-lineage-footer {
+  display: none;
 }
 
 .catalog-lineage-empty {
@@ -764,23 +592,6 @@
   background: transparent;
   padding: 0;
   box-shadow: none;
-}
-
-.catalog-lineage-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  border-top: 1px solid #e2e8f0;
-  padding-top: 16px;
-}
-
-.catalog-lineage-stat {
-  white-space: normal;
-}
-
-.catalog-lineage-stat strong {
-  color: #1e293b;
 }
 
 .catalog-lineage-mini {
