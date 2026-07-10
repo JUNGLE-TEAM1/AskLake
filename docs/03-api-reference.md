@@ -148,6 +148,23 @@ type KafkaReviewEvent = {
 
 필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
 
+### Kafka snapshot direct target 전환 계획
+
+Issue #455는 현재 landing-only Kafka ingest 계약을 다음의 direct target 계약으로 전환한다. 이 절은 Phase 0 설계이고, 구현 전에는 위 RAW landing endpoint와 response가 현재 동작 기준이다.
+
+```text
+partition offset snapshot
+  -> fixed-range consume with auto-commit disabled
+  -> transform/quality
+  -> selected target dataset write
+  -> Catalog materialization run
+  -> offset commit
+```
+
+새 계약에서 snapshot은 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 재시도는 같은 snapshot identity로 idempotent하게 처리한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
+
+중간 `kafka-landing/...` RAW object는 기본 경로에서 제거한다. target dataset의 layer는 `BRONZE` 또는 `SILVER`이며, `GOLD` join/aggregation은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+
 ### Scheduled job tick
 
 `POST /api/etl/schedules/run-due`는 production scheduler 자체가 아니라, scheduler/cron이 호출할 수 있는 due job 실행 endpoint다.

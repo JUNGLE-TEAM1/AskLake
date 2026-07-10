@@ -488,6 +488,30 @@ type CatalogDataset = {
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
+### Planned Kafka Snapshot Direct Target Metadata
+
+Issue #455의 Phase 0 계약은 현재 Kafka RAW landing 구현을 즉시 바꾸지 않는다. 구현 단계에서는 Kafka direct target run이 다음 snapshot metadata를 Catalog materialization run 또는 Run metadata에 보존해야 한다.
+
+```ts
+type KafkaPartitionSnapshot = {
+  partition: number;
+  startOffset: string;
+  highWatermark: string;
+  endOffset: string; // exclusive
+};
+
+type KafkaSnapshot = {
+  snapshotId: string;
+  capturedAt: string; // ISO 8601
+  topic: string;
+  consumerGroupId: string;
+  offsetPolicy: "earliest" | "latest";
+  partitions: KafkaPartitionSnapshot[];
+};
+```
+
+Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`을 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
+
 ### LineageGraph
 
 ```ts
