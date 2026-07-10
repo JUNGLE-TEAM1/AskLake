@@ -45,7 +45,8 @@ Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 �
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
-VITE_USE_MOCK_API=true
+VITE_USE_MOCK_API=false
+VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 DATABASE_URL=postgres://asklake:asklake_dev@127.0.0.1:54328/asklake
 S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
@@ -54,7 +55,8 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 ```
 
 - `VITE_API_BASE_URL`: 백엔드 base URL입니다.
-- `VITE_USE_MOCK_API`: `false`일 때 live backend를 호출합니다. 미설정 또는 `true`이면 frontend mock mode입니다.
+- `VITE_USE_MOCK_API`: `false` 또는 미설정이면 live backend를 호출합니다. frontend mock mode는 `true`를 명시합니다.
+- `VITE_DASHBOARD_ASSISTANT_API_PATH`: 미설정 시 `/api/dashboards/assistant`를 호출합니다. 다른 Assistant API 경로 또는 origin이 필요할 때만 지정합니다.
 - `DATABASE_URL`: backend metadata DB입니다. 미설정 시 `docker-compose.yml`의 local Postgres 기본값을 사용합니다.
 - mock mode에서는 Source/Schema 연결 테스트도 `sourceConnectorService.ts`의 mock `SourceConnectorAnalysis`를 사용합니다.
 - live mode에서는 Source/Schema/Create/Run 흐름이 실제 백엔드를 호출합니다.
@@ -454,6 +456,8 @@ type JobRunSummary = {
 };
 
 type JobDagStep = {
+  completedAt?: string;
+  duration?: string;
   id: string;
   title: string;
   meta: string;
@@ -461,6 +465,8 @@ type JobDagStep = {
   note?: string;
 };
 ```
+
+`duration`은 해당 단계의 실행 소요시간 표시값이고, `completedAt`은 단계가 성공 또는 실패로 종료된 시각이다. Backend가 아직 이 값을 수집하지 못한 경우 optional로 생략하며 frontend는 임의 시간을 계산하지 않고 미수집·진행 중·대기 상태를 표시한다.
 
 ### CatalogDataset
 
@@ -712,7 +718,67 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
-### 7.2 파이프라인 생성
+### 7.2 Review snapshot
+
+`POST /api/etl/review`
+
+Request는 `CreatePipelineRequest`에 아래 필드를 추가합니다.
+
+```ts
+type ReviewPipelineRequest = CreatePipelineRequest & {
+  sourceConnectionStatus: "idle" | "testing" | "success" | "failed";
+};
+```
+
+Response는 Review 화면의 모든 표시값을 아래 shape로 반환합니다.
+
+```ts
+type ReviewSnapshot = {
+  basicInformation: Array<{ label: string; value: string }>;
+  schema: Array<{ columnName: string; type: string; nullable: string; transform: string }>;
+  destination: Array<{ label: string; value: string }>;
+  permission: Array<{ label: string; value: string }>;
+  validation: Array<{ label: string; status: "ready" | "warning"; value: string }>;
+  canCreate: boolean;
+};
+```
+
+- `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
+- live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
+- Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+
+### 7.3 작업 목록 조회
+
+`GET /api/etl/jobs`
+
+작업 현황의 상태 버튼과 `실행 주기` 컬럼 필터는 이 endpoint를 사용한다. 목록을 프론트엔드에서 임의로 잘라내지 않고, live mode에서는 선택한 조건을 query parameter로 서버에 전달한다.
+
+Query parameter:
+
+- `status`: 0개 이상 반복 가능한 job status. 목록 UI 예: `?status=running&status=stopped`. 저장된 legacy `failed`, `canceled`, `paused` 상태는 목록 응답에서 `scheduled`로 정규화한다.
+- `owner`: 정확히 일치하는 소유자 1명. 예: `?owner=analytics`
+- `lastRunOutcome`: `success`, `failed`, `canceled` 중 하나. 최근 Run 결과로 목록을 필터링한다.
+- `scheduleKind`: `daily`, `weekly`, `monthly`, `realtime`, `none`, `other` 중 하나. 서버는 저장된 schedule label을 기준으로 분류한다.
+
+Response `200 OK`:
+
+```ts
+type GetJobsResponse = {
+  jobs: JobRowData[];
+  facets: {
+    latestRunOutcomeCounts: Record<"success" | "failed" | "canceled", number>;
+    owners: string[];
+    total: number;
+    statusCounts: Record<JobStatus, number>;
+  };
+};
+```
+
+`facets`는 현재 선택한 filter와 무관한 전체 목록 기준이다. 따라서 소유자 한 명을 선택한 뒤에도 `owners`에는 등록된 모든 소유자가 유지되고, 현황 버튼도 전체 작업의 상태 분포를 유지한다.
+
+각 `JobRowData`는 DB timestamp 기준의 optional `createdAt`, `updatedAt`을 포함한다. 목록 소유자 셀은 `updatedAt`을 우선 표시하고, legacy row처럼 수정 시각이 없을 때만 `createdAt`을 표시한다.
+
+### 7.4 파이프라인 생성
 
 `POST /api/etl/jobs`
 
@@ -944,12 +1010,13 @@ Validation:
 - 현재 Target 화면에서는 layer 선택 버튼을 노출하지 않고 기존 draft/default `targetLayer` 값을 사용합니다.
 - `rag`는 호환 필드로 유지하지만, 현재 Target 화면에서는 설정을 노출하지 않고 frontend는 기본값 `false`를 전송합니다.
 - 현재 Target 화면은 저장소 선택 화면이 아니라 최종 dataset 저장 명세 화면입니다. `data` JSON 단일 컬럼 sample은 frontend에서 dot-path 컬럼으로 펼쳐 `schemaRules`와 preview를 구성하고, 원본 보존용 `raw_data`는 optional 미사용 컬럼으로 둡니다.
-- 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼만 선택하며, 선택값을 `/`로 연결해 create request의 `partition`에 반영합니다.
+- 현재 Target 화면의 파티션은 실제 사용 컬럼 중 partition 가능한 컬럼을 checkbox로 여러 개 선택하며, 선택 순서를 유지해 `/`로 연결한 뒤 create request의 `partition`에 반영합니다. 예: `event_date/region`.
+- backend는 `partition` 문자열을 ETL job metadata에 보존하고 Spark 실행 시 컬럼 목록으로 복원해 Parquet writer의 `partitionBy`에 전달합니다. 선택 컬럼이 Spark output schema에 없으면 실행을 실패 처리합니다.
 - Spark run 성공 후 생성되는 `CatalogDataset`에는 `description`, `tags`, `partition`, `partitionColumns`, `indexColumns`가 create request의 Target metadata와 일치하게 저장되어야 합니다. 값이 없으면 backend는 기존 기본 description/tag fallback을 사용할 수 있습니다.
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
-### 7.3 파이프라인 수정
+### 7.5 파이프라인 수정
 
 `PATCH /api/etl/jobs/{jobId}`
 
@@ -974,7 +1041,7 @@ Rules:
 - 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
 - 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
 
-### 7.4 작업 명령
+### 7.6 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 
@@ -986,7 +1053,7 @@ Request:
 
 ```ts
 type JobCommandRequest = {
-  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule";
+  command: "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule";
 };
 ```
 
@@ -1064,11 +1131,14 @@ Response 예시:
 | `retry` | `etl.run.retry_requested` | `running` |
 | `pause` | `etl.job.pause_requested` | `paused` |
 | `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
-| `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
+| `stopSchedule` | `etl.schedule.stop_requested` | 스케줄 설정을 보존한 채 `stopped`, `nextRun: "-"`. 실행 중인 실시간 Job은 현재 Run도 `canceled`로 종료하고 `실시간 수집 중지`로 기록 |
+| `resumeSchedule` | `etl.schedule.resume_requested` | 보존한 스케줄 설정으로 `scheduled`, 다음 예약 재계산. 실시간 Job은 `실시간 수집 재개됨`으로 기록 |
 
 `run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `transform_quality_write` task는 `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`를 호출해 기존 Spark runner를 실행한다. Backend는 같은 Run에 실제 input/output row count와 output path를 저장하고, Spark 성공 시 같은 트랜잭션에서 Catalog dataset/materialization run을 upsert한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
 
 내부 실행 endpoint는 `X-AskLake-Airflow-Token`과 backend의 `AIRFLOW_INTERNAL_TOKEN`이 일치해야 한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 materialization이 없으면 Run을 `failed`로 보정해 스모크 task 성공을 실제 데이터 처리 성공으로 오인하지 않는다. `dag_run.conf`에는 `jobId`, `runId`, `command`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
+
+현재 `pause`는 Spark checkpoint에서 정확히 이어받는 복원을 보장하지 않는다. 목록 UI는 실행 중단과 자동 실행 중지를 구분하며, 현재 Run만 끝내는 동작은 `cancelRun`, 이후 자동 실행까지 중지하는 동작은 `stopSchedule`을 사용한다.
 
 Validation:
 
@@ -1077,8 +1147,9 @@ Validation:
 - 실행 중이 아닌 job에 `pause`하면 `422 INVALID_JOB_STATE`.
 - 실행 중이 아닌 job에 `cancelRun`하면 `422 INVALID_JOB_STATE`.
 - 스케줄이 없는 job에 `stopSchedule`하면 `422 INVALID_JOB_STATE`.
+- `stopped` 상태가 아니거나 보존된 스케줄이 없는 job에 `resumeSchedule`하면 `422 INVALID_JOB_STATE`.
 
-### 7.2.1 작업 단건 조회
+### 7.6.1 작업 단건 조회
 
 `GET /api/etl/jobs/{jobId}`
 
@@ -1090,7 +1161,7 @@ type GetJobResponse = JobRowData;
 
 실행 중인 job은 최신 `status`, `runHistory`, `dagSteps`를 포함한다. `run`/`retry` 완료 polling은 이 endpoint를 사용한다.
 
-### 7.3 읽기 전용 SQL 실행
+### 7.7 읽기 전용 SQL 실행
 
 `POST /api/query/runs`
 
@@ -1180,6 +1251,8 @@ Validation:
 - 대시보드 생성 시 같은 `SqlResultDraft`를 전달합니다.
 - 실패 시 `analysis.query.preview_failed` 감사 로그를 남깁니다.
 
+#### 7.7.1 SQL 실행 snapshot 조회
+
 `GET /api/query/runs/{runId}`
 
 Response `200 OK`:
@@ -1198,7 +1271,7 @@ Validation:
 - SQL 결과 기반 dashboard route가 직접 열리거나 새로고침되어 메모리의 `SqlResultDraft`가 없으면 이 endpoint로 snapshot을 복구합니다.
 - 복구에 실패하면 일반 dashboard로 fallback하지 않고 SQL 분석에서 Preview를 다시 실행하라는 안내를 표시합니다.
 
-### 7.4 Query AI SQL 초안 생성
+### 7.8 Query AI SQL 초안 생성
 
 `POST /api/query/ai-suggestions`
 
@@ -1302,7 +1375,7 @@ Validation:
 - editor에 반영된 SQL은 기존 preflight와 `POST /api/query/runs` 검증을 다시 통과해야 실행됩니다.
 - mock mode에서는 같은 request shape를 유지하면서 프론트 로컬 SQL 초안 fallback을 사용합니다.
 
-### 7.5 SQL 결과 기반 Lake Dataset 생성
+### 7.9 SQL 결과 기반 Lake Dataset 생성
 
 `POST /api/catalog/derived-datasets`
 
@@ -2198,8 +2271,8 @@ Response `200 OK`:
 단, `selectedWidgetId` 또는 `widgetId`가 있으면 해당 위젯 하나만 context/수정 후보로 제한한다.
 OpenAI 응답은 backend guard를 통과해야 하며, 없는 datasetId, 없는 widgetId, 없는 column, 지원하지 않는 widget type/config field는 action에서 제외하고 `warnings`에 이유를 담는다.
 OpenAI 설정이 없거나 호출이 실패하면 응답 `message`/`warnings`에 `mock fallback`을 명시한 fallback 응답을 반환한다.
-프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 네트워크 요청을 보내지 않고 미설정 안내를 표시한다.
-값이 있으면 해당 경로로 `POST` 요청을 보낸다. 값은 `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
+프론트는 `VITE_DASHBOARD_ASSISTANT_API_PATH`가 비어 있으면 기본 경로 `/api/dashboards/assistant`로 `POST` 요청을 보낸다.
+값을 지정하면 해당 경로로 요청하며, `/api/...` 상대 경로 또는 `https://...` 절대 URL을 모두 허용한다.
 
 Request:
 
