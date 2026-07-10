@@ -31,6 +31,7 @@ export interface PageHeaderProps
   eyebrow?: React.ReactNode;
   icon?: React.ReactNode;
   iconClassName?: string;
+  leadingAlign?: "center" | "start";
   meta?: React.ReactNode;
   title: React.ReactNode;
   titleClassName?: string;
@@ -44,6 +45,7 @@ export function PageHeader({
   eyebrow,
   icon,
   iconClassName,
+  leadingAlign = "start",
   meta,
   size,
   title,
@@ -54,9 +56,9 @@ export function PageHeader({
   return (
     <header className={cn(pageHeaderVariants({ className, size, variant }))} {...props}>
       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
+        <div className={cn("flex min-w-0 gap-3", leadingAlign === "center" ? "items-center" : "items-start")}>
           {icon && (
-            <span className={cn("mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-700 shadow-sm", iconClassName)}>
+            <span className={cn(leadingAlign === "center" ? "mt-0" : "mt-1", "inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-700 shadow-sm", iconClassName)}>
               {icon}
             </span>
           )}

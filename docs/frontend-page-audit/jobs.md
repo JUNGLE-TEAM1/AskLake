@@ -57,7 +57,7 @@
 | 검색 섹션 | `Panel`, `PanelHeader`, `FilterToolbar`, `FilterToolbarSearch`, `FilterToolbarInput` | 검색은 현재 목록에서 보조적으로 찾고, 상태/주기는 server-backed filter로 분리합니다. |
 | 작업 목록 | `DataTable` | 유지. TanStack logic + shadcn Table UI 방향과 맞습니다. |
 | table action | `IconButton`, `Tooltip` | 기존 접근성 label을 유지하고 shadcn Tooltip을 결합했습니다. |
-| 상태/태그 | `StatusBadge`, `Spinner`, `Chip`, `TagList` | 목록 상태는 legacy CSS를 제거하고 `StatusBadge`로 정렬했습니다. `running` 상태에는 공통 `Spinner`를 함께 표시합니다. card/detail의 tag 패턴은 유지합니다. |
+| 상태/태그 | `StatusBadge`, `Spinner`, `Progress`, `ProgressLabel`, `ProgressValue`, `Chip`, `TagList` | 목록 상태는 legacy CSS를 제거하고 `StatusBadge`로 정렬했습니다. `running` 상태에는 공통 `Spinner`를 함께 표시하고, 실행 중인 배치 스케줄 Job은 상태 아래에 단계명과 진행률을 표시합니다. card/detail의 tag 패턴은 유지합니다. |
 | 소유자 | ReUI-style local `Avatar`, `AvatarImage`, `AvatarFallback` | Radix Avatar primitive를 직접 사용합니다. 목록 avatar는 `lg` 크기로 표시하고, mock owner에는 임의의 프로필 사진을 연결합니다. live API에서 이미지가 없으면 이니셜 fallback, 이름, `updatedAt` 우선의 최근 수정 시각을 함께 표시합니다. |
 | empty state | `EmptyState` | shadcn `Empty` 기준으로 재정렬 후보입니다. |
 | 마지막 실행 이동 | `Button` link | 상태와 관계없이 `실행 이력`으로 `/jobs/:jobId/runs`에 이동합니다. |
@@ -77,6 +77,10 @@ Job 명령 응답을 반영할 때는 상태 count뿐 아니라 `latestRunOutcom
 `실행 주기`는 비교 가능한 연속값이 아니므로 정렬을 제거했습니다. 헤더 메뉴는 `전체`/`매일`/`매주`/`매월`/`실시간`/`스케줄 없음`/`기타`를 제공하며, 같은 `scheduleKind` 값을 서버로 보냅니다.
 
 목록의 `실행 중` 상태 badge는 `Spinner`로 진행 중임을 보조하고, 모든 목록 status badge는 shadcn `Badge`의 `rounded-md` 형태로 통일합니다. 소유자 셀은 Avatar와 이름 아래에 최근 수정일을 표시합니다. live API는 `JobRowData.createdAt`/`updatedAt`을 내려주며, 기존 데이터에 수정일이 없다면 생성일을 fallback으로 사용합니다.
+
+실행 중인 배치 스케줄 Job은 상태 badge 아래에 shadcn-style `Progress`, `ProgressLabel`, `ProgressValue`를 표시합니다. 표시 조건은 `running` 상태, 자동 스케줄 존재, 실시간 Job 아님, `job.progress` 존재를 모두 만족하는 경우입니다. 실시간 수집은 완료 지점이 없으므로 퍼센트 진행률을 표시하지 않습니다. 현재 mock/optimistic 응답의 `progress.label`과 `progress.value`로 UI를 검증하며, 향후 Airflow task 또는 Spark stage 진행률은 Backend가 계산해 같은 필드로 내려주고 Frontend는 표시만 담당합니다. 진행률이 없으면 `0%`를 임의로 만들지 않고 Progress 전체를 숨깁니다.
+
+상태 셀의 Progress는 ReUI `c-progress-4`의 label/value 구성을 따릅니다. 현재 단계 문구와 percentage를 같은 줄 양끝에 두고 바로 아래에 둥근 track을 표시합니다. `실행 진행률` 같은 중복 label과 별도 status message 줄은 두지 않습니다. indicator 색상은 ReUI `c-progress-8`의 `green-500`을 사용합니다. Progress는 셀 내부 padding 안에 배치하므로 row의 3px 상태 accent와 겹치지 않으며, 상태 badge는 Progress와 독립적으로 셀 중앙축을 유지합니다.
 
 ### 5.2 검색 input
 
@@ -121,7 +125,7 @@ TanStack `DataTable`과 shadcn `Table` 조합은 유지했습니다. 제목/보�
 6. 소유자
 7. 액션
 
-최근 실행 날짜와 실행 이력 접근은 `마지막 실행` 셀에만 남겼습니다. 최근 Run이 성공이면 날짜 옆에 28px 초록 체크와 `최근 실행 성공` tooltip만 표시하고, 날짜의 28px line-height와 같은 중앙축에 정렬합니다. 성공은 Job의 지속 상태가 아니라 마지막 Run의 결과이므로, 성공 후 Job 상태는 다음 스케줄을 기다리는 `실행 대기`로 돌아갑니다. 데이터셋 아래 보조 정보는 자동 생성 Job 이름/ID 대신 실제 Source를 표시합니다. 상태와 실행 주기, 소유자 열은 header `DropdownMenu` 필터로 통일하며, 소유자 옵션은 API facets의 전체 등록 소유자를 사용합니다. 액션 header와 row action은 `DataTable.rowActionsAlign="center"` 기준으로 같은 축에 정렬했습니다. Action `IconButton`은 `sm` size와 18px icon으로 키웠습니다.
+최근 실행 날짜와 실행 이력 접근은 `마지막 실행` 셀에만 남겼습니다. `다음 예정 실행`과 `마지막 실행`의 날짜는 모두 76px 중앙 정렬 wrapper와 18px font/28px line-height를 사용합니다. 브라우저 측정에서도 첫 번째 row의 두 날짜는 top, center, height가 모두 동일했습니다. 최근 Run이 성공이면 날짜 옆에 28px 초록 체크와 `최근 실행 성공` tooltip만 표시하고, 날짜의 28px line-height와 같은 중앙축에 정렬합니다. 성공은 Job의 지속 상태가 아니라 마지막 Run의 결과이므로, 성공 후 Job 상태는 다음 스케줄을 기다리는 `실행 대기`로 돌아갑니다. 데이터셋 아래 보조 정보는 자동 생성 Job 이름/ID 대신 실제 Source를 표시합니다. 상태와 실행 주기, 소유자 열은 header `DropdownMenu` 필터로 통일하며, 소유자 옵션은 API facets의 전체 등록 소유자를 사용합니다. 액션 header와 row action은 `DataTable.rowActionsAlign="center"` 기준으로 같은 축에 정렬했습니다. Action `IconButton`은 `sm` size와 18px icon으로 키웠습니다.
 
 ### 5.7 PageHeader 크기 기준
 
