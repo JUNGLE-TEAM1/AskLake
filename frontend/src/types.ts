@@ -4,6 +4,7 @@ export type { CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGr
 export type { AreaChartWidgetConfig, BarChartWidgetConfig, DashboardEntry, DashboardFilter, DashboardListFilterOptions, DashboardListQuery, DashboardListResponse, DashboardMeta, DashboardRevision, DashboardRuntimeMode, DashboardRuntimePage, DashboardRuntimeResponse, DashboardRuntimeWidget, DashboardWidgetColorConfig, DashboardRuntimeWidgetConfig, DashboardRuntimeWidgetConfigByType, DashboardRuntimeWidgetType, DashboardSortOption, DashboardStatus, DashboardView, DashboardWidgetAggregation, DashboardWidgetDateUnit, DashboardWidgetFormat, DashboardWidgetLayout, DashboardWidgetLineCurve, DashboardWidgetOrientation, DashboardWidgetPlaceholderKind, DashboardWidgetSortDirection, DashboardWidgetType, DonutChartWidgetConfig, HeatmapChartWidgetConfig, LineChartWidgetConfig, MetricWidgetConfig, PieChartWidgetConfig, RadialBarChartWidgetConfig, SavedDashboardCard, TableWidgetConfig, TreemapChartWidgetConfig } from "./types/dashboard";
 export type {
   CreatePipelineRequest,
+  BatchOperationalMetrics,
   DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
@@ -15,6 +16,7 @@ export type {
   JobListFacets,
   JobListQuery,
   JobListResult,
+  JobOperationalMetrics,
   JobRowData,
   JobScheduleKind,
   JobRunStatus,
@@ -25,6 +27,8 @@ export type {
   PermissionDraft,
   QualityDraft,
   QualityRuleDraft,
+  RealtimeOperationalHealth,
+  RealtimeOperationalMetrics,
   RetryBackoffStrategy,
   RetryFailureAction,
   RetryPolicyDraft,
