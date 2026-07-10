@@ -107,10 +107,12 @@ Spark runner 입력:
 - connector sample JSONL은 `ASKLAKE_SPARK_REPORT_DIR`에 쓰고 Spark submit/master/worker 모두 `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` 기본값 `/work/reports`로 같은 host directory를 mount해야 한다. worktree가 바뀌면 Spark container는 mount source가 달라지므로 자동 재생성되어야 한다.
 - `ASKLAKE_SPARK_TRANSFORM_STEPS`: create payload의 transform steps
 - `ASKLAKE_SPARK_QUALITY_RULES`: create payload의 quality rules
+- `ASKLAKE_SPARK_PARTITION_COLUMNS`: Target에서 선택한 다중 파티션 컬럼을 `/` 구분 문자열로 전달하며 Spark writer가 순서대로 `partitionBy`에 적용
 
 Spark runner 결과:
 
 - transformed Parquet output
+- 선택된 컬럼이 있을 때 다중 partition directory를 포함한 Parquet output
 - output schema
 - input/output row count
 - quality summary
@@ -331,6 +333,13 @@ Catalog dataset append 보완 기준:
 - 새로고침 후에도 저장된 대시보드/작업/데이터셋이 유지됩니다.
 - 실패 응답은 토스트와 감사 로그에 남습니다.
 - 콘솔에 React key/layout 관련 error가 없어야 합니다.
+
+## Review Snapshot 연결
+
+- `/etl/review`는 `POST /api/etl/review` 응답을 source of truth로 사용한다.
+- live mode는 source 연결 성공 상태를 backend connector로 재검증하고, source/schema/target/permission/schedule 값을 하나의 snapshot으로 반환한다.
+- mock mode는 같은 `ReviewSnapshot` 계약을 fixture로 반환해 화면과 API 타입이 갈라지지 않게 한다.
+- Review 생성 버튼은 snapshot의 `canCreate`가 true일 때만 활성화한다.
 
 ## 14. 남은 작업
 

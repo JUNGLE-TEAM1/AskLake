@@ -26,6 +26,11 @@ from app.schemas.etl import (
     JobScheduleKind,
     QueryRunRequest,
     QueryRunResponse,
+    ReviewEntry,
+    ReviewPipelineRequest,
+    ReviewSchemaRow,
+    ReviewSnapshot,
+    ReviewValidationRow,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -337,6 +342,79 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return analysis.draft_patch.schema_
 
 
+def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+    source_ready = request.source_connection_status == "success"
+    if source_ready and request.source_type != "SQL Result":
+        try:
+            source_ready = test_source_connector(
+                SourceConnectorRequest(source_type=request.source_type, source_config=request.source_config)
+            ).status == "success"
+        except Exception:
+            source_ready = False
+
+    included_columns = [column for column in request.schema_columns if column.included and column.target_name.strip()]
+    output_columns = request.transform_output_columns or [
+        (column.target_name, column.type) for column in included_columns
+    ]
+    schema_ready = bool(included_columns)
+    processing_ready = bool(request.rule_summary.strip())
+    schedule_ready = bool(request.schedule_label.strip())
+    retry_ready = bool(request.retry_policy_summary.strip())
+    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
+    can_create = source_ready and schema_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+
+    source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
+    source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
+
+    return ReviewSnapshot(
+        basic_information=[
+            review_entry("작업 ID", request.id),
+            review_entry("작업명", request.job_name),
+            review_entry("소스", source_display),
+            review_entry("대상 데이터셋", request.target_dataset),
+            review_entry("설명", request.target_description),
+        ],
+        can_create=can_create,
+        destination=[
+            review_entry("저장 경로", request.storage_path),
+            review_entry("데이터베이스", request.target_database or "asklake"),
+            review_entry("테이블 이름", request.target_dataset),
+            review_entry("형식", request.target_format),
+            review_entry("계층", request.target_layer),
+            review_entry("파티션", request.partition or "없음"),
+        ],
+        permission=[
+            review_entry("담당자", request.owner),
+            review_entry("요약", request.permission_summary),
+        ],
+        schema=[
+            ReviewSchemaRow(
+                column_name=name,
+                nullable=("예" if column.nullable else "아니요") if (column := next((item for item in included_columns if item.target_name == name or item.source_name == name), None)) else "생성",
+                transform=(f"원본.{column.source_name}" if column and column.source_name == name else f"{column.source_name} -> {name}" if column else "변환 출력"),
+                type=type_ or "string",
+            )
+            for name, type_ in output_columns
+        ],
+        validation=[
+            review_validation("소스 연결", source_ready, "완료", "확인 필요"),
+            review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
+            review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
+            review_validation("스케줄", schedule_ready, "유효함", "확인 필요"),
+            review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
+            review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
+        ],
+    )
+
+
+def review_entry(label: str, value: str | None) -> ReviewEntry:
+    return ReviewEntry(label=label, value=(value or "").strip() or "미설정")
+
+
+def review_validation(label: str, ready: bool, ready_value: str, warning_value: str) -> ReviewValidationRow:
+    return ReviewValidationRow(label=label, status="ready" if ready else "warning", value=ready_value if ready else warning_value)
+
+
 def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
     return run_node_bridge(
         "run-spark-job-once.mjs",
@@ -356,6 +434,7 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "id": job.id,
         "name": job.name,
         "owner": job.owner,
+        "partition": job.partition,
         "qualityInvalidRows": job.quality_invalid_rows or [],
         "qualityRules": job.quality_rules or [],
         "qualityScore": job.quality_score,

@@ -12,6 +12,8 @@ from app.schemas.etl import (
     JobRunOutcome,
     JobScheduleKind,
     JobStatus,
+    ReviewPipelineRequest,
+    ReviewSnapshot,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -36,6 +38,11 @@ def list_source_assets(request: SourceAssetsRequest) -> SourceAssetsResponse:
 @router.post("/schema-inference", response_model=SchemaDraft)
 def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     return etl_service.infer_schema(request)
+
+
+@router.post("/review", response_model=ReviewSnapshot)
+def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+    return etl_service.review_pipeline(request)
 
 
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)

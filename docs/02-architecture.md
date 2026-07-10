@@ -185,6 +185,7 @@ FastAPI 현재 구현 범위:
 
 - `GET /api/health`
 - `POST /api/etl/sources/test`
+- `POST /api/etl/review`: Review 화면의 표시값과 생성 가능 상태를 서버 기준으로 정규화
 - `POST /api/etl/schema-inference`
 - `POST /api/etl/jobs`
 - `GET /api/etl/jobs`
