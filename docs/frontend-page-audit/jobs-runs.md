@@ -41,12 +41,12 @@
 
 | 열 | 의미 |
 | --- | --- |
-| Run ID | 실행 식별자 |
+| 실행 ID | Run 실행 식별자 |
 | 상태 | 대기, 실행 중, 성공, 실패, 취소 |
 | 실행 시간 | 시작, 종료, 전체 소요시간 |
 | 처리 행 | 입력 행에서 출력 행으로 이어지는 처리량 |
 | 결과 요약 | 정상 완료 또는 실패 단계와 원인 요약 |
-| 액션 | 로그, 실행 단계 |
+| 액션 | `로그 보기`, `실행 단계 보기` text action |
 
 ### 상태 표현
 
@@ -59,7 +59,8 @@
 ### 로그 Dialog
 
 - `DialogShell`을 유지했습니다.
-- 표의 로그와 실행 단계 action은 `/jobs` 목록처럼 `IconButton`과 `Tooltip` 조합으로 정리했습니다.
+- 표의 로그와 실행 단계 action은 파란색 text link를 세로로 배치해 `로그 보기`, `실행 단계 보기`를 직접 읽을 수 있게 했습니다.
+- 성공 Run의 결과 요약은 `정상 완료`만 표시하고 반복 설명은 제거합니다. 실패·취소·진행 중에는 진단에 필요한 보조 문구를 유지합니다.
 - 로그 본문은 진단 정보이므로 고정폭 글꼴을 유지합니다.
 
 ### 실행 단계 Dialog
@@ -84,7 +85,7 @@
 | 실행 이력 | `DataTable` |
 | 상태 | `StatusBadge` |
 | 상태 필터 | 상태 column header의 `DropdownMenu` |
-| 액션 | `IconButton`, `Tooltip` |
+| 액션 | `Button variant="link"` |
 | Modal | `DialogShell` |
 | 진행 표시 | `Spinner` |
 | Modal 통계 카드 | `MetricCard size="compact"` |

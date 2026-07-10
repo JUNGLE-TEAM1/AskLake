@@ -16,7 +16,6 @@ import {
   Clock3,
   Database,
   Download,
-  FileText,
   Filter,
   HardDrive,
   History,
@@ -1998,13 +1997,13 @@ export function JobRunsPage({
   const runColumns: ColumnDef<JobRunSummary>[] = [
     {
       accessorKey: "runId",
-      header: "Run ID",
+      header: "실행 ID",
       cell: ({ row }) => (
-        <DataTableCellPrimary className="max-w-[140px] text-sm font-bold" title={row.original.runId}>
+        <DataTableCellPrimary className="max-w-[155px] text-base font-bold" title={row.original.runId}>
           {row.original.runId}
         </DataTableCellPrimary>
       ),
-      meta: { headerClassName: "text-base", widthClassName: "w-[145px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[160px]" } satisfies DataTableColumnMeta,
     },
     {
       accessorKey: "status",
@@ -2018,26 +2017,26 @@ export function JobRunsPage({
       header: "실행 시간",
       cell: ({ row }) => (
         <DataTableStackedCell>
-          <DataTableCellPrimary className="whitespace-nowrap text-base font-semibold tabular-nums">
+          <DataTableCellPrimary className="whitespace-nowrap text-lg font-semibold tabular-nums">
             {formatCompactDateTime(row.original.startedAt)}
           </DataTableCellPrimary>
-          <DataTableCellSecondary className="whitespace-nowrap text-sm tabular-nums">
+          <DataTableCellSecondary className="whitespace-nowrap text-base tabular-nums">
             종료 {formatCompactDateTime(row.original.endedAt)} · {row.original.duration}
           </DataTableCellSecondary>
         </DataTableStackedCell>
       ),
-      meta: { headerClassName: "text-base", widthClassName: "w-[180px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
     },
     {
       id: "throughput",
       header: "처리 행",
       cell: ({ row }) => (
         <DataTableStackedCell>
-          <DataTableCellPrimary className="text-base font-semibold tabular-nums">입력 {row.original.inputRows}</DataTableCellPrimary>
-          <DataTableCellSecondary className="text-sm tabular-nums">출력 {row.original.outputRows}</DataTableCellSecondary>
+          <DataTableCellPrimary className="text-lg font-semibold tabular-nums">입력 {row.original.inputRows}</DataTableCellPrimary>
+          <DataTableCellSecondary className="text-base tabular-nums">출력 {row.original.outputRows}</DataTableCellSecondary>
         </DataTableStackedCell>
       ),
-      meta: { headerClassName: "text-base", widthClassName: "w-[170px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[175px]" } satisfies DataTableColumnMeta,
     },
     {
       id: "resultSummary",
@@ -2046,12 +2045,14 @@ export function JobRunsPage({
         const result = getRunResultSummary(row.original);
         return (
           <DataTableStackedCell>
-            <DataTableCellPrimary className={row.original.status === "failed" ? "text-base font-bold text-red-700" : "text-base font-semibold"}>{result.title}</DataTableCellPrimary>
-            <DataTableCellSecondary className="max-w-[180px] text-sm" title={result.detail}>{result.detail}</DataTableCellSecondary>
+            <DataTableCellPrimary className={row.original.status === "failed" ? "text-lg font-bold text-red-700" : "text-lg font-semibold"}>{result.title}</DataTableCellPrimary>
+            {row.original.status !== "success" && (
+              <DataTableCellSecondary className="max-w-[145px] text-sm" title={result.detail}>{result.detail}</DataTableCellSecondary>
+            )}
           </DataTableStackedCell>
         );
       },
-      meta: { headerClassName: "text-base", widthClassName: "w-[185px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[150px]" } satisfies DataTableColumnMeta,
     },
   ];
 
@@ -2100,28 +2101,18 @@ export function JobRunsPage({
             getRowClassName={(row) => row.original.status === "failed" ? "bg-red-50/45 hover:bg-red-50/70" : row.original.status === "canceled" ? "bg-slate-50/80" : undefined}
             pagination={{ label: "실행 이력", pageSize: 5, showSummary: false }}
             renderRowActions={(row) => (
-              <div className="flex flex-wrap justify-center gap-1.5">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <IconButton label="로그" size="sm" type="button" variant="outline" onClick={() => openRunLog(row.original)}>
-                      <FileText aria-hidden="true" className="size-[18px]" />
-                    </IconButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">로그</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <IconButton className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100" label="실행 단계" size="sm" type="button" variant="outline" onClick={() => openRunDetail(row.original)}>
-                      <Workflow aria-hidden="true" className="size-[18px]" />
-                    </IconButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">실행 단계</TooltipContent>
-                </Tooltip>
+              <div className="grid w-full justify-items-center gap-1.5 text-center">
+                <Button className="h-auto w-full justify-center px-0 py-0 text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunLog(row.original)}>
+                  로그 보기
+                </Button>
+                <Button className="h-auto w-full justify-center px-0 py-0 text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunDetail(row.original)}>
+                  실행 단계 보기
+                </Button>
               </div>
             )}
             resetPaginationKey={`${runStatusFilter}-${filteredRuns.length}`}
             rowActionsAlign="center"
-            rowActionsClassName="w-[90px] text-base"
+            rowActionsClassName="w-[125px] text-base"
             rowActionsHeader="액션"
             headerRowClassName="[&_th]:h-12 [&_th]:py-2.5 [&_th]:text-slate-600 [&_th_button]:text-slate-600 [&_th_svg]:text-slate-600"
             tableClassName="min-w-[860px] table-fixed [&_td]:h-24 [&_thead_th_button]:gap-1.5 [&_thead_th_button_svg]:size-4"
@@ -2140,7 +2131,7 @@ function RunStatusPill({ status }: { status: JobRunStatus }) {
   const statusMeta = runStatusMeta[status];
 
   return (
-    <StatusBadge className="min-w-[74px] justify-center rounded-md text-sm" shape="compact" size="lg" tone={getRunStatusTone(status)}>
+    <StatusBadge className="min-w-[74px] justify-center rounded-md text-base" shape="compact" size="lg" tone={getRunStatusTone(status)}>
       {status === "running" && <Spinner className="size-3.5" aria-label="실행 중" />}
       {statusMeta.label}
     </StatusBadge>
