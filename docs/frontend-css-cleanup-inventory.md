@@ -87,7 +87,7 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 | Dashboard list/table | `dashboard.css` | `부분 정리됨` | B04에서 Dashboard 목록 table이 `DataTable` 기준으로 전환됨. #367에서 list toolbar/table panel shell은 `Panel`/`PanelHeader`로 이동. #369에서 toolbar body/search/actions/divider selector는 `FilterToolbar`로 이동. #378에서 `dashboard-pagination`은 `PaginationBar`, delete confirm shell은 `DialogShell`로 전환. #385에서 header action row, row tag/status, list status meta를 공통 컴포넌트로 전환. #422에서 owner/tag/sort menu는 `DropdownMenu` 기준으로 전환했고, filter button과 table/menu density selector는 `/dashboards` QA 후 추가 축소한다. |
 | Dashboard builder preview | `dashboard.css` | `보류` | builder canvas, widget preview, draft widget 상태가 많아 B04 QA 후 판단한다. |
 | Dashboard runtime canvas/widget | `dashboard-runtime.css` | `보류` | `react-grid-layout`, `react-resizable`, widget selected/editing/AI state와 묶여 있어 runtime route QA 전 삭제 금지. Table widget은 DataTable 기준으로 전환되어 `.asklake-table-widget*` selector가 새 기준이 됨. #385에서 edit toolbar wrapper만 `ActionGroup`으로 전환했지만 `.asklake-dashboard-edit-toolbar` CSS는 유지. |
-| Dashboard dataset tree | `dashboard-runtime.css` | `부분 정리됨` | B04에서 runtime dataset tree가 `react-arborist` 기준으로 전환됨. 기존 `.MuiTreeItem-*` selector는 #364에서 삭제. #401에서 state/body wrapper는 `TreePanel`로 전환했고 #421에서 MUI Tooltip wrapper/arrow selector를 제거. arborist row와 hover card 내부 density CSS는 유지한다. |
+| Dashboard dataset tree | `dashboard-runtime.css` | `정리됨` | #487에서 Kibo/shadcn-compatible Tree로 전환하고 arborist row/node/toggle/state CSS를 제거했다. sidebar layout과 hover card domain CSS만 유지한다. |
 | Dashboard widget form/buttons | `dashboard-runtime.css` | `부분 정리됨` | Config panel의 text/number input, select, action/color/type button은 primitive 또는 shadcn-style wrapper로 옮김. #419에서 textarea, checkbox, assistant prompt, inline widget input/button은 primitive로 교체. color picker, layout selector는 계속 유지한다. |
 
 ## 우선 정리 순서
@@ -218,7 +218,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | S3 picker tree | `.s3-picker-body`, `.s3-tree-panel`, `.s3-tree`, `.s3-tree-label`, `.s3-tree-state`, `.s3-tree-retry`, `.s3-tree-more` | #401에서는 wrapper만 `TreePanel`로 전환했고, MUI TreeView row/selected/loading/retry selector는 #421에서 `TreeRow` 기준으로 제거. |
 | ETL source asset tree | `.source-asset-tree-panel`, `.source-asset-tree`, `.source-asset-tree-label`, `.source-empty-note` | source asset tree와 empty shell을 `TreePanel`로 전환. row label/disclosure/meta selector는 유지. |
 | SQL dataset tree | `.sql-dataset-tree`, `.sql-tree-node`, `.sql-tree-table-node`, `.sql-tree-hover-card` | outer shell만 `TreePanel`로 전환. table/column row와 hover card selector는 유지. |
-| Dashboard dataset sidebar | `.asklake-dataset-sidebar-state`, `.asklake-dataset-tree-wrap`, `.asklake-dataset-tree-row`, `.asklake-dataset-hover-card` | loading/error/empty/body shell을 `TreePanel`로 전환. react-arborist row와 hover card selector는 유지. |
+| Dashboard dataset sidebar | `.asklake-dataset-hover-card` | #487에서 loading/error/empty/body를 shadcn state component로, row/connector를 Kibo Tree로 전환. hover metadata CSS만 유지. |
 
 ## #378 Component 확장 CSS 기록
 
@@ -368,7 +368,7 @@ npm run build
 | ETL source asset tree | `.source-asset-tree`, `.source-asset-tree-label`, `.source-asset-tree-group`, `.source-asset-kind`, `.source-asset-disclosure` | MUI TreeItem selector 제거. folder open request와 file select 흐름은 유지. |
 | ETL JSON sample tree | `.source-json-sample-tree`, `.source-json-tree-row`, `.source-json-tree-group`, `.source-json-node-label` | MUI TreeItem selector 제거. read-only JSON preview expanded state를 자체 관리하고 row shell을 `TreeRow`로 이동. |
 | SQL dataset tree | `.sql-tree-node`, `.sql-tree-table-row`, `.sql-tree-column-row` | SQL 전용 hover card와 add action은 유지하되 branch/table/column row를 `TreeRow`/`TreeStaticRow` shell로 연결. |
-| Dashboard dataset sidebar | `.asklake-dataset-tree-node`, `.asklake-dataset-hover-tooltip`, `.asklake-dataset-hover-card` | `react-arborist` engine은 유지. MUI Tooltip wrapper/arrow selector는 삭제하고 Radix/shadcn Tooltip content selector로 교체. |
+| Dashboard dataset sidebar | `.asklake-dataset-hover-tooltip`, `.asklake-dataset-hover-card` | #487에서 `react-arborist`와 `.asklake-dataset-tree-node`를 제거. Radix/shadcn Tooltip content와 hover card metadata selector만 유지. |
 | Package cleanup | `frontend/package.json`, `frontend/package-lock.json` | `@mui/x-tree-view`, `@mui/material`, `@mui/system`, `@emotion/react`, `@emotion/styled` 제거. |
 
 검증:

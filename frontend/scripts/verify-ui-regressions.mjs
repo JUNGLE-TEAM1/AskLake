@@ -87,6 +87,48 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard list states use shadcn feedback primitives",
+    file: "src/pages/dashboard/DashboardLandingPage.tsx",
+    patterns: [
+      /import \{ Alert, AlertDescription, AlertTitle \} from "@\/components\/ui\/alert";/,
+      /import \{ Skeleton \} from "@\/components\/ui\/skeleton";/,
+      /function DashboardListSkeleton\(\)/,
+      /<Alert variant="destructive">/,
+      /<DashboardListSkeleton \/>/,
+      /hasActiveFilters=\{Boolean\(searchQuery\.trim\(\) \|\| ownerFilter !== "all" \|\| selectedTags\.length\)\}/,
+    ],
+  },
+  {
+    name: "Dashboard edit uses shadcn Slider for radial range",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ Slider \} from "@\/components\/ui\/slider";/,
+      /aria-label="radial chart 표시 범위"/,
+      /minStepsBetweenThumbs=\{1\}/,
+      /onValueChange=\{\(\[min = 0, max = 100\]\) => patchCurrentConfig\(\{ min, max \}\)\}/,
+      /value=\{\[radialRangeStart, radialRangeEnd\]\}/,
+      /최솟값은 최댓값보다 작아야 합니다/,
+    ],
+  },
+  {
+    name: "Dashboard dataset sidebar uses shadcn-compatible tree states",
+    file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
+    patterns: [
+      /from "@\/components\/kibo-ui\/tree";/,
+      /import \{ Alert, AlertDescription, AlertTitle \} from "@\/components\/ui\/alert";/,
+      /import \{ Empty, EmptyDescription, EmptyHeader, EmptyTitle \} from "@\/components\/ui\/empty";/,
+      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
+      /import \{ Skeleton \} from "@\/components\/ui\/skeleton";/,
+      /<TreeProvider[\s\S]*showLines/,
+      /<TreeView aria-label="Dashboard dataset tree"/,
+      /data-dashboard-dataset-node=\{item\.kind\}/,
+    ],
+    forbiddenPatterns: [
+      /react-arborist/,
+      /<TreePanel/,
+    ],
+  },
+  {
     name: "ApexCharts widget removes leaked foreignObject style text",
     file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
     patterns: [
@@ -147,32 +189,6 @@ const checks = [
     ],
     forbiddenPatterns: [
       /현재 대시보드 링크를 복사했습니다/,
-    ],
-  },
-  {
-    name: "Dashboard dataset browser uses the composed line tree",
-    file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
-    patterns: [
-      /from "@\/components\/kibo-ui\/tree";/,
-      /<TreeProvider[\s\S]*selectedIds=\{selectedDatasetId/,
-      /<TreeNodeTrigger className="min-h-9">/,
-      /<TreeExpander hasChildren=\{hasChildren\} \/>/,
-      /<TreeNodeContent hasChildren=\{hasChildren\}>/,
-      /<ScrollArea className="asklake-dataset-tree-wrap">/,
-    ],
-    forbiddenPatterns: [
-      /from "react-arborist"/,
-    ],
-  },
-  {
-    name: "Dashboard radial chart uses the shadcn range slider",
-    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
-    patterns: [
-      /import \{ Slider \} from "@\/components\/ui\/slider";/,
-      /aria-label="방사형 차트 표시 범위"/,
-      /minStepsBetweenThumbs=\{1\}/,
-      /value=\{\[currentConfig\.min \?\? 0, currentConfig\.max \?\? 100\]\}/,
-      /최솟값은 최댓값보다 작아야 합니다/,
     ],
   },
 ];

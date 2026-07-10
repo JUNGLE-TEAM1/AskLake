@@ -99,3 +99,11 @@
 - `dashboard.css`가 list, legacy builder, runtime 일부를 함께 다루므로 selector cleanup은 route ownership 분리 후 진행한다.
 - dashboard API, mock card fixture, create/delete behavior는 변경하지 않는다.
 
+## #487 shadcn 적용
+
+- 목록 loading은 row-shaped shadcn `Skeleton`, API/create error는 `Alert`로 분리했다.
+- 목록, 상세, 편집 화면과 portal 기반 메뉴·삭제 dialog·공유 sheet에 `jobs` 기준 `--jobs-font-family`를 적용했다.
+- 목록 masthead와 panel header의 보조 설명, `필터`, `1-10`, `준비됨` header badge를 제거하고 아이콘과 제목을 한 줄로 정렬했다.
+- `DashboardTable`의 shadcn `Empty` composition에 active filter 여부를 전달해 전체 empty와 검색 결과 empty 문구를 구분했다.
+- 삭제 dialog의 custom `dashboard-delete-error` paragraph와 CSS를 제거하고 destructive `Alert`로 교체했다.
+- 검색, owner/tag filter, sort, pagination, create/delete API 계약은 변경하지 않았다.

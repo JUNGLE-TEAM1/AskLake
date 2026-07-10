@@ -125,7 +125,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 버튼/액션 묶음 | `EtlPages.tsx`, `DashboardPage.tsx`, `DashboardParts.tsx`, `SqlAnalysisPage.tsx`, `S3PathField.tsx`, `DatabaseField.tsx`에 raw `<button>` 또는 legacy button class가 남아 있음 | 단순 `Button` 교체보다 action grouping, icon-only, bottom command까지 나누는 편이 안전함 | `ActionGroup`, `CommandBar`, `IconOptionGrid` |
 | custom modal/dialog | `CatalogPage.tsx`, `SqlAnalysisPage.tsx`, `JobsPages.tsx`, `DashboardParts.tsx`, `S3PathField.tsx`, `DatabaseField.tsx`에서 role dialog/backdrop/modal class 반복 | 이미 `Dialog` primitive가 있으므로 shell 적용 우선순위가 높음 | `DialogShell`, `PickerDialog` |
 | non-table pagination | Catalog search/materialization, SQL context, Dashboard list, Ingest runs가 DataTable 밖에서 별도 pagination 사용 | `DataTable` 내부 pagination과 분리된 list/page pagination 필요 | `PaginationBar` |
-| tree/list selector | S3 picker, ETL source asset/json tree, SQL dataset tree, Dashboard dataset tree가 서로 다른 구현으로 존재 | #421에서 MUI TreeView를 제거하고 row/group shell을 표준화. #468에서 SQL dataset tree는 Shadcnblocks/Kibo line tree로 교체. Dashboard `react-arborist` engine과 hover/detail density는 화면별로 유지 | `TreePanel`, `TreeView`, `TreeRow`, `TreeHoverCard`, Kibo UI Tree |
+| tree/list selector | S3 picker, ETL source asset/json tree, SQL dataset tree, Dashboard dataset tree가 서로 다른 구현으로 존재 | #421에서 MUI TreeView를 제거하고 row/group shell을 표준화. #468에서 SQL dataset tree, #487에서 Dashboard dataset tree를 Kibo line tree로 교체 | `TreePanel`, `TreeView`, `TreeRow`, `TreeHoverCard`, Kibo UI Tree |
 | preview/result shell | Catalog schema preview, SQL result preview, Dashboard widget preview, ETL final preview가 panel/header/empty/CTA 조합을 반복 | 표 자체는 `DataTable`로 일부 해결됐고, 주변 shell이 다음 후보 | `PreviewPanel`, `ResultPanel` |
 | key-value/validation summary | `CreationFlow.tsx`, ETL review/permission, Catalog detail, Jobs detail에서 요약/검증 row 반복 | 화면별 문구는 다르지만 레이아웃은 공통화 가능 | `KeyValueList`, `ValidationList` |
 | chip/tag/status | Catalog tag/status/type pill, Ingest status/owner/tag, ETL data/target/permission chip, Dashboard row tag가 남아 있음 | `Badge`는 있지만 list/interactive chip 패턴이 별도로 필요 | `Chip`, `TagList`, `StatusBadge` |
@@ -216,7 +216,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | Dashboard widget config panel | dense chart/table settings form | `부분 해결` | `SettingsPanel`, `FormFieldGroup`, `NativeSelectField`, shadcn `Textarea`, `Checkbox` | #389에서 config panel shell과 기본 field를 적용했고, #391에서 chart/table select와 number field를 `WidgetSelectField`/`FormFieldGroup` 기준으로 확장. #419에서 description textarea, table column checkbox, area stacked checkbox를 primitive로 교체. color picker layout은 유지. |
 | Dashboard widget type picker | icon-only chart type grid + tooltip | `부분 해결` | `IconOptionGrid` | #389에서 `IconOptionGrid`로 전환. 기존 tooltip positioning과 selected state className은 유지. |
 | Dashboard color controls | color slot list + swatches + custom color picker | `보류` | `ColorPalettePicker` | `react-colorful`과 custom color state가 묶여 있어 후속 component 설계 전까지 유지. |
-| Dashboard dataset tree | arborist tree row + hover card + type icon | `부분 해결` | `TreePanel`, `TreeHoverCard`, `TreeRow` | #401에서 loading/error/empty/body wrapper를 `TreePanel`로 전환. #416에서 hover card shell을 `TreeHoverCard`로 전환. #421에서 arborist row button을 `TreeRow`로 연결하고 MUI Tooltip을 shadcn Tooltip으로 교체. arborist engine과 runtime density CSS는 유지. |
+| Dashboard dataset tree | dataset/group/column line tree + hover card + type icon | `해결됨` | Kibo UI Tree, `TreeHoverCard`, shadcn `ScrollArea`/`Alert`/`Empty`/`Skeleton` | #487에서 `react-arborist`와 전용 row/toggle/state CSS를 제거하고 Kibo line tree로 전환. |
 | Catalog lineage / graph preview | React Flow node/edge canvas | `보류` | `FlowCanvasPanel` | graph library class와 묶여 있어 Catalog QA 전 공통화하지 않음. |
 | SQL editor/action surface | editor toolbar + execution status + result shell | `부분 해결` | `QueryActionBar`, `ResultPanel`, `PaginationBar`, `DialogShell`, `ActionGroup`, shadcn `Textarea`, `Checkbox` | #378에서 context pagination과 materialize dialog shell을 공통화했고, #385에서 SQL AI/editor/result button rows를 `ActionGroup`으로 전환. #419에서 Query AI prompt, SQL editor, materialize description, RAG checkbox를 primitive로 교체. execution status와 result shell은 후속 `ResultPanel` 후보로 유지. |
 
@@ -320,7 +320,7 @@ Tree 계열은 wrapper/state shell 다음으로 hover card shell만 공통화했
 | 영역 | 이번에 공통화한 UI | 사용한 공통 컴포넌트 | 남은 gap |
 | --- | --- | --- | --- |
 | SQL dataset tree | table/column hover card shell | `TreeHoverCard` | fixed position 계산과 row hover event는 SQL 전용으로 유지 |
-| Dashboard dataset sidebar | dataset/group/column tooltip card shell | `TreeHoverCard` | MUI Tooltip wrapper는 #421에서 shadcn Tooltip으로 교체. react-arborist engine은 유지 |
+| Dashboard dataset sidebar | dataset/group/column tooltip card shell | `TreeHoverCard` | MUI Tooltip wrapper는 #421에서 shadcn Tooltip으로 교체. #487에서 Kibo Tree로 전환 |
 | Tree UI 전체 | icon/title/subtitle/detail rows/description 구조 | `TreeHoverCard` | S3 picker, ETL source tree, JSON sample tree row shell은 #421에서 `TreeRow` 기준으로 전환 |
 
 ## #417 Shadcn Primitive Foundation 반영
@@ -355,7 +355,7 @@ Tree 계열은 wrapper/state shell과 hover card shell 다음으로 row/group sh
 | ETL SourceAssetTree | folder/file row, nested group, selected row | `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow` | folder lazy loading 상태와 source list domain 로직은 화면 전용 유지 |
 | ETL SourceJsonSampleTree | JSON object/array/primitive row와 nested group | `TreeView`, `TreeGroup`, `TreeRow` | SchemaTransformEditor adapter tree는 별도 QA 전 유지 |
 | SQL dataset tree | branch label, table row, column row | Shadcnblocks `tree-lines-1`, Kibo UI `TreeProvider`/`TreeNode*`, `TreeHoverCard`, shadcn `Button` | fixed hover position과 table add action은 SQL 전용 유지 |
-| Dashboard dataset sidebar | arborist row button, tooltip wrapper | `TreePanel`, `TreeRow`, `TreeHoverCard`, shadcn `Tooltip` | `react-arborist` engine, row height, runtime density CSS는 유지 |
+| Dashboard dataset sidebar | Kibo line tree trigger, tooltip wrapper | Kibo UI Tree, `TreeHoverCard`, shadcn `Tooltip`/`ScrollArea` | #487에서 `react-arborist` dependency와 runtime row density CSS 제거 |
 
 의존성 정리:
 

@@ -563,6 +563,10 @@ export function WidgetConfigPanel({
   }, [editingWidget, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeFloor = Math.min(0, radialRangeStart);
+  const radialRangeCeiling = Math.max(100, radialRangeEnd);
   const colorSlotLabels = useMemo(() => {
     if (type === "metric" || type === "table") return [];
 
@@ -1045,16 +1049,22 @@ export function WidgetConfigPanel({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </WidgetSelectField>
-            <FormFieldGroup label={`표시 범위 (${currentConfig.min ?? 0}–${currentConfig.max ?? 100})`}>
-              <Slider
-                aria-label="방사형 차트 표시 범위"
-                min={0}
-                max={100}
-                minStepsBetweenThumbs={1}
-                step={1}
-                value={[currentConfig.min ?? 0, currentConfig.max ?? 100]}
-                onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
-              />
+            <FormFieldGroup label="표시 범위">
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between text-sm font-semibold text-slate-600">
+                  <span>최솟값 {radialRangeStart}</span>
+                  <span>최댓값 {radialRangeEnd}</span>
+                </div>
+                <Slider
+                  aria-label="radial chart 표시 범위"
+                  max={radialRangeCeiling}
+                  min={radialRangeFloor}
+                  minStepsBetweenThumbs={1}
+                  onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
+                  step={1}
+                  value={[radialRangeStart, radialRangeEnd]}
+                />
+              </div>
             </FormFieldGroup>
           </>
         )}

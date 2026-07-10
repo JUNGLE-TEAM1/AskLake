@@ -1,18 +1,23 @@
 import { useMemo, type ReactNode } from "react";
-import { CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
+import { AlertCircle, CalendarDays, Database, Hash, LetterText, Server, Table2 } from "lucide-react";
 import {
   TreeExpander,
   TreeIcon,
+  TreeLabel,
   TreeNode,
   TreeNodeContent,
   TreeNodeTrigger,
   TreeProvider,
   TreeView,
 } from "@/components/kibo-ui/tree";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
-import { TreePanel } from "@/components/ui/tree-panel";
+import { cn } from "@/lib/utils";
 import type { DashboardDatasetColumn, DashboardDatasetOption } from "./dashboardRuntimeTypes";
 
 type DatasetSidebarProps = {
@@ -23,6 +28,19 @@ type DatasetSidebarProps = {
   onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
   onSelectDataset: (datasetId: string) => void;
   selectedDatasetId: string | null;
+};
+
+type DatasetTreeNode = {
+  children?: DatasetTreeNode[];
+  columnName?: string;
+  datasetId?: string;
+  hoverCard?: ReactNode;
+  icon: ReactNode;
+  id: string;
+  kind: "column" | "dataset" | "group";
+  meta?: string;
+  selected?: boolean;
+  title: string;
 };
 
 const COLUMN_ITEM_PREFIX = "column:";
@@ -38,6 +56,7 @@ function datasetTreeItemId(datasetId: string) {
 function columnTreeItemId(datasetId: string, columnName: string) {
   return `${COLUMN_ITEM_PREFIX}${datasetId}:${columnName}`;
 }
+
 function columnTypeLabel(type: DashboardDatasetColumn["type"]) {
   if (type === "number") return "number";
   if (type === "date") return "date";
@@ -45,9 +64,9 @@ function columnTypeLabel(type: DashboardDatasetColumn["type"]) {
 }
 
 function ColumnTypeIcon({ type }: { type: DashboardDatasetColumn["type"] }) {
-  if (type === "number") return <Hash size={15} />;
-  if (type === "date") return <CalendarDays size={15} />;
-  return <LetterText size={15} />;
+  if (type === "number") return <Hash />;
+  if (type === "date") return <CalendarDays />;
+  return <LetterText />;
 }
 
 function columnDescription(column: DashboardDatasetColumn) {
@@ -89,33 +108,26 @@ function DatasetHoverCard({
 
 function DatasetTreeLabel({
   hoverCard,
-  icon,
   meta,
   selected = false,
   title,
 }: {
   hoverCard?: ReactNode;
-  icon?: ReactNode;
   meta?: string;
   selected?: boolean;
   title: string;
 }) {
   const label = (
-    <span className={selected ? "flex min-w-0 flex-1 items-center gap-2 text-blue-700" : "flex min-w-0 flex-1 items-center gap-2"}>
-      {icon ? <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground" aria-hidden="true">{icon}</span> : null}
-      <span className="grid min-w-0 flex-1 gap-0.5">
-        <strong className="truncate text-sm font-semibold text-foreground">{title}</strong>
-        {meta ? <em className="truncate text-xs not-italic text-muted-foreground">{meta}</em> : null}
-      </span>
+    <span className={cn("grid min-w-0 gap-0.5", selected && "text-blue-700")}>
+      <strong className="truncate text-sm font-semibold text-slate-950">{title}</strong>
+      {meta && <span className="truncate text-xs font-medium text-slate-500">{meta}</span>}
     </span>
   );
 
   if (!hoverCard) return label;
 
   return (
-    <Tooltip
-      delayDuration={250}
-    >
+    <Tooltip delayDuration={250}>
       <TooltipTrigger asChild>{label}</TooltipTrigger>
       <TooltipContent align="start" className="asklake-dataset-hover-tooltip" side="right" sideOffset={12}>
         {hoverCard}
@@ -124,61 +136,83 @@ function DatasetTreeLabel({
   );
 }
 
-type DatasetTreeNode = {
-  children?: DatasetTreeNode[];
-  columnName?: string;
-  datasetId?: string;
-  hoverCard?: ReactNode;
-  icon: ReactNode;
-  id: string;
-  kind: "column" | "dataset" | "group";
-  meta?: string;
-  selected?: boolean;
-  title: string;
-};
-
-function DatasetTreeBranch({
+function DashboardDatasetTreeItems({
+  datasets,
+  items,
   level = 0,
-  node,
+  onSelectColumn,
+  onSelectDataset,
   parentPath = [],
-  position,
-  siblingCount,
 }: {
+  datasets: DashboardDatasetOption[];
+  items: DatasetTreeNode[];
   level?: number;
-  node: DatasetTreeNode;
+  onSelectColumn?: (dataset: DashboardDatasetOption, column: DashboardDatasetColumn) => void;
+  onSelectDataset: (datasetId: string) => void;
   parentPath?: boolean[];
-  position: number;
-  siblingCount: number;
 }) {
-  const hasChildren = Boolean(node.children?.length);
-  const isLast = position === siblingCount - 1;
-  const nextParentPath = [...parentPath, isLast];
+  const activateItem = (item: DatasetTreeNode) => {
+    if (item.kind === "dataset" && item.datasetId) {
+      onSelectDataset(item.datasetId);
+      return;
+    }
 
+    if (item.kind !== "column" || !item.datasetId || !item.columnName) return;
+    const dataset = datasets.find((entry) => entry.id === item.datasetId);
+    const column = dataset?.columns.find((entry) => entry.name === item.columnName);
+    if (dataset && column) onSelectColumn?.(dataset, column);
+  };
+
+  return items.map((item, index) => {
+    const hasChildren = Boolean(item.children?.length);
+    const isLast = index === items.length - 1;
+    const nextParentPath = [...parentPath, isLast];
+
+    return (
+      <TreeNode isLast={isLast} key={item.id} level={level} nodeId={item.id} parentPath={parentPath}>
+        <TreeNodeTrigger
+          aria-selected={item.selected || undefined}
+          aria-level={level + 1}
+          className={cn("min-h-10", item.selected && "bg-blue-50")}
+          data-dashboard-dataset-node={item.kind}
+          onClick={() => activateItem(item)}
+        >
+          <TreeExpander hasChildren={hasChildren} />
+          <TreeIcon hasChildren={hasChildren} icon={item.icon} />
+          <TreeLabel className="min-w-0">
+            <DatasetTreeLabel
+              hoverCard={item.hoverCard}
+              meta={item.meta}
+              selected={item.selected}
+              title={item.title}
+            />
+          </TreeLabel>
+        </TreeNodeTrigger>
+        <TreeNodeContent hasChildren={hasChildren}>
+          {item.children && (
+            <DashboardDatasetTreeItems
+              datasets={datasets}
+              items={item.children}
+              level={level + 1}
+              onSelectColumn={onSelectColumn}
+              onSelectDataset={onSelectDataset}
+              parentPath={nextParentPath}
+            />
+          )}
+        </TreeNodeContent>
+      </TreeNode>
+    );
+  });
+}
+
+function DatasetTreeSkeleton() {
   return (
-    <TreeNode isLast={isLast} level={level} nodeId={node.id} parentPath={parentPath}>
-      <TreeNodeTrigger className="min-h-9">
-        <TreeExpander hasChildren={hasChildren} />
-        <TreeIcon hasChildren={hasChildren} icon={node.icon} />
-        <DatasetTreeLabel
-          hoverCard={node.hoverCard}
-          meta={node.meta}
-          selected={node.selected}
-          title={node.title}
-        />
-      </TreeNodeTrigger>
-      <TreeNodeContent hasChildren={hasChildren}>
-        {node.children?.map((child, index) => (
-          <DatasetTreeBranch
-            key={child.id}
-            level={level + 1}
-            node={child}
-            parentPath={nextParentPath}
-            position={index}
-            siblingCount={node.children?.length ?? 0}
-          />
-        ))}
-      </TreeNodeContent>
-    </TreeNode>
+    <div aria-label="Dataset tree loading" className="grid gap-3 p-3" role="status">
+      <Skeleton className="h-9 w-2/3" />
+      <Skeleton className="ml-5 h-9 w-3/4" />
+      <Skeleton className="ml-10 h-9 w-4/5" />
+      <Skeleton className="ml-14 h-12 w-3/4" />
+    </div>
   );
 }
 
@@ -206,7 +240,6 @@ export function DatasetSidebar({
           children: [
             {
               children: datasets.map((dataset) => {
-                const isSelected = dataset.id === selectedDatasetId;
                 const numericColumnCount = metricCount(dataset);
                 return {
                   children: dataset.columns.map((column) => ({
@@ -226,7 +259,7 @@ export function DatasetSidebar({
                     ),
                     icon: <ColumnTypeIcon type={column.type} />,
                     id: columnTreeItemId(dataset.id, column.name),
-                    kind: "column",
+                    kind: "column" as const,
                     meta: columnTypeLabel(column.type),
                     title: column.name,
                   })),
@@ -234,7 +267,7 @@ export function DatasetSidebar({
                   hoverCard: (
                     <DatasetHoverCard
                       description={dataset.description ?? "Dataset available for dashboard widgets."}
-                      icon={<Table2 size={18} />}
+                      icon={<Table2 />}
                       rows={[
                         { label: "owner", value: "System user" },
                         { label: "updated", value: dataset.updatedAt ?? "unknown" },
@@ -245,18 +278,18 @@ export function DatasetSidebar({
                       title={dataset.name}
                     />
                   ),
-                  icon: <Table2 size={15} />,
+                  icon: <Table2 />,
                   id: datasetTreeItemId(dataset.id),
-                  kind: "dataset",
+                  kind: "dataset" as const,
                   meta: `${dataset.columns.length} columns`,
-                  selected: isSelected,
+                  selected: dataset.id === selectedDatasetId,
                   title: dataset.name,
                 };
               }),
               hoverCard: (
                 <DatasetHoverCard
                   description="Tables available as widget sources."
-                  icon={<Table2 size={18} />}
+                  icon={<Table2 />}
                   rows={[
                     { label: "tables", value: `${datasets.length}` },
                     { label: "columns", value: `${totalColumnCount}` },
@@ -266,7 +299,7 @@ export function DatasetSidebar({
                   title={`tables (${datasets.length})`}
                 />
               ),
-              icon: <Table2 size={15} />,
+              icon: <Table2 />,
               id: tablesItemId,
               kind: "group",
               title: `tables (${datasets.length})`,
@@ -275,7 +308,7 @@ export function DatasetSidebar({
           hoverCard: (
             <DatasetHoverCard
               description="Dataset group available for dashboard widget creation."
-              icon={<Database size={18} />}
+              icon={<Database />}
               rows={[
                 { label: "owner", value: "System user" },
                 { label: "tables", value: `${datasets.length}` },
@@ -285,7 +318,7 @@ export function DatasetSidebar({
               title="datasets"
             />
           ),
-          icon: <Database size={15} />,
+          icon: <Database />,
           id: schemaItemId,
           kind: "group",
           title: "datasets",
@@ -294,7 +327,7 @@ export function DatasetSidebar({
       hoverCard: (
         <DatasetHoverCard
           description="Dataset catalog available for dashboard widgets."
-          icon={<Server size={18} />}
+          icon={<Server />}
           rows={[
             { label: "owner", value: "System user" },
             { label: "updated", value: "1 hour ago" },
@@ -303,33 +336,12 @@ export function DatasetSidebar({
           title="system"
         />
       ),
-      icon: <Server size={15} />,
+      icon: <Server />,
       id: systemItemId,
       kind: "group",
       title: "system",
     },
   ], [datasets, selectedDatasetId, totalColumnCount, totalMetricCount]);
-  const handleTreeSelection = (selectedIds: string[]) => {
-    const selectedId = selectedIds.at(-1);
-    if (!selectedId) return;
-    const datasetId = selectedId.startsWith(DATASET_ITEM_PREFIX)
-      ? selectedId.slice(DATASET_ITEM_PREFIX.length)
-      : selectedId.startsWith(COLUMN_ITEM_PREFIX)
-        ? selectedId.slice(COLUMN_ITEM_PREFIX.length).split(":")[0]
-        : null;
-    if (!datasetId) return;
-
-    if (selectedId.startsWith(DATASET_ITEM_PREFIX)) {
-      onSelectDataset(datasetId);
-      return;
-    }
-
-    const columnName = selectedId.slice(COLUMN_ITEM_PREFIX.length + datasetId.length + 1);
-    const dataset = datasets.find((entry) => entry.id === datasetId);
-    const column = dataset?.columns.find((entry) => entry.name === columnName);
-    if (!dataset || !column) return;
-    onSelectColumn?.(dataset, column);
-  };
 
   return (
     <aside
@@ -338,48 +350,45 @@ export function DatasetSidebar({
       className="asklake-dashboard-dataset-sidebar"
       id="asklake-dashboard-dataset-sidebar"
     >
-      <div className="asklake-dataset-sidebar-header">
-        <h2>Dataset</h2>
-      </div>
+      <PanelHeader className="min-h-0 border-b border-slate-200 p-4" icon={<Database />} title="Dataset" />
 
-      <TooltipProvider delayDuration={250}>
-        <TreePanel
-          bodyClassName="asklake-dataset-tree-wrap"
-          emptyState="No datasets available."
-          errorState="Failed to load datasets. Please try again."
-          isEmpty={datasets.length === 0}
-          isError={Boolean(error)}
-          isLoading={isLoading}
-          loadingState="Loading datasets..."
-          stateClassName={error && !isLoading ? "asklake-dataset-sidebar-state error" : "asklake-dataset-sidebar-state"}
-        >
-          <ScrollArea className="asklake-dataset-tree-wrap">
+      {isLoading ? (
+        <DatasetTreeSkeleton />
+      ) : error ? (
+        <Alert className="m-3 w-auto" variant="destructive">
+          <AlertCircle />
+          <AlertTitle>Dataset을 불러오지 못했습니다.</AlertTitle>
+          <AlertDescription>{error.message}</AlertDescription>
+        </Alert>
+      ) : datasets.length === 0 ? (
+        <Empty className="m-3" size="sm" variant="bordered">
+          <EmptyHeader>
+            <EmptyTitle>사용 가능한 Dataset이 없습니다.</EmptyTitle>
+            <EmptyDescription>Catalog에서 Dataset을 준비한 뒤 다시 시도해 주세요.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <TooltipProvider delayDuration={250}>
+          <ScrollArea className="h-[min(760px,calc(100vh-240px))] min-h-[260px]" type="always">
             <TreeProvider
-              animateExpand={false}
-              defaultExpandedIds={[
-                systemItemId,
-                schemaItemId,
-                tablesItemId,
-                ...datasets.map((dataset) => datasetTreeItemId(dataset.id)),
-              ]}
+              className="pr-3"
+              defaultExpandedIds={[systemItemId, schemaItemId, tablesItemId]}
               indent={18}
-              selectedIds={selectedDatasetId ? [datasetTreeItemId(selectedDatasetId)] : []}
-              onSelectionChange={handleTreeSelection}
+              selectable={false}
+              showLines
             >
-              <TreeView aria-label="Dashboard dataset tree" className="asklake-dataset-tree">
-                {treeData.map((node, index) => (
-                  <DatasetTreeBranch
-                    key={node.id}
-                    node={node}
-                    position={index}
-                    siblingCount={treeData.length}
-                  />
-                ))}
+              <TreeView aria-label="Dashboard dataset tree" className="p-2">
+                <DashboardDatasetTreeItems
+                  datasets={datasets}
+                  items={treeData}
+                  onSelectColumn={onSelectColumn}
+                  onSelectDataset={onSelectDataset}
+                />
               </TreeView>
             </TreeProvider>
           </ScrollArea>
-        </TreePanel>
-      </TooltipProvider>
+        </TooltipProvider>
+      )}
     </aside>
   );
 }

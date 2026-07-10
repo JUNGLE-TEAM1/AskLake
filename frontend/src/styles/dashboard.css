@@ -2,6 +2,13 @@
   display: grid;
   gap: 20px;
   max-width: var(--layout-main-width);
+  font-family: var(--jobs-font-family);
+}
+
+.dashboard-list-menu,
+.dashboard-delete-dialog,
+.asklake-dashboard-share-sheet {
+  font-family: var(--jobs-font-family);
 }
 
 .page-body > .dashboard-list-page,
@@ -1204,14 +1211,6 @@
 
 .dashboard-delete-modal p strong {
   color: #0f172a;
-}
-
-.dashboard-delete-error {
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c !important;
-  font-weight: 800;
-  padding: 10px 12px;
 }
 
 .danger-button {

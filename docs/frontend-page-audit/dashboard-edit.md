@@ -14,7 +14,7 @@
 
 - `DashboardRuntimeShell`, `DashboardTopBar`, `DashboardPageTabs`: runtime chrome과 navigation을 담당한다.
 - `DashboardCanvas`: `react-grid-layout`을 사용해 widget drag/resize와 collision validation을 처리한다.
-- `DatasetSidebar`: `react-arborist`, `TreePanel`, `TreeRow`, `TreeHoverCard`, shadcn `Tooltip`을 조합한다.
+- `DatasetSidebar`: Kibo/shadcn-compatible Tree, shadcn `ScrollArea`, `Alert`, `Empty`, `Skeleton`, `Tooltip`과 `TreeHoverCard`를 조합한다.
 - `WidgetConfigPanel`: `SettingsPanel`, `FormFieldGroup`, `NativeSelectField`, `IconOptionGrid`, `Input`, `Textarea`, `Checkbox`, `Button`을 조합한다.
 - `DashboardAssistantPanel`: `Textarea`, `Button`으로 dashboard AI interaction을 제공한다.
 - `ActionGroup`: undo/redo, assistant, cursor, widget 생성 toolbar의 layout을 담당한다.
@@ -41,7 +41,7 @@
 - `ScrollArea`: dataset sidebar와 inspector form의 독립 scroll을 명확히 한다.
 - `Alert`, `Skeleton`, `Empty`: draft error/loading/no widget/no revision 상태를 분리한다.
 - `Tooltip`: icon-only edit toolbar action을 일관되게 설명한다.
-- ReUI Tree 또는 현재 `react-arborist` + shadcn style: dataset tree virtualization은 유지하고 visual/interaction primitive만 정리한다.
+- Kibo/shadcn-compatible Tree: dataset/group/column connector line, expand/collapse, keyboard trigger를 공통 Tree primitive로 유지한다.
 - `ResizablePanelGroup`: dataset/canvas/inspector 폭 조절이 제품 요구로 확정될 때 검토한다.
 
 ## Design Options For Existing Components
@@ -72,7 +72,7 @@
 
 ### Desktop Findings
 
-- [HIGH] dataset tree에서 react-arborist node wrapper와 내부 `TreeRow`가 모두 `treeitem`으로 노출되어 각 node가 중첩·중복 announcement된다. 하나의 semantic treeitem owner만 남겨야 한다.
+- [RESOLVED #487] dataset tree를 Kibo/shadcn-compatible Tree로 교체해 node별 semantic `treeitem` owner를 하나로 정리했다.
 - [HIGH] widget color palette의 기본 swatch button 여러 개가 accessible name을 제공하지 않는다. 이번 snapshot에서 직접 색상 action을 제외한 swatch 11개가 이름 없는 button으로 노출됐다.
 - [MEDIUM] `openByDefault`로 11개 dataset과 column group이 다수 펼쳐져 처음부터 tree density가 높다. long dataset name도 sidebar 폭에서 잘리므로 default open level과 tooltip/search 정책을 조정한다.
 - [MEDIUM] H1은 list의 friendly title 대신 raw ID `dash_sales_demo`를 표시한다.
@@ -96,7 +96,15 @@
 - Tokens: pass - editor surface와 form control은 theme과 일치한다.
 - Composition: issues - color picker layer, mobile side panels, feedback state를 `Popover`, `Sheet`, `Alert`, `Skeleton`으로 보완할 수 있다.
 - Responsive/a11y: issues - duplicate treeitem, unnamed swatches, 600px mobile workspace가 높은 우선순위다.
-- Install/search notes: 기존 `Sheet`, `Popover`, `ScrollArea`, `Tabs`, `ToggleGroup`, `Tooltip`, `Slider`를 우선 사용하고 `react-grid-layout`은 유지한다.
+- Install/search notes: 기존 `Sheet`, `Popover`, `ScrollArea`, `Slider`, `Tabs`, `ToggleGroup`, `Tooltip`와 Kibo Tree를 사용한다. `react-grid-layout`은 유지하고 `react-arborist`는 #487에서 제거했다.
+
+## #487 shadcn 적용
+
+- radial bar widget의 별도 최솟값/최댓값 number input을 두 thumb shadcn `Slider`로 교체했다.
+- Dashboard dataset tree를 `react-arborist`에서 SQL과 같은 Kibo/shadcn-compatible line tree로 전환했다.
+- dataset loading/error/empty를 각각 `Skeleton`, `Alert`, `Empty`로 분리하고 tree viewport는 `ScrollArea`가 맡는다.
+- legacy arborist row/toggle/state CSS와 `react-arborist` package dependency를 제거했다.
+- widget config schema, dataset 선택 callback, column 선택 callback, `react-grid-layout`, chart engine은 유지한다.
 
 ### Recommended Order
 
@@ -110,10 +118,8 @@
 - dashboard view와 runtime component/CSS를 대부분 공유하므로 edit-only 변경도 published view를 회귀시킬 수 있다.
 - #422의 `DataTable` 변경은 table widget에 영향을 줄 수 있다.
 - runtime API, layout serialization, widget config schema, AI assistant contract는 이번 문서 범위에서 변경하지 않는다.
-
 ## Implementation Follow-up
 
-- dataset sidebar는 `react-arborist` row renderer 대신 저장소의 shadcn 스타일 line-tree composition과 `ScrollArea`를 사용한다.
-- radial bar chart의 min/max 설정은 shadcn dual-thumb `Slider`로 조작하며 `min < max` validation을 유지한다.
+- #487의 Kibo/shadcn-compatible line tree와 loading/error/empty 상태 구성을 유지한다.
+- radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
 - 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
-
