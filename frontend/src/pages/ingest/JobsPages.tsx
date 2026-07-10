@@ -201,6 +201,26 @@ function filterJobsBySearch(jobs: JobRowData[], searchQuery: string) {
   ));
 }
 
+function getJobScheduleKind(job: JobRowData): JobScheduleKind {
+  const schedule = job.schedule.trim().toLocaleLowerCase();
+  if (!schedule || schedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token))) return "none";
+  if (isRealtimeJob(job)) return "realtime";
+  if (["매일", "daily"].some((token) => schedule.includes(token))) return "daily";
+  if (["매주", "weekly"].some((token) => schedule.includes(token))) return "weekly";
+  if (["매월", "monthly"].some((token) => schedule.includes(token))) return "monthly";
+  return "other";
+}
+
+function matchesJobListQuery(job: JobRowData, query: JobListQuery) {
+  const statuses = new Set(query.statuses ?? []);
+  return (
+    (statuses.size === 0 || statuses.has(job.status))
+    && (!query.lastRunOutcome || getLatestRunOutcome(job) === query.lastRunOutcome)
+    && (!query.owner || job.owner === query.owner)
+    && (!query.scheduleKind || getJobScheduleKind(job) === query.scheduleKind)
+  );
+}
+
 export function JobsLandingPage({
   jobListFacets,
   jobsLoading,
@@ -216,7 +236,7 @@ export function JobsLandingPage({
   jobsLoading: boolean;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCommand: (job: JobRowData, command: JobCommand) => Promise<void> | void;
+  onCommand: (job: JobRowData, command: JobCommand) => Promise<JobRowData | undefined>;
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
   onFilter: (query: JobListQuery) => Promise<void> | void;
@@ -224,22 +244,28 @@ export function JobsLandingPage({
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
+  const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
-  const filteredJobs = useMemo(() => filterJobsBySearch(jobs, searchQuery), [jobs, searchQuery]);
+  const filteredJobs = useMemo(
+    () => filterJobsBySearch(jobs, searchQuery).filter((job) => !excludedJobIds.has(job.id)),
+    [excludedJobIds, jobs, searchQuery],
+  );
   const hasSearchQuery = searchQuery.trim().length > 0;
 
   const updateJobQuery = (nextQuery: JobListQuery) => {
+    setExcludedJobIds(new Set());
     setJobQuery(nextQuery);
     onAction("etl.jobs.filter_changed", getJobsQueryPath(nextQuery), nextQuery.statuses?.join(",") ?? nextQuery.lastRunOutcome ?? nextQuery.owner ?? nextQuery.scheduleKind ?? "all");
     onFilter(nextQuery);
   };
 
   const handleJobCommand = useCallback(async (job: JobRowData, command: JobCommand) => {
-    await onCommand(job, command);
-    await onFilter(jobQuery);
-  }, [jobQuery, onCommand, onFilter]);
+    const updatedJob = await onCommand(job, command);
+    if (!updatedJob || matchesJobListQuery(updatedJob, jobQuery)) return;
+    setExcludedJobIds((current) => new Set(current).add(updatedJob.id));
+  }, [jobQuery, onCommand]);
 
   const clearSearch = () => {
     setSearchQuery("");

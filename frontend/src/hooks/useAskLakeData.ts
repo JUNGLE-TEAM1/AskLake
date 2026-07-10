@@ -891,12 +891,12 @@ export function useAskLakeData({
     });
   };
 
-  const handleJobCommand = async (job: JobRowData, command: JobCommand) => {
+  const handleJobCommand = async (job: JobRowData, command: JobCommand): Promise<JobRowData | undefined> => {
     if (command === "edit") {
       writeAuditLog("etl.job.edit_opened", `/api/etl/jobs/${job.id}`, job.id);
       setSelectedJob(job);
       onFlowChange("source");
-      return;
+      return undefined;
     }
 
     if (command === "delete") {
@@ -914,7 +914,7 @@ export function useAskLakeData({
         return rest;
       });
       onFlowChange("jobs");
-      return;
+      return undefined;
     }
 
     if (commandPendingRef.current.has(job.id)) {
@@ -959,10 +959,12 @@ export function useAskLakeData({
         ? await runMockJobCommand(job, command)
         : await runLiveJobCommand(job, command);
       writeAuditLog(action, apiPath, job.id);
+      let normalizedUpdatedJob: JobRowData | undefined;
       if (updatedJob) {
-        const normalizedUpdatedJob = normalizeJobRow(updatedJob);
-        updateJobState(job.id, () => normalizedUpdatedJob);
-        setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, normalizedUpdatedJob));
+        const nextJob = normalizeJobRow(updatedJob);
+        normalizedUpdatedJob = nextJob;
+        updateJobState(job.id, () => nextJob);
+        setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, nextJob));
       }
       if (run) {
         setRunsByJobId((state) => ({
@@ -985,7 +987,7 @@ export function useAskLakeData({
       } else if (tempRunId) {
         rollbackOptimisticRun();
         showToast("실행 응답에 Run 정보가 없어 상태를 되돌렸습니다.", "info");
-        return;
+        return undefined;
       }
       if (dataset) {
         const normalizedDataset = normalizeDatasetRow(dataset);
@@ -994,12 +996,14 @@ export function useAskLakeData({
         setSelectedDataset(normalizedDataset);
       }
       showToast(commandSuccessMessage(command, job));
+      return normalizedUpdatedJob;
     } catch {
       if (tempRunId) {
         rollbackOptimisticRun();
       }
       writeAuditLog("etl.job.command_failed", `/api/etl/jobs/${job.id}`, job.id, "failed");
       showToast("작업 명령 처리에 실패했습니다.", "info");
+      return undefined;
     } finally {
       commandPendingRef.current.delete(job.id);
       setCommandPendingByJobId((state) => {
