@@ -6,6 +6,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 type DialogShellSize = "sm" | "md" | "lg" | "xl" | "wide" | "fullscreen";
@@ -22,6 +23,7 @@ const dialogShellSizeClassName: Record<DialogShellSize, string> = {
 export interface DialogShellProps {
   "aria-label"?: string;
   bodyClassName?: string;
+  bodyScrollArea?: boolean;
   children: React.ReactNode;
   closeLabel?: string;
   contentClassName?: string;
@@ -43,6 +45,7 @@ export interface DialogShellProps {
 export function DialogShell({
   "aria-label": ariaLabel,
   bodyClassName,
+  bodyScrollArea = false,
   children,
   closeLabel = "닫기",
   contentClassName,
@@ -102,9 +105,15 @@ export function DialogShell({
             </div>
           ) : null}
         </header>
-        <div className={cn("min-h-0 overflow-y-auto px-6 py-5", bodyClassName)}>
-          {children}
-        </div>
+        {bodyScrollArea ? (
+          <ScrollArea className={cn("min-h-0 px-6 py-5", bodyClassName)}>
+            {children}
+          </ScrollArea>
+        ) : (
+          <div className={cn("min-h-0 overflow-y-auto px-6 py-5", bodyClassName)}>
+            {children}
+          </div>
+        )}
         {footer ? (
           <footer
             className={cn(

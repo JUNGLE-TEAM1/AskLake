@@ -5,7 +5,6 @@ export const steps = ["소스", "처리", "스케줄", "권한", "타겟", "검�
 
 export const flowTabs: Array<{ id: FlowId; label: string; stepIndex: number }> = [
   { id: "jobs", label: "작업 목록", stepIndex: 0 },
-  { id: "jobsTableDemo", label: "표형 데모", stepIndex: 0 },
   { id: "jobDetail", label: "작업 상세", stepIndex: 0 },
   { id: "jobRuns", label: "실행 이력", stepIndex: 0 },
   { id: "source", label: "소스 연결", stepIndex: 0 },
@@ -27,8 +26,8 @@ export const navItems = [
   { id: "admin", label: "관리", icon: Settings, flow: "admin" },
 ] satisfies NavItem[];
 
-export const ingestFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "target", "permission", "review"];
-export const jobManagerFlows: FlowId[] = ["jobs", "jobsTableDemo", "jobDetail", "jobRuns"];
+export const ingestFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns", "source", "schema", "rules", "repeat", "manual", "target", "permission", "review"];
+export const jobManagerFlows: FlowId[] = ["jobs", "jobDetail", "jobRuns"];
 export const wizardFlows: FlowId[] = ["source", "schema", "rules", "repeat", "manual", "permission", "target", "review"];
 
 const qaRetryPolicy: RetryPolicyDraft = {
@@ -145,13 +144,16 @@ const logTransformSteps: TransformStepDraft[] = [
 
 export const etlJobs: JobRowData[] = [
   {
+    createdAt: "2026-06-01T09:30:00+09:00",
     status: "scheduled",
     name: "daily_order_ingestion",
     id: "JOB-001",
     owner: "admin",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/women/44.jpg",
     tag: "[주문]",
     source: "PostgreSQL / commerce.orders",
     target: "orders_clean",
+    updatedAt: "2026-07-01T00:15:00+09:00",
     schedule: "매일 00:00",
     lastRun: "2026-07-01 00:03",
     lastState: "성공",
@@ -202,14 +204,17 @@ export const etlJobs: JobRowData[] = [
     transformSteps: orderTransformSteps,
   },
   {
-    status: "failed",
+    createdAt: "2026-06-18T14:20:00+09:00",
+    status: "scheduled",
     name: "s3_user_log_parse",
     id: "JOB-002",
     owner: "data-team",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/men/32.jpg",
     tag: "[로그]",
     source: "S3 / raw/user-log/*.csv",
     target: "user_activity",
-    schedule: "매시간 10분",
+    updatedAt: "2026-07-02T10:14:00+09:00",
+    schedule: "10분마다",
     lastRun: "2026-07-02 10:10",
     lastState: "Spark 실행 실패: NumberFormatException: For input string \"unknown\" at Transform Rule age TYPE_CAST. Quarantine threshold exceeded.",
     nextRun: "2026-07-02 11:10",
@@ -243,7 +248,7 @@ export const etlJobs: JobRowData[] = [
       qaRun({ duration: "5m 02s", endedAt: "2026-07-02 09:15", errorSummary: "-", failedStage: "-", inputRows: "82,110", outputRows: "81,904", runId: "run_20260702_0910", startedAt: "2026-07-02 09:10", status: "success" }),
     ],
     runLimitSummary: "최근 7일 실패 이력 우선 노출",
-    scheduleSummary: "매시간 10분 · 실패 시 다음 예약 전 승인 필요",
+    scheduleSummary: "10분마다 · 실패 시 다음 예약 전 승인 필요",
     sourceConfig: [["Bucket", "raw"], ["Prefix", "user-log/"], ["Format", "CSV"], ["Header", "true"]],
     sourceLabel: "raw/user-log/*.csv",
     sourceType: "S3",
@@ -269,13 +274,16 @@ export const etlJobs: JobRowData[] = [
     transformSteps: logTransformSteps,
   },
   {
+    createdAt: "2026-06-25T11:00:00+09:00",
     status: "running",
     name: "realtime_clickstream_ingestion",
     id: "JOB-003",
     owner: "platform",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/men/54.jpg",
     tag: "[스트림]",
     source: "Kafka / clickstream.events",
     target: "clickstream_events",
+    updatedAt: "2026-07-03T10:21:00+09:00",
     schedule: "실시간 수집",
     lastRun: "현재 실행 중",
     lastState: "5/8 단계 · Load to Lake",
@@ -328,13 +336,16 @@ export const etlJobs: JobRowData[] = [
     ],
   },
   {
+    createdAt: "2026-06-12T16:40:00+09:00",
     status: "scheduled",
     name: "daily_sales_aggregation",
     id: "JOB-004",
     owner: "analytics",
+    ownerAvatarUrl: "https://randomuser.me/api/portraits/women/68.jpg",
     tag: "[집계]",
     source: "Lake / orders_clean",
     target: "sales_daily_summary",
+    updatedAt: "2026-07-02T01:23:00+09:00",
     schedule: "매일 01:00",
     lastRun: "2026-07-02 01:05",
     lastState: "성공",
@@ -651,6 +662,41 @@ const commerceDemoDatasets: CatalogDataset[] = [
       sourceNodeId: "source-commerce-orders-daily",
       targetName: "commerce_orders_daily",
     }),
+    materializationRuns: [
+      {
+        createdAt: "2026-07-10T04:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 32400,
+        runId: "append-orders-20260710-001",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "success",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-10/",
+        storageSizeBytes: 1468006,
+      },
+      {
+        createdAt: "2026-07-10T03:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 31840,
+        runId: "append-orders-20260710-002",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "running",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-10/",
+        storageSizeBytes: 1394606,
+      },
+      {
+        createdAt: "2026-07-09T04:10:00.000Z",
+        jobId: "commerce_orders_daily_ingest",
+        rowCount: 0,
+        runId: "append-orders-20260709-001",
+        sourceKind: "etl",
+        sourceLabel: "PostgreSQL commerce.orders_daily",
+        status: "failed",
+        storageLocation: "s3a://asklake-demo/silver/commerce_orders_daily/2026-07-09/",
+        storageSizeBytes: 0,
+      },
+    ],
     name: "commerce_orders_daily",
     nextRefresh: "매일 00:10",
     owner: "growth-analytics",
@@ -1035,13 +1081,6 @@ export const summaryByFlow: Record<FlowId, Array<[string, string]>> = {
     ["스케줄됨", "12"],
     ["실패", "2"],
     ["최신 아님", "4"],
-  ],
-  jobsTableDemo: [
-    ["표시 방식", "Table"],
-    ["핵심 컬럼", "7개"],
-    ["실패 로그", "요약 표시"],
-    ["원문", "모달"],
-    ["상태", "검토용"],
   ],
   jobDetail: [
     ["작업명", "s3_user_log_parse"],

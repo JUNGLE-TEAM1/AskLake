@@ -4,9 +4,9 @@ export const jobStatusMeta: Record<JobStatus, { className: string; label: string
   scheduled: { className: "scheduled", label: "실행 대기", summaryLabel: "READY" },
   failed: { className: "failed", label: "실패", summaryLabel: "FAILED" },
   running: { className: "running", label: "실행 중", summaryLabel: "RUNNING" },
-  paused: { className: "paused", label: "일시정지", summaryLabel: "PAUSED" },
+  paused: { className: "paused", label: "실행 일시정지", summaryLabel: "PAUSED" },
   canceled: { className: "canceled", label: "취소됨", summaryLabel: "CANCELED" },
-  stopped: { className: "paused", label: "스케줄 중지", summaryLabel: "STOPPED" },
+  stopped: { className: "paused", label: "자동 실행 중지", summaryLabel: "STOPPED" },
 };
 
 export const datasetStatusMeta: Record<CatalogDataset["status"], { className: string; label: string }> = {
@@ -30,11 +30,13 @@ export function normalizeJobStatus(status: string): JobStatus {
     "실행 중": "running",
     paused: "paused",
     "일시정지": "paused",
+    "실행 일시정지": "paused",
     canceled: "canceled",
     "취소됨": "canceled",
     stopped: "stopped",
     "스케줄 중지": "stopped",
     "스케줄 중지됨": "stopped",
+    "스케줄 일시중지": "stopped",
   };
 
   const normalizedStatus = statusMap[status];

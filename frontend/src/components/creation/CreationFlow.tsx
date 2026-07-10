@@ -38,17 +38,19 @@ export function CreationTopActions({
   onNext,
   onPrev,
   prevLabel = "이전",
+  useShadcnStyles = false,
 }: {
   nextDisabled?: boolean;
   nextLabel?: string;
   onNext: () => void;
   onPrev: () => void;
   prevLabel?: string;
+  useShadcnStyles?: boolean;
 }) {
   return (
     <CommandBar className="creation-top-actions" density="compact">
-      <Button className="secondary-button" type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
-      <Button className="primary-button" type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
+      <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onPrev}>{prevLabel}</Button>
+      <Button className={useShadcnStyles ? undefined : "primary-button"} type="button" disabled={nextDisabled} onClick={onNext}>{nextLabel}</Button>
     </CommandBar>
   );
 }
