@@ -8,6 +8,7 @@
 | 단계 | 우선순위 | API | 목적 |
 | --- | --- | --- | --- |
 | 1 | P0 | `POST /api/etl/jobs` | 새 수집/처리 생성 완료 |
+| 1a | P0 | `PATCH /api/etl/jobs/{jobId}` | 생성 Job의 허용 설정 update (Issue #460) |
 | 2 | P0 | `POST /api/etl/jobs/{jobId}/commands` | 즉시 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 |
 | 3 | P0 | `POST /api/query/runs` | 읽기 전용 SQL 실행 |
 | 4 | P0 | `POST /api/query/ai-suggestions` | 선택 테이블 context 기반 Query AI SQL 초안 생성 |
@@ -147,6 +148,7 @@ Resource/action 기준:
 | `POST /api/query/runs` | `query` | base/reference dataset 모두 검사 |
 | `POST /api/query/ai-suggestions` | `query` | 선택 dataset metadata를 AI context로 사용하기 전 모두 검사 |
 | `POST /api/etl/jobs/{jobId}/commands` | `run` 또는 `manage` | `run`/`retry`는 `run`, pause/cancel/stop은 `manage` |
+| `PATCH /api/etl/jobs/{jobId}` | `manage` | source identity와 successful target identity 보호 |
 | `GET /api/dashboards`, `POST /api/dashboards/query` | `view` | actor가 볼 수 있는 dashboard만 목록에 포함 |
 | `GET /api/dashboards/{dashboardId}/published` | `view` | published revision이 없어도 권한 통과 후 빈 runtime 응답 가능 |
 | `PATCH /api/dashboards/{dashboardId}` | `manage` | dashboard card title 수정 |
@@ -389,6 +391,31 @@ type JobRowData = {
     watermarkPolicy?: WatermarkPolicyDraft;
   };
   scheduleSummary?: string;
+  sourceConfig?: Array<[string, string]>;
+  sourceLabel?: string;
+  sourceType?: string;
+  schemaColumns?: SchemaColumnDraft[];
+  schemaFingerprint?: string;
+  schemaSampleRows?: string[][];
+  schemaSummary?: string;
+  ruleSummary?: string;
+  permissionSummary?: string;
+  permissionRoles?: PermissionDraft["roles"];
+  targetDatabase?: string;
+  targetDescription?: string;
+  targetTags?: string[];
+  targetFormat?: string;
+  targetLayer?: "RAW" | "BRONZE" | "SILVER" | "GOLD";
+  storageType?: "S3" | "Local" | "HDFS";
+  storagePath?: string;
+  partitionColumns?: string[];
+  indexColumns?: string[];
+  transformOutputColumns?: Array<[string, string]>;
+  transformSteps?: TransformStepDraft[];
+  qualityRules?: QualityRuleDraft[];
+  qualityInvalidRows?: string[][];
+  qualityScore?: number;
+  qualityStatus?: "idle" | "pass" | "warn" | "fail";
   lastRun: string;
   lastState: string;
   nextRun: string;
@@ -401,6 +428,8 @@ type JobRowData = {
   };
 };
 ```
+
+`GET /api/etl/jobs/{jobId}`는 위 설정값을 편집 복원용으로 반환한다. `sourceConfig`에는 Kafka broker, topic, consumer group, batch/timeout, offset policy, authentication 같은 source identity가 포함될 수 있으므로 UI는 값을 보이되 Issue #460 수정 모드에서는 변경하지 않는다. 기존 Job에는 새 선택형 metadata가 없을 수 있으므로 해당 값은 optional로 유지한다.
 
 `schedule`/`scheduleSummary`의 화면 문구는 `수동/자동/1회 실행`이 아니라 `스케줄링 건너뛰기`와 `반복 실행` 두 기준으로 표현한다. 스케줄링을 건너뛰면 즉시 실행 command `run`으로 1회 Run을 만들며, `1회 실행`은 schedule 값으로 저장하지 않는다. 반복 실행 UI는 반복 주기, 실행 시각, IANA timezone, 실패 재시도만 노출한다. ISO date `startDate`, optional `endDate`, 겹침 처리, watermark 수집 기준은 `schedulePolicy`에 함께 보존하지만 UI에서는 기본값으로 처리한다. 빈 `endDate`는 종료일 없음으로 해석하고, `endDate`가 `startDate`보다 이르면 frontend draft에서 빈 값으로 정규화한다. 기본 겹침 처리는 `skip_if_running`이며, 이전 Run이 길어져 다음 예약 시각과 겹쳐도 다음 schedule 계산을 밀지 않고 해당 예약 Run을 건너뛰는 정책이다. `retryPolicySummary`는 재시도 횟수/2배 지수 백오프/최종 실패 처리만 담는 optional field이며, `runLimitSummary`는 hidden default `timeoutMinutes` 기반 실행 제한 표시용 optional field다. 둘 중 하나가 없으면 frontend가 fallback 문구를 사용한다.
 
@@ -769,6 +798,7 @@ type CreatePipelineRequest = {
   compression: "Snappy" | "Gzip" | "None";
   storagePath: string;
   targetDataset: string;
+  targetDatabase?: string;
   targetDescription?: string;
   targetTags?: string[];
   targetLayer: "RAW" | "BRONZE" | "SILVER" | "GOLD";
@@ -915,7 +945,32 @@ Validation:
 - backend API가 없는 Target 설정 config 저장은 frontend local fallback으로 `window.localStorage["asklake.targetConfigDraft"]`에 `{ metadata, tags, partitionColumns, indexColumns, schemaRules, previewRows, lineage, lastTestRun }` 형태를 저장합니다. 이 config는 create request contract를 대체하지 않고 화면 재확인/debug 용도입니다.
 - 같은 `targetDataset`이 이미 존재하면 기본 정책은 `409 CONFLICT`가 아니라 기존 Job/dataset 연결을 재사용해 append 대상으로 갱신하는 것입니다. 같은 dataset 이름의 결과가 새 Catalog row를 만들지 않도록 합니다.
 
-### 7.3 작업 명령
+### 7.3 파이프라인 수정
+
+`PATCH /api/etl/jobs/{jobId}`
+
+프론트 함수:
+
+- `updatePipelineDraft(jobId, draftPipeline)`
+
+Request는 `CreatePipelineRequest`에서 `id`, `sourceConfig`, `sourceLabel`, `sourceType`, `createdBy`, `createdByProfile`, `permissionGrants`를 제외한 `UpdatePipelineRequest`다. source field가 body에 포함되면 `422` validation error로 거부한다.
+
+Response `200 OK`:
+
+```ts
+type UpdatePipelineResponse = JobRowData;
+```
+
+Rules:
+
+- `manage` 권한이 필요하다.
+- `running` Job은 `409 CONFLICT`로 수정할 수 없다.
+- 성공 Run이 하나라도 있으면 `targetDataset`, `targetDatabase`, `targetLayer`, `targetFormat`, `storageType`, `storagePath` 변경을 `422`로 차단한다.
+- source config와 Kafka consumer group offset, `kafka_snapshots` row는 update 대상이 아니다.
+- 성공 시 같은 Job ID를 반환하며 새 Job이나 Catalog Dataset을 만들지 않는다.
+- 실패하면 서버 Job은 변경하지 않고 frontend edit draft는 유지한다.
+
+### 7.4 작업 명령
 
 `POST /api/etl/jobs/{jobId}/commands`
 

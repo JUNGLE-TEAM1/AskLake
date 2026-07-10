@@ -18,6 +18,7 @@ from app.schemas.etl import (
     SourceAssetsResponse,
     SourceConnectorAnalysis,
     SourceConnectorRequest,
+    UpdatePipelineRequest,
 )
 from app.services import etl_service
 
@@ -71,6 +72,16 @@ def get_job(
     actor: ActorContext = Depends(get_actor_context),
 ) -> JobRowData:
     return etl_service.get_job(db, job_id, actor)
+
+
+@router.patch("/jobs/{job_id}", response_model=JobRowData)
+def update_job(
+    job_id: str,
+    request: UpdatePipelineRequest,
+    db: Session = Depends(get_db),
+    actor: ActorContext = Depends(get_actor_context),
+) -> JobRowData:
+    return etl_service.update_pipeline(db, job_id, request, actor)
 
 
 @router.post("/jobs/{job_id}/commands", response_model=JobCommandResponse)
