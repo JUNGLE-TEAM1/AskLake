@@ -13,8 +13,9 @@
 ## Current Shared Components
 
 - shadcn primitive: `Button`, `Badge`, `Bubble`, `Checkbox`, `Dialog`, `Empty`, `Field`, `FieldGroup`, `Input`, `NativeSelect`, `ScrollArea`, `Separator`, `Slider`, `Tabs`, `Textarea`.
+- shadcn registry component: Shadcnblocks `tree-lines-1`이 설치한 Kibo UI `TreeProvider`, `TreeView`, `TreeNode`, `TreeNodeTrigger`, `TreeExpander`, `TreeIcon`, `TreeLabel`, `TreeNodeContent`.
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `ActionGroup`, `FilterToolbarSearch`, `FilterToolbarInput`, `PaginationBar`, `DialogShell`.
-- `SqlDatasetTree`: `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow`, `TreeHoverCard`를 조합한 dataset browser다.
+- `SqlDatasetTree`: Shadcnblocks line tree와 `TreeHoverCard`, shadcn `Button`을 조합한 dataset browser다.
 - `SqlPreviewTable`: TanStack 기반 `DataTable`로 결과 sorting, pagination, empty state를 처리한다.
 - `SchemaDetailsPanel`: 선택 dataset, JOIN, column insert를 담당하는 도메인 panel이다.
 - `DashboardPage`: SQL 결과로 dashboard draft를 만드는 embedded flow에 재사용된다.
@@ -22,7 +23,7 @@
 ## Weakly Componentized Areas
 
 - SQL editor는 `Textarea`, line-number `<pre>`, dark surface를 직접 조합한다. autocomplete는 editor focus/selection과 absolute position 계산이 묶인 custom popover다.
-- dataset tree, SQL editor, autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
+- SQL editor와 autocomplete 위치에는 도메인 layout CSS가 남아 있다. dataset tree의 line/row/expand surface는 registry Tree가, dataset/schema/autocomplete/result의 실제 scroll 동작은 `ScrollArea`가 소유한다.
 - global App Shell sidebar가 좁은 viewport의 첫 화면을 점유해 SQL mobile workspace 가독성이 낮다.
 - `SqlAnalysisPage.tsx` 하나가 query state, AI, autocomplete, materialize dialog, embedded dashboard를 모두 관리한다.
 
@@ -32,6 +33,7 @@
 - `Popover` + `Command`: SQL autocomplete list의 focus 이동, active option, dismiss behavior를 정리한다.
 - `Dialog`: #468에서 raw dashboard builder backdrop를 accessible dialog composition으로 교체했다.
 - `ScrollArea`: #468에서 dataset panel, schema panel, autocomplete, result table의 독립 scroll 영역에 적용했다.
+- Shadcnblocks `tree-lines-1`: #468에서 SQL dataset branch/table/column tree에 적용했다. `showLines`, controlled expand, single dataset preview, keyboard Enter/Space 동작을 사용한다.
 - `Alert`: preflight error, Query AI error, execution error를 공통 feedback 구조로 표시한다.
 - `Badge`: #468에서 layer, RAG, preflight tone, selected dataset metadata에 적용했다.
 - `Empty`: #468에서 schema 미선택과 result 미실행 상태에 적용했다. `Skeleton`은 async loading 요구가 생길 때 추가한다.
@@ -40,8 +42,8 @@
 
 ## Design Options For Existing Components
 
-- `SqlDatasetTree`, `SchemaDetailsPanel`: SQL 도메인 composition으로 유지하되 내부 raw action을 `Button`과 공통 feedback primitive로 교체한다.
-- `TreePanel`/`TreeView`: 현재 계층이 단순하고 기존 primitive가 있으므로 유지한다. 대규모 virtual tree가 필요할 때만 `react-arborist` 기반 ReUI style을 검토한다.
+- `SqlDatasetTree`, `SchemaDetailsPanel`: SQL 도메인 composition으로 유지하되 내부 action은 shadcn `Button`, 계층 UI는 Shadcnblocks/Kibo Tree를 사용한다.
+- SQL tree는 `tree-lines-1` 패턴으로 교체했다. drag-and-drop은 제품 요구가 없어 추가하지 않고, 대규모 virtualization이 필요할 때만 별도 engine을 검토한다.
 - `SqlPreviewTable`: 이미 `DataTable`을 사용하므로 유지한다.
 - `Panel`/`PanelHeader`, `ActionGroup`, `DialogShell`: AskLake 공통 composition으로 유지하고 내부는 shadcn primitive를 사용한다.
 - editor surface는 별도 `SqlEditor` 컴포넌트로 분리해 autocomplete와 keyboard logic을 한 경계에 둔다.
@@ -49,8 +51,8 @@
 ## Related CSS
 
 - 현재 사용 중: `frontend/src/styles/sql.css`의 `.sql-page`, `.sql-page-header`, `.sql-dataset-panel`, `.sql-schema-panel`.
-- 현재 사용 중: `.sql-tree-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
-- #468 3차 정리까지 `sql.css`를 2,547줄에서 582줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll surface CSS는 제거했다.
+- 현재 사용 중: `.sql-tree-hover-*`, `.sql-editor-surface`, `.sql-autocomplete-popover`, `.sql-editor-footer*`, `.sql-result-scroll`, `.sql-preview-table*`, `.sql-dashboard-builder-dialog`.
+- #468 Tree/viewport 정리까지 `sql.css`를 2,547줄에서 401줄로 줄였다. shadcn이 소유하는 panel/header/form/list/separator/table/scroll/tree surface CSS는 제거했다.
 
 ## Pre-#468 QA Notes
 
@@ -111,12 +113,16 @@
 - SQL 도구, editor, schema, result surface는 `Panel`, 상태/metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
 - dataset `+ 추가`, JOIN, 제거, column 삽입 action을 `Button`으로 통일했다. `+ 추가`는 pill CSS를 제거하고 기본 `rounded-lg`의 직사각형 `size="sm"` 버튼으로 바꿨다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
-- `sql.css`는 2,547줄에서 582줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea 기본 surface로 header/form/list/table/scroll CSS를 추가 제거했다.
+- `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
 - schema list는 `Panel` + `PanelHeader` + `Separator`, result header는 `PanelHeader`, autocomplete surface는 `Panel` + `Button` + `Badge`로 구성한다.
 - dataset/schema/autocomplete/result의 native `overflow: auto`를 제거하고 shadcn `ScrollArea`를 실제 scroll container로 사용한다. SQL 영역은 `type="always"`로 thumb를 명확히 노출하고 result는 vertical/horizontal scrollbar를 모두 제공한다.
 - Slider track/range/thumb는 AskLake의 slate/blue token으로 명시해 track과 현재 값이 배경에서 확실히 구분되도록 했다.
 - SQL 도구의 후보/검색 건수와 schema의 선택 건수 badge를 제거하고, Page/Panel/Dialog title 아래의 반복 설명문을 제거해 heading hierarchy를 한 줄로 정리했다.
+- Query AI panel의 `Query AI 생성`, `테이블 선택 필요` badge도 제거해 탭 아래에서 같은 상태를 반복하지 않는다.
+- SQL dataset tree를 Shadcnblocks `tree-lines-1` registry로 교체하고 Kibo UI Tree source를 프로젝트에 설치했다. `motion`은 registry의 expand/collapse animation 의존성으로 추가했다.
+- 기존 `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` selector는 제거하고 fixed hover card selector만 유지했다.
+- SQL page가 `page-body`의 실제 남은 높이를 사용하도록 grid row를 제한하고, 후보 Tree만 `ScrollArea`로 스크롤되게 해 검색/페이징을 고정했다.
 - 1,200px 콘텐츠 폭에서 3열 최소폭이 밀리던 문제를 막기 위해 1,240px부터 2열 layout으로 전환한다.
 
 ### #468 Verification
@@ -124,6 +130,10 @@
 - `commerce_orders_daily` 선택 후 Slider를 50행으로 조작하고 실행해 `50행 조회됨`, `최대 50행 표시`, 2-page result를 확인했다.
 - Slider track, blue range, thumb가 모두 표시되고 keyboard로 설정한 50행이 label과 실행 limit에 반영되는 것을 확인했다.
 - dataset/schema/result의 scrollbar가 shadcn `ScrollArea` thumb로 렌더링되고 native scrollbar가 중첩되지 않는 것을 확인했다.
+- Shadcnblocks Tree에서 connector line과 icon이 표시되고 table row mouse click, Enter key 접기, column group 노출, `+ 추가` 후 editor/schema 활성화를 확인했다.
+- 720px viewport에서 panel 하단 634px, pagination 하단 613px, footer 시작 658px로 `이전`/`다음`이 잘리지 않음을 확인하고 실제 1→2→1 page 이동을 검증했다.
+- Query AI 탭에서 `Query AI 생성`, `테이블 선택 필요` 문구가 렌더링되지 않는 것을 확인했다.
+- 1,200px와 860px viewport에서 Tree와 page의 horizontal overflow가 없음을 확인했다.
 - Query AI prompt를 실행해 Bubble 안에 생성 SQL과 `SQL에 적용` action이 표시되는 것을 확인했다.
 - Dashboard builder Dialog가 열리고 `Escape`로 닫히는 것을 확인했다.
 - 실제 1,200x750 CSS viewport에서 2열 전환 후 SQL page/table의 horizontal overflow가 없음을 확인했다.
@@ -134,5 +144,5 @@
 ### #468 Remaining Deliberate CSS
 
 - SQL autocomplete의 surface/action/status/scroll은 shadcn으로 바꿨지만 editor focus/selection과 absolute position 계산은 유지했다.
-- dataset tree 연결선/hover 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다.
+- dataset hover card의 fixed 위치, dark editor, ScrollArea의 높이/배치, embedded Dashboard 크기는 도메인 layout이라 유지했다. Tree 연결선/row/expand surface는 registry component가 소유한다.
 - global sidebar의 mobile 동작은 `layout.css`/`responsive.css` 소유이며 SQL route CSS에서 우회하지 않는다.

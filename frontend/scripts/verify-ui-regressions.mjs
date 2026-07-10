@@ -42,6 +42,17 @@ const checks = [
     ],
   },
   {
+    name: "SQL dataset browser uses the Shadcnblocks line tree",
+    file: "src/pages/sql/SqlDatasetRow.tsx",
+    patterns: [
+      /from "@\/components\/kibo-ui\/tree";/,
+      /<TreeProvider[\s\S]*expandedIds=\{expandedIds\}[\s\S]*showLines/,
+      /<TreeNodeTrigger[\s\S]*data-sql-dataset-row=""/,
+      /<TreeExpander hasChildren \/>/,
+      /<TreeNodeContent className="pb-2" hasChildren>/,
+    ],
+  },
+  {
     name: "Catalog wide action button keeps icon and label aligned",
     file: "src/styles/catalog.css",
     patterns: [

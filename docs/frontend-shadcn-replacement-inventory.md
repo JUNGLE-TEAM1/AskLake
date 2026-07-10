@@ -92,7 +92,8 @@
 | `PreviewPanel` / `ResultPanel` | SQL/Dashboard/ETL preview/result shell pattern이다. | header/status/empty/loading/action slot은 shadcn primitive로 구성한다. |
 | `SettingsPanel` | dashboard/ETL/SQL 설정 panel shell pattern이다. | form body는 `Field`, `Input Group`, `Native Select`, `Checkbox`로 교체한다. |
 | `DetailTableSection` | 상세 화면의 table title/body/footer shell pattern이다. | table body는 `DataTable` 또는 shadcn `Table` 기준으로 유지한다. |
-| `TreePanel` | S3/ETL/SQL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | 내부 tree는 `react-arborist` 기준으로 통일하고, row UI는 shadcn-style file explorer pattern으로 정리한다. |
+| `TreePanel` | S3/ETL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | route별 engine을 유지하며 row UI를 shadcn-style file explorer pattern으로 정리한다. SQL은 #468에서 Shadcnblocks/Kibo Tree로 이동했다. |
+| Shadcnblocks `tree-lines-1` / Kibo UI Tree | SQL dataset branch/table/column tree의 connector line, icon, expand/collapse, keyboard trigger를 담당한다. | SQL의 single dataset preview와 `+ 추가` action은 도메인 adapter에서 유지한다. drag-and-drop은 적용하지 않는다. |
 | `SelectableCard` | 아이콘, 설명, selected/check 상태가 있는 업무 선택 card pattern이다. | checkbox/radio 의미가 있으면 `Radio Group`/`Checkbox` 기반으로 재설계한다. |
 | `IconOptionGrid` | dashboard widget/chart type icon grid pattern이다. | `Tooltip`, `Toggle Group`, `Button` 기반으로 내부를 정리한다. |
 
@@ -148,6 +149,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #419에서 SQL/Dashboard runtime/config의 대표 form control을 `Textarea`, `Input`, `Checkbox`, `Button` 기준으로 2차 교체하고 Dashboard runtime compact 보정을 추가했다. |
 | 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard runtime share panel을 `Sheet`로 교체했다. |
 | 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
+| 2026-07-10 | #468에서 SQL dataset tree에 Shadcnblocks `tree-lines-1` registry와 Kibo UI Tree를 적용하고 `motion` dependency, controlled expand, keyboard trigger, line tree CSS 제거 상태를 반영했다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 
@@ -287,7 +289,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 
 CSS/의존성 판단:
 
-- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector를 삭제해 2,547줄에서 591줄로 줄였다.
-- workspace responsive grid, SQL editor, dataset tree hover/branch, autocomplete position, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
+- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector와 registry Tree로 이동한 branch/row selector를 삭제해 2,547줄에서 401줄로 줄였다.
+- workspace responsive grid, SQL editor, dataset tree fixed hover detail, autocomplete position, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
 - Slider는 monolithic `radix-ui`가 아니라 `@radix-ui/react-slider` 직접 의존을 사용한다.
 - autocomplete는 editor focus/selection 회귀 위험 때문에 이번 범위에서 `Popover`/`Command`로 전환하지 않는다.

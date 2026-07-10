@@ -330,7 +330,7 @@ export function SqlAnalysisPage({
         const list = contextListRef.current;
         if (!panel || !list) return;
 
-        const firstRow = list.querySelector<HTMLElement>(".sql-tree-table-row-shell");
+        const firstRow = list.querySelector<HTMLElement>("[data-sql-dataset-row]");
         const rowHeight = Math.max(1, firstRow?.getBoundingClientRect().height ?? 56);
         const panelStyle = window.getComputedStyle(panel);
         const panelBottomPadding = Number.parseFloat(panelStyle.paddingBottom) || 0;
@@ -761,12 +761,11 @@ export function SqlAnalysisPage({
       {!contextCollapsed && (
         <Panel asChild>
           <aside className="sql-dataset-panel" ref={contextPanelRef}>
-            <ScrollArea className="h-full" type="always">
-              <Tabs
-                className="grid min-h-full grid-rows-[max-content_minmax(0,1fr)] gap-4 pr-3"
-                onValueChange={(value) => setContextPanelTab(value as "tables" | "queryAi")}
-                value={contextPanelTab}
-              >
+            <Tabs
+              className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
+              onValueChange={(value) => setContextPanelTab(value as "tables" | "queryAi")}
+              value={contextPanelTab}
+            >
                 <div className="grid gap-4">
                   <PanelHeader
                     actions={(
@@ -787,7 +786,7 @@ export function SqlAnalysisPage({
                     </TabsTrigger>
                   </TabsList>
                 </div>
-                <TabsContent className="mt-0 grid min-w-0 gap-3" value="tables">
+                <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[max-content_minmax(0,1fr)] gap-3 overflow-hidden" value="tables">
                   <FilterToolbarSearch icon={<Search size={15} />} size="compact">
                     <FilterToolbarInput
                       aria-label="분석 테이블 검색"
@@ -798,25 +797,27 @@ export function SqlAnalysisPage({
                       type="search"
                     />
                   </FilterToolbarSearch>
-                  <section className="grid min-h-0 content-start grid-rows-[max-content_max-content_max-content] gap-2">
+                  <section className="grid min-h-0 grid-rows-[max-content_minmax(0,1fr)_max-content] gap-2">
                     <FieldTitle>데이터셋</FieldTitle>
                     <Panel asChild>
-                      <div className="grid min-h-0 gap-0" ref={contextListRef}>
-                        <SqlDatasetTree
-                          datasets={paginatedContextDatasets}
-                          expandedDatasetId={expandedDatasetId}
-                          onSelect={addSelectedDataset}
-                          onToggle={toggleDatasetPreview}
-                        />
-                        {filteredDatasets.length === 0 && (
-                          <Empty size="sm" variant="bordered">
-                            <EmptyHeader>
-                              <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
-                              <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "선택된 테이블을 해제하면 다시 표시됩니다."}</EmptyDescription>
-                            </EmptyHeader>
-                          </Empty>
-                        )}
-                      </div>
+                      <ScrollArea className="min-h-0" type="always">
+                        <div className="grid min-w-0 gap-0 pr-3" ref={contextListRef}>
+                          <SqlDatasetTree
+                            datasets={paginatedContextDatasets}
+                            expandedDatasetId={expandedDatasetId}
+                            onSelect={addSelectedDataset}
+                            onToggle={toggleDatasetPreview}
+                          />
+                          {filteredDatasets.length === 0 && (
+                            <Empty size="sm" variant="bordered">
+                              <EmptyHeader>
+                                <EmptyTitle>{datasetSearch.trim() ? "검색 결과가 없습니다." : "선택 가능한 테이블이 없습니다."}</EmptyTitle>
+                                <EmptyDescription>{datasetSearch.trim() ? "다른 검색어를 입력해 주세요." : "선택된 테이블을 해제하면 다시 표시됩니다."}</EmptyDescription>
+                              </EmptyHeader>
+                            </Empty>
+                          )}
+                        </div>
+                      </ScrollArea>
                     </Panel>
                     {filteredDatasets.length > contextPageSize && (
                       <PaginationBar
@@ -832,68 +833,63 @@ export function SqlAnalysisPage({
                     )}
                   </section>
                 </TabsContent>
-                <TabsContent className="mt-0 grid min-w-0 gap-3" value="queryAi">
-                  <Panel className="grid gap-3 p-3.5" variant="muted">
-                    <div className="flex min-w-0 items-center justify-between gap-3 max-[860px]:grid max-[860px]:grid-cols-1">
-                      <Badge size="sm" variant="default">Query AI 생성</Badge>
-                      <Badge className="max-w-[48%] truncate max-[860px]:max-w-full" size="sm" variant="secondary">
-                        {baseDataset ? baseDataset.name : "테이블 선택 필요"}
-                      </Badge>
-                    </div>
-                    <div className="grid min-w-0 gap-2.5">
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch gap-2.5 max-[860px]:grid-cols-1">
-                        <Field>
-                          <FieldLabel htmlFor="sql-query-ai-prompt">요청</FieldLabel>
-                          <Textarea
-                            className="min-h-[66px]"
-                            id="sql-query-ai-prompt"
-                            ref={queryAiPromptRef}
-                            onChange={(event) => {
-                              setQueryAiPrompt(event.target.value);
-                              setQueryAiError(null);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter" || event.shiftKey) return;
-                              event.preventDefault();
-                              void requestQueryAiSuggestion();
-                            }}
-                            placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
-                            rows={3}
-                            value={queryAiPrompt}
-                          />
-                        </Field>
-                        <ActionGroup align="end" className="self-end" density="compact">
-                          <Button disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
-                            <Sparkles data-icon="inline-start" /> {queryAiPending ? "생성 중" : "제안"}
-                          </Button>
-                        </ActionGroup>
+                <TabsContent className="mt-0 min-h-0 min-w-0 overflow-hidden" value="queryAi">
+                  <ScrollArea className="h-full" type="always">
+                    <Panel className="mr-3 grid gap-3 p-3.5" variant="muted">
+                      <div className="grid min-w-0 gap-2.5">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-stretch gap-2.5 max-[860px]:grid-cols-1">
+                          <Field>
+                            <FieldLabel htmlFor="sql-query-ai-prompt">요청</FieldLabel>
+                            <Textarea
+                              className="min-h-[66px]"
+                              id="sql-query-ai-prompt"
+                              ref={queryAiPromptRef}
+                              onChange={(event) => {
+                                setQueryAiPrompt(event.target.value);
+                                setQueryAiError(null);
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter" || event.shiftKey) return;
+                                event.preventDefault();
+                                void requestQueryAiSuggestion();
+                              }}
+                              placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
+                              rows={3}
+                              value={queryAiPrompt}
+                            />
+                          </Field>
+                          <ActionGroup align="end" className="self-end" density="compact">
+                            <Button disabled={queryAiPending} onClick={requestQueryAiSuggestion} type="button" size="sm" variant="outline">
+                              <Sparkles data-icon="inline-start" /> {queryAiPending ? "생성 중" : "제안"}
+                            </Button>
+                          </ActionGroup>
+                        </div>
+                        <Bubble
+                          aria-live="polite"
+                          className="sql-ai-suggestion w-full max-w-full"
+                          role={queryAiError ? "alert" : "status"}
+                          variant={queryAiSuggestion ? "outline" : queryAiError ? "destructive" : "muted"}
+                        >
+                          <BubbleContent className="grid w-full gap-2">
+                            {queryAiSuggestion ? (
+                              <>
+                                {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
+                                {queryAiSuggestion.sql && (
+                                  <Button onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
+                                    SQL에 적용
+                                  </Button>
+                                )}
+                              </>
+                            ) : (
+                              <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
+                            )}
+                          </BubbleContent>
+                        </Bubble>
                       </div>
-                      <Bubble
-                        aria-live="polite"
-                        className="sql-ai-suggestion w-full max-w-full"
-                        role={queryAiError ? "alert" : "status"}
-                        variant={queryAiSuggestion ? "outline" : queryAiError ? "destructive" : "muted"}
-                      >
-                        <BubbleContent className="grid w-full gap-2">
-                          {queryAiSuggestion ? (
-                            <>
-                              {queryAiSuggestion.sql && <pre>{queryAiSuggestion.sql}</pre>}
-                              {queryAiSuggestion.sql && (
-                                <Button onClick={applyQueryAiSuggestion} type="button" size="sm" variant="primary">
-                                  SQL에 적용
-                                </Button>
-                              )}
-                            </>
-                          ) : (
-                            <span>{queryAiError ?? (baseDataset ? "자동 실행 없이 초안만 만듭니다." : "분석 테이블을 추가하면 AI 제안을 만들 수 있습니다.")}</span>
-                          )}
-                        </BubbleContent>
-                      </Bubble>
-                    </div>
-                  </Panel>
+                    </Panel>
+                  </ScrollArea>
                 </TabsContent>
-              </Tabs>
-            </ScrollArea>
+            </Tabs>
           </aside>
         </Panel>
       )}

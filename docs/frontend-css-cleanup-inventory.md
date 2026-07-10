@@ -52,7 +52,7 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 | `frontend/src/styles/etl.css` | 9,097 | A | `부분 정리됨` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. #378에서 S3/DB picker shell은 `PickerDialog`, schema/rule bottom bar는 `CommandBar`로 이동. #385에서 target tag row, rule action footer, permission/review validation, review key-value summary를 공통 컴포넌트로 전환. #401에서 S3 picker tree wrapper와 ETL source asset tree shell은 `TreePanel`로 이동. #418에서 ETL source/rule/schedule/target/permission form과 S3/DB picker 검색 control의 raw input/select를 shadcn primitive로 1차 교체. #421에서 S3 picker, ETL source asset tree, JSON sample tree를 `TreeView`/`TreeRow` 기준으로 바꾸고 MUI TreeView selector를 제거. `.field`, `.input.control-input`, DB picker list/body, Source/Schema/Schedule form selector는 route QA와 wrapper 제거 전까지 유지. |
 | `frontend/src/styles/responsive.css` | 553 | A/B 공통 | `보류` | #468에서 사용처가 사라진 SQL editor/result/schema responsive selector를 제거. 여러 화면의 모바일 대응이 섞여 있으므로 나머지는 각 route 모바일 QA 후 추가 정리. |
 | `frontend/src/styles/catalog.css` | 1,391 | B | `부분 정리됨` | Catalog 목록/상세, lineage, schema preview. #361에서 Catalog shell은 `catalog-panel-*`, lineage graph는 `lineage-*` selector로 rename. #367에서 검색/결과/미리보기 panel shell selector를 `Panel`/`PanelHeader`로 이동. #375에서 검색 box/tag row/filter row shell selector를 `FilterToolbar` 계열로 이동. #420에서 sort menu는 `DropdownMenu` 기준으로 전환. #422에서 검색 결과/materialization pagination은 `PaginationBar` 기준으로 전환하고 예전 직접 button pagination selector를 축소. Catalog schema table은 `DataTable` 기준이며 preview card, lineage teaser, result card, tag/chip 시각 상태 CSS는 유지. |
-| `frontend/src/styles/sql.css` | 591 | B | `부분 정리됨` | #468 2차 정리에서 `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table 기본 surface까지 적용해 2,547줄에서 591줄로 축소. responsive workspace, dark SQL editor, tree 연결선/hover positioning, autocomplete 위치, result overflow, embedded Dashboard 크기 같은 도메인 layout CSS만 유지한다. |
+| `frontend/src/styles/sql.css` | 401 | B | `부분 정리됨` | #468에서 shadcn Table/ScrollArea/Slider와 Shadcnblocks/Kibo Tree까지 적용해 2,547줄에서 401줄로 축소. responsive workspace, dark SQL editor, tree hover positioning, autocomplete 위치, result/embedded Dashboard 크기 같은 도메인 layout CSS만 유지한다. |
 | `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
 | `frontend/src/styles/schema-transform-source.css` | 1 | A | `보류` | Tailwind import 역할을 유지한다. Tailwind entry 통합 전 삭제 금지. |
 | `frontend/src/styles/dashboard.css` | 1,298 | B | `부분 정리됨` | Dashboard list가 `DataTable`, `Panel`, `PanelHeader`, `Button`, `Input`, `FilterToolbar` 기준으로 일부 전환됨. #361에서 list shell legacy naming은 `dashboard-panel-*`로 rename. #367에서 list toolbar/table panel shell selector를 `Panel`/`PanelHeader`로 이동. #369에서 list toolbar body/search/actions/divider selector를 `FilterToolbar`로 이동. #378에서 list pagination은 `PaginationBar`, delete confirm dialog는 `DialogShell`로 이동. #385에서 dashboard header/workspace action row, row tag/status, list status meta는 공통 컴포넌트로 전환. #422에서 list owner/tag/sort menu를 `DropdownMenu` item/radio/checkbox 기준으로 전환하고 option density CSS만 유지. builder preview와 table density selector는 계속 유지. |
@@ -116,7 +116,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | `SegmentedTabs` / `SelectableCard` | 단계 전환, source connector, schedule mode, widget type card의 selected/disabled/focus selector를 추적한다. rename/edit 상태가 있는 탭은 route QA 전 `보류`로 유지한다. |
 | `IconOptionGrid` | icon-only option button grid, selected state, tooltip, keyboard focus selector를 추적한다. |
 | `DetailTableSection` | 작은 detail table 주변 title, action, empty state, overflow shell selector를 추적한다. table 자체보다 section wrapper CSS를 먼저 기록한다. |
-| `TreePanel` / `TreeView` / `TreeRow` | S3/ETL/SQL/Dashboard tree의 outer wrapper와 row shell은 공통 component로 옮기되, 화면별 density, hover card, arborist runtime selector는 route QA 전까지 필요한 만큼 유지한다. |
+| `TreePanel` / `TreeView` / `TreeRow` | S3/ETL/Dashboard tree의 outer wrapper와 row shell은 공통 component로 옮기되 화면별 density, hover card, arborist runtime selector는 route QA 전까지 유지한다. SQL tree는 Shadcnblocks/Kibo Tree로 이동했고 fixed hover detail만 route CSS에 남긴다. |
 
 현재 코드 스윕 기준으로 먼저 시도하기 좋은 순서는 `PreviewPanel/ResultPanel` -> `FormFieldGroup/NativeSelectField` -> `SettingsPanel` -> `SegmentedTabs/SelectableCard` -> `IconOptionGrid` -> `DetailTableSection`이다. #401에서 `TreePanel` wrapper/state shell은 1차 적용됐고, `WidgetShell`, `ColorPalettePicker`, `TreeHoverCard`는 상태와 라이브러리 차이가 커서 별도 설계 PR로 분리한다.
 
@@ -373,6 +373,22 @@ npm run build
 
 - `rg "@mui|@emotion|MuiTreeItem|MuiTooltip|SimpleTreeView"` 기준으로 코드/package 사용처 없음.
 - `cd frontend && npm run build` 통과. Vite chunk size warning과 기존 audit warning은 별도 범위로 유지.
+
+## #468 SQL Shadcnblocks Tree CSS 기록
+
+SQL dataset tree는 Shadcnblocks `tree-lines-1` registry가 설치한 Kibo UI Tree로 교체했다. connector line, row hover/focus, icon, expand/collapse animation은 component source가 소유한다.
+
+| 범위 | 제거/유지 selector | 이번 판단 |
+| --- | --- | --- |
+| SQL branch/table/column tree | `.sql-dataset-tree`, `.sql-tree-node`, `.sql-tree-branch`, `.sql-tree-table-*`, `.sql-tree-column-*` | registry Tree component로 이동해 모두 제거했다. |
+| SQL hover detail | `.sql-tree-hover-card`, `.sql-tree-hover-icon`, `.sql-tree-hover-body` | viewport-relative fixed card 위치와 도메인 metadata typography이므로 유지했다. |
+| SQL row measurement | `.sql-tree-table-row-shell` | CSS selector 의존을 제거하고 `[data-sql-dataset-row]` contract로 page-size 계산을 유지했다. |
+
+검증:
+
+- `cd frontend && npm run build` 통과.
+- mouse/keyboard expand-collapse, column group, `+ 추가`, 1,200px/860px horizontal overflow, browser console을 확인했다.
+- `page-body`의 실제 남은 높이를 SQL grid가 사용하고 Tree만 `ScrollArea`로 스크롤하도록 정리해 720px viewport에서도 pagination과 footer가 겹치지 않음을 확인했다.
 
 ## #420 Navigation/Menu/Overlay Primitive CSS 기록
 
