@@ -115,6 +115,30 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard widget settings use the shared searchable combobox",
+    file: "src/pages/dashboard/runtime/WidgetConfigPanel.tsx",
+    patterns: [
+      /import \{ DashboardFieldCombobox, type DashboardComboboxOption \} from "\.\/DashboardFieldCombobox";/,
+      /function WidgetSelectField\([\s\S]*?<DashboardFieldCombobox/,
+      /Children\.toArray\(children\)\.flatMap/,
+      /child\.type !== "option"/,
+    ],
+    forbiddenPatterns: [
+      /<select/,
+    ],
+  },
+  {
+    name: "Dashboard widget combobox supports filtering and keyboard selection",
+    file: "src/pages/dashboard/runtime/DashboardFieldCombobox.tsx",
+    patterns: [
+      /role="combobox"/,
+      /placeholder=\{`\$\{label\} 검색`\}/,
+      /event\.key === "Enter" && filteredOptions\.length === 1/,
+      /role="listbox"/,
+      /role="option"/,
+    ],
+  },
+  {
     name: "Dashboard dataset sidebar uses shadcn-compatible tree states",
     file: "src/pages/dashboard/runtime/DatasetSidebar.tsx",
     patterns: [
