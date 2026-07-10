@@ -3,6 +3,7 @@ import { Check, Database, RefreshCw, Search, X } from "lucide-react";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
 type DatabaseFieldProps = {
+  disabled?: boolean;
   onChange: (databaseName: string) => void;
   value: string;
 };
@@ -20,7 +21,7 @@ function mergeCurrentDatabase(databases: TargetDatabaseOption[], currentName: st
   return [{ description: "현재 설정된 DB", name: normalizedName }, ...databases];
 }
 
-export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
+export function DatabaseField({ disabled = false, onChange, value }: DatabaseFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -28,11 +29,11 @@ export function DatabaseField({ onChange, value }: DatabaseFieldProps) {
       <div className="database-display" title={value}>
         {value.trim() ? <span>{value}</span> : <em>DB를 선택하세요</em>}
       </div>
-      <button className="secondary-button database-field-action" type="button" onClick={() => setPickerOpen(true)}>
+      <button className="secondary-button database-field-action" disabled={disabled} type="button" onClick={() => setPickerOpen(true)}>
         <Database size={14} />
         찾아보기
       </button>
-      {pickerOpen ? (
+      {pickerOpen && !disabled ? (
         <DatabasePicker
           value={value}
           onCancel={() => setPickerOpen(false)}

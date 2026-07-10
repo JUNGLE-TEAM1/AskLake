@@ -6,6 +6,7 @@ import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFo
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
 type S3PathFieldProps = {
+  disabled?: boolean;
   onChange: (path: string) => void;
   value: string;
 };
@@ -47,7 +48,7 @@ function S3PathText({ value }: { value: string }) {
   return <span className="s3-path-text" title={parsed.path}>{parsed.path}</span>;
 }
 
-export function S3PathField({ onChange, value }: S3PathFieldProps) {
+export function S3PathField({ disabled = false, onChange, value }: S3PathFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -64,7 +65,7 @@ export function S3PathField({ onChange, value }: S3PathFieldProps) {
       <div className="s3-path-display" title={parsed.path || value}>
         <S3PathText value={value} />
       </div>
-      <button className="secondary-button s3-path-action" type="button" onClick={() => setPickerOpen(true)}>
+      <button className="secondary-button s3-path-action" disabled={disabled} type="button" onClick={() => setPickerOpen(true)}>
         <FolderSearch size={14} />
         찾아보기
       </button>
@@ -72,7 +73,7 @@ export function S3PathField({ onChange, value }: S3PathFieldProps) {
         {copied ? <Check size={14} /> : <Clipboard size={14} />}
         {copied ? "복사됨" : "복사"}
       </button>
-      {pickerOpen ? (
+      {pickerOpen && !disabled ? (
         <S3PathPicker
           value={value}
           onCancel={() => setPickerOpen(false)}

@@ -29,9 +29,11 @@ type PipelineEditorMode =
 ```
 
 - `create`: 빈/신규 draft로 `POST /api/etl/jobs`를 호출한다.
-- `edit`: `GET /api/etl/jobs/{jobId}` 결과를 draft로 변환한다. Phase 2에서는 중복 생성을 막고, 다음 Phase에서 `PATCH /api/etl/jobs/{jobId}`를 호출한다.
+- `edit`: `GET /api/etl/jobs/{jobId}` 결과를 draft로 변환하고 `PATCH /api/etl/jobs/{jobId}`로 같은 Job ID를 업데이트한다.
 - 수정 중 취소하거나 update가 실패해도 서버의 기존 Job을 변경하지 않는다. 실패한 edit draft는 화면에 남겨 재시도할 수 있어야 한다.
 - 브라우저 새로고침 뒤에도 URL 또는 화면 state로 edit 대상 Job을 다시 조회할 수 있어야 한다. 저장 전 draft의 영속화 방식은 구현 단계에서 정하되, 새 기본 draft로 대체하면 안 된다.
+
+Phase 4 UI는 수정 mode를 명시하고, Source 단계의 이전 버튼으로 수정 취소 후 기존 Job 상세로 돌아간다. 성공 Run이 있는 Job은 target identity 필드를 읽기 전용으로 표시하며 설명, 태그, 파티션 같은 허용 metadata만 편집할 수 있다.
 
 ## 3. 필드 변경 정책
 

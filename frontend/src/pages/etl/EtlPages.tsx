@@ -5297,12 +5297,14 @@ export function TargetPage({
   onDraftChange,
   onPrev,
   onNext,
+  targetIdentityLocked = false,
 }: {
   draft: DraftPipeline;
   onDraftChange: (patch: DraftPipelinePatch) => void;
   onPrev: () => void;
   onNext: () => void;
   onSave: () => void;
+  targetIdentityLocked?: boolean;
 }) {
   const initialTarget = getTargetDraftValues(draft);
   const draftTarget = (draft as DraftPipelineWithSlices).target;
@@ -5473,7 +5475,8 @@ export function TargetPage({
 
   return (
     <CreationFlowLayout actions={<CreationTopActions prevLabel="이전" nextLabel="다음" onPrev={onPrev} onNext={handleNext} />}>
-      <PageTitle title="타겟 설정" description="최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다." />
+      <PageTitle title="타겟 설정" description={targetIdentityLocked ? "성공 Run이 있어 목적지 식별값은 고정됩니다. metadata와 파티션은 수정할 수 있습니다." : "최종 데이터셋의 저장 명세, 컬럼 규칙, 파티션을 설정합니다."} />
+      {targetIdentityLocked ? <InfoBox title="저장 목적지 고정" body="성공한 데이터가 있는 Job은 데이터셋, DB, 포맷, 저장 경로를 바꿀 수 없습니다. 다른 목적지가 필요하면 Job을 복제하세요." /> : null}
       {validationErrors.length > 0 ? (
         <div className="target-validation-summary" role="alert">
           {validationErrors.map((error) => <span key={error}>{error}</span>)}
@@ -5491,7 +5494,7 @@ export function TargetPage({
           <div className="target-xflow-form-grid basic">
             <label className="field wide">
               <span>데이터셋명</span>
-              <input className="input control-input" value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
+              <input className="input control-input" readOnly={targetIdentityLocked} value={targetDataset} onChange={(event) => setTargetDataset(event.target.value)} />
             </label>
             <label className="field">
               <span>오너</span>
@@ -5519,7 +5522,7 @@ export function TargetPage({
           <div className="target-xflow-form-grid destination">
             <label className="field target-db-field">
               <span>DB 선택</span>
-              <DatabaseField value={databaseName} onChange={setDatabaseName} />
+              <DatabaseField disabled={targetIdentityLocked} value={databaseName} onChange={setDatabaseName} />
             </label>
             <label className="field target-format-field">
               <span>포맷</span>
@@ -5527,13 +5530,14 @@ export function TargetPage({
                 <button
                   aria-expanded={formatOptionsOpen}
                   className="target-format-trigger"
+                  disabled={targetIdentityLocked}
                   type="button"
                   onClick={() => setFormatOptionsOpen((open) => !open)}
                 >
                   <span>{targetFormat}</span>
                   {formatOptionsOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                 </button>
-                {formatOptionsOpen ? (
+                {formatOptionsOpen && !targetIdentityLocked ? (
                   <div className="target-format-menu">
                     {TARGET_FORMAT_OPTIONS.map((format) => (
                       <button
@@ -5555,7 +5559,7 @@ export function TargetPage({
             </label>
             <label className="field wide target-storage-field">
               <span>저장경로</span>
-              <S3PathField value={targetStoragePath} onChange={setTargetStoragePath} />
+              <S3PathField disabled={targetIdentityLocked} value={targetStoragePath} onChange={setTargetStoragePath} />
             </label>
           </div>
         </section>

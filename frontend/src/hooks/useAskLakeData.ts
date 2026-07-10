@@ -834,6 +834,12 @@ export function useAskLakeData({
     onFlowChange("source");
   };
 
+  const cancelJobEdit = () => {
+    setEditingJobId(null);
+    setDraftPipeline(initialDraftPipeline);
+    onFlowChange("jobDetail");
+  };
+
   const startJobEdit = async (job: JobRowData) => {
     setApiPending(true);
     try {
@@ -1151,6 +1157,7 @@ export function useAskLakeData({
 
   return {
     apiPending,
+    cancelJobEdit,
     commandPendingByJobId,
     createPipeline,
     dataError,
