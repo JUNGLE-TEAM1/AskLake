@@ -37,9 +37,9 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 
 ## 현재 스냅샷
 
-기준일: 2026-07-09
+기준일: 2026-07-10
 
-기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401`, #418 `refactor-#418`, #419 `refactor-#419`, #421 `refactor-#421` 확인 기준
+기준 브랜치: A03 `feat-#352`, B04 `feat-#350`, #357 `refactor-#357`, #361 `refactor-#361`, #364 `refactor-#364`, #367 `refactor-#367`, #369 `refactor-#369`, #375 `refactor-#375`, #378 `feat-#378`, #385 `feat-#385`, #387 `refactor-#387`, #389 `feat-#389`, #391 `refactor-#391`, #393 `refactor-#393`, #395 `refactor-#395`, #401 `refactor-#401`, #418 `refactor-#418`, #419 `refactor-#419`, #421 `refactor-#421`, #440 `docs-#440` 확인 기준
 
 주의: 이 문서는 현재 CSS 상태와 진행 중 A/B 작업으로 생길 cleanup 후보를 함께 추적한다. CSS 관련 PR마다 실제 route QA, `rg` 확인 결과, 유지/제외 판단을 반영해 갱신한다.
 
@@ -47,10 +47,10 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 | --- | ---: | --- | --- | --- |
 | `frontend/src/styles/base.css` | 706 | A/B 공통 | `교체 후보` | reset, token, `.icon-button` 등 공통 기반. #369에서 Jobs 전용으로 남아 있던 global `.filter-chip` selector 제거. |
 | `frontend/src/styles/layout.css` | 713 | A | `교체 후보` | App Shell, Sidebar, Topbar, Page title, legacy button class 포함. |
-| `frontend/src/styles/ingest.css` | 1,760 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동. #385에서 status/owner/tag pill, job row/detail action group, Jobs detail key-value markup은 공통 컴포넌트로 전환했고 #393에서 Jobs tab, #395에서 run history table shell은 공통 컴포넌트로 전환. `.status-pill`, `.owner-chip`, `.tag-chip`, `.job-row-details`, `.job-row-actions`, `.runs-table*` density CSS는 유지. |
+| `frontend/src/styles/ingest.css` | 834 | A | `부분 정리됨` | A02에서 Jobs 목록에 PageHeader/primitive/DataTable 적용. #361에서 Jobs shell legacy naming은 `jobs-panel-*`로 rename. #364에서 legacy table footer/empty selector 제거. #367에서 Jobs panel shell/metric selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동했고 #440에서 목록 현황은 shadcn `Button` composition으로 교체했다. #369에서 Jobs toolbar body/search/filter chip selector를 `FilterToolbar`로 이동. #378에서 runs footer는 `PaginationBar`, job/run log modal은 `DialogShell`로 이동. #385에서 status/owner/tag pill, job row/detail action group, Jobs detail key-value markup은 공통 컴포넌트로 전환했고 #393에서 Jobs tab, #395에서 run history table shell은 공통 컴포넌트로 전환. #440에서 Jobs table의 화면 전용 header/cell/column/action selector와 사용되지 않는 `job-log-modal` wrapper/pre selector, 목록 `.status-pill` selector를 제거했다. 이어 사용하지 않는 카드형 목록과 `/jobs-table-demo` route를 삭제하고 `.jobs-page-header`, `.jobs-view-switch`, `.job-row*`, `.job-progress*`, `.job-table-footer` 전용 selector를 제거했다. 최종 사용처 대조에서 `danger-text`, detail metric/status, runs DAG card/flow, `summary-kv` selector도 제거했다. `.run-status-pill`, `.owner-chip`, `.tag-chip`, `.runs-table*` density CSS는 상세/실행 이력에서 계속 사용한다. |
 | `frontend/src/styles/ingest-dag.css` | 537 | A | `보류` | Run DAG modal/graph 전용. 화면 QA 전 삭제 금지. |
 | `frontend/src/styles/etl.css` | 9,097 | A | `부분 정리됨` | A03에서 PageHeader/Button primitive 일부 적용. #357에서 ETL 내부 legacy xflow naming은 AskLake 도메인 이름으로 rename. #378에서 S3/DB picker shell은 `PickerDialog`, schema/rule bottom bar는 `CommandBar`로 이동. #385에서 target tag row, rule action footer, permission/review validation, review key-value summary를 공통 컴포넌트로 전환. #401에서 S3 picker tree wrapper와 ETL source asset tree shell은 `TreePanel`로 이동. #418에서 ETL source/rule/schedule/target/permission form과 S3/DB picker 검색 control의 raw input/select를 shadcn primitive로 1차 교체. #421에서 S3 picker, ETL source asset tree, JSON sample tree를 `TreeView`/`TreeRow` 기준으로 바꾸고 MUI TreeView selector를 제거. `.field`, `.input.control-input`, DB picker list/body, Source/Schema/Schedule form selector는 route QA와 wrapper 제거 전까지 유지. |
-| `frontend/src/styles/responsive.css` | 561 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector 제거. #369에서 Jobs/Dashboard toolbar responsive selector를 `FilterToolbar` responsive utility로 이동. 각 route 모바일 QA 후 추가 정리. |
+| `frontend/src/styles/responsive.css` | 464 | A/B 공통 | `보류` | 여러 화면의 모바일 대응이 섞여 있음. #364에서 Jobs legacy footer responsive selector 제거. #369에서 Jobs/Dashboard toolbar responsive selector를 `FilterToolbar` responsive utility로 이동. #440에서 사용하지 않는 Jobs 카드형 목록, 표형 데모, legacy log modal wrapper와 삭제된 detail metric/status selector의 responsive 규칙을 제거했다. 다른 route selector는 각 route 모바일 QA 후 추가 정리한다. |
 | `frontend/src/styles/catalog.css` | 1,391 | B | `부분 정리됨` | Catalog 목록/상세, lineage, schema preview. #361에서 Catalog shell은 `catalog-panel-*`, lineage graph는 `lineage-*` selector로 rename. #367에서 검색/결과/미리보기 panel shell selector를 `Panel`/`PanelHeader`로 이동. #375에서 검색 box/tag row/filter row shell selector를 `FilterToolbar` 계열로 이동. #420에서 sort menu는 `DropdownMenu` 기준으로 전환. #422에서 검색 결과/materialization pagination은 `PaginationBar` 기준으로 전환하고 예전 직접 button pagination selector를 축소. Catalog schema table은 `DataTable` 기준이며 preview card, lineage teaser, result card, tag/chip 시각 상태 CSS는 유지. |
 | `frontend/src/styles/sql.css` | 2,547 | B | `부분 정리됨` | SQL panel/editor/preview. B02/B03에서 SQL preview table은 `DataTable` 기준으로 전환됐고 action button/dialog primitive 적용이 진행됨. #375에서 분석 테이블 검색 shell selector를 `FilterToolbarSearch`/`FilterToolbarInput`으로 이동. #378에서 context pagination은 `PaginationBar`, materialize dialog shell은 `DialogShell`로 이동. #385에서 AI/editor/result action rows는 `ActionGroup`으로 전환. #401에서 dataset tree outer shell은 `TreePanel`로 이동. #419에서 Query AI prompt, SQL editor, materialize description/RAG control을 `Textarea`/`Checkbox`로 교체. #421에서 dataset tree branch/table/column row를 `TreeRow`/`TreeStaticRow` shell로 연결. editor/result shell, 실행 상태, preview wrapper CSS는 유지. |
 | `frontend/src/styles/schema-transform-adapter.css` | 119 | A | `보류` | `SchemaTransformWorkbench` adapter 전용. 외부 editor DOM 구조에 의존하므로 schema transform QA 전 삭제 금지. |
@@ -65,9 +65,10 @@ shadcn primitive로 대체 가능한 raw UI와 wrapper 판단은 `docs/frontend-
 | App Shell / Topbar / Sidebar | `layout.css`, `base.css`, `responsive.css` | `교체 후보` | Router Shell과 layout component 기준으로 active/navigation 스타일을 정리한다. |
 | Page title | `layout.css`, `ingest.css`, `catalog.css`, `dashboard.css`, `styles.css` | `부분 정리됨` | Jobs/ETL에 이어 #384에서 Catalog/SQL/Dashboard list 상단 헤더를 `PageHeader` 기준으로 맞춤. Module placeholder, ETL schedule standalone, Dashboard runtime/compact header, legacy `.page-title` selector는 후속 QA 후 축소한다. |
 | Legacy button class | `layout.css`, `ingest.css`, `etl.css`, `catalog.css`, `sql.css`, `dashboard.css` | `교체 후보` | `.primary-button`, `.secondary-button`, `.ghost-button`, `.icon-button` 사용처를 `Button`/`IconButton`으로 옮긴 뒤 제거한다. |
-| Jobs 목록 shell / toolbar | `ingest.css`, `responsive.css`, `base.css` | `정리됨` | #367에서 Jobs metrics/filter/table panel shell과 metrics card selector를 `Panel`/`PanelHeader`/`MetricCard`로 이동. #369에서 Jobs toolbar body/search/filter chip/reset responsive selector를 `FilterToolbar`로 이동. Jobs table detail selector는 유지. |
+| Jobs 목록 shell / toolbar | `ingest.css`, `responsive.css`, `base.css` | `정리됨` | #367에서 Jobs metrics/filter/table panel shell을 `Panel`/`PanelHeader` 기준으로 이동했고 #440에서 Jobs 상태 요약을 shadcn `Button` composition으로 교체했다. #369에서 Jobs toolbar body/search/filter chip/reset responsive selector를 `FilterToolbar`로 이동했다. 사용하지 않는 카드형 목록과 `/jobs-table-demo` route 및 전용 CSS도 제거했다. Job 상세와 실행 이력 selector는 해당 route 감사 전 유지한다. |
 | Jobs table legacy footer/empty | `ingest.css`, `responsive.css` | `정리됨` | A02에서 `JobsPages.tsx` 사용처가 제거된 뒤 CSS만 남아 있던 `jobs-table-empty`, `jobs-table-preview-footer` selector를 #364에서 삭제. |
-| Jobs status/owner/tag chip | `ingest.css` | `부분 정리됨` | #385에서 `StatusBadge`, `Chip`, `TagList`로 markup을 전환. `.status-pill`, `.run-status-pill`, `.owner-chip`, `.tag-chip`은 기존 색/간격 보존을 위해 유지. |
+| Jobs DataTable cell/action density | `ingest.css`, `responsive.css` | `정리됨` | #440에서 title/subtitle 셀을 `DataTableStackedCell`로 이동하고 `DataTableColumnMeta`와 shadcn Table 기본 density를 사용하도록 전환. `jobs-table-preview*`, `jobs-table-*-cell`, `jobs-data-table*` selector를 삭제. |
+| Jobs status/owner/tag chip | `ingest.css` | `부분 정리됨` | #385에서 `StatusBadge`, `Chip`, `TagList`로 markup을 전환했고 #440에서 목록 `.status-pill` selector를 제거했다. `.run-status-pill`, `.owner-chip`, `.tag-chip`은 실행 이력/card/detail의 기존 색·간격 보존을 위해 유지. |
 | Run History table | `ingest.css`, `ingest-dag.css` | `부분 정리됨` | #378에서 `.runs-pagination` markup은 `PaginationBar`로 전환. #395에서 `.runs-table-card`와 `.runs-table-scroll` shell은 `DetailTableSection`으로 전환. `.runs-table*` density와 DAG modal/graph는 별도 QA 전 유지한다. |
 | ETL Source/Schema flow | `etl.css`, `schema-transform-adapter.css`, `schema-transform-source.css` | `부분 정리됨` | A03에서 PageHeader와 주요 action button은 primitive 적용. #357에서 legacy naming은 정리. #378에서 S3/DB picker shell과 schema/rule bottom command wrapper를 공통화했고, #385에서 Review summary/validation, Target tag, rule action footer를 공통 컴포넌트로 전환. #418에서 ETL source/rule/schedule/target/permission의 대표 form control을 `Input`/`NativeSelect`로 교체하고, S3/DB 검색은 `InputGroup`으로 전환. #421에서 S3/ETL tree row는 `TreeView`/`TreeRow`로 이동. card, segmented tabs, schema workbench, form wrapper, DB picker list selector는 유지. |
 | Tree UI | `etl.css`, `schema-transform-adapter.css` | `부분 정리됨` | #401에서 S3 picker와 ETL source asset tree의 wrapper shell은 `TreePanel`로 전환. #421에서 S3 picker, ETL source asset tree, JSON sample tree의 MUI TreeView를 제거하고 `TreeView`/`TreeRow` selector로 이동. SchemaTransformEditor tree/editor selector는 실제 교체 전 삭제하지 않는다. |
@@ -108,7 +109,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | --- | --- |
 | `PaginationBar` | DataTable 밖 pagination selector를 `교체 후보` 또는 `부분 정리됨`으로 갱신한다. 예: `catalog-pagination`, `catalog-materialization-pagination`, `sql-context-pagination`, `dashboard-pagination`, `runs-pagination`. |
 | `DialogShell` / `PickerDialog` | custom backdrop/dialog selector를 route QA 전까지 `부분 정리됨` 또는 `보류`로 남긴다. 예: `catalog-modal-*`, `sql-materialize-dialog-*`, `job-log-modal`, `run-dag-modal`, `s3-picker-*`, `dashboard-*-modal`. |
-| `ActionGroup` | header/action row와 footer action selector는 wrapper만 공통화하고, 버튼 자체 색/폭/반응형 CSS는 route QA 전까지 유지한다. 예: `sql-ai-actions`, `sql-editor-actions`, `sql-result-actions`, `dashboard-header-actions`, `job-row-actions`, `job-detail-actions`, `hegun-rule-form-actions`. |
+| `ActionGroup` | header/action row와 footer action selector는 wrapper만 공통화하고, 버튼 자체 색/폭/반응형 CSS는 route QA 전까지 유지한다. 예: `sql-ai-actions`, `sql-editor-actions`, `sql-result-actions`, `dashboard-header-actions`, `job-detail-actions`, `hegun-rule-form-actions`. |
 | `Chip` / `TagList` / `StatusBadge` | 기존 `Badge`로 대체된 범위와 interactive chip으로 유지한 범위를 분리한다. 예: `status-pill`, `run-status-pill`, `owner-chip`, `tag-chip`, `target-chip`, `*-type-pill`. |
 | `KeyValueList` / `ValidationList` | ETL/Creation/Catalog/Jobs detail의 summary/validation row selector를 화면별로 유지할지, 공통 row로 옮길지 기록한다. |
 | `PreviewPanel` / `ResultPanel` | `DataTable` 적용이 끝난 표 주변의 header, empty/loading, CTA, overflow shell selector를 추적한다. |
@@ -194,7 +195,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 
 | 범위 | 관련 selector | 이번 판단 |
 | --- | --- | --- |
-| Jobs view/detail tabs | `.jobs-view-switch`, `.job-detail-tabs` | Jobs 목록 보기 전환과 상세 탭을 `SegmentedTabs`로 전환. button density/active selector는 유지. |
+| Jobs detail tabs | `.job-detail-tabs` | 작업 상세 탭을 `SegmentedTabs`로 전환. 사용하지 않는 목록 보기 전환과 `.jobs-view-switch`는 제거했다. 상세 탭 density/active selector는 유지한다. |
 | ETL rule category tabs | `.hegun-rule-category-list`, `.hegun-rule-category`, `.hegun-rule-category-icon` | rule mode tablist를 `SegmentedTabs`로 전환. icon/copy/active selector는 유지. |
 | checkbox/radio option card | `.permission-config-role`, `.target-partition-option` | #393에서는 button 기반 `SelectableCard` 전환을 보류했고, #414에서 label+input 기반 `CheckableOption`으로 shell만 전환했다. |
 
@@ -226,7 +227,7 @@ shadcn replacement PR에서는 `docs/frontend-shadcn-replacement-inventory.md`�
 | 범위 | 관련 selector | 이번 판단 |
 | --- | --- | --- |
 | PaginationBar | `.sql-context-pagination`, `.dashboard-pagination`, `.runs-pagination` | 공통 component로 markup을 옮겼지만 화면별 density/compact CSS는 유지. route QA 후 공통 variant로 흡수 가능. |
-| DialogShell | `.sql-materialize-dialog`, `.job-log-modal-header`, `.dashboard-delete-modal*` | dialog shell은 공통화. content/header/body density selector는 일부 유지. `.sql-materialize-dialog-backdrop`, `.job-log-modal`, `.job-log-modal section`, `.job-log-modal pre`, `.dashboard-delete-modal` wrapper 계열은 사용처가 제거되어 삭제 후보. |
+| DialogShell | `.sql-materialize-dialog`, `.job-log-modal-header`, `.dashboard-delete-modal*` | dialog shell은 공통화. content/header/body density selector는 일부 유지. #440에서 사용처가 없던 `.job-log-modal`, `.job-log-modal section`, `.job-log-modal pre`를 삭제했고 `.job-log-modal-header`는 #442 RunLogModal 전환 전까지 유지. |
 | PickerDialog | `.s3-picker-dialog`, `.s3-picker-header`, `.s3-picker-toolbar`, `.s3-picker-footer`, `.database-picker-*` | backdrop/header/footer shell은 공통화. S3 tree의 MUI 의존은 #421에서 제거했고, search/body density CSS는 picker 상태가 있어 유지. `.s3-picker-backdrop`은 사용처가 제거되어 삭제 후보. |
 | CommandBar | `.creation-top-actions`, `.summary-actions`, `.schema-bottom-bar`, `.hegun-rule-bottom-bar` | wrapper를 공통 component로 전환. ETL absolute/sticky 위치와 button density CSS는 유지. |
 
@@ -265,6 +266,7 @@ npm run build
 
 | 날짜 | 변경 |
 | --- | --- |
+| 2026-07-10 | #440에서 Jobs 검색을 `FilterToolbarInput`, 필터를 `DropdownMenu`, table stacked cell을 공통 composition으로 전환. Jobs table 전용 header/cell/column/action selector와 사용되지 않는 legacy job log modal wrapper/pre selector를 삭제하고 줄 수를 갱신. |
 | 2026-07-09 | Issue #347에서 초기 인벤토리 생성. A 작업 CSS와 B 작업 CSS를 한 문서에서 함께 추적하도록 정리. |
 | 2026-07-09 | A02에서 Jobs 목록 PageHeader/primitive/DataTable 적용 상태를 반영. `jobs-table-empty`, `jobs-table-preview-footer`는 CSS-only 삭제 후보로 표시. |
 | 2026-07-09 | A03에서 ETL PageHeader/주요 action button primitive 적용 상태를 반영. component gap inventory와 xflow rename 후속 cleanup 기준을 연결. |
