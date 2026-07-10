@@ -471,7 +471,36 @@ Rules:
 - 서버는 `TARGET_DATABASES` 또는 `ASKLAKE_TARGET_DATABASES`에 지정된 이름만 반환할 수 있습니다.
 - 환경변수가 없으면 local demo 기본값으로 `asklake`, `asklake_gold`, `analytics`, `marketing`을 반환합니다.
 
-### 7.2 파이프라인 생성
+### 7.2 Review snapshot
+
+`POST /api/etl/review`
+
+Request는 `CreatePipelineRequest`에 아래 필드를 추가합니다.
+
+```ts
+type ReviewPipelineRequest = CreatePipelineRequest & {
+  sourceConnectionStatus: "idle" | "testing" | "success" | "failed";
+};
+```
+
+Response는 Review 화면의 모든 표시값을 아래 shape로 반환합니다.
+
+```ts
+type ReviewSnapshot = {
+  basicInformation: Array<{ label: string; value: string }>;
+  schema: Array<{ columnName: string; type: string; nullable: string; transform: string }>;
+  destination: Array<{ label: string; value: string }>;
+  permission: Array<{ label: string; value: string }>;
+  validation: Array<{ label: string; status: "ready" | "warning"; value: string }>;
+  canCreate: boolean;
+};
+```
+
+- `targetDatabase`, `targetDescription`은 Review 표시용으로 create/review request에 함께 보냅니다.
+- live mode는 source connector 결과를 재확인하고, mock mode는 동일한 response shape를 fixture로 반환합니다.
+- Review UI는 local draft를 직접 조합하지 않고 이 response를 표시합니다.
+
+### 7.3 파이프라인 생성
 
 `POST /api/etl/jobs`
 

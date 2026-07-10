@@ -66,6 +66,7 @@ import { S3PathField } from "../../components/s3/S3PathField";
 import { DatabaseField } from "../../components/target/DatabaseField";
 import { runTransformQualitySamplePreview } from "../../data/transformQualityPreview";
 import { toCreatePipelineRequest } from "../../services/draftPipelineContract";
+import { getReviewSnapshot, type ReviewSnapshot } from "../../services/reviewApi";
 import { listSourceAssets, testSourceConnector, type SourceConnectorAnalysis } from "../../services/sourceConnectorService";
 import type { AuditResult, DraftPipeline, DraftPipelinePatch, FlowId, ScheduleFlowId, SchemaColumnDraft, SourceDraft, TargetLayer } from "../../types";
 import type { QualityRuleDraft, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, TransformStepDraft, WatermarkPolicyDraft, WatermarkWindowMode } from "../../types/etl";
@@ -5156,70 +5157,35 @@ export function ReviewPage({
   onEdit: (flow: FlowId) => void;
   onSave: () => void;
 }) {
-  const request = toCreatePipelineRequest(draft);
-  const includedReviewColumns = draft.schema.columns.filter(isSchemaColumnIncluded);
-  const schemaRows: ReviewSchemaRow[] = draft.transform.outputColumns.length > 0
-    ? draft.transform.outputColumns.map(([name, type]) => {
-        const sourceColumn = includedReviewColumns.find((column) => schemaColumnOutputName(column) === name || column.sourceName === name);
-        return {
-          columnName: name,
-          nullable: sourceColumn ? (sourceColumn.nullable ? "예" : "아니요") : "생성",
-          transform: sourceColumn ? (sourceColumn.sourceName === name ? `SOURCE.${sourceColumn.sourceName}` : `${sourceColumn.sourceName} -> ${name}`) : "변환 출력",
-          type,
-        };
+  const [reviewSnapshot, setReviewSnapshot] = useState<ReviewSnapshot | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReviewLoading(true);
+    void getReviewSnapshot(draft)
+      .then((snapshot) => {
+        if (!cancelled) setReviewSnapshot(snapshot);
       })
-    : includedReviewColumns.map((column) => ({
-        columnName: column.targetName,
-        nullable: column.nullable ? "예" : "아니요",
-        transform: column.sourceName === column.targetName ? `SOURCE.${column.sourceName}` : `${column.sourceName} -> ${column.targetName}`,
-        type: column.type,
-      }));
-  const sourceSummary = summarizeSourceConfig(request.sourceConfig);
-  const permissionReview = getPermissionDraftValues(draft);
-  const targetReview = getTargetDraftValues(draft);
-  const targetDatabaseName = (draft as DraftPipelineWithSlices).target?.databaseName ?? "asklake";
-  const sourceDisplay = [sourceTypeLabel(request.sourceType), sourceSummary || request.sourceLabel]
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .join(" · ");
-  const basicInformationRows = [
-    ["작업 ID", displayReviewValue(request.id)],
-    ["작업명", targetReview.jobName],
-    ["소스", displayReviewValue(sourceDisplay)],
-    ["대상 데이터셋", targetReview.targetDataset],
-    ["설명", targetReview.description],
-  ];
-  const destinationRows = [
-    ["저장 경로", targetReview.storagePath],
-    ["데이터베이스", targetDatabaseName],
-    ["테이블 이름", targetReview.tableName],
-    ["형식", targetReview.targetFormat],
-    ["계층", targetReview.targetLayer],
-    ["파티션", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
-  ];
-  const permissionRows = [
-    ["권한 템플릿", permissionReview.permissionTemplate],
-    ["공개 범위", permissionReview.visibility],
-    ["승인 상태", permissionReview.approvalStatus],
-    ["담당자", permissionReview.owner],
-    ["요약", permissionReview.permissionSummary],
-  ];
-  const validationRows = [
-    ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
-    ["스키마", includedReviewColumns.length > 0 ? "확정됨" : "추론 필요"],
-    ["처리 테스트", request.ruleSummary ? "통과" : "확인 필요"],
-    ["스케줄", request.scheduleLabel ? "유효함" : "확인 필요"],
-    ["실패 재시도", request.retryPolicySummary ? "유효함" : "확인 필요"],
-    ["권한/타겟", request.permissionSummary && request.targetDataset ? "유효함" : "확인 필요"],
-  ];
-  const canCreate = draft.source.connectionStatus === "success"
-    && includedReviewColumns.length > 0
-    && Boolean(request.sourceType.trim())
-    && Boolean(request.sourceLabel.trim())
-    && Boolean(request.targetDataset.trim())
-    && Boolean(request.owner.trim());
-  const createDisabled = createPending || !canCreate;
-  const createLabel = createPending ? "생성 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
+      .catch(() => {
+        if (!cancelled) setReviewSnapshot(null);
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [draft]);
+
+  const basicInformationRows = reviewSnapshot?.basicInformation ?? [];
+  const destinationRows = reviewSnapshot?.destination ?? [];
+  const permissionRows = reviewSnapshot?.permission ?? [];
+  const schemaRows = reviewSnapshot?.schema ?? [];
+  const validationRows = reviewSnapshot?.validation ?? [];
+  const canCreate = reviewSnapshot?.canCreate === true;
+  const createDisabled = createPending || reviewLoading || !canCreate;
+  const createLabel = createPending ? "생성 중..." : reviewLoading ? "서버 확인 중..." : canCreate ? "파이프라인 생성" : "검증 필요";
 
   return (
     <CreationFlowLayout
@@ -5242,7 +5208,7 @@ export function ReviewPage({
             </div>
             <KeyValueList
               className="etl-review-kv"
-              items={basicInformationRows.map(([label, value]) => ({
+              items={basicInformationRows.map(({ label, value }) => ({
                 className: label === "설명" ? "wide" : undefined,
                 label,
                 value,
@@ -5271,7 +5237,7 @@ export function ReviewPage({
             </div>
             <KeyValueList
               className="etl-review-kv destination"
-              items={destinationRows.map(([label, value]) => ({
+              items={destinationRows.map(({ label, value }) => ({
                 className: label === "저장 경로" ? "wide" : undefined,
                 label,
                 value,
@@ -5289,7 +5255,7 @@ export function ReviewPage({
             </div>
             <KeyValueList
               className="etl-review-kv permission"
-              items={permissionRows.map(([label, value]) => ({
+              items={permissionRows.map(({ label, value }) => ({
                 className: label === "요약" ? "wide" : undefined,
                 label,
                 value,
@@ -5297,10 +5263,10 @@ export function ReviewPage({
             />
             <ValidationList
               className="etl-review-validation"
-              items={validationRows.map(([item, status]) => ({
-                label: item,
-                status: status === "완료" || status === "확정됨" || status === "통과" || status === "유효함" ? "ready" : "warning",
-                value: status,
+              items={validationRows.map(({ label, status, value }) => ({
+                label,
+                status,
+                value,
               }))}
             />
           </section>

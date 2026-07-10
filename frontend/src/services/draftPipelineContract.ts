@@ -62,6 +62,8 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     storagePath: draft.target.storagePath,
     storageType: draft.target.storageType,
     targetDataset,
+    targetDatabase: draft.target.databaseName,
+    targetDescription: draft.target.description,
     targetFormat: draft.target.format,
     targetLayer: draft.target.layer,
     transformOutputColumns: effectiveTransformOutputColumns(draft),
