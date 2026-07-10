@@ -530,6 +530,43 @@ function JobStatusFilter({
   );
 }
 
+function RunStatusFilter({
+  onValueChange,
+  value,
+}: {
+  onValueChange: (status: "all" | JobRunStatus) => void;
+  value: "all" | JobRunStatus;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label="실행 상태 필터"
+          className="h-8 w-full justify-center gap-1.5 px-0 text-base font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          상태
+          <Filter className="size-4" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" className="min-w-40">
+        <DropdownMenuLabel>실행 상태 필터</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={value} onValueChange={(nextValue) => onValueChange(nextValue as "all" | JobRunStatus)}>
+          <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="queued">대기 중</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="running">실행 중</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="success">성공</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="failed">실패</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="canceled">취소됨</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function JobOwnerFilter({
   onValueChange,
   owners,
@@ -1954,22 +1991,27 @@ export function JobRunsPage({
     onAction("etl.run.log_opened", `/api/etl/jobs/${job.id}/runs/${run.runId}/logs`, run.runId);
     setActiveLogRun(run);
   };
+  const changeRunStatusFilter = (nextValue: "all" | JobRunStatus) => {
+    setRunStatusFilter(nextValue);
+    onAction("etl.runs.status_filtered", `/api/etl/jobs/${job.id}/runs?status=${nextValue}`, job.id);
+  };
   const runColumns: ColumnDef<JobRunSummary>[] = [
     {
       accessorKey: "runId",
       header: "Run ID",
       cell: ({ row }) => (
-        <DataTableCellPrimary className="max-w-[180px] text-base font-bold" title={row.original.runId}>
+        <DataTableCellPrimary className="max-w-[140px] text-sm font-bold" title={row.original.runId}>
           {row.original.runId}
         </DataTableCellPrimary>
       ),
-      meta: { widthClassName: "w-[180px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[145px]" } satisfies DataTableColumnMeta,
     },
     {
       accessorKey: "status",
-      header: "상태",
+      header: () => <RunStatusFilter value={runStatusFilter} onValueChange={changeRunStatusFilter} />,
       cell: ({ row }) => <RunStatusPill status={row.original.status} />,
-      meta: { widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
+      enableSorting: false,
+      meta: { align: "center", cellClassName: "h-px p-0", headerClassName: "text-base", widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
     },
     {
       id: "executionTime",
@@ -1984,18 +2026,18 @@ export function JobRunsPage({
           </DataTableCellSecondary>
         </DataTableStackedCell>
       ),
-      meta: { widthClassName: "w-[245px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[180px]" } satisfies DataTableColumnMeta,
     },
     {
       id: "throughput",
       header: "처리 행",
       cell: ({ row }) => (
         <DataTableStackedCell>
-          <DataTableCellPrimary className="text-base font-semibold tabular-nums">{row.original.inputRows} → {row.original.outputRows}</DataTableCellPrimary>
-          <DataTableCellSecondary className="text-sm">입력 → 출력</DataTableCellSecondary>
+          <DataTableCellPrimary className="text-base font-semibold tabular-nums">입력 {row.original.inputRows}</DataTableCellPrimary>
+          <DataTableCellSecondary className="text-sm tabular-nums">출력 {row.original.outputRows}</DataTableCellSecondary>
         </DataTableStackedCell>
       ),
-      meta: { widthClassName: "w-[205px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[170px]" } satisfies DataTableColumnMeta,
     },
     {
       id: "resultSummary",
@@ -2005,116 +2047,92 @@ export function JobRunsPage({
         return (
           <DataTableStackedCell>
             <DataTableCellPrimary className={row.original.status === "failed" ? "text-base font-bold text-red-700" : "text-base font-semibold"}>{result.title}</DataTableCellPrimary>
-            <DataTableCellSecondary className="max-w-[280px] text-sm" title={result.detail}>{result.detail}</DataTableCellSecondary>
+            <DataTableCellSecondary className="max-w-[180px] text-sm" title={result.detail}>{result.detail}</DataTableCellSecondary>
           </DataTableStackedCell>
         );
       },
-      meta: { widthClassName: "w-[250px]" } satisfies DataTableColumnMeta,
-    },
-    {
-      id: "actions",
-      header: "액션",
-      cell: ({ row }) => (
-        <div className="flex flex-wrap items-center gap-4">
-          <Button className="text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunLog(row.original)}>
-            <FileText aria-hidden="true" />
-            로그
-          </Button>
-          <Button className="text-base font-bold" size="content" type="button" variant="link" onClick={() => openRunDetail(row.original)}>
-            <Workflow aria-hidden="true" />
-            실행 단계
-          </Button>
-        </div>
-      ),
-      meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
+      meta: { headerClassName: "text-base", widthClassName: "w-[185px]" } satisfies DataTableColumnMeta,
     },
   ];
 
-  const statusFilterLabels: Record<"all" | JobRunStatus, string> = {
-    all: "전체 상태",
-    queued: "대기 중",
-    running: "실행 중",
-    success: "성공",
-    failed: "실패",
-    canceled: "취소됨",
-  };
-
   return (
-    <div className="job-detail-page job-runs-page">
-      <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
+    <TooltipProvider delayDuration={250}>
+      <div className="job-detail-page job-runs-page">
+        <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
 
-      <section className="runs-body-content">
-        <Panel overflow="visible">
-          <PanelHeader icon={<BarChart3 aria-hidden="true" size={18} />} title="실행 통계 요약" />
-          <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard detail="종료된 Run 기준" icon={<Check aria-hidden="true" />} label="성공률" tone="running" value={job.stats?.successRate ?? "-"} />
-            <MetricCard detail="최근 집계 기준" icon={<Clock3 aria-hidden="true" />} label="평균 소요시간" value={job.stats?.averageDuration ?? "-"} />
-            <MetricCard detail="누적 실행 횟수" icon={<History aria-hidden="true" />} label="총 실행" tone="total" value={totalRunsValue} />
-            <MetricCard
-              detail={latestRun ? formatCompactDateTime(latestRun.endedAt || latestRun.startedAt) : "실행 기록 없음"}
-              icon={<Activity aria-hidden="true" />}
-              label="최근 실행"
-              tone={latestRun?.status === "failed" ? "failed" : latestRun?.status === "success" ? "running" : latestRun?.status === "canceled" ? "default" : "scheduled"}
-              value={latestRun ? runStatusMeta[latestRun.status].label : "-"}
-            />
-          </div>
-        </Panel>
+        <section className="runs-body-content">
+          <Panel overflow="visible">
+            <PanelHeader icon={<BarChart3 aria-hidden="true" size={18} />} title="실행 통계 요약" />
+            <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard detail="집계된 종료 Run 기준" icon={<Check aria-hidden="true" />} label="실행 성공률" size="default" tone="running" value={job.stats?.successRate ?? "-"} />
+              <MetricCard detail="집계된 종료 Run 기준" icon={<Clock3 aria-hidden="true" />} label="평균 실행 시간" size="default" value={job.stats?.averageDuration ?? "-"} />
+              <MetricCard detail="누적 실행 횟수" icon={<History aria-hidden="true" />} label="누적 실행" size="default" tone="total" value={totalRunsValue} />
+              <MetricCard
+                detail={latestRun ? formatCompactDateTime(latestRun.endedAt || latestRun.startedAt) : "실행 기록 없음"}
+                icon={<Activity aria-hidden="true" />}
+                label="최근 실행 결과"
+                size="default"
+                tone={latestRun?.status === "failed" ? "failed" : latestRun?.status === "success" ? "running" : latestRun?.status === "canceled" ? "default" : "scheduled"}
+                value={latestRun ? runStatusMeta[latestRun.status].label : "-"}
+              />
+            </div>
+          </Panel>
 
-        <Panel>
-          <PanelHeader
-            actions={(
-              <Button size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}>
-                <RefreshCw aria-hidden="true" />
-                새로고침
-              </Button>
-            )}
-            icon={<Workflow aria-hidden="true" size={18} />}
-            meta={<Badge shape="compact" size="lg" variant="muted">{filteredRuns.length}건</Badge>}
-            title="실행 이력"
-          />
-          <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-slate-200 bg-slate-50/60 px-5 py-3">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="outline">
-                  {statusFilterLabels[runStatusFilter]}
-                  <Filter aria-hidden="true" />
+          <Panel>
+            <PanelHeader
+              actions={(
+                <Button size="sm" type="button" variant="outline" onClick={() => onAction("etl.runs.refreshed", `/api/etl/jobs/${job.id}/runs`, job.id)}>
+                  <RefreshCw aria-hidden="true" />
+                  새로고침
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuLabel>실행 상태</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup
-                  value={runStatusFilter}
-                  onValueChange={(value) => {
-                    const nextValue = value as "all" | JobRunStatus;
-                    setRunStatusFilter(nextValue);
-                    onAction("etl.runs.status_filtered", `/api/etl/jobs/${job.id}/runs?status=${nextValue}`, job.id);
-                  }}
-                >
-                  {(Object.entries(statusFilterLabels) as Array<["all" | JobRunStatus, string]>).map(([value, label]) => (
-                    <DropdownMenuRadioItem key={value} value={value}>{label}</DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-          <DataTable
-            bodyRowClassName="[&_td]:py-4"
-            className="gap-0 [&_th]:text-sm [&_td]:text-base"
+              )}
+              icon={<Workflow aria-hidden="true" size={18} />}
+              meta={<Badge shape="compact" size="lg" variant="muted">{filteredRuns.length}건</Badge>}
+              title="실행 이력"
+            />
+            <DataTable
+            bodyRowClassName="[&_td]:py-3"
+            className="gap-0 [&>div:last-child]:min-h-14 [&>div:last-child]:rounded-none [&>div:last-child]:border-x-0 [&>div:last-child]:border-b-0"
             columns={runColumns}
             data={filteredRuns}
             emptyState={{ title: runStatusFilter === "all" ? "아직 실행 이력이 없습니다." : "선택한 상태의 실행 이력이 없습니다." }}
             enableSorting={false}
             getRowClassName={(row) => row.original.status === "failed" ? "bg-red-50/45 hover:bg-red-50/70" : row.original.status === "canceled" ? "bg-slate-50/80" : undefined}
-            pagination={{ label: "실행 이력", pageSize: 5, showSummary: true }}
-            tableClassName="min-w-[1160px]"
-            viewportClassName="rounded-none border-0"
-          />
-        </Panel>
-      </section>
-      {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
-      {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
-    </div>
+            pagination={{ label: "실행 이력", pageSize: 5, showSummary: false }}
+            renderRowActions={(row) => (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <IconButton label="로그" size="sm" type="button" variant="outline" onClick={() => openRunLog(row.original)}>
+                      <FileText aria-hidden="true" className="size-[18px]" />
+                    </IconButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">로그</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <IconButton className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100" label="실행 단계" size="sm" type="button" variant="outline" onClick={() => openRunDetail(row.original)}>
+                      <Workflow aria-hidden="true" className="size-[18px]" />
+                    </IconButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">실행 단계</TooltipContent>
+                </Tooltip>
+              </div>
+            )}
+            resetPaginationKey={`${runStatusFilter}-${filteredRuns.length}`}
+            rowActionsAlign="center"
+            rowActionsClassName="w-[90px] text-base"
+            rowActionsHeader="액션"
+            headerRowClassName="[&_th]:h-12 [&_th]:py-2.5 [&_th]:text-slate-600 [&_th_button]:text-slate-600 [&_th_svg]:text-slate-600"
+            tableClassName="min-w-[860px] table-fixed [&_td]:h-24 [&_thead_th_button]:gap-1.5 [&_thead_th_button_svg]:size-4"
+            viewportClassName="rounded-none border-0 bg-transparent"
+            />
+          </Panel>
+        </section>
+        {activeRun && <RunDagModal evidence={evidence} job={job} onAction={onAction} onClose={() => setActiveRun(null)} run={activeRun} />}
+        {activeLogRun && <RunLogModal job={job} onClose={() => setActiveLogRun(null)} run={activeLogRun} />}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -2205,33 +2223,33 @@ function RunDagModal({
       <section className="dag-body-content">
         <div className="dag-summary-grid">
           <MetricCard
-            className="min-h-[104px] gap-2.5"
             detail={formatDagStepTitle(currentPoint)}
             icon={<Activity aria-hidden="true" />}
-            label="실행 상태"
+            label="이 Run의 상태"
+            size="compact"
             tone={currentRun.status === "failed" ? "failed" : currentRun.status === "success" ? "running" : "scheduled"}
             value={runStatusMeta[currentRun.status].label}
           />
           <MetricCard
-            className="min-h-[104px] gap-2.5"
             detail={`${formatCompactDateTime(currentRun.startedAt)} - ${formatCompactDateTime(currentRun.endedAt)}`}
             icon={<Clock3 aria-hidden="true" />}
-            label="소요 시간"
+            label="이 Run의 소요 시간"
+            size="compact"
             value={currentRun.duration}
           />
           <MetricCard
-            className="min-h-[104px] gap-2.5"
             detail="성공한 단계 / 전체 단계"
             icon={<Workflow aria-hidden="true" />}
-            label="진행 단계"
+            label="완료 단계"
+            size="compact"
             tone="total"
             value={`${completedSteps}/${dagSteps.length}`}
           />
           <MetricCard
-            className="min-h-[104px] gap-2.5"
             detail={`출력 ${currentRun.outputRows}`}
             icon={<Table2 aria-hidden="true" />}
-            label="입력 행"
+            label="이 Run의 입력 행"
+            size="compact"
             value={currentRun.inputRows}
           />
         </div>

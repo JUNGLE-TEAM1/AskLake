@@ -4,12 +4,17 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const metricCardVariants = cva(
-  "grid min-h-[116px] content-start gap-3 rounded-lg border bg-white px-5 py-4 shadow-[0_8px_24px_-20px_rgba(15,23,42,0.45)]",
+  "grid content-start rounded-lg border bg-white shadow-[0_8px_24px_-20px_rgba(15,23,42,0.45)]",
   {
     defaultVariants: {
+      size: "default",
       tone: "default",
     },
     variants: {
+      size: {
+        compact: "min-h-[104px] gap-2.5 px-4 py-3.5",
+        default: "min-h-[116px] gap-3 px-5 py-4",
+      },
       tone: {
         attention: "border-amber-200 text-amber-700",
         default: "border-slate-200 text-slate-600",
@@ -33,10 +38,10 @@ export interface MetricCardProps
 }
 
 export const MetricCard = React.forwardRef<HTMLElement, MetricCardProps>(
-  ({ active, className, detail, icon, label, tone, value, ...props }, ref) => (
+  ({ active, className, detail, icon, label, size = "default", tone, value, ...props }, ref) => (
     <article
       className={cn(
-        metricCardVariants({ tone }),
+        metricCardVariants({ size, tone }),
         active && "ring-1 ring-current/20",
         className,
       )}
@@ -45,19 +50,31 @@ export const MetricCard = React.forwardRef<HTMLElement, MetricCardProps>(
     >
       <div className="flex min-w-0 items-center gap-2.5">
         {icon ? (
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-current/10 [&_svg]:size-[18px]">
+          <span className={cn(
+            "grid shrink-0 place-items-center rounded-lg bg-current/10",
+            size === "compact" ? "size-8 [&_svg]:size-4" : "size-9 [&_svg]:size-[18px]",
+          )}>
             {icon}
           </span>
         ) : null}
-        <strong className="min-w-0 text-sm font-bold leading-snug tracking-normal text-slate-600">
+        <strong className={cn(
+          "min-w-0 font-bold leading-snug tracking-normal text-slate-600",
+          size === "compact" ? "text-[13px]" : "text-sm",
+        )}>
           {label}
         </strong>
       </div>
-      <span className="text-3xl font-extrabold leading-none tracking-normal text-slate-950">
+      <span className={cn(
+        "font-extrabold leading-none tracking-normal text-slate-950",
+        size === "compact" ? "text-2xl" : "text-3xl",
+      )}>
         {value}
       </span>
       {detail ? (
-        <span className="text-sm font-medium leading-snug tracking-normal text-slate-500">
+        <span className={cn(
+          "font-medium leading-snug tracking-normal text-slate-500",
+          size === "compact" ? "text-xs" : "text-sm",
+        )}>
           {detail}
         </span>
       ) : null}
