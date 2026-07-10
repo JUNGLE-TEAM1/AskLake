@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SelectableCard } from "@/components/ui/selectable-card";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ValidationList } from "@/components/ui/validation-list";
@@ -371,14 +372,6 @@ const sourceValueLabels: Record<string, string> = {
   Verified: "검증됨",
 };
 
-const sourceActionLabels: Record<string, string> = {
-  "Download CSV": "CSV 다운로드",
-  "Fetch Metadata": "메타데이터 조회",
-  "Full Screen": "전체 화면",
-  "Refresh Preview": "미리보기 새로고침",
-  "Show Advanced Configuration": "고급 설정 보기",
-};
-
 function sourceTypeLabel(value: string) {
   return sourceTypeLabels[value] ?? value;
 }
@@ -395,10 +388,6 @@ function sourceValueLabel(value: string) {
   if (/^leader \d+$/i.test(value)) return value.replace(/^leader/i, "리더");
   if (/^\d+ bytes$/i.test(value)) return value.replace("bytes", "바이트");
   return sourceValueLabels[value] ?? value;
-}
-
-function sourceActionLabel(value: string) {
-  return sourceActionLabels[value] ?? value;
 }
 
 function isInternalSourceField(label: string) {
@@ -1075,7 +1064,6 @@ export function SourceConnectionPage({
     previewNote: string;
     previewColumns: string[];
     previewRows: string[][];
-    actions?: string[];
     info?: string;
   }> = {
     "SQL Result": {
@@ -1169,7 +1157,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · MinIO 연결 테스트를 실행하세요.",
       previewColumns: ["Object Key", "Size", "Last Modified"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Data Lake": {
       title: "데이터 레이크 소스",
@@ -1195,7 +1182,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Event Timestamp", "User ID", "Transaction ID", "Region", "Action Type", "Latency"],
       previewRows: [],
-      actions: ["Fetch Metadata", "Download CSV", "Full Screen"],
     },
     "REST API": {
       title: "REST API 소스",
@@ -1220,7 +1206,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 연결 테스트를 실행하세요.",
       previewColumns: ["User ID", "Email", "Date", "Status", "Amount"],
       previewRows: [],
-      actions: ["Refresh Preview"],
     },
     "Stream / Kafka": {
       title: "스트림 소스 설정",
@@ -1242,7 +1227,6 @@ export function SourceConnectionPage({
       previewNote: "미리보기 데이터 없음 · 백엔드 연결 테스트를 실행하세요.",
       previewColumns: ["Payload (Raw JSON)", "Part.", "Offset", "Timestamp"],
       previewRows: [],
-      actions: ["Show Advanced Configuration"],
     },
   };
   const selectedSourceType = sourceType === "Database" ? "PostgreSQL" : sourceType;
@@ -1353,32 +1337,6 @@ export function SourceConnectionPage({
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
-  };
-
-  const fillMinioDemoFields = () => {
-    const demoFields: Array<[string, string]> = [
-      ["Storage Provider", "MinIO"],
-      ["Endpoint URL", "http://127.0.0.1:19000"],
-      ["Region", "us-east-1"],
-      ["Bucket / Stage Name", "m3-raw"],
-      ["Path / Prefix", ""],
-      ["Access Key", "m3admin"],
-      ["Secret Key", "wishuponastar"],
-      ["Use Path Style", "true"],
-      ["File Type", "auto"],
-      ["Delimiter", ","],
-      ["Encoding", "UTF-8"],
-      ["Header", "Treat first row as header"],
-    ];
-    const nextFields = mergeFieldRows(editableFields, demoFields);
-    const nextMessage = "로컬 MinIO 데모 연결값을 채웠습니다. 연결 테스트를 실행하세요.";
-    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
-    setSourceRuntime(null);
-    setSelectedAssetPath("");
-    setConnectionStatus("idle");
-    setConnectionMessage(nextMessage);
-    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
-    onAction("etl.source.demo_minio_filled", "/api/etl/sources/demo-minio", activeSourceType);
   };
 
   const loadSourceAssetChildren = async (folderPath: string) => {
@@ -1556,10 +1514,6 @@ export function SourceConnectionPage({
     onNext();
   };
 
-  const fetchMetadata = () => {
-    onAction("etl.source.metadata_fetched", "/api/etl/sources/metadata", activeSourceType);
-  };
-
   const sourceChoiceConnectors = ["PostgreSQL", "MongoDB", "File / S3", "REST API", "Stream / Kafka", "Data Lake"];
 
   return (
@@ -1611,7 +1565,8 @@ export function SourceConnectionPage({
           )}
 
           {sourceStage === "connect" && hasSelectedSource && (
-            <div className="source-stage-screen">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen">
               <section className="source-step-section active">
                 <div className="source-step-header">
                   <em>1</em>
@@ -1619,9 +1574,6 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <Button type="button" variant="outline" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</Button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <Button type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</Button>}
-                  {current.actions?.includes("Fetch Metadata") && <Button type="button" variant="outline" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</Button>}
                     {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
                   </div>
                 </div>
@@ -1656,11 +1608,13 @@ export function SourceConnectionPage({
                   ))}
                 </div>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
 
           {sourceStage === "browse" && hasSelectedSource && (
-            <div className="source-stage-screen source-browser-layout">
+            <ScrollArea className="h-[calc(100vh-270px)] min-h-0">
+              <div className="source-stage-screen source-browser-layout">
               <section className="source-from-panel">
                 <div className="source-browser-heading">
                   <LayoutGrid size={18} />
@@ -1713,7 +1667,8 @@ export function SourceConnectionPage({
                   )}
                 </section>
               </section>
-            </div>
+              </div>
+            </ScrollArea>
           )}
           </Tabs>
         </section>
