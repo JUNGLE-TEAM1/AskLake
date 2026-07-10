@@ -3,12 +3,13 @@ from typing import Any
 
 from fastapi import status
 
-from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
+from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles
 from app.models.dashboard_runtime import DashboardPage as DashboardPageModel
 from app.models.dashboard_runtime import DashboardRevision as DashboardRevisionModel
 from app.models.dashboard_runtime import DashboardWidget as DashboardWidgetModel
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import get_dashboard_card
 from app.repositories.dashboard_runtime_repository import DashboardRuntimeMetaRecord, DashboardRuntimeRepository
 from app.repositories.catalog_repository import CatalogRepository
@@ -52,7 +53,8 @@ from app.schemas.dashboard import (
     UpdateDraftPageRequest,
     UpdateDraftWidgetRequest,
 )
-from app.services.resource_permission_service import dashboard_with_persisted_permission_grants
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permissions_for_actor_with_governance
 from app.services.demo_catalog import dataset_rows_to_widget_data, get_demo_dataset
 
 
@@ -276,13 +278,40 @@ class DashboardRuntimeService:
             self.repository.db,
             dashboard.model_copy(update={"permission_grants": grants}),
         )
-        require_permission(
+        require_governed_access(
+            self.repository.db,
             actor,
-            action,
-            owner=dashboard.owner,
-            grants=dashboard.permission_grants,
-            resource_label="dashboard",
+            action=action,
+            api_path=f"/api/dashboards/{dashboard_id}",
+            http_method="GET" if action == "view" else "POST",
+            metadata={"owner": dashboard.owner},
+            resource_id=dashboard.id,
+            resource_name=dashboard.name,
+            resource_type="dashboard",
         )
+        try:
+            require_permission(
+                actor,
+                action,
+                owner=dashboard.owner,
+                grants=dashboard.permission_grants,
+                resource_label="dashboard",
+            )
+        except ApiError as exc:
+            safe_record_audit_event(
+                self.repository.db,
+                action="dashboard.access.forbidden",
+                actor=actor,
+                api_path=f"/api/dashboards/{dashboard_id}",
+                http_method="GET" if action == "view" else "POST",
+                metadata={"owner": dashboard.owner, "requiredAction": action},
+                result="forbidden",
+                status_code=exc.status_code,
+                target_id=dashboard.id,
+                target_name=dashboard.name,
+                target_type="dashboard",
+            )
+            raise
         return dashboard
 
     def _ensure_draft_revision(self, dashboard_id: str) -> DashboardRevisionModel:
@@ -360,7 +389,17 @@ class DashboardRuntimeService:
             title=record.title,
             status=status_value,
             permission_grants=dashboard_card.permission_grants,
-            permissions=permissions_for_actor(actor, owner=dashboard_card.owner, grants=dashboard_card.permission_grants, enforced=True),
+            permissions=permissions_for_actor_with_governance(
+                self.repository.db,
+                actor,
+                owner=dashboard_card.owner,
+                grants=[
+                    grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant
+                    for grant in dashboard_card.permission_grants
+                ],
+                resource_id=dashboard_card.id,
+                resource_type="dashboard",
+            ),
             has_published_revision=has_published_revision,
             updated_at=DashboardRuntimeService._datetime_to_iso(record.updated_at),
         )

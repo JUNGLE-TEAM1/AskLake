@@ -1,4 +1,4 @@
-import { Activity, Boxes, CircleUser, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Activity, AlertCircle, Boxes, Check, CircleUser, Plus, Save, Search, ShieldCheck, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { InfoBox, PageTitle } from "../../components/common";
@@ -6,15 +6,23 @@ import {
   createAdminPermissionGrant,
   deleteAdminPermissionGrant,
   fetchAdminAuditLogs,
+  fetchAdminGovernanceControls,
   fetchAdminGroups,
   fetchAdminPermissions,
   fetchAdminUsers,
+  updateAdminPrincipalControl,
   updateAdminPermissionGrant,
+  updateAdminResourceLock,
 } from "../../services/adminApi";
 import { ApiError } from "../../types";
 import type {
   AdminAuditLogEntry,
+  AdminAuditLogQuery,
+  AdminGovernanceControlsResponse,
   AdminPermissionSummary,
+  AdminPrincipalControl,
+  AdminPrincipalControlType,
+  AdminResourceLock,
   AdminResourceType,
   AdminUser,
   IdentityGroup,
@@ -41,11 +49,17 @@ const permissionOrder: PermissionAction[] = ["view", "query", "run", "manage", "
 const principalTypeOptions: PermissionPrincipalType[] = ["group", "user"];
 const resourceTypeFilters: Array<"all" | AdminResourceType> = ["all", "dataset", "etl_job", "dashboard"];
 
+type ActivitySubject =
+  | { type: "user"; user: AdminUser }
+  | { type: "group"; group: IdentityGroup };
+
 export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("users");
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<IdentityGroup[]>([]);
   const [permissions, setPermissions] = useState<AdminPermissionSummary[]>([]);
+  const [principalControls, setPrincipalControls] = useState<AdminPrincipalControl[]>([]);
+  const [resourceLocks, setResourceLocks] = useState<AdminResourceLock[]>([]);
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,8 +70,14 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
     resourceKey: "",
   });
   const [permissionPending, setPermissionPending] = useState(false);
+  const [controlPending, setControlPending] = useState<string | null>(null);
   const [deletingGrantId, setDeletingGrantId] = useState<string | null>(null);
   const [savingGrantId, setSavingGrantId] = useState<string | null>(null);
+  const [auditQuery, setAuditQuery] = useState<AdminAuditLogQuery>({ limit: 100 });
+  const [auditPending, setAuditPending] = useState(false);
+  const [activitySubject, setActivitySubject] = useState<ActivitySubject | null>(null);
+  const [activityLogs, setActivityLogs] = useState<AdminAuditLogEntry[]>([]);
+  const [activityPending, setActivityPending] = useState(false);
   const onActionRef = useRef(onAction);
 
   useEffect(() => {
@@ -71,13 +91,16 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
       fetchAdminUsers(),
       fetchAdminGroups(),
       fetchAdminPermissions(),
+      fetchAdminGovernanceControls(),
       fetchAdminAuditLogs(),
     ])
-      .then(([userResponse, groupResponse, permissionResponse, auditResponse]) => {
+      .then(([userResponse, groupResponse, permissionResponse, controlResponse, auditResponse]) => {
         if (!active) return;
         setUsers(userResponse.users);
         setGroups(groupResponse.groups);
         setPermissions(permissionResponse.resources);
+        setPrincipalControls(controlResponse.principalControls);
+        setResourceLocks(controlResponse.resourceLocks);
         setPermissionDraft((draft) => ({
           ...draft,
           resourceKey: draft.resourceKey || resourceKey(permissionResponse.resources[0]),
@@ -103,6 +126,95 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
   }, []);
 
   const totalPermissionGrants = permissions.reduce((sum, resource) => sum + resource.grants.length, 0);
+  const blockedPrincipalCount = principalControls.filter((control) => control.status === "blocked").length;
+  const lockedResourceCount = resourceLocks.filter((lockItem) => lockItem.locked).length;
+
+  const refreshAuditLogs = (query: AdminAuditLogQuery = auditQuery) => {
+    setAuditPending(true);
+    fetchAdminAuditLogs(query)
+      .then((response) => {
+        setAuditLogs(response.logs);
+        setAuditQuery(query);
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "감사 로그를 불러오지 못했습니다.";
+        onNotify(message, "info");
+      })
+      .finally(() => setAuditPending(false));
+  };
+
+  const refreshActivityLogs = () => {
+    setActivityPending(true);
+    return fetchAdminAuditLogs({ limit: 100 })
+      .then((response) => setActivityLogs(response.logs))
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "최근 활동을 불러오지 못했습니다.";
+        onNotify(message, "info");
+      })
+      .finally(() => setActivityPending(false));
+  };
+
+  const handleOpenActivity = (subject: ActivitySubject) => {
+    setActivitySubject(subject);
+    void refreshActivityLogs();
+  };
+
+  const applyControls = (response: AdminGovernanceControlsResponse) => {
+    setPrincipalControls(response.principalControls);
+    setResourceLocks(response.resourceLocks);
+  };
+
+  const handlePrincipalControlChange = (principalType: AdminPrincipalControlType, principalId: string, blocked: boolean, reason = "") => {
+    const trimmedId = principalId.trim();
+    if (!trimmedId) {
+      onNotify("차단할 사용자 또는 그룹을 선택해주세요.", "info");
+      return;
+    }
+    const pendingKey = `principal:${principalType}:${trimmedId}`;
+    setControlPending(pendingKey);
+    updateAdminPrincipalControl({
+      principalId: trimmedId,
+      principalType,
+      reason: reason.trim() || undefined,
+      status: blocked ? "blocked" : "active",
+    })
+      .then((response) => {
+        applyControls(response);
+        refreshAuditLogs();
+        void refreshActivityLogs();
+        onNotify(blocked ? "대상이 차단되었습니다." : "차단이 해제되었습니다.");
+        onActionRef.current("admin.principal_control.updated", "/api/admin/governance/principals", trimmedId, "success", { targetType: "admin_module" });
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "차단 상태를 변경하지 못했습니다.";
+        onNotify(message, "info");
+        onActionRef.current("admin.principal_control.update_failed", "/api/admin/governance/principals", trimmedId, "failed", { targetType: "admin_module" });
+      })
+      .finally(() => setControlPending(null));
+  };
+
+  const handleResourceLockChange = (resource: AdminPermissionSummary, locked: boolean, reason = "") => {
+    const pendingKey = `resource:${resource.resourceType}:${resource.resourceId}`;
+    setControlPending(pendingKey);
+    updateAdminResourceLock({
+      locked,
+      reason: reason.trim() || undefined,
+      resourceId: resource.resourceId,
+      resourceType: resource.resourceType,
+    })
+      .then((response) => {
+        applyControls(response);
+        refreshAuditLogs();
+        onNotify(locked ? "리소스가 잠겼습니다." : "리소스 잠금이 해제되었습니다.");
+        onActionRef.current("admin.resource_lock.updated", "/api/admin/governance/resource-locks", resource.resourceId, "success", { targetType: "admin_module" });
+      })
+      .catch((unknownError) => {
+        const message = unknownError instanceof ApiError ? unknownError.message : "리소스 잠금 상태를 변경하지 못했습니다.";
+        onNotify(message, "info");
+        onActionRef.current("admin.resource_lock.update_failed", "/api/admin/governance/resource-locks", resource.resourceId, "failed", { targetType: "admin_module" });
+      })
+      .finally(() => setControlPending(null));
+  };
 
   const handlePermissionDraftActionChange = (action: PermissionAction, checked: boolean) => {
     setPermissionDraft((draft) => ({
@@ -211,7 +323,7 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
           <AdminMetric label="사용자" value={`${users.length}`} />
           <AdminMetric label="그룹" value={`${groups.length}`} />
           <AdminMetric label="권한 항목" value={`${totalPermissionGrants}`} />
-          <AdminMetric label="감사 로그" value={`${auditLogs.length}`} />
+          <AdminMetric label="제한 항목" value={`${blockedPrincipalCount + lockedResourceCount}`} />
         </div>
 
         <section className="xflow-review-card admin-console-panel">
@@ -242,8 +354,24 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
           {!loading && error && <InfoBox title={error.includes("관리자 권한") ? "관리자 권한 필요" : "관리 API 요청 실패"} body={error} />}
           {!loading && !error && (
             <>
-              {activeTab === "users" && <UsersTable users={users} />}
-              {activeTab === "groups" && <GroupsTable groups={groups} />}
+              {activeTab === "users" && (
+                <UsersTable
+                  controlPending={controlPending}
+                  principalControls={principalControls}
+                  users={users}
+                  onOpenActivity={(user) => handleOpenActivity({ type: "user", user })}
+                  onPrincipalControlChange={handlePrincipalControlChange}
+                />
+              )}
+              {activeTab === "groups" && (
+                <GroupsTable
+                  controlPending={controlPending}
+                  groups={groups}
+                  principalControls={principalControls}
+                  onOpenActivity={(group) => handleOpenActivity({ type: "group", group })}
+                  onPrincipalControlChange={handlePrincipalControlChange}
+                />
+              )}
               {activeTab === "permissions" && (
                 <PermissionsTable
                   draft={permissionDraft}
@@ -251,20 +379,33 @@ export function AdminConsolePage({ onAction, onNotify }: AdminConsolePageProps) 
                   groups={groups}
                   pending={permissionPending}
                   permissions={permissions}
+                  resourceLocks={resourceLocks}
                   savingGrantId={savingGrantId}
                   users={users}
                   onCreate={handleCreateGrant}
                   onDelete={handleDeleteGrant}
                   onDraftActionChange={handlePermissionDraftActionChange}
                   onDraftChange={setPermissionDraft}
+                  onResourceLockChange={handleResourceLockChange}
                   onUpdate={handleUpdateGrant}
                 />
               )}
-              {activeTab === "audit" && <AuditLogTable logs={auditLogs} />}
+              {activeTab === "audit" && <AuditLogTable logs={auditLogs} pending={auditPending} query={auditQuery} onQueryChange={refreshAuditLogs} />}
             </>
           )}
         </section>
       </div>
+      {activitySubject && (
+        <ActivityModal
+          activityLogs={activityLogs}
+          controlPending={controlPending}
+          loading={activityPending}
+          principalControls={principalControls}
+          subject={activitySubject}
+          onClose={() => setActivitySubject(null)}
+          onPrincipalControlChange={handlePrincipalControlChange}
+        />
+      )}
     </div>
   );
 }
@@ -278,7 +419,19 @@ function AdminMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function UsersTable({ users }: { users: AdminUser[] }) {
+function UsersTable({
+  controlPending,
+  principalControls,
+  users,
+  onOpenActivity,
+  onPrincipalControlChange,
+}: {
+  controlPending: string | null;
+  principalControls: AdminPrincipalControl[];
+  users: AdminUser[];
+  onOpenActivity: (user: AdminUser) => void;
+  onPrincipalControlChange: (principalType: AdminPrincipalControlType, principalId: string, blocked: boolean, reason?: string) => void;
+}) {
   return (
     <div className="admin-console-table-scroll">
       <table className="schema-table admin-console-table">
@@ -289,28 +442,68 @@ function UsersTable({ users }: { users: AdminUser[] }) {
             <th>그룹</th>
             <th>권한 요약</th>
             <th>상태</th>
+            <th>관리</th>
           </tr>
         </thead>
         <tbody>
-          {users.map((user) => (
-            <tr key={user.id}>
-              <td>
-                <strong>{user.displayName}</strong>
-                <span>{user.email}</span>
-              </td>
-              <td><AdminChip>{user.role}</AdminChip></td>
-              <td>{user.groups.map((group) => group.name).join(", ") || "-"}</td>
-              <td>{user.permissionsSummary.canView} view · {user.permissionsSummary.canManage} manage</td>
-              <td><AdminChip>{user.status}</AdminChip></td>
-            </tr>
-          ))}
+          {users.map((user) => {
+            const control = principalControls.find((item) => item.principalType === "user" && item.principalId === user.id);
+            const blocked = control?.status === "blocked";
+            const pendingKey = `principal:user:${user.id}`;
+            const isAdmin = user.role.toLowerCase() === "admin";
+            return (
+              <tr key={user.id}>
+                <td>
+                  <strong>{user.displayName}</strong>
+                  <span>{user.email}</span>
+                  {blocked && control?.reason && <em className="admin-internal-note">내부 사유: {control.reason}</em>}
+                  {blocked && control?.updatedAt && <em className="admin-internal-note">변경: {control.updatedBy || "-"} · {formatTime(control.updatedAt)}</em>}
+                </td>
+                <td><AdminChip>{user.role}</AdminChip></td>
+                <td>{user.groups.map((group) => group.name).join(", ") || "-"}</td>
+                <td>{user.permissionsSummary.canView} view · {user.permissionsSummary.canManage} manage</td>
+                <td><AdminChip tone={blocked ? "danger" : "default"}>{blocked ? "차단됨" : user.status}</AdminChip></td>
+                <td className="admin-console-row-actions">
+                  <button className="admin-row-action-button" type="button" onClick={() => onOpenActivity(user)}>
+                    <Activity size={15} />
+                    <span>활동</span>
+                  </button>
+                  {isAdmin ? (
+                    <span className="admin-console-readonly-badge">운영자</span>
+                  ) : (
+                    <button
+                      className={blocked ? "admin-row-action-button restore" : "admin-row-action-button danger"}
+                      type="button"
+                      disabled={controlPending === pendingKey}
+                      onClick={() => onPrincipalControlChange("user", user.id, !blocked, blocked ? "관리자 차단 해제" : "관리자 차단")}
+                    >
+                      {blocked ? <Check size={15} /> : <AlertCircle size={15} />}
+                      <span>{blocked ? "차단 해제" : "차단"}</span>
+                    </button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function GroupsTable({ groups }: { groups: IdentityGroup[] }) {
+function GroupsTable({
+  controlPending,
+  groups,
+  principalControls,
+  onOpenActivity,
+  onPrincipalControlChange,
+}: {
+  controlPending: string | null;
+  groups: IdentityGroup[];
+  principalControls: AdminPrincipalControl[];
+  onOpenActivity: (group: IdentityGroup) => void;
+  onPrincipalControlChange: (principalType: AdminPrincipalControlType, principalId: string, blocked: boolean, reason?: string) => void;
+}) {
   return (
     <div className="admin-console-table-scroll">
       <table className="schema-table admin-console-table">
@@ -319,20 +512,152 @@ function GroupsTable({ groups }: { groups: IdentityGroup[] }) {
             <th>그룹</th>
             <th>설명</th>
             <th>멤버</th>
+            <th>상태</th>
+            <th>관리</th>
           </tr>
         </thead>
         <tbody>
-          {groups.map((group) => (
-            <tr key={group.id}>
-              <td><strong>{group.name}</strong><span>{group.id}</span></td>
-              <td>{group.description || "-"}</td>
-              <td>{typeof group.memberCount === "number" ? `${group.memberCount}명` : "-"}</td>
-            </tr>
-          ))}
+          {groups.map((group) => {
+            const control = principalControls.find((item) => item.principalType === "group" && item.principalId === group.id);
+            const blocked = control?.status === "blocked";
+            const pendingKey = `principal:group:${group.id}`;
+            return (
+              <tr key={group.id}>
+                <td>
+                  <strong>{group.name}</strong>
+                  {blocked && control?.reason && <em className="admin-internal-note">내부 사유: {control.reason}</em>}
+                  {blocked && control?.updatedAt && <em className="admin-internal-note">변경: {control.updatedBy || "-"} · {formatTime(control.updatedAt)}</em>}
+                </td>
+                <td>{group.description || "-"}</td>
+                <td>{typeof group.memberCount === "number" ? `${group.memberCount}명` : "-"}</td>
+                <td><AdminChip tone={blocked ? "danger" : "default"}>{blocked ? "차단됨" : "정상"}</AdminChip></td>
+                <td className="admin-console-row-actions">
+                  <button className="admin-row-action-button" type="button" onClick={() => onOpenActivity(group)}>
+                    <Activity size={15} />
+                    <span>활동</span>
+                  </button>
+                  <button
+                    className={blocked ? "admin-row-action-button restore" : "admin-row-action-button danger"}
+                    type="button"
+                    disabled={controlPending === pendingKey}
+                    onClick={() => onPrincipalControlChange("group", group.id, !blocked, blocked ? "관리자 차단 해제" : "관리자 차단")}
+                  >
+                    {blocked ? <Check size={15} /> : <AlertCircle size={15} />}
+                    <span>{blocked ? "차단 해제" : "차단"}</span>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
+}
+
+function ActivityModal({
+  activityLogs,
+  controlPending,
+  loading,
+  principalControls,
+  subject,
+  onClose,
+  onPrincipalControlChange,
+}: {
+  activityLogs: AdminAuditLogEntry[];
+  controlPending: string | null;
+  loading: boolean;
+  principalControls: AdminPrincipalControl[];
+  subject: ActivitySubject;
+  onClose: () => void;
+  onPrincipalControlChange: (principalType: AdminPrincipalControlType, principalId: string, blocked: boolean, reason?: string) => void;
+}) {
+  const isUser = subject.type === "user";
+  const principalType: AdminPrincipalControlType = isUser ? "user" : "group";
+  const principalId = isUser ? subject.user.id : subject.group.id;
+  const control = principalControls.find((item) => item.principalType === principalType && item.principalId === principalId);
+  const blocked = control?.status === "blocked";
+  const isAdmin = isUser && subject.user.role.toLowerCase() === "admin";
+  const pendingKey = `principal:${principalType}:${principalId}`;
+  const logs = filterActivityLogs(activityLogs, subject).slice(0, 10);
+  const summary = isUser
+    ? [subject.user.email, subject.user.role, subject.user.groups.map((group) => group.name).join(", ") || "소속 그룹 없음"]
+    : [subject.group.description || "설명 없음", `${subject.group.memberCount ?? 0}명`];
+
+  return (
+    <div className="admin-activity-modal" role="dialog" aria-modal="true" aria-label={`${isUser ? subject.user.displayName : subject.group.name} 활동`} onClick={onClose}>
+      <section onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <span>{isUser ? "사용자 활동" : "그룹 활동"}</span>
+            <h2>{isUser ? subject.user.displayName : subject.group.name}</h2>
+            <p>{summary.join(" · ")}</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="닫기" onClick={onClose}><X size={18} /></button>
+        </header>
+
+        <div className="admin-activity-modal-status">
+          <AdminChip tone={blocked ? "danger" : "default"}>{blocked ? "차단됨" : "정상"}</AdminChip>
+          {isAdmin ? (
+            <span className="admin-console-readonly-badge">운영자</span>
+          ) : (
+            <button
+              className={blocked ? "admin-row-action-button restore" : "admin-row-action-button danger"}
+              type="button"
+              disabled={controlPending === pendingKey}
+              onClick={() => onPrincipalControlChange(principalType, principalId, !blocked, blocked ? "관리자 차단 해제" : "관리자 차단")}
+            >
+              {blocked ? <Check size={15} /> : <AlertCircle size={15} />}
+              <span>{blocked ? "차단 해제" : "차단"}</span>
+            </button>
+          )}
+        </div>
+
+        <div className="admin-activity-log-heading">
+          <h3>최근 활동</h3>
+          {loading && <span>불러오는 중</span>}
+        </div>
+        <div className="admin-activity-log-list">
+          {!loading && logs.length === 0 && <p className="admin-activity-empty">최근 활동이 없습니다.</p>}
+          {logs.map((log) => (
+            <article className="admin-activity-log-row" key={log.requestId}>
+              <div>
+                <strong>{log.action}</strong>
+                <span>{log.targetName || log.targetId} · {log.targetType}</span>
+              </div>
+              <div>
+                <AdminChip tone={log.result === "forbidden" ? "danger" : log.result === "failed" ? "warning" : "default"}>{auditResultLabel(log.result)}</AdminChip>
+                <time>{formatTime(log.createdAt)}</time>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function filterActivityLogs(logs: AdminAuditLogEntry[], subject: ActivitySubject) {
+  if (subject.type === "group") {
+    return [...logs]
+      .filter((log) => log.actorGroups.includes(subject.group.id))
+      .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
+  }
+
+  const identifiers = new Set([
+    subject.user.id,
+    subject.user.displayName,
+    subject.user.email,
+  ].map((value) => value.trim().toLowerCase()).filter(Boolean));
+
+  return [...logs]
+    .filter((log) => [
+      log.actorId,
+      log.actorName,
+      typeof log.metadata?.actorEmail === "string" ? log.metadata.actorEmail : "",
+      typeof log.metadata?.email === "string" ? log.metadata.email : "",
+    ].some((value) => identifiers.has((value ?? "").trim().toLowerCase())))
+    .sort((first, second) => Date.parse(second.createdAt) - Date.parse(first.createdAt));
 }
 
 type PermissionDraft = {
@@ -348,12 +673,14 @@ function PermissionsTable({
   groups,
   pending,
   permissions,
+  resourceLocks,
   savingGrantId,
   users,
   onCreate,
   onDelete,
   onDraftActionChange,
   onDraftChange,
+  onResourceLockChange,
   onUpdate,
 }: {
   draft: PermissionDraft;
@@ -361,12 +688,14 @@ function PermissionsTable({
   groups: IdentityGroup[];
   pending: boolean;
   permissions: AdminPermissionSummary[];
+  resourceLocks: AdminResourceLock[];
   savingGrantId: string | null;
   users: AdminUser[];
   onCreate: (event: React.FormEvent<HTMLFormElement>) => void;
   onDelete: (resource: AdminPermissionSummary, grant: PermissionGrant) => void;
   onDraftActionChange: (action: PermissionAction, checked: boolean) => void;
   onDraftChange: React.Dispatch<React.SetStateAction<PermissionDraft>>;
+  onResourceLockChange: (resource: AdminPermissionSummary, locked: boolean, reason?: string) => void;
   onUpdate: (resource: AdminPermissionSummary, grant: PermissionGrant, actions: PermissionAction[]) => void;
 }) {
   const [resourceSearch, setResourceSearch] = useState("");
@@ -390,6 +719,9 @@ function PermissionsTable({
   const selectedResource = filteredResources.find((resource) => resourceKey(resource) === draft.resourceKey)
     ?? filteredResources[0]
     ?? permissions.find((resource) => resourceKey(resource) === draft.resourceKey);
+  const selectedResourceLock = selectedResource
+    ? resourceLocks.find((lockItem) => lockKey(lockItem) === resourceKey(selectedResource))
+    : undefined;
 
   const selectResource = (resource: AdminPermissionSummary) => {
     onDraftChange((current) => ({ ...current, resourceKey: resourceKey(resource) }));
@@ -466,10 +798,21 @@ function PermissionsTable({
                   <h3 title={selectedResource.resourceId}>{selectedResource.resourceName}</h3>
                   <p>{resourceTypeLabel(selectedResource.resourceType)} · 소유자 {selectedResource.owner || selectedResource.createdBy || "-"} · 권한 {selectedResource.grants.length}개</p>
                 </div>
-                <div className="admin-console-chip-row">
-                  {permissionOrder.filter((action) => canAction(selectedResource, action)).map((action) => (
-                    <AdminChip key={`${selectedResource.resourceId}-${action}`}>{actionLabel(action)}</AdminChip>
-                  ))}
+                <div className="admin-resource-state-actions">
+                  <div className="admin-console-chip-row">
+                    {selectedResourceLock?.locked && <AdminChip tone="warning">잠김</AdminChip>}
+                    {permissionOrder.filter((action) => canAction(selectedResource, action)).map((action) => (
+                      <AdminChip key={`${selectedResource.resourceId}-${action}`}>{actionLabel(action)}</AdminChip>
+                    ))}
+                  </div>
+                  <button
+                    className={selectedResourceLock?.locked ? "secondary-button admin-lock-button" : "secondary-button admin-lock-button"}
+                    type="button"
+                    onClick={() => onResourceLockChange(selectedResource, !selectedResourceLock?.locked, selectedResourceLock?.locked ? "관리자 잠금 해제" : "관리자 잠금")}
+                  >
+                    {selectedResourceLock?.locked ? <Check size={15} /> : <ShieldCheck size={15} />}
+                    <span>{selectedResourceLock?.locked ? "잠금 해제" : "리소스 잠금"}</span>
+                  </button>
                 </div>
               </header>
 
@@ -622,41 +965,121 @@ function GrantEditor({
   );
 }
 
-function AuditLogTable({ logs }: { logs: AdminAuditLogEntry[] }) {
+function AuditLogTable({
+  logs,
+  onQueryChange,
+  pending,
+  query,
+}: {
+  logs: AdminAuditLogEntry[];
+  onQueryChange: (query: AdminAuditLogQuery) => void;
+  pending: boolean;
+  query: AdminAuditLogQuery;
+}) {
+  const [draft, setDraft] = useState({
+    limit: String(query.limit ?? 100),
+    q: query.q ?? "",
+    resourceType: query.resourceType ?? "",
+    result: query.result ?? "",
+  });
+
+  const submit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onQueryChange({
+      limit: Number(draft.limit) || 100,
+      q: draft.q.trim() || undefined,
+      resourceType: draft.resourceType || undefined,
+      result: draft.result ? draft.result as AdminAuditLogQuery["result"] : undefined,
+    });
+  };
+
   return (
-    <div className="admin-console-table-scroll">
-      <table className="schema-table admin-console-table">
-        <thead>
-          <tr>
-            <th>활동</th>
-            <th>사용자</th>
-            <th>대상</th>
-            <th>결과</th>
-            <th>시간</th>
-          </tr>
-        </thead>
-        <tbody>
-          {logs.map((log) => (
-            <tr key={log.requestId}>
-              <td><strong>{log.action}</strong><span>{log.apiPath}</span></td>
-              <td>{log.actorId}</td>
-              <td>{log.targetType}:{log.targetId}</td>
-              <td><AdminChip>{log.result}</AdminChip></td>
-              <td>{formatTime(log.createdAt)}</td>
+    <div className="admin-audit-panel">
+      <form className="admin-audit-filter" onSubmit={submit}>
+        <label>
+          <span>검색</span>
+          <input placeholder="actor, action, resource ID" value={draft.q} onChange={(event) => setDraft((current) => ({ ...current, q: event.target.value }))} />
+        </label>
+        <label>
+          <span>대상</span>
+          <select value={draft.resourceType} onChange={(event) => setDraft((current) => ({ ...current, resourceType: event.target.value }))}>
+            <option value="">전체</option>
+            <option value="dataset">Dataset</option>
+            <option value="etl_job">Job</option>
+            <option value="dashboard">Dashboard</option>
+            <option value="auth">Auth</option>
+            <option value="user">User</option>
+            <option value="group">Group</option>
+            <option value="admin_module">Admin</option>
+          </select>
+        </label>
+        <label>
+          <span>결과</span>
+          <select value={draft.result} onChange={(event) => setDraft((current) => ({ ...current, result: event.target.value }))}>
+            <option value="">전체</option>
+            <option value="success">성공</option>
+            <option value="failed">실패</option>
+            <option value="forbidden">차단</option>
+          </select>
+        </label>
+        <label>
+          <span>개수</span>
+          <input inputMode="numeric" value={draft.limit} onChange={(event) => setDraft((current) => ({ ...current, limit: event.target.value }))} />
+        </label>
+        <button className="primary-button admin-audit-search-button" type="submit" disabled={pending}>
+          <Search size={15} />
+          <span>조회</span>
+        </button>
+      </form>
+      <div className="admin-console-table-scroll">
+        <table className="schema-table admin-console-table">
+          <thead>
+            <tr>
+              <th>활동</th>
+              <th>사용자</th>
+              <th>대상</th>
+              <th>결과</th>
+              <th>시간</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {logs.map((log) => (
+              <tr key={log.requestId}>
+                <td><strong>{log.action}</strong><span>{log.httpMethod ? `${log.httpMethod} ` : ""}{log.apiPath}</span></td>
+                <td><strong>{log.actorName || log.actorId}</strong><span>{log.actorRole || log.actorId}</span></td>
+                <td><strong>{log.targetName || log.targetId}</strong><span>{log.targetType}:{log.targetId}</span></td>
+                <td><AdminChip tone={log.result === "forbidden" ? "danger" : log.result === "failed" ? "warning" : "default"}>{log.result}</AdminChip></td>
+                <td>{formatTime(log.createdAt)}</td>
+              </tr>
+            ))}
+            {logs.length === 0 && (
+              <tr>
+                <td colSpan={5}><span className="admin-console-muted">조건에 맞는 감사 로그가 없습니다.</span></td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-function AdminChip({ children }: { children: React.ReactNode }) {
-  return <span className="admin-console-chip">{children}</span>;
+function AdminChip({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "danger" | "warning" }) {
+  return <span className={`admin-console-chip ${tone}`}>{children}</span>;
+}
+
+function auditResultLabel(result: AdminAuditLogEntry["result"]) {
+  if (result === "forbidden") return "차단";
+  if (result === "failed") return "실패";
+  return "성공";
 }
 
 function resourceKey(resource?: AdminPermissionSummary) {
   return resource ? `${resource.resourceType}:${resource.resourceId}` : "";
+}
+
+function lockKey(lockItem: AdminResourceLock) {
+  return `${lockItem.resourceType}:${lockItem.resourceId}`;
 }
 
 function resourceTypeLabel(type: AdminResourceType) {

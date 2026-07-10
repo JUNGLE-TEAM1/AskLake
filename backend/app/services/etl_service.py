@@ -10,10 +10,11 @@ from typing import Any
 from fastapi import status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, permissions_for_actor, require_permission
+from app.core.auth_context import ActorContext, require_permission
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
 from app.models import CatalogDatasetModel, ETLJobModel, ETLRunModel, KafkaSnapshotModel
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories import etl_repository
 from app.schemas.common import ErrorCode
 from app.schemas.etl import (
@@ -39,7 +40,8 @@ from app.schemas.etl import (
 )
 
 from app.services.airflow_client import AirflowDagRun, AirflowTaskInstance, build_airflow_client
-from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import job_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
@@ -141,10 +143,11 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
 
 
 def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
-    return [
+    jobs = [
         with_job_permissions(db, job, actor or ActorContext())
         for job in etl_repository.list_jobs(db)
     ]
+    return [job for job in jobs if job.permissions.can_view]
 
 
 def run_due_scheduled_jobs(
@@ -190,6 +193,7 @@ def run_due_scheduled_jobs(
 
 
 def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobRowData:
+    actor_context = actor or ActorContext()
     job_model = etl_repository.get_job(db, job_id)
     if job_model is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
@@ -197,7 +201,19 @@ def get_job(db: Session, job_id: str, actor: ActorContext | None = None) -> JobR
     job = etl_repository.get_job_schema(db, job_id)
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
-    return with_job_permissions(db, job, actor or ActorContext())
+    job_with_permissions = with_job_permissions(db, job, actor_context)
+    if not job_with_permissions.permissions.can_view:
+        safe_record_audit_event(
+            db,
+            actor=actor_context,
+            action="etl_job.view.forbidden",
+            result="forbidden",
+            target_id=job_id,
+            target_type="etl_job",
+            details={"reason": "missing_view_permission"},
+        )
+        raise ApiError(ErrorCode.FORBIDDEN, "Job access denied", status.HTTP_403_FORBIDDEN)
+    return job_with_permissions
 
 
 def update_pipeline(
@@ -210,8 +226,20 @@ def update_pipeline(
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
+    actor_context = actor or ActorContext()
+    require_governed_access(
+        db,
+        actor_context,
+        action="manage",
+        api_path=f"/api/etl/jobs/{job_id}",
+        http_method="PATCH",
+        metadata={"owner": job.owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
+    )
     require_permission(
-        actor or ActorContext(),
+        actor_context,
         "manage",
         owner=job.owner,
         grants=permission_grants_for_resource(
@@ -236,7 +264,7 @@ def update_pipeline(
 
     apply_update_request(job, request, target_changed)
     saved_job = etl_repository.save_job(db, job)
-    return with_job_permissions(db, saved_job, actor or ActorContext())
+    return with_job_permissions(db, saved_job, actor_context)
 
 
 def list_datasets(db: Session) -> list[CatalogDataset]:
@@ -289,18 +317,47 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
 
     if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
-    require_permission(
-        actor or ActorContext(),
-        "run" if command in {"run", "retry"} else "manage",
-        owner=job.owner,
-        grants=permission_grants_for_resource(
-            db,
-            "etl_job",
-            job.id,
-            permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
-        ),
-        resource_label="job",
+    actor_context = actor or ActorContext()
+    required_action = "run" if command in {"run", "retry"} else "manage"
+    require_governed_access(
+        db,
+        actor_context,
+        action=required_action,
+        api_path=f"/api/etl/jobs/{job_id}/commands",
+        http_method="POST",
+        metadata={"command": command, "owner": job.owner},
+        resource_id=job.id,
+        resource_name=job.name,
+        resource_type="etl_job",
     )
+    try:
+        require_permission(
+            actor_context,
+            required_action,
+            owner=job.owner,
+            grants=permission_grants_for_resource(
+                db,
+                "etl_job",
+                job.id,
+                permission_grants_from_roles(job.owner, job.permission_roles, default_actions=["view", "run"]),
+            ),
+            resource_label="job",
+        )
+    except ApiError as exc:
+        safe_record_audit_event(
+            db,
+            action="etl_job.command.forbidden",
+            actor=actor_context,
+            api_path=f"/api/etl/jobs/{job_id}/commands",
+            http_method="POST",
+            metadata={"command": command, "requiredAction": required_action, "owner": job.owner},
+            result="forbidden",
+            status_code=exc.status_code,
+            target_id=job.id,
+            target_name=job.name,
+            target_type="etl_job",
+        )
+        raise
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
     if command == "pause" and job.status != "running":
@@ -390,11 +447,13 @@ def with_job_permissions(db: Session, job: JobRowData, actor: ActorContext) -> J
         for grant in job_with_grants.permission_grants
     ]
     return job_with_grants.model_copy(update={
-        "permissions": permissions_for_actor(
+        "permissions": permissions_for_actor_with_governance(
+            db,
             actor,
             owner=job_with_grants.owner,
             grants=grant_payloads,
-            enforced=True,
+            resource_id=job_with_grants.id,
+            resource_type="etl_job",
         ),
     })
 

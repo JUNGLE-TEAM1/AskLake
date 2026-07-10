@@ -144,13 +144,20 @@ def permissions_for_actor(
     grants: list[dict[str, Any]] | None = None,
     enforced: bool = False,
 ) -> ResourcePermissions:
+    grant_payload_list = grant_payloads(grants)
+    can_view = can(actor, "view", owner=owner, grants=grant_payload_list)
+    can_query = can(actor, "query", owner=owner, grants=grant_payload_list)
+    can_run = can(actor, "run", owner=owner, grants=grant_payload_list)
+    can_manage = can(actor, "manage", owner=owner, grants=grant_payload_list)
+    can_delete = can(actor, "delete", owner=owner, grants=grant_payload_list)
+    can_share = can(actor, "share", owner=owner, grants=grant_payload_list)
     return ResourcePermissions(
-        can_view=can(actor, "view", owner=owner, grants=grant_payloads(grants)),
-        can_query=can(actor, "query", owner=owner, grants=grant_payloads(grants)),
-        can_run=can(actor, "run", owner=owner, grants=grant_payloads(grants)),
-        can_manage=can(actor, "manage", owner=owner, grants=grant_payloads(grants)),
-        can_delete=can(actor, "delete", owner=owner, grants=grant_payloads(grants)),
-        can_share=can(actor, "share", owner=owner, grants=grant_payloads(grants)),
+        can_view=can_view or can_query or can_run or can_manage or can_delete or can_share,
+        can_query=can_query,
+        can_run=can_run,
+        can_manage=can_manage,
+        can_delete=can_delete,
+        can_share=can_share,
         computed_for=actor.name,
         enforced=enforced,
     )

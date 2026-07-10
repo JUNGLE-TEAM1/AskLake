@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
 from app.core.database import get_db
+from app.core.errors import ApiError
+from app.repositories.audit_repository import safe_record_audit_event
 from app.schemas.auth import AuthSessionResponse, AuthUserResponse, LoginRequest, LogoutResponse, SignupRequest
 from app.services.auth_service import SESSION_COOKIE_NAME, SESSION_TTL_DAYS, AuthService
 from app.services.identity_service import IdentityService
@@ -48,9 +50,37 @@ def login(
     service: Annotated[AuthService, Depends(get_auth_service)],
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthUserResponse:
-    session = service.login(email=payload.email, password=payload.password)
+    try:
+        session = service.login(email=payload.email, password=payload.password)
+    except ApiError as exc:
+        safe_record_audit_event(
+            db,
+            action="auth.login.failed",
+            actor=ActorContext(name=payload.email, role="anonymous", email=payload.email),
+            api_path="/api/auth/login",
+            http_method="POST",
+            metadata={"email": payload.email},
+            result="forbidden" if exc.status_code == status.HTTP_403_FORBIDDEN else "failed",
+            status_code=exc.status_code,
+            target_id=payload.email,
+            target_type="auth",
+        )
+        raise
     issue_session_cookie(response, str(session["token"]))
     actor = actor_context_from_session(session)
+    safe_record_audit_event(
+        db,
+        action="auth.login.succeeded",
+        actor=actor,
+        api_path="/api/auth/login",
+        http_method="POST",
+        metadata={"email": payload.email},
+        result="success",
+        status_code=status.HTTP_200_OK,
+        target_id=actor.id or actor.email or actor.name,
+        target_name=actor.name,
+        target_type="auth",
+    )
     return AuthUserResponse(user=IdentityService(db).get_current_user(actor))
 
 
@@ -81,9 +111,36 @@ def get_session(
 def logout(
     response: Response,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    db: Annotated[Session, Depends(get_db)],
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> LogoutResponse:
+    session_actor = service.actor_for_session(session_token)
+    actor = (
+        ActorContext(
+            name=str(session_actor.get("name") or "demo-user"),
+            role=str(session_actor.get("role") or "viewer"),
+            groups=tuple(str(group) for group in session_actor.get("groups") or []),
+            id=str(session_actor.get("id") or "") or None,
+            email=str(session_actor.get("email") or "") or None,
+            title=str(session_actor.get("title") or "") or None,
+        )
+        if session_actor is not None
+        else ActorContext(name="anonymous", role="anonymous")
+    )
     service.logout(session_token)
+    safe_record_audit_event(
+        db,
+        action="auth.logout.succeeded",
+        actor=actor,
+        api_path="/api/auth/logout",
+        http_method="POST",
+        metadata={"email": actor.email},
+        result="success",
+        status_code=status.HTTP_200_OK,
+        target_id=actor.id or actor.email or actor.name,
+        target_name=actor.name,
+        target_type="auth",
+    )
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/", samesite="lax")
     return LogoutResponse()
 

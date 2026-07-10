@@ -29,15 +29,40 @@ async function runSmoke() {
 
   await waitForHealth();
 
+  const loginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "demo.user@asklake.local", password: "asklake-demo" }),
+  });
+  const loginPayload = await readPayload(loginResponse);
+  assert(loginResponse.ok && loginPayload.user?.id === "demo-user", "Demo user should be able to log in.");
+  const sessionCookie = loginResponse.headers.get("set-cookie")?.split(";")[0];
+  assert(sessionCookie, "Login response should include a session cookie.");
+
+  const logoutResponse = await fetch(`${baseUrl}/api/auth/logout`, {
+    method: "POST",
+    headers: { Cookie: sessionCookie },
+  });
+  await readPayload(logoutResponse);
+  assert(logoutResponse.ok, "Demo user should be able to log out.");
+
+  const failedLogin = await postExpectError("/api/auth/login", {
+    email: "demo.user@asklake.local",
+    password: "wrong-password",
+  }, 401);
+  assert(failedLogin.error?.code === "UNAUTHORIZED", "Invalid login should return UNAUTHORIZED.");
+
   const currentUser = await get("/api/users/me");
   assert(currentUser.id === "admin-user", "Current user should resolve the default Admin User actor.");
   assert(currentUser.profile?.avatarInitials === "AU", "Current user profile should include avatar initials.");
-  assert(Array.isArray(currentUser.groups) && currentUser.groups.length > 0, "Current user should include groups.");
+  assert(Array.isArray(currentUser.groups) && currentUser.groups.length === 0, "Admin current user should not include resource access groups.");
   assert(typeof currentUser.permissionsSummary?.canView === "number", "Current user should include permission summary.");
 
   const adminUsers = await get("/api/admin/users");
   assert(Array.isArray(adminUsers.users), "Admin users response should include users array.");
   assert(adminUsers.users.some((user) => user.role === "admin"), "Admin users should include an admin actor.");
+  const adminUser = adminUsers.users.find((user) => user.id === "admin-user");
+  assert(adminUser && adminUser.groups.length === 0, "Admin user should not belong to resource access groups.");
 
   const adminGroups = await get("/api/admin/groups");
   assert(Array.isArray(adminGroups.groups), "Admin groups response should include groups array.");
@@ -90,7 +115,65 @@ async function runSmoke() {
 
   const adminAuditLogs = await get("/api/admin/audit-logs");
   assert(Array.isArray(adminAuditLogs.logs), "Admin audit log response should include logs array.");
-  assert(adminAuditLogs.logs.length >= 1, "Admin audit log response should include demo logs.");
+  assert(adminAuditLogs.logs.length >= 3, "Admin audit log response should include persisted permission grant events.");
+  assert(
+    adminAuditLogs.logs.some((log) => log.action === "admin.permission_grant.created" && log.targetId === editableResource.resourceId),
+    "Admin audit logs should include the persisted permission grant creation event.",
+  );
+  assert(
+    adminAuditLogs.logs.every((log) => log.requestId && log.createdAt && log.actorId),
+    "Admin audit logs should include requestId, createdAt, and actorId.",
+  );
+
+  const filteredAuditLogs = await get(`/api/admin/audit-logs?resourceType=${encodeURIComponent(editableResource.resourceType)}&q=${encodeURIComponent("temporary.editor")}&limit=10`);
+  assert(
+    filteredAuditLogs.logs.length >= 1 && filteredAuditLogs.logs.every((log) => log.targetType === editableResource.resourceType),
+    "Admin audit logs should support resourceType and text search filters.",
+  );
+
+  const authAuditLogs = await get(`/api/admin/audit-logs?resourceType=auth&q=${encodeURIComponent("demo.user")}&limit=20`);
+  assert(
+    authAuditLogs.logs.some((log) => log.action === "auth.login.succeeded" && log.result === "success"),
+    "Auth audit logs should include successful login events.",
+  );
+  assert(
+    authAuditLogs.logs.some((log) => log.action === "auth.logout.succeeded" && log.result === "success"),
+    "Auth audit logs should include logout events.",
+  );
+  assert(
+    authAuditLogs.logs.some((log) => log.action === "auth.login.failed" && log.result === "failed"),
+    "Auth audit logs should include failed login events.",
+  );
+
+  const governanceControls = await get("/api/admin/governance-controls");
+  assert(Array.isArray(governanceControls.principalControls), "Governance controls should include principal controls.");
+  assert(Array.isArray(governanceControls.resourceLocks), "Governance controls should include resource locks.");
+
+  await patch("/api/admin/governance/principals", {
+    principalId: "demo-user",
+    principalType: "user",
+    reason: "Identity admin smoke user block",
+    status: "blocked",
+  });
+  const blockedLogin = await postExpectError("/api/auth/login", {
+    email: "demo.user@asklake.local",
+    password: "asklake-demo",
+  }, 403);
+  assert(blockedLogin.error?.code === "FORBIDDEN", "Blocked user should not be able to log in.");
+
+  await patch("/api/admin/governance/principals", {
+    principalId: "demo-user",
+    principalType: "user",
+    reason: "Identity admin smoke user unblock",
+    status: "active",
+  });
+  const unblockedLoginResponse = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "demo.user@asklake.local", password: "asklake-demo" }),
+  });
+  await readPayload(unblockedLoginResponse);
+  assert(unblockedLoginResponse.ok, "Unblocked user should be able to log in again.");
 
   const forbidden = await getExpectError("/api/admin/users", 403, { "X-AskLake-Role": "viewer" });
   assert(forbidden.error?.code === "FORBIDDEN", "Non-admin actor should receive FORBIDDEN.");

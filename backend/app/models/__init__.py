@@ -3,7 +3,7 @@
 from app.models.catalog import CatalogDatasetModel
 from app.models.dashboard_runtime import DashboardPage, DashboardRevision, DashboardWidget
 from app.models.etl import ETLJobModel, ETLRunModel, KafkaSnapshotModel
-from app.models.identity import PermissionGrantModel
+from app.models.identity import AuditEventModel, PermissionGrantModel, PrincipalControlModel, ResourceLockModel
 from app.models.sql import SqlRunModel
 
 __all__ = [
@@ -14,6 +14,9 @@ __all__ = [
     "ETLJobModel",
     "ETLRunModel",
     "KafkaSnapshotModel",
+    "AuditEventModel",
     "PermissionGrantModel",
+    "PrincipalControlModel",
+    "ResourceLockModel",
     "SqlRunModel",
 ]

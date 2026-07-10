@@ -6,6 +6,8 @@ import type { PermissionAction, PermissionPrincipalType } from "./permissions";
 export type AdminUserStatus = "active" | "invited" | "disabled";
 
 export type AdminResourceType = "dataset" | "etl_job" | "dashboard";
+export type AdminPrincipalControlType = "user" | "group";
+export type AdminPrincipalStatus = "active" | "blocked";
 
 export type AdminUser = CurrentUserResponse & {
   lastActiveAt?: string;
@@ -51,14 +53,70 @@ export type AdminPermissionGrantUpdateRequest = {
 export type AdminAuditLogEntry = {
   action: string;
   actorId: string;
+  actorGroups: string[];
+  actorName?: string;
+  actorRole?: string;
   apiPath: string;
   createdAt: string;
+  httpMethod?: string;
+  metadata?: Record<string, unknown>;
   requestId: string;
   result: AuditResult;
+  statusCode?: number;
   targetId: string;
+  targetName?: string;
   targetType: AuditTargetType;
 };
 
 export type AdminAuditLogsResponse = {
   logs: AdminAuditLogEntry[];
+};
+
+export type AdminPrincipalControl = {
+  id: string;
+  principalId: string;
+  principalType: AdminPrincipalControlType;
+  reason?: string;
+  status: AdminPrincipalStatus;
+  updatedAt?: string;
+  updatedBy?: string;
+};
+
+export type AdminResourceLock = {
+  id: string;
+  locked: boolean;
+  reason?: string;
+  resourceId: string;
+  resourceType: AdminResourceType;
+  updatedAt?: string;
+  updatedBy?: string;
+};
+
+export type AdminGovernanceControlsResponse = {
+  principalControls: AdminPrincipalControl[];
+  resourceLocks: AdminResourceLock[];
+};
+
+export type AdminPrincipalControlRequest = {
+  principalId: string;
+  principalType: AdminPrincipalControlType;
+  reason?: string;
+  status: AdminPrincipalStatus;
+};
+
+export type AdminResourceLockRequest = {
+  locked: boolean;
+  reason?: string;
+  resourceId: string;
+  resourceType: AdminResourceType;
+};
+
+export type AdminAuditLogQuery = {
+  actorId?: string;
+  from?: string;
+  limit?: number;
+  q?: string;
+  resourceType?: string;
+  result?: AuditResult;
+  to?: string;
 };
