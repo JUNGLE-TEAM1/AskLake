@@ -76,3 +76,36 @@ export type DatasetMaterializationRun = {
   storageLocation?: string;
   storageSizeBytes: number;
 };
+
+export type CatalogDatasetRowsResponse = {
+  columns: string[];
+  datasetId: string;
+  datasetName: string;
+  hasNext: boolean;
+  limit: number;
+  offset: number;
+  returnedRows: number;
+  rowCount: number;
+  rows: string[][];
+};
+
+export type CatalogModelArtifact = {
+  allowedValues?: string[];
+  artifactType: "model";
+  datasetName?: string;
+  id: string;
+  jobId?: string;
+  method?: string;
+  modelArtifact?: string;
+  modelKind?: string;
+  outputColumn?: string;
+  runId?: string;
+  runtimeStatus?: string;
+  status?: "available" | "fallback" | "missing" | string;
+  targetColumn?: string;
+  targetDatasetId?: string;
+  totalRows?: number;
+  updatedAt?: string;
+  validRows?: number;
+  validationStatus?: string;
+};

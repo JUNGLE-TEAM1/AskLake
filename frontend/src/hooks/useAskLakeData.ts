@@ -15,13 +15,14 @@ import {
   getJob as getLiveJob,
   runJobCommand as runLiveJobCommand,
 } from "../services/pipelineApi";
-import { canQueryDataset, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
+import { canQueryDatasetAs, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import type {
   AuditResult,
   AuditTargetType,
   CatalogDataset,
   CreateDerivedDatasetRequest,
+  CurrentUserResponse,
   DagStepsByRunId,
   DraftPipeline,
   DraftPipelinePatch,
@@ -620,6 +621,53 @@ async function readInitialResource<T>(
   }
 }
 
+type InitialDataSnapshot = {
+  datasets: CatalogDataset[];
+  fatalErrors: string[];
+  hydratedRunState: JobRunStateMaps;
+  jobs: JobRowData[];
+  recoverableErrors: string[];
+};
+
+let initialDataSnapshot: InitialDataSnapshot | null = null;
+let initialDataSnapshotPromise: Promise<InitialDataSnapshot> | null = null;
+let initialDataSnapshotReadAt = 0;
+const initialDataSnapshotTtlMs = 30_000;
+
+function shouldReuseInitialDataSnapshot() {
+  return Boolean(initialDataSnapshot && Date.now() - initialDataSnapshotReadAt < initialDataSnapshotTtlMs);
+}
+
+async function readInitialDataSnapshot(): Promise<InitialDataSnapshot> {
+  if (shouldReuseInitialDataSnapshot() && initialDataSnapshot) return initialDataSnapshot;
+  if (initialDataSnapshotPromise) return initialDataSnapshotPromise;
+
+  initialDataSnapshotPromise = (async () => {
+    const [jobsResult, datasetsResult] = await Promise.all([
+      readInitialResource(getJobs, "jobs"),
+      readInitialResource(getDatasets, "catalog"),
+    ]);
+    const jobs = jobsResult.data.map(normalizeJobRow);
+    const datasets = datasetsResult.data.map(normalizeDatasetRow);
+    const snapshot: InitialDataSnapshot = {
+      datasets,
+      fatalErrors: [jobsResult, datasetsResult]
+        .flatMap((result) => (result.fatal && result.error ? [result.error] : [])),
+      hydratedRunState: buildRunStateFromJobs(jobs),
+      jobs,
+      recoverableErrors: [jobsResult, datasetsResult]
+        .flatMap((result) => (!result.fatal && result.error ? [result.error] : [])),
+    };
+    initialDataSnapshot = snapshot;
+    initialDataSnapshotReadAt = Date.now();
+    return snapshot;
+  })().finally(() => {
+    initialDataSnapshotPromise = null;
+  });
+
+  return initialDataSnapshotPromise;
+}
+
 function isOptimisticRunCommand(command: JobCommand): command is "run" | "retry" {
   return command === "run" || command === "retry";
 }
@@ -666,11 +714,13 @@ function buildOptimisticJob(job: JobRowData): JobRowData {
 
 export function useAskLakeData({
   enabled = true,
+  currentUser,
   onFlowChange,
   showToast,
   writeAuditLog,
 }: {
   enabled?: boolean;
+  currentUser?: CurrentUserResponse | null;
   onFlowChange: (flow: FlowId) => void;
   showToast: (message: string, tone?: "success" | "info") => void;
   writeAuditLog: WriteAuditLog;
@@ -691,6 +741,11 @@ export function useAskLakeData({
   const createPendingRef = useRef(false);
   const pollingFailureRef = useRef<Set<string>>(new Set());
   const commandPendingRef = useRef<Set<string>>(new Set());
+  const showToastRef = useRef(showToast);
+
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   const jobExecutionEvidence = useMemo(
     () => buildJobExecutionEvidence(runsByJobId, selectedRunIdByJobId, dagStepsByRunId),
@@ -748,15 +803,12 @@ export function useAskLakeData({
 
     async function hydrateData() {
       setDataError(null);
-      const [jobsResult, datasetsResult] = await Promise.all([
-        readInitialResource(getJobs, "jobs"),
-        readInitialResource(getDatasets, "catalog"),
-      ]);
+      const snapshot = await readInitialDataSnapshot();
       if (cancelled) return;
 
-      const normalizedJobs = jobsResult.data.map(normalizeJobRow);
-      const normalizedDatasets = datasetsResult.data.map(normalizeDatasetRow);
-      const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
+      const normalizedJobs = snapshot.jobs;
+      const normalizedDatasets = snapshot.datasets;
+      const hydratedRunState = snapshot.hydratedRunState;
       setJobs(normalizedJobs);
       setDatasets(normalizedDatasets);
       setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
@@ -765,18 +817,11 @@ export function useAskLakeData({
       setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
       setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
 
-      const fatalErrors = [jobsResult, datasetsResult]
-        .filter((result) => result.fatal && result.error)
-        .map((result) => result.error);
-      const recoverableErrors = [jobsResult, datasetsResult]
-        .filter((result) => !result.fatal && result.error)
-        .map((result) => result.error);
-
-      if (fatalErrors.length > 0) {
-        setDataError(fatalErrors.join(" / "));
-      } else if (recoverableErrors.length > 0) {
+      if (snapshot.fatalErrors.length > 0) {
+        setDataError(snapshot.fatalErrors.join(" / "));
+      } else if (snapshot.recoverableErrors.length > 0) {
         setDataError(null);
-        showToast("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
+        showToastRef.current("DB API 초기 목록을 불러오지 못해 빈 상태로 표시합니다.", "info");
       }
 
       setDataLoading(false);
@@ -787,7 +832,7 @@ export function useAskLakeData({
     return () => {
       cancelled = true;
     };
-  }, [enabled, showToast]);
+  }, [enabled]);
 
 
   useEffect(() => {
@@ -806,7 +851,7 @@ export function useAskLakeData({
         } catch {
           if (cancelled || pollingFailureRef.current.has(jobId)) return;
           pollingFailureRef.current.add(jobId);
-          showToast("작업 상태 동기화에 실패했습니다.", "info");
+          showToastRef.current("작업 상태 동기화에 실패했습니다.", "info");
         }
       }));
     }
@@ -820,7 +865,7 @@ export function useAskLakeData({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activePollingKey, enabled, showToast]);
+  }, [activePollingKey, enabled]);
 
   const updateDraftPipeline = (patch: DraftPipelinePatch) => {
     setDraftPipeline((draft) => applyDraftPipelinePatch(draft, patch));
@@ -1085,7 +1130,7 @@ export function useAskLakeData({
   };
 
   const openDatasetInSql = (dataset: CatalogDataset) => {
-    if (!canQueryDataset(dataset)) {
+    if (!canQueryDatasetAs(dataset, currentUser)) {
       writeAuditLog("catalog.open_in_sql.forbidden", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "failed", { targetType: "dataset" });
       showToast(permissionDeniedMessage("데이터셋", "SQL 실행"), "info");
       return;

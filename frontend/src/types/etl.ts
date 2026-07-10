@@ -89,8 +89,12 @@ export type TransformChainStepDraft = {
 
 export type SchemaColumnDraft = {
   confidence?: number;
+  expandedFrom?: string;
+  expandedIndex?: number;
+  expandedTotal?: number;
   included?: boolean;
   nullable: boolean;
+  reviewAnalysisInstruction?: string;
   reviewAnalysisMethod?: string;
   role?: string;
   sourceName: string;

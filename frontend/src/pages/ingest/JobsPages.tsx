@@ -231,7 +231,7 @@ function CellphonesReviewAnalysisPanel({
             </div>
             <div>
               <dt>Output schema</dt>
-              <dd>review_id, asin, rating, sentiment, issue_category, issue_subcategory, severity, summary, evidence, confidence</dd>
+              <dd>review_id, asin, rating, sentiment, issue_category, issue_subcategory, severity, summary, evidence</dd>
             </div>
             <div>
               <dt>Last run</dt>

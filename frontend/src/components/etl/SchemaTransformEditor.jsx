@@ -392,7 +392,14 @@ export default function SchemaTransformEditor({
             transformParams: params,
             type: column.type,
           }));
-          next.splice(editingColumn.index, 1, ...generated);
+          const replacingExpandedGroup = existing.expandedFrom
+            ? next.findIndex((item) => item.expandedFrom === existing.expandedFrom)
+            : -1;
+          const replaceStartIndex = replacingExpandedGroup >= 0 ? replacingExpandedGroup : editingColumn.index;
+          const replaceCount = replacingExpandedGroup >= 0
+            ? Math.max(1, next.filter((item) => item.expandedFrom === existing.expandedFrom).length)
+            : 1;
+          next.splice(replaceStartIndex, replaceCount, ...generated);
           onSchemaChange(next);
           if (onTestStatusChange) onTestStatusChange(false);
           setShowFunctionModal(false);

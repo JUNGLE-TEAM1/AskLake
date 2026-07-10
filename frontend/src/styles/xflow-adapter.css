@@ -70,6 +70,15 @@
   scrollbar-width: thin;
 }
 
+.asklake-xflow-source-adapter .bg-purple-100.text-purple-700.font-mono {
+  display: inline-block;
+  max-width: min(100%, 520px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .asklake-xflow-source-adapter .flex-1.overflow-y-auto::-webkit-scrollbar {
   width: 12px;
   height: 12px;

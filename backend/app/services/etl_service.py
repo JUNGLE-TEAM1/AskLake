@@ -449,7 +449,7 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
             or field_value(fields, "Target Endpoint URL")
-            or "http://127.0.0.1:19000"
+            or "http://127.0.0.1:9000"
         ),
         "landingPrefix": landing["prefix"],
         "maxMessages": max_messages,

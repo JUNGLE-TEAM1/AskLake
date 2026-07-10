@@ -182,10 +182,40 @@ function RunTypeCard({ active, icon, title, desc, onClick }: { active: boolean; 
 
 function mergeFieldRows(baseFields: Array<[string, string]>, savedFields: Array<[string, string]>): Array<[string, string]> {
   const savedByLabel = new Map(savedFields);
-  const mergedFields = baseFields.map(([label, value]) => [label, savedByLabel.get(label) ?? value] as [string, string]);
+  const mergedFields = baseFields.map(([label, value]) => {
+    const savedValue = savedByLabel.get(label);
+    if (shouldBackfillSourceField(label, value, savedValue)) return [label, value] as [string, string];
+    return [label, savedValue ?? value] as [string, string];
+  });
   const baseLabels = new Set(baseFields.map(([label]) => label));
   const extraSavedFields = savedFields.filter(([label]) => !baseLabels.has(label));
   return [...mergedFields, ...extraSavedFields];
+}
+
+function mergeSourceFieldsWithDefaults(baseFields: Array<[string, string]>, savedFields: Array<[string, string]> | undefined): Array<[string, string]> {
+  return savedFields ? mergeFieldRows(baseFields, savedFields) : baseFields;
+}
+
+function shouldBackfillSourceField(label: string, defaultValue: string, savedValue: string | undefined) {
+  if (savedValue === undefined || savedValue.trim() !== "" || defaultValue.trim() === "") return false;
+  return [
+    "Access Key",
+    "Broker / Endpoint",
+    "Bucket / Stage Name",
+    "CONSUMER GROUP ID",
+    "Database Name",
+    "Endpoint / Host",
+    "Endpoint URL",
+    "File Type",
+    "Path",
+    "Password / Auth Token",
+    "Port",
+    "Region",
+    "Secret Key",
+    "TOPIC / QUEUE NAME",
+    "Use Path Style",
+    "Username",
+  ].includes(label);
 }
 
 function mergeConnectorSourceConfig(currentFields: Array<[string, string]>, responseFields: Array<[string, string]>): Array<[string, string]> {
@@ -1270,11 +1300,14 @@ export function SourceConnectionPage({
   const activeSourceType = sourceConfigs[selectedSourceType] ? selectedSourceType : "";
   const hasSelectedSource = activeSourceType.length > 0;
   const current = hasSelectedSource ? sourceConfigs[activeSourceType] : sourceConfigs["File / S3"];
-  const editableFields = sourceFields[activeSourceType] ?? (
+  const cachedEditableFields = activeSourceType ? sourceFields[activeSourceType] : undefined;
+  const editableFields = cachedEditableFields
+    ? mergeSourceFieldsWithDefaults(current.fields, cachedEditableFields)
+    : (
     draft.source.sourceType === activeSourceType && draft.source.sourceConfig.length > 0
       ? mergeFieldRows(current.fields, draft.source.sourceConfig)
       : current.fields
-  );
+    );
   const isSqlResultSource = activeSourceType === "SQL Result";
   const hasSqlResultPreview = isSqlResultSource && hasSqlResultPreviewConfig(editableFields);
   const sourceLabel = hasSelectedSource
@@ -1362,7 +1395,9 @@ export function SourceConnectionPage({
   };
 
   const selectSource = (value: string) => {
-    const nextFields = value === activeSourceType ? editableFields : sourceFields[value] ?? sourceConfigs[value].fields;
+    const nextFields = value === activeSourceType
+      ? editableFields
+      : mergeSourceFieldsWithDefaults(sourceConfigs[value].fields, sourceFields[value]);
     const nextIsSqlResult = value === "SQL Result";
     const nextHasSqlResultPreview = nextIsSqlResult && hasSqlResultPreviewConfig(nextFields);
     const nextStatus: SourceDraft["connectionStatus"] = nextIsSqlResult ? (nextHasSqlResultPreview ? "success" : "idle") : "idle";

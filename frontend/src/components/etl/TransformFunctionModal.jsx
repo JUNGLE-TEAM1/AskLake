@@ -1,5 +1,6 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { getCatalogModelArtifacts } from "../../services/catalogApi";
 
 const SQL_EXPRESSION = "SQL Expression";
 const LEGACY_CSV_CLASSIFIER = "Custom CSV Classifier";
@@ -170,6 +171,9 @@ function parseReviewAnalysisStep(step, sourceField, outputName, outputType) {
       allowedValues: Array.isArray(firstColumn?.allowedValues) ? firstColumn.allowedValues : defaultAllowedValues(rawMethod || method),
       instruction: String(firstColumn?.instruction || parsed.instruction || defaultInstruction(rawMethod || method, outputName)),
       method,
+      modelArtifact: String(firstColumn?.modelArtifact || firstColumn?.selectedModelArtifact || ""),
+      modelId: String(firstColumn?.modelId || firstColumn?.selectedModelId || ""),
+      requireModel: Boolean(firstColumn?.requireModel || firstColumn?.requirePortableModel),
       sourceField: String(parsed.sourceField || sourceField),
       targetName: String(firstColumn?.targetName || parsed.targetName || outputName),
       type: String(firstColumn?.type || parsed.type || outputType || "string"),
@@ -190,7 +194,7 @@ function newReviewRuleId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createReviewRule({ allowedValues, instruction, method, targetName, type } = {}) {
+function createReviewRule({ allowedValues, instruction, method, modelArtifact, modelId, requireModel, targetName, type } = {}) {
   const normalizedMethod = normalizeReviewAnalysisMethod(method, "copy");
   const normalizedAllowedValues = Array.isArray(allowedValues) && allowedValues.length > 0
     ? allowedValues
@@ -201,6 +205,9 @@ function createReviewRule({ allowedValues, instruction, method, targetName, type
     id: newReviewRuleId(),
     instruction: String(instruction || defaultInstruction(method || normalizedMethod, targetName)).trim(),
     method: normalizedMethod,
+    modelArtifact: String(modelArtifact || ""),
+    modelId: String(modelId || ""),
+    requireModel: Boolean(requireModel),
     targetName: normalizeCsvColumnName(targetName || "output_value") || "output_value",
     type: type || "string",
   };
@@ -216,6 +223,9 @@ function parseReviewAnalysisRules(step, sourceField, outputName, outputType) {
           allowedValues: Array.isArray(column?.allowedValues) ? column.allowedValues : [],
           instruction: column?.instruction || column?.description || "",
           method: column?.method || column?.analysisMethod || parsed.method,
+          modelArtifact: column?.modelArtifact || column?.selectedModelArtifact || "",
+          modelId: column?.modelId || column?.selectedModelId || "",
+          requireModel: column?.requireModel || column?.requirePortableModel,
           targetName: column?.targetName || column?.value || parsed.outputColumn || outputName || `output_${index + 1}`,
           type: column?.type || parsed.type || outputType || "string",
         }))
@@ -257,6 +267,31 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
     initialDataStep?.operation === LEGACY_CSV_CLASSIFIER || isRowAnalysisOperation(initialDataStep?.operation),
   );
   const [reviewRules, setReviewRules] = useState(() => parseReviewAnalysisRules(initialDataStep, sourceField, column.name, column.type));
+  const [modelArtifacts, setModelArtifacts] = useState([]);
+  const [modelArtifactsError, setModelArtifactsError] = useState("");
+  const availableModelArtifacts = useMemo(
+    () => modelArtifacts.filter((artifact) => artifact?.status === "available" && artifact?.modelArtifact),
+    [modelArtifacts],
+  );
+
+  useEffect(() => {
+    if (!isClassifierEditorOpen) return undefined;
+    let cancelled = false;
+    getCatalogModelArtifacts()
+      .then((items) => {
+        if (cancelled) return;
+        setModelArtifacts(Array.isArray(items) ? items : []);
+        setModelArtifactsError("");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setModelArtifacts([]);
+        setModelArtifactsError(error instanceof Error ? error.message : "Failed to load models.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isClassifierEditorOpen]);
 
   const functions = [
     {
@@ -368,6 +403,9 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
             ? (rule.instruction || defaultInstruction(method, rule.targetName))
             : "",
           method: normalizedMethod,
+          modelArtifact: normalizedMethod === "one_of_values" ? rule.modelArtifact : "",
+          modelId: normalizedMethod === "one_of_values" ? rule.modelId : "",
+          requireModel: normalizedMethod === "one_of_values" ? rule.requireModel : false,
         };
       })()
       : rule)));
@@ -379,6 +417,15 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
 
   const updateReviewRuleInstruction = (id, value) => {
     updateReviewRule(id, { instruction: value });
+  };
+
+  const updateReviewRuleModel = (id, value) => {
+    const selected = availableModelArtifacts.find((artifact) => artifact.id === value || artifact.modelArtifact === value);
+    updateReviewRule(id, {
+      modelArtifact: selected?.modelArtifact || "",
+      modelId: selected?.id || "",
+      requireModel: Boolean(selected),
+    });
   };
 
   const addReviewRule = () => {
@@ -462,7 +509,10 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
             allowedValues: parseAllowedValues(rule.allowedValuesInput ?? serializeAllowedValues(rule.allowedValues)),
             instruction: String(rule.instruction || "").trim(),
             method,
+            modelArtifact: method === "one_of_values" ? String(rule.modelArtifact || "") : "",
+            modelId: method === "one_of_values" ? String(rule.modelId || "") : "",
             nullable: true,
+            requireModel: method === "one_of_values" && Boolean(rule.modelArtifact || rule.modelId || rule.requireModel),
             targetName,
             type: rule.type || "string",
           };
@@ -511,7 +561,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1002]">
-      <div className={`bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] overflow-hidden ${isClassifierEditorOpen ? "w-[calc(100vw-24px)] max-w-[980px]" : "w-[640px]"}`}>
+      <div className={`bg-white rounded-2xl shadow-xl border border-slate-200 max-h-[90vh] overflow-hidden ${isClassifierEditorOpen ? "w-[calc(100vw-24px)] max-w-[1280px]" : "w-[640px]"}`}>
         <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
           <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-2">
             <span className="w-1 h-3 bg-indigo-500 rounded-full"></span>
@@ -552,9 +602,9 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
           {isClassifierEditorOpen ? (
             <div className="space-y-5 rounded-xl border border-indigo-100 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <strong className="block text-base font-bold text-slate-900">Text row to structured CSV columns</strong>
-                  <span className="font-mono text-xs font-semibold text-indigo-600">source field: {sourceField}</span>
+                  <span className="block truncate font-mono text-xs font-semibold text-indigo-600">source field: {sourceField}</span>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -574,25 +624,27 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-slate-300 bg-white">
-                <div className="grid grid-cols-[56px_minmax(150px,1fr)_132px_180px_minmax(260px,1.4fr)_72px] bg-slate-950 font-mono text-xs font-bold text-slate-100">
-                  <div className="border-r border-slate-700 px-3 py-3 text-center">#</div>
-                  <div className="border-r border-slate-700 px-3 py-3">A - output_column</div>
-                  <div className="border-r border-slate-700 px-3 py-3">B - type</div>
-                  <div className="border-r border-slate-700 px-3 py-3">C - method</div>
-                  <div className="border-r border-slate-700 px-3 py-3">D - values_or_instruction</div>
-                  <div className="px-3 py-3 text-center">delete</div>
-                </div>
+              <div className="overflow-auto rounded-xl border border-slate-300 bg-white">
+                <div className="min-w-[1040px]">
+                  <div className="grid grid-cols-[56px_minmax(180px,1fr)_140px_190px_240px_minmax(360px,1.5fr)_72px] bg-slate-950 font-mono text-xs font-bold text-slate-100">
+                    <div className="border-r border-slate-700 px-3 py-3 text-center">#</div>
+                    <div className="border-r border-slate-700 px-3 py-3">A - output_column</div>
+                    <div className="border-r border-slate-700 px-3 py-3">B - type</div>
+                    <div className="border-r border-slate-700 px-3 py-3">C - method</div>
+                    <div className="border-r border-slate-700 px-3 py-3">D - model</div>
+                    <div className="border-r border-slate-700 px-3 py-3">E - values_or_instruction</div>
+                    <div className="px-3 py-3 text-center">delete</div>
+                  </div>
 
-                <div className="max-h-[420px] overflow-auto">
-                  {reviewRules.map((rule, index) => {
+                  <div className="max-h-[420px] overflow-y-auto">
+                    {reviewRules.map((rule, index) => {
                     const methodOption = METHOD_OPTION_BY_VALUE[normalizeReviewAnalysisMethod(rule.method)] || METHOD_OPTION_BY_VALUE.one_of_values;
                     const canUseAllowedValues = methodOption.kind === "classify";
                     const canUseInstruction = methodOption.kind === "instruction";
                     return (
                       <div
                         key={rule.id}
-                        className="grid grid-cols-[56px_minmax(150px,1fr)_132px_180px_minmax(260px,1.4fr)_72px] border-t border-slate-200 font-mono text-sm"
+                        className="grid grid-cols-[56px_minmax(180px,1fr)_140px_190px_240px_minmax(360px,1.5fr)_72px] border-t border-slate-200 font-mono text-sm"
                       >
                         <div className="flex items-center justify-center bg-slate-50 px-3 py-2 text-xs font-bold text-slate-500">
                           {index + 1}
@@ -612,6 +664,21 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                           >
                             {OUTPUT_TYPE_OPTIONS.map((type) => (
                               <option key={type} value={type}>{type}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="border-l border-slate-200 p-0">
+                          <select
+                            className="h-full min-h-12 w-full border-0 bg-white px-3 font-mono text-sm outline-none focus:bg-indigo-50 focus:ring-2 focus:ring-inset focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-400"
+                            disabled={!canUseAllowedValues || availableModelArtifacts.length === 0}
+                            value={rule.modelId || rule.modelArtifact || ""}
+                            onChange={(event) => updateReviewRuleModel(rule.id, event.target.value)}
+                          >
+                            <option value="">Auto model</option>
+                            {availableModelArtifacts.map((artifact) => (
+                              <option key={artifact.id || artifact.modelArtifact} value={artifact.modelArtifact || artifact.id}>
+                                {(artifact.targetColumn || artifact.outputColumn || "model") + " · " + (artifact.modelArtifact || artifact.id)}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -657,8 +724,16 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                         </div>
                       </div>
                     );
-                  })}
+                    })}
+                  </div>
                 </div>
+              </div>
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
+                {modelArtifactsError
+                  ? `Model list failed: ${modelArtifactsError}`
+                  : availableModelArtifacts.length > 0
+                    ? `${availableModelArtifacts.length} saved model(s) available`
+                    : "No saved model yet. One of values will use automatic matching or fallback."}
               </div>
 
             </div>          ) : (
@@ -673,7 +748,7 @@ export default function TransformFunctionModal({ column, onApply, onClose }) {
                     onClick={openClassifierEditor}
                     type="button"
                   >
-                    Select method
+                    Define CSV columns
                   </button>
                 </div>
               </div>

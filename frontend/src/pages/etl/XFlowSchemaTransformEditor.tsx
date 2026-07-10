@@ -10,11 +10,16 @@ import type { SchemaColumnDraft, TransformChainStepDraft, TransformStepDraft } f
 
 type XFlowColumn = {
   defaultValue?: string;
+  expandedFrom?: string;
+  expandedIndex?: number;
+  expandedTotal?: number;
   name: string;
   notNull?: boolean;
   onError?: string;
   originalName?: string;
   originalType?: string;
+  reviewAnalysisInstruction?: string;
+  reviewAnalysisMethod?: string;
   sourceId?: string | null;
   sourceName?: string;
   transform?: string | null;
@@ -54,6 +59,7 @@ const XFLOW_COLUMN_STEP_PREFIX = "xflow-col-";
 const XFLOW_SQL_STEP_ID = "xflow-sql-transform";
 const CUSTOM_CSV_CLASSIFIER = "Custom CSV Classifier";
 const REVIEW_ROW_ANALYSIS = "Review Row Analysis";
+const TEXT_ROW_ANALYSIS = "Text Row Analysis";
 const FIELD_ONLY_OPERATIONS = new Set(["Default Value", "Null Guard"]);
 
 export function XFlowSchemaTransformEditor({
@@ -138,13 +144,18 @@ function toXFlowTargetColumn(column: SchemaColumnDraft, transformSteps: Transfor
 
   return {
     defaultValue: defaultStep?.params ?? "",
+    expandedFrom: column.expandedFrom,
+    expandedIndex: column.expandedIndex,
+    expandedTotal: column.expandedTotal,
     name: outputName,
     notNull: column.nullable === false || Boolean(nullGuardStep),
     onError: dataStep?.onError ?? defaultStep?.onError ?? nullGuardStep?.onError ?? "Warn",
-    originalName: column.sourceName,
+    originalName: column.expandedFrom || column.sourceName,
     originalType: toXFlowType(column.type),
+    reviewAnalysisInstruction: column.reviewAnalysisInstruction,
+    reviewAnalysisMethod: column.reviewAnalysisMethod,
     sourceId: XFLOW_SOURCE_ID,
-    sourceName: "Source",
+    sourceName: column.sourceName,
     transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
     transformChain: dataChain,
     transformDisplay: transformDisplay || null,
@@ -162,6 +173,14 @@ function projectXFlowSchema(
 ) {
   const sourceIndexByName = buildSourceIndex(currentColumns);
   const usedSourceNames = new Set<string>();
+  const currentTextExpansionKeys = new Set(
+    currentColumns
+      .filter((column) => column.expandedFrom && column.sourceName.startsWith("__text_analysis."))
+      .map((column) => `${column.expandedFrom}:${column.targetName}`),
+  );
+  const hasNewTextExpansion = nextTargetSchema.some((target) => (
+    target.expandedFrom && !currentTextExpansionKeys.has(`${target.expandedFrom}:${target.name}`)
+  ));
 
   const targetColumns = nextTargetSchema.map((target) => {
     const sourceName = normalizeSourceName(target.originalName || target.name);
@@ -170,6 +189,8 @@ function projectXFlowSchema(
     const chain = normalizeColumnChain(target, target.type);
     const displayRole = target.transformDisplay || chain.map(formatChainStep).filter(Boolean).join(" -> ") || target.transform || target.transformOperation || existing?.role;
     usedSourceNames.add(existing?.sourceName ?? sourceName);
+    if (target.sourceName) usedSourceNames.add(target.sourceName);
+    if (target.expandedFrom) usedSourceNames.add(target.expandedFrom);
 
     return {
       ...(existing ?? {
@@ -178,9 +199,16 @@ function projectXFlowSchema(
         sourceName,
       }),
       included: true,
-      nullable: !target.notNull,
+      expandedFrom: target.expandedFrom,
+      expandedIndex: target.expandedIndex,
+      expandedTotal: target.expandedTotal,
+      nullable: target.expandedFrom ? true : !target.notNull,
       role: displayRole ? `xflow-transform:${displayRole}` : existing?.role,
-      sourceName: existing?.sourceName ?? sourceName,
+      reviewAnalysisInstruction: target.reviewAnalysisInstruction ?? existing?.reviewAnalysisInstruction,
+      reviewAnalysisMethod: target.reviewAnalysisMethod ?? existing?.reviewAnalysisMethod,
+      sourceName: target.expandedFrom
+        ? `__text_analysis.${target.name}`
+        : existing?.sourceName ?? sourceName,
       targetName: target.name,
       transformChain: chain,
       type: fromXFlowType(target.type),
@@ -188,8 +216,11 @@ function projectXFlowSchema(
   });
 
   const excludedColumns = currentColumns
-    .filter((column) => !usedSourceNames.has(column.sourceName))
-    .map((column) => ({ ...column, included: false }));
+    .filter((column) => !usedSourceNames.has(column.sourceName) && !isInternalDerivedColumn(column))
+    .map((column) => ({
+      ...column,
+      included: hasNewTextExpansion && column.included !== false ? true : false,
+    }));
 
   const nextColumns = [...targetColumns, ...excludedColumns];
   const nextRows = projectSampleRows(currentColumns, sampleRows, nextColumns, nextTargetSchema, columnSteps);
@@ -239,8 +270,8 @@ function projectSampleRows(
 function buildTransformSteps(targetSchema: XFlowColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column) => {
     const output = column.name;
-    let currentInput = normalizeSourceName(column.name);
     const chain = normalizeColumnChain(column, column.type);
+    let currentInput = initialTransformInput(column, chain);
     const steps: TransformStepDraft[] = [];
 
     chain.forEach((step, index) => {
@@ -254,12 +285,40 @@ function buildTransformSteps(targetSchema: XFlowColumn[]): TransformStepDraft[] 
       currentInput = output;
     }
 
-    if (column.notNull && !chain.some((step) => step.operation === "Null Guard")) {
+    const isTextRowAnalysisColumn = chain.some((step) => isTextRowAnalysisOperation(step.operation));
+    if (column.notNull && !isTextRowAnalysisColumn && !chain.some((step) => step.operation === "Null Guard")) {
       steps.push(makeTransformStep(column, currentInput, output, "Null Guard", "required", steps.length + 1, "Fail Run"));
     }
 
     return steps;
   });
+}
+
+function initialTransformInput(column: XFlowColumn, chain: TransformChainStepDraft[]) {
+  const firstDataStep = chain.find((step) => !FIELD_ONLY_OPERATIONS.has(step.operation));
+  if (firstDataStep && isTextRowAnalysisOperation(firstDataStep.operation)) {
+    return reviewAnalysisSourceFieldFromParams(firstDataStep.params)
+      || column.expandedFrom
+      || column.originalName
+      || normalizeSourceName(column.sourceName || column.name);
+  }
+  return normalizeSourceName(column.name);
+}
+
+function reviewAnalysisSourceFieldFromParams(params = "") {
+  try {
+    const parsed = JSON.parse(params);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+    return String(
+      parsed.sourceField
+      || parsed.textField
+      || parsed.inputField
+      || parsed.sourceColumn
+      || "",
+    ).trim();
+  } catch {
+    return "";
+  }
 }
 
 function makeTransformStep(
@@ -354,7 +413,7 @@ function transformStepToChainStep(step: TransformStepDraft, fallbackType: string
   return normalizeChainStep({
     display: step.operation === CUSTOM_CSV_CLASSIFIER
       ? formatCsvClassifierDisplay(step.params)
-      : step.operation === REVIEW_ROW_ANALYSIS
+      : isTextRowAnalysisOperation(step.operation)
         ? formatReviewRowAnalysisDisplay(step.params, step.output)
       : `${step.operation}${step.params ? `: ${step.params}` : ""}`,
     expression: step.operation === "SQL Expression"
@@ -390,6 +449,8 @@ function buildSourceIndex(columns: SchemaColumnDraft[]) {
 
 function expressionForOperation(operation: string, input: string, params = "") {
   switch (operation) {
+    case TEXT_ROW_ANALYSIS:
+      return `TEXT_ANALYZE(${quoteSqlIdentifier(input)})`;
     case REVIEW_ROW_ANALYSIS:
       return `REVIEW_ANALYZE(${quoteSqlIdentifier(input)})`;
     case CUSTOM_CSV_CLASSIFIER:
@@ -446,7 +507,7 @@ function safeId(value: string) {
 }
 
 function isInternalDerivedColumn(column: SchemaColumnDraft) {
-  return column.sourceName.startsWith("__review_analysis.");
+  return column.sourceName.startsWith("__review_analysis.") || column.sourceName.startsWith("__text_analysis.");
 }
 
 function parseCsvClassifierConfig(params: string, input: string) {
@@ -482,10 +543,14 @@ function formatReviewRowAnalysisDisplay(params: string, output: string) {
     const parsed = JSON.parse(params);
     const columns = Array.isArray(parsed.columns) ? parsed.columns : [];
     const label = columns.find((column: Record<string, unknown>) => column.targetName === output)?.instruction;
-    return `Review row -> ${output}${label ? ` (${label})` : ""}`;
+    return `Text row -> ${output}${label ? ` (${label})` : ""}`;
   } catch {
-    return `Review row -> ${output}`;
+    return `Text row -> ${output}`;
   }
+}
+
+function isTextRowAnalysisOperation(operation: string) {
+  return operation === REVIEW_ROW_ANALYSIS || operation === TEXT_ROW_ANALYSIS;
 }
 
 function buildCsvClassifierSql(params: string, input: string) {
