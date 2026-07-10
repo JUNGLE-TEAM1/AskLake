@@ -285,12 +285,18 @@
 }
 
 .catalog-preview-title {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 32px minmax(0, 1fr) 36px;
   border-bottom: 1px solid #e5e7eb;
 }
 
 .catalog-preview-title > div {
   min-width: 0;
+}
+
+.catalog-preview-title > div:last-child {
+  width: 36px;
+  min-width: 36px;
+  justify-self: end;
 }
 
 .catalog-preview-title h2,
@@ -302,7 +308,9 @@
 }
 
 .catalog-preview-title h2 {
+  display: block;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   overflow-wrap: normal;
   text-overflow: ellipsis;
@@ -311,7 +319,9 @@
 
 .catalog-preview-title h2 > span {
   display: block;
+  width: 100%;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
