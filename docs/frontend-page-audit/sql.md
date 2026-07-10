@@ -115,7 +115,7 @@
 - embedded Dashboard builder는 raw backdrop과 `role="dialog"` 대신 `Dialog`/`DialogContent`를 사용한다.
 - SQL 도구, editor, schema, result surface는 `Panel`, 실행 상태는 Jobs 기준 `StatusBadge`, metadata는 `Badge`, 빈 상태는 `Empty`, action은 `Button`, label/control 조합은 `Field`를 사용한다.
 - 오른쪽 선택 테이블/schema 패널을 제거하고, 왼쪽 tree table 행 클릭으로 선택·해제한다. 선택 행은 Jobs 기준 `StatusBadge`의 `선택됨` 상태를 표시한다. 자동 JOIN과 column 삽입 action은 제공하지 않는다.
-- desktop 2열 layout의 content row는 오른쪽 editor/result 높이를 기준으로 잡아, 왼쪽 SQL 도구 panel이 결과 Preview 하단까지 같은 높이로 이어진다.
+- desktop 2열 layout에서 왼쪽 SQL 도구 panel은 콘텐츠 높이만 사용한다. dataset ScrollArea는 250px로 제한해 `결과 대기 중` panel과 비슷한 높이를 유지하고, 데이터가 많으면 내부 스크롤로 탐색한다.
 - 미사용 `SqlDatasetSchemaPreview.tsx`를 삭제했다.
 - `sql.css`는 2,547줄에서 401줄로 줄였다. `PanelHeader`, `FieldGroup`, `NativeSelect`, `Separator`, shadcn Table/ScrollArea와 Shadcnblocks Tree 기본 surface로 header/form/list/table/scroll/tree CSS를 추가 제거했다.
 - 처리 Job 모달은 `FormFieldGroup`/`NativeSelectField`와 `sql-materialize-*` CSS 대신 `DialogShell` + `FieldGroup` + `Field` + `NativeSelect` grid를 사용한다.
