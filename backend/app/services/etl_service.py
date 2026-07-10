@@ -95,6 +95,9 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         schema_columns=[column.model_dump(mode="json", by_alias=True) for column in request.schema_columns],
         schema_fingerprint=request.schema_fingerprint,
         schema_sample_rows=request.schema_sample_rows,
+        schema_summary=request.schema_summary,
+        rule_summary=request.rule_summary,
+        permission_summary=request.permission_summary,
         permission_roles=request.permission_roles,
         storage_type=request.storage_type,
         partition=request.partition,
@@ -103,9 +106,11 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
         compression=request.compression,
         storage_path=request.storage_path,
         target_description=normalize_optional_text(request.target_description),
+        target_database=normalize_optional_text(request.target_database),
         target_tags=normalize_target_tags(request.target_tags),
         target_format=request.target_format,
         target_layer=request.target_layer,
+        target_path=request.storage_path,
         rag=request.rag,
         transform_output_columns=tuple_rows_to_lists(request.transform_output_columns),
         transform_steps=[step.model_dump(mode="json", by_alias=True) for step in request.transform_steps],
@@ -1129,6 +1134,9 @@ def update_existing_append_job(
     job.schema_columns = [column.model_dump(mode="json", by_alias=True) for column in request.schema_columns]
     job.schema_fingerprint = request.schema_fingerprint
     job.schema_sample_rows = request.schema_sample_rows
+    job.schema_summary = request.schema_summary
+    job.rule_summary = request.rule_summary
+    job.permission_summary = request.permission_summary
     job.permission_roles = request.permission_roles
     job.storage_type = request.storage_type
     job.partition = request.partition
@@ -1137,9 +1145,11 @@ def update_existing_append_job(
     job.compression = request.compression
     job.storage_path = request.storage_path
     job.target_description = normalize_optional_text(request.target_description)
+    job.target_database = normalize_optional_text(request.target_database)
     job.target_tags = normalize_target_tags(request.target_tags)
     job.target_format = request.target_format
     job.target_layer = request.target_layer
+    job.target_path = request.storage_path
     job.rag = request.rag
     job.transform_output_columns = tuple_rows_to_lists(request.transform_output_columns)
     job.transform_steps = [step.model_dump(mode="json", by_alias=True) for step in request.transform_steps]

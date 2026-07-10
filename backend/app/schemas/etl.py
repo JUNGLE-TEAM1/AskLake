@@ -132,10 +132,16 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    schema_columns: list[SchemaColumnDraft] | list[dict[str, Any]] | None = None
+    schema_fingerprint: str | None = None
+    schema_sample_rows: list[list[str]] | None = None
+    schema_summary: str | None = None
+    rule_summary: str | None = None
     retry_policy: RetryPolicyDraft | dict[str, Any] | None = None
     retry_policy_summary: str | None = None
     run_limit_summary: str | None = None
     permission_roles: list[dict[str, Any]] | None = None
+    permission_summary: str | None = None
     storage_type: str | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None
@@ -143,6 +149,7 @@ class JobRowData(CamelModel):
     compression: str | None = None
     storage_path: str | None = None
     target_description: str | None = None
+    target_database: str | None = None
     target_tags: list[str] | None = None
     target_format: str | None = None
     target_layer: TargetLayer | None = None
@@ -257,6 +264,7 @@ class CreatePipelineRequest(CamelModel):
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
+    target_database: str | None = None
     target_description: str | None = None
     target_tags: list[str] = Field(default_factory=list)
     target_layer: TargetLayer
