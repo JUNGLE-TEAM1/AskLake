@@ -5,7 +5,9 @@ import {
   BarChart3,
   BookOpen,
   Bot,
+  AlertCircle,
   Calendar,
+  CalendarOff,
   Check,
   CircleUser,
   Clock3,
@@ -13,11 +15,11 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Filter,
   HardDrive,
   Info,
-  LayoutGrid,
   Pencil,
-  PlayCircle,
+  Play,
   Plus,
   RefreshCw,
   Repeat2,
@@ -27,32 +29,48 @@ import {
   Settings,
   Share2,
   ShieldCheck,
-  SlidersHorizontal,
+  Square,
   Table2,
-  TerminalSquare,
   X,
+  Zap,
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Chip } from "@/components/ui/chip";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import {
+  DataTableCellPrimary,
+  DataTableCellSecondary,
+  DataTableStackedCell,
+} from "@/components/ui/data-table-stacked-cell";
 import { DetailTableSection } from "@/components/ui/detail-table-section";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FilterToolbar, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
+import { FilterToolbar, FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { IconButton } from "@/components/ui/icon-button";
-import { Input } from "@/components/ui/input";
 import { KeyValueList } from "@/components/ui/key-value-list";
-import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { TagList } from "@/components/ui/tag-list";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Field } from "../../components/common";
-import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobRowData, JobRunStatus, JobRunSummary, JobStats, JobStatus } from "../../types";
+import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
 const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> = {
@@ -77,6 +95,7 @@ function getJobStatusTone(status: JobStatus): StatusBadgeTone {
   if (status === "failed" || status === "canceled") return "danger";
   if (status === "running") return "success";
   if (status === "paused") return "warning";
+  if (status === "stopped") return "warning";
   return "default";
 }
 
@@ -101,23 +120,51 @@ function getJobActionButtonVariant(className: string): JobActionButtonVariant {
   return "outline";
 }
 
-type JobMetricTone = "total" | "running" | "scheduled" | "failed" | "attention";
+function getJobTableRowClassName(status: JobStatus) {
+  const statusAccentClassName: Record<JobStatus, string> = {
+    canceled: "[&>td:first-child]:shadow-[inset_3px_0_0_#64748b]",
+    failed: "bg-red-50/40 [&>td:first-child]:shadow-[inset_3px_0_0_#dc2626]",
+    paused: "[&>td:first-child]:shadow-[inset_3px_0_0_#f59e0b]",
+    running: "[&>td:first-child]:shadow-[inset_3px_0_0_#16a34a]",
+    scheduled: "[&>td:first-child]:shadow-[inset_3px_0_0_#2563eb]",
+    stopped: "[&>td:first-child]:shadow-[inset_3px_0_0_#64748b]",
+  };
+
+  return statusAccentClassName[status];
+}
+
+type JobMetricTone = "total" | "running" | "scheduled" | "stopped";
 
 type JobMetric = {
-  active?: boolean;
   label: string;
+  statuses?: JobStatus[];
   tone: JobMetricTone;
   value: string;
 };
 
-function getJobMetrics(jobs: JobRowData[]): JobMetric[] {
+function getJobMetrics(facets: JobListFacets): JobMetric[] {
   return [
-    { active: true, label: "전체 작업", tone: "total", value: String(jobs.length) },
-    { label: jobStatusMeta.running.label, tone: "running", value: String(jobs.filter((job) => job.status === "running").length) },
-    { label: jobStatusMeta.scheduled.label, tone: "scheduled", value: String(jobs.filter((job) => job.status === "scheduled").length) },
-    { label: jobStatusMeta.failed.label, tone: "failed", value: String(jobs.filter((job) => job.status === "failed").length) },
-    { label: "확인 필요", tone: "attention", value: String(jobs.filter((job) => job.status === "failed" || job.status === "canceled").length) },
+    { label: "전체 작업", tone: "total", value: String(facets.total) },
+    { label: jobStatusMeta.running.label, statuses: ["running"], tone: "running", value: String(facets.statusCounts.running) },
+    { label: jobStatusMeta.scheduled.label, statuses: ["scheduled"], tone: "scheduled", value: String(facets.statusCounts.scheduled) },
+    { label: "자동 실행 중지", statuses: ["stopped"], tone: "stopped", value: String(facets.statusCounts.stopped) },
   ];
+}
+
+function hasSameStatuses(first?: JobStatus[], second?: JobStatus[]) {
+  if (!first?.length && !second?.length) return true;
+  if (!first || !second || first.length !== second.length) return false;
+  return first.every((status) => second.includes(status));
+}
+
+function getJobsQueryPath(query: JobListQuery) {
+  const searchParams = new URLSearchParams();
+  query.statuses?.forEach((status) => searchParams.append("status", status));
+  if (query.lastRunOutcome) searchParams.set("lastRunOutcome", query.lastRunOutcome);
+  if (query.owner) searchParams.set("owner", query.owner);
+  if (query.scheduleKind) searchParams.set("scheduleKind", query.scheduleKind);
+  const serialized = searchParams.toString();
+  return `/api/etl/jobs${serialized ? `?${serialized}` : ""}`;
 }
 
 function normalizeJobSearchText(value: string) {
@@ -144,6 +191,7 @@ function getJobSearchFields(job: JobRowData) {
 
 function filterJobsBySearch(jobs: JobRowData[], searchQuery: string) {
   const normalizedQuery = normalizeJobSearchText(searchQuery);
+
   if (!normalizedQuery) return jobs;
 
   return jobs.filter((job) => (
@@ -154,325 +202,417 @@ function filterJobsBySearch(jobs: JobRowData[], searchQuery: string) {
 }
 
 export function JobsLandingPage({
+  jobListFacets,
+  jobsLoading,
   jobs,
   onAction,
   onCommand,
   onCreate,
   onDetail,
+  onFilter,
   onRuns,
 }: {
+  jobListFacets: JobListFacets;
+  jobsLoading: boolean;
   jobs: JobRowData[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCommand: (job: JobRowData, command: JobCommand) => void;
+  onCommand: (job: JobRowData, command: JobCommand) => Promise<void> | void;
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
+  onFilter: (query: JobListQuery) => Promise<void> | void;
   onRuns: (job: JobRowData) => void;
-  onTableDemo?: () => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const metrics = getJobMetrics(jobs);
+  const [jobQuery, setJobQuery] = useState<JobListQuery>({});
+  const metrics = getJobMetrics(jobListFacets);
+  const failureFilterActive = jobQuery.lastRunOutcome === "failed";
+  const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
   const filteredJobs = useMemo(() => filterJobsBySearch(jobs, searchQuery), [jobs, searchQuery]);
   const hasSearchQuery = searchQuery.trim().length > 0;
 
+  const updateJobQuery = (nextQuery: JobListQuery) => {
+    setJobQuery(nextQuery);
+    onAction("etl.jobs.filter_changed", getJobsQueryPath(nextQuery), nextQuery.statuses?.join(",") ?? nextQuery.lastRunOutcome ?? nextQuery.owner ?? nextQuery.scheduleKind ?? "all");
+    onFilter(nextQuery);
+  };
+
+  const handleJobCommand = useCallback(async (job: JobRowData, command: JobCommand) => {
+    await onCommand(job, command);
+    await onFilter(jobQuery);
+  }, [jobQuery, onCommand, onFilter]);
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    onAction("etl.jobs.search_reset", "/api/etl/jobs", "search");
+  };
+
+  const toggleFailureFilter = () => {
+    if (failureFilterActive) {
+      setSearchQuery("");
+      updateJobQuery({});
+      return;
+    }
+    updateJobQuery({
+      ...jobQuery,
+      lastRunOutcome: "failed",
+    });
+  };
+
   return (
     <div className="jobs-landing">
-      <div className="jobs-page-header">
-        <PageHeader
-          actions={(
-            <Button className="primary-button create-job-button" type="button" onClick={onCreate}>
-              <Plus size={16} />
-              새 수집/처리 생성
-            </Button>
-          )}
-          className="jobs-page-title"
-          description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
-          icon={<Database size={18} />}
-          title="수집/처리"
-        />
-      </div>
+      <PageHeader
+        actions={(
+          <Button type="button" onClick={onCreate}>
+            <Plus size={16} />
+            새 수집/처리 생성
+          </Button>
+        )}
+        descriptionClassName="text-xl leading-8"
+        description="데이터 소스를 연결하고 ETL 작업의 상태, 실행, 로그를 관리합니다."
+        icon={<Database size={30} />}
+        iconClassName="mt-0 size-16 rounded-xl"
+        size="lg"
+        title="수집/처리"
+        titleClassName="text-4xl"
+      />
       <div className="content-main jobs-panel-stack">
         <Panel className="jobs-metrics-card">
           <PanelHeader
-            description="수집/처리 Job의 현재 상태와 확인이 필요한 항목을 요약합니다."
+            className="min-h-[68px] [&_h2]:text-xl"
             icon={<BarChart3 size={16} />}
-            meta={<Badge size="sm">{jobs.length} jobs</Badge>}
+            iconClassName="size-11 [&_svg]:size-[22px]"
             title="작업 현황"
           />
-          <div className="metric-grid jobs-panel-metrics">
-            {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
+          <div className="jobs-panel-metrics grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {metrics.map((metric) => (
+              <JobStatusFilterCard
+                active={hasSameStatuses(jobQuery.statuses, metric.statuses)}
+                key={metric.label}
+                metric={metric}
+                onSelect={() => updateJobQuery({
+                  ...jobQuery,
+                  statuses: metric.statuses,
+                })}
+              />
+            ))}
           </div>
+          {(failedRunCount > 0 || failureFilterActive) && (
+            <div className="px-5 pb-5">
+              <JobFailureAlert
+                active={failureFilterActive}
+                count={failedRunCount}
+                onToggle={toggleFailureFilter}
+              />
+            </div>
+          )}
         </Panel>
-        <JobsToolbar
-          searchQuery={searchQuery}
-          onFilter={(filter) => onAction("etl.jobs.filter_opened", `/api/etl/jobs/filters/${filter}`, filter)}
-          onReset={() => {
-            setSearchQuery("");
-            onAction("etl.jobs.filter_reset", "/api/etl/jobs", "filters");
-          }}
-          onSearchQueryChange={setSearchQuery}
-        />
         <JobsTableSection
           ariaLabel="ETL 작업 목록"
-          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
+          emptyAction={hasSearchQuery ? <Button type="button" variant="outline" onClick={clearSearch}>검색어 지우기</Button> : undefined}
+          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 검색어를 지우거나 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
+          emptyTitle={hasSearchQuery ? "검색 결과가 없습니다." : undefined}
           jobs={filteredJobs}
-          logAction="etl.job.log_opened"
-          onAction={onAction}
-          onCommand={onCommand}
+          onCommand={handleJobCommand}
           onCreate={onCreate}
           onDetail={onDetail}
           onRuns={onRuns}
-          title="작업 상태 목록"
+          toolbar={<JobsToolbar searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} />}
+          statusFilters={jobQuery.statuses}
+          scheduleKind={jobQuery.scheduleKind}
+          owner={jobQuery.owner}
+          owners={jobListFacets.owners}
+          onStatusFilterChange={(statuses) => updateJobQuery({ ...jobQuery, statuses })}
+          onScheduleKindChange={(scheduleKind) => updateJobQuery({ ...jobQuery, scheduleKind })}
+          onOwnerChange={(owner) => updateJobQuery({ ...jobQuery, owner })}
+          isLoading={jobsLoading}
+          title="작업 목록"
         />
       </div>
     </div>
   );
 }
 
+function JobStatusFilterCard({
+  active,
+  metric,
+  onSelect,
+}: {
+  active: boolean;
+  metric: JobMetric;
+  onSelect: () => void;
+}) {
+  const toneClassName: Record<JobMetricTone, { active: string; dot: string }> = {
+    running: { active: "border-emerald-300 bg-emerald-50 text-emerald-950 ring-1 ring-emerald-200", dot: "bg-emerald-500" },
+    scheduled: { active: "border-blue-300 bg-blue-50 text-blue-950 ring-1 ring-blue-200", dot: "bg-blue-500" },
+    stopped: { active: "border-amber-300 bg-amber-50 text-amber-950 ring-1 ring-amber-200", dot: "bg-amber-500" },
+    total: { active: "border-slate-400 bg-slate-100 text-slate-950 ring-1 ring-slate-300", dot: "bg-slate-500" },
+  };
+  const tone = toneClassName[metric.tone];
+
+  return (
+    <Button
+      aria-pressed={active}
+      className={`group h-[100px] min-w-0 items-stretch justify-start rounded-lg border px-5 py-4 text-left shadow-none transition-colors ${active ? tone.active : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50"}`}
+      type="button"
+      variant="outline"
+      onClick={onSelect}
+    >
+      <span className={`mt-1.5 size-2.5 shrink-0 rounded-full ${tone.dot}`} aria-hidden="true" />
+      <span className="grid min-w-0 gap-1.5">
+        <strong className="text-3xl font-bold leading-none tracking-normal text-slate-950">{metric.value}</strong>
+        <span className="truncate text-base font-semibold tracking-normal">{metric.label}</span>
+      </span>
+    </Button>
+  );
+}
+
+function JobFailureAlert({
+  active,
+  count,
+  onToggle,
+}: {
+  active: boolean;
+  count: number;
+  onToggle: () => void;
+}) {
+  const hasFailures = count > 0;
+
+  return (
+    <Alert
+      className="flex min-h-20 items-center gap-3 [&>svg]:static [&>svg~*]:pl-0"
+      variant={hasFailures ? "destructive" : "default"}
+    >
+      <AlertCircle className="!size-5 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <AlertTitle className="text-base">
+          {hasFailures ? `마지막 실행이 실패한 작업이 ${count}개 있습니다.` : "현재 마지막 실행이 실패한 작업이 없습니다."}
+        </AlertTitle>
+        <AlertDescription>
+          {hasFailures ? "실행 이력에서 실패 원인을 확인하거나 작업을 재실행할 수 있습니다." : "필터를 해제하면 전체 작업을 다시 볼 수 있습니다."}
+        </AlertDescription>
+      </div>
+      <Button
+        className={`!grid h-9 min-w-[124px] shrink-0 place-items-center px-0 text-sm leading-none ${hasFailures && !active ? "border-red-300 bg-white text-red-700 hover:border-red-400 hover:bg-red-100" : "border-slate-300 bg-white text-slate-800 hover:bg-slate-50"}`}
+        size="sm"
+        type="button"
+        variant="outline"
+        onClick={onToggle}
+      >
+        <span className="block w-full text-center">{active ? "전체 작업 보기" : "실패 작업 보기"}</span>
+      </Button>
+    </Alert>
+  );
+}
+
 function JobsToolbar({
-  onFilter,
-  onReset,
   onSearchQueryChange,
   searchQuery,
 }: {
-  onFilter: (filter: string) => void;
-  onReset: () => void;
   onSearchQueryChange: (value: string) => void;
   searchQuery: string;
 }) {
   return (
-    <Panel>
-      <PanelHeader
-        description="작업명, 소스, 소유자, 태그 기준으로 작업 목록을 좁혀 봅니다."
-        icon={<SlidersHorizontal size={16} />}
-        meta={<Badge size="sm">필터</Badge>}
-        title="검색 및 필터"
-      />
-      <FilterToolbar layout="filters">
-        <FilterToolbarSearch icon={<Search size={16} />} size="compact">
-          <Input
-            aria-label="수집/처리 작업 검색"
-            autoComplete="off"
-            className="h-auto border-0 bg-transparent px-0 py-0 text-[13px] font-medium text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
-            placeholder="작업명, 소스명, 타깃 데이터셋명 검색"
-            type="search"
-            value={searchQuery}
-            variant="ghost"
-            onChange={(event) => onSearchQueryChange(event.target.value)}
-          />
-        </FilterToolbarSearch>
-        {["상태", "소스", "Owner", "태그"].map((filter) => (
-          <Button className="min-w-[74px] rounded-[7px]" key={filter} size="sm" type="button" variant="outline" onClick={() => onFilter(filter)}>{filter} ▾</Button>
-        ))}
-        <Button className="ghost-link justify-self-end whitespace-nowrap max-xl:justify-self-stretch" size="sm" type="button" variant="ghost" onClick={onReset}>↺ 필터 초기화</Button>
-      </FilterToolbar>
-    </Panel>
-  );
-}
-
-function JobViewSwitch({ activeView, onCards, onTable }: { activeView: "cards" | "table"; onCards: () => void; onTable: () => void }) {
-  return (
-    <SegmentedTabs
-      ariaLabel="작업 목록 보기 방식"
-      className="jobs-view-switch"
-      items={[
-        { icon: <LayoutGrid size={15} />, label: "카드", value: "cards" },
-        { icon: <Table2 size={15} />, label: "TanStack Table", value: "table" },
-      ]}
-      value={activeView}
-      onValueChange={(value) => {
-        if (value === "cards") onCards();
-        else onTable();
-      }}
-    />
-  );
-}
-
-function JobsCardSection({
-  jobs,
-  onAction,
-  onCommand,
-  onCreate,
-  onDetail,
-  onRuns,
-}: {
-  jobs: JobRowData[];
-  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCommand: (job: JobRowData, command: JobCommand) => void;
-  onCreate: () => void;
-  onDetail: (job: JobRowData) => void;
-  onRuns: (job: JobRowData) => void;
-}) {
-  const [activeLogJob, setActiveLogJob] = useState<JobRowData | null>(null);
-  const openJobLog = useCallback((job: JobRowData) => {
-    onAction("etl.job.log_opened", `/api/etl/jobs/${job.id}/runs/latest/logs`, job.id);
-    setActiveLogJob(job);
-  }, [onAction]);
-  const runAction = useCallback((action: JobListActionKind, job: JobRowData) => {
-    if (action === "detail") {
-      onDetail(job);
-      return;
-    }
-    if (action === "runs") {
-      onRuns(job);
-      return;
-    }
-    onCommand(job, action);
-  }, [onCommand, onDetail, onRuns]);
-
-  return (
-    <section className="job-table" aria-label="ETL 작업 카드 목록">
-      {jobs.length === 0 && (
-        <EmptyState
-          action={<Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>}
-          className="job-empty-state"
-          description="소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."
-          icon={<Plus size={22} />}
-          title="생성된 수집/처리 작업이 없습니다."
-          variant="plain"
+    <FilterToolbar layout="actions">
+      <FilterToolbarSearch className="min-h-12 text-base" icon={<Search size={20} />} size="compact">
+        <FilterToolbarInput
+          aria-label="수집/처리 작업 검색"
+          autoComplete="off"
+          className="text-lg"
+          placeholder="작업명, 소스명, 타깃 데이터셋명 검색"
+          type="search"
+          value={searchQuery}
+          onChange={(event) => onSearchQueryChange(event.target.value)}
         />
-      )}
-      {jobs.map((job) => {
-        const statusClass = jobStatusMeta[job.status].className;
-        const executionDisplay = getJobExecutionDisplay(job);
-
-        return (
-          <article className={`job-row ${statusClass}`} key={job.id}>
-            <div className="job-row-status">
-              <StatusPill status={job.status} />
-            </div>
-            <div className="job-row-main">
-              <div className="job-title-row">
-                <div>
-                  <strong>{job.name}</strong>
-                  <p>{job.id}</p>
-                </div>
-                <TagList className="job-owner" density="compact">
-                  <Chip className="owner-chip" tone="outline">{job.owner}</Chip>
-                  <Chip className="tag-chip" tone="secondary">{job.tag}</Chip>
-                </TagList>
-              </div>
-              {job.progress && <JobProgress label={job.progress.label} value={job.progress.value} />}
-              <KeyValueList
-                className="job-row-details"
-                items={[
-                  { label: "소스", value: job.source },
-                  { label: "타깃", value: job.target },
-                  { label: "스케줄", value: job.schedule },
-                  {
-                    description: (
-                      <>
-                        {executionDisplay.summary}
-                        {executionDisplay.hasRawLog && (
-                          <button className="job-inline-log-button" type="button" onClick={() => openJobLog(job)}>
-                            원문 로그
-                          </button>
-                        )}
-                      </>
-                    ),
-                    descriptionClassName: executionDisplay.tone === "danger" ? "danger-text job-state-summary" : "job-state-summary",
-                    descriptionTitle: executionDisplay.raw,
-                    label: "마지막 실행",
-                    value: formatCompactDateTime(job.lastRun),
-                  },
-                  { label: "다음 실행", value: job.nextRun },
-                ]}
-              />
-              <ActionGroup className="job-row-actions" density="compact">
-                {getJobListActions(job).map((action) => (
-                  <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind, job)}>
-                    {action.label}
-                  </Button>
-                ))}
-              </ActionGroup>
-            </div>
-          </article>
-        );
-      })}
-      {jobs.length > 0 && (
-        <div className="job-table-footer">
-          <span>1-{jobs.length} of {jobs.length}</span>
-          <div>
-            <Button className="ghost-link" size="sm" type="button" variant="ghost" onClick={() => onAction("etl.jobs.page_previous", "/api/etl/jobs?page=previous", "jobs")}>← 이전</Button>
-            <Button className="ghost-link" size="sm" type="button" variant="ghost" onClick={() => onAction("etl.jobs.page_next", "/api/etl/jobs?page=next", "jobs")}>다음 →</Button>
-          </div>
-        </div>
-      )}
-      {activeLogJob && <JobLogModal job={activeLogJob} onClose={() => setActiveLogJob(null)} />}
-    </section>
+      </FilterToolbarSearch>
+    </FilterToolbar>
   );
 }
 
 type JobsTableSectionProps = {
   ariaLabel: string;
+  emptyAction?: React.ReactNode;
   emptyBody: string;
+  emptyTitle?: string;
   jobs: JobRowData[];
-  logAction: string;
-  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onCommand: (job: JobRowData, command: JobCommand) => void;
+  isLoading?: boolean;
+  onCommand: (job: JobRowData, command: JobCommand) => Promise<void> | void;
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
   onRuns: (job: JobRowData) => void;
+  onScheduleKindChange?: (scheduleKind?: JobScheduleKind) => void;
+  onStatusFilterChange?: (statuses?: JobStatus[]) => void;
+  onOwnerChange?: (owner?: string) => void;
+  owner?: string;
+  owners?: string[];
+  scheduleKind?: JobScheduleKind;
+  statusFilters?: JobStatus[];
   title: string;
+  toolbar?: React.ReactNode;
 };
+
+function JobStatusFilter({
+  onValueChange,
+  value,
+}: {
+  onValueChange?: (statuses?: JobStatus[]) => void;
+  value?: JobStatus[];
+}) {
+  const selectedValue = value?.length === 1 ? value[0] : "all";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label="작업 상태 필터"
+          className="h-9 w-full justify-center gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          상태
+          <Filter className="size-[18px]" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="center" className="min-w-40">
+        <DropdownMenuLabel>작업 상태 필터</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={selectedValue}
+          onValueChange={(nextValue) => onValueChange?.(nextValue === "all" ? undefined : [nextValue as JobStatus])}
+        >
+          <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="scheduled">실행 대기</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="running">실행 중</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="stopped">자동 실행 중지</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function JobOwnerFilter({
+  onValueChange,
+  owners,
+  value,
+}: {
+  onValueChange?: (owner?: string) => void;
+  owners: string[];
+  value?: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label="소유자 필터"
+          className="h-9 w-full justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          소유자
+          <Filter className="size-[18px]" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        <DropdownMenuLabel>소유자 필터</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={value ?? "all"} onValueChange={(nextValue) => onValueChange?.(nextValue === "all" ? undefined : nextValue)}>
+          <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+          {owners.map((owner) => <DropdownMenuRadioItem key={owner} value={owner}>{owner}</DropdownMenuRadioItem>)}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ScheduleKindFilter({
+  onValueChange,
+  value,
+}: {
+  onValueChange?: (scheduleKind?: JobScheduleKind) => void;
+  value?: JobScheduleKind;
+}) {
+  const selectedValue = value ?? "all";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          aria-label="실행 주기 필터"
+          className="h-9 w-full justify-start gap-1.5 px-0 text-lg font-semibold text-slate-600 hover:bg-transparent hover:text-slate-950"
+          size="sm"
+          type="button"
+          variant="ghost"
+        >
+          실행 주기
+          <Filter className="size-[18px]" aria-hidden="true" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-44">
+        <DropdownMenuLabel>실행 주기 필터</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup
+          value={selectedValue}
+          onValueChange={(nextValue) => onValueChange?.(nextValue === "all" ? undefined : nextValue as JobScheduleKind)}
+        >
+          <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="daily">매일</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="weekly">매주</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="monthly">매월</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="realtime">실시간</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="none">스케줄 없음</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="other">기타</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function JobsTableSection({
   ariaLabel,
+  emptyAction,
   emptyBody,
+  emptyTitle,
   jobs,
-  logAction,
-  onAction,
+  isLoading,
   onCommand,
   onCreate,
   onDetail,
   onRuns,
+  onScheduleKindChange,
+  onStatusFilterChange,
+  onOwnerChange,
+  owner,
+  owners,
+  scheduleKind,
+  statusFilters,
   title,
+  toolbar,
 }: JobsTableSectionProps) {
-  const [activeLogJob, setActiveLogJob] = useState<JobRowData | null>(null);
-  const tableRows = useMemo<JobsTableRow[]>(() => jobs.map((job) => ({
-    executionDisplay: getJobExecutionDisplay(job),
-    job,
-  })), [jobs]);
-  const openJobLog = useCallback((job: JobRowData) => {
-    onAction(logAction, `/api/etl/jobs/${job.id}/runs/latest/logs`, job.id);
-    setActiveLogJob(job);
-  }, [logAction, onAction]);
+  const tableRows = useMemo<JobsTableRow[]>(() => jobs.map((job) => ({ job })), [jobs]);
   const runAction = useCallback((action: JobListActionKind, job: JobRowData) => {
     if (action === "detail") {
       onDetail(job);
       return;
     }
-    if (action === "runs") {
-      onRuns(job);
-      return;
-    }
     onCommand(job, action);
-  }, [onCommand, onDetail, onRuns]);
+  }, [onCommand, onDetail]);
   const columns = useMemo<ColumnDef<JobsTableRow>[]>(() => [
     {
       accessorFn: (row) => row.job.status,
-      cell: ({ row }) => <StatusPill status={row.original.job.status} />,
-      header: "상태",
+      cell: ({ row }) => <StatusPill job={row.original.job} />,
+      header: () => onStatusFilterChange ? (
+        <JobStatusFilter
+          value={statusFilters}
+          onValueChange={onStatusFilterChange}
+        />
+      ) : "상태",
       id: "status",
+      enableSorting: false,
       meta: {
-        widthClassName: "w-[92px]",
-      } satisfies DataTableColumnMeta,
-    },
-    {
-      accessorFn: (row) => row.job.name,
-      cell: ({ row }) => {
-        const { job } = row.original;
-
-        return (
-          <div className="jobs-table-title-cell">
-            <strong>{job.name}</strong>
-            <span>{job.id} · {job.tag.replace("[", "").replace("]", "")}</span>
-          </div>
-        );
-      },
-      header: "작업명",
-      id: "job",
-      meta: {
-        widthClassName: "w-[250px]",
+        align: "center",
+        headerClassName: "text-lg",
+        widthClassName: "w-[184px]",
       } satisfies DataTableColumnMeta,
     },
     {
@@ -481,47 +621,43 @@ function JobsTableSection({
         const { job } = row.original;
 
         return (
-          <div className="jobs-flow-cell">
-            <strong>{job.target}</strong>
-            <span>{job.source}</span>
-          </div>
+          <DataTableStackedCell className="gap-1.5">
+            <DataTableCellPrimary className="text-xl leading-7">{job.target}</DataTableCellPrimary>
+            <DataTableCellSecondary className="text-base" title={job.source}>{job.source}</DataTableCellSecondary>
+          </DataTableStackedCell>
         );
       },
-      header: "타깃 데이터셋",
-      id: "target",
+      header: "데이터셋",
+      id: "dataset",
       meta: {
-        widthClassName: "w-[260px]",
+        headerClassName: "text-lg",
+        widthClassName: "w-[300px]",
       } satisfies DataTableColumnMeta,
     },
     {
-      accessorFn: (row) => row.job.owner,
-      cell: ({ row }) => <Chip className="owner-chip" tone="outline">{row.original.job.owner}</Chip>,
-      header: "소유자",
-      id: "owner",
+      accessorFn: (row) => row.job.schedule,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{row.original.job.schedule}</DataTableCellPrimary>,
+      header: () => onScheduleKindChange ? (
+        <ScheduleKindFilter
+          value={scheduleKind}
+          onValueChange={onScheduleKindChange}
+        />
+      ) : "실행 주기",
+      id: "schedule",
+      enableSorting: false,
       meta: {
-        widthClassName: "w-[120px]",
+        headerClassName: "text-lg",
+        widthClassName: "w-[150px]",
       } satisfies DataTableColumnMeta,
     },
     {
-      accessorFn: (row) => row.executionDisplay.summary,
-      cell: ({ row }) => {
-        const { executionDisplay, job } = row.original;
-        const showStage = executionDisplay.stage && executionDisplay.stage !== executionDisplay.summary;
-
-        return (
-          <div className="jobs-table-run-cell">
-            {showStage && <span>{executionDisplay.stage}</span>}
-            <strong className={executionDisplay.tone === "danger" ? "danger-text" : ""} title={executionDisplay.raw}>{executionDisplay.summary}</strong>
-            {executionDisplay.hasRawLog && (
-              <Button size="sm" type="button" variant="link" onClick={() => openJobLog(job)}>로그</Button>
-            )}
-          </div>
-        );
-      },
-      header: "최근 실행 결과",
-      id: "executionResult",
+      accessorFn: (row) => row.job.nextRun,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatCompactDateTime(row.original.job.nextRun)}</DataTableCellPrimary>,
+      header: "다음 예정 실행",
+      id: "nextRun",
       meta: {
-        widthClassName: "w-[238px]",
+        headerClassName: "text-lg",
+        widthClassName: "w-[180px]",
       } satisfies DataTableColumnMeta,
     },
     {
@@ -530,75 +666,130 @@ function JobsTableSection({
         const { job } = row.original;
 
         return (
-          <div className="jobs-table-next-cell">
-            <strong>{formatCompactDateTime(job.lastRun)}</strong>
-            <span>다음: {job.nextRun}</span>
-          </div>
+          <DataTableStackedCell className="gap-1.5">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <DataTableCellPrimary className="text-lg leading-7">{formatJobLastRun(job)}</DataTableCellPrimary>
+              {getLatestRunOutcome(job) === "failed" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span aria-label="최근 실행 실패" className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-red-100">
+                      <AlertCircle className="size-[18px]" aria-hidden="true" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">최근 실행 실패</TooltipContent>
+                </Tooltip>
+              )}
+              {getLatestRunOutcome(job) === "canceled" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span aria-label="최근 실행 취소" className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 ring-1 ring-slate-200">
+                      <X className="size-[18px]" aria-hidden="true" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">최근 실행 취소</TooltipContent>
+                </Tooltip>
+              )}
+              {hasLatestSuccessfulRun(job) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span aria-label="최근 실행 성공" className="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100">
+                      <Check className="size-[18px]" aria-hidden="true" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">최근 실행 성공</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+            <Button className="h-auto justify-self-start px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
+              실행 이력
+            </Button>
+          </DataTableStackedCell>
         );
       },
       header: "마지막 실행",
       id: "lastRun",
       meta: {
-        widthClassName: "w-[156px]",
+        headerClassName: "text-lg",
+        widthClassName: "w-[260px]",
       } satisfies DataTableColumnMeta,
     },
-  ], [openJobLog]);
+    {
+      accessorFn: (row) => row.job.owner,
+      cell: ({ row }) => <OwnerIdentity job={row.original.job} />,
+      header: () => onOwnerChange ? <JobOwnerFilter owners={owners ?? []} value={owner} onValueChange={onOwnerChange} /> : "소유자",
+      id: "owner",
+      enableSorting: false,
+      meta: {
+        headerClassName: "text-lg",
+        widthClassName: "w-[220px]",
+      } satisfies DataTableColumnMeta,
+    },
+  ], [onOwnerChange, onRuns, onScheduleKindChange, onStatusFilterChange, owner, owners, scheduleKind, statusFilters]);
 
   return (
-    <Panel className="jobs-table-preview-card" aria-label={ariaLabel}>
-      <PanelHeader
-        className="jobs-table-preview-header"
-        description="상태, 타깃, 최근 실행 결과를 한 화면에서 확인하고 필요한 작업을 실행합니다."
-        icon={<Table2 size={16} />}
-        meta={<Badge size="sm">{jobs.length} jobs</Badge>}
-        title={title}
-      />
-      <DataTable
-        className="jobs-data-table"
-        columns={columns}
-        data={tableRows}
-        emptyState={{
-          action: <Button className="primary-button" type="button" onClick={onCreate}>새 수집/처리 생성</Button>,
-          description: emptyBody,
-          icon: <Plus size={22} />,
-          title: "생성된 수집/처리 작업이 없습니다.",
-        }}
-        getRowClassName={(row) => `job-table-row ${jobStatusMeta[row.original.job.status].className}`}
-        getRowId={(row) => row.job.id}
-        pagination={{ label: title, pageSize: 10 }}
-        renderRowActions={(row) => {
-          const { job } = row.original;
+    <TooltipProvider delayDuration={250}>
+      <Panel aria-label={ariaLabel}>
+        <PanelHeader
+          className="min-h-[68px] [&_h2]:text-xl"
+          icon={<Table2 size={16} />}
+          iconClassName="size-11 [&_svg]:size-[22px]"
+          title={title}
+        />
+        {toolbar}
+        <DataTable
+          className="gap-0 [&>div:last-child]:min-h-14 [&>div:last-child]:rounded-none [&>div:last-child]:border-x-0 [&>div:last-child]:border-b-0"
+          columns={columns}
+          data={tableRows}
+          emptyState={{
+            action: emptyAction ?? <Button type="button" onClick={onCreate}>새 수집/처리 생성</Button>,
+            description: emptyBody,
+            icon: <Plus size={22} />,
+            title: emptyTitle ?? "생성된 수집/처리 작업이 없습니다.",
+          }}
+          getRowClassName={(row) => getJobTableRowClassName(row.original.job.status)}
+          getRowId={(row) => row.job.id}
+          isLoading={isLoading}
+          pagination={{ label: title, pageSize: 5, showSummary: false }}
+          renderRowActions={(row) => {
+            const { job } = row.original;
 
-          return (
-            <div className="jobs-table-actions">
-              {getJobListActions(job).map((action) => (
-                <IconButton
-                  className={`${action.className} icon-only`}
-                  key={action.label}
-                  label={action.label}
-                  size="xs"
-                  type="button"
-                  variant={getJobActionButtonVariant(action.className)}
-                  onClick={() => runAction(action.kind, job)}
-                >
-                  <JobListActionIcon action={action} />
-                </IconButton>
-              ))}
-            </div>
-          );
-        }}
-        resetPaginationKey={jobs.length}
-        rowActionsClassName="jobs-table-actions-column"
-        rowActionsHeader="액션"
-        tableClassName="jobs-table-preview"
-        viewportClassName="jobs-table-scroll border-0 bg-transparent rounded-none"
-      />
-      {activeLogJob && <JobLogModal job={activeLogJob} onClose={() => setActiveLogJob(null)} />}
-    </Panel>
+            return (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {getJobListActions(job).map((action) => (
+                  <Tooltip key={action.label}>
+                    <TooltipTrigger asChild>
+                      <IconButton
+                        className={`[&_svg]:size-[18px] ${getJobListActionButtonClassName(action)}`}
+                        label={action.label}
+                        size="sm"
+                        title=""
+                        type="button"
+                        variant={getJobActionButtonVariant(action.className)}
+                        onClick={() => runAction(action.kind, job)}
+                      >
+                        <JobListActionIcon action={action} />
+                      </IconButton>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{action.label}</TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            );
+          }}
+          resetPaginationKey={jobs.length}
+          rowActionsAlign="center"
+          rowActionsClassName="w-[190px] text-lg"
+          rowActionsHeader="액션"
+          headerRowClassName="[&_th]:h-14 [&_th]:py-3 [&_th]:text-slate-600 [&_th_button]:text-slate-600 [&_th_svg]:text-slate-600"
+          tableClassName="min-w-[1550px] table-fixed [&_td]:h-[120px] [&_thead_th_button]:gap-2 [&_thead_th_button_svg]:size-[18px]"
+          viewportClassName="rounded-none border-0 bg-transparent"
+        />
+      </Panel>
+    </TooltipProvider>
   );
 }
 
-type JobListActionKind = Exclude<JobCommand, "delete" | "pause"> | "detail" | "runs";
+type JobListActionKind = Exclude<JobCommand, "delete"> | "detail";
 
 type JobListAction = {
   className: string;
@@ -606,40 +797,112 @@ type JobListAction = {
   label: string;
 };
 
+type ScheduleControlAction = JobListAction & { kind: "stopSchedule" };
+type IdleExecutionAction = JobListAction & { kind: "retry" | "run" };
+
 function getJobListActions(job: JobRowData): JobListAction[] {
   const actions: JobListAction[] = [
     { className: "job-action-button", kind: "detail", label: "작업 정보" },
   ];
 
   if (job.status === "running") {
+    if (isRealtimeJob(job)) {
+      return [
+        ...actions,
+        { className: "job-action-button danger realtime-stop", kind: "stopSchedule", label: "실행 중지" },
+      ];
+    }
     return [
       ...actions,
-      { className: "job-action-button primary soft", kind: "runs", label: "실행 단계" },
-      { className: "job-action-button danger", kind: "cancelRun", label: "취소" },
-    ];
-  }
-
-  if (job.status === "failed" || job.status === "canceled") {
-    return [
-      ...actions,
-      { className: "job-action-button primary soft", kind: "retry", label: "재실행" },
-      { className: "job-action-button", kind: "edit", label: "수정" },
+      { className: "job-action-button danger", kind: "cancelRun", label: "실행 취소" },
     ];
   }
 
   if (job.status === "paused") {
     return [
       ...actions,
-      { className: "job-action-button primary soft", kind: "run", label: "재개 실행" },
       { className: "job-action-button", kind: "edit", label: "수정" },
+      { className: "job-action-button retry", kind: "retry", label: "다시 실행" },
     ];
   }
 
-  return [
+  if (job.status === "stopped") {
+    if (isRealtimeJob(job)) {
+      return [
+        ...actions,
+        { className: "job-action-button", kind: "edit", label: "수정" },
+        {
+          className: "job-action-button realtime-start",
+          kind: getLatestRunOutcome(job) === "failed" ? "retry" : "run",
+          label: "실행",
+        },
+      ];
+    }
+    return [
+      ...actions,
+      { className: "job-action-button", kind: "edit", label: "수정" },
+      { className: "job-action-button schedule-resume", kind: "resumeSchedule", label: "스케줄 재개" },
+    ];
+  }
+
+  const idleActions: JobListAction[] = [
     ...actions,
-    { className: "job-action-button primary soft", kind: "run", label: "즉시 실행" },
     { className: "job-action-button", kind: "edit", label: "수정" },
   ];
+  const scheduleAction = getActiveScheduleAction(job);
+  if (scheduleAction) idleActions.push(scheduleAction);
+  idleActions.push(getIdleExecutionAction(job));
+  return idleActions;
+}
+
+function isRealtimeJob(job: JobRowData) {
+  const schedule = job.schedule.toLocaleLowerCase();
+  return ["실시간", "realtime", "real-time", "stream", "kafka"].some((token) => schedule.includes(token));
+}
+
+function hasAutomaticSchedule(job: JobRowData) {
+  const schedule = job.schedule.trim().toLocaleLowerCase();
+  if (!schedule || schedule === "-") return false;
+  return !["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token));
+}
+
+function getActiveScheduleAction(job: JobRowData): ScheduleControlAction | null {
+  if (!hasAutomaticSchedule(job) || isRealtimeJob(job)) return null;
+  return { className: "job-action-button warning", kind: "stopSchedule", label: "스케줄 일시중지" };
+}
+
+function getIdleExecutionAction(job: JobRowData): IdleExecutionAction {
+  const latestOutcome = getLatestRunOutcome(job);
+  if (isRealtimeJob(job)) {
+    return {
+      className: "job-action-button realtime-start",
+      kind: latestOutcome === "failed" || job.status === "failed" ? "retry" : "run",
+      label: "실행",
+    };
+  }
+  if (latestOutcome === "failed" || job.status === "failed") {
+    return { className: "job-action-button retry", kind: "retry", label: "재실행" };
+  }
+  return { className: "job-action-button success", kind: "run", label: "즉시 실행" };
+}
+
+function getJobListActionButtonClassName(action: JobListAction) {
+  if (action.className.includes("success")) {
+    return "border-violet-200 bg-violet-50 text-violet-700 shadow-sm hover:border-violet-300 hover:bg-violet-100";
+  }
+  if (action.className.includes("warning")) {
+    return "border-amber-200 bg-amber-50 text-amber-700 shadow-sm hover:border-amber-300 hover:bg-amber-100";
+  }
+  if (action.className.includes("realtime-start") || action.className.includes("realtime-resume")) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm hover:border-emerald-300 hover:bg-emerald-100";
+  }
+  if (action.className.includes("retry") || action.className.includes("schedule-resume")) {
+    return "border-blue-200 bg-blue-50 text-blue-700 shadow-sm hover:border-blue-300 hover:bg-blue-100";
+  }
+  if (action.className.includes("resume")) {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700 shadow-sm hover:border-emerald-300 hover:bg-emerald-100";
+  }
+  return "";
 }
 
 type JobDetailAction = {
@@ -650,146 +913,80 @@ type JobDetailAction = {
 
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
   if (job.status === "running") {
+    if (isRealtimeJob(job)) {
+      return [{ className: "job-action-button danger realtime-stop", kind: "stopSchedule", label: "실행 중지" }];
+    }
     return [
-      { className: "job-action-button", kind: "pause", label: "일시정지" },
       { className: "job-action-button danger", kind: "cancelRun", label: "실행 취소" },
-    ];
-  }
-
-  if (job.status === "failed" || job.status === "canceled") {
-    return [
-      { className: "job-action-button primary", kind: "retry", label: "재실행" },
-      { className: "job-action-button", kind: "edit", label: "수정" },
-      { className: "job-action-button danger", kind: "delete", label: "삭제" },
     ];
   }
 
   if (job.status === "paused") {
     return [
-      { className: "job-action-button primary", kind: "run", label: "재개 실행" },
+      { className: "job-action-button primary", kind: "retry", label: "다시 실행" },
       { className: "job-action-button", kind: "edit", label: "수정" },
       { className: "job-action-button danger", kind: "delete", label: "삭제" },
     ];
   }
 
-  return [
-    { className: "job-action-button primary", kind: "run", label: "즉시 실행" },
+  if (job.status === "stopped") {
+    if (isRealtimeJob(job)) {
+      return [
+        {
+          className: "job-action-button primary realtime-start",
+          kind: getLatestRunOutcome(job) === "failed" ? "retry" : "run",
+          label: "실행",
+        },
+        { className: "job-action-button", kind: "edit", label: "수정" },
+        { className: "job-action-button danger", kind: "delete", label: "삭제" },
+      ];
+    }
+    return [
+      {
+        className: "job-action-button primary",
+        kind: "resumeSchedule",
+        label: "스케줄 재개",
+      },
+      { className: "job-action-button", kind: "edit", label: "수정" },
+      { className: "job-action-button danger", kind: "delete", label: "삭제" },
+    ];
+  }
+
+  const executionAction = getIdleExecutionAction(job);
+  const detailActions: JobDetailAction[] = [
     { className: "job-action-button", kind: "edit", label: "수정" },
-    { className: "job-action-button danger", kind: "delete", label: "삭제" },
   ];
-}
-
-export function JobsTableDemoPage({
-  jobs,
-  onAction,
-  onBack,
-  onCommand,
-  onCreate,
-  onDetail,
-  onRuns,
-}: {
-  jobs: JobRowData[];
-  onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onBack: () => void;
-  onCommand: (job: JobRowData, command: JobCommand) => void;
-  onCreate: () => void;
-  onDetail: (job: JobRowData) => void;
-  onRuns: (job: JobRowData) => void;
-}) {
-  const [searchQuery, setSearchQuery] = useState("");
-  const metrics = getJobMetrics(jobs);
-  const filteredJobs = useMemo(() => filterJobsBySearch(jobs, searchQuery), [jobs, searchQuery]);
-  const hasSearchQuery = searchQuery.trim().length > 0;
-
-  return (
-    <div className="jobs-table-demo-page">
-      <div className="jobs-page-header">
-        <PageHeader
-          actions={(
-            <>
-              <JobViewSwitch activeView="table" onCards={onBack} onTable={() => undefined} />
-              <Button className="primary-button create-job-button" type="button" onClick={onCreate}>
-                <Plus size={16} />
-                새 수집/처리 생성
-              </Button>
-            </>
-          )}
-          className="jobs-page-title"
-          description="TanStack Table 버전으로 작업 밀도, 정렬, 액션 배치를 비교합니다."
-          icon={<Table2 size={18} />}
-          title="수집/처리"
-        />
-      </div>
-
-      <div className="content-main">
-        <div className="metric-grid">
-          {metrics.map((metric) => <MetricCard key={metric.label} {...metric} />)}
-        </div>
-        <JobsToolbar
-          searchQuery={searchQuery}
-          onFilter={(filter) => onAction("etl.jobs.table_demo_filter_opened", `/api/etl/jobs/filters/${filter}`, filter)}
-          onReset={() => {
-            setSearchQuery("");
-            onAction("etl.jobs.table_demo_filter_reset", "/api/etl/jobs", "filters");
-          }}
-          onSearchQueryChange={setSearchQuery}
-        />
-        <JobsTableSection
-          ariaLabel="ETL 작업 표형 데모"
-          emptyBody={hasSearchQuery ? "검색어와 일치하는 수집/처리 작업이 없습니다. 다른 작업명, 소스명, 타깃 데이터셋명을 입력해 보세요." : "소스 연결과 스키마 확인을 마친 뒤 파이프라인을 생성하면 이 목록에 Job이 추가됩니다."}
-          jobs={filteredJobs}
-          logAction="etl.job.table_demo_log_opened"
-          onAction={onAction}
-          onCommand={onCommand}
-          onCreate={onCreate}
-          onDetail={onDetail}
-          onRuns={onRuns}
-          title="작업 상태 중심 목록"
-        />
-      </div>
-    </div>
-  );
+  const scheduleAction = getActiveScheduleAction(job);
+  if (scheduleAction) detailActions.push(scheduleAction);
+  detailActions.push({ ...executionAction, className: "job-action-button primary" });
+  detailActions.push({ className: "job-action-button danger", kind: "delete", label: "삭제" });
+  return detailActions;
 }
 
 type JobsTableRow = {
-  executionDisplay: JobExecutionDisplay;
   job: JobRowData;
 };
 
 function JobListActionIcon({ action }: { action: JobListAction }) {
   if (action.kind === "detail") return <Info aria-hidden="true" size={15} />;
-  if (action.kind === "runs") return <TerminalSquare aria-hidden="true" size={15} />;
   if (action.kind === "edit") return <Pencil aria-hidden="true" size={15} />;
+  if (action.className.includes("realtime-stop")) return <Square aria-hidden="true" size={15} />;
+  if (action.className.includes("realtime-start")) return <Play aria-hidden="true" size={15} />;
+  if (action.className.includes("realtime-resume")) return <Play aria-hidden="true" size={15} />;
+  if (action.kind === "stopSchedule") return <CalendarOff aria-hidden="true" size={15} />;
+  if (action.kind === "resumeSchedule") return <Calendar aria-hidden="true" size={15} />;
   if (action.kind === "cancelRun") return <X aria-hidden="true" size={15} />;
   if (action.kind === "retry") return <RefreshCw aria-hidden="true" size={15} />;
+  if (action.className.includes("resume")) return <Play aria-hidden="true" size={15} />;
 
-  return <PlayCircle aria-hidden="true" size={15} />;
+  return <Zap aria-hidden="true" size={15} />;
 }
 
-function JobLogModal({ job, onClose }: { job: JobRowData; onClose: () => void }) {
-  const executionDisplay = getJobExecutionDisplay(job);
-  const failedRun = getLatestProblemRun(job);
-
-  return (
-    <DialogShell
-      bodyClassName="p-0"
-      contentClassName="w-[min(920px,calc(100vw-2rem))] max-h-[min(720px,calc(100vh-2rem))] overflow-hidden"
-      description={`${executionDisplay.stage} · ${executionDisplay.summary}`}
-      eyebrow={failedRun?.runId ?? job.id}
-      headerActions={(
-        <Button size="sm" type="button" variant="outline" aria-label="닫기" onClick={onClose}><X size={16} />닫기</Button>
-      )}
-      headerClassName="job-log-modal-header"
-      onClose={onClose}
-      title={job.name}
-    >
-      <pre className="m-0 min-h-0 overflow-auto whitespace-pre-wrap break-words bg-slate-900 px-5 py-4 font-mono text-xs leading-6 text-blue-100">{executionDisplay.raw}</pre>
-    </DialogShell>
-  );
+function formatJobLastRun(job: JobRowData) {
+  return formatCompactDateTime(job.lastRun);
 }
 
 type JobExecutionDisplay = {
-  hasRawLog: boolean;
   raw: string;
   stage: string;
   summary: string;
@@ -802,16 +999,14 @@ function getJobExecutionDisplay(job: JobRowData): JobExecutionDisplay {
   const errorSummary = normalizeShortText(problemRun?.errorSummary);
   const rawCandidates = [job.lastState, problemRun?.errorSummary ?? ""].map((value) => value.trim()).filter(Boolean);
   const raw = rawCandidates.sort((first, second) => second.length - first.length)[0] ?? job.lastState;
-  const isProblem = job.status === "failed" || job.status === "canceled";
+  const latestOutcome = getLatestRunOutcome(job);
+  const isProblem = latestOutcome === "failed" || latestOutcome === "canceled" || /실행 실패|취소됨/.test(job.lastState);
   const stage = problemStage && problemStage !== "-" ? problemStage : isProblem ? "실패 단계 미확인" : job.progress?.label ?? jobStatusMeta[job.status].summaryLabel;
   const fallbackSummary = isProblem ? compactLogSummary(raw) : normalizeWhitespace(job.lastState);
   const summarySource = errorSummary && errorSummary !== "-" && !isVerboseLogText(errorSummary) ? errorSummary : fallbackSummary;
   const normalizedSummary = summarySource === "실패" || summarySource === "FAILED" ? "실패 원인 확인 필요" : summarySource;
   const summary = truncateText(normalizedSummary || jobStatusMeta[job.status].summaryLabel, isProblem ? 72 : 58);
-  const hasRawLog = isVerboseLogText(raw) || normalizeWhitespace(raw).length > summary.length + 24;
-
   return {
-    hasRawLog,
     raw: raw || "-",
     stage,
     summary,
@@ -820,7 +1015,23 @@ function getJobExecutionDisplay(job: JobRowData): JobExecutionDisplay {
 }
 
 function getLatestProblemRun(job: JobRowData) {
-  return job.runHistory?.find((run) => run.status === "failed" || run.status === "canceled");
+  const latestRun = job.runHistory?.[0];
+  return latestRun?.status === "failed" || latestRun?.status === "canceled" ? latestRun : undefined;
+}
+
+function getLatestRunOutcome(job: JobRowData): JobRunStatus | null {
+  const latestRun = job.runHistory?.[0];
+  if (latestRun && ["success", "failed", "canceled"].includes(latestRun.status)) return latestRun.status;
+  if (/실행 실패/.test(job.lastState)) return "failed";
+  if (/취소됨/.test(job.lastState)) return "canceled";
+  return null;
+}
+
+function hasLatestSuccessfulRun(job: JobRowData) {
+  const latestRun = job.runHistory?.[0];
+  if (latestRun) return latestRun.status === "success";
+
+  return /^(성공|success)$/i.test(normalizeWhitespace(job.lastState));
 }
 
 function normalizeShortText(value?: string) {
@@ -830,6 +1041,12 @@ function normalizeShortText(value?: string) {
 
 function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function isVerboseLogText(value: string) {
+  const normalized = normalizeWhitespace(value);
+  if (normalized.length > 120) return true;
+  return /warning:|exception|traceback|spark|ivy|\/opt\/spark|hadoop-aws|jar:file|download|successfully/i.test(normalized);
 }
 
 function formatCompactDateTime(value: string) {
@@ -856,12 +1073,6 @@ function formatCompactDateTime(value: string) {
   return `${year}.${month}.${day} ${hours}:${minutes}`;
 }
 
-function isVerboseLogText(value: string) {
-  const normalized = normalizeWhitespace(value);
-  if (normalized.length > 120) return true;
-  return /warning:|exception|traceback|spark|ivy|\/opt\/spark|hadoop-aws|jar:file|download|successfully/i.test(normalized);
-}
-
 function compactLogSummary(value: string) {
   const normalized = normalizeWhitespace(value);
   if (!normalized || normalized === "실패") return "실패 원인 확인 필요";
@@ -886,23 +1097,43 @@ function truncateText(value: string, maxLength: number) {
   return `${normalized.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
-function StatusPill({ status }: { status: JobStatus }) {
-  const statusClass = status === "failed" ? "danger" : status === "scheduled" ? "" : jobStatusMeta[status].className;
-  return <StatusBadge className={`status-pill ${statusClass}`} tone={getJobStatusTone(status)}>{jobStatusMeta[status].label}</StatusBadge>;
+function StatusPill({ job }: { job: JobRowData }) {
+  return (
+    <StatusBadge className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold" tone={getJobStatusTone(job.status)}>
+      {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
+      {jobStatusMeta[job.status].label}
+    </StatusBadge>
+  );
 }
 
-function JobProgress({ label, value }: { label: string; value: number }) {
+function OwnerIdentity({ job }: { job: JobRowData }) {
+  const timestamp = job.updatedAt ?? job.createdAt;
+  const timestampLabel = job.updatedAt ? "최근 수정" : "생성";
+
   return (
-    <div className="job-progress" aria-label={label}>
-      <div className="job-progress-label">
-        <span>진행 상태</span>
-        <strong>{label}</strong>
+    <div className="flex min-w-0 items-center gap-2.5 text-left">
+      <Avatar size="lg">
+        {job.ownerAvatarUrl && <AvatarImage alt={`${job.owner} 프로필`} src={job.ownerAvatarUrl} />}
+        <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
+          {getOwnerInitials(job.owner)}
+        </AvatarFallback>
+      </Avatar>
+      <div className="grid min-w-0 gap-1">
+        <span className="truncate text-lg font-semibold text-slate-800" title={job.owner}>{job.owner}</span>
+        {timestamp && (
+          <span className="truncate text-base font-medium text-slate-500" title={`${timestampLabel} ${timestamp}`}>
+            {timestampLabel} {formatCompactDateTime(timestamp)}
+          </span>
+        )}
       </div>
-      <span className="job-progress-track">
-        <span style={{ width: `${value}%` }} />
-      </span>
     </div>
   );
+}
+
+function getOwnerInitials(owner: string) {
+  const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return (words[0] ?? "?").slice(0, 2).toUpperCase();
 }
 
 type SchemaDetailRow = [string, string, string, string, string, string];
@@ -973,13 +1204,25 @@ function DetailSummaryStat({ label, tone, value }: { label: string; tone?: "dang
 }
 
 type JobNextAction = {
-  kind: "run" | "retry";
+  kind: "resumeSchedule" | "run" | "retry";
   label: string;
 };
 
 function getJobNextAction(job: JobRowData): JobNextAction {
+  if (isRealtimeJob(job)) {
+    return {
+      kind: getLatestRunOutcome(job) === "failed" ? "retry" : "run",
+      label: "실행",
+    };
+  }
   if (job.status === "failed" || job.status === "canceled") return { kind: "retry", label: "재실행 요청" };
-  if (job.status === "paused") return { kind: "run", label: "재개 실행" };
+  if (job.status === "paused") return { kind: "retry", label: "다시 실행" };
+  if (job.status === "stopped") {
+    return {
+      kind: "resumeSchedule",
+      label: isRealtimeJob(job) ? "실행" : "스케줄 재개",
+    };
+  }
   return { kind: "run", label: "즉시 실행" };
 }
 
@@ -1011,7 +1254,7 @@ function JobDetailHeader({
         <div>
           <h1>{job.name}</h1>
           <TagList className="job-detail-meta" density="compact">
-            <StatusPill status={job.status} />
+            <StatusPill job={job} />
             <Chip className="owner-chip" tone="outline">Owner: {job.owner}</Chip>
             <Chip className="tag-chip" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
           </TagList>
@@ -1063,7 +1306,17 @@ export function JobDetailPage({
   const primaryAction = getJobNextAction(job);
   const showPrimaryAction = job.status !== "running";
   const stripTone = job.status === "failed" ? "danger" : job.status === "running" ? "running" : job.status === "canceled" ? "canceled" : "scheduled";
-  const stripTitle = job.status === "failed" ? "최근 실행 실패" : job.status === "running" ? "현재 실행 중" : job.status === "paused" ? "작업 일시정지" : job.status === "canceled" ? "최근 실행 취소" : "스케줄 정상";
+  const stripTitle = job.status === "failed"
+    ? "최근 실행 실패"
+    : job.status === "running"
+      ? "현재 실행 중"
+      : job.status === "paused"
+        ? "작업 일시정지"
+        : job.status === "canceled"
+          ? "최근 실행 취소"
+          : job.status === "stopped"
+            ? isRealtimeJob(job) ? "실시간 수집 중지" : "스케줄 일시중지"
+            : "스케줄 정상";
   const schemaRows = schemaRowsForJob(job, stats);
   const ruleRows = ruleRowsForJob(job);
 
