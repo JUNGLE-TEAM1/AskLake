@@ -82,39 +82,25 @@
   .catalog-detail-grid,
   .sql-page,
   .sql-page.context-collapsed,
-  .sql-editor-layout,
   .dashboard-layout,
   .dashboard-builder-layout {
     grid-template-columns: 1fr;
   }
 
-  .sql-schema-panel {
-    order: 2;
-    position: static;
-    height: auto;
-    max-height: none;
-    overflow: visible;
-  }
-
   .sql-dataset-panel {
+    grid-column: 1;
+    grid-row: auto;
     order: 1;
   }
 
   .sql-workspace {
-    order: 3;
+    grid-column: 1;
+    grid-row: auto;
+    order: 2;
   }
 
   .sql-page.context-collapsed .sql-workspace {
     order: 2;
-  }
-
-  .sql-page.context-collapsed .sql-schema-panel {
-    order: 3;
-  }
-
-  .sql-schema-panel .sql-card-schema {
-    max-height: 360px;
-    overflow-y: auto;
   }
 
   .sql-dashboard-preview-hero,
@@ -327,9 +313,6 @@
   .dag-output-strip,
   .panel-header,
   .sql-page-header,
-  .sql-editor-header,
-  .sql-result-header,
-  .sql-editor-footer,
   .dashboard-header,
   .dashboard-card-header,
   .dashboard-workspace-header,

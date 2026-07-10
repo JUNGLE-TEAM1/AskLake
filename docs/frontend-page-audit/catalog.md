@@ -16,7 +16,7 @@
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `FilterToolbar`, `FilterToolbarSearch`, `FilterToolbarInput`, `FilterToolbarCheckbox`, `PaginationBar`.
 - `DataTable`: preview 및 상세 schema table에 사용한다.
 - `DialogShell`: 전체 schema와 lineage overlay shell에 사용한다.
-- `DatasetStatusBadge`: dataset status와 RAG 상태를 `Badge` variant로 조합한다.
+- `DatasetStatusBadge`: Jobs 기준 `StatusBadge`로 dataset status를, `Badge`로 RAG metadata를 조합한다.
 - `CatalogMaterializationRuns`, `CatalogSchemaTable`, `CatalogLineage`: run 목록, schema, lineage의 도메인 조합 컴포넌트다.
 - `ReactFlow`: lineage graph의 layout, edge, control을 담당한다.
 
@@ -43,16 +43,18 @@
 ## Design Options For Existing Components
 
 - `FilterToolbar`, `Panel`, `PaginationBar`, `DialogShell`: 이미 shadcn primitive를 조합한 AskLake 공통 컴포넌트이므로 유지한다.
-- `DatasetStatusBadge`: `StatusBadge`와 역할이 겹치는지 확인한 뒤 dataset 전용 mapping만 남기고 공통 status primitive로 합칠 수 있다.
+- `DatasetStatusBadge`: dataset 전용 mapping만 유지하고 visual surface는 Jobs와 같은 `StatusBadge`에 맡긴다.
 - `CatalogMaterializationRuns`: 도메인 동작이 있으므로 유지하되 내부 row, empty, pagination을 공통 컴포넌트로 교체한다.
 - `CatalogLineage`: ReactFlow를 유지한다. ReUI tree나 shadcn table로 graph engine을 교체할 대상은 아니다.
 - result card는 별도 범용 Card를 새로 만들기보다 `CatalogResultItem` 도메인 컴포넌트로 분리하는 편이 명확하다.
 
 ## Related CSS
 
+- `/catalog` 목록·상세·Sheet·Dialog는 `--jobs-font-family`를 상속해 `/jobs`의 SUIT typography 기준을 사용한다.
 - 현재 사용 중: `frontend/src/styles/catalog.css`의 `.catalog-page`, `.catalog-content-grid`, `.catalog-main`, `.catalog-search-panel`, `.catalog-results-section`.
 - 현재 사용 중: `.catalog-result-list`, `.catalog-result-item`, `.catalog-result-card`, `.catalog-result-summary`, `.catalog-result-tags`, `.catalog-empty-state`, `.catalog-pagination`.
 - 현재 사용 중: `.catalog-preview-panel`, `.catalog-preview-card`, `.catalog-overview-metrics`, `.catalog-lineage-teaser`, `.catalog-sql-target-hint`.
+- preview 하단의 `catalog-preview-tags`는 `TagList align="center"`를 사용해 카드 폭 안에서 태그를 중앙 정렬한다.
 - 현재 사용 중: `.catalog-materialization-*`, `.catalog-run-status`, `.catalog-sort-*`, `.catalog-favorite-button`.
 - 주의: lineage selector는 catalog detail과 modal에서도 공유하므로 목록 화면만 보고 삭제하면 안 된다.
 
@@ -129,12 +131,19 @@
 - 데스크톱 우측 미리보기는 `sticky top-6 self-start` 보조 패널로 동작하고, 긴 내용은 shadcn `ScrollArea` 내부에서만 스크롤한다.
 - 1180px 이하에서는 데스크톱 패널을 숨기고 shadcn `Sheet side="right"`에서 동일한 미리보기 콘텐츠를 제공한다.
 - 전체 스키마 모달 상단의 레이어 데이터셋 문구와 스키마 헤더의 컬럼 수 표시는 제거한다.
-- 생성/append 결과 헤더의 결과 수, 행 수, 용량 요약은 제거하고 제목만 표시한다.
+- 생성/append 결과의 결과 수, 행 수, 용량 요약과 제목 줄을 모두 제거한다.
 - 리니지 edge는 끊겨 보이는 점선을 제거하고 연속 `smoothstep` 실선과 작은 방향 화살표로 표시한다.
+- 검색 입력은 기존 shadcn `InputGroup` 구성을 유지하고 상태 필터를 `FieldSet`으로 묶었다.
+- 정렬은 `DropdownMenu` 대신 shadcn `Select`, 결과 펼치기는 조건부 DOM 대신 화살표 전용 shadcn `Collapsible`로 교체했다.
+- 우측 상세 프레임은 shadcn `Card`로 교체하고 즐겨찾기 아이콘과 긴 데이터셋 이름에 shadcn `Tooltip`을 적용했다.
+- 공통 헤더의 raw 아이콘 버튼과 CSS 원형 계정 표시는 shadcn `IconButton`, `Tooltip`, `Avatar`로 교체했다.
+- 실제 `dataLoading`과 `dataError`를 카탈로그의 shadcn `Skeleton`, `Alert` 상태에 연결했다.
+- 전체 리니지 하단의 상위 데이터셋 수, 레이어, 상태 요약 배지 줄은 제거했다.
+- 검색 결과 행의 펼치기 화살표와 실행 결과 목록을 제거하고, 목록 클릭은 우측 미리보기 선택만 수행하도록 변경했다.
+- 우측 미리보기 헤더의 긴 데이터셋 이름은 즐겨찾기 아이콘 영역을 침범하지 않도록 한 줄 말줄임으로 표시하고 Tooltip으로 전체 이름을 제공한다.
 
 ## Conflict Risk
 
 - #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이므로 list/search/pagination 데이터 흐름은 유지한다.
 - catalog list와 detail이 `CatalogPage.tsx` 및 `catalog.css`를 공유하므로 분리 작업 전에 두 route를 함께 회귀 확인한다.
 - API, React Router, ReactFlow graph contract는 이번 범위에서 변경하지 않는다. mock fixture는 materialization 상태 UI 확인을 위한 success/running/failed 예시만 추가한다.
-

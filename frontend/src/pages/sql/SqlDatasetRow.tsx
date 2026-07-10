@@ -1,8 +1,17 @@
-import { Calendar, ChevronDown, ChevronRight, Database, Hash, Plus, Server, Table2, Type } from "lucide-react";
-import { useState } from "react";
+import { Calendar, Database, Hash, Server, Table2, Type } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import {
+  TreeExpander,
+  TreeIcon,
+  TreeLabel,
+  TreeNode,
+  TreeNodeContent,
+  TreeNodeTrigger,
+  TreeProvider,
+  TreeView,
+} from "@/components/kibo-ui/tree";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { TreeHoverCard } from "@/components/ui/tree-hover-card";
-import { TreePanel } from "@/components/ui/tree-panel";
-import { TreeGroup, TreeRow, TreeStaticRow, TreeView } from "@/components/ui/tree-view";
 import type { CatalogDataset } from "../../types";
 
 type SqlDatasetTreeProps = {
@@ -10,68 +19,113 @@ type SqlDatasetTreeProps = {
   expandedDatasetId: string | null;
   onSelect: (dataset: CatalogDataset) => void;
   onToggle: (dataset: CatalogDataset) => void;
+  selectedDatasetIds: ReadonlySet<string>;
 };
 
 type HoverInfo =
   | { dataset: CatalogDataset; kind: "table"; position: { left: number; top: number } }
   | { columnName: string; columnType: string; dataset: CatalogDataset; kind: "column"; position: { left: number; top: number } };
 
+const SYSTEM_NODE_ID = "sql-tree:system";
+const DATASETS_NODE_ID = "sql-tree:datasets";
+const TABLES_NODE_ID = "sql-tree:tables";
+const STRUCTURAL_NODE_IDS = [SYSTEM_NODE_ID, DATASETS_NODE_ID, TABLES_NODE_ID];
+const DATASET_NODE_PREFIX = "sql-tree:dataset:";
+
+function getDatasetNodeId(datasetId: string) {
+  return `${DATASET_NODE_PREFIX}${datasetId}`;
+}
+
 export function SqlDatasetTree({
   datasets,
   expandedDatasetId,
   onSelect,
   onToggle,
+  selectedDatasetIds,
 }: SqlDatasetTreeProps) {
+  const [expandedStructureIds, setExpandedStructureIds] = useState<string[]>(STRUCTURAL_NODE_IDS);
+  const expandedIds = useMemo(
+    () => expandedDatasetId
+      ? [...expandedStructureIds, getDatasetNodeId(expandedDatasetId)]
+      : expandedStructureIds,
+    [expandedDatasetId, expandedStructureIds],
+  );
+  const handleExpandedChange = useCallback((nextExpandedIds: string[], changedNodeId: string) => {
+    if (changedNodeId.startsWith(DATASET_NODE_PREFIX)) {
+      const datasetId = changedNodeId.slice(DATASET_NODE_PREFIX.length);
+      const targetDataset = datasets.find((dataset) => dataset.id === datasetId);
+      if (targetDataset) onToggle(targetDataset);
+      return;
+    }
+
+    setExpandedStructureIds(nextExpandedIds.filter((nodeId) => STRUCTURAL_NODE_IDS.includes(nodeId)));
+  }, [datasets, onToggle]);
   if (datasets.length === 0) return null;
 
   return (
-    <TreePanel className="sql-dataset-tree">
-      <TreeView className="sql-tree" label="분석 데이터셋 트리">
-        <TreeStaticRow className="sql-tree-node depth-0" expanded level={0}>
-          <ChevronDown size={15} />
-          <Server size={16} />
-          <strong>system</strong>
-        </TreeStaticRow>
-        <TreeGroup className="sql-tree-branch depth-1" level={1}>
-          <TreeStaticRow className="sql-tree-node" expanded level={1}>
-            <ChevronDown size={15} />
-            <Database size={16} />
-            <strong>datasets</strong>
-          </TreeStaticRow>
-          <TreeGroup className="sql-tree-branch depth-2" level={2}>
-            <TreeStaticRow className="sql-tree-node" expanded level={2}>
-              <ChevronDown size={15} />
-              <Table2 size={16} />
-              <strong>테이블({datasets.length})</strong>
-            </TreeStaticRow>
-            <div className="sql-tree-table-list">
-              {datasets.map((dataset) => (
-                <SqlDatasetTreeRow
-                  dataset={dataset}
-                  expanded={expandedDatasetId === dataset.id}
-                  key={dataset.id}
-                  onSelect={onSelect}
-                  onToggle={onToggle}
-                />
-              ))}
-            </div>
-          </TreeGroup>
-        </TreeGroup>
+    <TreeProvider
+      className="min-w-0"
+      expandedIds={expandedIds}
+      indent={18}
+      onExpandedChange={handleExpandedChange}
+      selectable={false}
+      showLines
+    >
+      <TreeView aria-label="분석 데이터셋 트리" className="p-2 pr-3">
+        <TreeNode isLast level={0} nodeId={SYSTEM_NODE_ID}>
+          <TreeNodeTrigger aria-expanded={expandedIds.includes(SYSTEM_NODE_ID)} aria-level={1} className="min-h-9" toggleOnClick={false}>
+            <TreeExpander hasChildren />
+            <TreeIcon hasChildren icon={<Server />} />
+            <TreeLabel>system</TreeLabel>
+          </TreeNodeTrigger>
+          <TreeNodeContent hasChildren>
+            <TreeNode isLast level={1} nodeId={DATASETS_NODE_ID} parentPath={[true]}>
+              <TreeNodeTrigger aria-expanded={expandedIds.includes(DATASETS_NODE_ID)} aria-level={2} className="min-h-9" toggleOnClick={false}>
+                <TreeExpander hasChildren />
+                <TreeIcon hasChildren icon={<Database />} />
+                <TreeLabel>datasets</TreeLabel>
+              </TreeNodeTrigger>
+              <TreeNodeContent hasChildren>
+                <TreeNode isLast level={2} nodeId={TABLES_NODE_ID} parentPath={[true, true]}>
+                  <TreeNodeTrigger aria-expanded={expandedIds.includes(TABLES_NODE_ID)} aria-level={3} className="min-h-9" toggleOnClick={false}>
+                    <TreeExpander hasChildren />
+                    <TreeIcon hasChildren icon={<Table2 />} />
+                    <TreeLabel>{`테이블(${datasets.length})`}</TreeLabel>
+                  </TreeNodeTrigger>
+                  <TreeNodeContent hasChildren>
+                    {datasets.map((dataset, index) => (
+                      <SqlDatasetTreeRow
+                        dataset={dataset}
+                        expanded={expandedDatasetId === dataset.id}
+                        isLast={index === datasets.length - 1}
+                        key={dataset.id}
+                        onSelect={onSelect}
+                        selected={selectedDatasetIds.has(dataset.id)}
+                      />
+                    ))}
+                  </TreeNodeContent>
+                </TreeNode>
+              </TreeNodeContent>
+            </TreeNode>
+          </TreeNodeContent>
+        </TreeNode>
       </TreeView>
-    </TreePanel>
+    </TreeProvider>
   );
 }
 
 function SqlDatasetTreeRow({
   dataset,
   expanded,
+  isLast,
   onSelect,
-  onToggle,
+  selected,
 }: {
   dataset: CatalogDataset;
   expanded: boolean;
+  isLast: boolean;
   onSelect: (dataset: CatalogDataset) => void;
-  onToggle: (dataset: CatalogDataset) => void;
+  selected: boolean;
 }) {
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
   const showTableInfo = (target: HTMLElement) => setHoverInfo({
@@ -88,59 +142,69 @@ function SqlDatasetTreeRow({
   });
 
   return (
-    <article className={expanded ? "sql-tree-table-node active expanded" : "sql-tree-table-node"}>
-      <div className="sql-tree-table-row-shell">
-        <TreeRow
-          aria-expanded={expanded}
-          className="sql-tree-table-row"
-          expanded={expanded}
-          level={3}
-          type="button"
-          onClick={() => onToggle(dataset)}
-          onBlur={() => setHoverInfo(null)}
-          onFocus={(event) => showTableInfo(event.currentTarget)}
-          onMouseEnter={(event) => showTableInfo(event.currentTarget)}
-          onMouseLeave={() => setHoverInfo(null)}
-        >
-          {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          <Table2 size={16} />
-          <span className="sql-tree-table-name">
-            <strong title={dataset.name}>{dataset.name}</strong>
-            <em>{dataset.schema.length} columns</em>
-          </span>
-        </TreeRow>
-        <button className="sql-tree-add-button" type="button" aria-label={`${dataset.name} 선택 테이블에 추가`} onClick={() => onSelect(dataset)}>
-          <Plus size={14} /> 추가
-        </button>
-      </div>
-      {expanded && (
-        <div className="sql-tree-column-list" role="group">
-          {dataset.schema.map(([name, type], index) => {
-            const Icon = getColumnIcon(type);
-            return (
-              <TreeRow
-                className="sql-tree-column-row"
-                key={`${dataset.id}-${name}-${index}`}
-                leaf
-                level={4}
-                type="button"
+    <TreeNode
+      data-sql-dataset-node=""
+      isLast={isLast}
+      level={3}
+      nodeId={getDatasetNodeId(dataset.id)}
+      parentPath={[true, true, isLast]}
+    >
+      <TreeNodeTrigger
+        aria-expanded={expanded}
+        aria-level={4}
+        aria-pressed={selected}
+        className={selected ? "min-h-14 border border-blue-200 bg-blue-50 pr-2" : "min-h-14 pr-2"}
+        data-sql-dataset-row=""
+        data-sql-dataset-selected={selected ? "" : undefined}
+        onBlur={() => setHoverInfo(null)}
+        onFocus={(event) => showTableInfo(event.currentTarget)}
+        onMouseEnter={(event) => showTableInfo(event.currentTarget)}
+        onMouseLeave={() => setHoverInfo(null)}
+        onClick={() => onSelect(dataset)}
+        toggleOnClick={false}
+      >
+        <TreeExpander hasChildren />
+        <TreeIcon hasChildren icon={<Table2 />} />
+        <TreeLabel className="grid min-w-0 gap-1">
+          <strong className="truncate text-sm font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
+          <span className="text-xs font-semibold text-slate-500">{dataset.schema.length} columns</span>
+        </TreeLabel>
+        {selected && <StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨</StatusBadge>}
+      </TreeNodeTrigger>
+      <TreeNodeContent className="pb-2" hasChildren>
+        {dataset.schema.map(([name, type], index) => {
+          const Icon = getColumnIcon(type);
+          const columnIsLast = index === dataset.schema.length - 1;
+          return (
+            <TreeNode
+              isLast={columnIsLast}
+              key={`${dataset.id}-${name}-${index}`}
+              level={4}
+              nodeId={`${getDatasetNodeId(dataset.id)}:column:${name}:${index}`}
+              parentPath={[true, true, isLast, columnIsLast]}
+            >
+              <TreeNodeTrigger
+                aria-level={5}
+                className="min-h-10 py-1.5"
                 onBlur={() => setHoverInfo(null)}
                 onFocus={(event) => showColumnInfo(event.currentTarget, name, type)}
                 onMouseEnter={(event) => showColumnInfo(event.currentTarget, name, type)}
                 onMouseLeave={() => setHoverInfo(null)}
+                toggleOnClick={false}
               >
-                <Icon size={16} />
-                <span>
-                  <strong title={name}>{name}</strong>
-                  <em>{formatColumnType(type)}</em>
-                </span>
-              </TreeRow>
-            );
-          })}
-        </div>
-      )}
+                <TreeExpander />
+                <TreeIcon icon={<Icon />} />
+                <TreeLabel className="grid min-w-0 gap-0.5">
+                  <strong className="truncate text-sm font-bold text-slate-900" title={name}>{name}</strong>
+                  <span className="text-xs font-semibold text-slate-500">{formatColumnType(type)}</span>
+                </TreeLabel>
+              </TreeNodeTrigger>
+            </TreeNode>
+          );
+        })}
+      </TreeNodeContent>
       {hoverInfo && <SqlDatasetHoverCard info={hoverInfo} />}
-    </article>
+    </TreeNode>
   );
 }
 

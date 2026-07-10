@@ -33,7 +33,7 @@ npm run build
 ```
 
 현재 package script는 TypeScript build와 Vite build를 함께 실행한다.
-`npm run verify:ui-regressions`는 SQL 분석 사이드바 탭, Catalog -> SQL wide button, Dashboard 목록 밀도, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 스타일 계약을 정적으로 확인한다.
+`npm run verify:ui-regressions`는 SQL 분석의 shadcn `Tabs`/실제 `Slider`/`Bubble`, Preview `limit` 전달, Catalog -> SQL wide button, Dashboard 목록의 `Alert`/`Skeleton`/`Empty`, edit의 radial range `Slider`와 Kibo dataset Tree, ApexCharts CSS 텍스트 누수 방지처럼 최근 UI 회귀가 있었던 핵심 UI 계약을 정적으로 확인한다.
 
 ## 3) Backend Live Mode
 
@@ -56,12 +56,11 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
-대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 기본적으로 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API 경로 또는 origin이 필요할 때만 아래 값을 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
-설정하지 않으면 UI는 미설정 안내를 표시하고 네트워크 요청을 보내지 않는다.
 
 ```bash
-VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
+# VITE_DASHBOARD_ASSISTANT_API_PATH=/api/dashboards/assistant
 ```
 
 대시보드 데이터셋 사이드바와 Assistant는 `GET /api/catalog/datasets` 기준의 available catalog dataset을 함께 사용한다.

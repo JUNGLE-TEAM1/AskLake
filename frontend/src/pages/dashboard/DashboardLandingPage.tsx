@@ -1,9 +1,9 @@
-import { BarChart3, Plus, Table2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { AlertCircle, BarChart3, Plus, Table2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
 import { DashboardPagination } from "./components/DashboardPagination";
@@ -11,10 +11,27 @@ import { DashboardTable } from "./components/DashboardTable";
 import type { DashboardListControl, DashboardSortOption } from "./dashboardListUtils";
 import type { SavedDashboardCard } from "../../types";
 
+function DashboardListSkeleton() {
+  return (
+    <div aria-label="대시보드 목록을 불러오는 중" className="grid gap-3" role="status">
+      {Array.from({ length: 5 }, (_, index) => (
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(100px,1fr)_minmax(120px,1fr)_40px] items-center gap-4 rounded-lg border border-slate-200 p-3" key={index}>
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-2/3" />
+            <Skeleton className="h-5 w-1/2" />
+          </div>
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="size-8" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DashboardLandingPage({
   currentPage,
   createError,
-  dashboardCount,
   deleteError,
   deleteTarget,
   deletingDashboardId,
@@ -38,8 +55,6 @@ export function DashboardLandingPage({
   openControl,
   ownerFilter,
   owners,
-  pageEnd,
-  pageStart,
   searchQuery,
   selectedTags,
   sortOption,
@@ -80,12 +95,6 @@ export function DashboardLandingPage({
   tags: string[];
   totalPages: number;
 }) {
-  const listStatus: { label: string; tone: StatusBadgeTone } = error || createError || deleteError
-    ? { label: "오류", tone: "danger" }
-    : isLoading
-      ? { label: "불러오는 중", tone: "default" }
-      : { label: "준비됨", tone: "success" };
-
   return (
     <div className="dashboard-page dashboard-list-page">
       <PageHeader
@@ -98,12 +107,12 @@ export function DashboardLandingPage({
             variant="primary"
             onClick={onCreateDashboard}
           >
-            <Plus size={16} /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
+            <Plus data-icon="inline-start" /> {isCreatingDashboard ? "생성 중..." : "새 대시보드 생성"}
           </Button>
         )}
         className="dashboard-page-header"
-        description="게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다."
         icon={<BarChart3 size={18} />}
+        iconClassName="mt-0"
         title="대시보드"
       />
 
@@ -126,27 +135,35 @@ export function DashboardLandingPage({
 
         <Panel className="dashboard-table-list">
           <PanelHeader
-            description="대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다."
             icon={<Table2 size={16} />}
-            meta={(
-              <>
-                <Badge size="sm">{pageStart}-{pageEnd}</Badge>
-                <StatusBadge size="sm" tone={listStatus.tone}>{listStatus.label}</StatusBadge>
-              </>
-            )}
             title="대시보드 목록"
           />
           <div className="dashboard-table-list-body">
-            <div className="dashboard-list-count">전체 {dashboardCount}개 중 {pageStart}-{pageEnd}개 표시</div>
-            {isLoading && <div className="dashboard-list-count">Postgres에서 대시보드를 불러오는 중입니다.</div>}
-            {error && <div className="dashboard-list-count">Dashboard API error: {error}</div>}
-            {createError && <div className="dashboard-list-count">대시보드 생성 오류: {createError}</div>}
-            <DashboardTable
-              dashboards={dashboards}
-              deletingDashboardId={deletingDashboardId}
-              onOpenDetail={onOpenDashboard}
-              onRequestDelete={onRequestDelete}
-            />
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertTitle>대시보드 목록을 불러오지 못했습니다.</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {createError && (
+              <Alert variant="destructive">
+                <AlertCircle />
+                <AlertTitle>대시보드를 생성하지 못했습니다.</AlertTitle>
+                <AlertDescription>{createError}</AlertDescription>
+              </Alert>
+            )}
+            {isLoading ? (
+              <DashboardListSkeleton />
+            ) : (
+              <DashboardTable
+                dashboards={dashboards}
+                deletingDashboardId={deletingDashboardId}
+                hasActiveFilters={Boolean(searchQuery.trim() || ownerFilter !== "all" || selectedTags.length)}
+                onOpenDetail={onOpenDashboard}
+                onRequestDelete={onRequestDelete}
+              />
+            )}
             <DashboardPagination currentPage={currentPage} totalPages={totalPages} onPrevious={onPreviousPage} onNext={onNextPage} />
           </div>
         </Panel>

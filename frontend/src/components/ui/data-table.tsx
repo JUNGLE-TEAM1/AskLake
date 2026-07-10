@@ -66,6 +66,7 @@ export interface DataTableProps<TData, TValue>
   initialSorting?: SortingState;
   isLoading?: boolean;
   loadingRowCount?: number;
+  onRowClick?: (row: Row<TData>) => void;
   pagination?: false | DataTablePaginationOptions;
   renderRowActions?: (row: Row<TData>) => React.ReactNode;
   resetPaginationKey?: React.Key;
@@ -137,6 +138,7 @@ export function DataTable<TData, TValue>({
   initialSorting = [],
   isLoading = false,
   loadingRowCount = 4,
+  onRowClick,
   pagination,
   renderRowActions,
   resetPaginationKey,
@@ -280,9 +282,17 @@ export function DataTable<TData, TValue>({
             ) : rows.length ? (
               rows.map((row) => (
                 <TableRow
-                  className={cn(bodyRowClassName, getRowClassName?.(row))}
+                  className={cn(bodyRowClassName, onRowClick && "cursor-pointer", getRowClassName?.(row))}
                   data-state={row.getIsSelected() && "selected"}
                   key={row.id}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={onRowClick ? (event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    onRowClick(row);
+                  } : undefined}
+                  role={onRowClick ? "link" : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
                 >
                   {row.getVisibleCells().map((cell) => {
                     const meta = getColumnMeta(cell.column.columnDef);
@@ -292,11 +302,17 @@ export function DataTable<TData, TValue>({
                       <TableCell
                         className={cn(
                           alignClassName[align],
+                          onRowClick && "cursor-pointer",
                           meta.widthClassName,
                           meta.cellClassName,
                           cellClassName,
                         )}
+                        data-row-navigation={onRowClick ? "true" : undefined}
                         key={cell.id}
+                        onClick={onRowClick ? (event) => {
+                          event.stopPropagation();
+                          onRowClick(row);
+                        } : undefined}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>

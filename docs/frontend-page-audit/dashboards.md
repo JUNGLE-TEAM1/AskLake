@@ -99,3 +99,21 @@
 - `dashboard.css`가 list, legacy builder, runtime 일부를 함께 다루므로 selector cleanup은 route ownership 분리 후 진행한다.
 - dashboard API, mock card fixture, create/delete behavior는 변경하지 않는다.
 
+## #487 shadcn 적용
+
+- 목록 loading은 row-shaped shadcn `Skeleton`, API/create error는 `Alert`로 분리했다.
+- 목록, 상세, 편집 화면과 portal 기반 메뉴·삭제 dialog·공유 sheet에 `jobs` 기준 `--jobs-font-family`를 적용했다.
+- 목록 masthead와 panel header의 보조 설명, `필터`, `1-10`, `준비됨` header badge를 제거하고 아이콘과 제목을 한 줄로 정렬했다.
+- `DashboardTable`의 shadcn `Empty` composition에 active filter 여부를 전달해 전체 empty와 검색 결과 empty 문구를 구분했다.
+- 삭제 dialog의 custom `dashboard-delete-error` paragraph와 CSS를 제거하고 destructive `Alert`로 교체했다.
+- 검색, owner/tag filter, sort, pagination, create/delete API 계약은 변경하지 않았다.
+
+## #492 Jobs 목록 패턴 통일
+
+- `DashboardTable`의 column을 Jobs 목록과 같은 `상태 → 대시보드 → 마지막 수정 → 생성 일시 → 소유자 → 액션` 순서로 재구성했다.
+- row는 공통 `DataTableStackedCell`, `DataTableCellPrimary`, `DataTableCellSecondary`를 사용해 primary/secondary 정보 위계를 맞췄다.
+- 상태는 Jobs와 같은 크기의 `StatusBadge`, 소유자는 `Avatar`와 `AvatarFallback` 조합으로 표시한다.
+- 기존 `Chip`, `TagList`, `dashboard-row-*` 전용 CSS를 제거하고 shadcn variant와 utility layout으로 대체했다.
+- 검색, owner/tag filter, server pagination, 상세 이동, 삭제 dialog 계약은 유지한다.
+- 기본 목록 fixture의 상태, 대시보드명, 태그, 소유자 표시값을 한글로 통일하고 masthead 아이콘과 제목의 상단 기준선을 맞췄다.
+- 삭제 action을 제외한 목록 row 전체를 상세 진입 영역으로 확장하고 Enter/Space 키보드 진입을 지원한다.

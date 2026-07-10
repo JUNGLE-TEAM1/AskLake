@@ -933,12 +933,10 @@ export function DashboardPage({
   };
 
   const shareRuntimeDashboard = () => {
-    const path = runtimeHasPublishedRevision ? `/dashboards/${runtimeSelection.dashboardId}` : `/dashboards/${runtimeSelection.dashboardId}/edit`;
+    const path = `/dashboards/${runtimeSelection.dashboardId}`;
     const shareUrl = `${window.location.origin}${path}`;
     setRuntimeShareLink(shareUrl);
-    void navigator.clipboard?.writeText(shareUrl)
-      .then(() => setRuntimeNotice({ message: "공유 링크를 복사했습니다.", tone: "success" }))
-      .catch(() => setRuntimeNotice({ message: "링크가 준비되었습니다. 패널에서 복사할 수 있습니다.", tone: "info" }));
+    setRuntimeNotice({ message: "공유 링크가 준비되었습니다.", tone: "info" });
     onAction("dashboard.runtime.shared", path, runtimeSelection.dashboardId);
   };
 

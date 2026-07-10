@@ -1,79 +1,145 @@
 import { useMemo } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
+import {
+  DataTableCellPrimary,
+  DataTableCellSecondary,
+  DataTableStackedCell,
+} from "@/components/ui/data-table-stacked-cell";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { TagList } from "@/components/ui/tag-list";
-import { formatDashboardDateLabel, splitDashboardTags } from "../dashboardListUtils";
+import { formatDashboardDateLabel, localizeDashboardName, localizeDashboardOwner, localizeDashboardTags } from "../dashboardListUtils";
 import { dashboardStatusMeta } from "../../../utils/statusMeta";
 import type { SavedDashboardCard } from "../../../types";
+
+function getOwnerInitials(owner: string) {
+  const words = owner.trim().split(/[\s_-]+/).filter(Boolean);
+  if (words.length >= 2) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return (words[0] ?? "?").slice(0, 2).toUpperCase();
+}
 
 export function DashboardTable({
   dashboards,
   deletingDashboardId,
+  hasActiveFilters,
   onOpenDetail,
   onRequestDelete,
 }: {
   dashboards: SavedDashboardCard[];
   deletingDashboardId: string | null;
+  hasActiveFilters: boolean;
   onOpenDetail: (dashboard: SavedDashboardCard) => void;
   onRequestDelete: (dashboard: SavedDashboardCard) => void;
 }) {
   const columns = useMemo<ColumnDef<SavedDashboardCard>[]>(
     () => [
       {
+        accessorKey: "status",
+        cell: ({ row }) => (
+          <StatusBadge
+            className="min-w-[132px] justify-center whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
+            tone={row.original.status === "published" ? "success" : "warning"}
+          >
+            {dashboardStatusMeta[row.original.status].label}
+          </StatusBadge>
+        ),
+        enableSorting: false,
+        header: "상태",
+        meta: {
+          align: "center",
+          headerClassName: "text-lg",
+          widthClassName: "w-[156px]",
+        } satisfies DataTableColumnMeta,
+      },
+      {
         accessorKey: "name",
         cell: ({ row }) => {
           const dashboard = row.original;
+          const tags = localizeDashboardTags(dashboard.tags);
+          const dashboardName = localizeDashboardName(dashboard);
           return (
-            <>
-              <Button
-                className="dashboard-row-link"
-                type="button"
-                variant="link"
-                onClick={() => onOpenDetail(dashboard)}
-              >
-                {dashboard.name}
-              </Button>
-              <TagList className="dashboard-row-tags" density="compact">
-                {splitDashboardTags(dashboard.tags).map((tag, tagIndex) => (
-                  <Chip className="dashboard-row-tag" key={`${dashboard.id}-${tag}-${tagIndex}`} size="sm" tone="secondary">{tag}</Chip>
-                ))}
-                <StatusBadge className="dashboard-row-tag" size="sm" tone={dashboard.status === "published" ? "success" : "warning"}>
-                  {dashboardStatusMeta[dashboard.status].label}
-                </StatusBadge>
-              </TagList>
-            </>
+            <Button
+              className="min-h-[72px] w-full justify-start rounded-none px-0 py-0 text-left hover:bg-transparent"
+              type="button"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenDetail(dashboard);
+              }}
+            >
+              <DataTableStackedCell className="w-full gap-1.5">
+                <span className="truncate text-xl font-semibold leading-7 text-slate-950">
+                  {dashboardName}
+                </span>
+                <DataTableCellSecondary className="text-base" title={tags.join(" · ")}>
+                  {tags.length ? tags.join(" · ") : "태그 없음"}
+                </DataTableCellSecondary>
+              </DataTableStackedCell>
+            </Button>
           );
         },
-        header: "이름",
+        header: "대시보드",
         meta: {
-          widthClassName: "w-[34%]",
-        } as DataTableColumnMeta,
+          headerClassName: "text-lg",
+          widthClassName: "w-[320px]",
+        } satisfies DataTableColumnMeta,
       },
       {
-        accessorKey: "owner",
-        header: "소유자",
-        meta: {
-          widthClassName: "w-[18%]",
-        } as DataTableColumnMeta,
-      },
-      {
-        accessorKey: "updated",
+        accessorFn: (dashboard) => dashboard.updatedAtValue ?? dashboard.updated,
+        cell: ({ row }) => (
+          <DataTableCellPrimary className="text-lg">
+            {formatDashboardDateLabel(row.original.updatedAtValue ?? row.original.updated)}
+          </DataTableCellPrimary>
+        ),
         header: "마지막 수정",
+        id: "updatedAt",
         meta: {
-          widthClassName: "w-[16%]",
-        } as DataTableColumnMeta,
+          headerClassName: "text-lg",
+          widthClassName: "w-[220px]",
+        } satisfies DataTableColumnMeta,
       },
       {
         accessorFn: (dashboard) => formatDashboardDateLabel(dashboard.createdAtValue ?? dashboard.createdAt),
+        cell: ({ row }) => (
+          <DataTableCellPrimary className="text-lg">
+            {formatDashboardDateLabel(row.original.createdAtValue ?? row.original.createdAt)}
+          </DataTableCellPrimary>
+        ),
         header: "생성 일시",
         id: "createdAt",
         meta: {
-          widthClassName: "w-[24%]",
-        } as DataTableColumnMeta,
+          headerClassName: "text-lg",
+          widthClassName: "w-[220px]",
+        } satisfies DataTableColumnMeta,
+      },
+      {
+        accessorKey: "owner",
+        cell: ({ row }) => {
+          const dashboard = row.original;
+          const owner = localizeDashboardOwner(dashboard.owner);
+          return (
+            <div className="flex min-w-0 items-center gap-2.5 text-left">
+              <Avatar size="lg">
+                <AvatarFallback className="bg-slate-100 font-semibold text-slate-700 ring-1 ring-slate-200">
+                  {getOwnerInitials(owner)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="grid min-w-0 gap-1">
+                <span className="truncate text-lg font-semibold text-slate-800" title={owner}>{owner}</span>
+                <span className="truncate text-base font-medium text-slate-500" title={dashboard.updated}>
+                  최근 수정 {dashboard.updated}
+                </span>
+              </div>
+            </div>
+          );
+        },
+        header: "소유자",
+        meta: {
+          headerClassName: "text-lg",
+          widthClassName: "w-[220px]",
+        } satisfies DataTableColumnMeta,
       },
     ],
     [onOpenDetail],
@@ -81,28 +147,35 @@ export function DashboardTable({
 
   return (
     <DataTable
-      className="dashboard-table-scroll"
+      bodyRowClassName="min-h-[96px]"
+      cellClassName="py-5"
+      className="dashboard-table-scroll gap-0"
       columns={columns}
       data={dashboards}
       emptyState={{
-        description: "검색 조건에 맞는 대시보드가 없습니다.",
-        title: "대시보드가 없습니다.",
+        description: hasActiveFilters ? "검색어나 필터 조건을 변경해 보세요." : "새 대시보드를 생성해 분석 화면을 구성해 보세요.",
+        title: hasActiveFilters ? "검색 조건에 맞는 대시보드가 없습니다." : "아직 대시보드가 없습니다.",
       }}
       getRowId={(dashboard) => dashboard.id}
-      tableClassName="schema-table dashboard-list-data-table"
+      headerRowClassName="h-[68px] bg-white"
+      onRowClick={(row) => onOpenDetail(row.original)}
+      tableClassName="dashboard-list-data-table"
       viewportClassName="dashboard-table-viewport"
       renderRowActions={(row) => (
         <Button
-          aria-label={`${row.original.name} 삭제`}
-          className="dashboard-row-delete-button"
+          aria-label={`${localizeDashboardName(row.original)} 삭제`}
+          className="text-slate-500 hover:text-red-600"
           disabled={deletingDashboardId === row.original.id}
           title="대시보드 삭제"
           type="button"
-          variant="destructive"
+          variant="ghost"
           size="icon"
-          onClick={() => onRequestDelete(row.original)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onRequestDelete(row.original);
+          }}
         >
-          <Trash2 size={18} />
+          <Trash2 />
         </Button>
       )}
       rowActionsClassName="dashboard-table-action-cell"

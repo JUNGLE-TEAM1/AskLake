@@ -2,7 +2,7 @@
   display: grid;
   gap: 18px;
   max-width: none;
-  font-family: "SUIT Variable", SUIT, "Apple SD Gothic Neo", "Noto Sans KR", Inter, system-ui, sans-serif;
+  font-family: var(--jobs-font-family);
 }
 
 .jobs-panel-stack {

@@ -15,8 +15,8 @@ export const datasetStatusMeta: Record<CatalogDataset["status"], { className: st
 };
 
 export const dashboardStatusMeta: Record<DashboardStatus, { label: string }> = {
-  draft: { label: "Draft" },
-  published: { label: "Published" },
+  draft: { label: "초안" },
+  published: { label: "게시됨" },
 };
 
 export function normalizeJobStatus(status: string): JobStatus {
@@ -65,8 +65,10 @@ export function normalizeDashboardStatus(status: string): DashboardStatus {
   const statusMap: Record<string, DashboardStatus> = {
     draft: "draft",
     Draft: "draft",
+    "초안": "draft",
     published: "published",
     Published: "published",
+    "게시됨": "published",
   };
 
   const normalizedStatus = statusMap[status];
