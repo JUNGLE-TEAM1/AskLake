@@ -116,6 +116,8 @@
 - 샘플 데이터의 가로 이동 컨트롤을 실제 스크롤 위치와 동기화된 shadcn `Slider`로 교체했다.
 - 우측 지표의 긴 날짜/담당자 값은 카드 내부에서 줄바꿈하고, append 삭제는 작은 shadcn 휴지통 아이콘 버튼으로 교체했다.
 - 우측 스키마 미리보기 헤더의 컬럼 수 메타를 제거했다.
+- shadcn 재점검으로 append 선택 행을 `Panel`과 `Button`으로 분리하고, preview/card surface와 상세 탭·표·리니지 컨트롤을 `Card`, `Panel`, `Tabs`, `Table`, `Button`, `Badge`로 교체했다.
+- ReactFlow 좌표·핸들, grid, overflow, 긴 텍스트 줄바꿈처럼 컴포넌트로 대체할 수 없는 레이아웃 CSS만 유지했다.
 
 ## Conflict Risk
 
