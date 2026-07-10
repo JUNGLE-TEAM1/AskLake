@@ -253,6 +253,8 @@ type JobRunSummary = {
 };
 
 type JobDagStep = {
+  completedAt?: string;
+  duration?: string;
   id: string;
   title: string;
   meta: string;
@@ -260,6 +262,8 @@ type JobDagStep = {
   note?: string;
 };
 ```
+
+`duration`은 해당 단계의 실행 소요시간 표시값이고, `completedAt`은 단계가 성공 또는 실패로 종료된 시각이다. Backend가 아직 이 값을 수집하지 못한 경우 optional로 생략하며 frontend는 임의 시간을 계산하지 않고 미수집·진행 중·대기 상태를 표시한다.
 
 ### CatalogDataset
 

@@ -2318,32 +2318,39 @@ function DagTimelineItem({
   onSelect: () => void;
   step: JobDagStep;
 }) {
+  const timing = getDagStepTimingLabel(step);
+
   return (
-    <TimelineItem className="!ms-9 !pb-3 last:!pb-0" role="listitem" step={index + 1}>
+    <TimelineItem className="group-data-[orientation=vertical]/timeline:ms-10 group-data-[orientation=vertical]/timeline:not-last:pb-5" role="listitem" step={index + 1}>
       <TimelineSeparator className={getDagTimelineSeparatorClassName(step.status)} />
-      <TimelineIndicator className={getDagTimelineIndicatorClassName(step.status)}>
+      <TimelineIndicator className={getDagTimelineIndicatorClassName(step.status, active)}>
         {getDagStepStatusIcon(step.status)}
       </TimelineIndicator>
       <button
         aria-current={active ? "step" : undefined}
         className={cn(
-          "group grid min-h-[94px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left shadow-sm transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out",
-          "hover:translate-x-0.5 hover:border-blue-200 hover:bg-blue-50/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
-          active && "translate-x-1 border-blue-300 bg-blue-50/80 shadow-md ring-1 ring-blue-200",
+          "group w-full py-0.5 text-left transition-transform duration-200 ease-out hover:translate-x-0.5 focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-4",
+          active && "translate-x-1",
         )}
         type="button"
         onClick={onSelect}
       >
-        <span className="min-w-0">
-          <TimelineHeader>
-            <TimelineDate className="mb-1 text-xs font-extrabold text-blue-600">단계 {index + 1}</TimelineDate>
-            <TimelineTitle className="text-lg font-extrabold leading-6 text-slate-950">{formatDagStepTitle(step.title)}</TimelineTitle>
-          </TimelineHeader>
-          <TimelineContent className="mt-1 truncate text-sm font-semibold text-slate-500" title={step.meta}>
-            {step.meta}
-          </TimelineContent>
-        </span>
-        <span className="transition-transform duration-200 group-hover:translate-x-0.5"><DagStatePill status={step.status} /></span>
+        <TimelineHeader>
+          <span className="flex flex-wrap items-center gap-2">
+            <TimelineTitle className={cn("text-lg font-extrabold leading-6 text-slate-950 transition-colors", active && "text-blue-700")}>
+              {formatDagStepTitle(step.title)}
+            </TimelineTitle>
+            <DagStatePill status={step.status} />
+          </span>
+        </TimelineHeader>
+        <TimelineContent className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold text-slate-500">
+          <span>{step.meta}</span>
+          <span aria-hidden="true">·</span>
+          <span>{timing.duration}</span>
+        </TimelineContent>
+        <TimelineDate className="mt-1 mb-0 text-sm font-semibold text-slate-500" dateTime={step.completedAt}>
+          {timing.completedAt}
+        </TimelineDate>
       </button>
     </TimelineItem>
   );
@@ -2410,8 +2417,11 @@ function getDagStepStatusIcon(status: JobDagStepStatus) {
   return <Clock3 aria-hidden="true" className="size-4" />;
 }
 
-function getDagTimelineIndicatorClassName(status: JobDagStepStatus) {
-  const baseClassName = "!left-[-24px] !top-0 grid !size-8 place-items-center border-2 shadow-sm transition-[box-shadow,transform] duration-200";
+function getDagTimelineIndicatorClassName(status: JobDagStepStatus, active: boolean) {
+  const baseClassName = cn(
+    "flex size-7 items-center justify-center border-none shadow-sm transition-[box-shadow,transform] duration-200 group-data-[orientation=vertical]/timeline:-left-7",
+    active && "scale-105 ring-4 ring-blue-100",
+  );
 
   if (status === "success") return `${baseClassName} border-emerald-500 bg-emerald-500 text-white`;
   if (status === "failed") return `${baseClassName} border-red-500 bg-red-500 text-white`;
@@ -2421,12 +2431,28 @@ function getDagTimelineIndicatorClassName(status: JobDagStepStatus) {
 }
 
 function getDagTimelineSeparatorClassName(status: JobDagStepStatus) {
-  const baseClassName = "!left-[-24px] !top-0 !h-[calc(100%-2rem)] !translate-x-[-50%] !translate-y-8 transition-colors duration-200";
+  const baseClassName = "transition-colors duration-200 group-data-[orientation=vertical]/timeline:-left-7 group-data-[orientation=vertical]/timeline:h-[calc(100%-1.75rem-0.25rem)] group-data-[orientation=vertical]/timeline:translate-y-7";
 
-  if (status === "success") return `${baseClassName} bg-emerald-300`;
-  if (status === "failed") return `${baseClassName} bg-red-300`;
-  if (status === "running") return `${baseClassName} bg-blue-300`;
-  return `${baseClassName} bg-slate-200`;
+  if (status === "success") return `${baseClassName} bg-emerald-300!`;
+  if (status === "failed") return `${baseClassName} bg-red-300!`;
+  if (status === "running") return `${baseClassName} bg-blue-300!`;
+  return `${baseClassName} bg-slate-200!`;
+}
+
+function getDagStepTimingLabel(step: JobDagStep) {
+  const duration = step.duration
+    ?? (step.status === "running" ? "진행 중" : step.status === "pending" || step.status === "blocked" ? "미실행" : "소요시간 미수집");
+  const completedAt = step.completedAt
+    ? `${step.completedAt} 완료`
+    : step.status === "running"
+      ? "현재 실행 중"
+      : step.status === "blocked"
+        ? "이전 단계 완료 대기"
+        : step.status === "pending"
+          ? "실행 대기"
+          : "완료 시각 미수집";
+
+  return { completedAt, duration };
 }
 
 function formatDagStepTitle(title: string) {

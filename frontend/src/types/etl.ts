@@ -353,7 +353,9 @@ export type JobRunSummary = {
 };
 
 export type JobDagStep = {
+  completedAt?: string;
   details?: Array<[string, string]>;
+  duration?: string;
   id: string;
   logs?: string[];
   meta: string;

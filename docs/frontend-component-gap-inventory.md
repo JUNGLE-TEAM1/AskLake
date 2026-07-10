@@ -288,6 +288,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 2026-07-10 | #468에서 SQL dataset tree를 Shadcnblocks `tree-lines-1`/Kibo UI Tree로 교체하고 connector line, controlled expand, keyboard trigger를 component source로 이동. SQL branch/table/column CSS는 제거하고 `TreeHoverCard` 위치 CSS만 유지. |
 | 2026-07-10 | #440에서 Jobs 검색, table stacked cell, row action Tooltip을 적용하고 `DataTableStackedCell` 계열을 후속 재사용 후보로 기록. 목록의 legacy log modal은 실행 이력 route 이동으로 교체했고, owner는 ReUI Avatar fallback으로 정리했다. Jobs 상태 요약은 `MetricCard`가 아닌 shadcn `Button` composition으로 전환했고, `DropdownMenu` 실행 주기 filter와 함께 live server query/facet API를 사용한다. `DataTable` action column 정렬 API도 보강. |
 | 2026-07-11 | #523에서 실행 단계의 수제 marker/connector list를 ReUI `Timeline`과 shadcn `ScrollArea` composition으로 교체했다. `JobDagStepStatus`는 indicator/separator/Badge 상태에 매핑하고, 단계 선택은 오른쪽 inspector를 갱신하는 AskLake interaction으로 유지했다. |
+| 2026-07-11 | #523 후속에서 ReUI `c-timeline-10` deployment-log pattern에 맞춰 실행 단계 card border를 제거하고 제목+Badge, 메타+소요시간, 완료 시각 구조로 조정했다. 단계 timing이 없을 때는 UI가 임의 값을 만들지 않는다. |
 
 ## #410 Modal Shell 꼬리 정리 반영
 

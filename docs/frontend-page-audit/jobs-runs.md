@@ -68,10 +68,11 @@
 `origin/codex/run-observability-ui`의 화면 구조를 현재 공통 컴포넌트 기준으로 이식했습니다.
 
 - 기존의 작은 DAG 격자와 검색 시늉 UI를 제거했습니다.
-- 왼쪽은 ReUI `Timeline`, 오른쪽은 선택 단계 상세로 구성했습니다.
+- 왼쪽은 ReUI `c-timeline-10` deployment-log 패턴을 AskLake 데이터에 맞춘 `Timeline`, 오른쪽은 선택 단계 상세로 구성했습니다.
 - 단계 선택 시 상세 정보와 진단 메시지가 갱신됩니다.
 - `TimelineIndicator`와 `TimelineSeparator`를 같은 item 레일에 배치해 상태 아이콘과 연결선 중심을 일치시켰습니다.
-- 선택 카드는 레일을 덮지 않는 콘텐츠 영역에서만 이동·강조되고, hover와 inspector 전환에 짧은 motion을 적용했습니다.
+- 단계 항목은 별도 card border 없이 제목 옆 상태 Badge, 메타·소요시간, 완료 시각을 순서대로 표시합니다.
+- 선택 항목은 레일을 덮지 않고 제목 색과 indicator ring, 짧은 이동으로만 강조하며 inspector 전환에 짧은 motion을 적용했습니다.
 - Run별 `dagStepsByRunId`를 우선 사용해 다른 Run의 단계가 섞이지 않게 했습니다.
 - 요약 영역은 `MetricCard size="compact"`를 사용하고 `이 Run의 상태`, `이 Run의 소요 시간`, `완료 단계`, `이 Run의 입력 행`처럼 단일 Run 범위를 label에 명시합니다.
 - 단계 상태는 `StatusBadge`, 진행 상태는 `Spinner`를 사용합니다.
@@ -112,6 +113,8 @@
 - 실행 이력과 DAG의 중복 반응형 selector
 
 현재 남은 `ingest-dag.css`는 Dialog workbench와 단계 inspector처럼 화면 배치 및 진단 정보 표현에 필요한 복합 UI 전용입니다.
+
+단계별 `duration`, `completedAt`은 Backend가 제공하면 그대로 사용합니다. 값이 없을 때 frontend는 가짜 시간을 계산하지 않고 `소요시간 미수집`, `현재 실행 중`, `실행 대기`처럼 수집 상태를 표시합니다.
 
 ## 5. 백엔드 계약 후속 항목
 
