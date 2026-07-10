@@ -90,6 +90,19 @@ export async function testObjectStorageSource(fields, sourceType = "File / S3") 
     throw apiError("SOURCE_CREDENTIALS_REQUIRED", "MinIO/S3 액세스 키와 시크릿 키가 필요합니다.", 400);
   }
 
+  // A selected Parquet object needs the Spark reader; treating it as a text
+  // object silently falls back to object metadata instead of its real schema.
+  if (isParquetObjectKey(selectedObject)) {
+    const parquetPath = `s3://${bucket}/${selectedObject}`;
+    const parquetFields = upsertFields(fields, [
+      ["Path", parquetPath],
+      ["Path / Prefix", selectedObject],
+      ["__Selected Object", selectedObject],
+      ["__Sample Object", selectedObject],
+    ]);
+    return testDataLakeSourceStable(parquetFields, sourceType);
+  }
+
   const samplePolicy = samplePolicyForFields(fields, "object");
   const client = s3Client({ accessKeyId, endpoint, forcePathStyle, region, secretAccessKey });
   try {
@@ -307,6 +320,14 @@ export async function testDataLakeSourceStable(fields, sourceType = "Data Lake")
       }
       if (parseBoolean(process.env.ASKLAKE_DATALAKE_SCHEMA_STRICT, false)) throw error;
     }
+  }
+
+  if (isParquetObjectKey(selectedObject) && inspectError) {
+    throw apiError(
+      "PARQUET_SCHEMA_INFERENCE_FAILED",
+      `선택한 Parquet 파일의 스키마를 읽지 못했습니다: ${inspectError}`,
+      502,
+    );
   }
 
   const schemaColumns = inspected?.schemaColumns ?? [];
@@ -1266,7 +1287,7 @@ function inspectParquetLakeWithSpark({ accessKeyId, endpoint, path: sourcePath, 
   const result = spawnSync("docker", dockerArgs, {
     encoding: "utf8",
     maxBuffer: 128 * 1024 * 1024,
-    timeout: Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 30000),
+    timeout: Number(process.env.ASKLAKE_SOURCE_INSPECT_TIMEOUT_MS || 90000),
   });
   const output = `${result.stdout || ""}\n${result.stderr || ""}`;
   const marker = output.split(/\r?\n/).findLast((line) => line.startsWith("ASKLAKE_SOURCE_INSPECT="));
@@ -1461,6 +1482,10 @@ function redactSecretConfigValues(fields) {
 function hasTextExtension(key) {
   const lower = key.toLowerCase();
   return textFileExtensions.some((extension) => lower.endsWith(extension));
+}
+
+function isParquetObjectKey(key) {
+  return String(key ?? "").trim().toLowerCase().endsWith(".parquet");
 }
 
 function samplePolicyForFields(fields, kind) {
