@@ -13,7 +13,7 @@
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
-- Issue #488 Phase 0의 Trino Query Run endpoint/response는 목표 계약이다. 현재 구현된 `/api/query/runs` DuckDB Preview 호환 runtime과 결과 snapshot은 후속 Phase에서 전환한다.
+- Issue #488 Phase 1은 local/prod Compose의 Trino 482 + Iceberg JDBC catalog baseline과 Catalog `queryEngineTable` response field를 제공한다. 현재 구현된 `/api/query/runs` DuckDB Preview 호환 runtime과 결과 snapshot은 후속 Phase에서 전환한다.
 
 ## 2) 환경 변수
 
@@ -25,6 +25,12 @@ S3_ALLOWED_BUCKETS=asklake-output
 S3_ENDPOINT=http://localhost:9000
 S3_FORCE_PATH_STYLE=true
 TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
+TRINO_ENABLED=false
+TRINO_BASE_URL=http://localhost:8088
+TRINO_CATALOG=iceberg
+TRINO_SCHEMA=asklake
+TRINO_USER=asklake-api
+TRINO_QUERY_TIMEOUT_SECONDS=300
 ```
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
@@ -36,6 +42,7 @@ TARGET_DATABASES=asklake,asklake_gold,analytics,marketing
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
+- `TRINO_ENABLED`은 후속 Query Run adapter 전환 전에는 `false`로 유지한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata이며, 현재 DuckDB compatibility runtime의 입력으로 사용하지 않는다.
 
 ## 3) 공통 규칙
 

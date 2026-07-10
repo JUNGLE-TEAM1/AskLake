@@ -13,6 +13,7 @@ LineageLayer = Literal["SOURCE", "RAW", "BRONZE", "SILVER", "GOLD", "CONSUMER"]
 QueryRefreshPolicy = Literal["manual"]
 MaterializationRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 MaterializationSourceKind = Literal["etl", "sql", "kafka"]
+QueryEngineTableFormat = Literal["iceberg", "parquet"]
 
 
 class LineageGraphColumn(CamelModel):
@@ -54,6 +55,14 @@ class DatasetMaterializationRun(CamelModel):
     storage_size_bytes: int = 0
 
 
+class QueryEngineTableRef(CamelModel):
+    catalog: str
+    schema_: str = Field(alias="schema")
+    table: str
+    format: QueryEngineTableFormat
+    partition_columns: list[str] = Field(default_factory=list)
+
+
 class CatalogDatasetResponse(CamelModel):
     created_by: str | None = None
     created_by_profile: dict[str, Any] | None = None
@@ -84,6 +93,7 @@ class CatalogDatasetResponse(CamelModel):
     storage_size_bytes: int | None = None
     partition: str | None = None
     partition_columns: list[str] | None = None
+    query_engine_table: QueryEngineTableRef | None = None
     index_columns: list[str] | None = None
     tags: list[str]
     upstream: list[str] = Field(default_factory=list)

@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_ui_base_url: str | None = None
+    trino_enabled: bool = False
+    trino_base_url: str = "http://localhost:8088"
+    trino_catalog: str = "iceberg"
+    trino_schema: str = "asklake"
+    trino_user: str = "asklake-api"
+    trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

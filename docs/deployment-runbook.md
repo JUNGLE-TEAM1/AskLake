@@ -111,6 +111,23 @@ S3_FORCE_PATH_STYLE=true
 S3_ALLOWED_BUCKETS=m3-raw,asklake-output
 ```
 
+Trino는 Issue #488 Phase 1부터 같은 Compose stack의 내부 service로 실행한다. 외부에 포트를 열지 않고 backend가 `http://trino:8080`으로 접근한다. Iceberg catalog metadata는 AskLake Postgres에, table data는 MinIO warehouse에 저장한다. server `deploy/.env`에는 아래 값도 확인한다.
+
+```bash
+TRINO_ENABLED=false
+TRINO_BASE_URL=http://trino:8080
+TRINO_CATALOG=iceberg
+TRINO_SCHEMA=asklake
+TRINO_USER=asklake-api
+TRINO_QUERY_TIMEOUT_SECONDS=300
+TRINO_IMAGE=trinodb/trino:482
+TRINO_ICEBERG_CATALOG_NAME=asklake
+TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-warehouse
+TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
+```
+
+`TRINO_ENABLED`은 Query Run adapter가 도입되는 후속 Phase에서 true로 전환한다. Phase 1의 backend SQL API는 아직 DuckDB compatibility runtime을 사용한다.
+
 ## 4. 재배포
 
 ```bash
