@@ -104,8 +104,10 @@ const checks = [
     patterns: [
       /import \{ Slider \} from "@\/components\/ui\/slider";/,
       /aria-label="radial chart 표시 범위"/,
+      /minStepsBetweenThumbs=\{1\}/,
       /onValueChange=\{\(\[min = 0, max = 100\]\) => patchCurrentConfig\(\{ min, max \}\)\}/,
       /value=\{\[radialRangeStart, radialRangeEnd\]\}/,
+      /최솟값은 최댓값보다 작아야 합니다/,
     ],
   },
   {
@@ -173,6 +175,20 @@ const checks = [
       /\(type === "bar_chart" \|\| type === "line_chart" \|\| type === "area_chart"\) && \(!config\.xKey \|\| \(!usesCount && !config\.yKey\)\)/,
       /\(type === "donut_chart" \|\| type === "pie_chart" \|\| type === "treemap_chart"\) && \(!config\.labelKey \|\| \(!usesCount && !config\.valueKey\)\)/,
       /type === "heatmap_chart" && \(!config\.xKey \|\| !config\.yKey \|\| \(!usesCount && !config\.valueKey\)\)/,
+    ],
+  },
+  {
+    name: "Dashboard published view keeps explicit share copy and shadcn empty actions",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+    patterns: [
+      /const copyShareLink = async \(\) =>/,
+      /navigator\.clipboard\.writeText\(shareLink\)/,
+      /document\.execCommand\("copy"\)/,
+      /<Button type="button" onClick=\{\(\) => void copyShareLink\(\)\}>/,
+      /\{\(mode === "draft" \|\| pages\.length > 0\) \? \(/,
+    ],
+    forbiddenPatterns: [
+      /현재 대시보드 링크를 복사했습니다/,
     ],
   },
 ];

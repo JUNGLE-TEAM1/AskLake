@@ -9,6 +9,8 @@ import type {
 } from "../../../types";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
 import { DashboardAssistantPanel } from "./DashboardAssistantPanel";
@@ -147,36 +149,45 @@ function DashboardEditToolbar({
   onRedo: () => void;
   onUndo: () => void;
 }) {
+  const toolbarButton = (
+    label: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+    options: { active?: boolean; disabled?: boolean } = {},
+  ) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          aria-label={label}
+          aria-pressed={options.active}
+          className={options.active ? "active" : undefined}
+          disabled={options.disabled}
+          size="icon"
+          type="button"
+          variant="ghost"
+          onClick={onClick}
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
-    <ActionGroup className="asklake-dashboard-edit-toolbar" density="compact" wrap="nowrap" role="toolbar" aria-label="대시보드 편집 도구">
-      <button
-        aria-label="AskLake 보조 패널"
-        className={assistantActive ? "active asklake-toolbar-assistant" : "asklake-toolbar-assistant"}
-        title="AskLake 보조 패널"
-        type="button"
-        onClick={onAssistant}
-      >
-        <AskLakeNessiIcon />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="이동 모드" className={!assistantActive ? "active" : undefined} title="이동" type="button" onClick={onCursor}>
-        <MousePointer2 size={18} />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="시각화 추가" disabled={disabled} title="시각화 추가" type="button" onClick={() => void onCreateToolbarWidget("visualization")}>
-        <BarChart3 size={18} />
-      </button>
-      <button aria-label="텍스트 추가" disabled={disabled} title="텍스트 추가" type="button" onClick={() => void onCreateToolbarWidget("text")}>
-        <Type size={18} />
-      </button>
-      <span aria-hidden="true" />
-      <button aria-label="실행 취소" disabled={!canUndo} title="실행 취소" type="button" onClick={onUndo}>
-        <Undo2 size={18} />
-      </button>
-      <button aria-label="다시 실행" disabled={!canRedo} title="다시 실행" type="button" onClick={onRedo}>
-        <Redo2 size={18} />
-      </button>
-    </ActionGroup>
+    <TooltipProvider delayDuration={250}>
+      <ActionGroup className="asklake-dashboard-edit-toolbar" density="compact" wrap="nowrap" role="toolbar" aria-label="대시보드 편집 도구">
+        {toolbarButton("AskLake 보조 패널", <AskLakeNessiIcon />, onAssistant, { active: assistantActive })}
+        <span aria-hidden="true" />
+        {toolbarButton("이동 모드", <MousePointer2 />, onCursor, { active: !assistantActive })}
+        <span aria-hidden="true" />
+        {toolbarButton("시각화 추가", <BarChart3 />, () => void onCreateToolbarWidget("visualization"), { disabled })}
+        {toolbarButton("텍스트 추가", <Type />, () => void onCreateToolbarWidget("text"), { disabled })}
+        <span aria-hidden="true" />
+        {toolbarButton("실행 취소", <Undo2 />, onUndo, { disabled: !canUndo })}
+        {toolbarButton("다시 실행", <Redo2 />, onRedo, { disabled: !canRedo })}
+      </ActionGroup>
+    </TooltipProvider>
   );
 }
 
@@ -191,8 +202,8 @@ function isVisualizationRequestWidget(widget: DashboardRuntimeWidget | null) {
 }
 
 const emptyDashboardCopy = {
-  description: "왼쪽 사이드바에서 데이터셋을 선택 후, 오른쪽 사이드바에서 위젯을 생성할 수 있습니다",
-  title: "위젯을 추가해 주세요",
+  description: "편집 모드에서 페이지와 위젯을 구성한 뒤 게시하면 이 화면에서 확인할 수 있습니다.",
+  title: "게시된 위젯이 없습니다",
 };
 
 export function DashboardRuntimeView({
@@ -279,19 +290,19 @@ export function DashboardRuntimeView({
   } = actions;
   const isDraftMode = mode === "draft";
   const openDraftAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onOpenDraft}>
+    <Button type="button" onClick={onOpenDraft}>
       위젯 편집
-    </button>
+    </Button>
   );
   const retryAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onRetryPublished}>
+    <Button type="button" variant="outline" onClick={onRetryPublished}>
       다시 시도
-    </button>
+    </Button>
   );
   const draftRetryAction = (
-    <button className="asklake-dashboard-empty-action" type="button" onClick={onRetryDraft}>
+    <Button type="button" variant="outline" onClick={onRetryDraft}>
       다시 시도
-    </button>
+    </Button>
   );
 
   const patchWidgetConfig = (widget: DashboardRuntimeWidget, patch: Record<string, unknown>) => onUpdateWidget(widget.id, {

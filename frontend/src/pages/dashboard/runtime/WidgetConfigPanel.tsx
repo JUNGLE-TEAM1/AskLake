@@ -20,8 +20,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
 import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
-import { Slider } from "@/components/ui/slider";
 import { SettingsPanel } from "@/components/ui/settings-panel";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
@@ -329,6 +329,7 @@ function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDr
     return "분류와 값 컬럼을 선택해 주세요.";
   }
   if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
   if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
@@ -1058,6 +1059,7 @@ export function WidgetConfigPanel({
                   aria-label="radial chart 표시 범위"
                   max={radialRangeCeiling}
                   min={radialRangeFloor}
+                  minStepsBetweenThumbs={1}
                   onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
                   step={1}
                   value={[radialRangeStart, radialRangeEnd]}

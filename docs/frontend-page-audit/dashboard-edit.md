@@ -118,3 +118,8 @@
 - dashboard view와 runtime component/CSS를 대부분 공유하므로 edit-only 변경도 published view를 회귀시킬 수 있다.
 - #422의 `DataTable` 변경은 table widget에 영향을 줄 수 있다.
 - runtime API, layout serialization, widget config schema, AI assistant contract는 이번 문서 범위에서 변경하지 않는다.
+## Implementation Follow-up
+
+- #487의 Kibo/shadcn-compatible line tree와 loading/error/empty 상태 구성을 유지한다.
+- radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
+- 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
