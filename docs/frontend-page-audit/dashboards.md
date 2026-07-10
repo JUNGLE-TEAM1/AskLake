@@ -59,6 +59,40 @@
 - 이번 문서 PR에서는 생성, 삭제, filter interaction을 실행하지 않고 route rendering만 최소 확인했다.
 - 좁은 화면에서 toolbar menu trigger text, table horizontal scroll, destructive icon button hit area를 확인해야 한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [PASS] mock dashboard 15개가 첫 page 10개로 표시되고 table header, row action, pagination에 semantic/accessibility 정보가 제공된다.
+- [PASS] no-result search는 table header를 유지한 채 `대시보드가 없습니다` empty row와 disabled pagination을 표시한다.
+- [PASS] 삭제 action은 제목이 있는 dialog를 열고 최초 focus를 `취소`에 둔다. destructive `삭제`와 안전 action의 구분도 명확하다.
+- [MEDIUM] loading/create/delete error가 같은 `dashboard-list-count` text style을 공유해 status hierarchy가 약하다. `Alert`와 row-shaped `Skeleton`으로 분리하는 편이 낫다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 document width가 `345px`인데 scroll width가 `810px`까지 늘어나 page-level horizontal scrollbar가 생긴다. 현재 table은 mobile에서 primary workflow를 안정적으로 제공하지 못한다.
+- [HIGH] global app sidebar도 접히지 않아 dashboard list가 첫 viewport 아래로 밀린다.
+- [MEDIUM] 긴 dashboard title과 delete action cell이 함께 clipping된다. 단순 table horizontal scroll을 유지할지 mobile row/card representation으로 바꿀지 결정해야 한다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, mock 15개/첫 page 10개, no-result search, delete dialog open/focus, page overflow measurement, console warning/error.
+- 확인하지 못함: 실제 삭제 confirm/rollback, create pending/error, owner/tag/sort 조합, pagination page 2 이동.
+
+### shadcn Review
+
+- Structure: pass - toolbar/table/dialog가 명확한 component 경계를 가진다.
+- Tokens: pass - `Button`, `Badge`, `StatusBadge`, `Chip` variant가 일관된다.
+- Composition: follow-up - error/loading만 `Alert`/`Skeleton`로 보완하면 된다.
+- Responsive/a11y: issues - mobile table overflow가 높은 우선순위다.
+- Install/search notes: 이미 설치된 `AlertDialog`, `Empty`, `Skeleton`, `ScrollArea` 범위에서 해결 가능하다.
+
+### Recommended Order
+
+1. mobile에서 table viewport가 page width를 늘리지 않도록 containment를 수정하고 mobile representation을 결정한다.
+2. global mobile sidebar를 collapse/Sheet pattern으로 전환한다.
+3. loading/error state를 semantic feedback component로 분리한다.
+
 ## Conflict Risk
 
 - #422의 list/search/table/pagination과 직접 겹치는 화면이므로 이 PR은 문서만 추가한다.

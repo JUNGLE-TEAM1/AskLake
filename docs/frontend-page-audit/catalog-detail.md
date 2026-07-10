@@ -60,6 +60,40 @@
 - raw tab의 Arrow key 동작, active focus, URL/history 보존 여부는 현재 보장되지 않으므로 후속 `Tabs` 전환 시 확인한다.
 - ReactFlow는 desktop뿐 아니라 좁은 viewport에서 node clipping, controls overlap, horizontal scroll을 확인해야 한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [HIGH] detail navigation은 `<nav>` 안의 raw button이지만 각 button에 `role="tab"`, `aria-selected`, tabpanel association이 없다.
+- [HIGH] `스키마` tab을 선택한 뒤 `ArrowRight`를 눌러도 다음 tab으로 이동하지 않았다. shadcn `Tabs`로 교체하면 roving focus와 arrow navigation을 함께 해결할 수 있다.
+- [MEDIUM] default `개요` tab의 주 content heading이 `리니지` 하나라서 tab label과 content hierarchy가 다르게 느껴진다. 개요 summary heading을 두고 lineage는 subsection으로 내리는 편이 명확하다.
+- [PASS] action button, breadcrumb, status/tag metadata는 desktop에서 잘 보이며 page-level overflow와 console error는 없었다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 global app sidebar가 접히지 않아 detail header와 actions가 첫 viewport 아래로 밀린다.
+- [PASS] detail route 자체는 360px에서 page-level horizontal overflow를 만들지 않았다.
+- [MEDIUM] tab label과 header action이 늘어날 경우 현재 raw nav는 wrapping/focus order 정책이 없다. `TabsList` scroll 또는 wrap 규칙이 필요하다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, overview render, schema tab click, schema row 5개, ArrowRight behavior, console warning/error.
+- 확인하지 못함: sample/lineage tab의 full graph interaction, ReactFlow zoom/pan keyboard, refresh loading/error, SQL route navigation.
+
+### shadcn Review
+
+- Structure: issues - header와 tab semantics가 custom markup이다.
+- Tokens: pass - metadata chip과 content surface는 기존 catalog style과 일치한다.
+- Composition: issues - 설치된 `Tabs`, `Badge`, `DataTable`, `ScrollArea`를 더 활용할 수 있다.
+- Responsive/a11y: issues - tab semantics와 arrow keyboard가 빠져 있다.
+- Install/search notes: `Tabs`가 이미 설치되어 있어 registry 추가가 필요 없다.
+
+### Recommended Order
+
+1. raw detail nav를 shadcn `Tabs`로 교체하고 tabpanel association을 추가한다.
+2. overview content hierarchy와 breadcrumb/header composition을 정리한다.
+3. mobile header action과 long metadata wrapping을 검증한다.
+
 ## Conflict Risk
 
 - catalog list와 같은 `CatalogPage.tsx`, `catalog.css`를 공유한다.

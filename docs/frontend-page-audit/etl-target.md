@@ -84,6 +84,40 @@
   - validation summary는 alert role은 있으나 `Alert` component 기준의 title/description 구조는 아니다.
   - S3/DB picker API 실패 시 fallback/error row가 보이지만, loading skeleton은 아직 없다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [HIGH] mock mode에서도 DB picker를 열면 `Internal Server Error`가 먼저 노출되고 fallback DB 4개가 함께 표시된다. 사용자는 fallback을 선택할 수 있지만 mock 성공 상태와 backend 실패 상태가 한 dialog에 섞여 신뢰하기 어렵다.
+- [HIGH] custom format menu는 trigger의 `aria-expanded`와 option의 pressed state는 제공하지만 `Escape`를 눌러도 닫히지 않았다. shadcn `Select` 또는 `DropdownMenuRadioGroup`으로 옮겨 keyboard close/focus restore를 맡기는 것이 우선이다.
+- [MEDIUM] DB picker는 dialog title, close label, search focus, retry action을 갖추고 있어 overlay 기본 접근성은 양호하다. 문제는 dialog shell보다 mock/backend 상태 분리다.
+- [PASS] 데이터셋명, 오너, 담당자, 설명 input과 partition radio는 실제 `<label>` association이 확인됐다. desktop 1280px에서는 page-level horizontal overflow가 없었다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 app sidebar가 접히지 않고 첫 viewport 대부분을 차지한다. wizard stepper도 별도 horizontal scrollbar를 만들기 때문에 핵심 Target form이 화면 아래로 크게 밀린다.
+- [MEDIUM] page-level overflow는 없지만 `order_date`, `order_count`, `gross_sales` partition label이 좁은 option card 안에서 잘린다.
+- [LOW] 긴 S3 path는 ellipsis로 제한되어 page 폭을 늘리지는 않는다. tooltip 또는 copy affordance로 전체 값을 확인할 수 있어야 한다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, format menu open/Escape, DB picker open, dialog semantics, input label association, console warning/error.
+- 확인하지 못함: S3 picker tree interaction, copy 완료 feedback, tag 추가/삭제, partition 변경 후 draft persistence, validation failure 후 복구.
+
+### shadcn Review
+
+- Structure: issues - format menu와 feedback state가 custom UI에 남아 있다.
+- Tokens: pass - 주요 surface와 control은 현재 theme 안에서 일관된다.
+- Composition: issues - 이미 설치된 `Select`, `DropdownMenu`, `Alert`로 줄일 수 있는 custom 코드가 있다.
+- Responsive/a11y: issues - Escape close 실패, mobile sidebar/stepper, partition text clipping이 있다.
+- Install/search notes: `Select`, `DropdownMenu`, `Tooltip`은 설치돼 있다. `Alert`를 선택하면 추가 설치가 필요하며 기존 `InfoBox`/status composition 확장과 비교한다.
+
+### Recommended Order
+
+1. mock mode의 DB/S3 request를 backend error와 분리하고 fallback 사용 시 error banner를 숨기거나 명확한 fallback 상태로 바꾼다.
+2. format custom menu를 shadcn primitive로 교체해 Escape, outside click, focus restore를 보장한다.
+3. mobile shell/stepper와 partition option의 최소 폭 및 wrapping을 수정한다.
+
 ## Conflict Risk
 
 - 이번 작업은 문서 추가만 하며 frontend/backend 코드, API 계약, mock fixture, Router 구조는 변경하지 않는다.

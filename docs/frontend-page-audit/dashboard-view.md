@@ -64,6 +64,42 @@
 - page identity, topbar, share/edit action, empty state 구조는 확인 가능하다.
 - populated fixture가 추가되면 widget grid overflow, chart resize, table pagination, page switching을 다시 확인해야 한다.
 
+## Rendered Audit Findings
+
+### Desktop Findings
+
+- [HIGH] 게시 화면에서 `공유`를 열면 안내는 `현재 대시보드 링크를 복사했습니다`라고 말하지만 실제 panel에는 code와 닫기 button만 있고 copy action이 없다.
+- [HIGH] 게시 화면에서 만든 share URL이 `/dashboards/dash_sales_demo/edit`를 가리킨다. view 공유 의도와 URL 권한/모드가 어긋나므로 `/dashboards/:id`를 사용하거나 명확히 draft 공유라고 표시해야 한다.
+- [MEDIUM] list에서는 사람이 읽는 dashboard name이 있지만 view H1은 raw ID `dash_sales_demo`를 표시한다.
+- [MEDIUM] published empty state는 `왼쪽 사이드바`, `오른쪽 사이드바`를 안내하지만 view mode에는 두 sidebar가 없다. CTA `위젯 편집`과 맞는 편집 진입 문구로 바꿔야 한다.
+- [MEDIUM] mock runtime은 page가 없어 빈 `tablist`만 렌더링한다. screen reader에는 이름 있는 빈 navigation landmark가 남는다.
+- [PASS] share panel 자체는 title/description/close focus가 있는 shadcn `Sheet` dialog로 노출된다.
+
+### Narrow Viewport Findings
+
+- [HIGH] 360px에서 global app sidebar가 첫 viewport를 점유한다.
+- [PASS] empty published view 자체는 page-level horizontal overflow를 만들지 않았다.
+- [MEDIUM] populated widget fixture가 없어 mobile chart/table/grid layout은 검증할 수 없었다.
+
+### Verification Coverage
+
+- 확인함: desktop 1280x900, narrow 360x800, published empty state, edit CTA, refresh/share accessible names, share Sheet content/URL, console warning/error.
+- 확인하지 못함: populated page tabs, chart/table widgets, refresh failure/retry, actual clipboard mutation, published widget responsive grid.
+
+### shadcn Review
+
+- Structure: mostly pass - runtime shell과 share `Sheet` composition은 명확하다.
+- Tokens: pass - topbar, empty surface, action tone이 일관된다.
+- Composition: issues - empty action과 runtime notice를 `Button`, `Empty`, `Alert`로 통일할 여지가 있다.
+- Responsive/a11y: issues - misleading empty copy, empty tablist, mobile shell이 남아 있다.
+- Install/search notes: `Empty`, `Button`, `Tabs`, `Sheet`는 설치돼 있다. `Alert`는 추가 설치 또는 기존 runtime notice 개선 중 선택한다.
+
+### Recommended Order
+
+1. share URL을 published route로 교정하고 실제 copy action/feedback을 일치시킨다.
+2. published empty copy와 raw dashboard ID title을 수정한다.
+3. populated runtime fixture를 추가한 뒤 view widget 반응형을 다시 감사한다.
+
 ## Conflict Risk
 
 - view와 edit가 `DashboardRuntimeView`, `DashboardRuntimeShell`, `dashboard-runtime.css`를 공유한다.
