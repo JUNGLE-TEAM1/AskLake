@@ -134,7 +134,7 @@ export const TreeProvider = ({
 
       let newSelection: string[];
 
-      if (multiSelect && ctrlKey) {
+      if (multiSelect) {
         newSelection = currentSelectedIds.includes(nodeId)
           ? currentSelectedIds.filter((id) => id !== nodeId)
           : [...currentSelectedIds, nodeId];
@@ -246,7 +246,7 @@ export const TreeNode = ({
   );
 };
 
-export type TreeNodeTriggerProps = ComponentProps<typeof motion.div>;
+export type TreeNodeTriggerProps = ComponentProps<typeof motion.button>;
 
 export const TreeNodeTrigger = ({
   children,
@@ -262,9 +262,10 @@ export const TreeNodeTrigger = ({
   const isSelected = selectedIds.includes(nodeId);
 
   return (
-    <motion.div
+    <motion.button
+      {...props}
       className={cn(
-        "group relative mx-1 flex cursor-pointer items-center rounded-md px-3 py-2 text-slate-700 outline-none transition-[background-color,box-shadow] duration-200 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1",
+        "group relative mx-1 flex w-[calc(100%-0.5rem)] cursor-pointer items-center rounded-md border-0 bg-transparent px-3 py-2 text-left text-slate-700 outline-none transition-[background-color,box-shadow] duration-200 hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-1",
         isSelected && "bg-blue-50 text-slate-950",
         className
       )}
@@ -288,12 +289,12 @@ export const TreeNodeTrigger = ({
       role={role}
       style={{ paddingLeft: level * (indent ?? 0) + 8 }}
       tabIndex={tabIndex}
+      type="button"
       whileTap={{ scale: 0.98, transition: { duration: 0.1 } }}
-      {...props}
     >
       <TreeLines />
       {children as ReactNode}
-    </motion.div>
+    </motion.button>
   );
 };
 

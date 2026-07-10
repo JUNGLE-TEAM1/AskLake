@@ -16,7 +16,7 @@
 - AskLake composition: `PageHeader`, `Panel`, `PanelHeader`, `FilterToolbar`, `FilterToolbarSearch`, `FilterToolbarInput`, `FilterToolbarCheckbox`, `PaginationBar`.
 - `DataTable`: preview 및 상세 schema table에 사용한다.
 - `DialogShell`: 전체 schema와 lineage overlay shell에 사용한다.
-- `DatasetStatusBadge`: dataset status와 RAG 상태를 `Badge` variant로 조합한다.
+- `DatasetStatusBadge`: Jobs 기준 `StatusBadge`로 dataset status를, `Badge`로 RAG metadata를 조합한다.
 - `CatalogMaterializationRuns`, `CatalogSchemaTable`, `CatalogLineage`: run 목록, schema, lineage의 도메인 조합 컴포넌트다.
 - `ReactFlow`: lineage graph의 layout, edge, control을 담당한다.
 
@@ -43,7 +43,7 @@
 ## Design Options For Existing Components
 
 - `FilterToolbar`, `Panel`, `PaginationBar`, `DialogShell`: 이미 shadcn primitive를 조합한 AskLake 공통 컴포넌트이므로 유지한다.
-- `DatasetStatusBadge`: `StatusBadge`와 역할이 겹치는지 확인한 뒤 dataset 전용 mapping만 남기고 공통 status primitive로 합칠 수 있다.
+- `DatasetStatusBadge`: dataset 전용 mapping만 유지하고 visual surface는 Jobs와 같은 `StatusBadge`에 맡긴다.
 - `CatalogMaterializationRuns`: 도메인 동작이 있으므로 유지하되 내부 row, empty, pagination을 공통 컴포넌트로 교체한다.
 - `CatalogLineage`: ReactFlow를 유지한다. ReUI tree나 shadcn table로 graph engine을 교체할 대상은 아니다.
 - result card는 별도 범용 Card를 새로 만들기보다 `CatalogResultItem` 도메인 컴포넌트로 분리하는 편이 명확하다.

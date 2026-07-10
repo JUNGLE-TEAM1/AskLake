@@ -3,10 +3,10 @@
   position: relative;
   display: grid;
   width: 100%;
-  height: 100%;
-  min-height: 0;
-  grid-template-columns: var(--sql-side-panel-width) minmax(320px, 1fr) var(--sql-side-panel-width);
-  grid-template-rows: max-content minmax(0, 1fr);
+  height: auto;
+  min-height: 100%;
+  grid-template-columns: var(--sql-side-panel-width) minmax(0, 1fr);
+  grid-template-rows: max-content auto;
   align-items: stretch;
   gap: 12px;
   max-width: none;
@@ -19,7 +19,7 @@
 }
 
 .sql-page.context-collapsed {
-  grid-template-columns: minmax(0, 1fr) var(--sql-side-panel-width);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .sql-dataset-panel {
@@ -27,30 +27,15 @@
   z-index: 20;
   top: 0;
   display: grid;
+  grid-column: 1;
+  grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
-  height: 100%;
-  max-height: 100%;
+  align-self: stretch;
+  height: auto;
+  max-height: none;
   min-width: 0;
   overflow: hidden;
   padding: 20px;
-}
-
-.sql-schema-panel {
-  position: sticky;
-  top: 0;
-  display: grid;
-  align-content: start;
-  grid-template-rows: max-content max-content minmax(0, 1fr);
-  height: 100%;
-  max-height: 100%;
-  gap: 16px;
-  min-width: 0;
-  overflow: hidden;
-  padding: 20px;
-}
-
-.sql-schema-panel.empty {
-  grid-template-rows: max-content minmax(0, 1fr);
 }
 
 .sql-context-rail-button {
@@ -62,6 +47,11 @@
 
 .sql-page.context-collapsed .sql-workspace {
   padding-left: 44px;
+}
+
+.sql-workspace {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .sql-tree-hover-card {
@@ -366,13 +356,6 @@
     padding-left: 44px;
   }
 
-  .sql-schema-panel {
-    position: relative;
-    grid-column: 1 / -1;
-    height: auto;
-    max-height: none;
-  }
-
 }
 
 @media (max-width: 860px) {
@@ -385,8 +368,7 @@
     padding-left: 0;
   }
 
-  .sql-dataset-panel,
-  .sql-schema-panel {
+  .sql-dataset-panel {
     position: relative;
     height: auto;
     max-height: none;

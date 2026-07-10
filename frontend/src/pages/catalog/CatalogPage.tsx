@@ -45,6 +45,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Slider } from "@/components/ui/slider";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -746,12 +747,12 @@ export function CatalogDetailPage({
 
 export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: CatalogDataset; shape?: BadgeProps["shape"] }) {
   const statusMeta = datasetStatusMeta[dataset.status];
-  const statusVariant = dataset.status === "available" ? "success" : dataset.status === "approval_required" ? "warning" : "outline";
+  const statusTone = dataset.status === "available" ? "success" : dataset.status === "approval_required" ? "warning" : "outline";
 
   return (
     <>
       {dataset.rag && <Badge shape={shape} size="sm">RAG</Badge>}
-      <Badge shape={shape} size="sm" variant={statusVariant}>{statusMeta.label}</Badge>
+      <StatusBadge shape={shape} size="sm" tone={statusTone}>{statusMeta.label}</StatusBadge>
     </>
   );
 }
