@@ -18,8 +18,8 @@
   align-content: start;
   gap: 16px;
   min-width: 0;
-  border-right: 1px solid #c5e0eb;
-  background: #e7f4f8;
+  border-right: 1px solid #c8dcfa;
+  background: #eef5ff;
   padding: 18px 14px;
 }
 
@@ -35,7 +35,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #173c56;
+  color: #2455a6;
   font-size: 16px;
   font-weight: 750;
 }
@@ -50,7 +50,7 @@
 .ai-conversation-sidebar-header .ai-nessi-mark {
   width: 28px;
   height: 28px;
-  border: 1px solid #c5e0eb;
+  border: 1px solid #c8dcfa;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.76);
   padding: 4px;
@@ -65,16 +65,16 @@
   justify-content: flex-start;
   gap: 9px;
   min-height: 44px;
-  border: 1px solid #b8d9e7;
+  border: 1px solid #bdd4f7;
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.7);
-  color: #173c56;
+  color: #2455a6;
   padding: 0 12px;
   font-size: 14px;
   font-weight: 650;
 }
 
-.ai-sidebar-new-conversation:hover { border-color: #88bfd5; background: #f7fcfe; }
+.ai-sidebar-new-conversation:hover { border-color: #83acec; background: #f8fbff; }
 .ai-conversation-list { display: grid; gap: 4px; max-height: calc(100vh - 268px); overflow-y: auto; }
 
 .ai-conversation-item {
@@ -85,14 +85,14 @@
   border-radius: 7px;
   background: transparent;
   padding: 11px 10px;
-  color: #31546a;
+  color: #426b9f;
   text-align: left;
 }
 
-.ai-conversation-item:hover { background: #d7edf4; }
-.ai-conversation-item.active { background: #c5e6f1; }
-.ai-conversation-item span { overflow: hidden; color: #173c56; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.ai-conversation-item small { color: #5f8196; font-size: 11px; }
+.ai-conversation-item:hover { background: #e0ecff; }
+.ai-conversation-item.active { background: #cfe1ff; }
+.ai-conversation-item span { overflow: hidden; color: #214f91; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.ai-conversation-item small { color: #6582ad; font-size: 11px; }
 
 .ai-chat-header {
   display: flex;
