@@ -1109,8 +1109,10 @@ export function SourceConnectionPage({
   const [sourceRuntime, setSourceRuntime] = useState<SourceConnectorAnalysis | null>(null);
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => sourceLocked ? "connect" : getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
+  const [samplingAssetPath, setSamplingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
   const sourceAssetCacheRef = useRef<Map<string, SourceAssetsResponse>>(new Map());
+  const sourceSampleInFlightRef = useRef(false);
   const connectorMeta: Record<string, { desc: string; icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { desc: "MinIO 버킷을 연결한 뒤 실제 오브젝트를 선택합니다.", icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { desc: "테이블 목록, 샘플 행, 스키마 추론", icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1338,6 +1340,7 @@ export function SourceConnectionPage({
   );
   const displayPreviewColumns = selectedAssetHasSample ? sourceRuntime?.previewColumns ?? [] : [];
   const displayPreviewRows = selectedAssetHasSample ? sourceRuntime?.previewRows ?? [] : [];
+  const isSamplingAsset = samplingAssetPath.length > 0;
   const hasSamplePreview = displayPreviewColumns.length > 0 && displayPreviewRows.length > 0;
   const hasSchemaPatch = Boolean(sourceRuntime?.draftPatch.schema?.columns?.length && sourceRuntime?.draftPatch.schema?.sampleRows?.length);
   const displayPreviewNote = sourceRuntime?.previewNote ?? current.previewNote;
@@ -1499,6 +1502,10 @@ export function SourceConnectionPage({
   };
 
   const selectSourceAsset = async (assetPath: string) => {
+    if (sourceSampleInFlightRef.current) {
+      onNotify("선택한 파일의 샘플을 불러오는 중입니다.");
+      return;
+    }
     const asset = displayAssets.find(([path]) => path === assetPath);
     if (!asset) return;
     const [, assetMeta] = asset;
@@ -1517,11 +1524,14 @@ export function SourceConnectionPage({
     ]);
     const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
     setSelectedAssetPath(assetPath);
+    setSamplingAssetPath(assetPath);
+    setSourceRuntime(null);
     setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
     setConnectionMessage(nextMessage);
     setConnectionStatus("testing");
     applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
     onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
+    sourceSampleInFlightRef.current = true;
     try {
       const result = mergeConnectorAnalysisSourceConfig(
         publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
@@ -1544,6 +1554,9 @@ export function SourceConnectionPage({
       applySourceDraft(activeSourceType, nextFields, "failed", message);
       onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
       onNotify(message);
+    } finally {
+      sourceSampleInFlightRef.current = false;
+      setSamplingAssetPath("");
     }
   };
 
@@ -1640,6 +1653,10 @@ export function SourceConnectionPage({
     }
     if (connectionStatus !== "success") {
       onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
+      return;
+    }
+    if (!sourceLocked && requiresAssetSelectionForPreview && !selectedAssetHasSample) {
+      onNotify("목록에서 실제 파일을 선택해 스키마 샘플을 확인한 뒤 다음 단계로 이동하세요.");
       return;
     }
     applySourceDraft(activeSourceType, verifiedSourceFields, connectionStatus, connectionMessage);
@@ -1810,6 +1827,7 @@ export function SourceConnectionPage({
                 {hasDetectedAssets ? (
                   <SourceAssetTree
                     assets={displayAssets}
+                    disabled={isSamplingAsset}
                     loadingPath={loadingAssetPath}
                     selectedPath={selectedAssetPath}
                     onOpenFolder={loadSourceAssetChildren}
@@ -1830,7 +1848,7 @@ export function SourceConnectionPage({
                   </div>
                   <div className="source-preview-format-strip">
                     <strong>{displayPreviewFormat}</strong>
-                    <span>{displayPreviewRows.length}행 · {displayPreviewColumns.length}필드</span>
+                    <span>{isSamplingAsset ? "불러오는 중" : `${displayPreviewRows.length}행 · ${displayPreviewColumns.length}필드`}</span>
                   </div>
                   {displayPreviewRows.length > 0 ? (
                     usesJsonSampleTree ? (
@@ -1850,7 +1868,11 @@ export function SourceConnectionPage({
                       </div>
                     )
                   ) : (
-                    <p className="source-empty-note">파일을 선택한 뒤 연결 테스트를 다시 실행하면 해당 파일 기준 샘플이 표시됩니다.</p>
+                    <p className="source-empty-note">
+                      {isSamplingAsset
+                        ? `${samplingAssetPath}의 스키마와 제한 샘플을 불러오는 중입니다.`
+                        : "파일을 선택하면 해당 파일 기준 샘플과 스키마가 표시됩니다."}
+                    </p>
                   )}
                 </section>
               </section>
@@ -1917,7 +1939,7 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix"].includes(label);
+    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path", "Path / Prefix"].includes(label);
   }
   return true;
 }
