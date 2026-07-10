@@ -1337,23 +1337,23 @@
 
 .asklake-widget-config-heading span {
   color: var(--dash-text-muted);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .asklake-widget-config-heading strong {
   color: var(--dash-text);
-  font-size: 18px;
+  font-size: 20px;
   line-height: 1.3;
 }
 
 .asklake-widget-dataset-field label {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .asklake-widget-dataset-field button {
-  font-size: 16px;
+  font-size: 17px;
 }
 
 .asklake-widget-config-heading em {
