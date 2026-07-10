@@ -553,7 +553,7 @@ type LineageGraph = {
   datasets: Array<{
     id: string;
     name: string;
-    layer: "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+    layer: "SOURCE" | "PROCESS" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
     engine: string;
     columns: Array<{
       id: string;
@@ -932,6 +932,8 @@ Response 예시:
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
 - Spark run 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
+- ETL `lineageGraph`의 source node에는 실제 source/transform input 컬럼만 포함합니다. source-to-job edge는 transform step의 `input -> output` 또는 명시적 sourceName-to-targetName mapping으로 만들고, job-to-target edge는 같은 output column name으로 연결합니다. 결과 schema를 source node에 복제하거나 컬럼 순번만으로 연결하지 않습니다. `_asklake_run_id`, `_asklake_ingested_at` 같은 실행 metadata는 source가 아니라 Spark job에서 생성된 것으로 표현합니다.
+- ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 요청값이 아니라 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용합니다.
 
 Validation:
 
@@ -1064,7 +1066,9 @@ Response 예시:
 | `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
 | `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
 
-`run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `transform_quality_write` task는 `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`를 호출해 기존 Spark runner를 실행한다. Backend는 같은 Run에 실제 input/output row count와 output path를 저장하고, Spark 성공 시 같은 트랜잭션에서 Catalog dataset/materialization run을 upsert한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+
+내부 실행 endpoint는 `X-AskLake-Airflow-Token`과 backend의 `AIRFLOW_INTERNAL_TOKEN`이 일치해야 한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 materialization이 없으면 Run을 `failed`로 보정해 스모크 task 성공을 실제 데이터 처리 성공으로 오인하지 않는다. `dag_run.conf`에는 `jobId`, `runId`, `command`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
 Validation:
 

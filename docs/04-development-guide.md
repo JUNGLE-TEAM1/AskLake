@@ -74,9 +74,10 @@ AIRFLOW_DAG_ID=asklake_etl_job
 AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
 AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=airflow
+AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
 ```
 
-그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Run History와 DAG modal이 `GET /api/etl/jobs/{jobId}` polling으로 Airflow DAG Run/Task Instance 상태를 반영한다.
+Local Compose의 Airflow task에는 `AIRFLOW_INTERNAL_BASE_URL=http://host.docker.internal:8080`과 같은 내부 토큰이 기본 주입된다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Airflow가 backend의 실 Spark runner를 호출하고, Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다. Spark 성공 뒤에는 같은 `runId`의 Catalog dataset materialization도 확인한다.
 
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
@@ -394,6 +395,7 @@ Docker/Spark까지 켜진 환경에서 ETL run -> Catalog payload/storage/lineag
 
 ```bash
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 ```
 
 - live backend browser smoke tests
