@@ -30,7 +30,7 @@
   grid-column: 1;
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
-  align-self: stretch;
+  align-self: start;
   height: auto;
   max-height: none;
   min-width: 0;
