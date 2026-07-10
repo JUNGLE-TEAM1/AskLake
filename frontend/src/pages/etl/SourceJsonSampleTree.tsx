@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type React from "react";
-import { SimpleTreeView } from "@mui/x-tree-view/SimpleTreeView";
-import { TreeItem } from "@mui/x-tree-view/TreeItem";
+import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
 
 type SourceJsonSampleTreeProps = {
   columns: string[];
@@ -11,8 +9,13 @@ type SourceJsonSampleTreeProps = {
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-type BuiltTree = {
-  node: React.ReactNode;
+type JsonTreeNode = {
+  children?: JsonTreeNode[];
+  id: string;
+  kind?: "array" | "object" | "row";
+  muted?: boolean;
+  name: string;
+  value: string;
 };
 
 const MAX_RECORDS = 5;
@@ -33,27 +36,32 @@ export function SourceJsonSampleTree({ columns, rows }: SourceJsonSampleTreeProp
     [columns, rows],
   );
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
+  const expandedItemSet = useMemo(() => new Set(expandedItems), [expandedItems]);
 
   useEffect(() => {
     setExpandedItems([]);
   }, [records]);
+
+  const toggleItem = (itemId: string) => {
+    setExpandedItems((current) => (
+      current.includes(itemId)
+        ? current.filter((entry) => entry !== itemId)
+        : [...current, itemId]
+    ));
+  };
 
   if (records.length === 0) {
     return <p className="source-empty-note">{TEXT.empty}</p>;
   }
 
   return (
-    <SimpleTreeView
-      className="source-json-sample-tree"
-      expandedItems={expandedItems}
-      onExpandedItemsChange={(_, itemIds) => setExpandedItems(itemIds)}
-    >
-      {records.map((record) => record.node)}
-    </SimpleTreeView>
+    <TreeView className="source-json-sample-tree" label="JSON 샘플 트리">
+      {records.map((record) => renderJsonNode(record, expandedItemSet, toggleItem))}
+    </TreeView>
   );
 }
 
-function buildRecord(columns: string[], row: string[], rowIndex: number): BuiltTree {
+function buildRecord(columns: string[], row: string[], rowIndex: number): JsonTreeNode {
   const record = columns.reduce<Record<string, JsonValue>>((acc, column, columnIndex) => {
     setPathValue(acc, column, parseCellValue(row[columnIndex]));
     return acc;
@@ -133,26 +141,33 @@ function normalizeJsonValue(value: unknown): JsonValue {
   return String(value);
 }
 
-function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, depth: number, rootKind?: "row"): BuiltTree {
+function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, depth: number, rootKind?: "row"): JsonTreeNode {
   if (depth > MAX_DEPTH) {
     return {
-      node: <TreeItem itemId={itemId} label={<JsonTreeLabel muted name={label} value="..." />} />,
+      id: itemId,
+      muted: true,
+      name: label,
+      value: "...",
     };
   }
 
   if (Array.isArray(value)) {
     const preview = value.slice(0, MAX_CHILDREN_PER_NODE);
     const children = preview.map((item, index) => buildJsonTreeItem(item, `${itemId}-${index}`, `[${index}]`, depth + 1));
-    const overflow = value.length > preview.length
-      ? <TreeItem itemId={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${value.length - preview.length}${TEXT.items}`} />} />
-      : null;
+    if (value.length > preview.length) {
+      children.push({
+        id: `${itemId}-more`,
+        muted: true,
+        name: TEXT.more,
+        value: `+${value.length - preview.length}${TEXT.items}`,
+      });
+    }
     return {
-      node: (
-        <TreeItem itemId={itemId} label={<JsonTreeLabel kind="array" name={label} value={`Array[${value.length}]`} />}>
-          {children.map((child) => child.node)}
-          {overflow}
-        </TreeItem>
-      ),
+      children,
+      id: itemId,
+      kind: "array",
+      name: label,
+      value: `Array[${value.length}]`,
     };
   }
 
@@ -162,22 +177,62 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
       buildJsonTreeItem(item, `${itemId}-${index}-${safeItemId(key)}`, key, depth + 1),
     );
     const totalCount = Object.keys(value).length;
-    const overflow = totalCount > entries.length
-      ? <TreeItem itemId={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${totalCount - entries.length}${TEXT.items}`} />} />
-      : null;
+    if (totalCount > entries.length) {
+      children.push({
+        id: `${itemId}-more`,
+        muted: true,
+        name: TEXT.more,
+        value: `+${totalCount - entries.length}${TEXT.items}`,
+      });
+    }
     return {
-      node: (
-        <TreeItem itemId={itemId} label={<JsonTreeLabel kind={rootKind ?? "object"} name={label} value={`${totalCount}${TEXT.fields}`} />}>
-          {children.map((child) => child.node)}
-          {overflow}
-        </TreeItem>
-      ),
+      children,
+      id: itemId,
+      kind: rootKind ?? "object",
+      name: label,
+      value: `${totalCount}${TEXT.fields}`,
     };
   }
 
   return {
-    node: <TreeItem itemId={itemId} label={<JsonTreeLabel name={label} value={formatPrimitive(value)} />} />,
+    id: itemId,
+    name: label,
+    value: formatPrimitive(value),
   };
+}
+
+function renderJsonNode(
+  node: JsonTreeNode,
+  expandedItems: Set<string>,
+  toggleItem: (itemId: string) => void,
+  depth = 0,
+) {
+  const isBranch = Boolean(node.children?.length);
+  const isExpanded = expandedItems.has(node.id);
+
+  return (
+    <div className="source-json-tree-item" key={node.id}>
+      <TreeRow
+        className="source-json-tree-row"
+        expanded={isBranch ? isExpanded : undefined}
+        leaf={!isBranch}
+        level={depth}
+        onClick={() => {
+          if (isBranch) toggleItem(node.id);
+        }}
+      >
+        <span className="source-json-disclosure" aria-hidden="true">
+          {isBranch ? (isExpanded ? "v" : ">") : ""}
+        </span>
+        <JsonTreeLabel kind={node.kind} muted={node.muted} name={node.name} value={node.value} />
+      </TreeRow>
+      {isBranch && isExpanded ? (
+        <TreeGroup className="source-json-tree-group" level={depth + 1}>
+          {node.children?.map((child) => renderJsonNode(child, expandedItems, toggleItem, depth + 1))}
+        </TreeGroup>
+      ) : null}
+    </div>
+  );
 }
 
 function JsonTreeLabel({
