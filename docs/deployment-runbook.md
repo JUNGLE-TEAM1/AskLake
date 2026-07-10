@@ -95,6 +95,41 @@ AIRFLOW_METADATA_DB_PASSWORD=replace-with-strong-airflow-metadata-password
 
 Kafka source를 EC2에서 end-to-end로 시연하려면 Redpanda 기동 후 `reviews.raw`에 fixture를 seed해야 한다. topic seed 전까지는 배포 서버에서 Kafka source 연결 테스트와 Kafka job 실행을 완료 기준으로 보지 않는다.
 
+Kafka demo topic을 기본 fixture 100건으로 초기화한다.
+
+```bash
+scripts/seed-kafka-demo-data.sh
+```
+
+기본값:
+
+```text
+broker: redpanda:9092
+topic: reviews.raw
+limit: 100
+rate: 100 messages/sec
+batch size: 10
+recreate topic: true
+```
+
+증분 수집을 확인할 때는 기존 topic을 지우지 않고 추가 메시지만 넣는다.
+
+```bash
+ASKLAKE_KAFKA_DEMO_RECREATE_TOPIC=false \
+ASKLAKE_KAFKA_DEMO_LIMIT=100 \
+scripts/seed-kafka-demo-data.sh
+```
+
+실제 Amazon review JSONL/JSONL.gz 파일을 서버에서 사용할 수 있으면 backend 컨테이너가 읽을 수 있는 경로를 `ASKLAKE_KAFKA_DEMO_INPUT`으로 지정한다.
+
+```bash
+ASKLAKE_KAFKA_DEMO_INPUT=/tmp/Electronics.jsonl.gz \
+ASKLAKE_KAFKA_DEMO_LIMIT=200 \
+ASKLAKE_KAFKA_DEMO_RATE=100 \
+ASKLAKE_KAFKA_DEMO_BATCH_SIZE=10 \
+scripts/seed-kafka-demo-data.sh
+```
+
 ## 3. 켜기
 
 ```bash

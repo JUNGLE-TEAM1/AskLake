@@ -291,6 +291,7 @@ Kafka deploy dependency status:
 - Kafka review replay/ingest code is present in the backend deploy image through `backend/package.json` and `backend/scripts/*kafka*`.
 - Production Compose declares a single-node Redpanda broker for demo/dev deployment.
 - Redpanda is exposed only inside the Compose network by default. The internal broker endpoint is `redpanda:9092`.
+- `scripts/seed-kafka-demo-data.sh` seeds the `reviews.raw` topic through the backend container. Its default is 100 review events at `redpanda:9092`.
 - Kafka source demos are not complete until data is seeded: `reviews.raw` must exist with review events before UI connection tests and ingest jobs can pass.
 - Kafka demo readiness requires broker running, `reviews.raw` topic seeded, Kafka source connection test passing, ingest job landing JSONL into MinIO, and Catalog dataset registration confirmed.
 

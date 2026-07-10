@@ -237,6 +237,14 @@ Kafka demo를 배포 완료로 판단하는 최소 기준은 다음과 같다.
 - Kafka ingest job이 MinIO landing path에 JSONL을 저장한다.
 - Catalog에 target dataset이 등록되고 Job 실행 결과에서 consumed/stored count를 확인할 수 있다.
 
+EC2 demo topic seed는 repo root에서 아래 명령으로 실행한다.
+
+```bash
+scripts/seed-kafka-demo-data.sh
+```
+
+기본값은 `redpanda:9092`, `reviews.raw`, 100건이다. 증분 소비 테스트에서는 `ASKLAKE_KAFKA_DEMO_RECREATE_TOPIC=false`를 설정해 기존 topic을 유지한 채 추가 메시지를 넣는다.
+
 ## 5) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.
