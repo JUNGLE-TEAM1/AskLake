@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   Maximize2,
   Minus,
+  PanelRight,
   Pin,
   Plus,
   Star,
@@ -61,6 +62,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
@@ -304,6 +306,7 @@ export function CatalogPage({
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
+  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -451,6 +454,105 @@ export function CatalogPage({
     onOpenSql(previewDataset);
   };
 
+  const openPreviewModal = (variant: "lineage" | "schema", fromMobileSheet = false) => {
+    if (fromMobileSheet) setMobilePreviewOpen(false);
+    onAction(
+      variant === "schema" ? "catalog.schema.modal_opened" : "catalog.lineage.opened",
+      `/api/catalog/datasets/${previewDataset.id}/${variant}`,
+      previewDataset.id,
+    );
+    setActiveModal(variant);
+  };
+
+  const renderPreviewContent = (fromMobileSheet = false) => (
+    <>
+      <PanelHeader
+        actions={(
+          <Button
+            aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+            aria-pressed={isPreviewPinned}
+            shape="compact"
+            title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
+            type="button"
+            size="iconSm"
+            variant={isPreviewPinned ? "subtle" : "ghost"}
+            onClick={togglePinnedDataset}
+          >
+            <Star fill={isPreviewPinned ? "currentColor" : "none"} />
+          </Button>
+        )}
+        className="catalog-preview-title"
+        icon={<LayoutGrid size={16} />}
+        iconVariant="success"
+        title={previewDataset.name}
+      />
+      <ScrollArea className="catalog-preview-scroll" type="auto">
+        <div className="catalog-preview-body">
+          <Accordion className="catalog-preview-accordion" type="multiple">
+            <AccordionItem value="overview">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
+              </AccordionTrigger>
+              <AccordionContent>
+                <div className="catalog-overview-metrics catalog-preview-metrics">
+                  <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
+                  <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
+                  <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
+                  <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
+                  <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
+                  <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="schema">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
+              </AccordionTrigger>
+              <AccordionContent className="catalog-preview-accordion-content">
+                <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
+                <Button className="catalog-text-button" type="button" onClick={() => openPreviewModal("schema", fromMobileSheet)} size="sm" variant="link">전체 스키마 상세 보기</Button>
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="lineage">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><Share2 /> 리니지</span>
+              </AccordionTrigger>
+              <AccordionContent>
+                <Button className="catalog-wide-button" shape="compact" size="sm" type="button" variant="outline" onClick={() => openPreviewModal("lineage", fromMobileSheet)}>
+                  <Share2 data-icon="inline-start" /> 전체 리니지 보기
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+          <div className="catalog-preview-actions">
+            <Button
+              className="catalog-wide-button"
+              disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+              shape="compact"
+              title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+              type="button"
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                if (fromMobileSheet) setMobilePreviewOpen(false);
+                openSelectedSqlDataset();
+              }}
+            >
+              <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+            </Button>
+            <TagList className="catalog-preview-tags" density="compact">
+              {previewDataset.tags.map((tag) => (
+                <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
+              ))}
+            </TagList>
+          </div>
+        </div>
+      </ScrollArea>
+    </>
+  );
+
   return (
     <div className="catalog-page">
       <PageHeader
@@ -482,6 +584,23 @@ export function CatalogPage({
               </FilterToolbarSearch>
             </FilterToolbar>
           </Panel>
+
+          {hasCatalogResults && (
+            <Sheet open={mobilePreviewOpen} onOpenChange={setMobilePreviewOpen}>
+              <SheetTrigger asChild>
+                <Button className="catalog-preview-mobile-trigger" shape="compact" type="button" variant="outline">
+                  <PanelRight data-icon="inline-start" /> 데이터셋 미리보기
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="catalog-preview-sheet" closeLabel="미리보기 닫기" side="right">
+                <SheetHeader className="sr-only">
+                  <SheetTitle>{previewDataset.name} 미리보기</SheetTitle>
+                  <SheetDescription>데이터셋 정보와 빠른 작업</SheetDescription>
+                </SheetHeader>
+                {renderPreviewContent(true)}
+              </SheetContent>
+            </Sheet>
+          )}
 
           <Panel className="catalog-results-section">
             <div className="catalog-results-header">
@@ -618,99 +737,9 @@ export function CatalogPage({
         </div>
 
         {hasCatalogResults ? (
-          <Panel asChild className="catalog-preview-panel">
+          <Panel asChild className="catalog-preview-panel catalog-preview-desktop">
             <aside>
-              <PanelHeader
-                actions={(
-                  <Button
-                    aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-                    aria-pressed={isPreviewPinned}
-                    shape="compact"
-                    title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
-                    type="button"
-                    size="iconSm"
-                    variant={isPreviewPinned ? "subtle" : "ghost"}
-                    onClick={togglePinnedDataset}
-                  >
-                    <Star fill={isPreviewPinned ? "currentColor" : "none"} />
-                  </Button>
-                )}
-                className="catalog-preview-title"
-                icon={<LayoutGrid size={16} />}
-                iconVariant="success"
-                title={previewDataset.name}
-              />
-              <Accordion className="catalog-preview-accordion" type="multiple">
-                <AccordionItem value="overview">
-                  <AccordionTrigger>
-                    <span className="catalog-preview-accordion-label"><LayoutGrid /> 기본 정보</span>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div className="catalog-overview-metrics catalog-preview-metrics">
-                      <CatalogMiniMetric label="품질 지표" value={previewDataset.quality} />
-                      <CatalogMiniMetric label="최근 갱신 일시" value={previewDataset.lastUpdated} />
-                      <CatalogMiniMetric label="데이터 담당자" value={previewDataset.owner} />
-                      <CatalogMiniMetric label="행 수" value={previewDataset.rows} />
-                      <CatalogMiniMetric label="파일 크기" value={previewDataset.size} />
-                      <CatalogMiniMetric label="갱신 예정 일시" value={previewDataset.nextRefresh} />
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="schema">
-                  <AccordionTrigger>
-                    <span className="catalog-preview-accordion-label"><TerminalSquare /> 스키마 미리보기</span>
-                  </AccordionTrigger>
-                  <AccordionContent className="catalog-preview-accordion-content">
-                    <CatalogSchemaTable dataset={previewDataset} maxRows={5} variant="preview" />
-                    <Button className="catalog-text-button" type="button" onClick={() => {
-                      onAction("catalog.schema.modal_opened", `/api/catalog/datasets/${previewDataset.id}/schema`, previewDataset.id);
-                      setActiveModal("schema");
-                    }} size="sm" variant="link">전체 스키마 상세 보기</Button>
-                  </AccordionContent>
-                </AccordionItem>
-
-                <AccordionItem value="lineage">
-                  <AccordionTrigger>
-                    <span className="catalog-preview-accordion-label"><Share2 /> 리니지</span>
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <Button
-                      className="catalog-wide-button"
-                      shape="compact"
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-                        setActiveModal("lineage");
-                      }}
-                    >
-                      <Share2 data-icon="inline-start" /> 전체 리니지 보기
-                    </Button>
-                  </AccordionContent>
-                </AccordionItem>
-
-              </Accordion>
-              <div className="catalog-preview-actions">
-                <Button
-                  className="catalog-wide-button"
-                  disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-                  shape="compact"
-                  title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
-                  type="button"
-                  size="sm"
-                  variant="primary"
-                  onClick={openSelectedSqlDataset}
-                >
-                  <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
-                </Button>
-                <TagList className="catalog-preview-tags" density="compact">
-                  {previewDataset.tags.map((tag) => (
-                    <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
-                  ))}
-                </TagList>
-              </div>
+              {renderPreviewContent()}
             </aside>
           </Panel>
         ) : (

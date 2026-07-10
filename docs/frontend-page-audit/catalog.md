@@ -124,6 +124,8 @@
 - 여러 항목을 동시에 열 수 있다. `SQL 분석에서 열기`와 태그는 접힘 상태와 관계없이 보이도록 Accordion 아래 고정 action 영역에 유지한다.
 - lineage 확대·축소·화면 맞춤은 ReactFlow 기본 control 대신 shadcn `ButtonGroup`, `IconButton`, `Tooltip`로 제공한다.
 - 페이지당 5개인 결과 목록의 고정 높이와 내부 ScrollArea를 제거해 카드 바로 아래에 페이지네이션이 붙도록 했다.
+- 데스크톱 우측 미리보기는 `sticky top-6 self-start` 보조 패널로 동작하고, 긴 내용은 shadcn `ScrollArea` 내부에서만 스크롤한다.
+- 1180px 이하에서는 데스크톱 패널을 숨기고 shadcn `Sheet side="right"`에서 동일한 미리보기 콘텐츠를 제공한다.
 
 ## Conflict Risk
 

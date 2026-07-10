@@ -68,6 +68,7 @@ export { default as MoreHorizontal } from "lucide-react/dist/esm/icons/ellipsis.
 export { default as MousePointer2 } from "lucide-react/dist/esm/icons/mouse-pointer-2.mjs";
 export { default as PanelLeftClose } from "lucide-react/dist/esm/icons/panel-left-close.mjs";
 export { default as PanelLeftOpen } from "lucide-react/dist/esm/icons/panel-left-open.mjs";
+export { default as PanelRight } from "lucide-react/dist/esm/icons/panel-right.mjs";
 export { default as Pencil } from "lucide-react/dist/esm/icons/pencil.mjs";
 export { default as Pin } from "lucide-react/dist/esm/icons/pin.mjs";
 export { default as Play } from "lucide-react/dist/esm/icons/play.mjs";
