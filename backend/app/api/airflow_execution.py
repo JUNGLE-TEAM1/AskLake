@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.errors import ApiError
-from app.schemas.etl import AirflowSparkExecutionRequest
+from app.schemas.etl import (
+    AirflowCatalogReconciliationRequest,
+    AirflowCatalogReconciliationResponse,
+    AirflowSparkExecutionRequest,
+)
 from app.services import etl_service
 
 router = APIRouter(prefix="/internal/airflow", tags=["internal-airflow"])
@@ -43,4 +47,18 @@ def execute_spark_run(
         job_id=request.job_id,
         run_id=run_id,
         command=request.command,
+    )
+
+
+@router.post("/spark-runs/{run_id}/catalog", response_model=AirflowCatalogReconciliationResponse)
+def reconcile_spark_run_catalog(
+    run_id: str,
+    request: AirflowCatalogReconciliationRequest,
+    _: None = Depends(require_airflow_execution_token),
+    db: Session = Depends(get_db),
+) -> AirflowCatalogReconciliationResponse:
+    return etl_service.reconcile_airflow_catalog(
+        db,
+        job_id=request.job_id,
+        run_id=run_id,
     )

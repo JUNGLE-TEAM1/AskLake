@@ -191,6 +191,15 @@ def get_dataset_by_id(db: Session, dataset_id: str) -> CatalogDatasetModel | Non
     return db.get(CatalogDatasetModel, dataset_id)
 
 
+def get_dataset_by_id_for_update(db: Session, dataset_id: str) -> CatalogDatasetModel | None:
+    ensure_schema(db)
+    return db.scalar(
+        select(CatalogDatasetModel)
+        .where(CatalogDatasetModel.id == dataset_id)
+        .with_for_update()
+    )
+
+
 def get_dataset_by_name(db: Session, name: str) -> CatalogDatasetModel | None:
     ensure_schema(db)
     return db.scalar(select(CatalogDatasetModel).where(CatalogDatasetModel.name == name))

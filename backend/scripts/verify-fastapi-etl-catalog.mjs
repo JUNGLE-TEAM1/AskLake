@@ -118,6 +118,9 @@ async function runSmoke() {
   assert(command.run?.airflowRunUrl?.includes(command.run.airflowDagRunId), "Run summary should include an Airflow UI URL.");
   assert(!command.dataset, "Airflow submit is asynchronous and should not create a catalog dataset in the command response.");
   assert(command.dagSteps?.some((step) => step.id === "airflow-submit"), "Command response should include an Airflow submit DAG step.");
+  if (shouldStartAirflowMock) {
+    await assertCatalogNotReady(create.job.id, command.run.airflowDagRunId);
+  }
 
   const syncedJob = await waitForTerminalJob(create.job.id);
   const latestRun = syncedJob.runHistory?.[0];
@@ -146,17 +149,33 @@ async function runSmoke() {
 }
 
 async function assertInternalExecutionAuth() {
-  const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/not-a-run/execute`, {
-    body: JSON.stringify({ command: "run", jobId: "not-a-job" }),
+  for (const endpoint of ["execute", "catalog"]) {
+    const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/not-a-run/${endpoint}`, {
+      body: JSON.stringify(endpoint === "execute" ? { command: "run", jobId: "not-a-job" } : { jobId: "not-a-job" }),
+      headers: {
+        Authorization: "Bearer invalid-phase2-token",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    const payload = await readPayload(response);
+    assert(response.status === 401, `Internal ${endpoint} endpoint should reject an invalid token: ${response.status}`);
+    assert(payload?.error?.code === "AIRFLOW_EXECUTION_UNAUTHORIZED", `Internal ${endpoint} auth should return the expected error code.`);
+  }
+}
+
+async function assertCatalogNotReady(jobId, runId) {
+  const response = await fetch(`${baseUrl}/api/internal/airflow/spark-runs/${encodeURIComponent(runId)}/catalog`, {
+    body: JSON.stringify({ jobId }),
     headers: {
-      Authorization: "Bearer invalid-phase2-token",
+      Authorization: `Bearer ${env.AIRFLOW_EXECUTION_API_TOKEN}`,
       "Content-Type": "application/json",
     },
     method: "POST",
   });
   const payload = await readPayload(response);
-  assert(response.status === 401, `Internal Spark execution endpoint should reject an invalid token: ${response.status}`);
-  assert(payload?.error?.code === "AIRFLOW_EXECUTION_UNAUTHORIZED", "Internal Spark execution auth should return the expected error code.");
+  assert(response.status === 409, `Catalog endpoint should wait for persisted Spark success: ${response.status}`);
+  assert(payload?.error?.code === "SPARK_RESULT_NOT_READY", "Catalog endpoint should expose SPARK_RESULT_NOT_READY.");
 }
 
 async function assertPhysicalParquet(outputPath) {

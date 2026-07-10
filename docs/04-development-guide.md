@@ -119,6 +119,14 @@ npm run verify:airflow-spark
 
 현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 현재 구현의 `publish_run_result`는 Spark 결과를 확정할 뿐 Catalog Dataset을 갱신하지 않는다. Phase 3 target에서는 이 task가 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다.
 
+Phase 3 FastAPI Catalog endpoint의 transaction과 실패 계약은 별도 PostgreSQL database를 지정한 뒤 아래 명령으로 검증한다. 같은 Run 중복 방지, 두 번째 Run append, local/S3 physical evidence, Spark 미완료, identity mismatch, output 부재, 강제 transaction rollback, Airflow sync 후 failure evidence 보존을 확인한다.
+
+```bash
+cd backend
+DATABASE_URL=postgresql+psycopg://asklake:asklake_dev@127.0.0.1:54328/asklake_phase3_checkpoint \
+PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
+```
+
 
 대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.

@@ -1053,7 +1053,7 @@ Failure contract:
 - 같은 Airflow task retry는 성공 `sparkResult`를 재사용해 Catalog만 재시도하고 Spark output을 다시 만들지 않는다.
 - Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
 
-최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 2의 현재 코드는 Catalog gate 없이 Airflow terminal state를 반영하므로, 이 규칙은 Phase 3 구현과 검증이 끝난 뒤 활성 계약이 된다.
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction은 구현됐지만 현재 DAG의 `publish_run_result` 호출 연결은 남아 있으므로, 이 최종 gate는 Airflow wiring과 live 검증이 끝난 뒤 활성 계약이 된다.
 
 프론트 함수:
 

@@ -331,6 +331,17 @@ class AirflowSparkExecutionRequest(CamelModel):
     job_id: str
 
 
+class AirflowCatalogReconciliationRequest(CamelModel):
+    job_id: str
+
+
+class AirflowCatalogReconciliationResponse(CamelModel):
+    dataset: CatalogDataset
+    reconciled_at: str
+    run_id: str
+    status: Literal["success"] = "success"
+
+
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str

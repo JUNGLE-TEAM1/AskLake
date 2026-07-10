@@ -16,8 +16,8 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
-| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark manifest를 동기화 | 성공 Spark output의 Catalog materialization/lineage 반영, run detail table과 Spark log object storage 분리 |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 reconciliation 계약은 확정됨 | Phase 3 일반 batch materialization/lineage 구현, 상세/lineage/search API 고도화 |
+| Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark manifest를 동기화 | `publish_run_result`의 Catalog endpoint 호출, run detail table과 Spark log object storage 분리 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 FastAPI reconciliation endpoint와 transaction 검증 구현 | Airflow final-task 연결, frontend terminal-success refresh, live E2E, 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
@@ -151,7 +151,7 @@ Airflow sync 결과:
 
 ### Phase 3 Catalog reconciliation target
 
-Status: contract fixed, implementation pending.
+Status: contract and FastAPI backend implementation complete. Airflow DAG call, frontend refresh, and live end-to-end verification are pending.
 
 Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 실제 Parquet가 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
 
@@ -193,6 +193,7 @@ cd backend
 npm run verify
 npm run verify:airflow-smoke
 npm run verify:airflow-spark
+PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
 npm run verify:fastapi-pair2
 npm run verify:permission-dataset
 npm run verify:permission-job-dashboard
@@ -243,7 +244,9 @@ Live Airflow verification on 2026-07-10:
 - `npm run verify:airflow-spark`: pass, real PySpark input/output 2 rows and MinIO Parquet verified
 - expected Spark Quality failure: pass, `sparkResult`, Airflow DAG Run, AskLake Run/Job all failed
 - invalid internal execution token: pass, `401 AIRFLOW_EXECUTION_UNAUTHORIZED`
-- Catalog materialization/lineage mutation: contract fixed but implementation/live verification not covered; Phase 3 scope
+- FastAPI Catalog reconciliation contract: pass in isolated PostgreSQL, including idempotent same-Run retry, second-Run append, missing output, transaction rollback, and preserved failure evidence
+- Python S3 physical inspection against `s3a://asklake-output/customer_review_gold/gold/run_d783b7d326e1`: pass, Parquet 1 object / 3,882 bytes
+- Airflow `publish_run_result` -> Catalog endpoint and frontend terminal-success refresh: not connected or live-verified yet; remaining Phase 3 scope
 
 ## 7. 완료 기준
 
