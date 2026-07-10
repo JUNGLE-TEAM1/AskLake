@@ -284,14 +284,15 @@ Compose/runtime services declared in `deploy/docker-compose.prod.yml`:
 - `minio/minio:RELEASE.2025-07-23T15-54-02Z`
 - `apache/airflow:3.3.0`
 - Airflow metadata `postgres:16-alpine`
+- `redpandadata/redpanda:v24.3.6`
 
-Phase 0 Kafka deploy audit:
+Kafka deploy dependency status:
 
 - Kafka review replay/ingest code is present in the backend deploy image through `backend/package.json` and `backend/scripts/*kafka*`.
-- The EC2 production Compose file does not currently declare a Kafka-compatible broker such as Redpanda, Kafka, or Zookeeper.
-- Therefore Kafka source demos are not deployment-complete yet: the UI and backend code can create Kafka source jobs, but the EC2 stack has no internal broker, no `reviews.raw` topic, and no seeded review events.
-- The next infrastructure phase should add a single-node Redpanda service for demo/dev deployment, expose it only inside the Compose network by default, and document `redpanda:9092` as the internal broker endpoint.
-- Kafka demo readiness requires both infrastructure and data: broker running, `reviews.raw` topic seeded, Kafka source connection test passing, ingest job landing JSONL into MinIO, and Catalog dataset registration confirmed.
+- Production Compose declares a single-node Redpanda broker for demo/dev deployment.
+- Redpanda is exposed only inside the Compose network by default. The internal broker endpoint is `redpanda:9092`.
+- Kafka source demos are not complete until data is seeded: `reviews.raw` must exist with review events before UI connection tests and ingest jobs can pass.
+- Kafka demo readiness requires broker running, `reviews.raw` topic seeded, Kafka source connection test passing, ingest job landing JSONL into MinIO, and Catalog dataset registration confirmed.
 
 Airflow orchestration dependencies:
 

@@ -227,11 +227,11 @@ scripts/deploy.sh stop
 
 ### EC2 Kafka 데모 의존성
 
-Kafka review replay/ingest 코드는 backend deploy image에 포함되어 있지만, 현재 EC2 production Compose에는 Kafka-compatible broker가 없다. Kafka source 화면이나 Kafka ingest job을 배포 서버에서 검증하려면 후속 phase에서 Redpanda/Kafka service와 `reviews.raw` topic seed가 먼저 준비되어야 한다.
+Kafka review replay/ingest 코드는 backend deploy image에 포함되어 있고, EC2 production Compose는 demo/dev용 단일 Redpanda broker를 포함한다. 배포 서버 안에서 접근할 broker endpoint는 `redpanda:9092`다. Kafka source 화면이나 Kafka ingest job을 배포 서버에서 검증하려면 Redpanda 기동 뒤 `reviews.raw` topic seed가 먼저 준비되어야 한다.
 
 Kafka demo를 배포 완료로 판단하는 최소 기준은 다음과 같다.
 
-- Compose 내부 broker endpoint가 정해져 있다. 권장값은 Redpanda 추가 후 `redpanda:9092`다.
+- Compose 내부 broker endpoint가 정해져 있다. 현재 값은 `redpanda:9092`다.
 - `reviews.raw` topic에 100건 이상 review fixture가 seed되어 있다.
 - UI source connection test가 배포 backend에서 성공한다.
 - Kafka ingest job이 MinIO landing path에 JSONL을 저장한다.
