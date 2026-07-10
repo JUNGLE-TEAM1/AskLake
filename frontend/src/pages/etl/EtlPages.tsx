@@ -21,7 +21,6 @@ import {
   Download,
   ExternalLink,
   FileText,
-  FolderOpen,
   HardDrive,
   Info,
   LayoutGrid,
@@ -37,7 +36,6 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
-  Sparkles,
   Table2,
   TerminalSquare,
   Trash2,
@@ -1339,7 +1337,6 @@ export function SourceConnectionPage({
     setSourceType(value);
     setSourceRuntime(null);
     setSelectedAssetPath("");
-    setSourceStage("connect");
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
@@ -1547,6 +1544,10 @@ export function SourceConnectionPage({
       onNotify("먼저 소스를 선택하세요.");
       return;
     }
+    if (sourceStage === "choose") {
+      setSourceStage("connect");
+      return;
+    }
     if (connectionStatus !== "success") {
       onNotify(isSqlResultSource ? "SQL 분석에서 Preview를 실행한 뒤 처리 Job 생성으로 진입해 주세요." : "먼저 소스 연결 테스트를 성공시켜야 스키마 단계로 넘어갈 수 있습니다.");
       return;
@@ -1563,7 +1564,7 @@ export function SourceConnectionPage({
 
   return (
     <CreationFlowLayout
-      actions={<CreationTopActions useShadcnStyles onPrev={onPrev} onNext={goNext} />}
+      actions={<CreationTopActions nextDisabled={sourceStage === "choose" && !hasSelectedSource} useShadcnStyles onPrev={onPrev} onNext={goNext} />}
     >
         <PageHeader
           className="etl-flow-page-header etl-source-page-header"
@@ -1577,7 +1578,7 @@ export function SourceConnectionPage({
           >
             <TabsList aria-label="소스 연결 단계" className="source-stage-tabs">
               <TabsTrigger value="choose">1. 소스 선택</TabsTrigger>
-              <TabsTrigger disabled={!hasSelectedSource} value="connect">2. 연결 설정</TabsTrigger>
+              <TabsTrigger disabled={!hasSelectedSource || sourceStage === "choose"} value="connect">2. 연결 설정</TabsTrigger>
               <TabsTrigger disabled={connectionStatus !== "success" || !hasDetectedAssets} value="browse">3. 데이터 탐색</TabsTrigger>
             </TabsList>
 
@@ -1618,10 +1619,10 @@ export function SourceConnectionPage({
                     <strong>{current.title}</strong>
                   </div>
                   <div className="hegun-status-actions">
-                  {activeSourceType === "File / S3" && <Button type="button" variant="outline" onClick={fillMinioDemoFields}><Sparkles data-icon="inline-start" />데모용 MinIO 값 채우기</Button>}
-                  {current.actions?.includes("Show Advanced Configuration") && <Button type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}><SlidersHorizontal data-icon="inline-start" />{sourceActionLabel("Show Advanced Configuration")}</Button>}
-                  {current.actions?.includes("Fetch Metadata") && <Button type="button" variant="outline" onClick={fetchMetadata}><RefreshCw data-icon="inline-start" />{sourceActionLabel("Fetch Metadata")}</Button>}
-                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}><Cable data-icon="inline-start" />연결 테스트</Button>}
+                  {activeSourceType === "File / S3" && <Button type="button" variant="outline" onClick={fillMinioDemoFields}>데모용 MinIO 값 채우기</Button>}
+                  {current.actions?.includes("Show Advanced Configuration") && <Button type="button" variant="outline" onClick={() => onAction("etl.source.advanced_opened", "/api/etl/sources/advanced", activeSourceType)}>{sourceActionLabel("Show Advanced Configuration")}</Button>}
+                  {current.actions?.includes("Fetch Metadata") && <Button type="button" variant="outline" onClick={fetchMetadata}>{sourceActionLabel("Fetch Metadata")}</Button>}
+                    {isSqlResultSource ? <span className="panel-note">연결 테스트 생략</span> : <Button type="button" disabled={connectionStatus === "testing"} onClick={testConnection}>연결 테스트</Button>}
                   </div>
                 </div>
                 <div className="hegun-field-grid source-flow-fields">
@@ -1641,7 +1642,7 @@ export function SourceConnectionPage({
                     <h2>{connectionStatusCopy[connectionStatus].title}</h2>
                   </div>
                   <div className="hegun-status-actions">
-                    {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}><FolderOpen data-icon="inline-start" />데이터 탐색 열기</Button>}
+                    {connectionStatus === "success" && hasDetectedAssets && <Button type="button" variant="outline" onClick={() => setSourceStage("browse")}>데이터 탐색 열기</Button>}
                     {isSqlResultSource && <span className="panel-note">연결 테스트 생략</span>}
                   </div>
                 </div>
