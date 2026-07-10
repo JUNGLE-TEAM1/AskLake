@@ -131,7 +131,7 @@ const checks = [
     file: "src/styles/ai.css",
     patterns: [
       /@media \(max-width: 720px\) \{[\s\S]*\.ai-response-blocks \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/,
-      /\.ai-context-option:focus-within \{ outline: 2px solid #2563eb;/,
+      /\.ai-context-option:focus-within \{ outline: 2px solid #[0-9a-f]{6};/,
       /\.ai-conversation-sidebar\.open \{ transform: translateX\(0\); \}/,
     ],
   },

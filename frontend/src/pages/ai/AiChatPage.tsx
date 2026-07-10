@@ -172,7 +172,7 @@ export function AiChatPage({
       {conversationDrawerOpen ? <button aria-label="대화 목록 닫기" className="ai-conversation-backdrop" type="button" onClick={() => setConversationDrawerOpen(false)} /> : null}
       <aside className={conversationDrawerOpen ? "ai-conversation-sidebar open" : "ai-conversation-sidebar"} aria-label="대화 목록">
         <div className="ai-conversation-sidebar-header">
-          <strong>대화</strong>
+          <strong><Sparkles size={15} /> AskLake</strong>
           <button aria-label="대화 목록 닫기" className="icon-button ai-conversation-close" type="button" onClick={() => setConversationDrawerOpen(false)}><PanelLeftClose size={17} /></button>
         </div>
         <button className="ai-sidebar-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
@@ -232,8 +232,11 @@ export function AiChatPage({
               <div className="ai-chat-empty">
                 <span className="ai-chat-empty-mark"><Bot size={26} /></span>
                 <div>
-                  <h2>데이터에 대해 질문하세요</h2>
-                  <p>답변에 사용할 Lake 데이터셋을 선택한 뒤 질문을 시작할 수 있습니다.</p>
+                  <h2>무엇을 도와드릴까요?</h2>
+                  <p>Lake 데이터셋을 선택하고 질문을 시작하세요.</p>
+                </div>
+                <div className="ai-empty-suggestions" aria-label="추천 질문">
+                  {suggestedQuestions.map((question) => <button disabled={runtimeUnavailable} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
                 </div>
               </div>
             ) : null}
@@ -254,9 +257,6 @@ export function AiChatPage({
               {selectedDatasets.map((dataset) => <span key={dataset.id}><Database size={13} />{dataset.name}</span>)}
             </div>
           ) : null}
-          <div className="ai-chat-recommendations" aria-label="추천 질문">
-            {suggestedQuestions.map((question) => <button disabled={runtimeUnavailable} key={question} type="button" onClick={() => chooseSuggestedQuestion(question)}>{question}</button>)}
-          </div>
           <div className="ai-chat-composer" aria-label="AI 질문 입력">
             <textarea aria-label="AI 질문" disabled={runtimeUnavailable} placeholder="Lake 데이터에 대해 질문하세요" ref={composerRef} rows={2} value={activeConversation.draftPrompt} onChange={(event) => updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: event.target.value, updatedAt: new Date().toISOString() }))} onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
