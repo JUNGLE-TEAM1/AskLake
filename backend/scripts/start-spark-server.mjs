@@ -22,7 +22,7 @@ mkdirSync(reportHostDir, { recursive: true });
 ensureOutputVolumeWritable();
 ensureMaster();
 ensureWorker();
-console.log("Spark standalone server ready: spark://asklake-spark-master:7077");
+console.log(`Spark standalone server ready: spark://${masterName}:7077`);
 console.log("Spark master UI: http://127.0.0.1:18080");
 console.log("Spark worker UI: http://127.0.0.1:18081");
 console.log(`Spark sample mount: ${sampleHostDir} -> ${sampleContainerDir}`);

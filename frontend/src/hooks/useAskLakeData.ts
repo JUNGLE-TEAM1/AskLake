@@ -761,8 +761,16 @@ export function useAskLakeData({
       const hydratedRunState = buildRunStateFromJobs(normalizedJobs);
       setJobs(normalizedJobs);
       setDatasets(normalizedDatasets);
-      setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-      setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+      setSelectedJob((current) => (
+        normalizedJobs.find((job) => job.id === current.id)
+        ?? normalizedJobs[0]
+        ?? emptySelectedJob
+      ));
+      setSelectedDataset((current) => (
+        normalizedDatasets.find((dataset) => dataset.id === current.id)
+        ?? normalizedDatasets[0]
+        ?? emptySelectedDataset
+      ));
       setRunsByJobId(hydratedRunState.runsByJobId);
       setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
       setDagStepsByRunId(hydratedRunState.dagStepsByRunId);

@@ -13,7 +13,32 @@ status update until the run reaches a terminal state.
 The first version should wrap the existing Spark execution path with Airflow
 orchestration. It should not attempt to build a production-grade DAG generator.
 
-## 2. Phase Plan
+## 2. Current Follow-up Phase Plan
+
+The original Airflow adapter/persistence/frontend work is already merged and is
+kept as a historical record below. The current follow-up plan restarts phase
+numbering so that a request to proceed has one unambiguous acceptance boundary.
+
+- Phase 0 — baseline and scope audit: complete. Confirm the latest `origin/dev`
+  implementation and separate the smoke runtime from real Spark execution.
+- Phase 1 — live runtime and backend sync verification: complete on the current
+  branch. DAG discovery/imports, successful and failed DAG Runs, and AskLake
+  submit/poll/task-state synchronization have repeatable verification commands.
+- Phase 2 — real Spark execution: complete on the current branch. Airflow calls
+  an authenticated FastAPI internal endpoint, PySpark writes Parquet to
+  MinIO/S3, and the Spark manifest is reconciled into the AskLake Run.
+- Phase 3 — Catalog reconciliation: use the persisted Spark manifest to update
+  Catalog materialization and lineage only after a successful Airflow Run.
+- Phase 4 — operational commands and recovery: define and implement retry,
+  cancel, and any honest pause semantics across Airflow and Spark.
+- Phase 5 — deployment and operations: define DAG deployment, versioning,
+  credentials, logs, monitoring, and rollback for a non-local Airflow server.
+
+Phase 2 now validates real Spark processing and physical Parquet output. It does
+not claim that Catalog metadata was materialized; that claim becomes valid only
+after Phase 3 passes its own acceptance checks.
+
+## Historical Implementation Record
 
 ### Phase 1. Branch And SOT Baseline
 
@@ -184,15 +209,15 @@ Phase 6 output:
 
 ### Phase 7. Local Runtime And Verification
 
-Status: implemented. Local Airflow compose wiring and the smoke DAG are now
-available; live smoke still requires running Docker services and restarting the
-backend with Airflow env.
+Status: implemented and live-verified on 2026-07-10. Local Airflow compose
+wiring and the smoke DAG are available; verification requires running Docker
+services and a backend process configured with Airflow env.
 
 Scope:
 
 - Add local Airflow runtime instructions or compose wiring.
-- Add smoke verification for trigger, poll, DAG task mapping, and final catalog
-  update.
+- Add smoke verification for trigger, poll, and DAG task mapping. Treat real
+  Spark output and final Catalog update as explicit follow-up scope.
 - Run relevant backend and frontend checks.
 
 Acceptance criteria:
@@ -219,6 +244,16 @@ Phase 7 output:
   - `frontend`: `npm run build`
   - live server checks: `GET /api/health`, `GET /api/etl/jobs`, and browser load
     at `http://127.0.0.1:5174/`
+- Live checks added on 2026-07-10:
+  - `npm run verify:airflow-smoke`: DAG discovery/import error 0건, successful
+    four-task Run, and forced failure at `spark_process_write`
+  - `npm run verify:fastapi-etl-catalog` with a real Airflow API: queued submit,
+    backend polling until terminal success, and four task state snapshots
+  - `npm run verify:airflow-spark`: real PySpark input/output 2 rows, physical
+    MinIO Parquet, persisted `sparkResult`, and terminal Airflow/AskLake success
+  - expected Quality `Fail Run`: persisted Spark failure manifest and terminal
+    Airflow/AskLake failure
+  - Limitation: Catalog materialization and lineage mutation remain Phase 3.
 
 Local Airflow runtime options:
 
@@ -239,6 +274,7 @@ AIRFLOW_API_TOKEN=
 AIRFLOW_USERNAME=
 AIRFLOW_PASSWORD=
 AIRFLOW_REQUEST_TIMEOUT_SECONDS=10
+AIRFLOW_EXECUTION_API_TOKEN=
 ```
 
 Manual smoke once Airflow is reachable:
@@ -256,14 +292,14 @@ Manual smoke once Airflow is reachable:
 
 ## 3. Branch Baseline
 
-Phase 1 uses the latest fetched `origin/dev` as the baseline.
+The current follow-up Phase 2 uses the latest fetched `origin/dev` as the baseline.
 
-Current Phase 1 baseline:
+Current Phase 2 baseline:
 
-- Branch: `feature/issue-320-airflow-run-polling`
+- Branch: `codex/airflow-smoke-verification`
 - Upstream: `origin/dev`
-- Baseline commit: `93dfb455e2da09a2aa0021657789f52bdc5343be`
-- Baseline date: 2026-07-09
+- Baseline commit: `2403adc3eab185f3126953d1b3d729bb691672cc`
+- Baseline date: 2026-07-10
 
 ## 4. Status Mapping
 
@@ -290,7 +326,9 @@ In scope:
 - One stable Airflow DAG for AskLake ETL execution, for example
   `asklake_etl_job`.
 - DAG run configuration passed through `dag_run.conf`.
-- Existing Spark runner reused from Airflow task execution.
+- Airflow `spark_process_write` calls the token-authenticated FastAPI internal
+  execution API; FastAPI validates persisted identity and invokes PySpark.
+- `executionMode=smoke` remains available for backend-independent DAG checks.
 - AskLake remains the source of truth for user-facing job and dataset metadata.
 - Airflow is the source of truth for orchestration state while a run is active.
 

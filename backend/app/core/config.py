@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     airflow_password: str | None = None
     airflow_request_timeout_seconds: float = 10.0
     airflow_ui_base_url: str | None = None
+    airflow_execution_api_token: str | None = None
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

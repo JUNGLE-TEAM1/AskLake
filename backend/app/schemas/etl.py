@@ -326,6 +326,11 @@ class JobCommandRequest(CamelModel):
     command: JobCommand
 
 
+class AirflowSparkExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+    job_id: str
+
+
 class JobCommandResponse(CamelModel):
     action: str
     api_path: str

@@ -619,6 +619,72 @@ def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]
     )
 
 
+def execute_airflow_spark_run(
+    db: Session,
+    *,
+    job_id: str,
+    run_id: str,
+    command: str,
+) -> dict[str, Any]:
+    job = etl_repository.get_job(db, job_id)
+    if job is None:
+        raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
+    run = etl_repository.get_run_model(db, run_id)
+    if run is None or run.job_id != job.id or run.airflow_dag_run_id != run_id:
+        raise ApiError(
+            "AIRFLOW_RUN_MISMATCH",
+            "Airflow Spark execution does not match a persisted AskLake Run.",
+            status.HTTP_409_CONFLICT,
+            {"jobId": job_id, "runId": run_id},
+        )
+
+    existing_result = (run.task_states or {}).get("sparkResult")
+    if isinstance(existing_result, dict) and existing_result.get("status") == "success":
+        return existing_result
+
+    result = run_spark_job(job, command, run_id)
+    manifest = spark_result_manifest(result, run_id)
+    run.input_rows = format_rows(manifest.get("inputRows"))
+    run.output_rows = format_rows(manifest.get("outputRows"))
+    run.output_path = manifest.get("outputPath") or run.output_path
+    run.duration = format_duration_ms(manifest.get("durationMs"))
+    run.ended_at = str(manifest.get("endedAt") or run.ended_at)
+    run.failed_stage = "-" if manifest.get("status") == "success" else spark_failed_stage(manifest)
+    run.error_summary = "-" if manifest.get("status") == "success" else spark_error_summary(manifest)
+    run.task_states = {**(run.task_states or {}), "sparkResult": manifest}
+    if manifest.get("status") == "success" and manifest.get("outputPath"):
+        job.target_path = str(manifest["outputPath"])
+    db.commit()
+    return manifest
+
+
+def spark_result_manifest(result: dict[str, Any], run_id: str) -> dict[str, Any]:
+    manifest = {
+        key: result.get(key)
+        for key in (
+            "durationMs",
+            "endedAt",
+            "error",
+            "failedStage",
+            "format",
+            "inputRows",
+            "outputPath",
+            "outputRows",
+            "quality",
+            "schema",
+            "sourcePath",
+            "sparkExitCode",
+            "startedAt",
+            "status",
+        )
+        if result.get(key) is not None
+    }
+    manifest["runId"] = str(result.get("runId") or run_id)
+    if manifest.get("error"):
+        manifest["error"] = compact_storage_text(manifest["error"], limit=1800)
+    return manifest
+
+
 def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
     submitted_at = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:airflow:{submitted_at}")
@@ -648,6 +714,7 @@ def submit_airflow_job_run(job: ETLJobModel, command: str) -> ETLRunModel:
 def airflow_dag_run_conf(job: ETLJobModel, command: str, run_id: str, submitted_at: str) -> dict[str, Any]:
     return {
         "command": command,
+        "executionMode": "spark",
         "job": job_payload_for_spark(job),
         "jobId": job.id,
         "runId": run_id,
@@ -828,7 +895,10 @@ def sync_airflow_run(job: ETLJobModel, run: ETLRunModel, airflow_client: Any) ->
     run.airflow_dag_run_id = dag_run.dag_run_id or run.airflow_dag_run_id
     run.airflow_run_url = airflow_client.dag_run_url(run.airflow_dag_run_id) or run.airflow_run_url
     run.airflow_state = dag_run.state
+    spark_result = (run.task_states or {}).get("sparkResult")
     run.task_states = task_state_snapshot(task_instances)
+    if isinstance(spark_result, dict):
+        run.task_states["sparkResult"] = spark_result
     run.last_synced_at = synced_at
     run.sync_error = None
 
@@ -838,8 +908,16 @@ def sync_airflow_run(job: ETLJobModel, run: ETLRunModel, airflow_client: Any) ->
 
     if run.status == "failed":
         failed_task = first_problem_task(task_instances)
-        run.failed_stage = task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
-        run.error_summary = f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
+        run.failed_stage = (
+            str(spark_result.get("failedStage"))
+            if isinstance(spark_result, dict) and spark_result.get("failedStage")
+            else task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
+        )
+        run.error_summary = (
+            str(spark_result.get("error"))
+            if isinstance(spark_result, dict) and spark_result.get("error")
+            else f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
+        )
     elif run.status == "success":
         run.failed_stage = "-"
         run.error_summary = "-"
@@ -885,9 +963,9 @@ def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -
 
 AIRFLOW_TASK_TITLES = {
     "receive_asklake_run": "1. Airflow DAG Run 접수",
-    "spark_source_read": "2. Spark 소스 읽기",
-    "transform_quality_write": "3. 처리/품질/적재",
-    "catalog_update": "4. 카탈로그 갱신",
+    "validate_spark_request": "2. Spark 실행 요청 검증",
+    "spark_process_write": "3. Spark 처리/품질/Parquet 적재",
+    "publish_run_result": "4. Spark 실행 결과 확정",
 }
 
 

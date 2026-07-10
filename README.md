@@ -5,7 +5,7 @@ AskLake is a trusted data lake workflow project. This branch includes the Pair A
 ## Structure
 
 ```text
-backend/    # Local Node backend, source connectors, Spark validation scripts
+backend/    # FastAPI backend plus source/Spark launcher and validation helpers
 frontend/   # React/Vite frontend
 docs/       # Product, architecture, API, validation, and team guardrails
 ```

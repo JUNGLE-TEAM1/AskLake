@@ -339,6 +339,11 @@ def list_run_models_for_job(db: Session, job_id: str) -> list[ETLRunModel]:
     ).all()
 
 
+def get_run_model(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
         id=job.id,
