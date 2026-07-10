@@ -263,6 +263,17 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard assistant renders conversation with shadcn Bubble",
+    file: "src/pages/dashboard/runtime/DashboardAssistantPanel.tsx",
+    patterns: [
+      /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
+      /<BubbleGroup aria-live="polite" className="asklake-assistant-messages">/,
+      /align=\{message\.role === "user" \? "end" : "start"\}/,
+      /variant=\{message\.role === "user" \? "default" : "secondary"\}/,
+      /<BubbleContent className="whitespace-pre-wrap">\{message\.text\}<\/BubbleContent>/,
+    ],
+  },
+  {
     name: "Dashboard status labels stay Korean",
     file: "src/utils/statusMeta.ts",
     patterns: [

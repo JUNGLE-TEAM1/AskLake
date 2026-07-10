@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Loader2, Send } from "lucide-react";
+import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { DashboardRuntimeWidget } from "../../../types";
@@ -165,17 +166,25 @@ export function DashboardAssistantPanel({
           <div className="asklake-assistant-hero">
             <AskLakeAssistantMark />
             <strong>AskLake</strong>
-            <span>AI로 질문하세요</span>
+            <Bubble variant="secondary">
+              <BubbleContent>대시보드에 대해 무엇이든 물어보세요.</BubbleContent>
+            </Bubble>
           </div>
         )}
 
         {hasMessages && (
-          <div className="asklake-assistant-messages" aria-live="polite">
+          <BubbleGroup aria-live="polite" className="asklake-assistant-messages">
             {messages.map((message) => (
-              <p className={message.role} key={message.id}>{message.text}</p>
+              <Bubble
+                align={message.role === "user" ? "end" : "start"}
+                key={message.id}
+                variant={message.role === "user" ? "default" : "secondary"}
+              >
+              <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
+              </Bubble>
             ))}
             <span ref={messagesEndRef} aria-hidden="true" />
-          </div>
+          </BubbleGroup>
         )}
       </div>
 
@@ -196,7 +205,7 @@ export function DashboardAssistantPanel({
           onChange={(event) => setPrompt(event.target.value)}
         />
         <Button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
-          {isSubmitting ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
+          {isSubmitting ? <Loader2 className="spin" /> : <Send />}
         </Button>
       </form>
 
