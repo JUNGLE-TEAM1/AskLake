@@ -538,7 +538,7 @@ export function CatalogPage({
               className="catalog-wide-button"
               disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
               shape="compact"
-              title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+              title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "성공한 실행 결과를 먼저 선택해 주세요."}
               type="button"
               size="sm"
               variant="primary"
@@ -923,9 +923,6 @@ function CatalogMaterializationRuns({
 
   return (
     <Panel className="catalog-materialization-panel" onClick={(event) => event.stopPropagation()}>
-      <div className="catalog-materialization-header">
-        <strong>생성/append 결과</strong>
-      </div>
       {visibleRuns.length > 0 ? (
         <ScrollArea
           className="catalog-materialization-scroll-area"

@@ -183,7 +183,6 @@
   cursor: default;
 }
 
-.catalog-materialization-header,
 .catalog-materialization-pagination {
   display: flex;
   align-items: center;
@@ -192,28 +191,11 @@
   min-width: 0;
 }
 
-.catalog-materialization-header strong {
-  color: #0f172a;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.catalog-materialization-header {
-  flex-wrap: wrap;
-}
-
-.catalog-materialization-header span,
 .catalog-materialization-pagination span,
 .catalog-materialization-pagination strong {
   color: #64748b;
   font-size: 12px;
   font-weight: 850;
-}
-
-.catalog-materialization-header span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  text-align: right;
 }
 
 .catalog-materialization-list {

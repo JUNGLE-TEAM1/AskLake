@@ -129,7 +129,7 @@
 - 데스크톱 우측 미리보기는 `sticky top-6 self-start` 보조 패널로 동작하고, 긴 내용은 shadcn `ScrollArea` 내부에서만 스크롤한다.
 - 1180px 이하에서는 데스크톱 패널을 숨기고 shadcn `Sheet side="right"`에서 동일한 미리보기 콘텐츠를 제공한다.
 - 전체 스키마 모달 상단의 레이어 데이터셋 문구와 스키마 헤더의 컬럼 수 표시는 제거한다.
-- 생성/append 결과 헤더의 결과 수, 행 수, 용량 요약은 제거하고 제목만 표시한다.
+- 생성/append 결과의 결과 수, 행 수, 용량 요약과 제목 줄을 모두 제거한다.
 - 리니지 edge는 끊겨 보이는 점선을 제거하고 연속 `smoothstep` 실선과 작은 방향 화살표로 표시한다.
 - 검색 입력은 기존 shadcn `InputGroup` 구성을 유지하고 상태 필터를 `FieldSet`으로 묶었다.
 - 정렬은 `DropdownMenu` 대신 shadcn `Select`, 결과 펼치기는 조건부 DOM 대신 화살표 전용 shadcn `Collapsible`로 교체했다.
