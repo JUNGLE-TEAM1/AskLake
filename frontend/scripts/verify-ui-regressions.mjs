@@ -149,6 +149,20 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard edit toolbar separates active tools from action buttons",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeView.tsx",
+    patterns: [
+      /import \{ ButtonGroup \} from "@\/components\/ui\/button-group";/,
+      /import \{ ToggleGroup, ToggleGroupItem \} from "@\/components\/ui\/toggle-group";/,
+      /<ToggleGroup[\s\S]*?type="single"[\s\S]*?value=\{assistantActive \? "assistant" : "cursor"\}/,
+      /<ButtonGroup aria-label="위젯 추가">/,
+      /<ButtonGroup aria-label="편집 기록">/,
+    ],
+    forbiddenPatterns: [
+      /from "@\/components\/ui\/action-group";/,
+    ],
+  },
+  {
     name: "Dashboard widget combobox supports filtering and keyboard selection",
     file: "src/pages/dashboard/runtime/DashboardFieldCombobox.tsx",
     patterns: [
