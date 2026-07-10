@@ -128,6 +128,8 @@ TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
 
 `TRINO_ENABLED`은 Query Run adapter가 도입되는 후속 Phase에서 true로 전환한다. Phase 1의 backend SQL API는 아직 DuckDB compatibility runtime을 사용한다.
 
+Iceberg JDBC catalog의 metadata table은 `deploy/postgres/init/02-create-iceberg-jdbc-catalog.sql`로 bootstrap한다. `scripts/deploy.sh`는 새 DB와 기존 Postgres volume 모두에 이 idempotent migration을 실행한다.
+
 Production Trino는 public port를 열지 않고 backend와만 공유하는 internal network에서 HTTPS/password authentication으로 실행한다. 아래 secret files는 서버에만 만들고 Git에 올리지 않는다.
 
 ```text

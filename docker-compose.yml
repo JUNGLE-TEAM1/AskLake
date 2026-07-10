@@ -157,6 +157,7 @@ services:
       - "54328:5432"
     volumes:
       - asklake_postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U asklake -d asklake"]
       interval: 5s
