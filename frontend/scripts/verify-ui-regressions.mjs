@@ -116,6 +116,9 @@ const checks = [
       /<strong>Nessie runtime 미연결<\/strong>/,
       /<button disabled type="button"><FileText size=\{15\} \/><span>근거<\/span><small>미연결<\/small><\/button>/,
       /aria-current=\{conversation\.id === activeConversation\.id \? "page" : undefined\}/,
+      /const deleteConversation = \(conversationId: string\) => \{/,
+      /onAction\("ai\.chat\.deleted", "\/api\/ai\/conversations", conversationId\);/,
+      /className="ai-conversation-delete"/,
     ],
   },
   {

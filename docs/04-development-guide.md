@@ -127,8 +127,9 @@ Source/Schema/Create/Run 흐름은 항상 live backend 기준으로 검증한다
 3. 추천 질문을 누르거나 질문을 입력한 뒤 Enter로 전송한다. Shift+Enter는 줄바꿈으로 유지돼야 한다.
 4. 질문 카드에 선택 Dataset 이름이 보이고, 응답 카드는 `AI runtime 미연결`만 보이는지 확인한다.
 5. `새 대화`를 눌러 빈 대화가 목록에 추가되는지 확인한다. 새 대화에는 Dataset context가 복사되지 않아야 한다.
-6. 이전 대화를 다시 선택해 질문, Dataset context, runtime 미연결 상태가 복원되는지 확인한다.
-7. Dataset selector가 Escape와 바깥 클릭으로 닫히고, Tab으로 checkbox focus를 확인할 수 있는지 확인한다.
+6. 대화 항목 위에 마우스를 올려 삭제 아이콘이 보이는지 확인하고, 삭제 후 다음 대화로 전환되는지 확인한다. 마지막 대화를 삭제하면 빈 대화 하나가 유지되어야 한다.
+7. 이전 대화를 다시 선택해 질문, Dataset context, runtime 미연결 상태가 복원되는지 확인한다.
+8. Dataset selector가 Escape와 바깥 클릭으로 닫히고, Tab으로 checkbox focus를 확인할 수 있는지 확인한다.
 
 ```bash
 cd frontend

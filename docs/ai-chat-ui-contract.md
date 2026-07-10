@@ -28,7 +28,7 @@ UI-only 단계에서 제공하는 것은 다음과 같다.
 
 화면은 아래 순서를 유지한다.
 
-1. compact conversation sidebar: 새 대화 생성과 기존 대화 전환
+1. compact conversation sidebar: 새 대화 생성, 기존 대화 전환, 대화 삭제
 2. 대화 header: 선택 Dataset context의 진입점
 3. scrollable thread: empty state 또는 사용자 질문/향후 assistant 응답 카드
 4. composer: 추천 질문 chip, textarea, send icon button
@@ -52,6 +52,7 @@ type Conversation = {
 
 - `Conversation[]`와 active conversation ID는 화면이 살아 있는 동안에만 유지한다.
 - 새 대화는 빈 Conversation을 생성하고 active conversation으로 전환한다. 기존 대화는 sidebar 목록에 남는다.
+- 대화 삭제는 해당 Conversation의 브라우저 메모리 상태만 제거한다. 마지막 대화를 삭제하면 빈 Conversation 하나를 즉시 생성해 active 상태를 유지한다.
 - 대화 제목은 첫 사용자 질문을 잘라서 사용하며, 첫 질문 전에는 `새 대화`다.
 - 질문 전송은 active conversation의 thread에 사용자 메시지를 추가하고 `runtime_unavailable` 상태를 표시할 수 있다.
 - runtime이 연결되기 전에는 assistant message를 임의로 만들지 않는다.
@@ -83,6 +84,6 @@ dataset.status === "available" && dataset.permissions?.canQuery !== false
 
 1. AI 활용 메뉴가 ChatGPT형 empty state와 composer를 보여준다.
 2. 사용 가능한 Dataset만 context selector에 표시된다.
-3. Dataset 선택/해제, Enter 전송, Shift+Enter 줄바꿈, 새 대화 생성과 대화 전환이 로컬 상태에서 동작한다.
+3. Dataset 선택/해제, Enter 전송, Shift+Enter 줄바꿈, 새 대화 생성/삭제와 대화 전환이 로컬 상태에서 동작한다.
 4. backend가 없는 상태에서 가짜 분석 답변이나 근거를 렌더링하지 않는다.
 5. keyboard focus, Escape/outside click context close, desktop/mobile에서 composer와 message thread가 겹치지 않는다.

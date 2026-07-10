@@ -1,4 +1,4 @@
-import { Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Send } from "lucide-react";
+import { Braces, Check, ChevronDown, CircleUser, Database, FileText, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plus, Send, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import askLakeNessiIconUrl from "../../assets/asklake-nessi-icon.png";
 import type { CatalogDataset } from "../../types";
@@ -137,6 +137,23 @@ export function AiChatPage({
     onAction("ai.chat.selected", "/api/ai/conversations", conversationId);
   };
 
+  const deleteConversation = (conversationId: string) => {
+    setConversations((current) => {
+      const remaining = current.filter((conversation) => conversation.id !== conversationId);
+      if (remaining.length === 0) {
+        const replacement = createConversation();
+        setActiveConversationId(replacement.id);
+        return [replacement];
+      }
+      if (conversationId === activeConversationId) {
+        setActiveConversationId(remaining[0].id);
+      }
+      return remaining;
+    });
+    setContextOpen(false);
+    onAction("ai.chat.deleted", "/api/ai/conversations", conversationId);
+  };
+
   const chooseSuggestedQuestion = (question: string) => {
     if (runtimeUnavailable) return;
     updateActiveConversation((conversation) => ({ ...conversation, draftPrompt: question, updatedAt: new Date().toISOString() }));
@@ -183,10 +200,13 @@ export function AiChatPage({
         <button className="ai-sidebar-new-conversation" type="button" onClick={startNewConversation}><Plus size={15} /> 새 대화</button>
         <div className="ai-conversation-list">
           {conversations.map((conversation) => (
-            <button aria-current={conversation.id === activeConversation.id ? "page" : undefined} className={conversation.id === activeConversation.id ? "ai-conversation-item active" : "ai-conversation-item"} key={conversation.id} type="button" onClick={() => selectConversation(conversation.id)}>
-              <span>{conversation.title}</span>
-              <small>{conversation.messages.length > 0 ? `${conversation.messages.length}개 질문` : "빈 대화"}</small>
-            </button>
+            <div className={conversation.id === activeConversation.id ? "ai-conversation-row active" : "ai-conversation-row"} key={conversation.id}>
+              <button aria-current={conversation.id === activeConversation.id ? "page" : undefined} className="ai-conversation-item" type="button" onClick={() => selectConversation(conversation.id)}>
+                <span>{conversation.title}</span>
+                <small>{conversation.messages.length > 0 ? `${conversation.messages.length}개 질문` : "빈 대화"}</small>
+              </button>
+              <button aria-label={`대화 삭제: ${conversation.title}`} className="ai-conversation-delete" title="대화 삭제" type="button" onClick={() => deleteConversation(conversation.id)}><Trash2 size={15} /></button>
+            </div>
           ))}
         </div>
       </aside>

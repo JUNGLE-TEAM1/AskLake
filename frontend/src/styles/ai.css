@@ -77,10 +77,22 @@
 .ai-sidebar-new-conversation:hover { border-color: #83acec; background: #f8fbff; }
 .ai-conversation-list { display: grid; gap: 4px; max-height: calc(100vh - 268px); overflow-y: auto; }
 
+.ai-conversation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: stretch;
+  width: 100%;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.ai-conversation-row:hover { background: #e0ecff; }
+.ai-conversation-row.active { background: #cfe1ff; }
+
 .ai-conversation-item {
   display: grid;
   gap: 5px;
-  width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -89,10 +101,23 @@
   text-align: left;
 }
 
-.ai-conversation-item:hover { background: #e0ecff; }
-.ai-conversation-item.active { background: #cfe1ff; }
 .ai-conversation-item span { overflow: hidden; color: #214f91; font-size: 14px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .ai-conversation-item small { color: #6582ad; font-size: 11px; }
+.ai-conversation-delete {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  align-self: center;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6582ad;
+  opacity: 0;
+}
+.ai-conversation-row:hover .ai-conversation-delete,
+.ai-conversation-delete:focus-visible { opacity: 1; }
+.ai-conversation-delete:hover { background: #fff; color: #c2414c; }
 
 .ai-chat-header {
   display: flex;
