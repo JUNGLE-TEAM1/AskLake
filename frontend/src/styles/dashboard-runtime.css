@@ -663,7 +663,8 @@
 }
 
 .asklake-dashboard-edit-toolbar button:hover:not(:disabled),
-.asklake-dashboard-edit-toolbar button.active {
+.asklake-dashboard-edit-toolbar button[data-state="on"],
+.asklake-dashboard-edit-toolbar button.asklake-toolbar-mode-active {
   border-color: #bfdbfe;
   background: #eff6ff;
   color: #1d4ed8;
@@ -684,7 +685,7 @@
   color: #cbd5e1;
 }
 
-.asklake-dashboard-edit-toolbar > span {
+.asklake-dashboard-edit-toolbar .asklake-toolbar-divider {
   width: 1px;
   height: 24px;
   background: #dbe4ee;

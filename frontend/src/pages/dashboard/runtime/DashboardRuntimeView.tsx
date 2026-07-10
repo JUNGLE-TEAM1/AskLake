@@ -8,8 +8,9 @@ import type {
   DashboardRuntimeWidget,
 } from "../../../types";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
-import { ActionGroup } from "@/components/ui/action-group";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DashboardAssistantWidgetPatch } from "../../../services/dashboardAssistantService";
 import { DashboardCanvas } from "./DashboardCanvas";
@@ -149,19 +150,18 @@ function DashboardEditToolbar({
   onRedo: () => void;
   onUndo: () => void;
 }) {
-  const toolbarButton = (
+  const actionButton = (
     label: string,
     icon: React.ReactNode,
     onClick: () => void,
-    options: { active?: boolean; disabled?: boolean } = {},
+    options: { disabled?: boolean } = {},
   ) => (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
           aria-label={label}
-          aria-pressed={options.active}
-          className={options.active ? "active" : undefined}
           disabled={options.disabled}
+          data-icon=""
           size="icon"
           type="button"
           variant="ghost"
@@ -176,17 +176,56 @@ function DashboardEditToolbar({
 
   return (
     <TooltipProvider delayDuration={250}>
-      <ActionGroup className="asklake-dashboard-edit-toolbar" density="compact" wrap="nowrap" role="toolbar" aria-label="대시보드 편집 도구">
-        {toolbarButton("AskLake 보조 패널", <AskLakeNessiIcon />, onAssistant, { active: assistantActive })}
-        <span aria-hidden="true" />
-        {toolbarButton("이동 모드", <MousePointer2 />, onCursor, { active: !assistantActive })}
-        <span aria-hidden="true" />
-        {toolbarButton("시각화 추가", <BarChart3 />, () => void onCreateToolbarWidget("visualization"), { disabled })}
-        {toolbarButton("텍스트 추가", <Type />, () => void onCreateToolbarWidget("text"), { disabled })}
-        <span aria-hidden="true" />
-        {toolbarButton("실행 취소", <Undo2 />, onUndo, { disabled: !canUndo })}
-        {toolbarButton("다시 실행", <Redo2 />, onRedo, { disabled: !canRedo })}
-      </ActionGroup>
+      <div className="asklake-dashboard-edit-toolbar" role="toolbar" aria-label="대시보드 편집 도구">
+        <ToggleGroup
+          aria-label="편집 모드"
+          type="single"
+          value={assistantActive ? "assistant" : "cursor"}
+          onValueChange={(value) => {
+            if (value === "assistant") onAssistant();
+            if (value === "cursor") onCursor();
+          }}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroupItem
+                aria-label="AskLake 보조 패널"
+                className={assistantActive ? "asklake-toolbar-mode-active" : undefined}
+                data-icon=""
+                size="icon"
+                value="assistant"
+              >
+                <AskLakeNessiIcon />
+              </ToggleGroupItem>
+            </TooltipTrigger>
+            <TooltipContent>AskLake 보조 패널</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ToggleGroupItem
+                aria-label="이동 모드"
+                className={!assistantActive ? "asklake-toolbar-mode-active" : undefined}
+                data-icon=""
+                size="icon"
+                value="cursor"
+              >
+                <MousePointer2 />
+              </ToggleGroupItem>
+            </TooltipTrigger>
+            <TooltipContent>이동 모드</TooltipContent>
+          </Tooltip>
+        </ToggleGroup>
+        <span className="asklake-toolbar-divider" aria-hidden="true" />
+        <ButtonGroup aria-label="위젯 추가">
+          {actionButton("시각화 추가", <BarChart3 />, () => void onCreateToolbarWidget("visualization"), { disabled })}
+          {actionButton("텍스트 추가", <Type />, () => void onCreateToolbarWidget("text"), { disabled })}
+        </ButtonGroup>
+        <span className="asklake-toolbar-divider" aria-hidden="true" />
+        <ButtonGroup aria-label="편집 기록">
+          {actionButton("실행 취소", <Undo2 />, onUndo, { disabled: !canUndo })}
+          {actionButton("다시 실행", <Redo2 />, onRedo, { disabled: !canRedo })}
+        </ButtonGroup>
+      </div>
     </TooltipProvider>
   );
 }

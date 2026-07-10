@@ -122,7 +122,7 @@
 
 - #487의 Kibo/shadcn-compatible line tree와 loading/error/empty 상태 구성을 유지한다.
 - radial bar chart의 동적 min/max 범위 `Slider`에 `min < max` validation과 thumb 간격 제한을 적용한다.
-- 편집 toolbar와 dataset toggle은 shadcn `Button` 및 `Tooltip` composition으로 통일한다.
+- 편집 toolbar는 활성 도구를 shadcn `ToggleGroup` 단일 선택으로, 위젯 추가·기록 동작을 `ButtonGroup`으로 분리하고 `Tooltip`을 제공한다.
 - 위젯 설정의 데이터셋·컬럼·집계·정렬·형식 선택은 공통 searchable Combobox로 제공해 긴 컬럼명을 검색·키보드 선택할 수 있게 한다.
 - 초기 빈 편집 화면에서도 canvas wrap과 edit stage의 흰색 배경이 viewport 하단까지 이어지고, 빈 canvas가 최소 높이를 유지하도록 한다.
 - 중앙 canvas의 native scrollbar를 shadcn `ScrollArea`의 vertical/horizontal track과 thumb로 교체한다.
