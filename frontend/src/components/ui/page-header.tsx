@@ -27,21 +27,27 @@ export interface PageHeaderProps
     VariantProps<typeof pageHeaderVariants> {
   actions?: React.ReactNode;
   description?: React.ReactNode;
+  descriptionClassName?: string;
   eyebrow?: React.ReactNode;
   icon?: React.ReactNode;
+  iconClassName?: string;
   meta?: React.ReactNode;
   title: React.ReactNode;
+  titleClassName?: string;
 }
 
 export function PageHeader({
   actions,
   className,
   description,
+  descriptionClassName,
   eyebrow,
   icon,
+  iconClassName,
   meta,
   size,
   title,
+  titleClassName,
   variant,
   ...props
 }: PageHeaderProps) {
@@ -50,7 +56,7 @@ export function PageHeader({
       <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           {icon && (
-            <span className="mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-700 shadow-sm">
+            <span className={cn("mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-blue-700 shadow-sm", iconClassName)}>
               {icon}
             </span>
           )}
@@ -61,11 +67,11 @@ export function PageHeader({
               </div>
             )}
             <div className="grid min-w-0 gap-1">
-              <h1 className="text-2xl font-semibold leading-tight tracking-normal text-slate-950">
+              <h1 className={cn("text-2xl font-semibold leading-tight tracking-normal text-slate-950", titleClassName)}>
                 {title}
               </h1>
               {description && (
-                <p className="max-w-3xl text-sm leading-6 text-slate-500">
+                <p className={cn("max-w-3xl text-sm leading-6 text-slate-500", descriptionClassName)}>
                   {description}
                 </p>
               )}
