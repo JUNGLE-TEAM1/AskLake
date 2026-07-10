@@ -68,8 +68,10 @@
 `origin/codex/run-observability-ui`의 화면 구조를 현재 공통 컴포넌트 기준으로 이식했습니다.
 
 - 기존의 작은 DAG 격자와 검색 시늉 UI를 제거했습니다.
-- 왼쪽은 실행 단계 타임라인, 오른쪽은 선택 단계 상세로 구성했습니다.
+- 왼쪽은 ReUI `Timeline`, 오른쪽은 선택 단계 상세로 구성했습니다.
 - 단계 선택 시 상세 정보와 진단 메시지가 갱신됩니다.
+- `TimelineIndicator`와 `TimelineSeparator`를 같은 item 레일에 배치해 상태 아이콘과 연결선 중심을 일치시켰습니다.
+- 선택 카드는 레일을 덮지 않는 콘텐츠 영역에서만 이동·강조되고, hover와 inspector 전환에 짧은 motion을 적용했습니다.
 - Run별 `dagStepsByRunId`를 우선 사용해 다른 Run의 단계가 섞이지 않게 했습니다.
 - 요약 영역은 `MetricCard size="compact"`를 사용하고 `이 Run의 상태`, `이 Run의 소요 시간`, `완료 단계`, `이 Run의 입력 행`처럼 단일 Run 범위를 label에 명시합니다.
 - 단계 상태는 `StatusBadge`, 진행 상태는 `Spinner`를 사용합니다.
@@ -89,6 +91,8 @@
 | Modal | `DialogShell` |
 | 진행 표시 | `Spinner` |
 | Modal 통계 카드 | `MetricCard size="compact"` |
+| 실행 단계 레일 | ReUI `Timeline`, `TimelineItem`, `TimelineIndicator`, `TimelineSeparator` |
+| 실행 단계 스크롤 | shadcn `ScrollArea` |
 
 표면별 조합 컴포넌트는 유지하지만, 단일 primitive를 다시 만드는 CSS는 추가하지 않습니다.
 
@@ -104,9 +108,10 @@
 - `.runs-pagination`
 - `.runs-stats-summary`, `.run-summary-metric`
 - 기존 DAG grid, arrow, node, search panel, selected strip CSS
+- `.dag-timeline-*` 수제 연결선, marker, 선택 item CSS
 - 실행 이력과 DAG의 중복 반응형 selector
 
-현재 남은 `ingest-dag.css`는 타임라인 연결선과 단계 inspector처럼 primitive만으로 표현하기 어려운 복합 UI 전용입니다.
+현재 남은 `ingest-dag.css`는 Dialog workbench와 단계 inspector처럼 화면 배치 및 진단 정보 표현에 필요한 복합 UI 전용입니다.
 
 ## 5. 백엔드 계약 후속 항목
 

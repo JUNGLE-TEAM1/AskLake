@@ -2,6 +2,16 @@ import { useCallback, useMemo, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
+  Timeline,
+  TimelineContent,
+  TimelineDate,
+  TimelineHeader,
+  TimelineIndicator,
+  TimelineItem,
+  TimelineSeparator,
+  TimelineTitle,
+} from "@/components/reui/timeline";
+import {
   Activity,
   BarChart3,
   BookOpen,
@@ -72,9 +82,11 @@ import { MetricCard } from "@/components/ui/metric-card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus, RealtimeOperationalHealth } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
@@ -86,12 +98,12 @@ const runStatusMeta: Record<JobRunStatus, { className: string; label: string }> 
   canceled: { className: "canceled", label: "취소됨" },
 };
 
-const dagStepStatusMeta: Record<JobDagStepStatus, { className: string; label: string }> = {
-  pending: { className: "paused", label: "대기" },
-  running: { className: "running", label: "진행" },
-  success: { className: "success", label: "성공" },
-  failed: { className: "failed", label: "실패" },
-  blocked: { className: "paused", label: "중단" },
+const dagStepStatusMeta: Record<JobDagStepStatus, { label: string }> = {
+  pending: { label: "대기" },
+  running: { label: "진행" },
+  success: { label: "성공" },
+  failed: { label: "실패" },
+  blocked: { label: "중단" },
 };
 
 const realtimeHealthMeta: Record<RealtimeOperationalHealth, { label: string; tone: "danger" | "default" | "running" | "scheduled" }> = {
@@ -2192,6 +2204,7 @@ function RunDagModal({
   const completedSteps = dagSteps.filter((step) => step.status === "success").length;
   const activeOrFailedStep = dagSteps.find((step) => step.status === "running" || step.status === "failed" || step.status === "blocked");
   const selectedStep = getSelectedDagStep(dagSteps, selectedStepId);
+  const selectedStepIndex = Math.max(dagSteps.findIndex((step) => step.id === selectedStep?.id), 0);
   const currentPoint = currentRun.failedStage !== "-"
     ? currentRun.failedStage
     : activeOrFailedStep?.title ?? (currentRun.status === "success" ? "전체 단계 완료" : "단계 정보 대기");
@@ -2253,25 +2266,36 @@ function RunDagModal({
               icon={<Workflow aria-hidden="true" size={18} />}
               title="실행 단계"
             />
-            <div className="dag-timeline" role="list">
-              {dagSteps.length ? dagSteps.map((step, index) => (
-                <DagTimelineItem
-                  active={selectedStep?.id === step.id}
-                  index={index}
-                  key={step.id}
-                  onSelect={() => {
-                    setSelectedStepId(step.id);
-                    onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/runs/${currentRun.runId}/steps/${step.id}`, step.id);
-                  }}
-                  step={step}
-                />
-              )) : (
-                <div className="dag-timeline-empty">이 Run에 수집된 실행 단계가 없습니다.</div>
+            <ScrollArea className="h-[430px]">
+              {dagSteps.length ? (
+                <Timeline
+                  aria-label="실행 단계 목록"
+                  className="px-5 py-4"
+                  role="list"
+                  value={selectedStepIndex + 1}
+                >
+                  {dagSteps.map((step, index) => (
+                    <DagTimelineItem
+                      active={selectedStep?.id === step.id}
+                      index={index}
+                      key={step.id}
+                      onSelect={() => {
+                        setSelectedStepId(step.id);
+                        onAction("etl.dag.node_selected", `/api/etl/jobs/${job.id}/runs/${currentRun.runId}/steps/${step.id}`, step.id);
+                      }}
+                      step={step}
+                    />
+                  ))}
+                </Timeline>
+              ) : (
+                <div className="grid min-h-[280px] place-items-center px-6 text-center text-sm font-bold text-slate-500">
+                  이 Run에 수집된 실행 단계가 없습니다.
+                </div>
               )}
-            </div>
+            </ScrollArea>
           </section>
 
-          <DagStepInspector currentRun={currentRun} step={selectedStep} />
+          <DagStepInspector currentRun={currentRun} key={selectedStep?.id ?? "empty"} step={selectedStep} />
         </article>
       </section>
     </DialogShell>
@@ -2294,25 +2318,34 @@ function DagTimelineItem({
   onSelect: () => void;
   step: JobDagStep;
 }) {
-  const tone = dagStepStatusMeta[step.status].className;
-
   return (
-    <div className="dag-timeline-entry" role="listitem">
+    <TimelineItem className="!ms-9 !pb-3 last:!pb-0" role="listitem" step={index + 1}>
+      <TimelineSeparator className={getDagTimelineSeparatorClassName(step.status)} />
+      <TimelineIndicator className={getDagTimelineIndicatorClassName(step.status)}>
+        {getDagStepStatusIcon(step.status)}
+      </TimelineIndicator>
       <button
         aria-current={active ? "step" : undefined}
-        className={active ? `dag-timeline-item ${tone} active` : `dag-timeline-item ${tone}`}
+        className={cn(
+          "group grid min-h-[94px] w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3.5 text-left shadow-sm transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out",
+          "hover:translate-x-0.5 hover:border-blue-200 hover:bg-blue-50/40 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
+          active && "translate-x-1 border-blue-300 bg-blue-50/80 shadow-md ring-1 ring-blue-200",
+        )}
         type="button"
         onClick={onSelect}
       >
-        <span className="dag-timeline-marker">{getDagStepStatusIcon(step.status)}</span>
-        <span className="dag-timeline-content">
-          <span className="dag-timeline-kicker">단계 {index + 1}</span>
-          <strong>{formatDagStepTitle(step.title)}</strong>
-          <span className="dag-step-meta">{step.meta}</span>
+        <span className="min-w-0">
+          <TimelineHeader>
+            <TimelineDate className="mb-1 text-xs font-extrabold text-blue-600">단계 {index + 1}</TimelineDate>
+            <TimelineTitle className="text-lg font-extrabold leading-6 text-slate-950">{formatDagStepTitle(step.title)}</TimelineTitle>
+          </TimelineHeader>
+          <TimelineContent className="mt-1 truncate text-sm font-semibold text-slate-500" title={step.meta}>
+            {step.meta}
+          </TimelineContent>
         </span>
-        <span className="dag-timeline-status"><DagStatePill status={step.status} /></span>
+        <span className="transition-transform duration-200 group-hover:translate-x-0.5"><DagStatePill status={step.status} /></span>
       </button>
-    </div>
+    </TimelineItem>
   );
 }
 
@@ -2370,11 +2403,30 @@ function getSelectedDagStep(steps: JobDagStep[], selectedStepId: string | null) 
 }
 
 function getDagStepStatusIcon(status: JobDagStepStatus) {
-  if (status === "success") return <Check aria-hidden="true" size={14} />;
-  if (status === "failed") return <X aria-hidden="true" size={14} />;
-  if (status === "running") return <Spinner aria-label="진행 중" className="size-3.5" />;
-  if (status === "blocked") return <TerminalSquare aria-hidden="true" size={13} />;
-  return <Clock3 aria-hidden="true" size={14} />;
+  if (status === "success") return <Check aria-hidden="true" className="size-4" strokeWidth={2.5} />;
+  if (status === "failed") return <X aria-hidden="true" className="size-4" strokeWidth={2.5} />;
+  if (status === "running") return <Spinner aria-label="진행 중" className="size-4" />;
+  if (status === "blocked") return <TerminalSquare aria-hidden="true" className="size-4" />;
+  return <Clock3 aria-hidden="true" className="size-4" />;
+}
+
+function getDagTimelineIndicatorClassName(status: JobDagStepStatus) {
+  const baseClassName = "!left-[-24px] !top-0 grid !size-8 place-items-center border-2 shadow-sm transition-[box-shadow,transform] duration-200";
+
+  if (status === "success") return `${baseClassName} border-emerald-500 bg-emerald-500 text-white`;
+  if (status === "failed") return `${baseClassName} border-red-500 bg-red-500 text-white`;
+  if (status === "running") return `${baseClassName} border-blue-500 bg-white text-blue-600 shadow-[0_0_0_5px_rgba(59,130,246,0.12)]`;
+  if (status === "blocked") return `${baseClassName} border-slate-400 bg-slate-100 text-slate-600`;
+  return `${baseClassName} border-slate-300 bg-white text-slate-500`;
+}
+
+function getDagTimelineSeparatorClassName(status: JobDagStepStatus) {
+  const baseClassName = "!left-[-24px] !top-0 !h-[calc(100%-2rem)] !translate-x-[-50%] !translate-y-8 transition-colors duration-200";
+
+  if (status === "success") return `${baseClassName} bg-emerald-300`;
+  if (status === "failed") return `${baseClassName} bg-red-300`;
+  if (status === "running") return `${baseClassName} bg-blue-300`;
+  return `${baseClassName} bg-slate-200`;
 }
 
 function formatDagStepTitle(title: string) {
