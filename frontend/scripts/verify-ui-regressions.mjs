@@ -25,7 +25,7 @@ const checks = [
       /<FieldGroup className="grid-cols-12 gap-3 max-\[860px\]:grid-cols-1">/,
       /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
       /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
-      /<ScrollArea className="h-\[250px\] min-h-0" type="always">/,
+      /<ScrollArea className="h-\[300px\] min-h-0" type="always">/,
       /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
       /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
       /<StatusBadge size="sm" tone=\{queryPending \? "default" : executed \? "success" : "muted"\}>/,
