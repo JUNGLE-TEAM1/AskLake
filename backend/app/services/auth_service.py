@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import status
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import ApiError
 from app.models.base import Base
 from app.models.identity import AuthSessionModel, AuthUserModel
+from app.repositories.governance_repository import blocked_principal_for_actor
 from app.schemas.common import ErrorCode
 
 SESSION_COOKIE_NAME = "asklake_session"
@@ -22,7 +24,7 @@ DEMO_AUTH_USERS = [
         "display_name": "Admin User",
         "password": "asklake-admin",
         "role": "admin",
-        "groups": ["data-platform", "analytics", "ops"],
+        "groups": [],
         "title": "Platform Admin",
     },
     {
@@ -89,6 +91,14 @@ class AuthService:
                 "비활성화된 계정입니다.",
                 status.HTTP_403_FORBIDDEN,
             )
+        blocked_principal = blocked_principal_for_actor(self.db, user_actor_namespace(user))
+        if blocked_principal is not None:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "계정 접근이 제한되었습니다. 관리자에게 문의하세요.",
+                status.HTTP_403_FORBIDDEN,
+                {"principalType": blocked_principal.principal_type, "principalId": blocked_principal.principal_id},
+            )
         user.last_active_at = now_utc()
         session = self.create_session(user)
         self.db.commit()
@@ -130,6 +140,8 @@ class AuthService:
         user = self.db.get(AuthUserModel, session.user_id)
         if user is None or user.status != "active":
             return None
+        if blocked_principal_for_actor(self.db, user_actor_namespace(user)) is not None:
+            return None
         return user_to_actor(user)
 
     def _ensure_tables(self) -> None:
@@ -140,6 +152,7 @@ class AuthService:
         for item in DEMO_AUTH_USERS:
             existing = self.db.get(AuthUserModel, item["id"])
             if existing is not None:
+                changed = sync_demo_user(existing, item) or changed
                 continue
             salt = secrets.token_hex(16)
             self.db.add(
@@ -173,6 +186,32 @@ def user_to_actor(user: AuthUserModel) -> dict[str, Any]:
         "groups": list(user.groups or []),
         "title": user.title,
     }
+
+
+def user_actor_namespace(user: AuthUserModel) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=user.id,
+        email=user.email,
+        name=user.display_name,
+        groups=tuple(user.groups or []),
+    )
+
+
+def sync_demo_user(user: AuthUserModel, item: dict[str, Any]) -> bool:
+    changed = False
+    updates = {
+        "email": str(item["email"]),
+        "display_name": str(item["display_name"]),
+        "role": str(item["role"]),
+        "groups": list(item["groups"]),
+        "status": "active",
+        "title": str(item["title"]),
+    }
+    for field, value in updates.items():
+        if getattr(user, field) != value:
+            setattr(user, field, value)
+            changed = True
+    return changed
 
 
 def normalize_email(email: str) -> str:

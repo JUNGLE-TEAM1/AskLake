@@ -335,6 +335,7 @@
   .admin-permission-form.compact,
   .admin-permission-toolbar,
   .admin-permission-workbench,
+  .admin-audit-filter,
   .admin-console-metric-grid,
   .profile-permission-grid,
   .form-grid,
@@ -381,6 +382,14 @@
 
   .admin-grant-item {
     grid-template-columns: 1fr;
+  }
+
+  .admin-permission-detail > header {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-resource-state-actions {
+    justify-items: stretch;
   }
 
   .hegun-rule-footer {
@@ -446,13 +455,22 @@
   }
 
   .job-log-modal,
-  .run-dag-modal {
+  .run-dag-modal,
+  .admin-activity-modal {
     padding: 12px;
   }
 
   .job-log-modal section,
-  .run-dag-modal > section {
+  .run-dag-modal > section,
+  .admin-activity-modal > section {
     max-height: calc(100vh - 24px);
+  }
+
+  .admin-activity-modal header,
+  .admin-activity-modal-status,
+  .admin-activity-log-heading,
+  .admin-activity-log-row {
+    align-items: flex-start;
   }
 
   .run-dag-modal-body {

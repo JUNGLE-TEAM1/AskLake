@@ -1,9 +1,13 @@
 import type {
+  AdminAuditLogQuery,
   AdminAuditLogsResponse,
+  AdminGovernanceControlsResponse,
   AdminGroupsResponse,
   AdminPermissionGrantRequest,
   AdminPermissionGrantUpdateRequest,
   AdminPermissionsResponse,
+  AdminPrincipalControlRequest,
+  AdminResourceLockRequest,
   AdminUsersResponse,
 } from "../types";
 import { apiClient } from "./apiClient";
@@ -32,6 +36,24 @@ export async function deleteAdminPermissionGrant(grantId: string): Promise<Admin
   return apiClient.delete<AdminPermissionsResponse>(`/api/admin/permissions/${encodeURIComponent(grantId)}`);
 }
 
-export async function fetchAdminAuditLogs(): Promise<AdminAuditLogsResponse> {
-  return apiClient.get<AdminAuditLogsResponse>("/api/admin/audit-logs");
+export async function fetchAdminGovernanceControls(): Promise<AdminGovernanceControlsResponse> {
+  return apiClient.get<AdminGovernanceControlsResponse>("/api/admin/governance-controls");
+}
+
+export async function updateAdminPrincipalControl(payload: AdminPrincipalControlRequest): Promise<AdminGovernanceControlsResponse> {
+  return apiClient.patch<AdminGovernanceControlsResponse>("/api/admin/governance/principals", payload);
+}
+
+export async function updateAdminResourceLock(payload: AdminResourceLockRequest): Promise<AdminGovernanceControlsResponse> {
+  return apiClient.patch<AdminGovernanceControlsResponse>("/api/admin/governance/resource-locks", payload);
+}
+
+export async function fetchAdminAuditLogs(query: AdminAuditLogQuery = {}): Promise<AdminAuditLogsResponse> {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    params.set(key, String(value));
+  });
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiClient.get<AdminAuditLogsResponse>(`/api/admin/audit-logs${suffix}`);
 }

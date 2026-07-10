@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -7,6 +7,8 @@ from app.schemas.permissions import PermissionAction, PermissionGrant, Permissio
 
 AdminUserStatus = Literal["active", "invited", "disabled"]
 AdminResourceType = Literal["dataset", "etl_job", "dashboard"]
+AdminPrincipalControlType = Literal["user", "group"]
+AdminPrincipalStatus = Literal["active", "blocked"]
 
 
 class IdentityProfile(CamelModel):
@@ -89,10 +91,57 @@ class AdminAuditLogEntry(CamelModel):
     api_path: str
     created_at: str
     request_id: str
-    result: Literal["success", "failed"]
+    result: Literal["success", "failed", "forbidden"]
     target_id: str
-    target_type: Literal["etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui"]
+    target_type: Literal["etl_job", "dataset", "dashboard", "ai_module", "admin_module", "ui", "auth", "user", "group"]
+    actor_name: str | None = None
+    actor_role: str | None = None
+    actor_groups: list[str] = Field(default_factory=list)
+    http_method: str | None = None
+    ip_address: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    status_code: int | None = None
+    target_name: str | None = None
 
 
 class AdminAuditLogsResponse(CamelModel):
     logs: list[AdminAuditLogEntry] = Field(default_factory=list)
+
+
+class AdminPrincipalControl(CamelModel):
+    id: str
+    principal_type: AdminPrincipalControlType
+    principal_id: str
+    status: AdminPrincipalStatus
+    reason: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class AdminResourceLock(CamelModel):
+    id: str
+    resource_type: AdminResourceType
+    resource_id: str
+    locked: bool = False
+    reason: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class AdminGovernanceControlsResponse(CamelModel):
+    principal_controls: list[AdminPrincipalControl] = Field(default_factory=list)
+    resource_locks: list[AdminResourceLock] = Field(default_factory=list)
+
+
+class AdminPrincipalControlRequest(CamelModel):
+    principal_type: AdminPrincipalControlType
+    principal_id: str
+    status: AdminPrincipalStatus
+    reason: str | None = None
+
+
+class AdminResourceLockRequest(CamelModel):
+    resource_type: AdminResourceType
+    resource_id: str
+    locked: bool
+    reason: str | None = None

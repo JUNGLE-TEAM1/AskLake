@@ -133,6 +133,33 @@ async function runSmoke() {
   const groupVisibleDetail = await get(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}`, groupViewerHeaders);
   assert(groupVisibleDetail.id === derivedDataset.id, "Viewer with matching group grant should hydrate derived dataset detail.");
 
+  const initialControls = await get("/api/admin/governance-controls");
+  assert(Array.isArray(initialControls.principalControls), "Governance controls should include principal controls.");
+  assert(Array.isArray(initialControls.resourceLocks), "Governance controls should include resource locks.");
+
+  await patch("/api/admin/governance/principals", {
+    principalId: "phase6-smoke-group",
+    principalType: "group",
+    reason: "Permission dataset smoke group block",
+    status: "blocked",
+  });
+  const blockedByGroup = await getExpectError(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}`, 403, groupViewerHeaders);
+  assert(blockedByGroup.error?.details?.principalType === "group", "Blocked group should be denied before dataset view grant.");
+  const blockedGroupList = await get("/api/catalog/datasets", groupViewerHeaders);
+  assert(
+    !blockedGroupList.datasets.some((dataset) => dataset.id === derivedDataset.id),
+    "Blocked group should not see granted dataset in catalog list.",
+  );
+
+  await patch("/api/admin/governance/principals", {
+    principalId: "phase6-smoke-group",
+    principalType: "group",
+    reason: "Permission dataset smoke group unblock",
+    status: "active",
+  });
+  const groupVisibleAgain = await get(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}`, groupViewerHeaders);
+  assert(groupVisibleAgain.id === derivedDataset.id, "Unblocked group should regain access granted by group permission.");
+
   const deleteGrantResponse = await post("/api/admin/permissions", {
     actions: ["delete"],
     principalId: viewerHeaders["X-AskLake-User"],
@@ -146,6 +173,71 @@ async function runSmoke() {
 
   const deleteResponse = await del(`/api/catalog/datasets/${encodeURIComponent(derivedDataset.id)}/materialization-runs/${encodeURIComponent(runId)}`, viewerHeaders);
   assert(deleteResponse.deletedRunId === runId, "Viewer with delete grant should delete the materialization run.");
+
+  await patch("/api/admin/governance/resource-locks", {
+    locked: true,
+    reason: "Permission dataset smoke query lock",
+    resourceId: seedDatasetId,
+    resourceType: "dataset",
+  });
+  const lockedQuery = await postExpectError("/api/query/runs", {
+    datasetId: seedDatasetId,
+    limit: 10,
+    mode: "preview",
+    query,
+    referenceDatasetIds: [],
+    validationKey: `${seedDatasetId}:${query}:locked`,
+  }, 403, viewerHeaders);
+  assert(lockedQuery.error?.details?.resourceType === "dataset", "Locked dataset should block query execution.");
+  const lockedList = await get("/api/catalog/datasets", viewerHeaders);
+  const lockedDataset = lockedList.datasets.find((dataset) => dataset.id === seedDatasetId);
+  assert(lockedDataset?.permissions?.canView === true, "Locked dataset should remain visible to actors with view grant.");
+  assert(lockedDataset?.permissions?.canQuery === false, "Locked dataset should report canQuery=false.");
+  assert(lockedDataset?.permissions?.canManage === false, "Locked dataset should report canManage=false.");
+  assert(lockedDataset?.permissions?.canDelete === false, "Locked dataset should report canDelete=false.");
+
+  await patch("/api/admin/governance/resource-locks", {
+    locked: false,
+    reason: "Permission dataset smoke query unlock",
+    resourceId: seedDatasetId,
+    resourceType: "dataset",
+  });
+  const unlockedPreview = await post("/api/query/runs", {
+    baseDatasetId: seedDatasetId,
+    datasetId: seedDatasetId,
+    limit: 10,
+    mode: "preview",
+    query,
+    referenceDatasetIds: [],
+    validationKey: `${seedDatasetId}:${query}:unlocked`,
+  }, viewerHeaders);
+  assert(unlockedPreview.runId, "Unlocked dataset should allow query execution again.");
+
+  const viewerForbiddenAudits = await get(`/api/admin/audit-logs?resourceType=dataset&result=forbidden&q=${encodeURIComponent(viewerHeaders["X-AskLake-User"])}&limit=20`);
+  assert(
+    viewerForbiddenAudits.logs.some((log) => log.targetId === seedDatasetId && log.action === "dataset.view.forbidden"),
+    "Dataset detail 403 should be recorded in admin audit logs.",
+  );
+  assert(
+    viewerForbiddenAudits.logs.some((log) => log.targetId === seedDatasetId && log.action === "dataset.query.forbidden"),
+    "Dataset query 403 should be recorded in admin audit logs.",
+  );
+
+  const groupForbiddenAudits = await get(`/api/admin/audit-logs?resourceType=dataset&result=forbidden&q=${encodeURIComponent(groupViewerHeaders["X-AskLake-User"])}&limit=20`);
+  assert(
+    groupForbiddenAudits.logs.some((log) => log.targetId === derivedDataset.id && log.action === "dataset.view.forbidden"),
+    "Group dataset detail 403 should be recorded in admin audit logs.",
+  );
+  assert(
+    groupForbiddenAudits.logs.some((log) => log.targetId === derivedDataset.id && log.action === "dataset.view.governance_forbidden"),
+    "Blocked group 403 should be recorded in admin audit logs.",
+  );
+
+  const governanceAuditLogs = await get(`/api/admin/audit-logs?resourceType=dataset&result=forbidden&q=${encodeURIComponent("governance_forbidden")}&limit=20`);
+  assert(
+    governanceAuditLogs.logs.some((log) => log.targetId === seedDatasetId && log.action === "dataset.query.governance_forbidden"),
+    "Locked dataset query 403 should be recorded in admin audit logs.",
+  );
 
   await del(`/api/admin/permissions/${viewGrant.id}`);
   await del(`/api/admin/permissions/${groupGrant.id}`);

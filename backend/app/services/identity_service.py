@@ -1,15 +1,22 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from fastapi import status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, permissions_for_actor
+from app.core.auth_context import ActorContext
 from app.core.errors import ApiError
 from app.core.permission_metadata import dedupe_grants
+from app.repositories.audit_repository import list_audit_events, record_audit_event
 from app.repositories.catalog_repository import CatalogRepository, dataset_model_to_payload
 from app.repositories.dashboard_card_repository import list_dashboard_cards
 from app.repositories.etl_repository import list_jobs
+from app.repositories.governance_repository import (
+    list_principal_controls,
+    list_resource_locks,
+    set_principal_control,
+    set_resource_lock,
+)
 from app.repositories.permission_repository import (
     create_permission_grant,
     delete_permission_grant,
@@ -17,15 +24,20 @@ from app.repositories.permission_repository import (
     seed_permission_grants_if_empty,
     update_permission_grant,
 )
+from app.services.resource_permission_service import permissions_for_actor_with_governance
 from app.schemas.common import ErrorCode
 from app.schemas.identity import (
-    AdminAuditLogEntry,
     AdminAuditLogsResponse,
+    AdminGovernanceControlsResponse,
     AdminGroupsResponse,
     AdminPermissionGrantRequest,
     AdminPermissionGrantUpdateRequest,
     AdminPermissionSummary,
     AdminPermissionsResponse,
+    AdminPrincipalControl,
+    AdminPrincipalControlRequest,
+    AdminResourceLock,
+    AdminResourceLockRequest,
     AdminUser,
     AdminUsersResponse,
     CurrentUserResponse,
@@ -40,19 +52,19 @@ DEMO_GROUPS = {
         id="data-platform",
         name="Data Platform Team",
         description="Lake platform administrators",
-        member_count=2,
+        member_count=0,
     ),
     "analytics": IdentityGroup(
         id="analytics",
         name="Analytics Team",
         description="SQL and dashboard analysts",
-        member_count=3,
+        member_count=1,
     ),
     "ops": IdentityGroup(
         id="ops",
         name="Operations Team",
         description="ETL job operators",
-        member_count=2,
+        member_count=0,
     ),
 }
 
@@ -62,7 +74,7 @@ DEMO_USERS = {
         "display_name": "Admin User",
         "email": "admin.user@asklake.local",
         "role": "admin",
-        "groups": ["data-platform", "analytics", "ops"],
+        "groups": [],
         "title": "Platform Admin",
         "last_active_at": "2026-07-09T06:30:00.000Z",
     },
@@ -113,7 +125,7 @@ class IdentityService:
     ) -> AdminPermissionsResponse:
         self._require_admin(actor)
         self._require_resource_exists(request.resource_type, request.resource_id)
-        create_permission_grant(
+        grant = create_permission_grant(
             self.db,
             resource_type=request.resource_type,
             resource_id=request.resource_id,
@@ -121,6 +133,22 @@ class IdentityService:
             principal_id=request.principal_id,
             actions=list(request.actions),
             created_by=actor.name,
+        )
+        self._record_audit_event(
+            self.db,
+            action="admin.permission_grant.created",
+            actor=actor,
+            api_path="/api/admin/permissions",
+            http_method="POST",
+            metadata={
+                "actions": list(request.actions),
+                "grantId": grant.id,
+                "principalId": request.principal_id,
+                "principalType": request.principal_type,
+            },
+            status_code=201,
+            target_id=request.resource_id,
+            target_type=request.resource_type,
         )
         return self.list_admin_permissions(actor)
 
@@ -131,12 +159,27 @@ class IdentityService:
         request: AdminPermissionGrantUpdateRequest,
     ) -> AdminPermissionsResponse:
         self._require_admin(actor)
-        update_permission_grant(
+        grant = update_permission_grant(
             self.db,
             grant_id,
             principal_type=request.principal_type,
             principal_id=request.principal_id,
             actions=list(request.actions) if request.actions is not None else None,
+        )
+        self._record_audit_event(
+            self.db,
+            action="admin.permission_grant.updated",
+            actor=actor,
+            api_path=f"/api/admin/permissions/{grant_id}",
+            http_method="PATCH",
+            metadata={
+                "actions": list(request.actions) if request.actions is not None else None,
+                "grantId": grant.id,
+                "principalId": grant.principal_id,
+                "principalType": grant.principal_type,
+            },
+            target_id=grant.resource_id,
+            target_type=grant.resource_type,
         )
         return self.list_admin_permissions(actor)
 
@@ -146,8 +189,99 @@ class IdentityService:
         grant_id: str,
     ) -> AdminPermissionsResponse:
         self._require_admin(actor)
-        delete_permission_grant(self.db, grant_id)
+        grant = delete_permission_grant(self.db, grant_id)
+        self._record_audit_event(
+            self.db,
+            action="admin.permission_grant.deleted",
+            actor=actor,
+            api_path=f"/api/admin/permissions/{grant_id}",
+            http_method="DELETE",
+            metadata={
+                "actions": grant.actions or [],
+                "grantId": grant.id,
+                "principalId": grant.principal_id,
+                "principalType": grant.principal_type,
+            },
+            target_id=grant.resource_id,
+            target_type=grant.resource_type,
+        )
         return self.list_admin_permissions(actor)
+
+    def list_admin_governance_controls(self, actor: ActorContext) -> AdminGovernanceControlsResponse:
+        self._require_admin(actor)
+        return AdminGovernanceControlsResponse(
+            principal_controls=[
+                principal_control_response(row)
+                for row in list_principal_controls(self.db)
+            ],
+            resource_locks=[
+                resource_lock_response(row)
+                for row in list_resource_locks(self.db)
+            ],
+        )
+
+    def update_admin_principal_control(
+        self,
+        actor: ActorContext,
+        request: AdminPrincipalControlRequest,
+    ) -> AdminGovernanceControlsResponse:
+        self._require_admin(actor)
+        row = set_principal_control(
+            self.db,
+            principal_type=request.principal_type,
+            principal_id=request.principal_id,
+            reason=request.reason,
+            status_value=request.status,
+            updated_by=actor.name,
+        )
+        self._record_audit_event(
+            self.db,
+            action="admin.principal_control.updated",
+            actor=actor,
+            api_path="/api/admin/governance/principals",
+            http_method="PATCH",
+            metadata={
+                "principalId": row.principal_id,
+                "principalType": row.principal_type,
+                "reason": row.reason,
+                "status": row.status,
+            },
+            target_id=row.principal_id,
+            target_type=row.principal_type,
+        )
+        return self.list_admin_governance_controls(actor)
+
+    def update_admin_resource_lock(
+        self,
+        actor: ActorContext,
+        request: AdminResourceLockRequest,
+    ) -> AdminGovernanceControlsResponse:
+        self._require_admin(actor)
+        self._require_resource_exists(request.resource_type, request.resource_id)
+        row = set_resource_lock(
+            self.db,
+            locked=request.locked,
+            reason=request.reason,
+            resource_id=request.resource_id,
+            resource_type=request.resource_type,
+            updated_by=actor.name,
+        )
+        self._record_audit_event(
+            self.db,
+            action="admin.resource_lock.updated",
+            actor=actor,
+            api_path="/api/admin/governance/resource-locks",
+            http_method="PATCH",
+            metadata={
+                "locked": row.locked,
+                "reason": row.reason,
+                "resourceId": row.resource_id,
+                "resourceType": row.resource_type,
+            },
+            target_id=row.resource_id,
+            target_type=row.resource_type,
+        )
+        return self.list_admin_governance_controls(actor)
 
     def _require_resource_exists(self, resource_type: str, resource_id: str) -> None:
         if resource_type == "dataset":
@@ -166,32 +300,30 @@ class IdentityService:
             status.HTTP_404_NOT_FOUND,
         )
 
-    def list_admin_audit_logs(self, actor: ActorContext) -> AdminAuditLogsResponse:
+    def list_admin_audit_logs(
+        self,
+        actor: ActorContext,
+        *,
+        actor_id: str | None = None,
+        from_at: datetime | None = None,
+        limit: int = 100,
+        query: str | None = None,
+        resource_type: str | None = None,
+        result: str | None = None,
+        to_at: datetime | None = None,
+    ) -> AdminAuditLogsResponse:
         self._require_admin(actor)
-        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return AdminAuditLogsResponse(
-            logs=[
-                AdminAuditLogEntry(
-                    action="admin.console.opened",
-                    actor_id=actor.name,
-                    api_path="/api/admin/audit-logs",
-                    created_at=now,
-                    request_id="req_demo_admin_audit_001",
-                    result="success",
-                    target_id="admin-console",
-                    target_type="admin_module",
-                ),
-                AdminAuditLogEntry(
-                    action="identity.profile.opened",
-                    actor_id=actor.name,
-                    api_path="/api/users/me",
-                    created_at=now,
-                    request_id="req_demo_identity_001",
-                    result="success",
-                    target_id=actor.name,
-                    target_type="ui",
-                ),
-            ]
+            logs=list_audit_events(
+                self.db,
+                actor_id=actor_id,
+                from_at=from_at,
+                limit=limit,
+                query=query,
+                resource_type=resource_type,
+                result=result,
+                to_at=to_at,
+            )
         )
 
     def _require_admin(self, actor: ActorContext) -> None:
@@ -202,6 +334,12 @@ class IdentityService:
             "Admin role is required to access this endpoint",
             status.HTTP_403_FORBIDDEN,
         )
+
+    def _record_audit_event(self, *args: Any, **kwargs: Any) -> None:
+        try:
+            record_audit_event(*args, **kwargs)
+        except Exception:
+            self.db.rollback()
 
     def _current_user_response(self, actor: ActorContext, summary: PermissionSummary) -> CurrentUserResponse:
         user = self._user_record(actor.name, actor.role, actor.groups)
@@ -327,11 +465,13 @@ class IdentityService:
                     owner=owner,
                     created_by=string_or_none(payload.get("createdBy")),
                     grants=grants,
-                    current_actor_permissions=permissions_for_actor(
+                    current_actor_permissions=permissions_for_actor_with_governance(
+                        self.db,
                         actor,
                         owner=owner,
                         grants=[grant.model_dump(by_alias=True) for grant in grants],
-                        enforced=True,
+                        resource_id=resource_id,
+                        resource_type="dataset",
                     ),
                 )
             )
@@ -357,11 +497,13 @@ class IdentityService:
                     owner=job.owner,
                     created_by=job.created_by,
                     grants=grants,
-                    current_actor_permissions=permissions_for_actor(
+                    current_actor_permissions=permissions_for_actor_with_governance(
+                        self.db,
                         actor,
                         owner=job.owner,
                         grants=[grant.model_dump(by_alias=True) for grant in grants],
-                        enforced=True,
+                        resource_id=job.id,
+                        resource_type="etl_job",
                     ),
                 )
             )
@@ -387,11 +529,13 @@ class IdentityService:
                     owner=dashboard.owner,
                     created_by=dashboard.created_by,
                     grants=grants,
-                    current_actor_permissions=permissions_for_actor(
+                    current_actor_permissions=permissions_for_actor_with_governance(
+                        self.db,
                         actor,
                         owner=dashboard.owner,
                         grants=[grant.model_dump(by_alias=True) for grant in grants],
-                        enforced=True,
+                        resource_id=dashboard.id,
+                        resource_type="dashboard",
                     ),
                 )
             )
@@ -426,6 +570,38 @@ def merge_grants(*grant_groups: list[PermissionGrant]) -> list[PermissionGrant]:
         for grant in group
     ]
     return parse_grants(dedupe_grants(payloads))
+
+
+def principal_control_response(row: Any) -> AdminPrincipalControl:
+    return AdminPrincipalControl(
+        id=row.id,
+        principal_type=row.principal_type,
+        principal_id=row.principal_id,
+        status=row.status,
+        reason=row.reason,
+        updated_by=row.updated_by,
+        updated_at=datetime_to_iso(row.updated_at),
+    )
+
+
+def resource_lock_response(row: Any) -> AdminResourceLock:
+    return AdminResourceLock(
+        id=row.id,
+        resource_type=row.resource_type,
+        resource_id=row.resource_id,
+        locked=bool(row.locked),
+        reason=row.reason,
+        updated_by=row.updated_by,
+        updated_at=datetime_to_iso(row.updated_at),
+    )
+
+
+def datetime_to_iso(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat().replace("+00:00", "Z")
+    return str(value)
 
 
 def string_or_none(value: Any) -> str | None:

@@ -6,9 +6,10 @@ from uuid import uuid4
 from fastapi import status
 from sqlalchemy.orm import Session
 
-from app.core.auth_context import ActorContext, can, permissions_for_actor
+from app.core.auth_context import ActorContext, can
 from app.core.errors import ApiError
 from app.core.permission_metadata import permission_grants_from_roles, resource_permissions
+from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.dashboard_card_repository import (
     delete_dashboard_card,
     get_dashboard_card,
@@ -27,7 +28,8 @@ from app.schemas.dashboard import (
     DashboardSortOption,
     UpdateDashboardRequest,
 )
-from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permission_grants_for_resource
+from app.services.governance_enforcement import require_governed_access
+from app.services.resource_permission_service import dashboard_with_persisted_permission_grants, permission_grants_for_resource, permissions_for_actor_with_governance
 
 
 def _format_dashboard_timestamp(value: datetime) -> str:
@@ -155,7 +157,14 @@ def with_dashboard_permissions(db: Session, card: DashboardCard, actor: ActorCon
     card = dashboard_with_persisted_permission_grants(db, card.model_copy(update={"permission_grants": grants}))
     grant_payloads = [grant.model_dump(by_alias=True) if hasattr(grant, "model_dump") else grant for grant in card.permission_grants]
     return card.model_copy(update={
-        "permissions": permissions_for_actor(actor_context, owner=card.owner, grants=grant_payloads, enforced=True),
+        "permissions": permissions_for_actor_with_governance(
+            db,
+            actor_context,
+            owner=card.owner,
+            grants=grant_payloads,
+            resource_id=card.id,
+            resource_type="dashboard",
+        ),
     })
 
 
@@ -184,7 +193,31 @@ def update_dashboard_card_title(db: Session, dashboard_id: str, request: UpdateD
         dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "share"]),
     )
     grant_payloads = [grant.model_dump(by_alias=True) for grant in grants]
+    require_governed_access(
+        db,
+        actor,
+        action="manage",
+        api_path=f"/api/dashboards/{dashboard_id}",
+        http_method="PATCH",
+        metadata={"owner": dashboard.owner},
+        resource_id=dashboard.id,
+        resource_name=dashboard.name,
+        resource_type="dashboard",
+    )
     if not can(actor, "manage", owner=dashboard.owner, grants=grant_payloads):
+        safe_record_audit_event(
+            db,
+            action="dashboard.update.forbidden",
+            actor=actor,
+            api_path=f"/api/dashboards/{dashboard_id}",
+            http_method="PATCH",
+            metadata={"owner": dashboard.owner, "requiredAction": "manage"},
+            result="forbidden",
+            status_code=status.HTTP_403_FORBIDDEN,
+            target_id=dashboard.id,
+            target_name=dashboard.name,
+            target_type="dashboard",
+        )
         raise ApiError(
             ErrorCode.FORBIDDEN,
             "Only the dashboard owner or an admin can update this dashboard",
@@ -220,7 +253,31 @@ def delete_dashboard_card_with_permission(
         dashboard.permission_grants or permission_grants_from_roles(dashboard.owner, default_actions=["view", "manage", "delete", "share"]),
     )
     grant_payloads = [grant.model_dump(by_alias=True) for grant in grants]
+    require_governed_access(
+        db,
+        actor,
+        action="delete",
+        api_path=f"/api/dashboards/{dashboard_id}",
+        http_method="DELETE",
+        metadata={"owner": dashboard.owner},
+        resource_id=dashboard.id,
+        resource_name=dashboard.name,
+        resource_type="dashboard",
+    )
     if not can(actor, "delete", owner=dashboard.owner, grants=grant_payloads):
+        safe_record_audit_event(
+            db,
+            action="dashboard.delete.forbidden",
+            actor=actor,
+            api_path=f"/api/dashboards/{dashboard_id}",
+            http_method="DELETE",
+            metadata={"owner": dashboard.owner, "requiredAction": "delete"},
+            result="forbidden",
+            status_code=status.HTTP_403_FORBIDDEN,
+            target_id=dashboard.id,
+            target_name=dashboard.name,
+            target_type="dashboard",
+        )
         raise ApiError(
             ErrorCode.FORBIDDEN,
             "Only the dashboard owner or an admin can delete this dashboard",
