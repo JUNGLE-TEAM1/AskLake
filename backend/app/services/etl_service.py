@@ -18,8 +18,12 @@ from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
+    JobListFacets,
+    JobListResponse,
     JobDagStep,
     JobRowData,
+    JobRunOutcome,
+    JobScheduleKind,
     QueryRunRequest,
     QueryRunResponse,
     SchemaDraft,
@@ -31,6 +35,7 @@ from app.schemas.etl import (
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
+JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipelineResponse:
@@ -113,8 +118,51 @@ def create_pipeline(db: Session, request: CreatePipelineRequest) -> CreatePipeli
     )
 
 
-def list_jobs(db: Session) -> list[JobRowData]:
-    return etl_repository.list_jobs(db)
+def list_jobs(
+    db: Session,
+    last_run_outcome: JobRunOutcome | None = None,
+    owner: str | None = None,
+    statuses: list[str] | None = None,
+    schedule_kind: JobScheduleKind | None = None,
+) -> JobListResponse:
+    all_jobs = [normalize_list_job(job) for job in etl_repository.list_jobs(db)]
+    selected_statuses = set(statuses or [])
+    filtered_jobs = [
+        job for job in all_jobs
+        if (not selected_statuses or job.status in selected_statuses)
+        and (not owner or job.owner == owner)
+        and (not last_run_outcome or latest_run_outcome(job) == last_run_outcome)
+    ]
+
+    if schedule_kind:
+        filtered_jobs = [job for job in filtered_jobs if job_schedule_kind(job.schedule) == schedule_kind]
+
+    return JobListResponse(
+        facets=JobListFacets(
+            latest_run_outcome_counts={
+                outcome: sum(latest_run_outcome(job) == outcome for job in all_jobs)
+                for outcome in ("success", "failed", "canceled")
+            },
+            owners=sorted({job.owner for job in all_jobs if job.owner}),
+            status_counts={status: sum(job.status == status for job in all_jobs) for status in JOB_STATUSES},
+            total=len(all_jobs),
+        ),
+        jobs=filtered_jobs,
+    )
+
+
+def normalize_list_job(job: JobRowData) -> JobRowData:
+    if job.status not in {"failed", "canceled", "paused"}:
+        return job
+    return job.model_copy(update={"status": "scheduled"})
+
+
+def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
+    latest_run = (job.run_history or [None])[0]
+    if latest_run is None:
+        return None
+    status_value = latest_run.status if hasattr(latest_run, "status") else latest_run.get("status")
+    return status_value if status_value in {"success", "failed", "canceled"} else None
 
 
 def get_job(db: Session, job_id: str) -> JobRowData:
@@ -172,7 +220,7 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
     if job is None:
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
-    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule"}:
+    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule"}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
     if command == "run" and job.status == "running":
         raise ApiError(ErrorCode.CONFLICT, f"Job is already running: {job_id}", status.HTTP_409_CONFLICT)
@@ -194,6 +242,12 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
             f"Job has no schedule to stop: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+    if command == "resumeSchedule" and (job.status != "stopped" or not has_scheduled_label(job.schedule)):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            f"Job has no paused schedule to resume: {job_id}",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
     action_by_command = {
         "cancelRun": "etl.run.cancel_requested",
@@ -201,6 +255,7 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         "retry": "etl.run.retry_requested",
         "run": "etl.run.requested",
         "stopSchedule": "etl.schedule.stop_requested",
+        "resumeSchedule": "etl.schedule.resume_requested",
     }
 
     run_schema = None
@@ -219,7 +274,11 @@ def command_job(db: Session, job_id: str, command: str) -> JobCommandResponse:
         if spark_result.get("status") == "success":
             existing_dataset = etl_repository.get_dataset_by_id(db, job.dataset_id) if job.dataset_id else None
             dataset_model = dataset_from_spark_result(job, spark_result, existing_dataset)
-    elif command == "cancelRun":
+    elif command == "cancelRun" or (
+        command == "stopSchedule"
+        and job.status == "running"
+        and job_schedule_kind(job.schedule) == "realtime"
+    ):
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
@@ -346,7 +405,7 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
     )
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
-    job.status = "scheduled" if success else "failed"
+    job.status = "scheduled"
     job.target_path = result.get("outputPath") or job.target_path
 
 
@@ -752,6 +811,21 @@ def has_scheduled_label(schedule_label: str | None) -> bool:
     return not any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"])
 
 
+def job_schedule_kind(schedule_label: str | None) -> JobScheduleKind:
+    schedule = str(schedule_label or "").strip().lower()
+    if not schedule or schedule == "-" or any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"]):
+        return "none"
+    if any(token in schedule for token in ["실시간", "realtime", "real-time", "stream", "kafka"]):
+        return "realtime"
+    if any(token in schedule for token in ["매일", "daily"]):
+        return "daily"
+    if any(token in schedule for token in ["매주", "weekly"]):
+        return "weekly"
+    if any(token in schedule for token in ["매월", "monthly"]):
+        return "monthly"
+    return "other"
+
+
 def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, Any]:
     watermark_policy = request.watermark_policy
     if hasattr(watermark_policy, "model_dump"):
@@ -780,57 +854,53 @@ def apply_job_command(job: ETLJobModel, command: str) -> None:
         job.status = "running"
         return
     if command == "pause":
+        job.last_run = iso_now()
         job.last_state = "사용자 일시정지"
         job.next_run = "재개 대기"
         job.progress = job.progress or {"label": "일시정지됨", "value": 50}
         job.status = "paused"
         return
     if command == "stopSchedule":
-        job.last_state = "스케줄 중지됨"
+        if job.status == "running" and job_schedule_kind(job.schedule) == "realtime":
+            job.last_run = iso_now()
+        job.last_state = "실시간 수집 중지" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 일시중지"
         job.next_run = "-"
         job.progress = None
-        job.schedule = "스케줄링 건너뛰기"
-        job.schedule_policy = {
-            "endDate": None,
-            "nextRunUtc": "",
-            "overlapPolicy": None,
-            "startDate": "",
-            "timezone": "",
-            "watermarkPolicy": {
-                "column": "updated_at",
-                "enabled": False,
-                "lookbackMinutes": 0,
-                "mode": "full_refresh",
-            },
-        }
-        job.schedule_summary = "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행"
         job.status = "stopped"
         return
+    if command == "resumeSchedule":
+        policy_next_run = (job.schedule_policy or {}).get("nextRunUtc")
+        job.last_state = "실시간 수집 재개됨" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 재개됨"
+        job.next_run = schedule_next_run_label(job.schedule, policy_next_run)
+        job.progress = None
+        job.status = "scheduled"
+        return
 
-    job.last_run = "방금 취소"
+    job.last_run = iso_now()
     job.last_state = "취소됨"
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
-    job.status = "canceled"
+    job.status = "scheduled"
 
 
 def run_from_command(job: ETLJobModel, command: str) -> ETLRunModel:
     now = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:{now}")
     input_rows = job.stats.get("inputRows") or job.stats.get("input_rows") or "0"
-    if command == "cancelRun":
+    if command in {"cancelRun", "stopSchedule"}:
+        realtime_stop = command == "stopSchedule"
         return ETLRunModel(
             run_id=run_id,
             job_id=job.id,
             status="canceled",
             started_at=now,
             ended_at=now,
-            duration="-",
+            duration="수집 중지" if realtime_stop else "-",
             input_rows=input_rows,
             output_rows="0",
             output_path=None,
-            failed_stage="실행 취소",
-            error_summary="사용자 취소",
+            failed_stage="실시간 수집 중지" if realtime_stop else "실행 취소",
+            error_summary="사용자 요청으로 실시간 수집 중지" if realtime_stop else "사용자 취소",
         )
     return ETLRunModel(
         run_id=run_id,
@@ -911,7 +981,7 @@ def initial_dag_steps(request: CreatePipelineRequest, metrics: dict[str, Any]) -
 
 
 def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, str]]:
-    if command == "cancelRun":
+    if command in {"cancelRun", "stopSchedule"}:
         return [
             {"id": "source", "meta": job.source, "status": "blocked", "title": "1. 소스 연결"},
             {"id": "schema", "meta": job.stats.get("schemaColumns", "-"), "status": "blocked", "title": "2. 스키마 확인"},

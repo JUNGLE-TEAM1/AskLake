@@ -210,6 +210,7 @@ def list_runs_for_job(db: Session, job_id: str) -> list[JobRunSummary]:
 
 def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
     return JobRowData(
+        created_at=job.created_at.isoformat() if job.created_at else None,
         id=job.id,
         name=job.name or job.target or job.id,
         owner=job.owner or "demo-user",
@@ -217,6 +218,7 @@ def job_to_schema(db: Session, job: ETLJobModel) -> JobRowData:
         tag=job.tag or "[생성]",
         source=job.source or job.source_label or "-",
         target=job.target or job.name or job.id,
+        updated_at=job.updated_at.isoformat() if job.updated_at else None,
         schedule=job.schedule or "-",
         schedule_policy=job.schedule_policy,
         schedule_summary=job.schedule_summary,
