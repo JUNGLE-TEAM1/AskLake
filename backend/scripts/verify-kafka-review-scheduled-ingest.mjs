@@ -39,6 +39,7 @@ try {
   await verifyMinimalReviewContractIngest();
   await verifyTransformAndQualityIngest();
   await verifyFailRunLeavesOffsetsForRetry();
+  await verifyMultiPartitionSnapshots();
   console.log("verify-kafka-review-scheduled-ingest: ok");
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
@@ -235,6 +236,51 @@ async function verifyFailRunLeavesOffsetsForRetry() {
   assert(await groupOffset(jobFailureTopic, jobFailureGroup) === "-1", "Failed Kafka Job must not commit its consumer group offset.");
 }
 
+async function verifyMultiPartitionSnapshots() {
+  const multiTopic = `reviews.raw.multipart.${suffix}`;
+  const multiGroup = `asklake-multipart-${suffix}`;
+  await produceReviewEvents(multiTopic, [
+    { event_id: `multipart-${suffix}-0-0`, offset: 0, partition: 0, review: "partition zero first", created_at: "2026-07-09T04:00:00Z" },
+    { event_id: `multipart-${suffix}-0-1`, offset: 1, partition: 0, review: "partition zero second", created_at: "2026-07-09T04:01:00Z" },
+    { event_id: `multipart-${suffix}-0-2`, offset: 2, partition: 0, review: "partition zero third", created_at: "2026-07-09T04:02:00Z" },
+    { event_id: `multipart-${suffix}-1-0`, offset: 0, partition: 1, review: "partition one first", created_at: "2026-07-09T04:03:00Z" },
+    { event_id: `multipart-${suffix}-1-1`, offset: 1, partition: 1, review: "partition one second", created_at: "2026-07-09T04:04:00Z" },
+    { event_id: `multipart-${suffix}-1-2`, offset: 2, partition: 1, review: "partition one third", created_at: "2026-07-09T04:05:00Z" },
+  ], 2);
+  const request = {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: multiTopic,
+    consumerGroupId: multiGroup,
+    datasetId: `ds_reviews_multipart_${suffix}`,
+    datasetName: `reviews_multipart_${suffix}`,
+    maxMessages: 2,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: false,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${multiTopic}/bronze`,
+    targetLayer: "BRONZE",
+    targetFormat: "jsonl",
+  };
+  const first = await post("/api/etl/kafka/reviews/ingest", request);
+  assert(first.consumedCount === 4, `Snapshot maxMessages must apply per partition: ${JSON.stringify(first.snapshot)}`);
+  assert(first.snapshot?.partitions?.length === 2, "Multi-partition snapshot should retain both partition ranges.");
+  for (const partition of first.snapshot.partitions) {
+    assert(partition.startOffset === "0" && partition.endOffset === "2", `First partition snapshot should be 0..2: ${JSON.stringify(partition)}`);
+  }
+  assert(JSON.stringify(await groupOffsets(multiTopic, multiGroup)) === JSON.stringify({ 0: "2", 1: "2" }), "Each partition should commit its independent end offset.");
+
+  const second = await post("/api/etl/kafka/reviews/ingest", request);
+  assert(second.consumedCount === 2, `Second multi-partition snapshot should consume the remaining row from each partition: ${JSON.stringify(second.snapshot)}`);
+  for (const partition of second.snapshot.partitions) {
+    assert(partition.startOffset === "2" && partition.endOffset === "3", `Second partition snapshot should be 2..3: ${JSON.stringify(partition)}`);
+  }
+  assert(JSON.stringify(await groupOffsets(multiTopic, multiGroup)) === JSON.stringify({ 0: "3", 1: "3" }), "Second snapshot should commit each remaining partition offset.");
+}
+
 async function readS3Object(location) {
   const match = String(location || "").match(/^s3:\/\/([^/]+)\/(.+)$/);
   assert(match, `Expected an S3 location: ${location}`);
@@ -289,16 +335,16 @@ async function produceMinimalReviewEvents() {
   }
 }
 
-async function produceReviewEvents(targetTopic, records) {
+async function produceReviewEvents(targetTopic, records, partitionCount = 1) {
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-transform-review-producer", retry: { retries: 2 } });
   const admin = kafka.admin();
   const producer = kafka.producer();
   try {
     await admin.connect();
-    await createFreshTopic(admin, targetTopic);
+    await createFreshTopic(admin, targetTopic, partitionCount);
     await producer.connect();
-    await producer.send({ topic: targetTopic, messages: records.map((record) => ({ key: record.event_id, value: JSON.stringify(record) })) });
+    await producer.send({ topic: targetTopic, messages: records.map(({ partition, ...record }) => ({ key: record.event_id, partition, value: JSON.stringify(record) })) });
   } finally {
     await producer.disconnect().catch(() => undefined);
     await admin.disconnect().catch(() => undefined);
@@ -306,26 +352,30 @@ async function produceReviewEvents(targetTopic, records) {
 }
 
 async function groupOffset(topicName, groupId) {
+  return (await groupOffsets(topicName, groupId))[0] || "-1";
+}
+
+async function groupOffsets(topicName, groupId) {
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({ brokers: [env.ASKLAKE_KAFKA_BROKER], clientId: "asklake-offset-verify", retry: { retries: 2 } });
   const admin = kafka.admin();
   try {
     await admin.connect();
     const offsets = await admin.fetchOffsets({ groupId, topics: [topicName] });
-    return offsets[0]?.partitions?.find((partition) => partition.partition === 0)?.offset ?? "-1";
+    return Object.fromEntries((offsets[0]?.partitions || []).map((partition) => [partition.partition, partition.offset]));
   } finally {
     await admin.disconnect().catch(() => undefined);
   }
 }
 
-async function createFreshTopic(admin, targetTopic) {
+async function createFreshTopic(admin, targetTopic, numPartitions = 1) {
   const topics = await admin.listTopics();
   if (topics.includes(targetTopic)) {
     await admin.deleteTopics({ topics: [targetTopic], timeout: 5000 });
     await sleep(750);
   }
   await admin.createTopics({
-    topics: [{ topic: targetTopic, numPartitions: 1, replicationFactor: 1 }],
+    topics: [{ topic: targetTopic, numPartitions, replicationFactor: 1 }],
     waitForLeaders: true,
   });
 }

@@ -1250,7 +1250,7 @@ export function SourceConnectionPage({
         ["Broker / Endpoint", "127.0.0.1:19092"],
         ["TOPIC / QUEUE NAME", "reviews.raw"],
         ["CONSUMER GROUP ID", "asklake-reviews-raw-job"],
-        ["Batch Max Messages", "100"],
+        ["Batch Max Messages (per partition)", "100"],
         ["Timeout Ms", "10000"],
         ["Offset Policy", "Earliest (Start from beginning)"],
         ["Message Format", "JSON (Auto-infer Schema)"],

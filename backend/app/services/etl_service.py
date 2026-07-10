@@ -448,7 +448,8 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
     )
     target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     max_messages = (
-        parse_positive_integer(field_value(fields, "Batch Max Messages"))
+        parse_positive_integer(field_value(fields, "Batch Max Messages (per partition)"))
+        or parse_positive_integer(field_value(fields, "Batch Max Messages"))
         or parse_positive_integer(field_value(fields, "Max Messages"))
         or parse_positive_integer(field_value(fields, "__Batch Max Messages"))
         or 100

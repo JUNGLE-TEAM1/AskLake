@@ -95,7 +95,7 @@ type KafkaReviewIngestRequest = {
   broker?: string; // default "127.0.0.1:19092"
   topic?: string; // default "reviews.raw"
   consumerGroupId?: string;
-  maxMessages?: number; // default 100
+  maxMessages?: number; // default 100, snapshot maximum per partition
   timeoutMs?: number; // default 10000
   offsetPolicy?: "earliest" | "latest";
   allowEmpty?: boolean;

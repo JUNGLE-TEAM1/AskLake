@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output. Phase 3 executes the configured supported transform and quality rules before that direct write. Phase 4 persists failed Kafka Job runs with their captured snapshot and verifies offset-safe retry behavior. Phase 5 verifies independent multi-partition snapshot ranges and offset commits.
 
 ## 2. Objective
 
@@ -47,7 +47,7 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 
 `endOffset` is exclusive. A run must process offsets `startOffset <= offset < endOffset`. Messages appended after `capturedAt` are outside the current snapshot and belong to a later run.
 
-`snapshotMaxMessagesPerPartition` replaces the ambiguous global meaning of the current `Batch Max Messages` field. The UI/API migration must either rename the field or explicitly display its per-partition semantics.
+`snapshotMaxMessagesPerPartition` replaces the ambiguous global meaning of the current `Batch Max Messages` field. New Kafka source drafts display this as `Batch Max Messages (per partition)`; the legacy label remains accepted for existing Jobs.
 
 ## 4. Direct Target Write
 
