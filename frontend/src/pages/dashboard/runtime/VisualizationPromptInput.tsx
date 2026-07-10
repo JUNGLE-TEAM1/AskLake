@@ -11,6 +11,7 @@ export type VisualizationPromptInputHandle = {
 export const VisualizationPromptInput = forwardRef<
   VisualizationPromptInputHandle,
   {
+    ariaLabel?: string;
     disabled?: boolean;
     isSubmitting?: boolean;
     onBlur?: () => void;
@@ -19,9 +20,13 @@ export const VisualizationPromptInput = forwardRef<
     onSubmit: () => void;
     onValueChange: (value: string) => void;
     placeholder: string;
+    rows?: number;
+    submitAriaLabel?: string;
+    textareaClassName?: string;
     value: string;
   }
 >(({
+  ariaLabel = "시각화 요청",
   disabled = false,
   isSubmitting = false,
   onBlur,
@@ -30,6 +35,9 @@ export const VisualizationPromptInput = forwardRef<
   onSubmit,
   onValueChange,
   placeholder,
+  rows = 1,
+  submitAriaLabel = "Assistant 요청",
+  textareaClassName,
   value,
 }, ref) => {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -50,12 +58,12 @@ export const VisualizationPromptInput = forwardRef<
     <form className="asklake-visualization-prompt-input" onSubmit={handleSubmit}>
       <InputGroup className="items-end p-1.5">
         <InputGroupTextarea
-          aria-label="시각화 요청"
-          className="min-h-11 px-3 py-2 text-sm font-medium"
+          aria-label={ariaLabel}
+          className={textareaClassName ?? "min-h-11 px-3 py-2 text-sm font-medium"}
           disabled={disabled || isSubmitting}
           placeholder={placeholder}
           ref={textareaRef}
-          rows={1}
+          rows={rows}
           value={value}
           onBlur={onBlur}
           onChange={(event) => onValueChange(event.target.value)}
@@ -67,7 +75,7 @@ export const VisualizationPromptInput = forwardRef<
             }
           }}
         />
-        <Button aria-label="Assistant 요청" disabled={!canSubmit} size="icon" type="submit">
+        <Button aria-label={submitAriaLabel} disabled={!canSubmit} size="icon" type="submit">
           {isSubmitting ? <Loader2 className="animate-spin" /> : <Send />}
         </Button>
       </InputGroup>
