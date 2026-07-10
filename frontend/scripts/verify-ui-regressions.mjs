@@ -146,6 +146,7 @@ const checks = [
       /header: "소유자"/,
       /<StatusBadge[\s\S]*min-w-\[132px\]/,
       /<Avatar size="lg">/,
+      /min-h-\[72px\] w-full justify-start rounded-none/,
       /onRowClick=\{\(row\) => onOpenDetail\(row\.original\)\}/,
       /event\.stopPropagation\(\);[\s\S]*onRequestDelete\(row\.original\);/,
     ],
@@ -162,6 +163,8 @@ const checks = [
       /role=\{onRowClick \? "link" : undefined\}/,
       /tabIndex=\{onRowClick \? 0 : undefined\}/,
       /event\.key !== "Enter" && event\.key !== " "/,
+      /data-row-navigation=\{onRowClick \? "true" : undefined\}/,
+      /data-row-navigation=\{onRowClick \? "true" : undefined\}[\s\S]*event\.stopPropagation\(\);[\s\S]*onRowClick\(row\);/,
     ],
   },
   {

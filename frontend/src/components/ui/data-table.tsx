@@ -302,11 +302,17 @@ export function DataTable<TData, TValue>({
                       <TableCell
                         className={cn(
                           alignClassName[align],
+                          onRowClick && "cursor-pointer",
                           meta.widthClassName,
                           meta.cellClassName,
                           cellClassName,
                         )}
+                        data-row-navigation={onRowClick ? "true" : undefined}
                         key={cell.id}
+                        onClick={onRowClick ? (event) => {
+                          event.stopPropagation();
+                          onRowClick(row);
+                        } : undefined}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
