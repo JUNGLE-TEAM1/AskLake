@@ -4,7 +4,7 @@ Issue: #500
 
 ## 1. Status
 
-Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. The current production data path remains the bounded Kafka snapshot direct-target bridge defined in `kafka-snapshot-direct-target-contract.md`. No continuous worker, Spark Structured Streaming query, automatic target append, or target format change is implemented yet.
+Phase 0 defines the product and interface boundary. Phase 1 persists `executionMode`, continuous configuration, and a durable runtime control record; it also adds the lifecycle command contract. Phase 2 adds the Redpanda broker prerequisite to prod-like Compose so the backend and future Spark submit containers share one internal Kafka endpoint. The current production data path remains the bounded Kafka snapshot direct-target bridge defined in `kafka-snapshot-direct-target-contract.md`. No continuous worker, Spark Structured Streaming query, automatic target append, or target format change is implemented yet.
 
 ## 2. Objective
 
