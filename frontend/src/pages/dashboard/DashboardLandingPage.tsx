@@ -112,6 +112,7 @@ export function DashboardLandingPage({
         )}
         className="dashboard-page-header"
         icon={<BarChart3 size={18} />}
+        iconClassName="mt-0"
         title="대시보드"
       />
 

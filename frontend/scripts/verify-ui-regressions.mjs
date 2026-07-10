@@ -202,6 +202,42 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard status labels stay Korean",
+    file: "src/utils/statusMeta.ts",
+    patterns: [
+      /draft: \{ label: "초안" \}/,
+      /published: \{ label: "게시됨" \}/,
+      /"초안": "draft"/,
+      /"게시됨": "published"/,
+    ],
+  },
+  {
+    name: "Dashboard list fixtures and status labels stay localized",
+    file: "src/pages/dashboard/dashboardListData.ts",
+    patterns: [
+      /name: "매출 분석 데모/,
+      /tags: "영업 · 매출 · 데모"/,
+      /name: "마케팅 캠페인 수익률 추적"/,
+      /name: "데이터 품질 운영 현황"/,
+      /owner: "관리자"/,
+    ],
+    forbiddenPatterns: [
+      /name: "Sales Analytics Demo/,
+      /tags: "Marketing · ROI"/,
+    ],
+  },
+  {
+    name: "Dashboard empty edit stage fills the initial workspace",
+    file: "src/styles/dashboard-runtime.css",
+    patterns: [
+      /\.asklake-dashboard-canvas-wrap\s*\{[^}]*background:\s*#ffffff;/s,
+      /\.asklake-dashboard-edit-stage\s*\{[^}]*display:\s*flex;/s,
+      /\.asklake-dashboard-edit-stage\s*\{[^}]*min-height:\s*100%;/s,
+      /\.asklake-dashboard-edit-stage\s*>\s*\.asklake-dashboard-empty-canvas\s*\{[^}]*min-height:\s*460px;/s,
+      /\.asklake-dashboard-edit-stage\s*>\s*\.asklake-dashboard-empty-canvas\s*\{[^}]*flex:\s*1 1 auto;/s,
+    ],
+  },
+  {
     name: "Dashboard published view keeps explicit share copy and shadcn empty actions",
     file: "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
     patterns: [

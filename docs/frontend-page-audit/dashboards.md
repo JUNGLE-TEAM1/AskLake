@@ -115,3 +115,4 @@
 - 상태는 Jobs와 같은 크기의 `StatusBadge`, 소유자는 `Avatar`와 `AvatarFallback` 조합으로 표시한다.
 - 기존 `Chip`, `TagList`, `dashboard-row-*` 전용 CSS를 제거하고 shadcn variant와 utility layout으로 대체했다.
 - 검색, owner/tag filter, server pagination, 상세 이동, 삭제 dialog 계약은 유지한다.
+- 기본 목록 fixture의 상태, 대시보드명, 태그, 소유자 표시값을 한글로 통일하고 masthead 아이콘과 제목의 상단 기준선을 맞췄다.
