@@ -5190,10 +5190,10 @@ export function ReviewPage({
   return (
     <CreationFlowLayout
       variant="review"
-      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} onPrev={() => onEdit("target")} onNext={onCreate} />}
+      actions={<CreationTopActions nextDisabled={createDisabled} nextLabel={createLabel} useShadcnStyles onPrev={() => onEdit("target")} onNext={onCreate} />}
     >
         <PageHeader
-          className="etl-flow-page-header"
+          className="etl-flow-page-header etl-review-page-header"
           icon={<FileText size={18} />}
           title="검토 및 생성"
         />
@@ -5277,8 +5277,8 @@ export function ReviewPage({
 
 function ReviewEditButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <Button aria-label={label} className="etl-review-edit" size="sm" type="button" variant="ghost" onClick={onClick}>
-      <Pencil aria-hidden="true" size={14} /> 수정
+    <Button aria-label={label} className="etl-review-edit" size="sm" type="button" variant="outline" onClick={onClick}>
+      <Pencil aria-hidden="true" data-icon="inline-start" /> 수정
     </Button>
   );
 }

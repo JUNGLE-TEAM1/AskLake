@@ -6022,26 +6022,21 @@
 }
 
 .etl-review-edit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 34px;
-  border: 1px solid #dee1e6;
-  border-radius: 8px;
-  background: #fff;
-  color: #374151;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 850;
-  padding: 0 12px;
   white-space: nowrap;
 }
 
-.etl-review-edit:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
+.etl-review-page-header > div > div:first-child {
+  align-items: center;
+}
+
+.etl-review-page-header > div > div:first-child > span {
+  margin-top: 0;
+}
+
+.etl-review-page-header h1 {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
 }
 
 .etl-review-kv {

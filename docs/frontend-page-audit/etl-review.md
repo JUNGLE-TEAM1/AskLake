@@ -29,7 +29,7 @@
 
 ## shadcn Review
 
-- 유지: `Button`은 기존 shadcn primitive를 그대로 사용한다.
+- 유지: Review의 이전/생성/수정 action은 기존 shadcn `Button` variant를 그대로 사용하고, 전용 CSS는 variant의 색상·테두리·글꼴을 덮어쓰지 않는다.
 - 미적용: `Alert`는 화면의 정보 밀도를 낮추기 위해 추가하지 않는다.
 - 보류: `DataTable`, `Panel`, `Badge`, `Separator` 전환은 공통 컴포넌트와 다른 ETL route에 미치는 범위가 커서 이번 작업에서 제외한다.
 - 접근성: 동일했던 `수정` 버튼 이름을 `기본 정보 수정`, `출력 스키마 수정`, `저장 위치 수정`, `권한 및 검증 수정`으로 구분한다.
@@ -43,6 +43,7 @@
 - 비어 있는 `Job ID`와 `Source`는 공백이나 구분 기호 대신 `미설정`으로 표시한다.
 - 출력 스키마 table에 가로 scroll viewport와 focus outline을 추가해 좁은 화면에서도 page 전체가 밀리지 않게 했다.
 - 빈 스키마 안내 cell은 말줄임 없이 줄바꿈한다.
+- Review PageHeader의 아이콘과 제목을 같은 세로 기준선에 정렬했다.
 
 ## Related CSS
 
