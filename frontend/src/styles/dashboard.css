@@ -2,6 +2,13 @@
   display: grid;
   gap: 20px;
   max-width: var(--layout-main-width);
+  font-family: var(--jobs-font-family);
+}
+
+.dashboard-list-menu,
+.dashboard-delete-dialog,
+.asklake-dashboard-share-sheet {
+  font-family: var(--jobs-font-family);
 }
 
 .page-body > .dashboard-list-page,

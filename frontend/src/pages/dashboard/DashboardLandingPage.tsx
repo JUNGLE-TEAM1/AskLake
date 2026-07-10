@@ -1,10 +1,8 @@
 import { AlertCircle, BarChart3, Plus, Table2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardDeleteConfirmDialog } from "./components/DashboardDeleteConfirmDialog";
 import { DashboardListToolbar } from "./components/DashboardListToolbar";
@@ -100,12 +98,6 @@ export function DashboardLandingPage({
   tags: string[];
   totalPages: number;
 }) {
-  const listStatus: { label: string; tone: StatusBadgeTone } = error || createError || deleteError
-    ? { label: "오류", tone: "danger" }
-    : isLoading
-      ? { label: "불러오는 중", tone: "default" }
-      : { label: "준비됨", tone: "success" };
-
   return (
     <div className="dashboard-page dashboard-list-page">
       <PageHeader
@@ -122,7 +114,6 @@ export function DashboardLandingPage({
           </Button>
         )}
         className="dashboard-page-header"
-        description="게시된 대시보드와 초안 상태를 확인하고 새 대시보드를 생성합니다."
         icon={<BarChart3 size={18} />}
         title="대시보드"
       />
@@ -146,14 +137,7 @@ export function DashboardLandingPage({
 
         <Panel className="dashboard-table-list">
           <PanelHeader
-            description="대시보드 이름, 소유자, 수정 이력을 확인하고 상세 화면으로 이동합니다."
             icon={<Table2 size={16} />}
-            meta={(
-              <>
-                <Badge size="sm">{pageStart}-{pageEnd}</Badge>
-                <StatusBadge size="sm" tone={listStatus.tone}>{listStatus.label}</StatusBadge>
-              </>
-            )}
             title="대시보드 목록"
           />
           <div className="dashboard-table-list-body">

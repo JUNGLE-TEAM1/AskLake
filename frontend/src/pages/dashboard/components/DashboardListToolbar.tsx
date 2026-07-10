@@ -1,5 +1,4 @@
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Filter, Search, SlidersHorizontal } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -47,7 +46,6 @@ export function DashboardListToolbar({
   tags: string[];
 }) {
   const activeSortLabel = getDashboardSortLabel(sortOption);
-  const activeFilterCount = (ownerFilter === "all" ? 0 : 1) + selectedTags.length;
   const setControlOpen = (control: DashboardListControl, open: boolean) => {
     if ((openControl === control) !== open) onToggleControl(control);
   };
@@ -55,9 +53,7 @@ export function DashboardListToolbar({
   return (
     <Panel className="dashboard-list-toolbar" overflow="visible">
       <PanelHeader
-        description="이름, 소유자, 태그, 정렬 기준으로 대시보드 목록을 좁혀 봅니다."
         icon={<SlidersHorizontal size={16} />}
-        meta={<Badge size="sm">{activeFilterCount ? `${activeFilterCount} active` : "필터"}</Badge>}
         title="검색 및 필터"
       />
       <FilterToolbar layout="actions">

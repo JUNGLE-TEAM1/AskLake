@@ -18,6 +18,7 @@ export function DashboardDeleteConfirmDialog({
   return (
     <DialogShell
       bodyClassName="grid gap-3"
+      contentClassName="dashboard-delete-dialog"
       footer={(
         <>
           <Button className="secondary-button" type="button" disabled={isDeleting} onClick={onCancel} size="sm" variant="outline">취소</Button>
