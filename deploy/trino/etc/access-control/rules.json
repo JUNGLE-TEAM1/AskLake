@@ -1,0 +1,19 @@
+{
+  "catalogs": [
+    {
+      "user": "asklake-api",
+      "catalog": "iceberg",
+      "allow": "read-only"
+    }
+  ],
+  "tables": [
+    {
+      "user": "asklake-api",
+      "catalog": "iceberg",
+      "schema": "asklake",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    }
+  ],
+  "functions": []
+}

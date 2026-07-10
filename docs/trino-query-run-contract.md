@@ -138,4 +138,6 @@ Trino 제출 전에 backend는 다음 순서로 검증합니다.
 
 Phase 1은 Trino single-node coordinator와 Iceberg JDBC catalog, MinIO S3 warehouse 구성, Catalog `queryEngineTable` mapping schema와 backend configuration을 추가합니다. `scripts/verify-deploy-dependencies.sh`는 Trino image availability도 확인합니다.
 
-Phase 2는 `TrinoClient`의 statement/nextUri/cancel protocol adapter, canonical Trino Query Run payload persistence, Dataset display name -> physical table compiler, Trino submit/refresh/cancel service를 추가합니다. 기존 `/api/query/runs`와 frontend는 아직 DuckDB compatibility runtime을 사용한다. API routing 전환, cursor result retention, UI polling과 current DuckDB 제거는 후속 Phase다.
+Phase 2는 `TrinoClient`의 statement/nextUri/cancel protocol adapter, canonical Trino Query Run payload persistence, Dataset display name -> physical table compiler, Trino submit/refresh/cancel service를 추가합니다. 보안 보완으로 AST 기반 single SELECT validation, physical table 직접 입력/table function 차단, server-side bounded result page 저장, opaque cursor, run submitter ownership, nextUri coordinator origin 검증, audit lifecycle를 포함합니다.
+
+production Trino는 backend-only internal network, HTTPS/password authentication, file-based read-only access control, separate Iceberg JDBC/MinIO credentials를 전제로 한다. TLS CA, keystore, password hash file은 서버 secret 경로에서 mount하며 repository에 저장하지 않는다. 기존 `/api/query/runs`와 frontend는 아직 DuckDB compatibility runtime을 사용한다. API routing 전환과 UI polling은 후속 Phase다.

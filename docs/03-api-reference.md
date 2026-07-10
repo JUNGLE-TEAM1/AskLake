@@ -31,6 +31,11 @@ TRINO_CATALOG=iceberg
 TRINO_SCHEMA=asklake
 TRINO_USER=asklake-api
 TRINO_QUERY_TIMEOUT_SECONDS=300
+TRINO_MAX_RESPONSE_BYTES=2000000
+TRINO_MAX_RESULT_BYTES=50000000
+TRINO_MAX_RESULT_PAGES=1000
+TRINO_RESULT_RETENTION_SECONDS=3600
+TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 ```
 
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
@@ -43,6 +48,7 @@ TRINO_QUERY_TIMEOUT_SECONDS=300
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
 - `TRINO_ENABLED`은 후속 Query Run adapter 전환 전에는 `false`로 유지한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata이며, 현재 DuckDB compatibility runtime의 입력으로 사용하지 않는다.
+- Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
 
 ## 3) 공통 규칙
 

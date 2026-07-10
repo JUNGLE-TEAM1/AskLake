@@ -128,6 +128,16 @@ TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
 
 `TRINO_ENABLED`은 Query Run adapter가 도입되는 후속 Phase에서 true로 전환한다. Phase 1의 backend SQL API는 아직 DuckDB compatibility runtime을 사용한다.
 
+Production Trino는 public port를 열지 않고 backend와만 공유하는 internal network에서 HTTPS/password authentication으로 실행한다. 아래 secret files는 서버에만 만들고 Git에 올리지 않는다.
+
+```text
+/opt/asklake/secrets/trino-ca.pem
+/opt/asklake/secrets/trino-keystore.jks
+/opt/asklake/secrets/trino-password.db
+```
+
+`trino-password.db`에는 bcrypt 또는 PBKDF2 hash만 넣는다. `TRINO_S3_*`와 `TRINO_ICEBERG_JDBC_*`는 MinIO root/Postgres application account를 재사용하지 않는 전용 read-only account를 사용한다.
+
 ## 4. 재배포
 
 ```bash

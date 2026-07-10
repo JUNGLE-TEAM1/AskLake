@@ -28,6 +28,14 @@ class TrinoQueryRunResult(CamelModel):
     row_count: int | None = None
 
 
+class TrinoQueryRunResultPage(CamelModel):
+    columns: list[str] = Field(default_factory=list)
+    next_cursor: str | None = None
+    page_size: int
+    rows: list[list[object]] = Field(default_factory=list)
+    run_id: str
+
+
 class SubmitTrinoQueryRunRequest(CamelModel):
     base_dataset_id: str
     client_request_id: str | None = None
@@ -48,6 +56,8 @@ class TrinoQueryRunResponse(CamelModel):
     started_at: str | None = None
     stats: TrinoQueryRunStats | None = None
     status: TrinoQueryRunStatus
+    submitted_by_name: str | None = None
+    submitted_by_user_id: str | None = None
     submitted_at: str
     trino_query_id: str | None = None
 
@@ -58,4 +68,5 @@ class TrinoClientPage(CamelModel):
     next_uri: str | None = None
     query_id: str
     raw_stats: dict[str, Any] = Field(default_factory=dict)
+    rows: list[list[object]] = Field(default_factory=list)
     state: str | None = None

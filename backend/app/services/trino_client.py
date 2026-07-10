@@ -1,7 +1,10 @@
+import base64
 import json
+import ssl
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from fastapi import status
 
@@ -16,6 +19,11 @@ class TrinoClient:
 
     def __init__(self, runtime_settings: Settings | None = None) -> None:
         self.settings = runtime_settings or settings
+        ssl_context = ssl.create_default_context(cafile=self.settings.trino_tls_ca_file) if self.settings.trino_tls_ca_file else None
+        handlers: list[object] = [NoRedirectHandler()]
+        if ssl_context is not None:
+            handlers.append(HTTPSHandler(context=ssl_context))
+        self.opener = build_opener(*handlers)
 
     def submit(self, query: str) -> TrinoClientPage:
         endpoint = f"{self.settings.trino_base_url.rstrip('/')}/v1/statement"
@@ -28,14 +36,25 @@ class TrinoClient:
                 "X-Trino-Catalog": self.settings.trino_catalog,
                 "X-Trino-Schema": self.settings.trino_schema,
                 "X-Trino-User": self.settings.trino_user,
+                **self._auth_headers(),
             },
         )
 
     def fetch(self, next_uri: str) -> TrinoClientPage:
-        return self._request(next_uri, method="GET")
+        validate_next_uri(next_uri, self.settings.trino_base_url)
+        return self._request(next_uri, method="GET", headers=self._auth_headers())
 
     def cancel(self, next_uri: str) -> None:
-        self._request(next_uri, method="DELETE", allow_empty_response=True)
+        validate_next_uri(next_uri, self.settings.trino_base_url)
+        self._request(next_uri, method="DELETE", headers=self._auth_headers(), allow_empty_response=True)
+
+    def _auth_headers(self) -> dict[str, str]:
+        username = self.settings.trino_auth_username or self.settings.trino_user
+        password = self.settings.trino_auth_password
+        if not password:
+            return {}
+        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        return {"Authorization": f"Basic {token}"}
 
     def _request(
         self,
@@ -53,22 +72,36 @@ class TrinoClient:
             method=method,
         )
         try:
-            with urlopen(request, timeout=self.settings.trino_query_timeout_seconds) as response:
-                response_text = response.read().decode("utf-8")
+            with self.opener.open(request, timeout=self.settings.trino_query_timeout_seconds) as response:
+                raw_response = response.read(self.settings.trino_max_response_bytes + 1)
         except HTTPError as exc:
-            message = read_error_message(exc)
             raise ApiError(
                 ErrorCode.BACKEND_TIMEOUT if exc.code in {429, 502, 503, 504} else ErrorCode.INTERNAL_ERROR,
                 "Trino request failed",
                 status.HTTP_503_SERVICE_UNAVAILABLE if exc.code in {429, 502, 503, 504} else status.HTTP_502_BAD_GATEWAY,
-                {"status": exc.code, "message": message},
+                {"status": exc.code},
             ) from exc
         except URLError as exc:
             raise ApiError(
                 ErrorCode.BACKEND_TIMEOUT,
                 "Trino coordinator is unavailable",
                 status.HTTP_503_SERVICE_UNAVAILABLE,
-                {"reason": str(exc.reason)},
+                None,
+            ) from exc
+
+        if len(raw_response) > self.settings.trino_max_response_bytes:
+            raise ApiError(
+                ErrorCode.BACKEND_TIMEOUT,
+                "Trino response exceeded the configured safety limit",
+                status.HTTP_502_BAD_GATEWAY,
+            )
+        try:
+            response_text = raw_response.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ApiError(
+                ErrorCode.INTERNAL_ERROR,
+                "Trino returned an invalid response",
+                status.HTTP_502_BAD_GATEWAY,
             ) from exc
 
         if allow_empty_response and not response_text.strip():
@@ -106,20 +139,37 @@ def parse_trino_page(payload: dict[str, Any]) -> TrinoClientPage:
         next_uri=string_or_none(payload.get("nextUri")),
         query_id=str(payload.get("id") or ""),
         raw_stats=raw_stats,
+        rows=[row for row in payload.get("data", []) if isinstance(row, list)],
         state=string_or_none(raw_stats.get("state")),
     )
-
-
-def read_error_message(error: HTTPError) -> str:
-    try:
-        payload = json.loads(error.read().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return str(error.reason)
-    if isinstance(payload, dict):
-        return str(payload.get("message") or payload.get("error") or error.reason)
-    return str(error.reason)
 
 
 def string_or_none(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+class NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> Request | None:
+        return None
+
+
+def validate_next_uri(next_uri: str, base_url: str) -> None:
+    next_parts = urlsplit(next_uri)
+    base_parts = urlsplit(base_url)
+    next_port = next_parts.port or (443 if next_parts.scheme == "https" else 80)
+    base_port = base_parts.port or (443 if base_parts.scheme == "https" else 80)
+    if (
+        next_parts.scheme not in {"http", "https"}
+        or next_parts.username
+        or next_parts.password
+        or next_parts.hostname != base_parts.hostname
+        or next_port != base_port
+        or next_parts.scheme != base_parts.scheme
+        or not next_parts.path.startswith("/v1/statement")
+    ):
+        raise ApiError(
+            ErrorCode.VALIDATION_ERROR,
+            "Invalid Trino query continuation URL",
+            status.HTTP_502_BAD_GATEWAY,
+        )

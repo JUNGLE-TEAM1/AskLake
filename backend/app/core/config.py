@@ -30,7 +30,15 @@ class Settings(BaseSettings):
     trino_catalog: str = "iceberg"
     trino_schema: str = "asklake"
     trino_user: str = "asklake-api"
+    trino_auth_username: str | None = None
+    trino_auth_password: str | None = None
+    trino_tls_ca_file: str | None = None
     trino_query_timeout_seconds: float = Field(default=300.0, ge=1.0, le=3600.0)
+    trino_max_response_bytes: int = Field(default=2_000_000, ge=65_536, le=50_000_000)
+    trino_max_result_bytes: int = Field(default=50_000_000, ge=1_000_000, le=1_000_000_000)
+    trino_max_result_pages: int = Field(default=1_000, ge=1, le=100_000)
+    trino_result_retention_seconds: int = Field(default=3_600, ge=60, le=604_800)
+    trino_max_concurrent_runs_per_user: int = Field(default=2, ge=1, le=100)
     backend_cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

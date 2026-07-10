@@ -1,11 +1,12 @@
-from datetime import datetime, timezone
-import re
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
 from typing import Iterable
 from uuid import uuid4
 
 from fastapi import status
 
-from app.core.auth_context import ActorContext, require_permission
+from app.core.auth_context import ActorContext, can, require_permission
 from app.core.config import Settings, settings
 from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
@@ -18,20 +19,13 @@ from app.schemas.trino import (
     TrinoClientPage,
     TrinoQueryRunResponse,
     TrinoQueryRunResult,
+    TrinoQueryRunResultPage,
     TrinoQueryRunStats,
 )
 from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
-from app.services.sql_service import (
-    SQL_TABLE_REFERENCE_RE,
-    build_dataset_context_map,
-    mask_sql_comments_and_literals,
-    normalize_sql_identifier,
-    resolve_referenced_datasets,
-    unique_dataset_ids,
-    validate_read_only_query,
-)
 from app.services.trino_client import TrinoClient
+from app.services.trino_sql_compiler import compile_trino_read_query
 
 
 class TrinoQueryRunService:
@@ -59,16 +53,20 @@ class TrinoQueryRunService:
             )
 
         actor_context = actor or ActorContext()
-        statement = validate_read_only_query(request.query)
+        actor_key = actor_context.id or actor_context.name
+        if self.repository.count_active_trino_runs_for_actor(actor_key) >= self.settings.trino_max_concurrent_runs_per_user:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Concurrent query run limit reached",
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                {"limit": self.settings.trino_max_concurrent_runs_per_user},
+            )
         context_datasets = self._resolve_context(request)
         self._require_query_access(context_datasets, actor_context, request.query)
-        referenced_datasets = resolve_referenced_datasets(
-            mask_sql_comments_and_literals(statement),
-            context_datasets,
-        )
-        compiled_query = compile_trino_query(statement, referenced_datasets, context_datasets)
+        compiled_query, _ = compile_trino_read_query(request.query, context_datasets)
         page = self.client.submit(compiled_query)
-        response = build_run_response(request, page)
+        response = build_run_response(request, page, actor_context, self.settings.trino_result_retention_seconds)
+        response = self._store_result_page(response, page)
         payload = response.model_dump(by_alias=True, exclude_none=True, mode="json")
         payload["compiledQuery"] = compiled_query
         payload["trinoNextUri"] = page.next_uri
@@ -90,30 +88,34 @@ class TrinoQueryRunService:
 
     def get(self, run_id: str, actor: ActorContext | None = None) -> TrinoQueryRunResponse:
         response = TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
-        self._require_access_for_response(response, actor or ActorContext())
+        self._require_access_for_response(response, actor or ActorContext(), operation="view")
+        self._require_result_retention(response)
         return response
 
     def refresh(self, run_id: str, actor: ActorContext | None = None) -> TrinoQueryRunResponse:
         payload = self._get_payload(run_id)
         response = TrinoQueryRunResponse.model_validate(payload)
-        self._require_access_for_response(response, actor or ActorContext())
+        self._require_access_for_response(response, actor or ActorContext(), operation="view")
         next_uri = str(payload.get("trinoNextUri") or "").strip()
         if response.status in {"succeeded", "failed", "cancelled"} or not next_uri:
             return response
 
         page = self.client.fetch(next_uri)
         updated = apply_trino_page(response, page)
+        updated = self._store_result_page(updated, page)
         updated_payload = updated.model_dump(by_alias=True, exclude_none=True, mode="json")
         updated_payload["compiledQuery"] = payload.get("compiledQuery")
         updated_payload["trinoNextUri"] = page.next_uri
         self.repository.save_run_payload(updated_payload)
+        if updated.status in {"succeeded", "failed", "cancelled"} and updated.status != response.status:
+            self._record_terminal_audit(updated, actor or ActorContext())
         return updated
 
     def cancel(self, run_id: str, actor: ActorContext | None = None) -> TrinoQueryRunResponse:
         payload = self._get_payload(run_id)
         response = TrinoQueryRunResponse.model_validate(payload)
         actor_context = actor or ActorContext()
-        self._require_access_for_response(response, actor_context)
+        self._require_access_for_response(response, actor_context, operation="cancel")
         next_uri = str(payload.get("trinoNextUri") or "").strip()
         if response.status in {"succeeded", "failed", "cancelled"} or not next_uri:
             return response
@@ -136,13 +138,44 @@ class TrinoQueryRunService:
             result="success",
             status_code=status.HTTP_200_OK,
             target_id=response.base_dataset_id,
-            target_type="dataset",
+            target_type="query_run",
         )
         return cancelled
 
+    def get_result_page(
+        self,
+        run_id: str,
+        cursor: str | None,
+        actor: ActorContext | None = None,
+    ) -> TrinoQueryRunResultPage:
+        response = TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
+        self._require_access_for_response(response, actor or ActorContext(), operation="view")
+        page_index = decode_cursor(cursor)
+        page = self.repository.get_result_page(run_id, page_index)
+        if page is None:
+            raise ApiError(ErrorCode.NOT_FOUND, "Query result page not found", status.HTTP_404_NOT_FOUND)
+        next_page = self.repository.get_result_page(run_id, page_index + 1)
+        safe_record_audit_event(
+            self.repository.db,
+            action="query_run.result.view",
+            actor=actor or ActorContext(),
+            api_path=f"/api/query/runs/{run_id}/results",
+            http_method="GET",
+            metadata={"pageIndex": page_index, "trinoQueryId": response.trino_query_id},
+            target_id=run_id,
+            target_type="query_run",
+        )
+        return TrinoQueryRunResultPage(
+            columns=page.columns,
+            next_cursor=encode_cursor(page_index + 1) if next_page else None,
+            page_size=len(page.rows),
+            rows=page.rows,
+            run_id=run_id,
+        )
+
     def _resolve_context(self, request: SubmitTrinoQueryRunRequest) -> list[CatalogDatasetResponse]:
         base_dataset = self._get_dataset(request.base_dataset_id, label="Base dataset")
-        reference_ids = unique_dataset_ids(request.reference_dataset_ids)
+        reference_ids = unique_values(request.reference_dataset_ids)
         return [
             base_dataset,
             *(self._get_dataset(dataset_id, label="Reference dataset") for dataset_id in reference_ids),
@@ -175,7 +208,7 @@ class TrinoQueryRunService:
                 action="query",
                 api_path="/api/query/runs",
                 http_method="POST",
-                metadata={"owner": dataset.owner, "query": query[:500]},
+                metadata={"owner": dataset.owner, **query_audit_metadata(query)},
                 resource_id=dataset.id,
                 resource_name=dataset.name,
                 resource_type="dataset",
@@ -195,7 +228,7 @@ class TrinoQueryRunService:
                     actor=actor,
                     api_path="/api/query/runs",
                     http_method="POST",
-                    metadata={"owner": dataset.owner, "query": query[:500]},
+                    metadata={"owner": dataset.owner, **query_audit_metadata(query)},
                     result="forbidden",
                     status_code=exc.status_code,
                     target_id=dataset.id,
@@ -204,12 +237,96 @@ class TrinoQueryRunService:
                 )
                 raise
 
-    def _require_access_for_response(self, response: TrinoQueryRunResponse, actor: ActorContext) -> None:
+    def _require_access_for_response(self, response: TrinoQueryRunResponse, actor: ActorContext, *, operation: str) -> None:
         context_datasets = [
             self._get_dataset(response.base_dataset_id, label="Base dataset"),
             *(self._get_dataset(dataset_id, label="Reference dataset") for dataset_id in response.reference_dataset_ids),
         ]
         self._require_query_access(context_datasets, actor, response.query)
+        is_submitter = (
+            (response.submitted_by_user_id and actor.id == response.submitted_by_user_id)
+            or actor.name == response.submitted_by_name
+        )
+        can_manage = can(
+            actor,
+            "manage",
+            owner=context_datasets[0].owner,
+            grants=[grant.model_dump(by_alias=True) for grant in context_datasets[0].permission_grants],
+        )
+        if actor.is_admin or is_submitter or (operation == "cancel" and can_manage):
+            return
+        safe_record_audit_event(
+            self.repository.db,
+            action=f"query_run.{operation}.forbidden",
+            actor=actor,
+            api_path=f"/api/query/runs/{response.run_id}",
+            http_method="POST" if operation == "cancel" else "GET",
+            metadata={"trinoQueryId": response.trino_query_id},
+            result="forbidden",
+            status_code=status.HTTP_403_FORBIDDEN,
+            target_id=response.run_id,
+            target_type="query_run",
+        )
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Only the submitting user can view this query run",
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def _store_result_page(self, response: TrinoQueryRunResponse, page: TrinoClientPage) -> TrinoQueryRunResponse:
+        if not page.rows:
+            return response
+        page_count = self.repository.count_result_pages(response.run_id)
+        page_bytes = len(json.dumps(page.rows, ensure_ascii=False, default=str).encode("utf-8"))
+        total_bytes = self.repository.total_result_bytes(response.run_id) + page_bytes
+        if page_count >= self.settings.trino_max_result_pages or total_bytes > self.settings.trino_max_result_bytes:
+            if page.next_uri:
+                self.client.cancel(page.next_uri)
+            raise ApiError(
+                ErrorCode.BACKEND_TIMEOUT,
+                "Query result exceeded the configured storage limit",
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+        columns = page.columns or (response.result.columns if response.result else [])
+        self.repository.save_result_page(
+            run_id=response.run_id,
+            page_index=page_count,
+            columns=columns,
+            rows=page.rows,
+            byte_size=page_bytes,
+        )
+        result = response.result or TrinoQueryRunResult()
+        return response.model_copy(update={
+            "result": result.model_copy(update={"columns": columns, "row_count": (result.row_count or 0) + len(page.rows)}),
+        })
+
+    def _record_terminal_audit(self, response: TrinoQueryRunResponse, actor: ActorContext) -> None:
+        safe_record_audit_event(
+            self.repository.db,
+            action=f"query_run.{response.status}",
+            actor=actor,
+            api_path=f"/api/query/runs/{response.run_id}",
+            http_method="GET",
+            metadata={"trinoQueryId": response.trino_query_id, "stats": response.stats.model_dump(by_alias=True) if response.stats else {}},
+            result="success" if response.status == "succeeded" else "failed",
+            target_id=response.run_id,
+            target_type="query_run",
+        )
+
+    def _require_result_retention(self, response: TrinoQueryRunResponse) -> None:
+        expires_at = response.result.retention_expires_at if response.result else None
+        if not expires_at:
+            return
+        try:
+            expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError:
+            return
+        if expiry <= datetime.now(timezone.utc):
+            raise ApiError(
+                ErrorCode.NOT_FOUND,
+                "Query result retention has expired",
+                status.HTTP_410_GONE,
+            )
 
     def _get_payload(self, run_id: str) -> dict[str, object]:
         payload = self.repository.get_run_payload(run_id)
@@ -223,51 +340,28 @@ class TrinoQueryRunService:
         return payload
 
 
-def compile_trino_query(
-    statement: str,
-    referenced_datasets: list[CatalogDatasetResponse],
-    context_datasets: list[CatalogDatasetResponse],
-) -> str:
-    dataset_by_table_name = build_dataset_context_map(context_datasets)
-    referenced_by_id = {dataset.id: dataset for dataset in referenced_datasets}
-
-    def replace_reference(match: re.Match[str]) -> str:
-        raw_identifier = match.group(1)
-        dataset = dataset_by_table_name.get(normalize_sql_identifier(raw_identifier))
-        if dataset is None or dataset.id not in referenced_by_id:
-            return match.group(0)
-        mapping = dataset.query_engine_table
-        if mapping is None:
-            raise ApiError(
-                ErrorCode.VALIDATION_ERROR,
-                "Dataset is missing its Trino table mapping",
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
-                {"datasetId": dataset.id, "datasetName": dataset.name},
-            )
-        physical_table = ".".join(
-            quote_trino_identifier(part)
-            for part in (mapping.catalog, mapping.schema_, mapping.table)
-        )
-        identifier_start = match.start(1) - match.start(0)
-        return f"{match.group(0)[:identifier_start]}{physical_table}"
-
-    return SQL_TABLE_REFERENCE_RE.sub(replace_reference, statement)
-
-
 def build_run_response(
     request: SubmitTrinoQueryRunRequest,
     page: TrinoClientPage,
+    actor: ActorContext,
+    retention_seconds: int,
 ) -> TrinoQueryRunResponse:
+    submitted_at = current_utc_timestamp()
     response = TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
         error=page.error,
         query=request.query,
-        reference_dataset_ids=unique_dataset_ids(request.reference_dataset_ids),
-        result=TrinoQueryRunResult(columns=page.columns) if page.columns else None,
+        reference_dataset_ids=unique_values(request.reference_dataset_ids),
+        result=TrinoQueryRunResult(
+            columns=page.columns,
+            retention_expires_at=(datetime.now(timezone.utc) + timedelta(seconds=retention_seconds)).isoformat(),
+        ) if page.columns else None,
         run_id=f"trino_{uuid4().hex[:12]}",
         stats=trino_stats(page.raw_stats),
         status=trino_status(page),
-        submitted_at=current_utc_timestamp(),
+        submitted_at=submitted_at,
+        submitted_by_name=actor.name,
+        submitted_by_user_id=actor.id,
         trino_query_id=page.query_id or None,
     )
     return apply_terminal_timestamps(response)
@@ -331,9 +425,41 @@ def int_or_none(value: object) -> int | None:
         return None
 
 
-def quote_trino_identifier(identifier: str) -> str:
-    escaped = str(identifier).replace('"', '""')
-    return f'"{escaped}"'
+def query_audit_metadata(query: str) -> dict[str, object]:
+    normalized = " ".join(query.split())
+    return {
+        "queryHash": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        "queryLength": len(query),
+    }
+
+
+def unique_values(values: Iterable[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in seen:
+            result.append(normalized)
+            seen.add(normalized)
+    return result
+
+
+def decode_cursor(cursor: str | None) -> int:
+    if cursor is None:
+        return 0
+    if not cursor.startswith("page:"):
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    try:
+        page_index = int(cursor.removeprefix("page:"))
+    except ValueError as exc:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
+    if page_index < 0:
+        raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY)
+    return page_index
+
+
+def encode_cursor(page_index: int) -> str:
+    return f"page:{page_index}"
 
 
 def current_utc_timestamp() -> str:
