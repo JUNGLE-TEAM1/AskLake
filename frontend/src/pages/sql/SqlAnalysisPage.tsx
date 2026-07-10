@@ -17,8 +17,8 @@ import {
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
-import { canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
+import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import { SqlPreviewTable } from "./SqlPreviewTable";
@@ -54,6 +54,7 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
 
 export function SqlAnalysisPage({
   cachedResult,
+  currentUser,
   dataset,
   datasets,
   onAction,
@@ -61,6 +62,7 @@ export function SqlAnalysisPage({
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
+  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -164,7 +166,7 @@ export function SqlAnalysisPage({
     () => datasets.filter((item) => referenceDatasetIdSet.has(item.id)),
     [datasets, referenceDatasetIdSet],
   );
-  const hasQueryPermission = Boolean(baseDataset && canQueryDataset(baseDataset) && selectedReferenceDatasets.every(canQueryDataset));
+  const hasQueryPermission = Boolean(baseDataset && canQueryDatasetAs(baseDataset, currentUser) && selectedReferenceDatasets.every((item) => canQueryDatasetAs(item, currentUser)));
   const queryPermissionMessage = hasQueryPermission ? "" : permissionDeniedMessage("선택 데이터셋", "SQL 실행");
   const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {

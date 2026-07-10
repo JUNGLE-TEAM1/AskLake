@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -46,3 +46,59 @@ class PermissionGrantModel(TimestampMixin, Base):
     actions: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     source: Mapped[str] = mapped_column(String(64), default="admin", nullable=False)
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class AuditEventModel(TimestampMixin, Base):
+    __tablename__ = "audit_events"
+    __table_args__ = (
+        Index("ix_audit_events_created_at", "created_at"),
+        Index("ix_audit_events_actor", "actor_id"),
+        Index("ix_audit_events_resource", "target_type", "target_id"),
+        Index("ix_audit_events_result", "result"),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    actor_groups: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    api_path: Mapped[str] = mapped_column(Text, nullable=False)
+    request_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    result: Mapped[str] = mapped_column(String(32), nullable=False)
+    status_code: Mapped[int | None] = mapped_column(nullable=True)
+    target_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    target_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    http_method: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict, nullable=False)
+
+
+class PrincipalControlModel(TimestampMixin, Base):
+    __tablename__ = "principal_controls"
+    __table_args__ = (
+        Index("ix_principal_controls_principal", "principal_type", "principal_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    principal_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class ResourceLockModel(TimestampMixin, Base):
+    __tablename__ = "resource_locks"
+    __table_args__ = (
+        Index("ix_resource_locks_resource", "resource_type", "resource_id", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    locked: Mapped[bool] = mapped_column(default=False, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

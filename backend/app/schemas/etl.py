@@ -352,6 +352,25 @@ class JobCommandResponse(CamelModel):
     processing_result: dict[str, Any] | None = None
 
 
+class AirflowRunExecutionRequest(CamelModel):
+    command: Literal["run", "retry"] = "run"
+
+
+class AirflowRunExecutionResponse(CamelModel):
+    status: Literal["success", "failed"]
+    job_id: str
+    run_id: str
+    dataset_id: str | None = None
+    input_rows: int = 0
+    output_rows: int = 0
+    output_path: str = "-"
+    duration_ms: int | None = None
+    schema_: list[dict[str, Any]] = Field(default_factory=list, alias="schema")
+    quality: dict[str, Any] | None = None
+    failed_stage: str | None = None
+    error: str | None = None
+
+
 class ScheduledJobRunRequest(CamelModel):
     force: bool = False
     job_id: str | None = None
@@ -388,7 +407,7 @@ class KafkaReviewIngestRequest(CamelModel):
     transform_steps: list[TransformStepDraft] = Field(default_factory=list)
     quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
     landing_bucket: str = "m3-raw"
-    landing_endpoint: str = "http://127.0.0.1:19000"
+    landing_endpoint: str = "http://127.0.0.1:9000"
     landing_prefix: str = "kafka-landing"
     local_landing_dir: str | None = None
     max_messages: int = Field(default=100, ge=1, le=1_000_000)

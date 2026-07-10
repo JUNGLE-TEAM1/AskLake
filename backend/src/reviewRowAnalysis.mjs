@@ -72,20 +72,32 @@ const categoryRules = [
 const positiveKeywords = ["works well", "worked great", "great price", "perfect", "love", "excellent", "recommend", "happy", "good quality", "easy to install"];
 
 const supportedReviewAnalysisMethods = [
-  "copy_or_extract_field",
+  "copy",
   "one_of_values",
-  "sentiment_3way",
-  "issue_category",
-  "issue_subcategory",
-  "severity_4level",
-  "boolean_y_n",
-  "extractive_summary",
-  "evidence_span",
+  "instruction",
 ];
 
 const reviewAnalysisMethodAliases = {
-  custom_instruction: "one_of_values",
-  issue_taxonomy: "issue_category",
+  copy_or_extract_field: "copy",
+  custom_instruction: "instruction",
+  copy: "copy",
+  instruction: "instruction",
+  issue_taxonomy: "one_of_values",
+  issue_category: "one_of_values",
+  issue_subcategory: "one_of_values",
+  severity_4level: "one_of_values",
+  text_classification: "one_of_values",
+  sentiment: "one_of_values",
+  sentiment_3way: "one_of_values",
+  issue_present: "one_of_values",
+  issue_present_binary: "one_of_values",
+  action_needed: "one_of_values",
+  action_needed_binary: "one_of_values",
+  boolean_y_n: "one_of_values",
+  summary: "instruction",
+  evidence: "instruction",
+  extractive_summary: "instruction",
+  evidence_span: "instruction",
 };
 
 export async function getCellphonesReviewAnalysisStatus() {
@@ -106,24 +118,27 @@ export async function suggestReviewAnalysisSchema(request = {}) {
   const sourceColumns = Array.isArray(request.sourceColumns) ? request.sourceColumns.slice(0, 40) : [];
   const sampleRows = Array.isArray(request.sampleRows) ? request.sampleRows.slice(0, 3) : [];
   const prompt = [
-    "You design a structured output schema for ecommerce product review rows.",
+    "You design a structured output schema for source rows that contain free text.",
     "Return one minified valid JSON object only. No markdown. No comments. No prose.",
     "The user wants a draft schema only; humans will edit it later.",
-    "Recommend columns that can be produced per review row for classification/extraction.",
+    "Recommend columns that can be produced per source row for classification, extraction, copied fields, and summarization.",
     "Prefer concise snake_case targetName values.",
     "Each column must have: targetName, label, type, nullable.",
     `Each column must include method. Supported methods: ${supportedReviewAnalysisMethods.join(", ")}.`,
+    "Use method copy for copied fields.",
+    "Use method one_of_values only when the output must be selected from allowedValues.",
+    "Use method instruction for summary, evidence, reason, or other free-form extraction/generation.",
     "Use allowedValues only for method one_of_values.",
     "Allowed types: String, Float, Integer, Boolean, Timestamp.",
     "Use English label values to avoid escaping problems.",
     "Do not put quotes inside string values.",
-    "Include columns for copied fields, sentiment, issue/category, issue subcategory, severity/risk, short summary, and evidence/reason.",
-    "Do not include UI confidence columns; quality thresholds are backend metadata only.",
+    "Include columns for copied identifiers when present, sentiment when useful, issue/category when useful, severity/risk when useful, short summary, and evidence/reason.",
+    "Do not include confidence, score, accuracy, or quality columns in the suggested output schema.",
     "",
     `Source columns: ${JSON.stringify(sourceColumns)}`,
     `Sample rows: ${JSON.stringify(sampleRows).slice(0, 6000)}`,
     "",
-    "JSON shape: {\"columns\":[{\"targetName\":\"sentiment\",\"label\":\"sentiment\",\"type\":\"String\",\"nullable\":false,\"method\":\"sentiment_3way\"}]}",
+    "JSON shape: {\"columns\":[{\"targetName\":\"sentiment\",\"label\":\"sentiment\",\"type\":\"String\",\"nullable\":false,\"method\":\"one_of_values\",\"allowedValues\":[\"positive\",\"mixed\",\"negative\"]}]}",
   ].join("\n");
 
   const response = await fetch(endpoint, {
@@ -169,6 +184,7 @@ export async function runCellphonesReviewAnalysis(request = {}) {
   const full = request.full === true || requestedLimit === 0;
   const limit = full ? 0 : Math.min(maxInteractiveLimit, boundedPositiveInt(requestedLimit, defaultLimit, 1, maxInteractiveLimit));
   const outputSchema = normalizeOutputSchema(request.schemaColumns ?? request.columns);
+  const runtime = normalizeReviewAnalysisRuntime(request.runtime);
   const startedAt = new Date();
   const runId = `cellphones_${startedAt.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
   const runDir = path.join(outputRoot, runId);
@@ -184,6 +200,7 @@ export async function runCellphonesReviewAnalysis(request = {}) {
     outputPath,
     outputSchema,
     runId,
+    runtime,
     startedAt,
     summaryPath,
   });
@@ -209,7 +226,9 @@ export async function runCellphonesReviewAnalysis(request = {}) {
       if (!line.trim()) continue;
       const row = parseJsonLine(line, result);
       if (!row) continue;
-      const analyzed = await analyzeReviewRowWithLocalLlm(row, outputSchema, result.processedRows + 1);
+      const analyzed = runtime === "local_llm"
+        ? await analyzeReviewRowWithLocalLlm(row, outputSchema, result.processedRows + 1)
+        : analyzeReviewRowScalable(row, outputSchema, result.processedRows + 1);
       const projected = analyzed.projected;
       recordClassifiedRow(result, analyzed.metricsRow, projected);
       output.write(`${JSON.stringify(projected)}\n`);
@@ -236,26 +255,27 @@ export async function runCellphonesReviewAnalysis(request = {}) {
   return result;
 }
 
-function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, startedAt, summaryPath }) {
+function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId, runtime, startedAt, summaryPath }) {
+  const usesLocalLlm = runtime === "local_llm";
   return {
     analysis: {
-      engine: "review-row-to-csv",
+      engine: "text-row-to-structured-csv",
       fallbackUsed: false,
-      mode: "local_llm_row_by_row_temporary",
-      modelArtifact: localLlmModel,
-      rowRuntime: {
-        endpoint: redactEndpoint(localLlmEndpoint),
-        timeoutMs: localLlmTimeoutMs,
-      },
-      qualityGate: {
-        metrics: [],
-        reason: "Row analysis used the configured local LLM per input row. F1/accuracy still requires a separate labeled evaluation set and is not shown as UI confidence.",
-        status: "not_evaluated",
-        thresholds: {
-          issue_category_f1: 0.75,
-          sentiment_f1: 0.75,
-          severity_f1: 0.75,
+      mode: usesLocalLlm ? "local_llm_explicit" : "scalable_text_signal",
+      modelArtifact: usesLocalLlm ? localLlmModel : "spark-compatible text signal pipeline",
+      rowRuntime: usesLocalLlm
+        ? {
+          endpoint: redactEndpoint(localLlmEndpoint),
+          timeoutMs: localLlmTimeoutMs,
+        }
+        : {
+          endpoint: "",
+          timeoutMs: 0,
         },
+      holdoutEvaluation: {
+        metrics: [],
+        reason: "Final quality is measured against labeled holdout data outside the transform definition.",
+        status: "not_evaluated",
       },
       supportedMethods: supportedReviewAnalysisMethods,
     },
@@ -263,6 +283,7 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
     invalidRows: 0,
     limit,
     metrics: {
+      actionNeededRows: 0,
       averageRating: 0,
       highSeverityRows: 0,
       issueRows: 0,
@@ -271,8 +292,10 @@ function initialSummary({ csvOutputPath, limit, outputPath, outputSchema, runId,
       totalHelpfulVotes: 0,
     },
     method: {
-      name: "electronics-review-row-structuring",
-      note: "Streams the real MinIO JSONL source and writes the user-defined final CSV schema. Temporary runtime calls the configured local LLM once per source row.",
+      name: "text-row-structuring",
+      note: usesLocalLlm
+        ? "Streams the real MinIO JSONL source and writes the user-defined final CSV schema. Local LLM row calls are explicit opt-in."
+        : "Streams the real MinIO JSONL source and writes the user-defined final CSV schema with scalable text-signal transforms.",
       schema: outputSchema.map((column) => column.targetName),
     },
     output: {
@@ -301,6 +324,19 @@ function sourceDescriptor() {
   };
 }
 
+function normalizeReviewAnalysisRuntime(value) {
+  const runtime = String(value || process.env.ASKLAKE_REVIEW_ANALYSIS_RUNTIME || "scalable").trim().toLowerCase();
+  return ["local_llm", "llm", "row_llm"].includes(runtime) ? "local_llm" : "scalable";
+}
+
+function analyzeReviewRowScalable(rawRow, outputSchema, ordinal) {
+  const metricsRow = classifyReview(rawRow, ordinal);
+  return {
+    metricsRow,
+    projected: projectClassifiedRow(metricsRow, outputSchema, rawRow),
+  };
+}
+
 async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
   const requestBody = {
     model: localLlmModel,
@@ -309,11 +345,11 @@ async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
       {
         role: "system",
         content: [
-          "You analyze ecommerce product review rows and return strict JSON only.",
+          "You analyze source rows that may contain free text and return strict JSON only.",
           "Do not return markdown, comments, prose, or nested objects.",
           "Use only the requested output keys.",
           "For enum-like methods, choose one allowed value exactly.",
-          "For issue fields, use concise snake_case labels.",
+          "For classification/category fields, use concise snake_case labels.",
           "For summary and evidence, quote or summarize only facts present in the row.",
         ].join(" "),
       },
@@ -331,7 +367,7 @@ async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
     signal: AbortSignal.timeout(localLlmTimeoutMs),
   });
   if (!response.ok) {
-    throw Object.assign(new Error(`Local LLM review row analysis failed: HTTP ${response.status}`), {
+    throw Object.assign(new Error(`Local LLM text row analysis failed: HTTP ${response.status}`), {
       code: "REVIEW_ROW_LOCAL_LLM_FAILED",
       status: 502,
     });
@@ -341,7 +377,7 @@ async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
   const content = payload?.choices?.[0]?.message?.content ?? "";
   const parsed = parseLlmJson(content);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw Object.assign(new Error("Local LLM review row analysis did not return a JSON object."), {
+    throw Object.assign(new Error("Local LLM text row analysis did not return a JSON object."), {
       code: "REVIEW_ROW_LOCAL_LLM_BAD_JSON",
       status: 502,
     });
@@ -356,13 +392,13 @@ async function analyzeReviewRowWithLocalLlm(rawRow, outputSchema, ordinal) {
 function buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal) {
   const columns = outputSchema.map((column) => ({
     allowedValues: allowedValuesForMethod(column),
-    method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field"),
+    method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
     targetName: column.targetName,
     type: normalizeSchemaType(column.type),
   }));
   const rowText = JSON.stringify(rawRow ?? {});
   return [
-    "Analyze this one source review row into one final CSV output row.",
+    "Analyze this one source row into one final structured CSV output row.",
     "Return one minified JSON object whose keys exactly match the requested columns.",
     "If the source row contains a copied identifier or numeric field, preserve it exactly where possible.",
     "Use null only when the requested value cannot be inferred from the row.",
@@ -374,12 +410,9 @@ function buildReviewRowLlmPrompt(rawRow, outputSchema, ordinal) {
 }
 
 function allowedValuesForMethod(column) {
-  const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field");
+  const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy");
   const explicit = normalizeAllowedValues(column?.allowedValues);
   if (explicit.length > 0) return explicit;
-  if (method === "sentiment_3way") return ["positive", "mixed", "negative"];
-  if (method === "severity_4level") return ["critical", "high", "medium", "low"];
-  if (method === "boolean_y_n") return ["Y", "N"];
   return [];
 }
 
@@ -387,10 +420,10 @@ function coerceLlmProjectedRow(llmRow, outputSchema, rawRow, ordinal) {
   const projected = {};
   for (const column of outputSchema) {
     const targetName = column.targetName;
-    const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field");
+    const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy");
     const allowedValues = allowedValuesForMethod(column);
     let value = llmRow?.[targetName];
-    if ((value === undefined || value === null || value === "") && method === "copy_or_extract_field") {
+    if ((value === undefined || value === null || value === "") && method === "copy") {
       value = copyOrExtractFieldValue({ review_id: reviewId(rawRow, ordinal) }, column, rawRow);
     }
     if (allowedValues.length > 0) {
@@ -419,24 +452,22 @@ function coerceOutputValue(value, type) {
 }
 
 function metricsRowFromProjected(projected, outputSchema, rawRow, ordinal) {
-  const byMethod = (method) => {
-    const column = outputSchema.find((item) => normalizeReviewAnalysisMethod(item?.method ?? item?.analysisMethod, "") === method);
-    return column ? projected[column.targetName] : undefined;
-  };
   const rating = Number(projected.rating ?? rawRow.rating ?? rawRow.overall ?? 0) || 0;
   return {
+    action_needed_status: stringValue(projected.action_needed ?? projected.action_needed_status),
+    action_reason_signal: stringValue(projected.action_reason_signal),
     asin: stringValue(projected.asin ?? rawRow.asin),
-    evidence: stringValue(byMethod("evidence_span") ?? projected.evidence),
+    evidence: stringValue(projected.evidence ?? projected.supporting_evidence ?? projected.reason),
     helpful_vote: Number(projected.helpful_vote ?? rawRow.helpful_vote ?? rawRow.helpfulVote ?? 0) || 0,
-    issue_category: stringValue(byMethod("issue_category") ?? projected.issue_category ?? "unclassified"),
-    issue_label: stringValue(byMethod("issue_category") ?? projected.issue_category ?? "unclassified"),
-    issue_subcategory: stringValue(byMethod("issue_subcategory") ?? projected.issue_subcategory ?? "unclassified"),
+    issue_category: stringValue(projected.issue_category ?? "unclassified"),
+    issue_label: stringValue(projected.issue_category ?? "unclassified"),
+    issue_subcategory: stringValue(projected.issue_subcategory ?? "unclassified"),
     parent_asin: stringValue(projected.parent_asin ?? rawRow.parent_asin),
     rating,
     review_id: stringValue(projected.review_id ?? reviewId(rawRow, ordinal)),
-    sentiment: stringValue(byMethod("sentiment_3way") ?? projected.sentiment ?? "mixed"),
-    severity: stringValue(byMethod("severity_4level") ?? projected.severity ?? "low"),
-    summary: stringValue(byMethod("extractive_summary") ?? projected.summary),
+    sentiment: stringValue(projected.sentiment ?? "mixed"),
+    severity: stringValue(projected.severity ?? "low"),
+    summary: stringValue(projected.summary),
     timestamp: Number(projected.timestamp ?? rawRow.timestamp ?? 0) || null,
     title: stringValue(projected.title ?? rawRow.title),
     user_id: stringValue(projected.user_id ?? rawRow.user_id),
@@ -465,7 +496,7 @@ function normalizeSuggestedColumns(columns) {
     .map((column) => ({
       instruction: String(column?.instruction ?? column?.description ?? column?.label ?? column?.targetName ?? "").trim(),
       label: String(column?.label ?? column?.targetName ?? "").trim(),
-      method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field"),
+      method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
       nullable: column?.nullable !== false,
       targetName: safeColumnName(column?.targetName ?? column?.name ?? ""),
       type: normalizeSchemaType(column?.type),
@@ -486,16 +517,16 @@ function normalizeSchemaType(value) {
 
 function normalizeOutputSchema(columns) {
   const fallback = [
-    { instruction: "원본 row에서 리뷰 고유 ID를 생성", method: "copy_or_extract_field", targetName: "review_id", type: "String" },
-    { instruction: "상품 ASIN", method: "copy_or_extract_field", targetName: "asin", type: "String" },
-    { instruction: "상위 상품 ASIN", method: "copy_or_extract_field", targetName: "parent_asin", type: "String" },
-    { instruction: "원본 평점", method: "copy_or_extract_field", targetName: "rating", type: "Float" },
-    { instruction: "positive, mixed, negative 중 하나", method: "sentiment_3way", targetName: "sentiment", type: "String" },
-    { instruction: "리뷰의 핵심 이슈 대분류", method: "issue_category", targetName: "issue_category", type: "String" },
-    { instruction: "이슈 세부 분류", method: "issue_subcategory", targetName: "issue_subcategory", type: "String" },
-    { instruction: "critical, high, medium, low 중 하나", method: "severity_4level", targetName: "severity", type: "String" },
-    { instruction: "리뷰 내용을 짧게 요약", method: "extractive_summary", targetName: "summary", type: "String" },
-    { instruction: "판단 근거 문장", method: "evidence_span", targetName: "evidence", type: "String" },
+    { instruction: "원본 row에서 리뷰 고유 ID를 생성", method: "copy", targetName: "review_id", type: "String" },
+    { instruction: "상품 ASIN", method: "copy", targetName: "asin", type: "String" },
+    { instruction: "상위 상품 ASIN", method: "copy", targetName: "parent_asin", type: "String" },
+    { instruction: "원본 평점", method: "copy", targetName: "rating", type: "Float" },
+    { allowedValues: ["positive", "mixed", "negative"], instruction: "후보값 중 하나로 감정을 선택", method: "one_of_values", targetName: "sentiment", type: "String" },
+    { allowedValues: ["charging_power", "screen_display", "shipping_delivery", "listing_accuracy", "durability_quality", "no_issue", "other_issue"], instruction: "후보값 중 하나로 이슈 대분류를 선택", method: "one_of_values", targetName: "issue_category", type: "String" },
+    { allowedValues: ["charging_or_power", "screen_or_display", "shipping_or_package", "listing_mismatch", "durability_or_quality", "positive_feedback", "other"], instruction: "후보값 중 하나로 이슈 세부 분류를 선택", method: "one_of_values", targetName: "issue_subcategory", type: "String" },
+    { allowedValues: ["critical", "high", "medium", "low"], instruction: "후보값 중 하나로 심각도를 선택", method: "one_of_values", targetName: "severity", type: "String" },
+    { instruction: "Summarize the review in one short factual sentence.", method: "instruction", targetName: "summary", type: "String" },
+    { instruction: "Extract the source sentence that best supports the output.", method: "instruction", targetName: "evidence", type: "String" },
   ];
   const source = Array.isArray(columns) && columns.length > 0 ? columns : fallback;
   const seen = new Set();
@@ -507,7 +538,7 @@ function normalizeOutputSchema(columns) {
     normalized.push({
       instruction: String(column?.instruction ?? column?.description ?? column?.label ?? targetName),
       label: String(column?.label ?? targetName),
-      method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field"),
+      method: normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy"),
       nullable: column?.nullable !== false,
       targetName,
       type: normalizeSchemaType(column?.type),
@@ -525,32 +556,20 @@ function projectClassifiedRow(row, outputSchema, rawRow = {}) {
 }
 
 function valueForRequestedColumn(row, column, rawRow = {}) {
-  const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy_or_extract_field");
+  const method = normalizeReviewAnalysisMethod(column?.method ?? column?.analysisMethod, "copy");
   switch (method) {
-    case "copy_or_extract_field":
+    case "copy":
       return copyOrExtractFieldValue(row, column, rawRow);
     case "one_of_values":
       return oneOfValuesForColumn(row, column, rawRow);
-    case "sentiment_3way":
-      return row.sentiment;
-    case "issue_category":
-      return row.issue_category;
-    case "issue_subcategory":
-      return row.issue_subcategory;
-    case "severity_4level":
-      return row.severity;
-    case "boolean_y_n":
-      return booleanValueFromRow(rawRow);
-    case "extractive_summary":
-      return row.summary;
-    case "evidence_span":
-      return row.evidence;
+    case "instruction":
+      return customInstructionValue(row, column, rawRow);
     default:
       return "";
   }
 }
 
-function normalizeReviewAnalysisMethod(value, fallback = "copy_or_extract_field") {
+function normalizeReviewAnalysisMethod(value, fallback = "copy") {
   const raw = String(value ?? "").split(":")[0].trim().toLowerCase();
   const normalized = reviewAnalysisMethodAliases[raw] || raw;
   return supportedReviewAnalysisMethods.includes(normalized) ? normalized : fallback;
@@ -586,6 +605,8 @@ function oneOfValuesForColumn(row, column, rawRow) {
     rawValueForColumn(rawRow, targetName),
     Object.prototype.hasOwnProperty.call(row, targetName) ? row[targetName] : undefined,
     row.sentiment,
+    row.action_needed_status,
+    row.issue_category && row.issue_category !== "positive_value" ? "issue" : "no_issue",
     row.issue_category,
     row.issue_subcategory,
     row.severity,
@@ -599,6 +620,33 @@ function oneOfValuesForColumn(row, column, rawRow) {
   const sourceText = reviewTextForRow(rawRow).toLowerCase();
   const textMatch = allowedValues.find((value) => sourceText.includes(String(value).toLowerCase()));
   return textMatch ?? allowedValues[0];
+}
+
+function customInstructionValue(row, column, rawRow = {}) {
+  const targetName = safeColumnName(column?.targetName ?? column?.name ?? "").toLowerCase();
+  const instruction = String(column?.instruction ?? column?.description ?? "").toLowerCase();
+  const rawTargetValue = rawValueForColumn(rawRow, targetName);
+  if (rawTargetValue !== undefined && rawTargetValue !== null && rawTargetValue !== "") return rawTargetValue;
+  if (Object.prototype.hasOwnProperty.call(row, targetName) && row[targetName]) return row[targetName];
+  if (targetName.includes("summary") || instruction.includes("summar") || instruction.includes("요약")) {
+    return row.summary || compactReviewText(rawRow, 180);
+  }
+  if (
+    targetName.includes("evidence")
+    || targetName.includes("reason")
+    || instruction.includes("evidence")
+    || instruction.includes("reason")
+    || instruction.includes("근거")
+  ) {
+    return row.evidence || compactReviewText(rawRow, 240);
+  }
+  return row.summary || row.evidence || compactReviewText(rawRow, 240);
+}
+
+function compactReviewText(row, maxLength) {
+  const cleaned = reviewTextForRow(row).replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.length > maxLength ? cleaned.slice(0, Math.max(0, maxLength - 3)) + "..." : cleaned;
 }
 
 function canonicalAllowedValue(value, allowedValues) {
@@ -632,6 +680,11 @@ function reviewTextForRow(row) {
     row?.reviewText,
     row?.review_text,
     row?.body,
+    row?.content,
+    row?.message,
+    row?.description,
+    row?.payload,
+    row?.value,
     row?.summary,
   ].filter(Boolean).join(" "));
 }
@@ -680,14 +733,17 @@ function parseJsonLine(line, result) {
 function classifyReview(row, ordinal) {
   const rating = Number(row.rating ?? row.overall ?? 0) || 0;
   const title = cleanText(row.title);
-  const text = cleanText(row.text ?? row.reviewText ?? "");
+  const text = cleanText(row.text ?? row.reviewText ?? row.review_text ?? row.body ?? row.content ?? row.message ?? row.description ?? row.payload ?? row.value ?? "");
   const haystack = `${title} ${text}`.toLowerCase();
   const category = findCategory(haystack, rating);
   const sentiment = inferSentiment(rating, haystack, category);
   const severity = inferSeverity(rating, category, haystack);
   const evidence = evidenceFor(text || title, category.keyword);
+  const action = inferActionNeeded(rating, haystack);
 
   return {
+    action_needed_status: action.status,
+    action_reason_signal: action.reasons.join("|"),
     asin: stringValue(row.asin),
     evidence,
     helpful_vote: Number(row.helpful_vote ?? row.helpfulVote ?? 0) || 0,
@@ -704,6 +760,24 @@ function classifyReview(row, ordinal) {
     title,
     user_id: stringValue(row.user_id),
     verified_purchase: Boolean(row.verified_purchase),
+  };
+}
+
+function inferActionNeeded(rating, haystack) {
+  const checks = [
+    ["rating_low", rating > 0 && rating <= 2],
+    ["not_working", /(not working|doesn.?t work|does not work|didn.?t work|stopped working|won.?t turn on|fails?)/i.test(haystack)],
+    ["broken", /(broken|broke|cracked|shattered|dead|defective|fell apart)/i.test(haystack)],
+    ["refund_return", /(refund|return|replacement|replace|warranty)/i.test(haystack)],
+    ["wrong_or_fake", /(wrong item|wrong product|wrong cable|fake|counterfeit|never arrived|missing)/i.test(haystack)],
+    ["fit_failure", /(doesn.?t fit|does not fit|didn.?t fit|not fit|wrong size)/i.test(haystack)],
+    ["charge_failure", /(won.?t charge|does not charge|doesn.?t charge|stopped charging|will not charge)/i.test(haystack)],
+    ["safety", /(fire|smoke|explode|burn|overheat|unsafe|danger|shock|swollen)/i.test(haystack)],
+  ];
+  const reasons = checks.filter(([, matched]) => matched).map(([reason]) => reason);
+  return {
+    reasons,
+    status: reasons.length > 0 ? "action_needed" : "low_or_none",
   };
 }
 
@@ -783,6 +857,7 @@ function recordClassifiedRow(result, row, projectedRow = row) {
   result.processedRows += 1;
   result.metrics.totalHelpfulVotes += row.helpful_vote;
   result.metrics.averageRating += row.rating;
+  if (row.action_needed_status === "action_needed") result.metrics.actionNeededRows += 1;
   if (row.sentiment === "negative") result.metrics.negativeRows += 1;
   if (row.sentiment === "positive") result.metrics.positiveRows += 1;
   if (row.issue_category !== "positive_value") result.metrics.issueRows += 1;

@@ -2,7 +2,6 @@ import { apiClient } from "./apiClient";
 
 export type ReviewAnalysisRow = {
   asin: string;
-  confidence: number;
   evidence: string;
   helpful_vote: number;
   issue_category: string;
@@ -68,7 +67,10 @@ export type ReviewAnalysisSummary = {
 };
 
 export type ReviewSchemaSuggestionColumn = {
+  allowedValues?: string[];
+  instruction?: string;
   label: string;
+  method?: string;
   nullable: boolean;
   targetName: string;
   type: string;
@@ -94,7 +96,7 @@ export function suggestReviewAnalysisSchema(request: {
 
 export function runCellphonesReviewAnalysis(
   limit = 50000,
-  schemaColumns?: Array<{ label?: string; targetName: string; type?: string }>,
+  schemaColumns?: Array<{ allowedValues?: string[]; instruction?: string; label?: string; method?: string; targetName: string; type?: string }>,
 ) {
   return apiClient.post<ReviewAnalysisSummary>("/api/review-analysis/cellphones/run", { limit, schemaColumns });
 }

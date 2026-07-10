@@ -1,5 +1,7 @@
 import json
+import math
 import os
+import re
 import sys
 import time
 import hashlib
@@ -12,23 +14,35 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 
-REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD = 0.75
 REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS = {
-    "copy_or_extract_field",
+    "copy",
     "one_of_values",
-    "sentiment_3way",
-    "issue_category",
-    "issue_subcategory",
-    "severity_4level",
-    "boolean_y_n",
-    "extractive_summary",
-    "evidence_span",
+    "instruction",
 }
 REVIEW_ROW_ANALYSIS_METHOD_ALIASES = {
-    "custom_instruction": "one_of_values",
-    "issue_taxonomy": "issue_category",
+    "copy_or_extract_field": "copy",
+    "custom_instruction": "instruction",
+    "copy": "copy",
+    "instruction": "instruction",
+    "issue_taxonomy": "one_of_values",
+    "issue_category": "one_of_values",
+    "issue_subcategory": "one_of_values",
+    "severity_4level": "one_of_values",
+    "text_classification": "one_of_values",
+    "sentiment": "one_of_values",
+    "sentiment_3way": "one_of_values",
+    "issue_present": "one_of_values",
+    "issue_present_binary": "one_of_values",
+    "action_needed": "one_of_values",
+    "action_needed_binary": "one_of_values",
+    "boolean_y_n": "one_of_values",
+    "summary": "instruction",
+    "evidence": "instruction",
+    "extractive_summary": "instruction",
+    "evidence_span": "instruction",
 }
 REVIEW_ROW_ANALYSIS_LLM_CACHE = {}
+REVIEW_TEXT_MODEL_CACHE = {}
 
 
 def main():
@@ -92,6 +106,7 @@ def main():
         )
         output_df.write.mode("overwrite").parquet(output_path)
         output_rows = spark.read.parquet(output_path).count()
+        sample_rows = collect_sample_rows(output_df, 10)
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -102,6 +117,7 @@ def main():
             "outputRows": output_rows,
             "quality": quality,
             "runId": run_id,
+            "sampleRows": sample_rows,
             "schema": [
                 {
                     "name": field.name,
@@ -189,6 +205,7 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
     if not included_columns:
         raise ValueError("Approved schema has no included output columns.")
 
+    derived_targets = transform_output_column_names(transform_steps or [])
     expressions = []
     missing_required = []
     required_targets = []
@@ -198,14 +215,15 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
         target_name = unique_column_name(normalize_column_name(column.get("targetName") or source_name) or f"column_{index + 1}", used_names)
         logical_type = str(column.get("type") or "String")
         nullable = bool(column.get("nullable", True))
+        is_derived_target = normalize_column_name(target_name) in derived_targets
         resolved = resolve_column_name(frame, source_name) or resolve_column_name(frame, target_name)
         if not resolved:
-            if nullable:
+            if nullable or is_derived_target:
                 expressions.append(F.lit(None).cast(spark_sql_type(logical_type)).alias(target_name))
             else:
                 missing_required.append(source_name or target_name)
             continue
-        if not nullable:
+        if not nullable and not is_derived_target:
             required_targets.append(target_name)
         expressions.append(cast_for_schema(frame, resolved, logical_type).alias(target_name))
 
@@ -232,6 +250,17 @@ def apply_schema_contract(frame, schema_columns, transform_steps=None):
     return contracted
 
 
+def transform_output_column_names(steps):
+    output = set()
+    for step in steps:
+        if not step or step.get("enabled") is False:
+            continue
+        name = normalize_column_name(step.get("output") or "")
+        if name:
+            output.add(name)
+    return output
+
+
 def transform_input_column_names(steps):
     names = []
     for step in steps:
@@ -244,10 +273,14 @@ def transform_input_column_names(steps):
         for raw in raw_inputs:
             if not raw:
                 continue
+            config_source_fields = review_analysis_config_source_fields(raw)
+            if config_source_fields:
+                names.extend(config_source_fields)
+                continue
             names.extend(review_analyze_source_fields(raw))
-            if "," in raw and "review_analyze(" not in raw.lower():
+            if "," in raw and not contains_row_analyze_call(raw):
                 names.extend(part.strip() for part in raw.split(",") if part.strip())
-            elif raw and "review_analyze(" not in raw.lower() and "=" not in raw:
+            elif raw and not contains_row_analyze_call(raw) and "=" not in raw:
                 names.append(raw.strip())
     seen = set()
     output = []
@@ -260,13 +293,61 @@ def transform_input_column_names(steps):
     return output
 
 
+def review_analysis_config_source_fields(text):
+    try:
+        parsed = json.loads(text or "{}")
+    except Exception:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    names = []
+    for key in (
+        "sourceField",
+        "textField",
+        "inputField",
+        "sourceColumn",
+        "ratingField",
+        "titleField",
+        "asinField",
+        "parentAsinField",
+        "userField",
+        "verifiedPurchaseField",
+        "helpfulVoteField",
+        "timestampField",
+    ):
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            names.append(value.strip())
+    columns = parsed.get("columns")
+    if isinstance(columns, list):
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            value = column.get("sourceField") or column.get("textField") or column.get("sourceColumn")
+            if isinstance(value, str) and value.strip():
+                names.append(value.strip())
+    return names
+
+
 def review_analyze_source_fields(text):
     source = str(text or "")
     lowered = source.lower()
-    if "review_analyze(" not in lowered or ")" not in source:
+    call_name = None
+    for candidate in ("review_analyze(", "text_analyze("):
+        if candidate in lowered:
+            call_name = candidate
+            break
+    if not call_name or ")" not in source:
         return []
-    inner = source.split("review_analyze(", 1)[1].split(")", 1)[0]
+    start = lowered.index(call_name) + len(call_name)
+    end = source.find(")", start)
+    inner = source[start:end]
     return [part.strip() for part in inner.split(",") if part.strip()]
+
+
+def contains_row_analyze_call(text):
+    lowered = str(text or "").lower()
+    return "review_analyze(" in lowered or "text_analyze(" in lowered
 
 
 def select_final_schema_columns(frame, schema_columns):
@@ -375,7 +456,7 @@ def apply_transform_steps(spark, frame, steps):
             continue
         elif "sql expression" in operation and params.strip():
             expression = F.expr(params)
-        elif "review row analysis" in operation or "review_analyze" in operation:
+        elif is_row_analysis_operation(operation):
             if review_row_analysis_uses_local_llm():
                 group = contiguous_review_row_analysis_group(steps, index)
                 current = apply_review_row_analysis_group(current, group)
@@ -443,10 +524,11 @@ def review_row_analysis_group_columns(group, config):
             target = normalize_column_name(raw_column.get("targetName") or raw_column.get("name") or "")
             if not target or target in seen:
                 continue
-            method = normalize_review_row_analysis_method(raw_column.get("method") or raw_column.get("analysisMethod")) or "copy_or_extract_field"
+            method = normalize_review_row_analysis_method(raw_column.get("method") or raw_column.get("analysisMethod")) or "copy"
             seen.add(target)
             columns.append({
                 "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(raw_column, config)),
+                "instruction": str(raw_column.get("instruction") or raw_column.get("description") or ""),
                 "method": method,
                 "targetName": target,
                 "type": str(raw_column.get("type") or "String"),
@@ -458,7 +540,8 @@ def review_row_analysis_group_columns(group, config):
         seen.add(target)
         columns.append({
             "allowedValues": [],
-            "method": "copy_or_extract_field",
+            "instruction": "",
+            "method": "copy",
             "targetName": target,
             "type": "String",
         })
@@ -500,9 +583,19 @@ def review_row_analysis_expression(frame, output_column, params):
     shipping_signal = haystack.rlike("shipping|delivery|package|arrived|late|box")
     listing_signal = haystack.rlike("fake|wrong|not as described|different|missing")
     boolean_signal = haystack.rlike("click|clicked|tap|tapped|pressed|selected|subscribe|subscribed|buy|bought|purchase|purchased")
+    issue_signal = negative_signal | safety_signal | charging_signal | screen_signal | shipping_signal | listing_signal
+    action_signal = (
+        (rating <= 2)
+        | safety_signal
+        | haystack.rlike(
+            "refund|return|replace|replacement|not working|doesn't work|does not work|didn't work|stopped working|"
+            "broken|broke|cracked|shattered|dead|defective|failed|missing|wrong|fake|never arrived|not fit|doesn't fit|"
+            "does not fit|won't charge|does not charge|doesn't charge"
+        )
+    )
 
-    if method == "copy_or_extract_field":
-        return review_copy_or_extract_field_expression(
+    if method == "copy":
+        return review_copy_expression(
             frame,
             target,
             source_field,
@@ -519,15 +612,32 @@ def review_row_analysis_expression(frame, output_column, params):
             },
         )
     if method == "one_of_values":
+        allowed_values = review_row_analysis_allowed_values(column_config, config)
+        portable_expression = review_portable_text_model_expression(
+            frame,
+            target,
+            allowed_values,
+            config,
+            column_config,
+            source_field,
+        )
+        if portable_expression is not None:
+            return portable_expression
+        if review_text_model_required(config, column_config):
+            raise ValueError(
+                f"Portable review text model artifact is required but was not found for column '{target}'."
+            )
         return review_one_of_values_expression(
             frame,
             target,
-            review_row_analysis_allowed_values(column_config, config),
+            allowed_values,
             rating,
             haystack,
             {
+                "action": action_signal,
                 "boolean": boolean_signal,
                 "charging": charging_signal,
+                "issue": issue_signal,
                 "listing": listing_signal,
                 "negative": negative_signal,
                 "safety": safety_signal,
@@ -535,57 +645,33 @@ def review_row_analysis_expression(frame, output_column, params):
                 "shipping": shipping_signal,
             },
         )
-    if method == "sentiment_3way":
-        return (
-            F.when(rating <= 2, F.lit("negative"))
-            .when((rating == 3) | negative_signal, F.lit("mixed"))
-            .otherwise(F.lit("positive"))
-        )
-    if method == "issue_category":
-        return (
-            F.when(safety_signal, F.lit("safety_battery"))
-            .when(charging_signal, F.lit("charging_power"))
-            .when(screen_signal, F.lit("screen_display"))
-            .when(shipping_signal, F.lit("shipping_delivery"))
-            .when(listing_signal, F.lit("listing_accuracy"))
-            .when((rating >= 4) & ~negative_signal, F.lit("positive_value"))
-            .otherwise(F.lit("general_negative"))
-        )
-    if method == "issue_subcategory":
-        return (
-            F.when(safety_signal, F.lit("battery_or_safety"))
-            .when(charging_signal, F.lit("charging_or_power"))
-            .when(screen_signal, F.lit("screen_or_display"))
-            .when(shipping_signal, F.lit("shipping_or_package"))
-            .when(listing_signal, F.lit("listing_mismatch"))
-            .when((rating >= 4) & ~negative_signal, F.lit("positive_feedback"))
-            .otherwise(F.lit("unspecified_complaint"))
-        )
-    if method == "severity_4level":
-        return (
-            F.when(safety_signal, F.lit("critical"))
-            .when((rating <= 2) | negative_signal, F.lit("high"))
-            .when(rating == 3, F.lit("medium"))
-            .otherwise(F.lit("low"))
-        )
-    if method == "boolean_y_n":
-        return F.when(boolean_signal, F.lit("Y")).otherwise(F.lit("N"))
-    if method == "extractive_summary":
-        return F.concat(
-            F.lit("Review signal: "),
-            F.substring(F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " "), 1, 180),
-        )
-    if method == "evidence_span":
-        return F.substring(F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " "), 1, 240)
+    if method == "instruction":
+        return review_instruction_expression(target, column_config, title, text)
     return F.lit("")
 
 
+def review_instruction_expression(target, column_config, title, text):
+    instruction = str(column_config.get("instruction") or column_config.get("description") or "").lower()
+    normalized_target = normalize_column_name(target)
+    combined = F.regexp_replace(F.concat_ws(" ", title, text), r"\s+", " ")
+    if "summary" in normalized_target or "summar" in instruction or "요약" in instruction:
+        return F.substring(combined, 1, 180)
+    if (
+        "evidence" in normalized_target
+        or "reason" in normalized_target
+        or "evidence" in instruction
+        or "reason" in instruction
+        or "근거" in instruction
+    ):
+        return F.substring(combined, 1, 240)
+    return F.substring(combined, 1, 240)
+
+
 def review_row_analysis_uses_local_llm():
-    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "local_llm").strip().lower() not in {
-        "rule",
-        "rules",
-        "baseline",
-        "off",
+    return os.environ.get("ASKLAKE_REVIEW_ANALYSIS_RUNTIME", "scalable").strip().lower() in {
+        "local_llm",
+        "llm",
+        "row_llm",
     }
 
 
@@ -608,13 +694,17 @@ def local_llm_review_row_analysis_payload_expression(frame, config, columns):
         row = parse_json_object(raw_row_json)
         cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
         if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, parse_json_array(schema_json))
+            REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(
+                row,
+                parse_json_array(schema_json),
+                config.get("sourceField") or "text",
+            )
         analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
         payload = {}
         for column in parse_json_array(schema_json):
             target = column.get("targetName") or ""
             value = analyzed.get(target)
-            if value in (None, "") and column.get("method") == "copy_or_extract_field":
+            if value in (None, "") and column.get("method") == "copy":
                 value = local_copy_or_extract_value(row, target, config.get("sourceField") or "text")
             allowed_values = column.get("allowedValues") or []
             if allowed_values:
@@ -640,12 +730,13 @@ def normalize_review_analysis_llm_columns(config, target, column_config, method)
         seen.add(target_name)
         column_method = normalize_review_row_analysis_method(
             raw_column.get("method") or raw_column.get("analysisMethod") or method
-        ) or "copy_or_extract_field"
+        ) or "copy"
         columns.append({
             "allowedValues": review_row_analysis_expected_values(
                 column_method,
                 review_row_analysis_allowed_values(raw_column, config),
             ),
+            "instruction": str(raw_column.get("instruction") or raw_column.get("description") or ""),
             "method": column_method,
             "targetName": target_name,
             "type": str(raw_column.get("type") or "String"),
@@ -653,7 +744,8 @@ def normalize_review_analysis_llm_columns(config, target, column_config, method)
     if target not in {column["targetName"] for column in columns}:
         columns.append({
             "allowedValues": review_row_analysis_expected_values(method, review_row_analysis_allowed_values(column_config, config)),
-            "method": method or "copy_or_extract_field",
+            "instruction": str(column_config.get("instruction") or column_config.get("description") or ""),
+            "method": method or "copy",
             "targetName": target,
             "type": str(column_config.get("type") or "String"),
         })
@@ -665,11 +757,11 @@ def local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
     columns = parse_json_array(schema_json)
     cache_key = hashlib.sha1(f"{schema_json}\n{raw_row_json}".encode("utf-8", "ignore")).hexdigest()
     if cache_key not in REVIEW_ROW_ANALYSIS_LLM_CACHE:
-        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, columns)
+        REVIEW_ROW_ANALYSIS_LLM_CACHE[cache_key] = call_local_review_llm(row, columns, source_field)
     analyzed = REVIEW_ROW_ANALYSIS_LLM_CACHE.get(cache_key) or {}
     column = next((item for item in columns if item.get("targetName") == target), {})
     value = analyzed.get(target)
-    if value in (None, "") and column.get("method") == "copy_or_extract_field":
+    if value in (None, "") and column.get("method") == "copy":
         value = local_copy_or_extract_value(row, target, source_field)
     allowed_values = column.get("allowedValues") or []
     if allowed_values:
@@ -681,24 +773,27 @@ def local_llm_review_row_target(raw_row_json, target, schema_json, source_field)
     return str(value)
 
 
-def call_local_review_llm(row, columns):
+def call_local_review_llm(row, columns, source_field="text"):
     endpoint = os.environ.get("ASKLAKE_LOCAL_LLM_ENDPOINT") or "http://host.docker.internal:1234/v1/chat/completions"
     model = os.environ.get("ASKLAKE_LOCAL_LLM_MODEL") or "local-review-analyzer"
     timeout_seconds = int(os.environ.get("ASKLAKE_LOCAL_LLM_TIMEOUT_SECONDS", "120") or "120")
     max_chars = int(os.environ.get("ASKLAKE_LOCAL_LLM_MAX_INPUT_CHARS", "9000") or "9000")
     prompt = "\n".join([
-        "Analyze this one ecommerce product review row into one final CSV output row.",
+        "Analyze this one source row into one structured CSV output row.",
+        "Use the configured text/source field when present, but you may inspect the full row for copied identifiers and context.",
         "Return one minified JSON object only. No markdown, comments, or prose.",
         "Keys must exactly match requestedColumns.targetName.",
         "For columns with allowedValues, choose exactly one value from allowedValues.",
-        "For issue fields, use concise snake_case labels.",
-        "For summary and evidence, use only facts present in the row.",
+        "For classification/category fields, use concise snake_case labels.",
+        "For summary, evidence, and extraction fields, use only facts present in the row.",
+        f"sourceField: {source_field}",
+        f"sourceText: {truncate_text(local_copy_or_extract_value(row, source_field, source_field), max_chars)}",
         f"requestedColumns: {json.dumps(columns, ensure_ascii=False)}",
         f"sourceRow: {truncate_text(json.dumps(row, ensure_ascii=False), max_chars)}",
     ])
     payload = {
         "messages": [
-            {"role": "system", "content": "You are a strict JSON review-row analyzer for Spark ETL."},
+            {"role": "system", "content": "You are a strict JSON text-row structuring analyzer for Spark ETL."},
             {"role": "user", "content": prompt},
         ],
         "model": model,
@@ -714,12 +809,12 @@ def call_local_review_llm(row, columns):
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             body = response.read().decode("utf-8", "replace")
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Local LLM review row analysis failed: {exc}") from exc
+        raise RuntimeError(f"Local LLM text row analysis failed: {exc}") from exc
     parsed = parse_json_object(body)
     content = (((parsed.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
     output = parse_json_object(content)
     if not output:
-        raise RuntimeError("Local LLM review row analysis returned no JSON object.")
+        raise RuntimeError("Local LLM text row analysis returned no JSON object.")
     return output
 
 
@@ -768,17 +863,24 @@ def local_copy_or_extract_value(row, target, source_field):
         seed = "|".join(str(row.get(key, "")) for key in ["asin", "parent_asin", "user_id", "timestamp", "title", "text"])
         return hashlib.sha1(seed.encode("utf-8", "ignore")).hexdigest()[:16]
     aliases = {
+        "body": "text",
+        "content": "text",
         "event_time": "timestamp",
         "helpful": "helpful_vote",
+        "message": "text",
         "review_text": "text",
         "score": "rating",
         "user": "user_id",
+        "value": "text",
     }
     alias = aliases.get(normalized_target)
     if alias:
         for key, value in row.items():
             if normalize_column_name(key) == alias and value is not None:
                 return value
+    for key, value in row.items():
+        if normalize_column_name(key) == normalized_source and value is not None:
+            return value
     return ""
 
 
@@ -815,13 +917,8 @@ def review_row_analysis_allowed_values(column_config, config):
     return [str(value).strip() for value in values if str(value).strip()]
 
 
-def review_copy_or_extract_field_expression(frame, target, source_field, field_expressions):
-    raw_target = first_matching_column(frame, target)
-    if raw_target:
-        return safe_col(frame, raw_target)
+def review_copy_expression(frame, target, source_field, field_expressions):
     normalized_source = normalize_column_name(source_field)
-    if target == normalized_source:
-        return safe_col(frame, source_field)
     if target in {"review_id", "id"}:
         return F.sha2(
             F.concat_ws(
@@ -836,14 +933,238 @@ def review_copy_or_extract_field_expression(frame, target, source_field, field_e
             256,
         )
     aliases = {
+        "body": "text",
+        "content": "text",
         "event_time": "timestamp",
         "helpful": "helpful_vote",
+        "message": "text",
         "review_text": "text",
         "score": "rating",
         "user": "user_id",
+        "value": "text",
     }
     field_key = aliases.get(target, target)
-    return field_expressions.get(field_key, F.lit(""))
+    fallback = None
+    if field_key in field_expressions:
+        fallback = field_expressions[field_key]
+    else:
+        source_key = aliases.get(normalized_source, normalized_source)
+        if source_key in field_expressions:
+            fallback = field_expressions[source_key]
+        else:
+            resolved_source = first_matching_column(frame, normalized_source)
+            fallback = safe_col(frame, resolved_source) if resolved_source else field_expressions.get("text", F.lit(""))
+    raw_target = first_matching_column(frame, target)
+    if raw_target:
+        raw_value = safe_col(frame, raw_target).cast("string")
+        return F.when(F.length(F.trim(raw_value)) > 0, raw_value).otherwise(fallback)
+    if target == normalized_source:
+        return safe_col(frame, source_field)
+    return fallback
+
+
+def review_portable_text_model_expression(frame, target, allowed_values, config, column_config, source_field):
+    model_path = resolve_review_text_model_path(target, allowed_values, review_row_analysis_model_artifact(column_config, config))
+    if not model_path:
+        return None
+    title_field = config.get("titleField") or "title"
+    text_field = column_config.get("sourceField") or config.get("textField") or config.get("sourceField") or source_field or "text"
+    rating_field = config.get("ratingField") or "rating"
+    title_col = safe_col(frame, title_field).cast("string")
+    text_col = safe_col(frame, text_field).cast("string")
+    rating_col = try_cast_double(frame, rating_field)
+    normalized_allowed = [str(value) for value in allowed_values]
+
+    def predict_with_model(title, text, rating):
+        predicted = portable_review_text_predict(model_path, title, text, rating)
+        if normalized_allowed:
+            return canonical_allowed_value(predicted, normalized_allowed) or normalized_allowed[0]
+        return predicted or ""
+
+    return F.udf(predict_with_model, T.StringType())(title_col, text_col, rating_col)
+
+
+def review_text_model_required(config, column_config):
+    value = column_config.get("requireModel")
+    if value is None:
+        value = column_config.get("requirePortableModel")
+    if value is None:
+        value = config.get("requireModel")
+    if value is None:
+        value = config.get("requirePortableModel")
+    if value is None:
+        value = os.environ.get("ASKLAKE_REVIEW_TEXT_MODEL_REQUIRED", "")
+    return truthy(value)
+
+
+def resolve_review_text_model_path(target, allowed_values, preferred_artifact=""):
+    root = os.environ.get("ASKLAKE_REVIEW_TEXT_MODEL_ROOT", "").strip()
+    if not root or not os.path.isdir(root):
+        return ""
+    normalized_target = normalize_column_name(target)
+    direct = os.path.join(root, f"{normalized_target}.portable_linear_svc.json")
+    candidates = [direct]
+    preferred = str(preferred_artifact or "").strip()
+    if preferred:
+        preferred_path = preferred if os.path.isabs(preferred) else os.path.join(root, os.path.basename(preferred))
+        candidates.insert(0, preferred_path)
+        if not os.path.exists(preferred_path):
+            preferred_name = os.path.basename(preferred)
+            for current_root, _dirs, files in os.walk(root):
+                if preferred_name in files:
+                    candidates.insert(0, os.path.join(current_root, preferred_name))
+                    break
+    if not os.path.exists(direct):
+        for current_root, _dirs, files in os.walk(root):
+            filename = f"{normalized_target}.portable_linear_svc.json"
+            if filename in files:
+                candidates.append(os.path.join(current_root, filename))
+                break
+    for candidate in candidates:
+        if not os.path.exists(candidate):
+            continue
+        try:
+            model = load_review_text_model(candidate)
+        except Exception:
+            continue
+        classes = [str(value) for value in model.get("classes") or []]
+        if not classes:
+            continue
+        if allowed_values:
+            allowed_normalized = {str(value).strip().lower() for value in allowed_values}
+            class_normalized = {value.strip().lower() for value in classes}
+            if not class_normalized.issubset(allowed_normalized):
+                continue
+        return candidate
+    return ""
+
+
+def review_row_analysis_model_artifact(column_config, config):
+    for source in [column_config, config]:
+        if not isinstance(source, dict):
+            continue
+        for key in ["modelArtifact", "selectedModelArtifact", "modelPath"]:
+            value = str(source.get(key) or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def load_review_text_model(model_path):
+    if model_path not in REVIEW_TEXT_MODEL_CACHE:
+        with open(model_path, "r", encoding="utf-8") as handle:
+            model = json.load(handle)
+        vocabulary = model.get("vectorizer", {}).get("vocabulary") or []
+        model["_vocabularyIndex"] = {term: index for index, term in enumerate(vocabulary)}
+        REVIEW_TEXT_MODEL_CACHE[model_path] = model
+    return REVIEW_TEXT_MODEL_CACHE[model_path]
+
+
+def portable_review_text_predict(model_path, title, text, rating):
+    model = load_review_text_model(model_path)
+    feature_values = portable_review_text_features(model, title, text, rating)
+    classes = [str(value) for value in model.get("classes") or []]
+    coefficients = model.get("coef") or []
+    intercepts = model.get("intercept") or []
+    if not classes or not coefficients:
+        return ""
+    if len(classes) == 2 and len(coefficients) == 1:
+        score = float(intercepts[0] if intercepts else 0.0) + sparse_dot(coefficients[0], feature_values)
+        return classes[1] if score > 0 else classes[0]
+    best_class = classes[0]
+    best_score = None
+    for index, label in enumerate(classes):
+        coef = coefficients[index] if index < len(coefficients) else []
+        score = float(intercepts[index] if index < len(intercepts) else 0.0) + sparse_dot(coef, feature_values)
+        if best_score is None or score > best_score:
+            best_class = label
+            best_score = score
+    return best_class
+
+
+def portable_review_text_features(model, title, text, rating):
+    vectorizer = model.get("vectorizer") or {}
+    vocab_index = model.get("_vocabularyIndex") or {}
+    idf = vectorizer.get("idf") or []
+    ngram_range = vectorizer.get("ngramRange") or [1, 1]
+    min_n = int(ngram_range[0] if len(ngram_range) > 0 else 1)
+    max_n = int(ngram_range[1] if len(ngram_range) > 1 else min_n)
+    combined = clean_review_text(f"{title or ''} {text or ''}").lower()
+    tokens = re.findall(r"\b\w\w+\b", combined, flags=re.UNICODE)
+    counts = {}
+    for ngram_size in range(min_n, max_n + 1):
+        if ngram_size <= 0 or len(tokens) < ngram_size:
+            continue
+        for index in range(0, len(tokens) - ngram_size + 1):
+            term = " ".join(tokens[index:index + ngram_size])
+            term_index = vocab_index.get(term)
+            if term_index is None:
+                continue
+            counts[term_index] = counts.get(term_index, 0) + 1
+    feature_values = {}
+    norm_sum = 0.0
+    for index, count in counts.items():
+        value = 1.0 + math.log(float(count))
+        if index < len(idf):
+            value *= float(idf[index])
+        feature_values[index] = value
+        norm_sum += value * value
+    if norm_sum > 0:
+        norm = math.sqrt(norm_sum)
+        for index in list(feature_values):
+            feature_values[index] = feature_values[index] / norm
+
+    text_feature_count = len(vocab_index)
+    dense_values = portable_dense_features_from_values(model, combined, rating)
+    for offset, value in enumerate(dense_values):
+        if value:
+            feature_values[text_feature_count + offset] = value
+    return feature_values
+
+
+def portable_dense_features_from_values(model, combined_text, rating):
+    dense = model.get("dense") or {}
+    scale = float(dense.get("scale") or 1.0)
+    try:
+        numeric_rating = float(rating or 0)
+    except Exception:
+        numeric_rating = 0.0
+    values = [
+        numeric_rating / 5.0,
+        1.0 if numeric_rating <= 1 else 0.0,
+        1.0 if numeric_rating <= 2 else 0.0,
+        1.0 if numeric_rating == 3 else 0.0,
+        1.0 if numeric_rating >= 4 else 0.0,
+        1.0 if numeric_rating == 5 else 0.0,
+    ]
+    for pattern_item in dense.get("patterns") or []:
+        pattern = ""
+        if isinstance(pattern_item, list) and len(pattern_item) >= 2:
+            pattern = str(pattern_item[1])
+        elif isinstance(pattern_item, dict):
+            pattern = str(pattern_item.get("pattern") or "")
+        values.append(1.0 if pattern and re.search(pattern, combined_text) else 0.0)
+    return [value * scale for value in values]
+
+
+def sparse_dot(coefficients, feature_values):
+    total = 0.0
+    for index, value in feature_values.items():
+        if index < len(coefficients):
+            total += float(coefficients[index]) * float(value)
+    return total
+
+
+def clean_review_text(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def truthy(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def review_one_of_values_expression(frame, target, allowed_values, rating, haystack, signals):
@@ -947,11 +1268,20 @@ def parse_review_row_analysis_config(params):
     text = str(params)
     output = text.split("=", 1)[0].strip() if "=" in text else ""
     fields = {}
-    if "review_analyze(" in text and ")" in text:
-        inner = text.split("review_analyze(", 1)[1].split(")", 1)[0]
+    lowered = text.lower()
+    call_name = "review_analyze(" if "review_analyze(" in lowered else "text_analyze(" if "text_analyze(" in lowered else ""
+    if call_name and ")" in text:
+        start = lowered.index(call_name) + len(call_name)
+        end = text.find(")", start)
+        inner = text[start:end]
         parts = [part.strip() for part in inner.split(",") if part.strip()]
-        for key, value in zip(["ratingField", "titleField", "textField", "asinField"], parts):
-            fields[key] = value
+        if call_name == "text_analyze(":
+            if parts:
+                fields["sourceField"] = parts[0]
+                fields["textField"] = parts[0]
+        else:
+            for key, value in zip(["ratingField", "titleField", "textField", "asinField"], parts):
+                fields[key] = value
     return {"outputColumn": output, **fields}
 
 
@@ -982,13 +1312,18 @@ def evaluate_review_row_analysis_checks(frame, steps):
         )
         method = review_row_analysis_method(column_config, config)
         allowed_values = review_row_analysis_allowed_values(column_config, config)
+        selected_model_artifact = review_row_analysis_model_artifact(column_config, config)
+        portable_model_path = resolve_review_text_model_path(target, allowed_values, selected_model_artifact) if method == "one_of_values" else ""
+        model_required = review_text_model_required(config, column_config) if method == "one_of_values" else False
         resolved_output = resolve_column_name(frame, step_output or target)
         check = {
             "allowedValues": allowed_values if method == "one_of_values" else [],
             "id": str(step.get("id") or target or step_output),
             "method": method,
+            "modelArtifact": os.path.basename(portable_model_path) if portable_model_path else "",
+            "modelRequired": model_required,
+            "selectedModelArtifact": selected_model_artifact,
             "output": step_output or target,
-            "qualityThreshold": REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD,
             "rawMethod": raw_method,
             "runtimeStatus": "recorded",
             "supportedMethods": sorted(REVIEW_ROW_ANALYSIS_SUPPORTED_METHODS),
@@ -999,8 +1334,8 @@ def evaluate_review_row_analysis_checks(frame, steps):
             check.update({
                 "invalidRows": total_rows,
                 "runtimeStatus": "unsupported_method",
-                "score": 0.0 if total_rows else 1.0,
                 "validRows": 0,
+                "validationStatus": "needs_review",
             })
             checks.append(check)
             continue
@@ -1008,8 +1343,17 @@ def evaluate_review_row_analysis_checks(frame, steps):
             check.update({
                 "invalidRows": total_rows,
                 "runtimeStatus": "missing_allowed_values",
-                "score": 0.0 if total_rows else 1.0,
                 "validRows": 0,
+                "validationStatus": "needs_review",
+            })
+            checks.append(check)
+            continue
+        if method == "one_of_values" and model_required and not portable_model_path:
+            check.update({
+                "invalidRows": total_rows,
+                "runtimeStatus": "missing_model_artifact",
+                "validRows": 0,
+                "validationStatus": "needs_review",
             })
             checks.append(check)
             continue
@@ -1017,8 +1361,8 @@ def evaluate_review_row_analysis_checks(frame, steps):
             check.update({
                 "invalidRows": total_rows,
                 "runtimeStatus": "missing_output_column",
-                "score": 0.0 if total_rows else 1.0,
                 "validRows": 0,
+                "validationStatus": "needs_review",
             })
             checks.append(check)
             continue
@@ -1030,13 +1374,27 @@ def evaluate_review_row_analysis_checks(frame, steps):
         else:
             valid_condition = output_value.isNotNull() & (F.length(F.trim(output_value)) > 0)
         valid_rows = frame.filter(valid_condition).count()
-        score = round(valid_rows / total_rows, 4) if total_rows else 1.0
+        invalid_rows = max(total_rows - valid_rows, 0)
+        if invalid_rows != 0:
+            runtime_status = "needs_review"
+        elif method == "one_of_values" and portable_model_path:
+            runtime_status = "portable_text_model_output"
+        elif method == "one_of_values":
+            runtime_status = "rule_fallback_output"
+        else:
+            runtime_status = "valid_output"
+        if portable_model_path:
+            validation_status = "model_runtime_check"
+        elif method == "one_of_values":
+            validation_status = "fallback_structural_check_only"
+        else:
+            validation_status = "structural_check_only"
         check.update({
             "expectedValues": expected_values,
-            "invalidRows": max(total_rows - valid_rows, 0),
-            "runtimeStatus": "pass" if score >= REVIEW_ROW_ANALYSIS_QUALITY_THRESHOLD else "below_threshold",
-            "score": score,
+            "invalidRows": invalid_rows,
+            "runtimeStatus": runtime_status,
             "validRows": valid_rows,
+            "validationStatus": validation_status,
         })
         checks.append(check)
     return checks
@@ -1044,38 +1402,22 @@ def evaluate_review_row_analysis_checks(frame, steps):
 
 def is_review_row_analysis_step(step):
     operation = str(step.get("operation") or step.get("kind") or "").lower()
-    return "review row analysis" in operation or "review_analyze" in operation
+    return is_row_analysis_operation(operation)
+
+
+def is_row_analysis_operation(operation):
+    normalized = str(operation or "").lower()
+    return (
+        "review row analysis" in normalized
+        or "text row analysis" in normalized
+        or "review_analyze" in normalized
+        or "text_analyze" in normalized
+    )
 
 
 def review_row_analysis_expected_values(method, allowed_values):
     if method == "one_of_values":
         return allowed_values
-    if method == "sentiment_3way":
-        return ["positive", "mixed", "negative"]
-    if method == "issue_category":
-        return [
-            "safety_battery",
-            "charging_power",
-            "screen_display",
-            "shipping_delivery",
-            "listing_accuracy",
-            "positive_value",
-            "general_negative",
-        ]
-    if method == "issue_subcategory":
-        return [
-            "battery_or_safety",
-            "charging_or_power",
-            "screen_or_display",
-            "shipping_or_package",
-            "listing_mismatch",
-            "positive_feedback",
-            "unspecified_complaint",
-        ]
-    if method == "severity_4level":
-        return ["critical", "high", "medium", "low"]
-    if method == "boolean_y_n":
-        return ["Y", "N"]
     return []
 
 
@@ -1333,6 +1675,18 @@ def resolve_column_name(frame, name):
     return ""
 
 
+def collect_sample_rows(frame, limit=10):
+    columns = list(frame.columns)
+    rows = []
+    for row in frame.limit(limit).collect():
+        values = []
+        for column in columns:
+            value = row[column]
+            values.append("" if value is None else str(value))
+        rows.append(values)
+    return rows
+
+
 def quote_identifier(name):
     return f"`{str(name).replace('`', '``')}`"
 
@@ -1377,7 +1731,7 @@ def load_json_env(name, fallback):
     raw = os.environ.get(name)
     if raw is None or raw == "":
         return fallback
-    value = json.loads(raw)
+    value = json.loads(raw.lstrip("\ufeff"))
     return value if isinstance(value, list) else fallback
 
 

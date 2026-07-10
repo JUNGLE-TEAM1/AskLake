@@ -8,7 +8,7 @@ const env = {
   ...process.env,
   ASKLAKE_RESET_METADATA_ON_START: "true",
   MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY || "m3admin",
-  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000",
+  MINIO_ENDPOINT: process.env.MINIO_ENDPOINT || "http://127.0.0.1:9000",
   MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY || "wishuponastar",
   PORT: String(port),
 };

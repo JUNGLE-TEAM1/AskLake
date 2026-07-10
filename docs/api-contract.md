@@ -17,7 +17,7 @@
 | 7 | P1 | `POST /api/dashboards` | 대시보드 초안 생성 |
 | 8 | P1 | `GET /api/s3/buckets`, `GET /api/s3/prefixes` | Target 저장경로 S3 bucket/prefix 선택 |
 | 9 | P1 | `GET /api/target/databases` | Target 기본정보 DB 선택 |
-| 10 | P2 | `POST /api/audit-logs` | 감사 로그 서버 저장 |
+| 10 | P2 | `GET /api/admin/audit-logs` | 서버 감사 로그 조회/검색 |
 
 현재 Pair A Source/Schema/Create/Run/Catalog/SQL preview 흐름과 Dashboard card/runtime 흐름은 live backend API를 호출합니다.
 Dashboard adapter는 FastAPI 응답을 우선하고, 이전 backend 호환을 위해 404 local/mock fallback을 유지합니다.
@@ -80,7 +80,7 @@ Authorization: Bearer {accessToken}
 X-Request-Id: req_20260703_000001
 ```
 
-현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다.
+현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
 ### Permission/Governance Phase 0 용어
 
@@ -119,7 +119,9 @@ Backend는 세션 쿠키가 있으면 session user를 우선 actor로 사용하�
 4. `principalType="public"` grant에 해당 action이 포함되어 있으면 허용
 5. 위 조건이 모두 아니면 `403 FORBIDDEN`
 
-관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
+Governance control은 위 allow-only 판정 앞에서 적용됩니다. `principal_controls`에서 actor의 user id/email/display name 또는 소속 group이 `blocked`이면 grant가 있어도 `403 FORBIDDEN`입니다. `resource_locks`에서 resource가 잠겨 있으면 `view`는 유지하고 `query`, `run`, `manage`, `delete`, `share` action은 `403 FORBIDDEN`입니다. 목록 API는 blocked actor에게 해당 resource를 숨깁니다. Resource lock은 목록 노출을 막지 않고, 응답 `permissions`에서 `canQuery`, `canRun`, `canManage`, `canDelete`, `canShare`를 `false`로 내려 UI preflight와 backend enforcement가 같은 상태를 보게 합니다.
+
+관리자 권한 편집 기능은 이 우선순위를 바꾸지 않고 독립 `permission_grants` table row를 생성/수정/삭제하는 API로 확장합니다. 운영 기본값은 group grant 중심이며, user grant는 예외 권한에 사용합니다. Admin 권한은 resource 접근 그룹이 아니라 `role=admin`으로 부여하고, 로컬 demo admin 계정의 groups는 빈 배열로 유지합니다. Group grant/block은 일반 사용자 권한 운영 단위입니다. `role`/`public` grant는 계약상 지원하지만 운영 위험이 크므로 정책 확인 후 사용합니다. 현재 backend는 resource payload 안의 legacy `permissionGrants`와 독립 `permission_grants` table row를 병합해 같은 `grants` 응답과 permission check 입력으로 사용합니다.
 
 Resource/action 기준:
 
@@ -172,8 +174,8 @@ Profile/Admin Console Phase 0 기준:
 - `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
 - `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
-- 관리 콘솔은 사용자/그룹/감사 로그 조회와 permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
-- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 자동 생성하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
+- 관리 콘솔은 사용자/그룹/감사 로그 조회, 사용자/그룹 차단, resource lock, permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
+- 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
 - Auth table은 현재 repo의 기존 로컬 persistence 패턴에 맞춰 service에서 `create_all`로 보강합니다. 운영 배포의 schema source of truth는 후속 Alembic migration으로 분리해야 합니다.
 
@@ -551,7 +553,7 @@ type LineageGraph = {
   datasets: Array<{
     id: string;
     name: string;
-    layer: "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+    layer: "SOURCE" | "PROCESS" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
     engine: string;
     columns: Array<{
       id: string;
@@ -930,6 +932,8 @@ Response 예시:
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
 - Spark와 Catalog reconciliation 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
+- ETL `lineageGraph`의 source node에는 실제 source/transform input 컬럼만 포함합니다. source-to-job edge는 transform step의 `input -> output` 또는 명시적 sourceName-to-targetName mapping으로 만들고, job-to-target edge는 같은 output column name으로 연결합니다. 결과 schema를 source node에 복제하거나 컬럼 순번만으로 연결하지 않습니다. `_asklake_run_id`, `_asklake_ingested_at` 같은 실행 metadata는 source가 아니라 Spark job에서 생성된 것으로 표현합니다.
+- ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 요청값이 아니라 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용합니다.
 
 Validation:
 
@@ -1143,7 +1147,9 @@ Response 예시:
 | `cancelRun` | `etl.run.cancel_requested` | 현재 Run만 `canceled`, 반복 schedule은 유지 |
 | `stopSchedule` | `etl.schedule.stop_requested` | `stopped`, 다음 반복 예약 제거, `nextRun: "-"` |
 
-`run`과 `retry`는 Spark 실행을 백그라운드로 시작한 뒤 `job.status: "running"`과 `run.status: "running"`을 즉시 응답한다. 프론트는 이 응답을 먼저 목록에 반영하고, `GET /api/etl/jobs/{jobId}`를 polling해 Spark 완료 후 저장된 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+`run`과 `retry`는 Airflow DAG Run을 제출한 뒤 non-terminal `job`/`run`을 즉시 응답한다. Airflow `spark_process_write` task는 `POST /api/internal/airflow/spark-runs/{runId}/execute`를 호출해 실제 input/output row count와 output path를 Run의 `sparkResult`에 저장한다. 다음 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출해 물리 Parquet를 검증하고 Catalog dataset/materialization을 transaction으로 확정한다. 프론트는 `GET /api/etl/jobs/{jobId}`를 polling해 최종 `scheduled` 또는 `failed` 상태와 `runHistory`, `dagSteps`를 다시 반영한다.
+
+분리된 내부 endpoint는 bearer token과 backend의 `AIRFLOW_EXECUTION_API_TOKEN`을 우선 사용하며 `AIRFLOW_INTERNAL_TOKEN`을 호환 fallback으로 허용한다. `POST /api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute`와 `X-AskLake-Airflow-Token`은 기존 단일 호출 Spark/Catalog 경로 호환용으로 유지한다. 동일 `runId`가 이미 Catalog에 materialize된 경우 기존 결과를 반환하고 Spark를 중복 실행하지 않는다. Airflow DAG가 `success`여도 해당 `runId`의 성공 Catalog evidence 또는 기존 persisted Spark result가 없으면 Run을 `failed`로 보정한다. `dag_run.conf`에는 `jobId`, `runId`, `command`, `executionMode`, 제출 시각만 전달하며 source credential과 전체 Job payload는 전달하지 않는다.
 
 Validation:
 
@@ -2669,30 +2675,121 @@ Response `200 OK`:
 - `X-AskLake-Role=admin` 필요.
 - admin이 아니면 `403 FORBIDDEN`.
 
+Query:
+
+- `q?: string`: action, actor, api path, target, metadata text 검색.
+- `actorId?: string`: actor id/name 부분 검색.
+- `resourceType?: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group"`.
+- `result?: "success" | "failed" | "forbidden"`.
+- `from?: ISO datetime`.
+- `to?: ISO datetime`.
+- `limit?: number`: 기본 100, 최대 500.
+
 Response `200 OK`:
 
 ```json
 {
   "logs": [
     {
-      "action": "etl.job.command_requested",
-      "actor_id": "Admin User",
-      "api_path": "/api/etl/jobs/JOB-001/commands",
+      "action": "admin.permission_grant.created",
+      "actor_id": "admin-user",
+      "actor_name": "Admin User",
+      "actor_role": "admin",
+      "actor_groups": ["data-platform", "analytics", "ops"],
+      "api_path": "/api/admin/permissions",
       "created_at": "2026-07-09T06:30:00.000Z",
-      "request_id": "req_demo_001",
+      "http_method": "POST",
+      "metadata": {
+        "grantId": "grant_abc123",
+        "principalId": "temporary.editor@asklake.local",
+        "principalType": "user",
+        "actions": ["view"]
+      },
+      "request_id": "req_01J1Z8W8EFGH",
       "result": "success",
-      "target_id": "JOB-001",
-      "target_type": "etl_job"
+      "status_code": 201,
+      "target_id": "ds_customer_orders_gold",
+      "target_name": "Customer Orders Gold",
+      "target_type": "dataset"
     }
   ]
 }
 ```
 
-초기 구현은 frontend local audit log와 backend demo audit snapshot을 합치지 않습니다. 서버 API는 backend가 알고 있는 demo log만 반환하고, Topbar의 local audit log는 별도 UI 상태로 유지합니다.
+Backend 저장 기준:
 
-### 9.6 감사 로그 저장
+- 서버 감사 로그는 `audit_events` table에 저장합니다.
+- 현재 기록 범위는 admin permission grant 생성/수정/삭제, governance control 변경, auth login/logout/login 실패, Dataset 상세/SQL query/materialization 삭제 403, Job command/update 403, Dashboard runtime/편집/삭제 403입니다.
+- 감사 저장 실패는 주요 사용자 액션을 막지 않고 서버 transaction rollback 후 액션 응답을 유지합니다.
+- Topbar의 local audit log는 별도 UI 상태로 유지하며, `/api/admin/audit-logs` 응답과 합치지 않습니다.
 
-`POST /api/audit-logs`
+### 9.6 관리자 Governance Controls
+
+`GET /api/admin/governance-controls`
+
+- admin이 아니면 `403 FORBIDDEN`.
+- 사용자/그룹 차단 상태와 resource lock 상태를 반환합니다.
+- 관리 콘솔 UI는 user 차단을 사용자 탭에, group 차단을 그룹 탭에, resource lock을 권한 탭의 선택 resource action에 표시합니다.
+- `reason`은 관리자 내부 표시와 감사 로그용입니다. 일반 사용자-facing 오류 메시지에는 차단/잠금 사유를 그대로 노출하지 않습니다.
+
+Response:
+
+```json
+{
+  "principalControls": [
+    {
+      "id": "principal_control_...",
+      "principalType": "group",
+      "principalId": "analytics",
+      "status": "blocked",
+      "reason": "incident response",
+      "updatedBy": "Admin User",
+      "updatedAt": "2026-07-10T00:00:00Z"
+    }
+  ],
+  "resourceLocks": [
+    {
+      "id": "resource_lock_...",
+      "resourceType": "dataset",
+      "resourceId": "ds_orders_clean",
+      "locked": true,
+      "reason": "schema freeze",
+      "updatedBy": "Admin User",
+      "updatedAt": "2026-07-10T00:00:00Z"
+    }
+  ]
+}
+```
+
+`PATCH /api/admin/governance/principals`
+
+```json
+{
+  "principalType": "user",
+  "principalId": "demo-user",
+  "status": "blocked",
+  "reason": "temporary investigation"
+}
+```
+
+`principalType`은 `user` 또는 `group`, `status`는 `active` 또는 `blocked`입니다. 성공 시 `admin.principal_control.updated` audit event를 저장합니다. 운영자 계정은 UI에서 차단 action을 노출하지 않으며, 일반 사용자에게는 내부 `reason` 대신 중립적인 접근 제한 메시지만 보여줍니다.
+
+`PATCH /api/admin/governance/resource-locks`
+
+```json
+{
+  "resourceType": "dataset",
+  "resourceId": "ds_orders_clean",
+  "locked": true,
+  "reason": "schema freeze"
+}
+```
+
+`resourceType`은 `dataset`, `etl_job`, `dashboard`입니다. 성공 시 `admin.resource_lock.updated` audit event를 저장합니다. 잠긴 resource는 `view`를 제외한 `query/run/manage/delete/share` action에서 backend가 `403 FORBIDDEN`을 반환하고 `*.governance_forbidden` audit event를 저장합니다.
+
+### 9.7 Frontend 최근 호출 로그
+
+서버 감사 로그와 별도로 frontend는 사용자 피드백용 최근 호출 로그를 브라우저 안에 저장합니다. 현재 `POST /api/audit-logs` endpoint는 구현하지 않습니다.
 
 현재 프론트 내부 저장 위치:
 
@@ -2709,37 +2806,11 @@ type AuditEntry = {
   api_path: string;
   created_at: string;
   request_id: string;
-  result: "success" | "failed";
+  result: "success" | "failed" | "forbidden";
   target_id: string;
-  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui";
+  target_type: "etl_job" | "dataset" | "dashboard" | "ai_module" | "admin_module" | "ui" | "auth" | "user" | "group";
 };
 ```
-
-Request 예시:
-
-```json
-{
-  "action": "etl.pipeline.created",
-  "actor_id": "demo-user",
-  "api_path": "/api/etl/jobs",
-  "created_at": "2026-07-03T11:40:00.000Z",
-  "request_id": "req_01J1Z8W8EFGH",
-  "result": "success",
-  "target_id": "JOB-001",
-  "target_type": "etl_job"
-}
-```
-
-Response `201 Created`:
-
-```json
-{
-  "id": "audit_01J1Z8W8IJKL",
-  "stored": true
-}
-```
-
-감사 로그 API는 실패해도 주요 사용자 액션을 막지 않는 것을 권장합니다.
 
 ## 10. 백엔드 구현 체크리스트
 

@@ -13,8 +13,10 @@ const dockerNetwork = process.env.ASKLAKE_DOCKER_NETWORK || "asklake_default";
 const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 ensureDockerNetwork();
-ensureSourceMinio();
-await seedMinioSourceSamples();
+if (process.env.ASKLAKE_WITH_SOURCE_MINIO === "true") {
+  ensureSourceMinio();
+  await seedMinioSourceSamples();
+}
 ensurePostgres();
 loadPostgresSample();
 ensureMongo();

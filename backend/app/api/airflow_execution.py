@@ -19,11 +19,11 @@ router = APIRouter(prefix="/internal/airflow", tags=["internal-airflow"])
 def require_airflow_execution_token(
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> None:
-    expected = settings.airflow_execution_api_token
+    expected = settings.airflow_execution_api_token or settings.airflow_internal_token
     if not expected:
         raise ApiError(
             "AIRFLOW_EXECUTION_NOT_CONFIGURED",
-            "AIRFLOW_EXECUTION_API_TOKEN is required for Airflow Spark execution.",
+            "AIRFLOW_EXECUTION_API_TOKEN or AIRFLOW_INTERNAL_TOKEN is required for Airflow Spark execution.",
             status.HTTP_503_SERVICE_UNAVAILABLE,
         )
     scheme, _, supplied = str(authorization or "").partition(" ")

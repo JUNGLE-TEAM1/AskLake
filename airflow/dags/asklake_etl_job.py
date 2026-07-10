@@ -29,12 +29,20 @@ def post_asklake_execution_api(
     *,
     operation: str,
 ) -> dict[str, Any]:
-    base_url = os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL", "").rstrip("/")
-    token = os.environ.get("ASKLAKE_EXECUTION_API_TOKEN", "")
+    base_url = str(
+        os.environ.get("ASKLAKE_EXECUTION_API_BASE_URL")
+        or os.environ.get("AIRFLOW_INTERNAL_BASE_URL")
+        or ""
+    ).rstrip("/")
+    token = str(
+        os.environ.get("ASKLAKE_EXECUTION_API_TOKEN")
+        or os.environ.get("AIRFLOW_INTERNAL_TOKEN")
+        or ""
+    )
     if not base_url or not token:
         raise RuntimeError(
-            f"{operation} requires ASKLAKE_EXECUTION_API_BASE_URL and "
-            "ASKLAKE_EXECUTION_API_TOKEN in the Airflow runtime."
+            f"{operation} requires an AskLake internal base URL and token "
+            "in the Airflow runtime."
         )
 
     url = f"{base_url}{route}"
@@ -51,7 +59,11 @@ def post_asklake_execution_api(
     )
     timeout_seconds = max(
         30,
-        int(os.environ.get("ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS", "930")),
+        int(
+            os.environ.get("ASKLAKE_EXECUTION_API_TIMEOUT_SECONDS")
+            or os.environ.get("AIRFLOW_INTERNAL_TIMEOUT_SECONDS")
+            or "930"
+        ),
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
@@ -121,14 +133,12 @@ def publish_catalog_result(conf: dict[str, Any], result: dict[str, Any]) -> dict
         "catalogDatasetId": catalog["dataset"]["id"],
         "catalogReconciledAt": catalog.get("reconciledAt"),
     }
-
-
 @dag(
     dag_id="asklake_etl_job",
     schedule=None,
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["asklake", "spark", "batch"],
+    tags=["asklake", "etl", "spark", "batch"],
     is_paused_upon_creation=False,
 )
 def asklake_etl_job() -> None:
@@ -143,13 +153,6 @@ def asklake_etl_job() -> None:
     @task(task_id="validate_spark_request")
     def validate_spark_request(conf: dict[str, Any]) -> dict[str, Any]:
         time.sleep(sleep_seconds(conf, "smokeReadSeconds", 0))
-        if conf.get("executionMode") != "smoke":
-            job = conf.get("job")
-            if not isinstance(job, dict):
-                raise ValueError("AskLake Spark DAG Run conf must include job metadata.")
-            missing = [key for key in ("sourceType", "target") if not job.get(key)]
-            if missing:
-                raise ValueError(f"AskLake Spark job metadata is missing: {', '.join(missing)}")
         return conf
 
     @task(task_id="spark_process_write")
@@ -158,7 +161,7 @@ def asklake_etl_job() -> None:
             time.sleep(sleep_seconds(conf, "smokeProcessSeconds", 0))
             if conf.get("forceFail"):
                 raise RuntimeError("AskLake smoke forced failure from dag_run.conf.forceFail.")
-            input_rows = len(conf.get("job", {}).get("schemaSampleRows") or []) or 10
+            input_rows = int(conf.get("smokeInputRows") or 10)
             result = {
                 "inputRows": input_rows,
                 "outputPath": f"airflow-smoke://{conf.get('jobId')}/{conf.get('runId')}",
@@ -175,7 +178,6 @@ def asklake_etl_job() -> None:
             error = result.get("error") or "Spark execution failed."
             raise RuntimeError(f"{failed_stage}: {error}")
         return result
-
     @task(task_id="publish_run_result")
     def publish_run_result(conf: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         return publish_catalog_result(conf, result)

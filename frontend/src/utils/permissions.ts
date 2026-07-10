@@ -1,9 +1,17 @@
-import type { CatalogDataset, DashboardMeta, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
+import type { CatalogDataset, CurrentUserResponse, DashboardMeta, JobCommand, JobRowData, ResourcePermissions, SavedDashboardCard } from "../types";
 
 type PermissionResource = CatalogDataset | DashboardMeta | JobRowData | SavedDashboardCard;
 
 export function canQueryDataset(dataset: CatalogDataset | null | undefined) {
   return permissionValue(dataset, "canQuery", true);
+}
+
+export function isAdminUser(user: CurrentUserResponse | null | undefined) {
+  return String(user?.role ?? "").toLowerCase() === "admin";
+}
+
+export function canQueryDatasetAs(dataset: CatalogDataset | null | undefined, user: CurrentUserResponse | null | undefined) {
+  return isAdminUser(user) || canQueryDataset(dataset);
 }
 
 export function canManageDataset(dataset: CatalogDataset | null | undefined) {
@@ -19,7 +27,8 @@ export function canManageDashboard(dashboard: DashboardMeta | SavedDashboardCard
 }
 
 export function canRunJobCommand(job: JobRowData, command: JobCommand) {
-  if (command === "edit" || command === "delete") return true;
+  if (command === "edit") return permissionValue(job, "canManage", false);
+  if (command === "delete") return permissionValue(job, "canDelete", false);
   if (command === "run" || command === "retry") return permissionValue(job, "canRun", true);
   return permissionValue(job, "canManage", false);
 }

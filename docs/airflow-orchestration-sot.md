@@ -430,8 +430,12 @@ In scope:
 - Airflow `spark_process_write` calls the token-authenticated FastAPI internal
   execution API; FastAPI validates persisted identity and invokes PySpark.
 - `executionMode=smoke` remains available for backend-independent DAG checks.
+- The previous single-call internal execution endpoint remains available for
+  compatibility, but the stable DAG uses separate Spark and Catalog commit
+  boundaries.
 - AskLake remains the source of truth for user-facing job and dataset metadata.
 - Airflow is the source of truth for orchestration state while a run is active.
+- AskLake accepts Airflow `success` only when the same run id has persisted Spark output metadata and a successful Catalog materialization.
 
 Out of scope for v1:
 

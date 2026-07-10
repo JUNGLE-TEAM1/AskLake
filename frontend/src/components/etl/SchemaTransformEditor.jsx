@@ -353,7 +353,7 @@ export default function SchemaTransformEditor({
           .map((column, columnIndex) => ({
             allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
             instruction: column.instruction || "",
-            method: column.method || "copy_or_extract_field",
+            method: column.method || "copy",
             nullable: column.nullable !== false,
             targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
             type: column.type || "String",
@@ -361,29 +361,46 @@ export default function SchemaTransformEditor({
           .filter((column, columnIndex, columns) => column.targetName && columns.findIndex((item) => item.targetName === column.targetName) === columnIndex);
         if (outputColumns.length > 0) {
           const params = JSON.stringify({ columns: outputColumns, sourceField, version: 1 });
-          const generated = outputColumns.map((column) => ({
+          const generated = outputColumns.map((column, columnIndex) => ({
+            defaultValue: existing.defaultValue || "",
+            expandedFrom: sourceField,
+            expandedIndex: columnIndex + 1,
+            expandedTotal: outputColumns.length,
             included: true,
             name: column.targetName,
             nullable: column.nullable,
-            role: `review-row-analysis:${column.instruction || column.targetName}`,
-            sourceName: `__review_analysis.${column.targetName}`,
+            notNull: existing.notNull || false,
+            originalName: sourceField,
+            originalType: existing.originalType || existing.type,
+            role: `text-row-analysis:${column.instruction || column.targetName}`,
+            sourceId: existing.sourceId,
+            sourceName: `__text_analysis.${column.targetName}`,
             targetName: column.targetName,
             reviewAnalysisMethod: column.method,
-            transform: `REVIEW_ANALYZE(${sourceField}).${column.targetName}`,
+            reviewAnalysisInstruction: column.instruction || "",
+            transform: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
             transformChain: [{
-              display: `Review row -> ${column.targetName}`,
-              expression: `REVIEW_ANALYZE(${sourceField}).${column.targetName}`,
+              display: `Text row -> ${column.targetName}`,
+              expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
               onError: transformMeta.onError || "Warn",
-              operation: "Review Row Analysis",
+              operation: transformMeta.operation || "Text Row Analysis",
               params,
               type: column.type,
             }],
-            transformDisplay: `Review row -> ${column.targetName}`,
-            transformOperation: "Review Row Analysis",
+            transformDisplay: `Text row -> ${column.targetName}`,
+            transformOperation: transformMeta.operation || "Text Row Analysis",
             transformParams: params,
             type: column.type,
           }));
-          onSchemaChange(generated);
+          const replacingExpandedGroup = existing.expandedFrom
+            ? next.findIndex((item) => item.expandedFrom === existing.expandedFrom)
+            : -1;
+          const replaceStartIndex = replacingExpandedGroup >= 0 ? replacingExpandedGroup : editingColumn.index;
+          const replaceCount = replacingExpandedGroup >= 0
+            ? Math.max(1, next.filter((item) => item.expandedFrom === existing.expandedFrom).length)
+            : 1;
+          next.splice(replaceStartIndex, replaceCount, ...generated);
+          onSchemaChange(next);
           if (onTestStatusChange) onTestStatusChange(false);
           setShowFunctionModal(false);
           setEditingColumn(null);
@@ -708,7 +725,9 @@ export default function SchemaTransformEditor({
                       className={`p-2.5 rounded-xl border transition-all ${
                         selectedAfter.has(col.name)
                           ? "bg-slate-50 border-indigo-300 shadow-sm ring-1 ring-indigo-300"
-                          : "bg-white border-slate-200 hover:border-slate-300"
+                          : col.expandedFrom
+                            ? "bg-indigo-50/60 border-indigo-200 hover:border-indigo-300"
+                            : "bg-white border-slate-200 hover:border-slate-300"
                       }`}
                     >
                       {/* Column Header */}
@@ -725,6 +744,11 @@ export default function SchemaTransformEditor({
                             <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
                           )}
                         </div>
+                        {col.expandedFrom && (
+                          <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700" title={`Expanded from ${col.expandedFrom}`}>
+                            expanded {col.expandedIndex || index + 1}/{col.expandedTotal || 1}
+                          </span>
+                        )}
                         <input
                           type="text"
                           value={col.name}

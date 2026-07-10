@@ -88,7 +88,7 @@ function jobCreatorLabel(job: JobRowData) {
 }
 
 function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
-  if (action === "detail" || action === "runs" || action === "edit" || action === "delete") return false;
+  if (action === "detail" || action === "runs") return false;
   return !canRunJobCommand(job, action);
 }
 
@@ -231,7 +231,7 @@ function CellphonesReviewAnalysisPanel({
             </div>
             <div>
               <dt>Output schema</dt>
-              <dd>review_id, asin, rating, sentiment, issue_category, issue_subcategory, severity, summary, evidence, confidence</dd>
+              <dd>review_id, asin, rating, sentiment, issue_category, issue_subcategory, severity, summary, evidence</dd>
             </div>
             <div>
               <dt>Last run</dt>
@@ -967,12 +967,12 @@ type JobExecutionDisplay = {
 };
 
 function getJobExecutionDisplay(job: JobRowData): JobExecutionDisplay {
-  const problemRun = getLatestProblemRun(job);
-  const problemStage = normalizeShortText(problemRun?.failedStage);
-  const errorSummary = normalizeShortText(problemRun?.errorSummary);
-  const rawCandidates = [job.lastState, problemRun?.errorSummary ?? ""].map((value) => value.trim()).filter(Boolean);
-  const raw = rawCandidates.sort((first, second) => second.length - first.length)[0] ?? job.lastState;
   const isProblem = job.status === "failed" || job.status === "canceled";
+  const problemRun = getLatestProblemRun(job);
+  const problemStage = isProblem ? normalizeShortText(problemRun?.failedStage) : "";
+  const errorSummary = isProblem ? normalizeShortText(problemRun?.errorSummary) : "";
+  const rawCandidates = [job.lastState, isProblem ? problemRun?.errorSummary ?? "" : ""].map((value) => value.trim()).filter(Boolean);
+  const raw = rawCandidates.sort((first, second) => second.length - first.length)[0] ?? job.lastState;
   const stage = problemStage && problemStage !== "-" ? problemStage : isProblem ? "실패 단계 미확인" : job.progress?.label ?? jobStatusMeta[job.status].summaryLabel;
   const fallbackSummary = isProblem ? compactLogSummary(raw) : normalizeWhitespace(job.lastState);
   const summarySource = errorSummary && errorSummary !== "-" && !isVerboseLogText(errorSummary) ? errorSummary : fallbackSummary;

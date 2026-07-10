@@ -43,9 +43,10 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import { PageTitle } from "../../components/common";
+import { getCatalogDatasetRows, getCatalogModelArtifacts } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
-import { canDeleteDatasetMaterializationRun, canQueryDataset, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -67,7 +68,7 @@ type LineageTableNodeData = Record<string, unknown> & {
   onColumnSelect: (columnKey: string | null) => void;
   relatedColumnKeys: string[] | null;
   tableName: string;
-  tone: "source" | "bronze" | "silver" | "gold" | "downstream";
+  tone: "source" | "process" | "bronze" | "silver" | "gold" | "downstream";
 };
 
 const lineageNodeTypes = {
@@ -269,12 +270,14 @@ function compareCatalogDatasetsBySort(
 }
 
 export function CatalogPage({
+  currentUser,
   datasets,
   onAction,
   onMaterializationRunDelete,
   onOpenSql,
   selectedDataset,
 }: {
+  currentUser?: CurrentUserResponse | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onMaterializationRunDelete: (datasetId: string, runId: string) => void;
@@ -287,6 +290,8 @@ export function CatalogPage({
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedDatasetIds, setExpandedDatasetIds] = useState<string[]>([]);
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
+  const [modelArtifacts, setModelArtifacts] = useState<CatalogModelArtifact[]>([]);
+  const [modelArtifactsError, setModelArtifactsError] = useState<string | null>(null);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [isSortMenuOpen, setIsSortMenuOpen] = useState(false);
@@ -300,6 +305,7 @@ export function CatalogPage({
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
   const selectedSearchTags = useMemo(() => new Set(inputSearchQuery.tags), [inputSearchQuery.tags]);
   const selectedSortOption = catalogSortOptions.find((option) => option.mode === sortMode) ?? catalogSortOptions[0];
+  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, currentUser);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -349,6 +355,24 @@ export function CatalogPage({
     if (currentPage === currentCatalogPage) return;
     setCurrentPage(currentCatalogPage);
   }, [currentCatalogPage, currentPage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCatalogModelArtifacts()
+      .then((items) => {
+        if (cancelled) return;
+        setModelArtifacts(items);
+        setModelArtifactsError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setModelArtifacts([]);
+        setModelArtifactsError(error instanceof Error ? error.message : "Failed to load model artifacts.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isSortMenuOpen) return undefined;
@@ -441,7 +465,7 @@ export function CatalogPage({
 
   const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
     event.stopPropagation();
-    if (run.status !== "success" || !canQueryDataset(dataset)) return;
+    if (run.status !== "success" || !canQueryCurrentDataset(dataset)) return;
     setPreviewDataset(dataset);
     setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
     onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
@@ -454,7 +478,7 @@ export function CatalogPage({
   };
 
   const openSelectedSqlDataset = () => {
-    if (!canQueryDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
+    if (!canQueryCurrentDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
     onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
     onOpenSql(previewDataset);
   };
@@ -617,6 +641,7 @@ export function CatalogPage({
                     </article>
                     {isExpanded && (
                       <CatalogMaterializationRuns
+                        canQueryDatasetForCurrentUser={canQueryCurrentDataset}
                         dataset={dataset}
                         onDelete={deleteMaterializationRun}
                         onPageChange={updateMaterializationRunPage}
@@ -658,6 +683,7 @@ export function CatalogPage({
                 </div>
               </div>
             )}
+            <ModelArtifactsPanel artifacts={modelArtifacts} error={modelArtifactsError} />
           </section>
         </div>
 
@@ -723,15 +749,15 @@ export function CatalogPage({
 
           <button
             className="primary-button catalog-wide-button"
-            disabled={!canQueryDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-            title={!canQueryDataset(previewDataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+            disabled={!canQueryCurrentDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+            title={!canQueryCurrentDataset(previewDataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
             type="button"
             onClick={openSelectedSqlDataset}
           >
             <ExternalLink size={16} /> SQL 분석에서 열기
           </button>
           <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
-            {!canQueryDataset(previewDataset)
+            {!canQueryCurrentDataset(previewDataset)
               ? permissionDeniedMessage("데이터셋", "SQL 실행")
               : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
               ? `선택된 결과: ${selectedSqlRunTarget.runId}`
@@ -793,12 +819,14 @@ function CatalogModal({
 }
 
 export function CatalogDetailPage({
+  currentUser,
   dataset,
   onAction,
   onBack,
   onLineage,
   onOpenSql,
 }: {
+  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
@@ -806,6 +834,7 @@ export function CatalogDetailPage({
   onOpenSql: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<"overview" | "schema" | "sample" | "lineage">("overview");
+  const canQueryCurrentDataset = canQueryDatasetAs(dataset, currentUser);
 
   const openLineage = () => {
     setActiveTab("lineage");
@@ -828,7 +857,7 @@ export function CatalogDetailPage({
             </div>
           </div>
           <div className="job-detail-actions">
-            <button className="job-action-button primary" disabled={!canQueryDataset(dataset)} title={canQueryDataset(dataset) ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")} type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
+            <button className="job-action-button primary" disabled={!canQueryCurrentDataset} title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")} type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
             <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
@@ -867,6 +896,42 @@ export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
   );
 }
 
+function ModelArtifactsPanel({ artifacts, error }: { artifacts: CatalogModelArtifact[]; error: string | null }) {
+  const visibleArtifacts = artifacts.slice(0, 6);
+
+  return (
+    <section className="catalog-xflow-card catalog-model-artifacts-panel">
+      <div className="catalog-xflow-card-header">
+        <span className="catalog-xflow-icon">
+          <TerminalSquare size={16} />
+        </span>
+        <div className="catalog-xflow-heading">
+          <h2>Model artifacts</h2>
+          <p>Separate from Catalog datasets</p>
+        </div>
+        <span className="catalog-xflow-state">{artifacts.length}</span>
+      </div>
+      {error ? (
+        <div className="catalog-materialization-empty">{error}</div>
+      ) : visibleArtifacts.length > 0 ? (
+        <div className="catalog-materialization-list">
+          {visibleArtifacts.map((artifact) => (
+            <div className="catalog-materialization-row selectable" key={artifact.id}>
+              <span className={`catalog-run-status ${artifact.status === "available" ? "success" : "queued"}`}>{artifact.status || "tracked"}</span>
+              <strong title={artifact.id}>{artifact.targetColumn || artifact.outputColumn || artifact.id}</strong>
+              <span>{artifact.method || "-"}</span>
+              <span>{artifact.modelArtifact || artifact.runtimeStatus || "-"}</span>
+              <span>{typeof artifact.totalRows === "number" ? artifact.totalRows.toLocaleString() : "-"} rows</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="catalog-materialization-empty">No model artifacts yet.</div>
+      )}
+    </section>
+  );
+}
+
 function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div className="catalog-mini-metric">
@@ -877,6 +942,7 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
 }
 
 function CatalogMaterializationRuns({
+  canQueryDatasetForCurrentUser,
   dataset,
   onDelete,
   onPageChange,
@@ -884,6 +950,7 @@ function CatalogMaterializationRuns({
   page,
   selectedRunId,
 }: {
+  canQueryDatasetForCurrentUser: (dataset: CatalogDataset | null | undefined) => boolean;
   dataset: CatalogDataset;
   onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
   onPageChange: (event: React.MouseEvent, dataset: CatalogDataset, nextPage: number) => void;
@@ -906,7 +973,7 @@ function CatalogMaterializationRuns({
       {visibleRuns.length > 0 ? (
         <div className="catalog-materialization-list">
           {visibleRuns.map((run) => {
-            const isSelectable = run.status === "success" && canQueryDataset(dataset);
+            const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
             const isSelected = run.runId === selectedRunId;
 
             return (
@@ -917,7 +984,7 @@ function CatalogMaterializationRuns({
               key={run.runId}
               role="button"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDataset(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -1094,23 +1161,79 @@ function CatalogSchemaHeader({ header }: { header: Header<CatalogSchemaRow, unkn
 }
 
 function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
-  const columns = dataset.schema.slice(0, 5).map(([name]) => name);
+  const pageSize = 100;
+  const [offset, setOffset] = useState(0);
+  const [rowsResult, setRowsResult] = useState<CatalogDatasetRowsResponse | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [isLoadingRows, setIsLoadingRows] = useState(false);
+  const fallbackColumns = dataset.schema.slice(0, 8).map(([name]) => name);
+  const columns = rowsResult?.columns.length ? rowsResult.columns : fallbackColumns;
+  const rows = rowsResult?.rows ?? dataset.sampleRows.slice(0, pageSize);
+  const totalRows = rowsResult?.rowCount ?? rows.length;
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingRows(true);
+    setRowsError(null);
+    getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })
+      .then((result) => {
+        if (cancelled) return;
+        setRowsResult(result);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRowsError(error instanceof Error ? error.message : "Failed to load dataset rows.");
+        setRowsResult(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingRows(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset.id, offset]);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [dataset.id]);
+
+  const nextOffset = offset + pageSize;
+  const previousOffset = Math.max(0, offset - pageSize);
+  const hasNext = rowsResult?.hasNext ?? false;
+  const startLabel = totalRows === 0 ? 0 : offset + 1;
+  const endLabel = Math.min(offset + rows.length, totalRows);
+  const rangeLabel = String(startLabel) + "-" + String(endLabel) + " / " + totalRows.toLocaleString() + " rows";
+
   return (
     <section className="catalog-table-card">
       <div className="catalog-section-header">
-        <h2>샘플 데이터</h2>
-        <span>읽기 전용 미리보기</span>
+        <h2>Rows</h2>
+        <span>{isLoadingRows ? "Loading..." : rangeLabel}</span>
       </div>
+      {rowsError && <div className="catalog-materialization-empty">{rowsError}</div>}
       <div className="catalog-sample-scroll">
         <table className="schema-table">
-          <thead><tr>{columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-          <tbody>{dataset.sampleRows.map((row, rowIndex) => <tr key={`sample-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
+          <thead><tr>{columns.map((column, index) => <th key={column + "-" + index}>{column}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={"dataset-row-" + (offset + rowIndex)}>
+                {columns.map((_, cellIndex) => <td key={(offset + rowIndex) + "-" + cellIndex}>{row[cellIndex] ?? ""}</td>)}
+              </tr>
+            ))}
+          </tbody>
         </table>
+      </div>
+      <div className="catalog-materialization-pagination">
+        <span>{rows.length} visible</span>
+        <div>
+          <button disabled={offset === 0 || isLoadingRows} type="button" onClick={() => setOffset(previousOffset)}>Previous</button>
+          <strong>{Math.floor(offset / pageSize) + 1}</strong>
+          <button disabled={!hasNext || isLoadingRows} type="button" onClick={() => setOffset(nextOffset)}>Next</button>
+        </div>
       </div>
     </section>
   );
 }
-
 function CatalogLineage({ compact = false, dataset }: { compact?: boolean; dataset: CatalogDataset }) {
   const [lineageGraph, setLineageGraph] = useState<LineageGraph | null>(dataset.lineageGraph ?? null);
   const [selectedColumnKey, setSelectedColumnKey] = useState<string | null>(null);
@@ -1205,7 +1328,7 @@ function CatalogLineage({ compact = false, dataset }: { compact?: boolean; datas
         </div>
       )}
       <div className="catalog-lineage-footer">
-        <span>상위 데이터셋 <strong>{Math.max((lineageGraph?.datasets.length ?? 1) - 1, 0)}개</strong></span>
+        <span>상위 데이터셋 <strong>{countUpstreamDatasets(lineageGraph)}개</strong></span>
         <span>레이어 <strong>{dataset.layer}</strong></span>
         <span>상태 <strong>{statusMeta.label}</strong></span>
       </div>
@@ -1310,7 +1433,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
     ].filter(Boolean).join(" ")}>
       <header className="xflow-schema-header">
         <div className="xflow-schema-icon">
-          <Table2 size={18} />
+          {data.tone === "process" ? <Settings size={18} /> : <Table2 size={18} />}
         </div>
         <div className="xflow-schema-title">
           <strong title={data.tableName}>{data.tableName}</strong>
@@ -1496,6 +1619,11 @@ function getMaxColumnCount(datasets: LineageGraphDataset[]): number {
   return Math.max(...datasets.map((dataset) => dataset.columns.length), 1);
 }
 
+function countUpstreamDatasets(graph: LineageGraph | null): number {
+  if (!graph) return 0;
+  return graph.datasets.filter((item) => item.id !== graph.datasetId && item.layer !== "PROCESS").length;
+}
+
 function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): LineageTableNodeData["handleMode"] {
   if (hasIncoming && hasOutgoing) return "both";
   if (hasIncoming) return "target";
@@ -1504,6 +1632,7 @@ function getLineageHandleMode(hasIncoming: boolean, hasOutgoing: boolean): Linea
 
 function getLineageLayerLabel(layer: LineageLayer): string {
   if (layer === "SOURCE") return "SOURCE";
+  if (layer === "PROCESS") return "PROCESS";
   if (layer === "CONSUMER") return "CONSUMER";
   return `${layer} LAYER`;
 }
@@ -1512,6 +1641,7 @@ function getLayerTone(layer: LineageLayer): LineageTableNodeData["tone"] {
   if (layer === "GOLD") return "gold";
   if (layer === "SILVER") return "silver";
   if (layer === "BRONZE") return "bronze";
+  if (layer === "PROCESS") return "process";
   if (layer === "CONSUMER") return "downstream";
   return "source";
 }
