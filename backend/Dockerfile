@@ -16,6 +16,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY app ./app
+COPY fixtures ./fixtures
 COPY scripts ./scripts
 COPY src ./src
 
