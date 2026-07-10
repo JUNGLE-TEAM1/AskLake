@@ -4,17 +4,17 @@ Issue: #455
 
 ## 1. Status
 
-Phase 0 defined the target contract. Phase 1 implements partition offset snapshot capture, fixed-range consumption, and post-write offset commit while retaining the current Kafka RAW landing output. Direct target write replaces that output in a later phase.
+Phase 0 defined the target contract. Phase 1 implemented partition offset snapshots and post-write offset commit. Phase 2 writes the fixed snapshot range directly to the selected target and removes the default intermediate RAW landing output.
 
 ## 2. Objective
 
-Kafka Job runs must process a deterministic, bounded Kafka range and write the transformed result directly to the selected target dataset. The default path must not create an intermediate RAW landing dataset or `kafka-landing/...` object.
+Kafka Job runs must process a deterministic, bounded Kafka range and write the normalized review result directly to the selected target dataset. The default path must not create an intermediate RAW landing dataset or `kafka-landing/...` object.
 
 ```text
 Kafka topic
   -> capture partition offset snapshot
   -> consume the fixed range
-  -> apply configured transform and quality rules
+  -> normalize review event shape
   -> write selected Bronze/Silver/Gold target once
   -> register Catalog run
   -> commit Kafka offsets
@@ -22,7 +22,7 @@ Kafka topic
 
 The offset snapshot is metadata, not a copied message payload.
 
-Current Phase 1 behavior still writes the existing RAW landing object after the fixed-range consume. It uses the same snapshot metadata and commits the configured consumer group only after landing storage and Catalog registration succeed.
+Current Phase 2 behavior writes JSONL directly to `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/`. It uses the same snapshot metadata and commits the configured consumer group only after target storage and Catalog registration succeed. User-configured transform/quality rule execution is a later phase.
 
 ## 3. Snapshot Boundary
 
@@ -54,7 +54,7 @@ endOffset = min(highWatermark, startOffset + snapshotMaxMessagesPerPartition)
 The selected target dataset is the only Lake data output for the default path.
 
 - `BRONZE`: snapshot records are written without business transformation.
-- `SILVER`: configured field transforms and quality rules are applied before one target write.
+- `SILVER`: target layer metadata is supported; user-configured field transforms and quality rules are a later execution phase.
 - `GOLD`: out of scope until join/aggregation execution semantics are implemented.
 
 The target physical path must be derived from the target dataset and `snapshotId`, rather than the removed `kafka-landing/<topic>/<runId>` convention. The Catalog materialization run must expose the target path, target layer, `sourceKind: "kafka"`, and snapshot metadata.

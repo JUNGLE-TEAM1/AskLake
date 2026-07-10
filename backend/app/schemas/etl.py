@@ -311,6 +311,11 @@ class KafkaReviewIngestRequest(CamelModel):
     consumer_group_id: str | None = None
     dataset_id: str | None = None
     dataset_name: str = "reviews_raw"
+    target_bucket: str = "asklake-output"
+    target_description: str | None = None
+    target_format: str = "jsonl"
+    target_layer: Literal["RAW", "BRONZE", "SILVER"] = "BRONZE"
+    target_prefix: str = ""
     landing_bucket: str = "m3-raw"
     landing_endpoint: str = "http://127.0.0.1:19000"
     landing_prefix: str = "kafka-landing"
@@ -354,6 +359,7 @@ class KafkaReviewIngestResponse(CamelModel):
     storage_location: str
     storage_mode: Literal["local", "s3"]
     stored_count: int
+    target_layer: Literal["RAW", "BRONZE", "SILVER"]
     topic: str
 
 

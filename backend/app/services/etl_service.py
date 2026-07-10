@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -421,7 +422,7 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         or field_value(fields, "topic")
         or "reviews.raw"
     )
-    landing = parse_job_landing_path(job.storage_path or job.target_path, topic)
+    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
     max_messages = (
         parse_positive_integer(field_value(fields, "Batch Max Messages"))
         or parse_positive_integer(field_value(fields, "Max Messages"))
@@ -445,18 +446,25 @@ def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, An
         "consumerGroupId": consumer_group_id,
         "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
         "datasetName": job.target or "reviews_raw",
-        "landingBucket": landing["bucket"],
+        "landingBucket": target["bucket"],
         "landingEndpoint": (
             field_value(fields, "Landing Endpoint URL")
             or field_value(fields, "Target Endpoint URL")
+            or os.environ.get("MINIO_ENDPOINT_IN_DOCKER")
+            or os.environ.get("MINIO_ENDPOINT")
             or "http://127.0.0.1:19000"
         ),
-        "landingPrefix": landing["prefix"],
+        "landingPrefix": target["prefix"],
         "maxMessages": max_messages,
         "offsetPolicy": offset_policy,
         "registerCatalog": True,
         "runId": run_id,
-        "storageMode": landing["storageMode"],
+        "storageMode": target["storageMode"],
+        "targetBucket": target["bucket"],
+        "targetDescription": job.target_description or None,
+        "targetFormat": job.target_format or "jsonl",
+        "targetLayer": job.target_layer or "BRONZE",
+        "targetPrefix": target["prefix"],
         "timeoutMs": timeout_ms,
         "topic": topic,
     }
@@ -469,20 +477,20 @@ def kafka_offset_policy(value: str) -> str:
     return "earliest"
 
 
-def parse_job_landing_path(storage_path: str | None, topic: str) -> dict[str, str]:
-    default_prefix = "kafka-landing"
+def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
+    default_prefix = f"{normalize_column_name(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
     if storage_path:
         match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
         if match:
             prefix = (match.group(2) or default_prefix).strip("/") or default_prefix
-            if prefix == topic or prefix.endswith(f"/{topic}"):
-                prefix = prefix[: -(len(topic) + 1)].strip("/") or default_prefix
+            if prefix == "kafka-landing" or prefix.startswith("kafka-landing/"):
+                return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
             return {
                 "bucket": match.group(1),
                 "prefix": prefix,
                 "storageMode": "s3",
             }
-    return {"bucket": "m3-raw", "prefix": default_prefix, "storageMode": "s3"}
+    return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
 
 
 def is_kafka_job(job: ETLJobModel) -> bool:
@@ -904,7 +912,7 @@ def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[
     snapshot_id = str((result.get("snapshot") or {}).get("snapshotId") or "-")
     job.last_run = str(result.get("endedAt") or iso_now())
     job.last_state = (
-        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka snapshot {snapshot_id} · {stored_count:,}건 landing"
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka snapshot {snapshot_id} · {stored_count:,}건 target 저장"
         if success
         else f"Kafka 실행 실패 · {result.get('error') or '원인 확인 필요'}"
     )
@@ -914,7 +922,7 @@ def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[
     job.target_path = result.get("storageLocation") or job.target_path
     job.stats = {
         **(job.stats or {}),
-        "currentStage": "Kafka snapshot landing 완료" if success else "Kafka snapshot landing 실패",
+        "currentStage": "Kafka snapshot target 저장 완료" if success else "Kafka snapshot target 저장 실패",
         "inputRows": format_rows(result.get("consumedCount")),
         "lastSuccess": str(result.get("endedAt") or iso_now()) if success else job.stats.get("lastSuccess", "-"),
         "outputPath": result.get("storageLocation") or job.target_path,
@@ -1259,11 +1267,12 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
         ], ["Kafka 메시지를 batch 단위로 읽었습니다." if not failed else f"Kafka consume 실패: {run.get('errorSummary')}"]),
-        dag_step("landing", "3. Lake landing 저장", storage_location, "blocked" if failed else "success", [
+        dag_step("target", "3. Direct target 저장", storage_location, "blocked" if failed else "success", [
             ["Storage", str(result.get("storageMode") or "s3")],
             ["Format", str(result.get("storageFormat") or "jsonl")],
+            ["Layer", str(result.get("targetLayer") or job.target_layer)],
             ["Stored", format_rows(result.get("storedCount"))],
-        ], ["이전 단계 실패로 landing 저장이 수행되지 않았습니다." if failed else f"원본 이벤트를 JSONL로 저장했습니다: {storage_location}"]),
+        ], ["이전 단계 실패로 target 저장이 수행되지 않았습니다." if failed else f"Kafka snapshot 결과를 target에 저장했습니다: {storage_location}"]),
         dag_step("catalog", "4. 카탈로그 갱신", dataset_id, "blocked" if failed else "success", [
             ["Dataset", dataset_id],
             ["Run ID", run.get("runId", "-")],

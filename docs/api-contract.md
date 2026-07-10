@@ -488,9 +488,9 @@ type CatalogDataset = {
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
-### Kafka Snapshot Metadata and Planned Direct Target
+### Kafka Snapshot Metadata and Direct Target
 
-Issue #455 Phase 1부터 Kafka RAW landing run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존한다. 이후 direct target 전환도 같은 metadata shape를 사용한다.
+Issue #455 Phase 2부터 Kafka run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존하고, 중간 RAW landing 없이 direct target object를 저장한다. Current direct bridge output is normalized review JSONL; configured transform/quality execution is a follow-up capability.
 
 ```ts
 type KafkaPartitionSnapshot = {

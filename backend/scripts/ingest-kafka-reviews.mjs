@@ -19,16 +19,19 @@ const allowEmpty = booleanOption("allowEmpty", process.env.ASKLAKE_REVIEW_ALLOW_
 const registerCatalog = booleanOption("registerCatalog", process.env.ASKLAKE_REVIEW_REGISTER_CATALOG || "true");
 const datasetName = stringOption("datasetName", process.env.ASKLAKE_REVIEW_DATASET_NAME || "reviews_raw");
 const datasetId = stringOption("datasetId", process.env.ASKLAKE_REVIEW_DATASET_ID || `ds_${normalizeColumnName(datasetName)}`);
+const targetLayer = stringOption("targetLayer", process.env.ASKLAKE_REVIEW_TARGET_LAYER || "BRONZE").toUpperCase();
+const targetFormat = stringOption("targetFormat", process.env.ASKLAKE_REVIEW_TARGET_FORMAT || "jsonl").toLowerCase();
+const targetDescription = stringOption("targetDescription", process.env.ASKLAKE_REVIEW_TARGET_DESCRIPTION || "Kafka snapshot direct target dataset");
 const landingMode = stringOption("storageMode", process.env.ASKLAKE_REVIEW_LANDING_MODE || "local").toLowerCase();
-const landingRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_LOCAL_LANDING_DIR || path.join(backendDir, "tmp", "kafka-landing")));
+const targetRoot = path.resolve(stringOption("localLandingDir", process.env.ASKLAKE_REVIEW_TARGET_LOCAL_DIR || path.join(backendDir, "tmp", "kafka-target")));
 const s3Endpoint = stringOption("landingEndpoint", process.env.ASKLAKE_REVIEW_LANDING_ENDPOINT || process.env.MINIO_ENDPOINT || "http://127.0.0.1:19000");
-const s3Bucket = stringOption("landingBucket", process.env.ASKLAKE_REVIEW_LANDING_BUCKET || process.env.MINIO_BUCKET || "m3-raw");
-const s3Prefix = normalizePrefix(stringOption("landingPrefix", process.env.ASKLAKE_REVIEW_LANDING_PREFIX || "kafka-landing"));
-const s3DataKey = `${s3Prefix}${safePathSegment(topic)}/${runId}/data.jsonl`;
-const s3MetadataKey = `${s3Prefix}${safePathSegment(topic)}/${runId}/metadata.json`;
-const targetDir = path.join(landingRoot, safePathSegment(topic), runId);
-const dataPath = path.join(targetDir, "data.jsonl");
-const metadataPath = path.join(targetDir, "metadata.json");
+const s3Bucket = stringOption("targetBucket", apiPayload.landingBucket || process.env.ASKLAKE_REVIEW_TARGET_BUCKET || "asklake-output");
+const s3Prefix = normalizePrefix(stringOption("targetPrefix", apiPayload.landingPrefix || process.env.ASKLAKE_REVIEW_TARGET_PREFIX || `${normalizeColumnName(datasetName)}/${targetLayer.toLowerCase()}`));
+let s3DataKey = "";
+let s3MetadataKey = "";
+let targetDir = "";
+let dataPath = "";
+let metadataPath = "";
 const startedAt = new Date().toISOString();
 const requiredFields = ["event_id", "offset", "review", "created_at"];
 
@@ -47,6 +50,12 @@ try {
 }
 
 async function ingestReviews() {
+  if (!["RAW", "BRONZE", "SILVER"].includes(targetLayer)) {
+    throw new Error(`Kafka direct target layer must be RAW, BRONZE, or SILVER: ${targetLayer}`);
+  }
+  if (targetFormat !== "jsonl") {
+    throw new Error(`Kafka direct target currently supports jsonl only: ${targetFormat}`);
+  }
   const { Kafka } = await import("kafkajs");
   const kafka = new Kafka({
     brokers: [broker],
@@ -54,6 +63,7 @@ async function ingestReviews() {
     retry: { retries: 2 },
   });
   const snapshot = await captureKafkaSnapshot(kafka);
+  configureTargetOutput(snapshot.snapshotId);
   const consumer = kafka.consumer({ groupId: snapshotReaderGroupId(snapshot) });
   let consumerStarted = false;
 
@@ -69,7 +79,7 @@ async function ingestReviews() {
 
     const jsonl = consumed.records.map((record) => JSON.stringify(record)).join("\n");
     const dataBody = consumed.records.length > 0 ? `${jsonl}\n` : "";
-    const localLocation = writeLocalLanding(dataBody);
+    const localLocation = writeLocalTarget(dataBody);
 
     const endedAt = new Date().toISOString();
     const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
@@ -100,6 +110,10 @@ async function ingestReviews() {
       storageLocation: localLocation,
       storageSizeBytes: statSync(dataPath).size,
       storedCount: consumed.records.length,
+      targetBucket: s3Bucket,
+      targetFormat,
+      targetLayer,
+      targetPrefix: s3Prefix.replace(/\/$/, ""),
       timeoutMs,
       topic,
     };
@@ -134,6 +148,15 @@ async function ingestReviews() {
     if (consumerStarted) await consumer.stop().catch(() => undefined);
     await consumer.disconnect().catch(() => undefined);
   }
+}
+
+function configureTargetOutput(snapshotId) {
+  const objectId = safePathSegment(snapshotId);
+  s3DataKey = `${s3Prefix}snapshots/${objectId}/data.${targetFormat}`;
+  s3MetadataKey = `${s3Prefix}snapshots/${objectId}/metadata.json`;
+  targetDir = path.join(targetRoot, safePathSegment(datasetName), targetLayer.toLowerCase(), "snapshots", objectId);
+  dataPath = path.join(targetDir, `data.${targetFormat}`);
+  metadataPath = path.join(targetDir, "metadata.json");
 }
 
 async function captureKafkaSnapshot(kafka) {
@@ -296,7 +319,7 @@ async function commitKafkaSnapshot(kafka, snapshot) {
   }
 }
 
-function writeLocalLanding(dataBody) {
+function writeLocalTarget(dataBody) {
   mkdirSync(targetDir, { recursive: true });
   writeFileSync(dataPath, dataBody, "utf8");
   return dataPath;
@@ -377,18 +400,18 @@ async function registerCatalogDataset(metadata) {
   const materializationRuns = appendMaterializationRun(previous?.materializationRuns, run);
   const aggregate = aggregateRuns(materializationRuns);
   const payload = {
-    description: "Kafka reviews.raw 원본 리뷰 이벤트 landing dataset",
+    description: targetDescription,
     downstream: ["SQL 분석", "리뷰 분석"],
     freshness: "latest",
     id: datasetId,
-    layer: "RAW",
+    layer: targetLayer,
     lastUpdated: aggregate.lastUpdated || metadata.endedAt,
     lineageGraph: reviewLineageGraph(schema),
     materializationRuns,
     name: datasetName,
     nextRefresh: "-",
     owner: process.env.ASKLAKE_REVIEW_DATASET_OWNER || "AskLake",
-    quality: metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "원본 적재 완료",
+    quality: metadata.failedCount > 0 ? `적재 완료 · 실패 ${metadata.failedCount}건` : "Kafka snapshot 적재 완료",
     rag: false,
     rows: String(aggregate.rowCount),
     sampleRows: metadata.sampleRows,
@@ -397,10 +420,10 @@ async function registerCatalogDataset(metadata) {
     source: `Kafka ${metadata.topic}`,
     sourceRunId: aggregate.latestRunId || metadata.runId,
     status: "available",
-    storageFormat: metadata.storageFormat,
+    storageFormat: targetFormat,
     storageLocation: aggregate.latestStorageLocation || metadata.storageLocation,
     storageSizeBytes: aggregate.storageSizeBytes,
-    tags: ["#kafka", "#reviews", "#raw"],
+    tags: ["#kafka", "#reviews", `#${targetLayer.toLowerCase()}`],
     upstream: [`Kafka topic: ${metadata.topic}`],
   };
   await saveDataset(payload);
@@ -409,7 +432,11 @@ async function registerCatalogDataset(metadata) {
 
 function appendMaterializationRun(previousRuns, nextRun) {
   const runs = Array.isArray(previousRuns) ? previousRuns.filter((run) => run && typeof run === "object") : [];
-  const filtered = runs.filter((run) => run.runId !== nextRun.runId);
+  const snapshotId = nextRun.kafkaSnapshot?.snapshotId;
+  const filtered = runs.filter((run) => (
+    run.runId !== nextRun.runId
+    && (!snapshotId || run.kafkaSnapshot?.snapshotId !== snapshotId)
+  ));
   return [nextRun, ...filtered].slice(0, 50);
 }
 
@@ -437,9 +464,9 @@ function reviewLineageGraph(schema) {
   };
   const datasetNode = {
     columns: schema.map(([name, type]) => ({ id: `dataset_${name}`, name, type })),
-    engine: "JSONL",
+    engine: targetFormat.toUpperCase(),
     id: datasetId,
-    layer: "RAW",
+    layer: targetLayer,
     name: datasetName,
   };
   return {

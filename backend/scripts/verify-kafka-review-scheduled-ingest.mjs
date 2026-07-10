@@ -49,7 +49,7 @@ async function verifyScheduledKafkaIngest() {
   assert(create.job?.id, "Kafka scheduled job create response should include job.id.");
   assert(create.job.sourceType === "Stream / Kafka", "Job sourceType should be Kafka.");
   assert(create.job.targetFormat === "jsonl", "Job targetFormat should be jsonl.");
-  assert(create.job.storagePath === `s3://m3-raw/kafka-landing/${topic}`, "Job storagePath should point to Kafka landing path.");
+  assert(create.job.storagePath === `s3://asklake-output/${targetDataset}/bronze`, "Job storagePath should point to the direct target path.");
 
   const tick = await post("/api/etl/schedules/run-due", {
     force: false,
@@ -66,6 +66,8 @@ async function verifyScheduledKafkaIngest() {
   assert(item.response?.run?.taskStates?.kafkaSnapshot?.partitions?.[0]?.endOffset === String(fixtureMessageCount), "Job run should retain Kafka snapshot metadata.");
   assert(item.response?.dataset?.storageFormat === "jsonl", "Catalog dataset should expose jsonl storage format.");
   assert(item.response?.dataset?.materializationRuns?.[0]?.sourceKind === "kafka", "Catalog materialization run should retain sourceKind kafka.");
+  assert(item.response?.dataset?.layer === "BRONZE", "Catalog dataset should retain the selected target layer.");
+  assert(!item.response?.dataset?.storageLocation?.includes("kafka-landing"), "Kafka job should not write to the legacy landing path.");
   assert(item.response?.dataset?.storageLocation === item.response?.run?.outputPath, "Catalog storageLocation should match run outputPath.");
 
   const jobAfterFirstTick = await get(`/api/etl/jobs/${encodeURIComponent(create.job.id)}`);
@@ -95,8 +97,10 @@ async function verifyMinimalReviewContractIngest() {
     registerCatalog: true,
     storageMode: "s3",
     landingEndpoint: env.MINIO_ENDPOINT,
-    landingBucket: "m3-raw",
-    landingPrefix: "kafka-landing",
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${minimalTopic}/bronze`,
+    targetLayer: "BRONZE",
+    targetFormat: "jsonl",
   });
 
   assert(result.status === "success", "Minimal review ingest should succeed.");
@@ -105,7 +109,9 @@ async function verifyMinimalReviewContractIngest() {
   assert(result.snapshot?.partitions?.length === 1, "Kafka ingest should return a partition snapshot.");
   assert(result.snapshot.partitions[0].startOffset === "0", `Snapshot should begin at offset 0: ${JSON.stringify(result.snapshot)}`);
   assert(result.snapshot.partitions[0].endOffset === "2", `Snapshot should end at offset 2: ${JSON.stringify(result.snapshot)}`);
-  assert(result.catalogDataset?.storageLocation === result.storageLocation, "Minimal review catalog storage location should match landing output.");
+  assert(result.targetLayer === "BRONZE", "Minimal ingest should retain the target layer.");
+  assert(!result.storageLocation.includes("kafka-landing"), "Minimal ingest should not write to the legacy landing path.");
+  assert(result.catalogDataset?.storageLocation === result.storageLocation, "Minimal review catalog storage location should match direct target output.");
 
   const emptyResult = await post("/api/etl/kafka/reviews/ingest", {
     broker: env.ASKLAKE_KAFKA_BROKER,
@@ -120,8 +126,10 @@ async function verifyMinimalReviewContractIngest() {
     registerCatalog: true,
     storageMode: "s3",
     landingEndpoint: env.MINIO_ENDPOINT,
-    landingBucket: "m3-raw",
-    landingPrefix: "kafka-landing",
+    targetBucket: "asklake-output",
+    targetPrefix: `verify/${minimalTopic}/bronze`,
+    targetLayer: "BRONZE",
+    targetFormat: "jsonl",
   });
   assert(emptyResult.consumedCount === 0, `Committed offsets should prevent duplicate consume: ${emptyResult.consumedCount}`);
   assert(emptyResult.snapshot.partitions[0].startOffset === "2", `Next snapshot should start at committed offset 2: ${JSON.stringify(emptyResult.snapshot)}`);
@@ -228,11 +236,11 @@ function kafkaJobPayload() {
     ],
     sourceLabel: topic,
     sourceType: "Stream / Kafka",
-    storagePath: `s3://m3-raw/kafka-landing/${topic}`,
+    storagePath: `s3://asklake-output/${targetDataset}/bronze`,
     storageType: "S3",
     targetDataset,
     targetFormat: "jsonl",
-    targetLayer: "RAW",
+    targetLayer: "BRONZE",
   };
 }
 

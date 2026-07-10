@@ -74,7 +74,7 @@ Canonical status values:
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
-| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka review topic batch를 Lake landing에 저장하고 Catalog 등록 | 이 문서 |
+| `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
 | `GET` | `/api/query/runs/{runId}` | TBD | 저장된 SQL 실행 결과 snapshot 조회 | `docs/api-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
@@ -82,11 +82,11 @@ Canonical status values:
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
-Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. 현재 bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> Lake landing object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> direct target object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 target에 저장되고, lag가 없으면 0건 JSONL target run도 성공으로 남긴다.
 
 ### Kafka review ingest
 
-`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 Lake landing에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
+`POST /api/etl/kafka/reviews/ingest`는 Kafka topic을 직접 읽어 선택 target에 저장하는 backend-only endpoint다. UI의 일반 실행 경로는 보통 `POST /api/etl/jobs/{jobId}/commands` 또는 scheduler tick을 사용하고, 이 endpoint는 fixture/debug/smoke 용도로 둔다.
 
 Request:
 
@@ -102,12 +102,17 @@ type KafkaReviewIngestRequest = {
   registerCatalog?: boolean;
   datasetId?: string;
   datasetName?: string;
+  targetBucket?: string; // default "asklake-output"
+  targetPrefix?: string; // default "{datasetName}/{targetLayer}"
+  targetLayer?: "RAW" | "BRONZE" | "SILVER";
+  targetFormat?: "jsonl"; // direct Kafka target currently supports JSONL only
+  targetDescription?: string;
   runId?: string;
   storageMode?: "local" | "s3";
   localLandingDir?: string;
-  landingEndpoint?: string; // MinIO default "http://127.0.0.1:19000"
-  landingBucket?: string; // default "m3-raw"
-  landingPrefix?: string; // default "kafka-landing"
+  landingEndpoint?: string; // legacy name for the S3-compatible target endpoint
+  landingBucket?: string; // deprecated compatibility fallback for targetBucket
+  landingPrefix?: string; // deprecated compatibility fallback for targetPrefix
 };
 ```
 
@@ -125,6 +130,7 @@ type KafkaReviewIngestResponse = {
   storageMode: "local" | "s3";
   storageFormat: "jsonl";
   storageLocation: string;
+  targetLayer: "RAW" | "BRONZE" | "SILVER";
   metadataLocation: string;
   datasetId?: string;
   datasetName?: string;
@@ -161,9 +167,9 @@ type KafkaReviewEvent = {
 
 필수 필드는 `event_id`, `review`, `offset`, `created_at`이다. Landing object는 `s3://{landingBucket}/{landingPrefix}/{topic}/{runId}/data.jsonl` 형태이며, metadata는 같은 run directory의 `metadata.json`에 저장한다.
 
-### Kafka snapshot direct target 전환 계획
+### Kafka snapshot direct target
 
-Issue #455는 현재 landing-only Kafka ingest 계약을 다음의 direct target 계약으로 전환한다. 이 절은 Phase 0 설계이고, 구현 전에는 위 RAW landing endpoint와 response가 현재 동작 기준이다.
+Issue #455 Phase 2는 아래 direct target 계약을 구현한다. 저장 경로는 `s3://{targetBucket}/{targetPrefix}/snapshots/{snapshotId}/data.jsonl` 형식이며 중간 `kafka-landing/...` RAW object를 만들지 않는다.
 
 ```text
 partition offset snapshot
@@ -174,9 +180,9 @@ partition offset snapshot
   -> offset commit
 ```
 
-현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, direct target 전환 단계에서 같은 snapshot identity의 idempotent 재시도를 완성한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
+현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 같은 snapshot identity는 target object path와 Catalog materialization run deduplication key로 사용한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
 
-중간 `kafka-landing/...` RAW object는 기본 경로에서 제거한다. target dataset의 layer는 `BRONZE` 또는 `SILVER`이며, `GOLD` join/aggregation은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
+target dataset의 layer는 `RAW`, `BRONZE`, `SILVER`를 지원하며 기본값은 `BRONZE`다. 현재 direct bridge는 normalized review event를 JSONL로 저장하고, user-configured transform/quality rule 실행과 `GOLD` join/aggregation은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 
 ### Scheduled job tick
 

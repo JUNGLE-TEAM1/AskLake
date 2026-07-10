@@ -742,16 +742,16 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
-function buildKafkaLandingPath(topic: string) {
-  return `s3://m3-raw/kafka-landing/${topic || "reviews.raw"}`;
-}
-
 function normalizeKafkaDatasetName(topic: string) {
   return (topic || "reviews.raw").trim().replace(/[^0-9A-Za-z_]+/g, "_").replace(/^_+|_+$/g, "").toLowerCase() || "reviews_raw";
 }
 
 function isDefaultTargetStoragePath(value: string | undefined) {
   return !value || value.includes("asklake-output/");
+}
+
+function isLegacyKafkaLandingPath(value: string | undefined) {
+  return Boolean(value?.includes("kafka-landing/"));
 }
 
 function isDefaultTargetDataset(value: string | undefined) {
@@ -766,9 +766,9 @@ function isDefaultTargetDescription(value: string | undefined) {
   return !value || value.includes("고객 리뷰 분석용");
 }
 
-function kafkaTargetTags(tags: string[] | undefined) {
+function kafkaTargetTags(tags: string[] | undefined, layer: TargetLayer) {
   const visibleTags = filterVisibleTargetTags(tags);
-  return visibleTags.length > 0 ? visibleTags : ["#kafka", "#raw"];
+  return visibleTags.length > 0 ? visibleTags : ["#kafka", `#${layer.toLowerCase()}`];
 }
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
@@ -1016,15 +1016,17 @@ function getTargetDraftValues(draft: DraftPipeline) {
     : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
   const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
   const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
-    ? "RAW"
+    ? "BRONZE"
     : normalizeTargetLayer(rawTargetLayer);
   const storedPath = target?.storagePath ?? draft.target.storagePath;
-  const defaultTargetPath = isKafkaSource ? buildKafkaLandingPath(kafkaTopic) : buildTargetStoragePath(targetDataset, targetLayer);
-  const storagePath = isKafkaSource && isDefaultTargetStoragePath(storedPath) ? defaultTargetPath : getDisplayText(storedPath, defaultTargetPath);
+  const defaultTargetPath = buildTargetStoragePath(targetDataset, targetLayer);
+  const storagePath = isKafkaSource && (isDefaultTargetStoragePath(storedPath) || isLegacyKafkaLandingPath(storedPath))
+    ? defaultTargetPath
+    : getDisplayText(storedPath, defaultTargetPath);
 
   return {
     description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
-      ? "Kafka 원본 이벤트 Lake landing 데이터셋"
+      ? "Kafka snapshot direct target 데이터셋"
       : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
@@ -1034,7 +1036,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
     tableName: isKafkaSource && isDefaultTargetTable(target?.tableName ?? draft.target.tableName)
       ? targetDataset
       : getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
-    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
+    tags: isKafkaSource ? kafkaTargetTags(target?.tags ?? draft.target.tags, targetLayer) : filterVisibleTargetTags(target?.tags ?? draft.target.tags ?? DEFAULT_TARGET_TAGS),
     targetDataset,
     targetFormat,
     targetLayer,
