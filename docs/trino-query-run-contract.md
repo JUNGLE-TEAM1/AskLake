@@ -1,6 +1,6 @@
 # Trino Query Run Contract
 
-이 문서는 Issue #488 Phase 0에서 확정한 SQL 분석의 목표 실행 계약입니다. 현재 구현된 DuckDB Preview runtime의 동작 설명이 아니라, 후속 Phase에서 구현할 Trino 기반 실제 SQL 실행의 기준입니다.
+이 문서는 Issue #488에서 확정한 SQL 분석의 목표 실행 계약입니다. 현재 구현된 DuckDB Preview runtime의 동작 설명이 아니라, 후속 Phase에서 구현할 Trino 기반 실제 SQL 실행의 기준입니다. 대용량 결과의 durable storage, collector, retention 상세는 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 ## 1. 핵심 결정
 
@@ -97,11 +97,12 @@ type QueryRunResultPage = {
 };
 ```
 
-- `GET /api/query/runs/{runId}/results?cursor=<opaque>&pageSize=<n>`만 결과 행을 반환한다.
+- `GET /api/query/runs/{runId}/results?cursor=<opaque>`만 결과 행을 반환한다. page size는 submit 시 고정한다.
 - cursor는 opaque value이며 frontend가 offset 또는 SQL을 조합하지 않는다.
 - 실행 결과 전체를 API response 또는 frontend memory에 적재하지 않는다.
 - row count는 Trino가 확정할 수 있을 때만 반환하며, pagination을 위해 별도 `COUNT(*)`를 강제하지 않는다.
 - 결과 retention 만료 또는 cursor 만료는 명시적 오류로 응답한다. 재실행 여부는 사용자에게 선택하게 한다.
+- 현재 PostgreSQL JSONB page storage는 전환 중인 구현이다. 목표 MinIO result page storage와 browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
 
 ## 6. Validation, Governance, Audit
 

@@ -379,6 +379,8 @@ cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
 ```
 
+Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 MinIO page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
+
 production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. password file은 bcrypt/PBKDF2 hash만 포함하며, Trino JDBC/MinIO credential은 backend/Postgres/MinIO root credential과 분리한다.
 
 Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.

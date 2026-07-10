@@ -38,7 +38,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Run History와 Run별 DAG 표시
 - 실행 성공 후 Catalog dataset 등록
 - Catalog 목록/상세/lineage fallback
-- Dataset 범위의 read-only SQL 실행. 기본 SQL 초안에는 preview용 `LIMIT`을 넣지 않으며, 목표 runtime은 Trino 기반 실제 전체 실행이다. Phase 0 계약은 `docs/trino-query-run-contract.md`를 따른다.
+- Dataset 범위의 read-only SQL 실행. 기본 SQL 초안에는 preview용 `LIMIT`을 넣지 않으며, 목표 runtime은 Trino 기반 실제 전체 실행이다. Query Run의 validation/lifecycle은 `docs/trino-query-run-contract.md`, 대용량 전체 결과의 private page storage/retention은 `docs/trino-query-result-storage-contract.md`를 따른다.
 - SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
 - AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
@@ -57,7 +57,7 @@ FastAPI live backend에서 현재 우선 구현하는 범위:
 | Job hydrate | 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog hydrate | 데이터셋 목록/상세를 서버 데이터로 조회 | High | `docs/backend-integration-readiness.md` |
 | Catalog lineage | 저장된 lineage 또는 fallback graph 반환 | Medium | `docs/api-contract.md` |
-| SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, 결과 페이지 조회 | Medium | `docs/trino-query-run-contract.md` |
+| SQL run | read-only SQL의 Trino 실제 실행, 상태 추적, private result page storage 기반 결과 페이지 조회 | Medium | `docs/trino-query-run-contract.md`, `docs/trino-query-result-storage-contract.md` |
 | Query AI 생성 | 선택 테이블 context와 자연어 요청으로 read-only SQL 초안을 생성 | Medium | `docs/api-contract.md` |
 | SQL derived dataset | 완료된 SQL run 결과를 Catalog dataset 또는 처리 Job materialize 흐름으로 연결 | Medium | `docs/api-contract.md` |
 

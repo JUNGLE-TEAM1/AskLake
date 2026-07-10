@@ -38,6 +38,8 @@ TRINO_RESULT_RETENTION_SECONDS=3600
 TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 ```
 
+`TRINO_MAX_RESULT_BYTES`, `TRINO_MAX_RESULT_PAGES`, `TRINO_RESULT_RETENTION_SECONDS=3600`은 현재 PostgreSQL result row storage의 전환기 값이다. Query Result Phase 1부터 일반 결과는 private MinIO page storage로 전환하며, target retention 기본값은 24시간이다. 상세 lifecycle은 `docs/trino-query-result-storage-contract.md`를 따른다.
+
 - 개발 서버에서 `VITE_API_BASE_URL`을 생략하면 프론트는 같은 출처의 `/api`를 호출하고, Vite proxy가 FastAPI `http://127.0.0.1:8080`으로 전달한다.
 - `VITE_USE_MOCK_API=false`: live backend mode. Source connector, create/run/query/catalog/dashboard API를 실제 backend로 보낸다.
 - 미설정 또는 `true`: frontend demo/mock mode. Source connector도 mock sample을 반환한다.
@@ -49,6 +51,7 @@ TRINO_MAX_CONCURRENT_RUNS_PER_USER=2
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
 - `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata다.
 - Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
+- 현재 Trino result row는 transitional PostgreSQL storage에 남아 있다. Query Result Phase 0의 목표는 backend collector가 private MinIO page object로 전체 결과를 저장하고, PostgreSQL에는 manifest만 보관하는 구조다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 ## 3) 공통 규칙
 

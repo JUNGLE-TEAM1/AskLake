@@ -1090,7 +1090,7 @@ type GetJobResponse = JobRowData;
 
 ### 7.3 Trino 읽기 전용 SQL 실행 (Phase 0 target contract)
 
-상세 lifecycle, Dataset physical mapping, cursor 결과 계약, 감사 기준은 `docs/trino-query-run-contract.md`를 canonical source로 둡니다. 이 절은 후속 Phase 구현의 API boundary를 고정합니다. 현재 DuckDB Preview 구현은 이 target contract가 구현되기 전의 호환 runtime이며, 새 API 의미로 해석하지 않습니다.
+상세 lifecycle, Dataset physical mapping, cursor 결과 계약, 감사 기준은 `docs/trino-query-run-contract.md`를 canonical source로 둡니다. 대용량 result page storage, collector recovery, retention 상세는 `docs/trino-query-result-storage-contract.md`를 따릅니다. 이 절은 후속 Phase 구현의 API boundary를 고정합니다. 현재 DuckDB Preview 구현은 이 target contract가 구현되기 전의 호환 runtime이며, 새 API 의미로 해석하지 않습니다.
 
 `POST /api/query/runs`
 
@@ -1136,6 +1136,8 @@ type CatalogDatasetResponse = {
 
 `GET /api/query/runs/{runId}`
 
+아래 `result.storage*`와 page count field는 Query Result Phase 1 target contract다. 현재 PostgreSQL transitional storage 응답은 해당 field를 아직 생략할 수 있다.
+
 ```ts
 type GetQueryRunResponse = {
   runId: string;
@@ -1157,7 +1159,11 @@ type GetQueryRunResponse = {
     peakMemoryBytes?: number;
   };
   result?: {
+    storage: "minio";
+    storageStatus: "collecting" | "available" | "expired" | "unavailable";
     columns: string[];
+    pageCount: number;
+    availablePageCount: number;
     rowCount?: number;
     nextCursor?: string | null;
     retentionExpiresAt?: string;
@@ -1166,7 +1172,7 @@ type GetQueryRunResponse = {
 };
 ```
 
-`GET /api/query/runs/{runId}/results?cursor=<opaque>&pageSize=<n>`
+`GET /api/query/runs/{runId}/results?cursor=<opaque>`
 
 ```ts
 type QueryRunResultPage = {
@@ -1181,6 +1187,8 @@ type QueryRunResultPage = {
 
 - 결과 행은 이 endpoint에서만 cursor page로 조회합니다.
 - frontend는 전체 결과를 memory에 적재하거나 offset SQL을 생성하지 않습니다.
+- result page는 private MinIO object에서 backend가 읽어 반환하며, browser에 storage URL 또는 credential을 노출하지 않습니다.
+- requested page가 아직 수집되지 않았으면 `409 RESULT_PAGE_NOT_READY`, retention 만료면 `410 RESULT_EXPIRED`, storage 장애면 `503 RESULT_STORAGE_UNAVAILABLE`을 반환합니다.
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 
 `POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 plan/metadata 기반 예상 처리량과 위험도를 반환하는 선택 endpoint입니다. 예상값은 실제 Query Run stats를 대체하지 않습니다.
