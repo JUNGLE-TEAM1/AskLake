@@ -17,7 +17,7 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
 | Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `publish_run_result`가 Catalog endpoint를 호출하고 `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark/Catalog evidence를 동기화 | run detail table과 Spark log object storage 분리 |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, backend live E2E 구현 | frontend terminal-success refresh, 상세/lineage/search API 고도화 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 멱등 reconciliation endpoint, transaction, final-task 연결, frontend terminal-success 1회 refresh, live E2E 구현 | 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
@@ -251,7 +251,7 @@ Live Airflow verification through 2026-07-11:
 - Python S3 physical inspection against `s3a://asklake-output/customer_review_gold/gold/run_d783b7d326e1`: pass, Parquet 1 object / 3,882 bytes
 - Airflow `publish_run_result` -> Catalog endpoint: pass, real Spark/MinIO output published with matching Run id/path, positive bytes, one materialization, and 3-node lineage
 - concurrent polling evidence preservation: pass, stale session could not erase committed `sparkResult`
-- frontend terminal-success Catalog refresh: not connected or live-verified yet; remaining Phase 3 scope
+- frontend terminal-success Catalog refresh: pass, active Run id에서 success로 전환된 뒤 `GET /api/catalog/datasets` 1회 호출, 이전 success 조기 재조회 없음, page/session reload 없음, UI/server 2 runs · 4 rows · 2.9 KB 일치
 
 ## 7. 완료 기준
 

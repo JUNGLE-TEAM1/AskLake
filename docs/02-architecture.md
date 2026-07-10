@@ -82,7 +82,7 @@ Catalog reconciliation의 상태 소유권은 다음과 같다.
 - `catalog_datasets.payload`: dataset metadata, `materializationRuns`, lineage의 source of truth
 - Airflow Task Instance/DAG Run: orchestration 성공·실패의 source of truth
 
-같은 `runId` 재호출은 기존 materialization을 교체하고, 다른 Run은 같은 dataset row에 append한다. target dataset row는 append read-modify-write 동안 lock해 동시 갱신 손실을 막는다. Catalog 저장이 실패하면 Parquet와 `sparkResult`는 복구 증거로 남고 `publish_run_result`가 실패한다. Airflow task retry는 Spark를 다시 실행하지 않고 저장된 manifest로 Catalog 단계만 재시도한다. polling sync는 Airflow 상태를 읽은 뒤 persisted Run을 다시 읽고 lock한 상태에서 task snapshot을 교체해, 동시에 저장된 `sparkResult`/`catalogResult`를 오래된 snapshot으로 지우지 않는다. frontend는 polling에서 terminal success 전환을 확인한 뒤 Catalog 목록을 다시 hydrate한다.
+같은 `runId` 재호출은 기존 materialization을 교체하고, 다른 Run은 같은 dataset row에 append한다. target dataset row는 append read-modify-write 동안 lock해 동시 갱신 손실을 막는다. Catalog 저장이 실패하면 Parquet와 `sparkResult`는 복구 증거로 남고 `publish_run_result`가 실패한다. Airflow task retry는 Spark를 다시 실행하지 않고 저장된 manifest로 Catalog 단계만 재시도한다. polling sync는 Airflow 상태를 읽은 뒤 persisted Run을 다시 읽고 lock한 상태에서 task snapshot을 교체해, 동시에 저장된 `sparkResult`/`catalogResult`를 오래된 snapshot으로 지우지 않는다. frontend는 같은 Run id를 queued/running으로 관찰한 뒤 terminal success로 전환됐을 때만 Catalog 목록을 한 번 다시 hydrate한다. 이 재조회만 실패하면 서버의 Run/Catalog 성공을 되돌리지 않고 현재 화면 데이터를 유지하며 수동 새로고침 안내를 표시한다.
 
 ### Kafka Snapshot Direct Target 전환 계획
 

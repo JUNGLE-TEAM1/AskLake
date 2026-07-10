@@ -97,6 +97,19 @@ const checks = [
       /const normalizedJob = normalizeJobRow\(hydratedJob\);\s*applyHydratedJob\(normalizedJob\);\s*setSelectedJob\(normalizedJob\);\s*setDraftPipeline\(hydrateDraftPipelineFromJob\(normalizedJob, initialDraftPipeline\)\);/s,
     ],
   },
+  {
+    name: "Terminal Job success refreshes Catalog once per Run",
+    file: "src/hooks/useAskLakeData.ts",
+    patterns: [
+      /const wasObservedActive = activeRunIds\.delete\(latestRun\.runId\);\s*return wasObservedActive && latestRun\.status === "success" \? latestRun\.runId : null;/s,
+      /const terminalSuccessRunId = trackCatalogRefreshCandidate\(normalizedJob, catalogActiveRunIdsRef\.current\);/,
+      /terminalSuccessRunId && !catalogRefreshRunIdsRef\.current\.has\(terminalSuccessRunId\)/,
+      /catalogRefreshRunIdsRef\.current\.add\(terminalSuccessRunId\);/,
+      /const refreshedDatasets = await getDatasets\(\);/,
+      /applyHydratedDatasets\(refreshedDatasets\);/,
+      /catalog\.datasets\.refresh_after_run_failed/,
+    ],
+  },
 ];
 
 const failures = [];

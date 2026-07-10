@@ -1053,7 +1053,7 @@ Failure contract:
 - 같은 Airflow task retry는 성공 `sparkResult`를 재사용해 Catalog만 재시도하고 Spark output을 다시 만들지 않는다.
 - Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
 
-최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. terminal success 뒤 frontend Catalog refresh는 남아 있다.
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
 
 프론트 함수:
 

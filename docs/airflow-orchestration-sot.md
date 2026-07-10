@@ -28,12 +28,13 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
   an authenticated FastAPI internal endpoint, PySpark writes Parquet to
   MinIO/S3, and the Spark manifest is reconciled into the AskLake Run.
 - Phase 3 — Catalog reconciliation: contract, FastAPI backend slice, and Airflow
-  final-task wiring are complete on the current branch, and the real
-  Airflow/Spark/MinIO/Catalog success and Spark-failure paths are verified.
-  Frontend terminal-success Catalog refresh remains. For real Spark execution,
-  the final `publish_run_result` task reconciles the persisted successful Spark
-  manifest into Catalog before the Airflow DAG Run can become successful.
-  Synthetic `smoke` execution continues to skip the physical Catalog call.
+  final-task wiring are complete on the current branch. The real
+  Airflow/Spark/MinIO/Catalog success and Spark-failure paths are verified, and
+  frontend polling refreshes Catalog once after observing the same Run move
+  from active to successful. For real Spark execution, the final
+  `publish_run_result` task reconciles the persisted successful Spark manifest
+  into Catalog before the Airflow DAG Run can become successful. Synthetic
+  `smoke` execution continues to skip the physical Catalog call.
 - Phase 4 — operational commands and recovery: define and implement retry,
   cancel, and any honest pause semantics across Airflow and Spark.
 - Phase 5 — deployment and operations: define DAG deployment, versioning,
@@ -129,6 +130,9 @@ Phase 3 implementation acceptance:
   second Spark output.
 - After frontend polling observes terminal success, it refreshes
   `GET /api/catalog/datasets` so the dataset appears without a full page reload.
+  A stale previous success returned during optimistic command submission is not
+  a refresh trigger; the same Run id must first have been observed as queued or
+  running.
 
 ## Historical Implementation Record
 
@@ -345,7 +349,10 @@ Phase 7 output:
     MinIO Parquet, persisted `sparkResult`, and terminal Airflow/AskLake success
   - expected Quality `Fail Run`: persisted Spark failure manifest and terminal
     Airflow/AskLake failure
-  - Limitation: Catalog materialization and lineage mutation remain Phase 3.
+  - Phase 3 live browser check on 2026-07-11: no early Catalog request during
+    optimistic command submission; Run `run_0ad0266cae32` triggered exactly one
+    `GET /api/catalog/datasets` after terminal success, without a session/page
+    reload, and the UI matched the server at 2 runs / 4 rows / 2.9 KB.
 
 Local Airflow runtime options:
 
@@ -379,7 +386,9 @@ Manual smoke once Airflow is reachable:
 6. Confirm `GET /api/etl/jobs/{jobId}` polling updates the selected run and DAG
    modal from Airflow DAG Run and Task Instance state.
 7. Confirm polling stops after `success`, `failed`, or `canceled`.
-8. For a failed DAG run, confirm the failed task and `syncError`/error summary
+8. After a successful Run, open Catalog without reloading the page and confirm
+   the target dataset's latest Run, aggregate rows, size, and append count.
+9. For a failed DAG run, confirm the failed task and `syncError`/error summary
    are visible.
 
 ## 3. Branch Baseline
