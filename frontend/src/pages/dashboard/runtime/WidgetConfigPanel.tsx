@@ -1,5 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type FormEvent } from "react";
-import { createPortal } from "react-dom";
+import {
+  Children,
+  isValidElement,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ComponentProps,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   Boxes,
   ChartArea,
@@ -17,12 +28,17 @@ import {
 import { HexColorInput, HexColorPicker } from "react-colorful";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { FormFieldGroup, NativeSelectField } from "@/components/ui/form-field-group";
-import { IconOptionGrid } from "@/components/ui/icon-option-grid";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SettingsPanel } from "@/components/ui/settings-panel";
+import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { DashboardFieldCombobox, type DashboardComboboxOption } from "./DashboardFieldCombobox";
 import type {
   DashboardRuntimeWidget,
   DashboardRuntimeWidgetConfig,
@@ -65,12 +81,6 @@ type WidgetConfigDraft = {
   yKey?: string;
 };
 
-type WidgetTypeTooltip = {
-  left: number;
-  text: string;
-  top: number;
-};
-
 const aggregationOptions: Array<{ label: string; value: DashboardWidgetAggregation }> = [
   { label: "합계", value: "sum" },
   { label: "평균", value: "avg" },
@@ -105,8 +115,34 @@ const orientationOptions: Array<{ label: string; value: DashboardWidgetOrientati
 ];
 const multiColorFallbackCount = 6;
 
-function WidgetSelectField({ selectClassName, ...props }: ComponentProps<typeof NativeSelectField>) {
-  return <NativeSelectField selectClassName={cn("asklake-widget-select", selectClassName)} {...props} />;
+function WidgetSelectField({
+  children,
+  onChange,
+  selectClassName,
+  value,
+  ...props
+}: Omit<ComponentProps<typeof NativeSelectField>, "children" | "onChange" | "value"> & {
+  children: ReactNode;
+  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
+  value: string;
+}) {
+  const options = Children.toArray(children).flatMap((child): DashboardComboboxOption[] => {
+    if (!isValidElement<{ children?: ReactNode; value?: string }>(child) || child.type !== "option") return [];
+    const label = typeof child.props.children === "string" ? child.props.children : String(child.props.value ?? "");
+    return [{ label, value: child.props.value ?? label }];
+  });
+
+  return (
+    <DashboardFieldCombobox
+      className={cn("asklake-widget-select", selectClassName)}
+      disabled={props.disabled}
+      fieldClassName={props.fieldClassName}
+      label={String(props.label)}
+      options={options}
+      value={value}
+      onValueChange={(nextValue) => onChange?.({ target: { value: nextValue } } as ChangeEvent<HTMLSelectElement>)}
+    />
+  );
 }
 
 const widgetTypeIcons: Record<DashboardRuntimeWidgetType, LucideIcon> = {
@@ -198,21 +234,6 @@ function uniqueLabelsFromWidget(widget: DashboardRuntimeWidget | null | undefine
 
 function fallbackColorLabels(count: number) {
   return Array.from({ length: count }, (_, index) => `색상 ${index + 1}`);
-}
-
-function createWidgetTypeTooltip(target: HTMLElement, text: string): WidgetTypeTooltip {
-  const rect = target.getBoundingClientRect();
-  const halfTooltipWidth = 150;
-  const safeLeft = Math.min(
-    Math.max(rect.left + rect.width / 2, halfTooltipWidth),
-    window.innerWidth - halfTooltipWidth,
-  );
-
-  return {
-    left: safeLeft,
-    text,
-    top: Math.max(rect.top - 10, 12),
-  };
 }
 
 function configDraftFromWidget(widget: DashboardRuntimeWidget): WidgetConfigDraft {
@@ -328,6 +349,7 @@ function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDr
     return "분류와 값 컬럼을 선택해 주세요.";
   }
   if (type === "radial_bar_chart" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
+  if (type === "radial_bar_chart" && (config.min ?? 0) >= (config.max ?? 100)) return "최솟값은 최댓값보다 작아야 합니다.";
   if (type === "heatmap_chart" && (!config.xKey || !config.yKey || (!usesCount && !config.valueKey))) {
     return "X축, Y축, 값 컬럼을 선택해 주세요.";
   }
@@ -499,7 +521,9 @@ export function WidgetConfigPanel({
   const [formError, setFormError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<DashboardRuntimeWidgetType>("bar_chart");
-  const [widgetTypeTooltip, setWidgetTypeTooltip] = useState<WidgetTypeTooltip | null>(null);
+  const datasetFieldId = useId();
+  const descriptionFieldId = useId();
+  const titleFieldId = useId();
   const previousEditingWidgetIdRef = useRef<string | null>(null);
   const previousSelectedDatasetIdRef = useRef<string | null>(null);
   const isEditMode = Boolean(editingWidget);
@@ -561,6 +585,10 @@ export function WidgetConfigPanel({
   }, [editingWidget, selectedDataset]);
 
   const currentConfig = configsByType[type] ?? {};
+  const radialRangeStart = Math.min(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeEnd = Math.max(currentConfig.min ?? 0, currentConfig.max ?? 100);
+  const radialRangeFloor = Math.min(0, radialRangeStart);
+  const radialRangeCeiling = Math.max(100, radialRangeEnd);
   const colorSlotLabels = useMemo(() => {
     if (type === "metric" || type === "table") return [];
 
@@ -751,69 +779,89 @@ export function WidgetConfigPanel({
       )}
     >
       <form className="asklake-widget-config-form" onSubmit={(event) => void handleSubmit(event)}>
-        {shouldShowDatasetSelect ? (
-          <WidgetSelectField
-            fieldClassName="asklake-widget-dataset-field"
-            label="데이터셋"
-            disabled={!datasets.length || !onSelectDataset}
-            value={selectedDatasetId ?? ""}
-            onChange={(event) => {
-              if (event.target.value) onSelectDataset?.(event.target.value);
-            }}
-          >
-            <option value="">데이터셋 선택</option>
-            {datasets.map((dataset) => (
-              <option key={dataset.id} value={dataset.id}>
-                {dataset.name}
-              </option>
-            ))}
-          </WidgetSelectField>
-        ) : null}
-        <FormFieldGroup label="위젯 제목">
-          <Input
-            size="sm"
-            placeholder="제목 없는 위젯"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </FormFieldGroup>
+        <FieldGroup className="contents">
+          {shouldShowDatasetSelect ? (
+            <Field className="asklake-widget-dataset-field">
+              <FieldLabel htmlFor={datasetFieldId}>데이터셋</FieldLabel>
+              <Select
+                disabled={!datasets.length || !onSelectDataset}
+                value={selectedDatasetId ?? ""}
+                onValueChange={(value) => onSelectDataset?.(value)}
+              >
+                <SelectTrigger id={datasetFieldId} size="sm">
+                  <SelectValue placeholder="데이터셋 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {datasets.map((dataset) => (
+                      <SelectItem key={dataset.id} value={dataset.id}>
+                        {dataset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+          <Field>
+            <FieldLabel htmlFor={titleFieldId}>위젯 제목</FieldLabel>
+            <Input
+              id={titleFieldId}
+              size="sm"
+              placeholder="제목 없는 위젯"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </Field>
 
-        <FormFieldGroup label="설명">
-          <Textarea
-            placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
-            rows={3}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-          />
-        </FormFieldGroup>
+          <Field>
+            <FieldLabel htmlFor={descriptionFieldId}>설명</FieldLabel>
+            <Textarea
+              id={descriptionFieldId}
+              placeholder="이 위젯에 대한 설명을 짧게 적어주세요."
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </Field>
 
-        <div className="asklake-widget-type-field">
-          <span>위젯 타입</span>
-          <IconOptionGrid
-            ariaLabel="위젯 타입"
-            buttonClassName="asklake-widget-type-button"
-            className="asklake-widget-type-grid"
-            items={dashboardWidgetTypeOptions.map((option) => {
-              const definition = dashboardWidgetDefinitions[option.value];
-              const Icon = widgetTypeIcons[option.value];
-              return {
-                description: definition.description,
-                icon: <Icon aria-hidden="true" size={18} strokeWidth={2.3} />,
-                label: definition.label,
-                value: option.value,
-              };
-            })}
-            value={type}
-            onOptionBlur={() => setWidgetTypeTooltip(null)}
-            onOptionFocus={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
-            onOptionMouseEnter={(event, option) => setWidgetTypeTooltip(createWidgetTypeTooltip(event.currentTarget, `${option.label}: ${option.description}`))}
-            onOptionMouseLeave={() => setWidgetTypeTooltip(null)}
-            onValueChange={(nextType) => {
-              setCustomColorIndex(0);
-              setType(nextType);
-            }}
-          />
-        </div>
+          <Field>
+            <FieldLabel>위젯 타입</FieldLabel>
+            <TooltipProvider delayDuration={150}>
+              <ToggleGroup
+                aria-label="위젯 타입"
+                className="grid w-full grid-cols-5 gap-3 bg-transparent p-0"
+                type="single"
+                value={type}
+                onValueChange={(nextType) => {
+                  if (!nextType) return;
+                  setCustomColorIndex(0);
+                  setType(nextType as DashboardRuntimeWidgetType);
+                }}
+              >
+                {dashboardWidgetTypeOptions.map((option) => {
+                  const definition = dashboardWidgetDefinitions[option.value];
+                  const Icon = widgetTypeIcons[option.value];
+                  const label = `${definition.label}: ${definition.description}`;
+                  return (
+                    <Tooltip key={option.value}>
+                      <TooltipTrigger asChild>
+                        <ToggleGroupItem
+                          aria-label={label}
+                          className="h-11 w-full border border-slate-200 bg-white text-slate-500 data-[state=on]:border-blue-600 data-[state=on]:bg-blue-50 data-[state=on]:text-blue-700"
+                          size="icon"
+                          value={option.value}
+                        >
+                          <Icon aria-hidden="true" />
+                        </ToggleGroupItem>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{label}</TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </ToggleGroup>
+            </TooltipProvider>
+          </Field>
 
         {colorSlotLabels.length > 0 && (
           <div className="asklake-widget-palette-field">
@@ -1043,11 +1091,22 @@ export function WidgetConfigPanel({
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
             </WidgetSelectField>
-            <FormFieldGroup label="최솟값">
-              <Input size="sm" type="number" value={currentConfig.min ?? 0} onChange={(event) => patchCurrentConfig({ min: Number(event.target.value) || 0 })} />
-            </FormFieldGroup>
-            <FormFieldGroup label="최댓값">
-              <Input size="sm" type="number" value={currentConfig.max ?? 100} onChange={(event) => patchCurrentConfig({ max: Number(event.target.value) || 100 })} />
+            <FormFieldGroup label="표시 범위">
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between text-sm font-semibold text-slate-600">
+                  <span>최솟값 {radialRangeStart}</span>
+                  <span>최댓값 {radialRangeEnd}</span>
+                </div>
+                <Slider
+                  aria-label="radial chart 표시 범위"
+                  max={radialRangeCeiling}
+                  min={radialRangeFloor}
+                  minStepsBetweenThumbs={1}
+                  onValueChange={([min = 0, max = 100]) => patchCurrentConfig({ min, max })}
+                  step={1}
+                  value={[radialRangeStart, radialRangeEnd]}
+                />
+              </div>
             </FormFieldGroup>
           </>
         )}
@@ -1077,27 +1136,15 @@ export function WidgetConfigPanel({
           </>
         )}
 
-        {(formError || validationMessage) && <p className="asklake-widget-config-error">{formError ?? validationMessage}</p>}
+        {(formError || validationMessage) && <FieldError>{formError ?? validationMessage}</FieldError>}
 
         <div className="asklake-widget-config-actions">
           <Button className="asklake-widget-create-button" disabled={!canSubmit || isCreating || isUpdating} type="submit">
             {isEditMode ? (isUpdating ? "저장 중" : "변경사항 저장") : (isCreating ? "생성 중" : "위젯 생성")}
           </Button>
         </div>
+        </FieldGroup>
       </form>
-      {widgetTypeTooltip && typeof document !== "undefined" && createPortal(
-        <div
-          className="asklake-widget-type-tooltip-layer"
-          role="tooltip"
-          style={{
-            left: widgetTypeTooltip.left,
-            top: widgetTypeTooltip.top,
-          }}
-        >
-          {widgetTypeTooltip.text}
-        </div>,
-        document.body,
-      )}
     </SettingsPanel>
   );
 }

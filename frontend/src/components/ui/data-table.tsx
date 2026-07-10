@@ -47,6 +47,7 @@ export type DataTablePaginationOptions = {
   label?: string;
   pageSize?: number;
   pageSizeOptions?: number[];
+  showSummary?: boolean;
   showPageSize?: boolean;
 };
 
@@ -65,9 +66,11 @@ export interface DataTableProps<TData, TValue>
   initialSorting?: SortingState;
   isLoading?: boolean;
   loadingRowCount?: number;
+  onRowClick?: (row: Row<TData>) => void;
   pagination?: false | DataTablePaginationOptions;
   renderRowActions?: (row: Row<TData>) => React.ReactNode;
   resetPaginationKey?: React.Key;
+  rowActionsAlign?: DataTableColumnAlign;
   rowActionsClassName?: string;
   rowActionsHeader?: React.ReactNode;
   tableClassName?: string;
@@ -115,6 +118,7 @@ function getPaginationOptions(pagination: DataTableProps<unknown, unknown>["pagi
     label: pagination?.label ?? "table",
     pageSize: pagination?.pageSize ?? 25,
     pageSizeOptions: pagination?.pageSizeOptions ?? [10, 25, 50, 100],
+    showSummary: pagination?.showSummary ?? true,
     showPageSize: pagination?.showPageSize ?? false,
   };
 }
@@ -134,9 +138,11 @@ export function DataTable<TData, TValue>({
   initialSorting = [],
   isLoading = false,
   loadingRowCount = 4,
+  onRowClick,
   pagination,
   renderRowActions,
   resetPaginationKey,
+  rowActionsAlign = "right",
   rowActionsClassName,
   rowActionsHeader,
   tableClassName,
@@ -239,7 +245,7 @@ export function DataTable<TData, TValue>({
                   );
                 })}
                 {renderRowActions && (
-                  <TableHead className={cn("w-0 text-right", rowActionsClassName)}>
+                  <TableHead className={cn("w-0", alignClassName[rowActionsAlign], rowActionsClassName)}>
                     {rowActionsHeader}
                   </TableHead>
                 )}
@@ -276,9 +282,17 @@ export function DataTable<TData, TValue>({
             ) : rows.length ? (
               rows.map((row) => (
                 <TableRow
-                  className={cn(bodyRowClassName, getRowClassName?.(row))}
+                  className={cn(bodyRowClassName, onRowClick && "cursor-pointer", getRowClassName?.(row))}
                   data-state={row.getIsSelected() && "selected"}
                   key={row.id}
+                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onKeyDown={onRowClick ? (event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    onRowClick(row);
+                  } : undefined}
+                  role={onRowClick ? "link" : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
                 >
                   {row.getVisibleCells().map((cell) => {
                     const meta = getColumnMeta(cell.column.columnDef);
@@ -288,18 +302,24 @@ export function DataTable<TData, TValue>({
                       <TableCell
                         className={cn(
                           alignClassName[align],
+                          onRowClick && "cursor-pointer",
                           meta.widthClassName,
                           meta.cellClassName,
                           cellClassName,
                         )}
+                        data-row-navigation={onRowClick ? "true" : undefined}
                         key={cell.id}
+                        onClick={onRowClick ? (event) => {
+                          event.stopPropagation();
+                          onRowClick(row);
+                        } : undefined}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
                     );
                   })}
                   {renderRowActions && (
-                    <TableCell className={cn("whitespace-nowrap text-right", rowActionsClassName)}>
+                    <TableCell className={cn("whitespace-nowrap", alignClassName[rowActionsAlign], rowActionsClassName)}>
                       {renderRowActions(row)}
                     </TableCell>
                   )}
@@ -325,7 +345,7 @@ export function DataTable<TData, TValue>({
           onNext={() => table.nextPage()}
           onPrevious={() => table.previousPage()}
           previousDisabled={!table.getCanPreviousPage()}
-          rangeLabel={(
+          rangeLabel={paginationOptions.showSummary ? (
             <span className="flex min-w-0 flex-wrap items-center gap-3">
               <span className="min-w-0">
                 {pageStart}-{pageEnd} / {totalRows} rows
@@ -351,7 +371,7 @@ export function DataTable<TData, TValue>({
                 </span>
               ) : null}
             </span>
-          )}
+          ) : undefined}
           summaryClassName="flex min-w-0 flex-wrap items-center gap-3 text-xs font-semibold text-slate-500"
           totalPages={pageCount}
         />

@@ -1,4 +1,4 @@
-import { apiClient } from "./apiClient";
+import { apiClient, apiConfig } from "./apiClient";
 import type { DraftPipelinePatch, SchemaColumnDraft, SourceDraft } from "../types";
 
 type SourceFieldRows = Array<[string, string]>;
@@ -42,13 +42,59 @@ export async function listSourceAssets(sourceType: string, fields: SourceFieldRo
 }
 
 async function postSourceConnector(sourceType: string, fields: SourceFieldRows): Promise<BackendSourceConnectorResponse> {
+  if (apiConfig.useMock) return resolveMockConnectorAnalysis(sourceType, fields);
   const body = { sourceConfig: fields, sourceType };
   return postWithDevFallback<BackendSourceConnectorResponse>("/api/etl/sources/test", body);
 }
 
 async function postSourceAssets(sourceType: string, fields: SourceFieldRows, prefix: string): Promise<SourceAssetsResponse> {
+  if (apiConfig.useMock) {
+    const assets = mockSourceAssets(sourceType, prefix);
+    return { assets, count: assets.length, limit: assets.length, prefix };
+  }
   const body = { prefix, sourceConfig: fields, sourceType };
   return postWithDevFallback<SourceAssetsResponse>("/api/etl/sources/assets", body);
+}
+
+function resolveMockConnectorAnalysis(sourceType: string, fields: SourceFieldRows): BackendSourceConnectorResponse {
+  const sourceLabel = fieldValue(fields, "Source Dataset")
+    || fieldValue(fields, "Bucket / Stage Name")
+    || fieldValue(fields, "Database Name")
+    || sourceType;
+  const previewColumns = ["review_id", "product_id", "rating", "review_text", "updated_at"];
+  const previewRows = [
+    ["r-1001", "p-100", "5", "배송이 빨라요", "2026-07-10T09:00:00Z"],
+    ["r-1002", "p-101", "4", "상품 상태가 좋아요", "2026-07-10T09:05:00Z"],
+  ];
+
+  return {
+    actionPath: "/api/etl/sources/test",
+    assets: mockSourceAssets(sourceType, ""),
+    draftPatch: {
+      source: {
+        connectionMessage: "mock 소스 연결 확인이 완료되었습니다.",
+        connectionStatus: "success",
+        sourceConfig: fields,
+        sourceLabel,
+        sourceType,
+      },
+    },
+    logs: ["mock connector fixture applied", "sample schema is ready"],
+    message: "mock 소스 연결 확인이 완료되었습니다.",
+    previewColumns,
+    previewNote: "mock 샘플",
+    previewRows,
+    status: "success",
+    testItems: [["소스 연결", "성공"], ["샘플 조회", "성공"], ["스키마 추론", "준비됨"]],
+  };
+}
+
+function mockSourceAssets(sourceType: string, prefix: string): Array<[string, string, string]> {
+  const basePath = prefix.trim() || (sourceType === "PostgreSQL" ? "public" : "sample");
+  return [
+    [`${basePath}/customer_reviews.parquet`, "Parquet", "준비됨"],
+    [`${basePath}/customer_reviews.csv`, "CSV", "준비됨"],
+  ];
 }
 
 async function postWithDevFallback<T>(path: string, body: unknown): Promise<T> {

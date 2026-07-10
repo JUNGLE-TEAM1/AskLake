@@ -6,9 +6,11 @@ from app.schemas.common import CamelModel
 
 TargetLayer = Literal["RAW", "BRONZE", "SILVER", "GOLD"]
 JobStatus = Literal["scheduled", "failed", "running", "paused", "canceled", "stopped"]
+JobScheduleKind = Literal["daily", "weekly", "monthly", "realtime", "none", "other"]
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
+JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
-JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule"]
+JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule"]
 
 SourceFieldRows = list[tuple[str, str]]
 
@@ -106,6 +108,7 @@ class JobDagStep(CamelModel):
 
 
 class JobRowData(CamelModel):
+    created_at: str | None = None
     status: JobStatus
     name: str
     id: str
@@ -113,6 +116,7 @@ class JobRowData(CamelModel):
     tag: str
     source: str
     target: str
+    updated_at: str | None = None
     schedule: str
     schedule_policy: dict[str, Any] | None = None
     schedule_summary: str | None = None
@@ -144,6 +148,18 @@ class JobRowData(CamelModel):
     run_history: list[JobRunSummary] | list[dict[str, Any]] | None = None
     dag_steps: list[JobDagStep] | list[dict[str, Any]] | None = None
     dag_steps_by_run_id: dict[str, list[JobDagStep] | list[dict[str, Any]]] | None = None
+
+
+class JobListFacets(CamelModel):
+    latest_run_outcome_counts: dict[JobRunOutcome, int]
+    owners: list[str]
+    status_counts: dict[JobStatus, int]
+    total: int
+
+
+class JobListResponse(CamelModel):
+    facets: JobListFacets
+    jobs: list[JobRowData]
 
 
 class CatalogDataset(CamelModel):
@@ -228,6 +244,8 @@ class CreatePipelineRequest(CamelModel):
     compression: str | None = None
     storage_path: str | None = None
     target_dataset: str
+    target_database: str | None = None
+    target_description: str | None = None
     target_layer: TargetLayer
     target_format: str
     owner: str
@@ -237,6 +255,37 @@ class CreatePipelineRequest(CamelModel):
 class CreatePipelineResponse(CamelModel):
     job: JobRowData
     catalog_target: dict[str, Any] | None = None
+
+
+class ReviewPipelineRequest(CreatePipelineRequest):
+    source_connection_status: Literal["idle", "testing", "success", "failed"] = "idle"
+
+
+class ReviewEntry(CamelModel):
+    label: str
+    value: str
+
+
+class ReviewSchemaRow(CamelModel):
+    column_name: str
+    nullable: str
+    transform: str
+    type: str
+
+
+class ReviewValidationRow(CamelModel):
+    label: str
+    status: Literal["ready", "warning"]
+    value: str
+
+
+class ReviewSnapshot(CamelModel):
+    basic_information: list[ReviewEntry]
+    can_create: bool
+    destination: list[ReviewEntry]
+    permission: list[ReviewEntry]
+    schema_: list[ReviewSchemaRow] = Field(alias="schema")
+    validation: list[ReviewValidationRow]
 
 
 class JobCommandRequest(CamelModel):

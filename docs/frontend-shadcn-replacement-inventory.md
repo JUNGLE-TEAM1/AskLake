@@ -20,7 +20,7 @@
 - AskLake composition component는 삭제 대상이 아니라 업무 화면 패턴을 묶는 상위 조립 단위다.
 - composition component 내부도 가능한 한 `Button`, `Input`, `Dialog`, `Table`, `Checkbox`, `Tabs`, `Dropdown Menu` 같은 shadcn primitive로 구성한다.
 - CSS selector 삭제는 primitive 교체와 route QA가 끝난 뒤 별도 cleanup PR에서만 진행한다.
-- Tree 계열은 `react-arborist`를 엔진 표준으로 두고, ReUI의 File Explorer Tree 스타일을 참고한 shadcn-style row/label/icon UI를 입힌다.
+- Tree 계열은 Kibo/shadcn-compatible line tree를 우선 사용하고, 대규모 virtualization이 실제로 필요한 화면만 별도 engine을 유지한다.
 - `TreePanel`은 tree 엔진이 아니라 header/body/footer/loading/error/empty를 감싸는 shell이다.
 - Backend API, 데이터 계약, React Router 구조, 도메인 로직은 이 문서의 범위가 아니다.
 
@@ -46,6 +46,7 @@
 | `Table` | 유지 | shadcn table visual primitive다. TanStack logic은 `DataTable`에서 유지한다. |
 | `Badge` | 유지 | 단순 상태/라벨 pill의 기본 대체 대상이다. interactive chip은 `Badge` variant 또는 별도 composition으로 판단한다. |
 | `Card` | 유지 | 단순 framed item의 기본 대체 대상이다. page section을 card로 감싸는 용도는 피한다. |
+| `Alert` | 유지 | 상태 집계와 분리해야 하는 경고·주의 정보를 표시한다. #440에서 최근 실행 실패 안내와 결과 필터 진입점에 적용했다. |
 
 ### shadcn primitive 추가 필요
 
@@ -68,20 +69,25 @@
 | `Textarea` | SQL/editor assistant, widget text | raw `<textarea>` 제거 기준이다. |
 | `Separator` | toolbar/menu/panel divider | 화면별 divider CSS 축소 기준이다. |
 | `Skeleton` | loading state | table/panel loading placeholder를 통일한다. |
+| `Spinner` | 실행 중/저장 중의 작은 진행 표시 | button 또는 status label의 텍스트를 대체하지 않고 보조한다. |
 | `Scroll Area` | dataset tree/list/result overflow | browser scrollbar CSS를 줄일 수 있는 영역에만 적용한다. |
 | `Pagination` | DataTable 밖 pagination | `PaginationBar` 재구성 기준이다. |
 | `Button Group` | action cluster | `ActionGroup` 내부 또는 단순 wrapper 대체 후보로 본다. |
 | `Empty` | empty state | `EmptyState`를 shadcn `Empty` 기준으로 정렬한다. |
+| `Slider` | SQL Preview 최대 행 수 | #468에서 실제 query `limit`을 변경하는 control로 적용했다. |
+| `Slider` | Dashboard radial bar 표시 범위 | #487에서 min/max number input을 두 thumb range control로 교체했다. |
+| `Bubble` | Query AI 응답/안내/오류 | #468에서 제안 결과와 상태 surface에 적용했다. |
 
 ### AskLake composition 유지
 
 | 컴포넌트 | 유지 이유 | 내부 정리 방향 |
 | --- | --- | --- |
 | `DataTable` | TanStack Table logic과 shadcn Table UI를 묶는 서비스 표준 table이다. | shadcn Data Table 가이드와 맞춰 pagination/sort/loading API를 정리한다. |
+| `DataTableStackedCell` 계열 | table 안의 title/subtitle/summary를 일관되게 쌓는 서비스 표시 pattern이다. | shadcn typography/token을 사용하고 domain 상태나 action은 호출 화면에서 조합한다. |
 | `FilterToolbar` 계열 | 검색, filter, actions, divider를 한 화면 toolbar로 묶는 서비스 패턴이다. | 내부 input/checkbox/menu는 `Input Group`, `Checkbox`, `Dropdown Menu`, `Button`으로 교체한다. |
 | `PageHeader` | route 상단 제목/설명/actions 패턴이다. | action slot은 `Button Group`/`ActionGroup` 기준으로 정리한다. |
 | `Panel` / `PanelHeader` | 화면 섹션 shell과 header pattern이다. | shadcn `Card`와 역할을 혼동하지 않도록 page section 용도로 유지한다. |
-| `MetricCard` | dashboard/jobs metric summary pattern이다. | 내부는 `Card`/`Badge` 기반으로 정렬한다. |
+| `MetricCard` | dashboard metric summary pattern이다. | 내부는 `Card`/`Badge` 기반으로 정렬한다. Jobs 상태 요약은 interactive filter라서 `Button` composition으로 분리했다. |
 | `CommandBar` | ETL/Creation 하단 command 영역이다. | 내부 action은 `Button`/`Button Group` 기반으로 정리한다. |
 | `ActionGroup` | 화면별 action row spacing/wrap pattern이다. | 단순 button cluster는 후속 `Button Group`으로 흡수 가능한지 재평가한다. |
 | `TagList` | 여러 tag/chip 행을 다루는 서비스 pattern이다. | 단순 tag는 `Badge`; interactive tag는 명확한 variant로 제한한다. |
@@ -90,7 +96,8 @@
 | `PreviewPanel` / `ResultPanel` | SQL/Dashboard/ETL preview/result shell pattern이다. | header/status/empty/loading/action slot은 shadcn primitive로 구성한다. |
 | `SettingsPanel` | dashboard/ETL/SQL 설정 panel shell pattern이다. | form body는 `Field`, `Input Group`, `Native Select`, `Checkbox`로 교체한다. |
 | `DetailTableSection` | 상세 화면의 table title/body/footer shell pattern이다. | table body는 `DataTable` 또는 shadcn `Table` 기준으로 유지한다. |
-| `TreePanel` | S3/ETL/SQL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | 내부 tree는 `react-arborist` 기준으로 통일하고, row UI는 shadcn-style file explorer pattern으로 정리한다. |
+| `TreePanel` | S3/ETL/Dashboard tree의 wrapper와 loading/error/empty state shell이다. | route별 engine을 유지하며 row UI를 shadcn-style file explorer pattern으로 정리한다. SQL은 #468에서 Shadcnblocks/Kibo Tree로 이동했다. |
+| Shadcnblocks `tree-lines-1` / Kibo UI Tree | SQL dataset branch/table/column tree의 connector line, icon, expand/collapse, keyboard trigger를 담당한다. | SQL은 tree row click과 `선택됨` StatusBadge로 선택 상태를 표시한다. drag-and-drop은 적용하지 않는다. |
 | `SelectableCard` | 아이콘, 설명, selected/check 상태가 있는 업무 선택 card pattern이다. | checkbox/radio 의미가 있으면 `Radio Group`/`Checkbox` 기반으로 재설계한다. |
 | `IconOptionGrid` | dashboard widget/chart type icon grid pattern이다. | `Tooltip`, `Toggle Group`, `Button` 기반으로 내부를 정리한다. |
 
@@ -103,7 +110,7 @@
 | `FormFieldGroup` | `Field` + `Label` + `Input Group` | deprecated 후보로 두고 신규 form은 shadcn field 기준으로 작성한다. |
 | `NativeSelectField` | `Native Select` + `Field` | native select가 필요한 곳만 유지하고 wrapper 이름은 shadcn 기준으로 맞춘다. |
 | `Chip` | `Badge` variant 또는 `Toggle` | read-only chip은 `Badge`, 선택 chip은 `Toggle`/`Checkbox` 기반으로 나눈다. |
-| `StatusBadge` | `Badge` variant | status tone mapper만 남기고 visual component는 `Badge`로 흡수한다. |
+| `StatusBadge` | `Badge` variant | Jobs의 status tone mapper를 공통 visual component로 유지한다. #482에서 Catalog dataset status와 SQL preflight/result status까지 사용처를 확장했다. |
 | `IconButton` | `Button size="icon"` + `Tooltip` | 접근성 label helper가 필요하면 thin wrapper만 남긴다. |
 | `DialogShell` | `Dialog` / `Alert Dialog` / `Sheet` | 일반 dialog, destructive confirm, side panel을 분리한다. |
 | `PickerDialog` | `Dialog` + `Command`/`Scroll Area`/tree wrapper | S3/DB picker shell만 유지할지 후속 tree/picker PR에서 판단한다. |
@@ -132,7 +139,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 3. Forms/Controls PR: ETL/SQL/Dashboard/S3/DB picker의 input/select/textarea/checkbox/radio를 교체한다.
 4. Navigation/Menu/Overlay PR: tabs, toggle group, dropdown menu, alert dialog, sheet를 적용한다.
 5. Table/List/Search PR: `DataTable` footer, `PaginationBar`, `FilterToolbar` 내부와 Catalog/Dashboard menu를 shadcn primitive 기준으로 정리한다. Catalog result card 자체는 별도 list/card cleanup 후보로 둔다.
-6. Tree Standardization PR: S3/ETL/SQL의 MUI/custom tree를 `react-arborist`로 교체하고 ReUI File Explorer Tree 스타일의 shadcn-style row UI를 적용한다.
+6. Tree Standardization PR: S3/ETL/SQL/Dashboard의 MUI/custom tree를 Kibo/shadcn-compatible line tree로 교체하고 공통 row/label/icon interaction을 적용한다.
 7. Complex Surface Polish PR: dashboard runtime, ETL rule builder, SQL result/editor shell을 화면별로 폴리싱한다.
 8. CSS Cleanup + Visual QA PR: 교체 완료 selector만 삭제하고 주요 route를 검증한다.
 
@@ -146,6 +153,8 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 | 2026-07-09 | #419에서 SQL/Dashboard runtime/config의 대표 form control을 `Textarea`, `Input`, `Checkbox`, `Button` 기준으로 2차 교체하고 Dashboard runtime compact 보정을 추가했다. |
 | 2026-07-09 | #420에서 Catalog sort menu를 `DropdownMenu`, Dashboard runtime share panel을 `Sheet`로 교체했다. |
 | 2026-07-09 | #422에서 `PaginationBar`/`DataTable` footer, `FilterToolbar` internals, Catalog/Dashboard `DropdownMenu` 적용 상태를 반영했다. Catalog result card는 후속 list/card cleanup 후보로 유지한다. |
+| 2026-07-10 | #468에서 SQL dataset tree에 Shadcnblocks `tree-lines-1` registry와 Kibo UI Tree를 적용하고 `motion` dependency, controlled expand, keyboard trigger, line tree CSS 제거 상태를 반영했다. |
+| 2026-07-10 | #440에서 Jobs 검색을 `FilterToolbarInput`으로 정리하고 `DataTableStackedCell` 계열을 AskLake composition으로 추가했다. row action은 `IconButton` + shadcn `Tooltip`, owner identity는 ReUI `Avatar` fallback으로 정리했고 목록 log modal은 실행 이력 route 이동으로 교체했다. 이어서 작업 현황은 shadcn `Button` 기반의 상호 배타적인 현재 상태 필터 4개로 전환하고, 최근 실행 실패는 shadcn `Alert`와 독립 결과 필터로 분리했다. `DropdownMenu`로 상태/소유자와 매일/매주/매월/실시간/스케줄 없음/기타 실행 주기 filter를 제공하며, 검색 input은 작업 목록 PanelHeader 바로 아래로 이동했다. filter는 live mode에서 `GET /api/etl/jobs` query와 facet response를 사용한다. |
 
 ## #417 Shadcn Primitive Foundation 반영
 
@@ -269,3 +278,23 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - Catalog result card 자체, tag/status visual state, lineage/schema preview shell은 후속 list/card cleanup 후보로 유지한다.
 - Dashboard menu option/filter button/table density CSS는 route QA 전까지 유지한다.
 - `frontend/src/vendor/lucide.ts`에는 이번에 실제로 쓰기 시작한 `MoreHorizontal` 아이콘 export만 추가했다.
+
+## #468 SQL Analysis Shadcn Refactor 반영
+
+적용 범위:
+
+- sidebar의 raw tablist를 shadcn `Tabs`/`TabsList`/`TabsTrigger`/`TabsContent`로 교체했다. useLayouts Discrete Tabs registry 구현을 검토한 뒤 별도 tab state를 중복하지 않고, 선택된 흰 배경만 기존 `motion` dependency의 shared `layoutId`로 이동시켰다.
+- SQL Preview 최대 행 수를 shadcn `Slider`로 추가하고 실제 `executeQueryPreview`의 `limit`에 연결했다.
+- Query AI 안내/결과/오류를 공식 `Bubble` composition으로 교체했다.
+- embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.
+- editor/result/schema/tool surface를 `Panel`, 상태와 metadata를 `Badge`, empty state를 `Empty`, form label을 `Field`, raw action을 `Button`으로 교체했다.
+- dataset의 `+ 추가` action은 custom pill CSS를 제거하고 shadcn `Button size="sm" variant="subtle"`로 맞췄다.
+- 2차 정리에서 header를 `PanelHeader`, schema/list row 구분을 `Separator`, 처리 Job form을 `FieldGroup`/`Field`/`NativeSelect`, SQL result cell surface를 shadcn `Table` 기본값으로 전환했다.
+- SQL result의 legacy `ResultPanel` wrapper를 `Panel` + `PanelHeader` composition으로 줄였다.
+
+CSS/의존성 판단:
+
+- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector와 registry Tree로 이동한 branch/row selector를 삭제해 2,547줄에서 401줄로 줄였다.
+- workspace responsive grid, SQL editor, dataset tree fixed hover detail, autocomplete position, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
+- Slider는 monolithic `radix-ui`가 아니라 `@radix-ui/react-slider` 직접 의존을 사용한다.
+- autocomplete는 editor focus/selection 회귀 위험 때문에 이번 범위에서 `Popover`/`Command`로 전환하지 않는다.

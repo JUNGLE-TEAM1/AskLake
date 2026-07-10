@@ -4,9 +4,9 @@ export const jobStatusMeta: Record<JobStatus, { className: string; label: string
   scheduled: { className: "scheduled", label: "실행 대기", summaryLabel: "READY" },
   failed: { className: "failed", label: "실패", summaryLabel: "FAILED" },
   running: { className: "running", label: "실행 중", summaryLabel: "RUNNING" },
-  paused: { className: "paused", label: "일시정지", summaryLabel: "PAUSED" },
+  paused: { className: "paused", label: "실행 일시정지", summaryLabel: "PAUSED" },
   canceled: { className: "canceled", label: "취소됨", summaryLabel: "CANCELED" },
-  stopped: { className: "paused", label: "스케줄 중지", summaryLabel: "STOPPED" },
+  stopped: { className: "paused", label: "자동 실행 중지", summaryLabel: "STOPPED" },
 };
 
 export const datasetStatusMeta: Record<CatalogDataset["status"], { className: string; label: string }> = {
@@ -15,8 +15,8 @@ export const datasetStatusMeta: Record<CatalogDataset["status"], { className: st
 };
 
 export const dashboardStatusMeta: Record<DashboardStatus, { label: string }> = {
-  draft: { label: "Draft" },
-  published: { label: "Published" },
+  draft: { label: "초안" },
+  published: { label: "게시됨" },
 };
 
 export function normalizeJobStatus(status: string): JobStatus {
@@ -30,11 +30,13 @@ export function normalizeJobStatus(status: string): JobStatus {
     "실행 중": "running",
     paused: "paused",
     "일시정지": "paused",
+    "실행 일시정지": "paused",
     canceled: "canceled",
     "취소됨": "canceled",
     stopped: "stopped",
     "스케줄 중지": "stopped",
     "스케줄 중지됨": "stopped",
+    "스케줄 일시중지": "stopped",
   };
 
   const normalizedStatus = statusMap[status];
@@ -63,8 +65,10 @@ export function normalizeDashboardStatus(status: string): DashboardStatus {
   const statusMap: Record<string, DashboardStatus> = {
     draft: "draft",
     Draft: "draft",
+    "초안": "draft",
     published: "published",
     Published: "published",
+    "게시됨": "published",
   };
 
   const normalizedStatus = statusMap[status];

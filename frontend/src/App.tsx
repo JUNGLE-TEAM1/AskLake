@@ -12,10 +12,15 @@ import { CatalogDetailPage, CatalogPage } from "./pages/catalog/CatalogPage";
 import { SqlAnalysisPage } from "./pages/sql/SqlAnalysisPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
-import { JobDetailPage, JobRunsPage, JobsLandingPage, JobsTableDemoPage } from "./pages/ingest/JobsPages";
+import { JobDetailPage, JobRunsPage, JobsLandingPage } from "./pages/ingest/JobsPages";
 import { PermissionPage, ReviewPage, RuleApplicationPage, SchedulePage, SchemaInferencePage, SourceConnectionPage, TargetPage } from "./pages/etl/EtlPages";
 import { useAuditLogs } from "./hooks/useAuditLogs";
 import { useAskLakeData } from "./hooks/useAskLakeData";
+import { Avatar, AvatarFallback } from "./components/ui/avatar";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { IconButton } from "./components/ui/icon-button";
+import { Skeleton } from "./components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import type { AuditEntry, AuditTargetType, CatalogDataset, DashboardEntry, FlowId, JobRowData, NavId, NavItem, ScheduleFlowId } from "./types";
 import type { DashboardRuntimeMode } from "./types";
 
@@ -115,7 +120,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
   const [area, id, action] = segments;
 
   if (!area) return { dashboardRoute: null, flow: "jobs" };
-  if (area === "jobs-table-demo") return { dashboardRoute: null, flow: "jobsTableDemo" };
   if (area === "jobs") {
     const jobId = decodePathSegment(id);
     if (jobId && action === "runs") return { dashboardRoute: null, flow: "jobRuns", jobId };
@@ -146,7 +150,6 @@ function parseAppRoute(pathname: string, currentScheduleFlow: ScheduleFlowId = d
 
 function getFlowPath(flow: FlowId, context: FlowPathContext = {}) {
   if (flow === "jobs") return "/jobs";
-  if (flow === "jobsTableDemo") return "/jobs-table-demo";
   if (flow === "jobDetail" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}`;
   if (flow === "jobRuns" && context.selectedJob && context.selectedJob.id !== emptyJobId) return `/jobs/${encodePathSegment(context.selectedJob.id)}/runs`;
   if (flow === "source") return "/etl/source";
@@ -248,10 +251,12 @@ export function App() {
     dataError,
     dataLoading,
     datasets,
-    deleteMaterializationRun,
     draftPipeline,
+    filterJobs,
     handleJobCommand,
     jobExecutionEvidence,
+    jobListFacets,
+    jobsLoading,
     jobs,
     prepareSqlDatasetJobDraft,
     runsByJobId,
@@ -275,7 +280,7 @@ export function App() {
     return "ingest";
   }, [activeFlow]);
   const hasShellRows = jobs.length > 0 || datasets.length > 0;
-  const isIngestShellFlow = activeFlow === "jobs" || activeFlow === "jobsTableDemo";
+  const isIngestShellFlow = activeFlow === "jobs";
   const shouldBlockForInitialData = dataLoading && !hasShellRows && !isIngestShellFlow;
   const shouldBlockForInitialError = !dataLoading && Boolean(dataError) && !hasShellRows && !isIngestShellFlow;
   const pendingMessage = dataLoading ? "DB 데이터 동기화 중..." : "API 요청 처리 중...";
@@ -383,16 +388,6 @@ export function App() {
     moveToFlow(item.flow);
   };
 
-  const openJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_opened", "/jobs-table-demo", "jobs-table-demo", "success", { targetType: "ui" });
-    moveToFlow("jobsTableDemo");
-  };
-
-  const closeJobsTableDemo = () => {
-    writeAuditLog("etl.jobs.table_demo_closed", "/api/etl/jobs", "jobs-table-demo", "success", { targetType: "ui" });
-    moveToFlow("jobs");
-  };
-
   const navigateIngestLanding = () => {
     writeAuditLog("ui.brand.clicked", "/app/ingest", "AskLake");
     setDashboardEntry((entry) => ({ source: "sidebar", view: "list", version: entry.version + 1 }));
@@ -482,18 +477,18 @@ export function App() {
         {wizardFlows.includes(activeFlow) && <Stepper activeIndex={current?.stepIndex ?? 0} onStepSelect={navigateWizardStep} />}
         <section className={activeFlow === "jobs" ? "page-body jobs-body" : activeFlow === "schema" ? "page-body schema-body" : activeFlow === "sql" ? "page-body sql-body" : "page-body"}>
           {shouldBlockForInitialData && (
-            <div className="module-placeholder-page">
-              <span>POSTGRES</span>
-              <h1>DB 데이터를 불러오는 중입니다</h1>
-              <p>Docker Postgres에 seed된 AskLake 데이터를 API 서버에서 가져오고 있습니다.</p>
+            <div aria-label="데이터를 불러오는 중" className="module-placeholder-page" role="status">
+              <Skeleton className="h-5 w-24" />
+              <Skeleton className="h-9 w-full max-w-md" />
+              <Skeleton className="h-5 w-full max-w-xl" />
             </div>
           )}
           {shouldBlockForInitialError && (
-            <div className="module-placeholder-page">
-              <span>POSTGRES ERROR</span>
-              <h1>DB API 연결을 확인해주세요</h1>
-              <p>{dataError}</p>
-            </div>
+            <Alert className="mx-auto max-w-3xl border-red-200 bg-red-50 text-red-800" variant="destructive">
+              <CircleHelp />
+              <AlertTitle>DB API 연결을 확인해 주세요.</AlertTitle>
+              <AlertDescription>{dataError}</AlertDescription>
+            </Alert>
           )}
           {!dataLoading && !dataError && !canRenderActiveFlow && (
             <div className="module-placeholder-page">
@@ -504,8 +499,7 @@ export function App() {
           )}
           {shouldRenderAppContent && (
             <>
-          {activeFlow === "jobs" && <JobsLandingPage jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onRuns={openJobRunsWithRoute} onTableDemo={openJobsTableDemo} onAction={writeAuditLog} />}
-          {activeFlow === "jobsTableDemo" && <JobsTableDemoPage jobs={jobs} onBack={closeJobsTableDemo} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onRuns={openJobRunsWithRoute} onDetail={openJobDetailWithRoute} onAction={writeAuditLog} />}
+          {activeFlow === "jobs" && <JobsLandingPage jobListFacets={jobListFacets} jobsLoading={jobsLoading} jobs={jobs} onCommand={handleJobCommand} onCreate={() => moveToFlow("source")} onDetail={openJobDetailWithRoute} onFilter={filterJobs} onRuns={openJobRunsWithRoute} onAction={writeAuditLog} />}
           {activeFlow === "jobDetail" && <JobDetailPage job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobs")} onEdit={() => moveToFlow("source")} onRuns={() => openJobRunsWithRoute(selectedJob)} onAction={writeAuditLog} />}
           {activeFlow === "jobRuns" && <JobRunsPage evidence={jobExecutionEvidence[selectedJob.id]} job={selectedJob} onCommand={handleJobCommand} onBack={() => moveToFlow("jobDetail")} onAction={writeAuditLog} />}
           {activeFlow === "source" && <SourceConnectionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("jobs")} onNext={() => moveToFlow("schema")} onSave={() => saveDraft("source")} onAction={writeAuditLog} onNotify={showToast} />}
@@ -514,7 +508,7 @@ export function App() {
           {activeFlow === "target" && <TargetPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow("permission")} onNext={() => moveToFlow("review")} onSave={() => saveDraft("target")} />}
           {activeFlow === "permission" && <PermissionPage draft={draftPipeline} onDraftChange={updateDraftPipeline} onPrev={() => moveToFlow(lastScheduleFlow)} onNext={() => moveToFlow("target")} onSave={() => saveDraft("permission")} />}
           {activeFlow === "review" && <ReviewPage createPending={apiPending} draft={draftPipeline} onEdit={moveToFlow} onSave={() => saveDraft("review")} onCreate={createPipeline} />}
-          {activeFlow === "catalog" && <CatalogPage datasets={datasets} selectedDataset={selectedDataset} onAction={writeAuditLog} onMaterializationRunDelete={deleteMaterializationRun} onOpenSql={openDatasetInSqlWithSelection} />}
+          {activeFlow === "catalog" && <CatalogPage datasets={datasets} error={dataError} loading={dataLoading} selectedDataset={selectedDataset} onAction={writeAuditLog} />}
           {activeFlow === "catalogDetail" && <CatalogDetailPage dataset={selectedDataset} onAction={writeAuditLog} onBack={() => moveToFlow("catalog")} onLineage={() => writeAuditLog("catalog.lineage.opened", `/api/catalog/datasets/${selectedDataset.id}/lineage`, selectedDataset.id)} onOpenSql={() => openDatasetInSqlWithSelection(selectedDataset)} />}
           {activeFlow === "sql" && <SqlAnalysisPage cachedResult={sqlResultDraft} dataset={sqlInitialDataset} datasets={datasets} onAction={writeAuditLog} onPrepareDatasetJob={prepareSqlDatasetJobDraft} onResultChange={setSqlResultDraft} />}
           {activeFlow === "dashboard" && <DashboardPage dataset={selectedDataset} datasets={datasets} entry={dashboardEntry} sqlResult={sqlResultDraft} onAction={writeAuditLog} onRuntimeNavigate={navigateDashboardRuntime} />}
@@ -584,12 +578,18 @@ function RuleBuilderShell({
             </span>
           ))}
         </nav>
+        <TooltipProvider delayDuration={300}>
         <div className="etl-builder-header-actions">
           <div className="audit-menu">
-            <button className={auditOpen ? "icon-button active" : "icon-button"} type="button" aria-label="최근 API 호출" onClick={onAuditToggle}>
-              <CircleHelp size={19} />
-              {auditCount > 0 && <span className="audit-dot" />}
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <IconButton className={auditOpen ? "icon-button active" : "icon-button"} label="최근 API 호출" size="sm" type="button" onClick={onAuditToggle}>
+                  <CircleHelp />
+                  {auditCount > 0 && <span className="audit-dot" />}
+                </IconButton>
+              </TooltipTrigger>
+              <TooltipContent>최근 API 호출</TooltipContent>
+            </Tooltip>
             {auditOpen && (
               <section className="audit-popover">
                 <div className="audit-popover-header">
@@ -611,14 +611,28 @@ function RuleBuilderShell({
               </section>
             )}
           </div>
-          <button className="icon-button" type="button" aria-label="문서" onClick={onDocs}>
-            <BookOpen size={19} />
-          </button>
-          <button className="icon-button" type="button" aria-label="새로고침" onClick={onRefresh}>
-            <History size={19} />
-          </button>
-          <button className="etl-builder-avatar" type="button" aria-label="계정" onClick={onAccount} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="icon-button" label="문서" size="sm" type="button" onClick={onDocs}><BookOpen /></IconButton>
+            </TooltipTrigger>
+            <TooltipContent>문서</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="icon-button" label="새로고침" size="sm" type="button" onClick={onRefresh}><History /></IconButton>
+            </TooltipTrigger>
+            <TooltipContent>새로고침</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <IconButton className="p-0" label="계정" size="sm" type="button" onClick={onAccount}>
+                <Avatar><AvatarFallback>AL</AvatarFallback></Avatar>
+              </IconButton>
+            </TooltipTrigger>
+            <TooltipContent>계정</TooltipContent>
+          </Tooltip>
         </div>
+        </TooltipProvider>
       </header>
       <aside className="etl-builder-sidebar">
         <div>
