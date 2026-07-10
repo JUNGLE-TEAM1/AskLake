@@ -146,10 +146,22 @@ const checks = [
       /header: "소유자"/,
       /<StatusBadge[\s\S]*min-w-\[132px\]/,
       /<Avatar size="lg">/,
+      /onRowClick=\{\(row\) => onOpenDetail\(row\.original\)\}/,
+      /event\.stopPropagation\(\);[\s\S]*onRequestDelete\(row\.original\);/,
     ],
     forbiddenPatterns: [
       /dashboard-row-tag/,
       /dashboard-row-link/,
+    ],
+  },
+  {
+    name: "DataTable supports keyboard-accessible row navigation",
+    file: "src/components/ui/data-table.tsx",
+    patterns: [
+      /onRowClick\?: \(row: Row<TData>\) => void;/,
+      /role=\{onRowClick \? "link" : undefined\}/,
+      /tabIndex=\{onRowClick \? 0 : undefined\}/,
+      /event\.key !== "Enter" && event\.key !== " "/,
     ],
   },
   {
@@ -227,9 +239,21 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard canvas uses shadcn ScrollArea instead of a native scrollbar",
+    file: "src/pages/dashboard/runtime/DashboardRuntimeShell.tsx",
+    patterns: [
+      /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
+      /className="asklake-dashboard-canvas-scroll-area"/,
+      /scrollbars="both"/,
+      /viewportProps=\{\{ className: "asklake-dashboard-canvas-scroll-viewport" \}\}/,
+    ],
+  },
+  {
     name: "Dashboard empty edit stage fills the initial workspace",
     file: "src/styles/dashboard-runtime.css",
     patterns: [
+      /\.asklake-dashboard-canvas-scroll-area\s*\{[^}]*min-height:\s*0;/s,
+      /\.asklake-dashboard-canvas-scroll-viewport\s*>\s*div\s*\{[^}]*min-height:\s*100%;/s,
       /\.asklake-dashboard-canvas-wrap\s*\{[^}]*background:\s*#ffffff;/s,
       /\.asklake-dashboard-edit-stage\s*\{[^}]*display:\s*flex;/s,
       /\.asklake-dashboard-edit-stage\s*\{[^}]*min-height:\s*100%;/s,
