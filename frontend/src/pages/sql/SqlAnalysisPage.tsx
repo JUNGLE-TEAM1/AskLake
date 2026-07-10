@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { DialogShell } from "@/components/ui/dialog-shell";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
@@ -27,6 +28,8 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -48,7 +51,6 @@ import {
   buildDefaultDerivedDatasetDescription,
   buildDefaultDerivedDatasetName,
   buildDefaultDerivedDatasetTags,
-  buildJoinDraftQuery,
   buildDefaultQuery,
   escapeCsvCell,
   formatDuration,
@@ -598,41 +600,6 @@ export function SqlAnalysisPage({
     );
   };
 
-  const joinSelectedDataset = (targetDataset: CatalogDataset) => {
-    if (!baseDataset || targetDataset.id === baseDataset.id) {
-      selectSchemaDataset(targetDataset);
-      return;
-    }
-    const joinDraft = buildJoinDraftQuery({
-      allDatasets: sqlCandidateDatasets,
-      query,
-      selectedDatasets: selectedContextDatasets.filter((item) => item.id !== targetDataset.id),
-      targetDataset,
-    });
-    setReferenceDatasetIds((ids) => {
-      const nextIds = new Set(ids);
-      nextIds.add(targetDataset.id);
-      joinDraft.addedDatasetIds.forEach((id) => {
-        if (id !== baseDataset.id) nextIds.add(id);
-      });
-      return Array.from(nextIds);
-    });
-    updateQuery(joinDraft.query);
-    setCursorIndex(joinDraft.query.length);
-    setOpenSchemaDatasetId(targetDataset.id);
-    setExpandedDatasetId(null);
-    onAction(
-      joinDraft.joined ? "analysis.context.dataset_joined" : "analysis.context.dataset_selected",
-      `/api/query/context/datasets/${targetDataset.id}/join`,
-      targetDataset.id,
-    );
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(joinDraft.query.length, joinDraft.query.length);
-      syncLineNumberScroll();
-    });
-  };
-
   const removeSelectedDataset = (targetDataset: CatalogDataset) => {
     const selectedIds = selectedContextDatasets.map((item) => item.id);
     const nextSelectedIds = selectedIds.filter((id) => id !== targetDataset.id);
@@ -759,9 +726,11 @@ export function SqlAnalysisPage({
           <PanelLeftOpen data-icon="inline-start" />
         </Button>
       )}
+      <ResizablePanelGroup className="sql-resizable-group h-auto" orientation="horizontal">
       {!contextCollapsed && (
-        <Panel asChild>
-          <aside className="sql-dataset-panel" ref={contextPanelRef}>
+        <ResizablePanel className="sql-resizable-context-pane" defaultSize="320px" minSize="280px" maxSize="420px">
+          <Panel asChild>
+            <aside className="sql-dataset-panel" ref={contextPanelRef}>
             <Tabs
               className="grid h-full min-h-0 grid-rows-[max-content_minmax(0,1fr)] gap-4"
               onValueChange={(value) => setContextPanelTab(value as "tables" | "queryAi")}
@@ -915,10 +884,17 @@ export function SqlAnalysisPage({
                   </ScrollArea>
                 </TabsContent>
             </Tabs>
-          </aside>
-        </Panel>
+            </aside>
+          </Panel>
+        </ResizablePanel>
       )}
+      {!contextCollapsed && <ResizableHandle className="sql-resizable-handle mx-1.5" withHandle />}
 
+      <ResizablePanel
+        className="sql-resizable-workspace-pane"
+        defaultSize={contextCollapsed ? "70%" : "50%"}
+        minSize="360px"
+      >
       <main className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3">
         <Panel className="grid gap-4 p-5">
           <PanelHeader
@@ -937,50 +913,68 @@ export function SqlAnalysisPage({
               <pre ref={lineNumberRef} aria-hidden="true">{lineNumbers}</pre>
               <div className="sql-editor-input-wrap">
                 <FieldLabel className="sr-only" htmlFor="sql-query-editor">SQL editor</FieldLabel>
-                <Textarea
-                  className="focus-visible:ring-0 focus-visible:ring-offset-0"
-                  id="sql-query-editor"
-                  ref={textareaRef}
-                  disabled={!baseDataset}
-                  placeholder={baseDataset ? "SQL을 입력하세요." : "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다."}
-                  value={query}
-                  onChange={(event) => {
-                    updateQuery(event.target.value);
-                    setCursorIndex(event.target.selectionStart);
-                    setDismissedAutocompleteKey(null);
-                  }}
-                  onClick={(event) => updateCursorFromTextarea(event.currentTarget)}
-                  onBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
-                  onKeyDown={handleQueryKeyDown}
-                  onKeyUp={(event) => {
-                    if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
-                    updateCursorFromTextarea(event.currentTarget);
-                  }}
-                  onScroll={syncLineNumberScroll}
-                  spellCheck={false}
-                />
-                {autocompleteCandidates.length > 0 && (
-                  <Panel className="sql-autocomplete-popover">
-                    <ScrollArea className="h-[220px]" type="always">
-                      <div className="grid gap-1 p-1.5 pr-3">
-                        {autocompleteCandidates.map((candidate, index) => (
-                          <Button
-                            className="grid min-h-8 w-full grid-cols-[minmax(0,1fr)_auto] gap-2.5 px-2 text-left"
-                            key={candidate.id}
-                            type="button"
-                            size="sm"
-                            variant={index === autocompleteIndex ? "subtle" : "ghost"}
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => applyAutocompleteCandidate(candidate)}
-                          >
-                            <strong>{candidate.label}</strong>
-                            <Badge size="sm" variant="secondary">{candidate.detail}</Badge>
-                          </Button>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </Panel>
-                )}
+                <Popover open={autocompleteCandidates.length > 0}>
+                  <PopoverAnchor asChild>
+                    <Textarea
+                      className="focus-visible:ring-0 focus-visible:ring-offset-0"
+                      id="sql-query-editor"
+                      ref={textareaRef}
+                      disabled={!baseDataset}
+                      placeholder={baseDataset ? "SQL을 입력하세요." : "왼쪽 분석 테이블에서 데이터셋을 선택하면 SQL을 작성할 수 있습니다."}
+                      value={query}
+                      onChange={(event) => {
+                        updateQuery(event.target.value);
+                        setCursorIndex(event.target.selectionStart);
+                        setDismissedAutocompleteKey(null);
+                      }}
+                      onClick={(event) => updateCursorFromTextarea(event.currentTarget)}
+                      onBlur={() => setDismissedAutocompleteKey(autocompleteContext.key)}
+                      onKeyDown={handleQueryKeyDown}
+                      onKeyUp={(event) => {
+                        if (["ArrowDown", "ArrowUp", "Tab", "Escape"].includes(event.key)) return;
+                        updateCursorFromTextarea(event.currentTarget);
+                      }}
+                      onScroll={syncLineNumberScroll}
+                      spellCheck={false}
+                    />
+                  </PopoverAnchor>
+                  {autocompleteCandidates.length > 0 && (
+                    <PopoverContent
+                      align="start"
+                      className="w-[var(--radix-popover-trigger-width)] min-w-[320px] p-0"
+                      onOpenAutoFocus={(event) => event.preventDefault()}
+                      side="bottom"
+                      sideOffset={8}
+                    >
+                      <Command
+                        onValueChange={(candidateId) => {
+                          const nextIndex = autocompleteCandidates.findIndex((candidate) => candidate.id === candidateId);
+                          if (nextIndex >= 0) setAutocompleteIndex(nextIndex);
+                        }}
+                        shouldFilter={false}
+                        value={autocompleteCandidates[autocompleteIndex]?.id}
+                      >
+                        <CommandList className="max-h-[220px]">
+                          <CommandEmpty>추천할 SQL 항목이 없습니다.</CommandEmpty>
+                          <CommandGroup heading="SQL 자동완성">
+                            {autocompleteCandidates.map((candidate) => (
+                              <CommandItem
+                                className="grid min-h-9 w-full grid-cols-[minmax(0,1fr)_auto] gap-2.5"
+                                key={candidate.id}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onSelect={() => applyAutocompleteCandidate(candidate)}
+                                value={candidate.id}
+                              >
+                                <strong className="truncate">{candidate.label}</strong>
+                                <Badge size="sm" variant="secondary">{candidate.detail}</Badge>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  )}
+                </Popover>
               </div>
             </div>
           </div>
@@ -1070,6 +1064,23 @@ export function SqlAnalysisPage({
           )}
         </Panel>
       </main>
+      </ResizablePanel>
+      <ResizableHandle className="sql-resizable-handle mx-1.5" withHandle />
+      <ResizablePanel
+        className="sql-resizable-schema-pane"
+        defaultSize={contextCollapsed ? "30%" : "300px"}
+        minSize="280px"
+        maxSize="420px"
+      >
+        <SchemaDetailsPanel
+          dataset={schemaDataset}
+          selectedDatasets={selectedContextDatasets}
+          onColumnClick={insertColumnName}
+          onSelectedDatasetRemove={removeSelectedDataset}
+          onSchemaSelect={selectSchemaDataset}
+        />
+      </ResizablePanel>
+      </ResizablePanelGroup>
       {resultDraft && materializeDialogOpen && (
         <DialogShell
           eyebrow="처리 작업"
@@ -1173,14 +1184,6 @@ export function SqlAnalysisPage({
           </DialogContent>
         </Dialog>
       )}
-      <SchemaDetailsPanel
-        dataset={schemaDataset}
-        selectedDatasets={selectedContextDatasets}
-        onColumnClick={insertColumnName}
-        onJoinDataset={joinSelectedDataset}
-        onSelectedDatasetRemove={removeSelectedDataset}
-        onSchemaSelect={selectSchemaDataset}
-      />
     </div>
   );
 }

@@ -171,7 +171,7 @@ AskLake 조합 컴포넌트는 반복되는 화면 구조를 줄이기 위한 �
 | 전체 | DataTable 밖 pagination/footer | `부분 해결` | `PaginationBar` | #378에서 SQL context pagination, Dashboard list pagination, Ingest runs footer에 1차 적용. #422에서 DataTable 내부 footer와 Catalog 검색 결과/materialization run pagination도 `PaginationBar` 기준으로 연결. 화면별 footer density CSS는 route QA 전까지 유지. |
 | 전체 | modal/backdrop/dialog shell | `부분 해결` | `DialogShell` | #378에서 SQL materialize dialog, Ingest job/run log dialog, Dashboard delete dialog 대표 사용처에 적용. Catalog modal, Dashboard chart/runtime dialog, DAG modal은 후속 QA 범위. |
 | 전체 | picker dialog shell | `부분 해결` | `PickerDialog` | #378에서 S3 path picker와 DB picker의 backdrop/header/footer shell을 공통화. S3 내부 MUI tree는 #421에서 제거했고, DB list/body CSS는 유지. |
-| 전체 | menu/overlay primitive | `부분 해결` | shadcn `DropdownMenu`, `Sheet`, `Popover`, `AlertDialog`, `Tooltip` | #420에서 Catalog sort menu를 `DropdownMenuRadioGroup`, Dashboard runtime share panel을 `Sheet`로 전환. SQL autocomplete, Dashboard filter/action menu, audit popover, destructive confirm 분리는 후속 범위. |
+| 전체 | menu/overlay primitive | `부분 해결` | shadcn `DropdownMenu`, `Sheet`, `Popover`, `Command`, `AlertDialog`, `Tooltip` | #420에서 Catalog sort menu를 `DropdownMenuRadioGroup`, Dashboard runtime share panel을 `Sheet`로 전환. #468 보완에서 SQL autocomplete를 `Popover` + `Command`로 전환. Dashboard filter/action menu, audit popover, destructive confirm은 후속 범위. |
 | 전체 | 상태와 분리된 경고/주의 안내 | `부분 해결` | shadcn `Alert` | #440에서 Jobs 최근 실행 실패를 현재 상태 카드에서 분리하고 독립 결과 필터 진입점으로 적용. 다른 페이지의 inline warning은 후속 감사에서 판단. |
 | 전체 | segmented tabs/selectable card | `부분 해결` | `SegmentedTabs`, `SelectableCard`, `CheckableOption` | #389에서 ETL source stage/source card, schedule run type card, Dashboard period/widget type card에 1차 적용. #393에서 Jobs 보기 전환/상세 탭과 ETL rule category tabs를 `SegmentedTabs`로 추가 전환. #414에서 checkbox/radio 의미가 있는 Target partition과 Permission role option은 `CheckableOption`으로 분리. rename/edit tab은 보류한다. |
 | 전체 | preview/result panel | `부분 해결` | `PreviewPanel`, `ResultPanel` | #389에서 SQL result, Dashboard builder preview, dashboard runtime table widget에 1차 적용. ETL final preview와 Catalog preview shell은 후속 판단. |
@@ -354,7 +354,7 @@ Tree 계열은 wrapper/state shell과 hover card shell 다음으로 row/group sh
 | S3 path picker | bucket prefix tree row, loading/retry/empty/more row | `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow` | picker toolbar/search/body density는 기존 CSS 유지 |
 | ETL SourceAssetTree | folder/file row, nested group, selected row | `TreePanel`, `TreeView`, `TreeGroup`, `TreeRow` | folder lazy loading 상태와 source list domain 로직은 화면 전용 유지 |
 | ETL SourceJsonSampleTree | JSON object/array/primitive row와 nested group | `TreeView`, `TreeGroup`, `TreeRow` | SchemaTransformEditor adapter tree는 별도 QA 전 유지 |
-| SQL dataset tree | branch label, table row, column row | Shadcnblocks `tree-lines-1`, Kibo UI `TreeProvider`/`TreeNode*`, `TreeHoverCard`, shadcn `Button` | fixed hover position과 table add action은 SQL 전용 유지 |
+| SQL dataset tree | branch label, table row, column row | Shadcnblocks `tree-lines-1`, Kibo UI `TreeProvider`/`TreeNode*`, shadcn `HoverCard`, `Button` | table add action과 dataset 선택 상태만 SQL 전용 유지 |
 | Dashboard dataset sidebar | arborist row button, tooltip wrapper | `TreePanel`, `TreeRow`, `TreeHoverCard`, shadcn `Tooltip` | `react-arborist` engine, row height, runtime density CSS는 유지 |
 
 의존성 정리:
@@ -370,9 +370,12 @@ Tree 계열은 wrapper/state shell과 hover card shell 다음으로 row/group sh
 | Preview 최대 행 수 | shadcn `Slider` | `해결됨` | 10~100, 10행 단위의 실제 query `limit` control로 연결 |
 | Query AI 상태 surface | shadcn `Bubble` | `해결됨` | 생성 SQL 적용/실행 정책은 기존 domain logic 유지 |
 | Dashboard builder overlay | shadcn `Dialog` | `해결됨` | 내부 `DashboardPage` runtime contract와 layout은 유지 |
-| action/status/empty/surface | `Button`, `Badge`, `Empty`, `Panel`, `PanelHeader`, `Field`, `Separator` | `해결됨` | autocomplete는 surface만 공통화하고 editor-relative 위치 계산은 유지 |
+| action/status/empty/surface | `Button`, `Badge`, `Empty`, `Panel`, `PanelHeader`, `Field`, `Separator` | `해결됨` | autocomplete는 `Popover` + `Command`로 전환하고 editor cursor 문맥만 유지 |
+| SQL autocomplete | shadcn `Popover`, `Command` | `해결됨` | ArrowUp/ArrowDown, Tab, Escape 동작은 기존 editor 계약 유지 |
+| SQL dataset detail | shadcn `HoverCard` | `해결됨` | fixed 위치 계산과 SQL 전용 hover CSS 제거 |
+| SQL 3열 폭 | shadcn `ResizablePanelGroup`, `ResizablePanel`, `ResizableHandle` | `해결됨` | 1,240px 이하에서는 handle을 숨기고 2열/1열 fallback 유지 |
 | SQL materialize form | `DialogShell`, `FieldGroup`, `Field`, `NativeSelect`, `Checkbox` | `해결됨` | API payload와 Review handoff는 기존 domain logic 유지 |
 | SQL preview table surface | `DataTable`, shadcn `Table` | `해결됨` | fixed layout과 1~3 column width만 route CSS 유지 |
 | mobile SQL workspace | 기존 responsive layout | `보류` | page overflow는 없으나 global App Shell sidebar가 좁은 viewport를 점유하므로 별도 shell 작업 필요 |
 
-`SqlDatasetSchemaPreview`는 사용처가 없어 삭제했다. Shadcnblocks/Kibo Tree와 viewport 고정까지 적용해 `sql.css`는 401줄까지 줄였고 새 공통 component gap은 추가하지 않았다. `SplitPanel`/mobile `Sheet` 여부는 global responsive 요구와 함께 판단한다.
+`SqlDatasetSchemaPreview`는 사용처가 없어 삭제했다. Shadcnblocks/Kibo Tree와 `Command`/`HoverCard`/`Resizable`까지 적용해 `sql.css`는 328줄까지 줄였다. mobile `Sheet`와 global Sidebar/API log/Profile UI는 App Shell 범위에서 별도 판단한다.

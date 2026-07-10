@@ -194,7 +194,7 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 
 유지/보류:
 
-- SQL autocomplete popover, Dashboard filter/action menu, audit popover, destructive confirm은 후속 #420 확장 또는 별도 PR 범위로 둔다.
+- SQL autocomplete popover는 #468 보완에서 `Popover` + `Command`로 전환했다. Dashboard filter/action menu, audit popover, destructive confirm은 후속 #420 확장 또는 별도 PR 범위로 둔다.
 - `DashboardPageTabs`는 rename/delete/edit 상태가 섞여 있어 이번 PR에서 `Tabs`로 억지 전환하지 않는다.
 
 검증:
@@ -287,13 +287,13 @@ rg "<input|<select|<textarea|type=\"checkbox|type=\"radio|role=\"dialog|role=\"t
 - Query AI 안내/결과/오류를 공식 `Bubble` composition으로 교체했다.
 - embedded Dashboard raw overlay를 shadcn `Dialog`로 교체했다.
 - editor/result/schema/tool surface를 `Panel`, 상태와 metadata를 `Badge`, empty state를 `Empty`, form label을 `Field`, raw action을 `Button`으로 교체했다.
-- dataset의 `+ 추가` action은 custom pill CSS를 제거하고 shadcn `Button size="sm" variant="subtle"`로 맞췄다.
+- dataset 추가 action은 shadcn `Button size="icon" variant="ghost"`의 회색 `+`로 단순화했다. 우측 선택 테이블 row/schema header의 컬럼 수 badge와 자동 JOIN action은 제거했다.
 - 2차 정리에서 header를 `PanelHeader`, schema/list row 구분을 `Separator`, 처리 Job form을 `FieldGroup`/`Field`/`NativeSelect`, SQL result cell surface를 shadcn `Table` 기본값으로 전환했다.
 - SQL result의 legacy `ResultPanel` wrapper를 `Panel` + `PanelHeader` composition으로 줄였다.
 
 CSS/의존성 판단:
 
-- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector와 registry Tree로 이동한 branch/row selector를 삭제해 2,547줄에서 401줄로 줄였다.
-- workspace responsive grid, SQL editor, dataset tree fixed hover detail, autocomplete position, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
+- `sql.css`의 button, tab, status pill, Query AI bubble, empty state, dialog form/header/footer, schema list, result table density selector와 registry Tree/Command/HoverCard로 이동한 selector를 삭제해 2,547줄에서 328줄로 줄였다.
+- workspace responsive grid, SQL editor, result overflow, embedded Dashboard sizing은 도메인 layout이라 유지한다.
 - Slider는 monolithic `radix-ui`가 아니라 `@radix-ui/react-slider` 직접 의존을 사용한다.
-- autocomplete는 editor focus/selection 회귀 위험 때문에 이번 범위에서 `Popover`/`Command`로 전환하지 않는다.
+- #468 보완에서 autocomplete를 `Popover`/`Command`, dataset detail을 `HoverCard`, 3열 layout을 `ResizablePanelGroup`으로 전환했다. editor cursor 문맥과 responsive breakpoint만 route logic/CSS로 유지한다.

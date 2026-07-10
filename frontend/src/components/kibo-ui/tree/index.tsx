@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   type ComponentProps,
   createContext,
+  forwardRef,
   type HTMLAttributes,
   type ReactNode,
   useCallback,
@@ -248,7 +249,7 @@ export const TreeNode = ({
 
 export type TreeNodeTriggerProps = ComponentProps<typeof motion.div>;
 
-export const TreeNodeTrigger = ({
+export const TreeNodeTrigger = forwardRef<HTMLDivElement, TreeNodeTriggerProps>(({
   children,
   className,
   onClick,
@@ -256,7 +257,7 @@ export const TreeNodeTrigger = ({
   role = "treeitem",
   tabIndex = 0,
   ...props
-}: TreeNodeTriggerProps) => {
+}, ref) => {
   const { selectedIds, toggleExpanded, handleSelection, indent } = useTree();
   const { nodeId, level } = useTreeNode();
   const isSelected = selectedIds.includes(nodeId);
@@ -286,6 +287,7 @@ export const TreeNodeTrigger = ({
         handleSelection(nodeId, event.ctrlKey || event.metaKey);
       }}
       role={role}
+      ref={ref}
       style={{ paddingLeft: level * (indent ?? 0) + 8 }}
       tabIndex={tabIndex}
       whileTap={{ scale: 0.98, transition: { duration: 0.1 } }}
@@ -295,7 +297,8 @@ export const TreeNodeTrigger = ({
       {children as ReactNode}
     </motion.div>
   );
-};
+});
+TreeNodeTrigger.displayName = "TreeNodeTrigger";
 
 export const TreeLines = () => {
   const { showLines, indent } = useTree();
