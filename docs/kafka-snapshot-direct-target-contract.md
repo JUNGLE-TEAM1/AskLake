@@ -4,7 +4,7 @@ Issue: #455
 
 ## 1. Status
 
-This document defines the Phase 0 target contract. It does not change the current Kafka RAW landing implementation. Until the implementation phases are complete, `POST /api/etl/kafka/reviews/ingest` and Kafka Job runs continue to use the documented RAW landing behavior.
+Phase 0 defined the target contract. Phase 1 implements partition offset snapshot capture, fixed-range consumption, and post-write offset commit while retaining the current Kafka RAW landing output. Direct target write replaces that output in a later phase.
 
 ## 2. Objective
 
@@ -21,6 +21,8 @@ Kafka topic
 ```
 
 The offset snapshot is metadata, not a copied message payload.
+
+Current Phase 1 behavior still writes the existing RAW landing object after the fixed-range consume. It uses the same snapshot metadata and commits the configured consumer group only after landing storage and Catalog registration succeed.
 
 ## 3. Snapshot Boundary
 

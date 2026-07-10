@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,111 +53,247 @@ async function ingestReviews() {
     clientId: "asklake-review-ingest",
     retry: { retries: 2 },
   });
-  const consumer = kafka.consumer({ groupId: consumerGroupId });
+  const snapshot = await captureKafkaSnapshot(kafka);
+  const consumer = kafka.consumer({ groupId: snapshotReaderGroupId(snapshot) });
+  let consumerStarted = false;
+
+  await prepareSnapshotReader(kafka, snapshot);
+  await consumer.connect();
+  try {
+    consumerStarted = true;
+    const consumed = await consumeKafkaSnapshot(consumer, snapshot);
+
+    if (consumed.records.length === 0 && !allowEmpty) {
+      throw new Error(`No valid review messages consumed from ${topic} at ${broker}.`);
+    }
+
+    const jsonl = consumed.records.map((record) => JSON.stringify(record)).join("\n");
+    const dataBody = consumed.records.length > 0 ? `${jsonl}\n` : "";
+    const localLocation = writeLocalLanding(dataBody);
+
+    const endedAt = new Date().toISOString();
+    const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(consumed.records.length, 20) });
+    const inferredSchemaColumns = inferSchemaColumns(parsedSample);
+    const schemaColumns = standardReviewSchema();
+    const metadata = {
+      broker,
+      consumedCount: consumed.records.length,
+      consumerGroupId,
+      dataPath,
+      datasetId: registerCatalog ? datasetId : null,
+      datasetName: registerCatalog ? datasetName : null,
+      endedAt,
+      failedCount: consumed.invalidRecords.length,
+      invalidRecords: consumed.invalidRecords.slice(0, 10),
+      maxMessages,
+      metadataPath,
+      offsetPolicy,
+      runId,
+      snapshot,
+      inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
+      sampleRows: consumed.records.slice(0, 10).map(reviewSampleRow),
+      schema: schemaColumns.map((column) => [column.targetName, column.type]),
+      schemaFingerprint: schemaFingerprint(schemaColumns),
+      startedAt,
+      status: "success",
+      storageFormat: "jsonl",
+      storageLocation: localLocation,
+      storageSizeBytes: statSync(dataPath).size,
+      storedCount: consumed.records.length,
+      timeoutMs,
+      topic,
+    };
+    if (landingMode === "s3") {
+      const s3Location = await writeS3Landing(dataBody, metadata);
+      metadata.storageLocation = s3Location.dataLocation;
+      metadata.metadataLocation = s3Location.metadataLocation;
+      metadata.storageMode = "s3";
+    } else {
+      metadata.metadataLocation = metadataPath;
+      metadata.storageMode = "local";
+    }
+    if (registerCatalog) {
+      const dataset = await registerCatalogDataset(metadata);
+      metadata.catalogDataset = {
+        id: dataset.id,
+        materializationRuns: dataset.materializationRuns?.length ?? 0,
+        name: dataset.name,
+        rows: dataset.rows,
+        storageLocation: dataset.storageLocation,
+      };
+    }
+    writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    if (landingMode === "s3") await writeS3Metadata(metadata);
+
+    await commitKafkaSnapshot(kafka, snapshot);
+    metadata.offsetCommit = { committedAt: new Date().toISOString(), status: "success" };
+    writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    if (landingMode === "s3") await writeS3Metadata(metadata);
+    return metadata;
+  } finally {
+    if (consumerStarted) await consumer.stop().catch(() => undefined);
+    await consumer.disconnect().catch(() => undefined);
+  }
+}
+
+async function captureKafkaSnapshot(kafka) {
+  const admin = kafka.admin();
+  await admin.connect();
+  try {
+    const [topicOffsets, groupOffsets] = await Promise.all([
+      admin.fetchTopicOffsets(topic),
+      admin.fetchOffsets({ groupId: consumerGroupId, topics: [topic] }),
+    ]);
+    const committedByPartition = new Map((groupOffsets[0]?.partitions || []).map((item) => [item.partition, item.offset]));
+    const partitions = topicOffsets
+      .map((item) => snapshotPartition(item, committedByPartition.get(item.partition)))
+      .sort((left, right) => left.partition - right.partition);
+    const snapshotIdentity = JSON.stringify({ consumerGroupId, partitions, topic });
+    return {
+      capturedAt: new Date().toISOString(),
+      consumerGroupId,
+      offsetPolicy,
+      partitions,
+      snapshotId: `kafka_snapshot_${createHash("sha256").update(snapshotIdentity).digest("hex").slice(0, 16)}`,
+      topic,
+    };
+  } finally {
+    await admin.disconnect().catch(() => undefined);
+  }
+}
+
+function snapshotReaderGroupId(snapshot) {
+  return `asklake-snapshot-${String(snapshot.snapshotId).replace(/^kafka_snapshot_/, "")}`;
+}
+
+async function prepareSnapshotReader(kafka, snapshot) {
+  const offsets = snapshot.partitions
+    .map((partition) => ({ offset: partition.startOffset, partition: partition.partition }));
+  if (offsets.length === 0) return;
+  const admin = kafka.admin();
+  await admin.connect();
+  try {
+    await admin.setOffsets({ groupId: snapshotReaderGroupId(snapshot), topic, partitions: offsets });
+  } finally {
+    await admin.disconnect().catch(() => undefined);
+  }
+}
+
+function snapshotPartition(topicOffset, committedOffset) {
+  const low = asOffset(topicOffset.low, "0");
+  const high = asOffset(topicOffset.high ?? topicOffset.offset, low);
+  const committed = asOffset(committedOffset, "-1");
+  const initial = committed < 0n ? (offsetPolicy === "latest" ? high : low) : committed;
+  const start = initial < low ? low : initial > high ? high : initial;
+  const cap = BigInt(maxMessages);
+  const end = start + cap < high ? start + cap : high;
+  return {
+    endOffset: end.toString(),
+    highWatermark: high.toString(),
+    partition: Number(topicOffset.partition),
+    startOffset: start.toString(),
+  };
+}
+
+function asOffset(value, fallback) {
+  try {
+    return BigInt(value ?? fallback);
+  } catch {
+    return BigInt(fallback);
+  }
+}
+
+async function consumeKafkaSnapshot(consumer, snapshot) {
+  const ranges = new Map(snapshot.partitions.map((partition) => [partition.partition, {
+    end: BigInt(partition.endOffset),
+    start: BigInt(partition.startOffset),
+  }]));
+  const completed = new Set(snapshot.partitions
+    .filter((partition) => BigInt(partition.startOffset) >= BigInt(partition.endOffset))
+    .map((partition) => partition.partition));
   const records = [];
   const invalidRecords = [];
 
-  await consumer.connect();
-  try {
-    await consumer.subscribe({ fromBeginning: offsetPolicy !== "latest", topic });
-    await new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-        void consumer.stop().catch(() => undefined);
-      };
-      const timer = setTimeout(finish, timeoutMs);
-      consumer.run({
-        eachMessage: async ({ message, partition, topic: messageTopic }) => {
-          if (settled || records.length >= maxMessages) return;
-          const value = message.value?.toString("utf8") ?? "";
-          const parsed = parseReviewMessage(value, {
-            key: message.key?.toString("utf8") ?? "",
-            offset: message.offset,
-            partition,
-            topic: messageTopic,
-          });
-          if (parsed.valid) records.push(parsed.record);
-          else invalidRecords.push(parsed.error);
-          if (records.length >= maxMessages) {
-            clearTimeout(timer);
-            finish();
-          }
-        },
-      }).catch((error) => {
-        invalidRecords.push({ message: error?.message || String(error), reason: "consumer_run_failed" });
-        clearTimeout(timer);
-        finish();
-      });
-    });
-  } finally {
-    await consumer.stop().catch(() => undefined);
-    await consumer.disconnect().catch(() => undefined);
-  }
+  if (completed.size === snapshot.partitions.length) return { invalidRecords, records };
 
-  if (records.length === 0 && !allowEmpty) {
-    throw new Error(`No valid review messages consumed from ${topic} at ${broker}.`);
-  }
+  await consumer.subscribe({ fromBeginning: false, topic });
 
-  const jsonl = records.map((record) => JSON.stringify(record)).join("\n");
-  const dataBody = records.length > 0 ? `${jsonl}\n` : "";
-  const localLocation = writeLocalLanding(dataBody);
-
-  const endedAt = new Date().toISOString();
-  const parsedSample = parseSourceSample("reviews.raw.jsonl", jsonl, { maxRows: Math.min(records.length, 20) });
-  const inferredSchemaColumns = inferSchemaColumns(parsedSample);
-  const schemaColumns = standardReviewSchema();
-  const metadata = {
-    broker,
-    consumedCount: records.length,
-    consumerGroupId,
-    dataPath,
-    datasetId: registerCatalog ? datasetId : null,
-    datasetName: registerCatalog ? datasetName : null,
-    endedAt,
-    failedCount: invalidRecords.length,
-    invalidRecords: invalidRecords.slice(0, 10),
-    maxMessages,
-    metadataPath,
-    offsetPolicy,
-    runId,
-    inferredSchema: inferredSchemaColumns.map((column) => [column.targetName, column.type]),
-    sampleRows: records.slice(0, 10).map(reviewSampleRow),
-    schema: schemaColumns.map((column) => [column.targetName, column.type]),
-    schemaFingerprint: schemaFingerprint(schemaColumns),
-    startedAt,
-    status: "success",
-    storageFormat: "jsonl",
-    storageLocation: localLocation,
-    storageSizeBytes: statSync(dataPath).size,
-    storedCount: records.length,
-    timeoutMs,
-    topic,
-  };
-  if (landingMode === "s3") {
-    const s3Location = await writeS3Landing(dataBody, metadata);
-    metadata.storageLocation = s3Location.dataLocation;
-    metadata.metadataLocation = s3Location.metadataLocation;
-    metadata.storageMode = "s3";
-  } else {
-    metadata.metadataLocation = metadataPath;
-    metadata.storageMode = "local";
-  }
-  if (registerCatalog) {
-    const dataset = await registerCatalogDataset(metadata);
-    metadata.catalogDataset = {
-      id: dataset.id,
-      materializationRuns: dataset.materializationRuns?.length ?? 0,
-      name: dataset.name,
-      rows: dataset.rows,
-      storageLocation: dataset.storageLocation,
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error) {
+        try {
+          consumer.pause([{ partitions: snapshot.partitions.map((partition) => partition.partition), topic }]);
+          resolve();
+        } catch (pauseError) {
+          reject(pauseError);
+        }
+        return;
+      }
+      reject(error);
     };
+    const timer = setTimeout(() => {
+      finish(new Error(`Kafka snapshot ${snapshot.snapshotId} timed out before all partition ranges were consumed.`));
+    }, timeoutMs);
+
+    consumer.run({
+      autoCommit: false,
+      eachBatchAutoResolve: false,
+      partitionsConsumedConcurrently: Math.max(1, snapshot.partitions.length),
+      eachBatch: async ({ batch, heartbeat, isRunning, isStale, resolveOffset }) => {
+        const range = ranges.get(batch.partition);
+        if (!range || completed.has(batch.partition) || settled) return;
+        for (const message of batch.messages) {
+          if (!isRunning() || isStale() || settled) return;
+          const messageOffset = BigInt(message.offset);
+          if (messageOffset >= range.end) {
+            completed.add(batch.partition);
+            if (completed.size === snapshot.partitions.length) finish();
+            return;
+          }
+          if (messageOffset >= range.start) {
+            const value = message.value?.toString("utf8") ?? "";
+            const parsed = parseReviewMessage(value, {
+              key: message.key?.toString("utf8") ?? "",
+              offset: message.offset,
+              partition: batch.partition,
+              topic: batch.topic,
+            });
+            if (parsed.valid) records.push(parsed.record);
+            else invalidRecords.push(parsed.error);
+          }
+          resolveOffset(message.offset);
+          if (messageOffset + 1n >= range.end) {
+            completed.add(batch.partition);
+            if (completed.size === snapshot.partitions.length) {
+              finish();
+              return;
+            }
+          }
+          await heartbeat();
+        }
+      },
+    }).catch(finish);
+  });
+
+  return { invalidRecords, records };
+}
+
+async function commitKafkaSnapshot(kafka, snapshot) {
+  const offsets = snapshot.partitions
+    .filter((partition) => BigInt(partition.startOffset) < BigInt(partition.endOffset))
+    .map((partition) => ({ offset: partition.endOffset, partition: partition.partition }));
+  if (offsets.length === 0) return;
+  const admin = kafka.admin();
+  await admin.connect();
+  try {
+    await admin.setOffsets({ groupId: consumerGroupId, topic, partitions: offsets });
+  } finally {
+    await admin.disconnect().catch(() => undefined);
   }
-  writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-  if (landingMode === "s3") await writeS3Metadata(metadata);
-  return metadata;
 }
 
 function writeLocalLanding(dataBody) {
@@ -228,6 +365,7 @@ async function registerCatalogDataset(metadata) {
   const run = {
     createdAt: metadata.endedAt,
     jobId: "kafka-review-ingest",
+    kafkaSnapshot: metadata.snapshot,
     rowCount: metadata.storedCount,
     runId: metadata.runId,
     sourceKind: "kafka",

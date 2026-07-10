@@ -82,7 +82,7 @@ Canonical status values:
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 
-Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. Kafka는 장기 저장소로 보지 않고, `topic -> batch consume -> Lake landing object(jsonl) -> Catalog materializationRuns append` 흐름으로 처리한다. 같은 consumer group을 쓰면 이미 읽은 offset 이후의 새 메시지만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
+Kafka Source Job의 `run`/`retry`는 Airflow/Spark 대신 backend Kafka ingest bridge를 실행한다. 현재 bridge는 Job 시작 시 partition별 end offset snapshot을 고정하고, 해당 range만 consume한 뒤 `topic -> Lake landing object(jsonl) -> Catalog materializationRuns append -> consumer offset commit` 순서로 처리한다. 같은 consumer group을 쓰면 마지막 성공 snapshot의 end offset 이후만 batch landing되고, lag가 없으면 0건 JSONL landing도 성공 run으로 남긴다.
 
 ### Kafka review ingest
 
@@ -129,6 +129,19 @@ type KafkaReviewIngestResponse = {
   datasetId?: string;
   datasetName?: string;
   catalogDataset?: CatalogDataset;
+  snapshot: {
+    snapshotId: string;
+    capturedAt: string;
+    topic: string;
+    consumerGroupId: string;
+    offsetPolicy: "earliest" | "latest";
+    partitions: Array<{
+      partition: number;
+      startOffset: string;
+      highWatermark: string;
+      endOffset: string; // exclusive
+    }>;
+  };
 };
 ```
 
@@ -161,7 +174,7 @@ partition offset snapshot
   -> offset commit
 ```
 
-새 계약에서 snapshot은 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, 재시도는 같은 snapshot identity로 idempotent하게 처리한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
+현재 ingest 응답과 Kafka Job Run metadata는 `snapshotId`, `capturedAt`, `topic`, `consumerGroupId`, partition별 `startOffset`, `highWatermark`, exclusive `endOffset`을 가진다. target write 또는 Catalog 등록이 실패하면 offset을 commit하지 않으며, direct target 전환 단계에서 같은 snapshot identity의 idempotent 재시도를 완성한다. `Batch Max Messages`의 후속 의미는 global count가 아니라 partition별 snapshot 최대 범위로 명시한다.
 
 중간 `kafka-landing/...` RAW object는 기본 경로에서 제거한다. target dataset의 layer는 `BRONZE` 또는 `SILVER`이며, `GOLD` join/aggregation은 이 전환 범위에 포함하지 않는다. 상세 계약은 [Kafka Snapshot Direct Target Contract](kafka-snapshot-direct-target-contract.md)를 따른다.
 

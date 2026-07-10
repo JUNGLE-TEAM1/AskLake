@@ -323,6 +323,22 @@ class KafkaReviewIngestRequest(CamelModel):
     timeout_ms: int = Field(default=10000, ge=1000, le=300000)
 
 
+class KafkaPartitionSnapshot(CamelModel):
+    end_offset: str
+    high_watermark: str
+    partition: int
+    start_offset: str
+
+
+class KafkaSnapshot(CamelModel):
+    captured_at: str
+    consumer_group_id: str
+    offset_policy: Literal["earliest", "latest"]
+    partitions: list[KafkaPartitionSnapshot]
+    snapshot_id: str
+    topic: str
+
+
 class KafkaReviewIngestResponse(CamelModel):
     broker: str
     catalog_dataset: dict[str, Any] | None = None
@@ -332,6 +348,7 @@ class KafkaReviewIngestResponse(CamelModel):
     failed_count: int
     metadata_location: str
     run_id: str
+    snapshot: KafkaSnapshot
     status: Literal["success"]
     storage_format: str
     storage_location: str

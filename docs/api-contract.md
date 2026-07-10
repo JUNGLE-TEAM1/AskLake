@@ -476,7 +476,7 @@ type CatalogDataset = {
     rowCount: number;
     storageSizeBytes: number;
     storageLocation?: string;
-    sourceKind: "etl" | "sql";
+    sourceKind: "etl" | "sql" | "kafka";
     sourceLabel: string;
   }>;
   upstream: string[];
@@ -488,9 +488,9 @@ type CatalogDataset = {
 `size`는 화면 표시용 저장 크기 문자열입니다. 물리 저장 위치와 원시 byte 값은 `storageLocation`, `storageFormat`, `storageSizeBytes`를 사용합니다.
 `materializationRuns`는 같은 Job/같은 dataset 이름으로 누적된 실행 또는 SQL materialize 결과 history입니다. 부모 dataset의 `rows`, `size`, `storageSizeBytes`, `lastUpdated`, `sourceRunId`는 삭제되지 않은 성공 run 기준으로 계산합니다.
 
-### Planned Kafka Snapshot Direct Target Metadata
+### Kafka Snapshot Metadata and Planned Direct Target
 
-Issue #455의 Phase 0 계약은 현재 Kafka RAW landing 구현을 즉시 바꾸지 않는다. 구현 단계에서는 Kafka direct target run이 다음 snapshot metadata를 Catalog materialization run 또는 Run metadata에 보존해야 한다.
+Issue #455 Phase 1부터 Kafka RAW landing run은 다음 snapshot metadata를 response, Run metadata, Catalog materialization run에 보존한다. 이후 direct target 전환도 같은 metadata shape를 사용한다.
 
 ```ts
 type KafkaPartitionSnapshot = {

@@ -63,7 +63,9 @@ async function verifyScheduledKafkaIngest() {
   assert(item.reason === "due", `Schedule tick reason should be due: ${item?.reason}`);
   assert(item.response?.run?.status === "success", "Scheduled Kafka run should succeed.");
   assert(item.response?.run?.inputRows === `${fixtureMessageCount}행`, `Scheduled Kafka run should consume ${fixtureMessageCount} rows: ${item.response?.run?.inputRows}`);
+  assert(item.response?.run?.taskStates?.kafkaSnapshot?.partitions?.[0]?.endOffset === String(fixtureMessageCount), "Job run should retain Kafka snapshot metadata.");
   assert(item.response?.dataset?.storageFormat === "jsonl", "Catalog dataset should expose jsonl storage format.");
+  assert(item.response?.dataset?.materializationRuns?.[0]?.sourceKind === "kafka", "Catalog materialization run should retain sourceKind kafka.");
   assert(item.response?.dataset?.storageLocation === item.response?.run?.outputPath, "Catalog storageLocation should match run outputPath.");
 
   const jobAfterFirstTick = await get(`/api/etl/jobs/${encodeURIComponent(create.job.id)}`);
@@ -100,7 +102,30 @@ async function verifyMinimalReviewContractIngest() {
   assert(result.status === "success", "Minimal review ingest should succeed.");
   assert(result.consumedCount === 2, `Minimal review ingest should consume 2 messages: ${result.consumedCount}`);
   assert(result.storedCount === 2, `Minimal review ingest should store 2 messages: ${result.storedCount}`);
+  assert(result.snapshot?.partitions?.length === 1, "Kafka ingest should return a partition snapshot.");
+  assert(result.snapshot.partitions[0].startOffset === "0", `Snapshot should begin at offset 0: ${JSON.stringify(result.snapshot)}`);
+  assert(result.snapshot.partitions[0].endOffset === "2", `Snapshot should end at offset 2: ${JSON.stringify(result.snapshot)}`);
   assert(result.catalogDataset?.storageLocation === result.storageLocation, "Minimal review catalog storage location should match landing output.");
+
+  const emptyResult = await post("/api/etl/kafka/reviews/ingest", {
+    broker: env.ASKLAKE_KAFKA_BROKER,
+    topic: minimalTopic,
+    consumerGroupId: `asklake-minimal-${suffix}`,
+    datasetId: `ds_reviews_raw_minimal_${suffix}`,
+    datasetName: `reviews_raw_minimal_${suffix}`,
+    maxMessages: 10,
+    timeoutMs: 10000,
+    offsetPolicy: "earliest",
+    allowEmpty: true,
+    registerCatalog: true,
+    storageMode: "s3",
+    landingEndpoint: env.MINIO_ENDPOINT,
+    landingBucket: "m3-raw",
+    landingPrefix: "kafka-landing",
+  });
+  assert(emptyResult.consumedCount === 0, `Committed offsets should prevent duplicate consume: ${emptyResult.consumedCount}`);
+  assert(emptyResult.snapshot.partitions[0].startOffset === "2", `Next snapshot should start at committed offset 2: ${JSON.stringify(emptyResult.snapshot)}`);
+  assert(emptyResult.snapshot.partitions[0].endOffset === "2", `Next snapshot should be empty: ${JSON.stringify(emptyResult.snapshot)}`);
 }
 
 async function produceMinimalReviewEvents() {

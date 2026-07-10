@@ -641,6 +641,7 @@ def run_from_kafka_result(job: ETLJobModel, result: dict[str, Any]) -> ETLRunMod
         output_path=result.get("storageLocation") or "-",
         failed_stage="-" if success else str(result.get("failedStage") or "Kafka ingest"),
         error_summary="-" if success else str(result.get("error") or "Kafka ingest failed."),
+        task_states={"kafkaSnapshot": result.get("snapshot")} if result.get("snapshot") else None,
     )
 
 
@@ -900,9 +901,10 @@ def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[
     success = result.get("status") == "success"
     stored_count = int(result.get("storedCount") or 0)
     failed_count = int(result.get("failedCount") or 0)
+    snapshot_id = str((result.get("snapshot") or {}).get("snapshotId") or "-")
     job.last_run = str(result.get("endedAt") or iso_now())
     job.last_state = (
-        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka {stored_count:,}건 landing"
+        f"{'재실행' if command == 'retry' else '실행'} 완료 · Kafka snapshot {snapshot_id} · {stored_count:,}건 landing"
         if success
         else f"Kafka 실행 실패 · {result.get('error') or '원인 확인 필요'}"
     )
@@ -912,7 +914,7 @@ def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[
     job.target_path = result.get("storageLocation") or job.target_path
     job.stats = {
         **(job.stats or {}),
-        "currentStage": "Kafka landing 완료" if success else "Kafka landing 실패",
+        "currentStage": "Kafka snapshot landing 완료" if success else "Kafka snapshot landing 실패",
         "inputRows": format_rows(result.get("consumedCount")),
         "lastSuccess": str(result.get("endedAt") or iso_now()) if success else job.stats.get("lastSuccess", "-"),
         "outputPath": result.get("storageLocation") or job.target_path,
@@ -1240,6 +1242,11 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
     storage_location = str(result.get("storageLocation") or run.get("outputPath") or "-")
     dataset_id = str(result.get("datasetId") or job.dataset_id or f"ds_{normalize_column_name(job.target)}")
     consumer_group_id = str(result.get("consumerGroupId") or field_value(job.source_config or [], "CONSUMER GROUP ID") or "-")
+    snapshot = result.get("snapshot") or {}
+    snapshot_ranges = ", ".join(
+        f"p{item.get('partition')}:{item.get('startOffset')}~{item.get('endOffset')}"
+        for item in snapshot.get("partitions", [])
+    ) or "-"
     return [
         dag_step("source", "1. Kafka 소스 연결", topic, "failed" if failed else "success", [
             ["Broker", broker],
@@ -1247,6 +1254,8 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
         ], [f"Kafka topic {topic} batch consume 요청을 실행했습니다."]),
         dag_step("consume", "2. 메시지 batch consume", format_rows(result.get("consumedCount")), "failed" if failed else "success", [
             ["Consumer group", consumer_group_id],
+            ["Snapshot", str(snapshot.get("snapshotId") or "-")],
+            ["Offset ranges", snapshot_ranges],
             ["Consumed", format_rows(result.get("consumedCount"))],
             ["Failed", format_rows(result.get("failedCount"))],
         ], ["Kafka 메시지를 batch 단위로 읽었습니다." if not failed else f"Kafka consume 실패: {run.get('errorSummary')}"]),
