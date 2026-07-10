@@ -298,6 +298,31 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard assistant renders conversation with shadcn Bubble",
+    file: "src/pages/dashboard/runtime/DashboardAssistantPanel.tsx",
+    patterns: [
+      /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
+      /<BubbleGroup aria-live="polite" className="asklake-assistant-messages">/,
+      /align=\{message\.role === "user" \? "end" : "start"\}/,
+      /variant=\{message\.role === "user" \? "default" : "secondary"\}/,
+      /<BubbleContent className="whitespace-pre-wrap">\{message\.text\}<\/BubbleContent>/,
+    ],
+  },
+  {
+    name: "Frontend defaults to the live dashboard Assistant API",
+    file: "src/services/dashboardAssistantService.ts",
+    patterns: [
+      /VITE_DASHBOARD_ASSISTANT_API_PATH \?\? "\/api\/dashboards\/assistant"/,
+    ],
+  },
+  {
+    name: "Frontend defaults to live API mode",
+    file: "src/services/apiClient.ts",
+    patterns: [
+      /VITE_USE_MOCK_API \?\? "false"/,
+    ],
+  },
+  {
     name: "Dashboard status labels stay Korean",
     file: "src/utils/statusMeta.ts",
     patterns: [

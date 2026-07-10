@@ -31,7 +31,7 @@ Demo hydrate endpoint는 live ETL/Catalog API를 가리지 않도록 `/api/demo/
 
 Pair A 생성 요청은 nested `draftPipeline`을 submit 직전에 flat `CreatePipelineRequest`로 변환한다.
 
-Frontend demo baseline에서는 `VITE_USE_MOCK_API`가 미설정이면 mock mode로 동작한다. 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환해야 한다. `VITE_USE_MOCK_API=false`일 때만 live backend connector를 호출한다.
+Frontend baseline은 `VITE_USE_MOCK_API`가 미설정이면 live mode로 동작한다. frontend-only mock QA가 필요할 때는 `VITE_USE_MOCK_API=true`를 명시하며, 이때 `frontend/src/services/sourceConnectorService.ts`는 backend 호출 없이 source type별 mock `SourceConnectorAnalysis`를 반환한다.
 
 필수 create payload:
 
