@@ -5183,26 +5183,26 @@ export function ReviewPage({
     .filter(Boolean)
     .join(" · ");
   const basicInformationRows = [
-    ["Job ID", displayReviewValue(request.id)],
-    ["Job Name", targetReview.jobName],
-    ["Source", displayReviewValue(sourceDisplay)],
-    ["Target Dataset", targetReview.targetDataset],
-    ["Description", targetReview.description],
+    ["작업 ID", displayReviewValue(request.id)],
+    ["작업명", targetReview.jobName],
+    ["소스", displayReviewValue(sourceDisplay)],
+    ["대상 데이터셋", targetReview.targetDataset],
+    ["설명", targetReview.description],
   ];
   const destinationRows = [
-    ["Output Path", targetReview.storagePath],
-    ["Database", targetDatabaseName],
-    ["Table Name", targetReview.tableName],
-    ["Format", targetReview.targetFormat],
-    ["Layer", targetReview.targetLayer],
-    ["Partition", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
+    ["저장 경로", targetReview.storagePath],
+    ["데이터베이스", targetDatabaseName],
+    ["테이블 이름", targetReview.tableName],
+    ["형식", targetReview.targetFormat],
+    ["계층", targetReview.targetLayer],
+    ["파티션", targetReview.partitionColumns.length > 0 ? targetReview.partitionColumns.join(", ") : "없음"],
   ];
   const permissionRows = [
-    ["Permission Template", permissionReview.permissionTemplate],
-    ["Visibility", permissionReview.visibility],
-    ["Approval", permissionReview.approvalStatus],
-    ["Owner", permissionReview.owner],
-    ["Summary", permissionReview.permissionSummary],
+    ["권한 템플릿", permissionReview.permissionTemplate],
+    ["공개 범위", permissionReview.visibility],
+    ["승인 상태", permissionReview.approvalStatus],
+    ["담당자", permissionReview.owner],
+    ["요약", permissionReview.permissionSummary],
   ];
   const validationRows = [
     ["소스 연결", draft.source.connectionStatus === "success" ? "완료" : "확인 필요"],
@@ -5236,14 +5236,14 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon"><FileText size={17} /></span>
               <div>
-                <h2>Basic Information</h2>
+                <h2>기본 정보</h2>
               </div>
               <ReviewEditButton label="기본 정보 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv"
               items={basicInformationRows.map(([label, value]) => ({
-                className: label === "Description" ? "wide" : undefined,
+                className: label === "설명" ? "wide" : undefined,
                 label,
                 value,
               }))}
@@ -5254,7 +5254,7 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon schema"><Database size={17} /></span>
               <div>
-                <h2>Output Schema</h2>
+                <h2>출력 스키마</h2>
               </div>
               <ReviewEditButton label="출력 스키마 수정" onClick={() => onEdit("schema")} />
             </div>
@@ -5265,14 +5265,14 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon destination"><HardDrive size={17} /></span>
               <div>
-                <h2>Destination Settings</h2>
+                <h2>저장 위치 설정</h2>
               </div>
               <ReviewEditButton label="저장 위치 수정" onClick={() => onEdit("target")} />
             </div>
             <KeyValueList
               className="etl-review-kv destination"
               items={destinationRows.map(([label, value]) => ({
-                className: label === "Output Path" ? "wide" : undefined,
+                className: label === "저장 경로" ? "wide" : undefined,
                 label,
                 value,
               }))}
@@ -5283,14 +5283,14 @@ export function ReviewPage({
             <div className="etl-review-card-header">
               <span className="etl-review-icon permission"><ShieldCheck size={17} /></span>
               <div>
-                <h2>Permission & Validation</h2>
+                <h2>권한 및 검증</h2>
               </div>
               <ReviewEditButton label="권한 및 검증 수정" onClick={() => onEdit("permission")} />
             </div>
             <KeyValueList
               className="etl-review-kv permission"
               items={permissionRows.map(([label, value]) => ({
-                className: label === "Summary" ? "wide" : undefined,
+                className: label === "요약" ? "wide" : undefined,
                 label,
                 value,
               }))}
