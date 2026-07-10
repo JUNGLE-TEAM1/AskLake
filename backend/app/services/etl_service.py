@@ -983,7 +983,7 @@ def dataset_payload_from_spark_result(
             "jobId": job.id,
             "rowCount": parse_count_value(result.get("outputRows")),
             "runId": str(result.get("runId") or ""),
-            "sourceKind": "sql" if job.source_type == "SQL Result" else "etl",
+            "sourceKind": materialization_source_kind(job),
             "sourceLabel": job.name or job.source or job.source_label or job.id,
             "status": "success" if result.get("status") == "success" else "failed",
             "storageLocation": output_path,
@@ -1260,6 +1260,14 @@ def dag_steps_from_kafka_result(job: ETLJobModel, command: str, run: dict[str, A
             ["Run ID", run.get("runId", "-")],
         ], ["이전 단계 실패로 카탈로그 갱신이 중단되었습니다." if failed else "Catalog materialization run이 Kafka sourceKind로 갱신되었습니다."]),
     ]
+
+
+def materialization_source_kind(job: ETLJobModel) -> str:
+    if job.source_type == "SQL Result":
+        return "sql"
+    if is_kafka_job(job):
+        return "kafka"
+    return "etl"
 
 
 def dag_step(id_: str, title: str, meta: str, status_value: str, details: list[list[Any]] | None = None, logs: list[str] | None = None) -> dict[str, Any]:

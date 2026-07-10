@@ -144,7 +144,7 @@ def normalize_materialization_runs(materialization_runs: list[Any]) -> list[dict
         if not isinstance(run, dict):
             continue
         normalized_run = dict(run)
-        if normalized_run.get("sourceKind") not in {"etl", "sql"}:
+        if normalized_run.get("sourceKind") not in {"etl", "sql", "kafka"}:
             normalized_run["sourceKind"] = "etl"
         normalized_runs.append(normalized_run)
     return normalized_runs

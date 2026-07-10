@@ -476,7 +476,7 @@ type CatalogDataset = {
     rowCount: number;
     storageSizeBytes: number;
     storageLocation?: string;
-    sourceKind: "etl" | "sql";
+    sourceKind: "etl" | "sql" | "kafka";
     sourceLabel: string;
   }>;
   upstream: string[];
