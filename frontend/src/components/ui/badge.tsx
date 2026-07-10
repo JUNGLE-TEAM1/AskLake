@@ -4,13 +4,18 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 export const badgeVariants = cva(
-  "inline-flex items-center gap-1 rounded-full border font-semibold tracking-normal transition-colors",
+  "inline-flex items-center gap-1 border font-semibold tracking-normal transition-colors",
   {
     defaultVariants: {
+      shape: "default",
       size: "default",
       variant: "default",
     },
     variants: {
+      shape: {
+        compact: "rounded-md",
+        default: "rounded-full",
+      },
       size: {
         default: "min-h-6 px-2.5 py-0.5 text-xs",
         lg: "min-h-7 px-3 py-1 text-sm",
@@ -34,9 +39,9 @@ export interface BadgeProps
     VariantProps<typeof badgeVariants> {}
 
 export const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
-  ({ className, size, variant, ...props }, ref) => (
+  ({ className, shape, size, variant, ...props }, ref) => (
     <span
-      className={cn(badgeVariants({ className, size, variant }))}
+      className={cn(badgeVariants({ className, shape, size, variant }))}
       ref={ref}
       {...props}
     />

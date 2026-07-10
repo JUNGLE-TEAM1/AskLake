@@ -18,10 +18,22 @@ import {
   Table2,
   TerminalSquare,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
 import { DialogShell } from "@/components/ui/dialog-shell";
+import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from "@/components/ui/empty";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,9 +53,11 @@ import {
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { datasetStatusMeta } from "../../utils/statusMeta";
+import { cn } from "@/lib/utils";
 
 type LineageColumn = {
   baseId: string;
@@ -444,7 +458,6 @@ export function CatalogPage({
     <div className="catalog-page">
       <PageHeader
         className="catalog-page-header"
-        description="데이터셋을 검색하고 스키마, 리니지, 활용 흐름을 확인합니다."
         icon={<Search size={18} />}
         title="검색/카탈로그"
       />
@@ -452,9 +465,7 @@ export function CatalogPage({
         <div className="catalog-main">
           <Panel className="catalog-search-panel">
             <PanelHeader
-              description="테이블명, 컬럼명, 태그, 업무 키워드로 데이터셋을 찾습니다."
               icon={<Search size={16} />}
-              meta={<Badge size="sm">{selectedSearchTags.size ? `${selectedSearchTags.size}개 태그` : "전체 검색"}</Badge>}
               title="검색 조건"
             />
             <FilterToolbar layout="stacked">
@@ -479,11 +490,12 @@ export function CatalogPage({
                   return (
                     <Button
                       aria-pressed={isTagInSearch}
-                      className={isTagInSearch ? "catalog-tag active" : "catalog-tag"}
+                      className="catalog-tag"
                       key={tag}
+                      shape="compact"
                       type="button"
                       size="sm"
-                      variant="outline"
+                      variant={isTagInSearch ? "subtle" : "outline"}
                       onClick={() => addTagToSearch(tag)}
                     >
                       {tag}
@@ -498,9 +510,7 @@ export function CatalogPage({
             <div className="catalog-results-header">
               <PanelHeader
                 bordered={false}
-                description="조건에 맞는 데이터셋을 선택하면 우측에서 상세 정보를 확인합니다."
                 icon={<LayoutGrid size={16} />}
-                meta={<Badge size="sm">{filteredDatasets.length}건</Badge>}
                 title="검색 결과"
               />
               <FilterToolbar
@@ -525,22 +535,18 @@ export function CatalogPage({
                     }}
                   >
                     <DropdownMenuTrigger asChild>
-                      <Button className="catalog-sort-button" type="button" size="sm" variant="outline">
+                      <Button shape="compact" type="button" size="sm" variant="outline">
                         정렬: {selectedSortOption.label}
-                        <ChevronDown size={14} />
+                        <ChevronDown data-icon="inline-end" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="catalog-sort-menu" aria-label="정렬 기준">
+                    <DropdownMenuContent align="end" aria-label="정렬 기준">
                       <DropdownMenuRadioGroup
                         value={sortMode}
                         onValueChange={(value) => updateSortMode(value as CatalogSortMode)}
                       >
                         {catalogSortOptions.map((option) => (
-                          <DropdownMenuRadioItem
-                            className="catalog-sort-option"
-                            key={option.mode}
-                            value={option.mode}
-                          >
+                          <DropdownMenuRadioItem key={option.mode} value={option.mode}>
                             {option.label}
                           </DropdownMenuRadioItem>
                         ))}
@@ -551,48 +557,41 @@ export function CatalogPage({
               </FilterToolbar>
             </div>
 
-            <div className="catalog-result-list">
-              {paginatedDatasets.map((dataset) => {
+            <ScrollArea className="catalog-result-scroll-area">
+              <div className="catalog-result-list">
+                {paginatedDatasets.map((dataset) => {
                 const isPinned = pinnedDatasetIds.includes(dataset.id);
                 const isActive = dataset.id === previewDataset.id;
                 const isExpanded = expandedDatasetIds.includes(dataset.id);
 
                 return (
-                  <div className={["catalog-result-item", isExpanded ? "expanded" : ""].filter(Boolean).join(" ")} key={`${dataset.id}:${dataset.name}`}>
-                    <article
-                      className={["catalog-result-card", isActive ? "active" : "", isPinned ? "pinned" : ""].filter(Boolean).join(" ")}
-                      role="button"
-                      tabIndex={0}
+                  <div className={cn("catalog-result-item", isExpanded && "expanded")} key={`${dataset.id}:${dataset.name}`}>
+                    <Button
+                      aria-pressed={isActive}
+                      className={cn("catalog-result-card", isActive && "active", isPinned && "pinned")}
+                      shape="compact"
+                      size="content"
+                      type="button"
+                      variant="outline"
                       onClick={() => selectPreviewDataset(dataset)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          selectPreviewDataset(dataset);
-                        }
-                      }}
                     >
                       <div className="catalog-result-summary">
                         {isPinned && (
-                          <span className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋">
-                            <Pin size={13} />
+                          <Badge className="catalog-result-pin-badge" aria-label="상단 고정된 데이터셋" shape="compact" size="sm">
+                            <Pin />
                             고정됨
-                          </span>
+                          </Badge>
                         )}
                         <div className="catalog-result-title">
                           <strong>{dataset.name}</strong>
-                          <DatasetStatusBadge dataset={dataset} />
-                          <span className="catalog-result-expand-indicator">{isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
-                        </div>
-                        <div className="catalog-result-metrics">
-                          <span>{dataset.rows}</span>
-                          <span>{dataset.size}</span>
-                          <span>{dataset.materializationRuns?.length ?? 0} runs</span>
+                          <DatasetStatusBadge dataset={dataset} shape="compact" />
+                          <span className="catalog-result-expand-indicator">{isExpanded ? <ChevronUp /> : <ChevronDown />}</span>
                         </div>
                         <div className="catalog-result-tags">
-                          {dataset.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                          {dataset.tags.map((tag) => <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>)}
                         </div>
                       </div>
-                    </article>
+                    </Button>
                     {isExpanded && (
                       <CatalogMaterializationRuns
                         dataset={dataset}
@@ -605,14 +604,18 @@ export function CatalogPage({
                     )}
                   </div>
                 );
-              })}
-              {!hasCatalogResults && (
-                <div className="catalog-empty-state">
-                  <strong>검색 결과가 없습니다.</strong>
-                  <span>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</span>
-                </div>
-              )}
-            </div>
+                })}
+                {!hasCatalogResults && (
+                  <Empty className="catalog-empty-state" size="sm" variant="bordered">
+                    <EmptyIcon><Search /></EmptyIcon>
+                    <EmptyHeader>
+                      <EmptyTitle>검색 결과가 없습니다.</EmptyTitle>
+                      <EmptyDescription>검색어, 태그, 상태 필터를 조정해 다시 확인하세요.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+              </div>
+            </ScrollArea>
 
             {hasCatalogResults && (
               <PaginationBar
@@ -636,18 +639,17 @@ export function CatalogPage({
                   <Button
                     aria-label={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
                     aria-pressed={isPreviewPinned}
-                    className={isPreviewPinned ? "catalog-favorite-button active" : "catalog-favorite-button"}
+                    shape="compact"
                     title={isPreviewPinned ? "데이터셋 고정 해제" : "데이터셋 상단 고정"}
                     type="button"
-                    size="icon"
-                    variant="ghost"
+                    size="iconSm"
+                    variant={isPreviewPinned ? "subtle" : "ghost"}
                     onClick={togglePinnedDataset}
                   >
-                    <Star size={18} />
+                    <Star fill={isPreviewPinned ? "currentColor" : "none"} />
                   </Button>
                 )}
                 className="catalog-preview-title"
-                description={`${previewDataset.layer} 데이터셋 · ${previewDataset.owner}`}
                 icon={<LayoutGrid size={16} />}
                 iconVariant="success"
                 title={previewDataset.name}
@@ -674,47 +676,46 @@ export function CatalogPage({
                 }} size="sm" variant="link">전체 스키마 상세 보기</Button>
               </article>
 
-              <article className="catalog-lineage-teaser" role="button" tabIndex={0} onClick={() => {
-                onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
-                setActiveModal("lineage");
-              }} onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
+              <Button
+                className="catalog-lineage-teaser"
+                shape="compact"
+                size="content"
+                type="button"
+                variant="outline"
+                onClick={() => {
                   onAction("catalog.lineage.opened", `/api/catalog/datasets/${previewDataset.id}/lineage`, previewDataset.id);
                   setActiveModal("lineage");
-                }
-              }}>
-                <Share2 size={16} />
+                }}
+              >
+                <Share2 data-icon="inline-start" />
                 <div>
                   <strong>리니지 보기</strong>
                 </div>
                 <span>›</span>
-              </article>
+              </Button>
 
               <Button
-                className="primary-button catalog-wide-button"
+                className="catalog-wide-button"
                 disabled={selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+                shape="compact"
                 title={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
                 type="button"
                 size="sm"
                 variant="primary"
                 onClick={openSelectedSqlDataset}
               >
-                <ExternalLink size={16} /> SQL 분석에서 열기
+                <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
               </Button>
-              <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
-                {selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-                  ? `선택된 결과: ${selectedSqlRunTarget.runId}`
-                  : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
-              </p>
             </aside>
           </Panel>
         ) : (
-          <aside className="catalog-preview-panel catalog-preview-panel-empty">
-            <LayoutGrid size={22} />
-            <strong>선택할 데이터셋이 없습니다.</strong>
-            <p>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</p>
-          </aside>
+          <Empty className="catalog-preview-panel catalog-preview-panel-empty" size="lg" variant="bordered">
+            <EmptyIcon><LayoutGrid /></EmptyIcon>
+            <EmptyHeader>
+              <EmptyTitle>선택할 데이터셋이 없습니다.</EmptyTitle>
+              <EmptyDescription>검색 조건을 바꾸면 일치하는 데이터셋의 스키마, 리니지, SQL 이동 정보를 다시 확인할 수 있습니다.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </div>
       {activeModal && (
@@ -748,6 +749,7 @@ function CatalogModal({
     <DialogShell
       aria-label={`${dataset.name} ${title}`}
       bodyClassName="catalog-modal-body"
+      bodyScrollArea={variant === "schema"}
       closeLabel="닫기"
       contentClassName={`catalog-modal ${variant === "lineage" ? "lineage-modal" : ""}`}
       description={title}
@@ -827,13 +829,14 @@ export function CatalogDetailPage({
   );
 }
 
-export function DatasetStatusBadge({ dataset }: { dataset: CatalogDataset }) {
+export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: CatalogDataset; shape?: BadgeProps["shape"] }) {
   const statusMeta = datasetStatusMeta[dataset.status];
+  const statusVariant = dataset.status === "available" ? "success" : dataset.status === "approval_required" ? "warning" : "outline";
 
   return (
     <>
-      {dataset.rag && <Badge className="dataset-rag-badge" size="sm" variant="success">RAG</Badge>}
-      <Badge className={`dataset-status-badge ${statusMeta.className}`} size="sm" variant="outline">{statusMeta.label}</Badge>
+      {dataset.rag && <Badge shape={shape} size="sm">RAG</Badge>}
+      <Badge shape={shape} size="sm" variant={statusVariant}>{statusMeta.label}</Badge>
     </>
   );
 }
@@ -875,8 +878,12 @@ function CatalogMaterializationRuns({
         <span>{runs.length}개 결과 · {dataset.rows} · {dataset.size}</span>
       </div>
       {visibleRuns.length > 0 ? (
-        <div className="catalog-materialization-list">
-          {visibleRuns.map((run) => {
+        <ScrollArea
+          className="catalog-materialization-scroll-area"
+          style={{ height: Math.min(visibleRuns.length * 72, 178) }}
+        >
+          <div className="catalog-materialization-list">
+            {visibleRuns.map((run) => {
             const isSelectable = run.status === "success";
             const isSelected = run.runId === selectedRunId;
 
@@ -884,7 +891,7 @@ function CatalogMaterializationRuns({
             <div
               aria-disabled={!isSelectable}
               aria-pressed={isSelected}
-              className={["catalog-materialization-row", isSelectable ? "selectable" : "disabled", isSelected ? "selected" : ""].filter(Boolean).join(" ")}
+              className={cn("catalog-materialization-row", isSelectable ? "selectable" : "disabled", isSelected && "selected")}
               key={run.runId}
               role="button"
               tabIndex={isSelectable ? 0 : -1}
@@ -897,32 +904,58 @@ function CatalogMaterializationRuns({
                 }
               }}
             >
-              <span className={`catalog-run-status ${run.status}`}>{materializationRunStatusLabel(run.status)}</span>
-              <strong title={run.runId}>{run.runId}</strong>
-              <span>{formatRunCreatedAt(run.createdAt)}</span>
-              <span>{run.rowCount.toLocaleString()} rows</span>
-              <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
-              <span title={run.sourceLabel}>{run.sourceLabel}</span>
-              <Button
-                aria-label={`${run.runId} append 결과 삭제`}
-                className="catalog-materialization-delete"
-                type="button"
+              <Badge
+                className="catalog-run-status"
+                shape="compact"
                 size="sm"
-                variant="destructive"
-                onClick={(event) => {
-                  if (window.confirm("이 append 결과를 데이터셋에서 삭제할까요?")) {
-                    onDelete(event, dataset, run.runId);
-                  } else {
-                    event.stopPropagation();
-                  }
-                }}
+                variant={run.status === "success" ? "success" : run.status === "failed" ? "destructive" : run.status === "canceled" ? "muted" : "default"}
               >
-                삭제
-              </Button>
+                {materializationRunStatusLabel(run.status)}
+              </Badge>
+              <div className="catalog-materialization-main">
+                <strong title={run.runId}>{run.runId}</strong>
+                <div className="catalog-materialization-meta">
+                  <span>{formatRunCreatedAt(run.createdAt)}</span>
+                  <span>{run.rowCount.toLocaleString()} rows</span>
+                  <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
+                  <span title={run.sourceLabel}>{run.sourceLabel}</span>
+                </div>
+              </div>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    aria-label={`${run.runId} append 결과 삭제`}
+                    shape="compact"
+                    size="sm"
+                    type="button"
+                    variant="destructive"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    삭제
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent className="rounded-md" onClick={(event) => event.stopPropagation()}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>append 결과를 삭제할까요?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {run.runId} 결과가 데이터셋에서 제거됩니다.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel className="rounded-md" onClick={(event) => event.stopPropagation()}>취소</AlertDialogCancel>
+                    <AlertDialogAction asChild>
+                      <Button shape="compact" type="button" variant="destructive" onClick={(event) => onDelete(event, dataset, run.runId)}>
+                        삭제
+                      </Button>
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        </ScrollArea>
       ) : (
         <div className="catalog-materialization-empty">아직 append된 실행 결과가 없습니다.</div>
       )}
@@ -990,7 +1023,7 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
         },
         {
           accessorKey: "type",
-          cell: (info) => <span className="catalog-schema-type-pill">{info.getValue<string>()}</span>,
+          cell: (info) => <Badge shape="compact" size="sm" variant="muted">{info.getValue<string>()}</Badge>,
           enableSorting: variant !== "preview",
           header: "타입",
           meta: {
@@ -1051,12 +1084,12 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
         <h2>샘플 데이터</h2>
         <span>읽기 전용 미리보기</span>
       </div>
-      <div className="catalog-sample-scroll">
+      <ScrollArea className="catalog-sample-scroll" scrollbars="horizontal" type="always">
         <table className="schema-table">
           <thead><tr>{columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
           <tbody>{dataset.sampleRows.map((row, rowIndex) => <tr key={`sample-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${rowIndex}-${cellIndex}`}>{cell}</td>)}</tr>)}</tbody>
         </table>
-      </div>
+      </ScrollArea>
     </section>
   );
 }

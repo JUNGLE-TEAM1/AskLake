@@ -81,14 +81,14 @@
 
 ### Verification Coverage
 
-- 확인함: desktop 1280x900, narrow 360x800, mock 13건, 첫 page 5건, no-result search, preview empty synchronization, console warning/error.
-- 확인하지 못함: checkbox 조합, sort 각 option, materialization run 선택/삭제, schema/lineage dialog keyboard loop, pin persistence.
+- 확인함: desktop mock 13건, 첫 page 5건, materialization success/running/failed 상태, 삭제 `AlertDialog`, 결과 목록·append 목록 shadcn `ScrollArea`, no-result search, preview empty synchronization, console warning/error.
+- 확인하지 못함: checkbox 전체 조합, sort 각 option, schema/lineage dialog keyboard loop, pin persistence.
 
 ### shadcn Review
 
 - Structure: mostly pass - `Panel`, `FilterToolbar`, `DropdownMenu`, `PaginationBar`, `DataTable`, `DialogShell` composition이 잘 적용돼 있다.
 - Tokens: pass - surface와 status 색상이 theme 안에서 일관된다.
-- Composition: issues - result card/tag/metric/materialization row는 custom CSS 의존도가 높다.
+- Composition: improved - result card는 shadcn `Button`, tag/metric/status/type 표시는 shadcn `Badge`, 빈 결과는 `Empty`, append 결과 삭제 확인은 `AlertDialog`를 사용한다.
 - Responsive/a11y: follow-up - global mobile shell과 긴 accessible name/title wrapping을 보완해야 한다.
 - Install/search notes: `Panel`, `Badge`, `TagList`, `Chip`, `ScrollArea`는 현재 사용 가능하다. `Collapsible`은 설치돼 있지 않아 도입 이점이 분명할 때만 추가한다.
 
@@ -98,9 +98,22 @@
 2. result card accessible name과 long-title policy를 정리한다.
 3. materialization run과 tag quick filter를 공통 primitive로 축소한다.
 
+## Implementation Update - Issue #466
+
+- PageHeader의 보조 설명과 검색 조건/검색 결과 section의 설명을 제거했다.
+- 검색 조건의 `전체 검색`/선택 태그 수 meta와 검색 결과의 결과 수 meta를 제거했다.
+- 검색 결과 카드의 dataset 이름 아래에 있던 row 수, 파일 크기, run 수 지표 줄을 모든 카드에서 제거했다.
+- preview header의 `${layer} 데이터셋 · ${owner}` 설명과 SQL 이동 하단 안내 문구를 제거했다.
+- 검색 tag action, 정렬 action, 결과 선택 card, pin action, lineage action, SQL 이동 action을 shadcn `Button` variant로 정리했다.
+- dataset status, RAG, row/size/run metric, dataset tag, schema type, materialization status를 shadcn `Badge`로 통일했다.
+- 카탈로그의 badge와 action은 기본 pill 대신 `compact` shape를 사용해 작은 반경의 사각형으로 표시한다.
+- 검색 결과 없음과 preview 없음은 shadcn `Empty`, append 결과 삭제 확인은 shadcn `AlertDialog`를 사용한다.
+- 결과 목록, append 결과 목록, sample table, schema modal의 내부 스크롤을 shadcn `ScrollArea`로 전환했다. ReactFlow lineage viewport는 graph engine 소유이므로 유지한다.
+- 공통 `Button`/`Badge`의 기본 variant와 shape는 유지하고, 선택형 `compact` shape만 추가해 다른 화면의 기본 UI는 변경하지 않는다.
+
 ## Conflict Risk
 
-- #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이다. 이 문서 PR에서는 구현을 변경하지 않는다.
+- #422의 list/search/table/pagination 영향 범위와 직접 겹치는 화면이므로 list/search/pagination 데이터 흐름은 유지한다.
 - catalog list와 detail이 `CatalogPage.tsx` 및 `catalog.css`를 공유하므로 분리 작업 전에 두 route를 함께 회귀 확인한다.
-- API, mock fixture, React Router, ReactFlow graph contract는 이번 범위에서 변경하지 않는다.
+- API, React Router, ReactFlow graph contract는 이번 범위에서 변경하지 않는다. mock fixture는 materialization 상태 UI 확인을 위한 success/running/failed 예시만 추가한다.
 
