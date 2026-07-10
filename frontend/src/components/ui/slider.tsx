@@ -6,25 +6,56 @@ import { cn } from "@/lib/utils";
 const Slider = React.forwardRef<
   React.ElementRef<typeof SliderPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>
->(({ "aria-label": ariaLabel, className, ...props }, ref) => (
-  <SliderPrimitive.Root
-    aria-label={ariaLabel}
-    className={cn(
-      "relative flex w-full touch-none select-none items-center data-[disabled]:opacity-50",
-      className,
-    )}
-    ref={ref}
-    {...props}
-  >
-    <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-slate-200">
-      <SliderPrimitive.Range className="absolute h-full bg-blue-600" />
-    </SliderPrimitive.Track>
-    <SliderPrimitive.Thumb
+>(({ "aria-label": ariaLabel, className, defaultValue, value, min = 0, max = 100, ...props }, ref) => {
+  const _values = React.useMemo(
+    () =>
+      Array.isArray(value)
+        ? value
+        : Array.isArray(defaultValue)
+          ? defaultValue
+          : [min, max],
+    [value, defaultValue, min, max],
+  );
+
+  return (
+    <SliderPrimitive.Root
       aria-label={ariaLabel}
-      className="block size-4 rounded-full border-2 border-blue-600 bg-white shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:pointer-events-none"
-    />
-  </SliderPrimitive.Root>
-));
+      data-slot="slider"
+      defaultValue={defaultValue}
+      value={value}
+      min={min}
+      max={max}
+      className={cn(
+        "relative flex w-full touch-none items-center select-none data-[disabled]:opacity-50 data-[orientation=vertical]:h-full data-[orientation=vertical]:min-h-44 data-[orientation=vertical]:w-auto data-[orientation=vertical]:flex-col",
+        className,
+      )}
+      ref={ref}
+      {...props}
+    >
+      <SliderPrimitive.Track
+        data-slot="slider-track"
+        className={cn(
+          "relative grow overflow-hidden rounded-full bg-slate-200 shadow-inner data-[orientation=horizontal]:h-2 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-2"
+        )}
+      >
+        <SliderPrimitive.Range
+          data-slot="slider-range"
+          className={cn(
+            "absolute bg-blue-600 data-[orientation=horizontal]:h-full data-[orientation=vertical]:w-full"
+          )}
+        />
+      </SliderPrimitive.Track>
+      {Array.from({ length: _values.length }, (_, index) => (
+        <SliderPrimitive.Thumb
+          aria-label={ariaLabel}
+          data-slot="slider-thumb"
+          key={index}
+          className="block size-5 shrink-0 rounded-full border-2 border-blue-600 bg-white shadow-sm ring-blue-500/30 transition-[color,box-shadow] hover:ring-4 focus-visible:ring-4 focus-visible:outline-hidden disabled:pointer-events-none disabled:opacity-50"
+        />
+      ))}
+    </SliderPrimitive.Root>
+  );
+});
 Slider.displayName = SliderPrimitive.Root.displayName;
 
 export { Slider };
