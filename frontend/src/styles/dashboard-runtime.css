@@ -1701,13 +1701,21 @@
 }
 
 .asklake-dashboard-inspector .asklake-widget-config-heading span {
-  font-size: 11px;
+  font-size: 16px;
   line-height: 1.2;
 }
 
-.asklake-dashboard-inspector strong {
+.asklake-dashboard-inspector .asklake-widget-config-heading strong {
   color: var(--dash-text);
+  font-size: 20px;
+}
+
+.asklake-dashboard-inspector .asklake-widget-dataset-field label {
   font-size: 15px;
+}
+
+.asklake-dashboard-inspector .asklake-widget-dataset-field button {
+  font-size: 17px;
 }
 
 .asklake-dashboard-inspector span {
