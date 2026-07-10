@@ -5,19 +5,25 @@ import { cn } from "@/lib/utils";
 
 type ScrollAreaProps = React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & {
   horizontalScrollBarClassName?: string;
-  scrollbars?: "vertical" | "horizontal" | "both";
+  scrollbars?: "vertical" | "horizontal" | "both" | "none";
+  viewportProps?: React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Viewport>;
+  viewportRef?: React.Ref<HTMLDivElement>;
 };
 
 export const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
   ScrollAreaProps
->(({ children, className, horizontalScrollBarClassName, scrollbars = "vertical", ...props }, ref) => (
+>(({ children, className, horizontalScrollBarClassName, scrollbars = "vertical", viewportProps, viewportRef, ...props }, ref) => (
   <ScrollAreaPrimitive.Root className={cn("relative overflow-hidden", className)} ref={ref} {...props}>
-    <ScrollAreaPrimitive.Viewport className="size-full rounded-[inherit]">
+    <ScrollAreaPrimitive.Viewport
+      {...viewportProps}
+      className={cn("size-full rounded-[inherit]", viewportProps?.className)}
+      ref={viewportRef}
+    >
       {children}
     </ScrollAreaPrimitive.Viewport>
-    {scrollbars !== "horizontal" && <ScrollBar />}
-    {scrollbars !== "vertical" && (
+    {(scrollbars === "vertical" || scrollbars === "both") && <ScrollBar />}
+    {(scrollbars === "horizontal" || scrollbars === "both") && (
       <ScrollBar className={horizontalScrollBarClassName} orientation="horizontal" />
     )}
     <ScrollAreaPrimitive.Corner />

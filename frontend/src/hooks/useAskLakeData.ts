@@ -261,9 +261,25 @@ function mergeStoredCatalogDatasets(datasets: CatalogDataset[]) {
 function mergeCatalogDatasets(baseDatasets: CatalogDataset[], storedDatasets: CatalogDataset[]) {
   const uniqueStoredDatasets = mergeStoredCatalogDatasets(storedDatasets);
   const storedDatasetIds = new Set(uniqueStoredDatasets.map((dataset) => dataset.id));
+  const baseDatasetById = new Map(baseDatasets.map((dataset) => [dataset.id, dataset]));
+  const mergedStoredDatasets = uniqueStoredDatasets.map((storedDataset) => {
+    const baseDataset = baseDatasetById.get(storedDataset.id);
+    if (!baseDataset) return storedDataset;
+
+    const materializationRuns = new Map([
+      ...(baseDataset.materializationRuns ?? []),
+      ...(storedDataset.materializationRuns ?? []),
+    ].map((run) => [run.runId, run]));
+
+    return {
+      ...baseDataset,
+      ...storedDataset,
+      materializationRuns: Array.from(materializationRuns.values()),
+    };
+  });
 
   return [
-    ...uniqueStoredDatasets,
+    ...mergedStoredDatasets,
     ...baseDatasets.filter((dataset) => !storedDatasetIds.has(dataset.id)),
   ].map(normalizeDatasetRow);
 }

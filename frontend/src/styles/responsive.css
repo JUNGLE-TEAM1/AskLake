@@ -142,8 +142,19 @@
   }
 
   .catalog-preview-panel {
+    position: static;
+    top: auto;
     height: auto;
+    max-height: none;
     width: 100%;
+  }
+
+  .catalog-preview-desktop {
+    display: none;
+  }
+
+  .catalog-preview-mobile-trigger {
+    display: inline-flex;
   }
 
   .dag-summary-grid {
