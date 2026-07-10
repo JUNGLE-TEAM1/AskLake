@@ -7,14 +7,14 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 
 const checks = [
   {
-    name: "SQL sidebar tabs keep grid layout",
-    file: "src/styles/sql.css",
+    name: "SQL tool tabs use the shared shadcn layout and animated indicator",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /\.sql-sidebar-tabs\s*\{[^}]*display:\s*grid;/s,
-      /\.sql-sidebar-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*display:\s*inline-flex;/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*gap:\s*6px;/s,
-      /\.sql-sidebar-tabs button svg\s*\{[^}]*flex:\s*0 0 auto;/s,
+      /<Tabs[\s\S]*value=\{contextPanelTab\}/,
+      /<TabsList className="grid w-full grid-cols-2"/,
+      /<TabsTrigger[\s\S]*value="tables"/,
+      /data-sql-tab-indicator=""/,
+      /layoutId="sql-tools-active-tab"/,
     ],
   },
   {
