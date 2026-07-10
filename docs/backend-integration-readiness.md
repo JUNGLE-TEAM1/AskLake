@@ -10,14 +10,14 @@ FastAPI 전환의 공통 구조와 의사결정은 `docs/backend-fastapi-transit
 | 영역 | 현재 상태 | 남은 범위 |
 | --- | --- | --- |
 | 수집/처리 목록 | Job 수정은 상세 response를 edit draft로 복원하고 source를 읽기 전용으로 표시. `PATCH /api/etl/jobs/{jobId}`가 동일 Job ID에 허용된 metadata를 저장 | 삭제, 복제 후 새 Job 생성 UX |
-| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`/`catalog_datasets` JSONB payload로 저장 | 중간 단계별 서버 저장 API는 후속 범위 |
+| 새 수집/처리 생성 | Source -> Schema -> Rule -> Schedule -> Permission -> Target -> Review -> Create가 `POST /api/etl/jobs`로 연결되고 `etl_jobs`에 저장. 응답의 `catalogTarget`은 pending identity이며 아직 Catalog row를 만들지 않음 | 중간 단계별 서버 저장 API는 후속 범위 |
 | Target 저장경로 선택 | `GET /api/s3/buckets`, `GET /api/s3/prefixes`로 S3 bucket/prefix를 서버에서 lazy 조회하고 `target.storagePath` string에 반영. EC2 prod compose는 MinIO를 S3-compatible endpoint로 제공하고 서버 `deploy/.env`의 `S3_ALLOWED_BUCKETS` allowlist를 사용 | 운영 IAM/credential rotation, external S3 전환 |
 | Target DB 선택 | `GET /api/target/databases`로 허용 DB 목록을 조회하고 `target.databaseName` string에 반영. 테이블명 입력은 노출하지 않고 datasetName을 create payload 호환값으로 사용 | 운영 catalog DB 목록/권한 API |
 | Source/Schema | mock mode에서는 `SourceConnectorAnalysis` fallback으로 schema/sampleRows 반영, live mode에서는 `POST /api/etl/sources/test`로 실제 connector 확인. MongoDB connector는 Node MongoDB driver로 컬렉션과 제한 문서 샘플을 조회 | Kafka message payload sampling, Parquet physical schema inference |
 | Rule | 현재 schema/sampleRows 기반 preview, create payload에 transform/quality detail 포함 | 별도 backend rule preview API |
 | Job command | `POST /api/etl/jobs/{jobId}/commands`가 run/retry를 Airflow DAG Run으로 접수하고 non-terminal job/run을 즉시 응답 | pause/cancel의 실제 Airflow/Spark interrupt |
 | Run/DAG | local Airflow DAG가 token-authenticated FastAPI internal API를 통해 실제 PySpark를 실행하고 MinIO/S3 Parquet를 생성. `GET /api/etl/jobs/{jobId}`가 DAG/task/Spark manifest를 동기화 | 성공 Spark output의 Catalog materialization/lineage 반영, run detail table과 Spark log object storage 분리 |
-| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, create/run 결과를 Postgres JSONB payload로 반영 | 상세/lineage/search API 고도화 |
+| Catalog | `GET /api/catalog/datasets` hydrate, `GET /api/catalog/datasets/{datasetId}/lineage`, SQL derived/Kafka 결과를 Postgres JSONB payload로 반영. 일반 Airflow/Spark batch의 reconciliation 계약은 확정됨 | Phase 3 일반 batch materialization/lineage 구현, 상세/lineage/search API 고도화 |
 | SQL 분석 | `POST /api/query/runs`, `POST /api/query/ai-suggestions`, `POST /api/catalog/derived-datasets` 호출 지점 유지. SQL run 결과는 `sql_runs.payload`에 snapshot 저장 | read-only SQL engine 고도화 |
 | Dashboard | FastAPI dashboard card/list와 draft/published runtime API 연결. 프론트는 404 local fallback 유지. Dashboard 목록/runtime/title/draft/delete 권한 enforcement 연결 | 공유 링크/API, export API, cross-pair E2E QA |
 | Permission/Governance | Create flow의 `owner`, `permissionSummary`, `permissionRoles`는 metadata로 저장/표시. Job/Dataset/Dashboard 응답은 optional `createdBy`/`createdByProfile`, `permissionGrants`, `permissions` metadata를 받을 수 있음. Backend는 `asklake_session` 쿠키 또는 `X-AskLake-User`/`X-AskLake-Role`, `X-AskLake-Groups`를 `ActorContext`로 읽고 공통 `can()` 판정을 제공함. 독립 `permission_grants` table을 만들고 기존 payload grant와 병합해 Admin permission 조회에 반영함. Admin permission grant 생성/수정/삭제 API와 관리 콘솔 권한 편집 UI가 연결됨. Profile/Admin API와 로컬 login/signup/session/logout API가 연결됨. Dashboard 삭제/runtime 편집, Catalog dataset 조회/lineage/materialization-run 삭제, SQL preview 실행, Query AI 생성, Job command는 공통 판정기를 사용함. Frontend는 `permissions`로 관련 버튼을 비활성화하고 403을 권한 메시지로 표시함 | dataset 생성/삭제 전체로 permission check 확대 |
@@ -149,6 +149,41 @@ Airflow sync 결과:
 - `JobRunSummary.taskStates.sparkResult`: input/output rows, outputPath, schema, quality, Spark failure stage/error manifest
 - selected run 기준 `dagStepsByRunId`
 
+### Phase 3 Catalog reconciliation target
+
+Status: contract fixed, implementation pending.
+
+Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 실제 Parquet가 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
+
+Transaction boundary:
+
+- target dataset id는 `job.dataset_id`를 사용한다.
+- 같은 `runId`의 `materializationRuns` 항목은 append가 아니라 replace되어 하나만 남는다.
+- 서로 다른 성공 Run은 같은 dataset row에 누적되며 rows/bytes/latest/sourceRunId를 다시 계산한다.
+- target dataset row를 lock한 상태에서 payload를 read-modify-write한다.
+- first create race는 dataset id/name unique constraint로 한 row만 허용하고 충돌한 요청이 그 row를 다시 읽어 run-keyed update를 적용한다.
+- Catalog payload와 성공 `taskStates.catalogResult`를 같은 transaction으로 commit한다.
+- physical output 또는 Catalog 저장 실패 시 partial Catalog write를 rollback한다.
+
+Failure/recovery boundary:
+
+- Spark failure는 `spark_process_write`에서 DAG를 실패시키며 Catalog endpoint를 호출하지 않는다.
+- Catalog 실패는 성공 Parquet와 `sparkResult`를 남긴 채 `publish_run_result`를 실패시킨다. 실패 `catalogResult`에는 `runId`, `datasetId`, compact error, failed timestamp를 남긴다.
+- 같은 Airflow task retry는 Spark를 다시 실행하지 않고 persisted manifest로 Catalog만 재시도한다.
+- commit 뒤 response가 유실돼도 retry는 기존 성공 `catalogResult`를 읽어 같은 success를 반환한다.
+- Catalog commit 전에는 Airflow DAG Run과 AskLake Run을 최종 `success`로 간주하지 않는다.
+- terminal success를 처음 본 frontend poller는 `GET /api/catalog/datasets`를 재조회한다.
+
+Phase 3 acceptance checks:
+
+- real Spark success 뒤 dataset row 1개, materialization 1개, exact outputPath, Parquet format, positive byte size, manifest schema/quality, 3-node lineage
+- 같은 reconciliation 2회 호출 뒤 같은 `runId` history 1개
+- 두 번째 성공 Run 뒤 dataset row 1개와 서로 다른 history 2개
+- Spark failure 뒤 Catalog 무변경
+- injected Catalog failure 뒤 physical output 유지, `publish_run_result`/AskLake failure, partial Catalog 무변경
+- failed final task retry 뒤 Spark output 추가 생성 없이 Catalog success
+- browser에서 전체 새로고침 없이 Catalog 목록/lineage 확인
+
 ## 6. 검증 명령
 
 Backend:
@@ -208,7 +243,7 @@ Live Airflow verification on 2026-07-10:
 - `npm run verify:airflow-spark`: pass, real PySpark input/output 2 rows and MinIO Parquet verified
 - expected Spark Quality failure: pass, `sparkResult`, Airflow DAG Run, AskLake Run/Job all failed
 - invalid internal execution token: pass, `401 AIRFLOW_EXECUTION_UNAUTHORIZED`
-- Catalog materialization/lineage mutation: not covered; Phase 3 scope
+- Catalog materialization/lineage mutation: contract fixed but implementation/live verification not covered; Phase 3 scope
 
 ## 7. 완료 기준
 

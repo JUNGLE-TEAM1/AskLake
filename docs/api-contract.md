@@ -926,10 +926,10 @@ Response 예시:
 - `job`을 수집/처리 목록 최상단에 추가합니다.
 - `catalogTarget`은 실행 전 대상 표시용으로만 사용합니다.
 - `selectedJob`을 응답값으로 변경합니다.
-- Catalog Dataset은 Spark run 성공 후 command 응답의 `dataset`으로 추가합니다.
+- Catalog Dataset은 비동기 command 접수 응답에서 추가하지 않습니다. Airflow의 `publish_run_result`가 Catalog reconciliation까지 성공한 뒤 frontend polling이 terminal success를 관찰하면 Catalog 목록을 재조회해 추가합니다.
 - 생성 성공 감사 로그를 남깁니다.
 - mock mode에서는 생성된 pipeline dataset을 `window.localStorage["asklake.catalogDatasets"]`에 저장하고 앱 로드시 mock catalog dataset 앞에 병합합니다.
-- Spark run 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
+- Spark와 Catalog reconciliation 성공 후 생성된 dataset에는 source -> job -> target 기본 `lineageGraph`가 포함되어야 합니다. Catalog lineage modal은 저장된 `lineageGraph`를 우선 사용하고, 없으면 `upstream` 기반 fallback graph를 사용합니다.
 
 Validation:
 
@@ -993,6 +993,67 @@ type AirflowSparkExecutionRequest = {
 Spark manifest에는 `status`, `runId`, `startedAt`, `endedAt`, `durationMs`, `inputRows`, `outputRows`, `outputPath`, `schema`, `quality`, `failedStage`, `error`가 포함될 수 있다. Phase 2는 이 manifest와 물리 Parquet까지 저장하지만 Catalog materialization/lineage 갱신은 수행하지 않는다.
 
 S3A 출력은 Job의 변경 불가능한 설정값 `storagePath`를 destination root로 사용하고 그 아래에 `runId`를 붙인다. `targetPath`는 최신 Run에서 관측한 실제 `outputPath`이므로 다음 재실행의 destination root로 재사용하지 않는다.
+
+Phase 3의 마지막 Airflow task는 Spark 실행 endpoint와 분리된 Catalog endpoint를 호출한다.
+
+```text
+POST /api/internal/airflow/spark-runs/{runId}/catalog
+Authorization: Bearer <AIRFLOW_EXECUTION_API_TOKEN>
+```
+
+```ts
+type AirflowCatalogReconciliationRequest = {
+  jobId: string;
+};
+
+type AirflowCatalogReconciliationResponse = {
+  dataset: CatalogDataset;
+  reconciledAt: string;
+  runId: string;
+  status: "success";
+};
+```
+
+이 endpoint는 DAG의 `publish_run_result` task 전용이다. backend는 request body에서 Spark 결과나 Catalog payload를 받지 않으며 다음 저장값을 다시 조회하고 검증한다.
+
+- path의 `runId`
+- body의 `jobId`
+- 저장된 `ETLRunModel.job_id`, `airflow_dag_run_id`
+- 저장된 `taskStates.sparkResult.status=success`
+- Job에 저장된 `datasetId`와 변경 불가능한 target identity
+- Spark `outputPath` 아래의 실제 Parquet object
+
+Catalog mapping:
+
+| Catalog 값 | source |
+| --- | --- |
+| dataset id | `job.datasetId` |
+| `materializationRuns[].runId` | `sparkResult.runId` |
+| `materializationRuns[].jobId` | 저장된 Job id |
+| `rowCount` | `sparkResult.outputRows` |
+| `createdAt` | `sparkResult.endedAt` |
+| `storageLocation` | `sparkResult.outputPath` |
+| `storageSizeBytes` | S3A prefix 또는 local output path의 실제 file byte 합계 |
+| `schema` | `sparkResult.schema` |
+| `quality` | `sparkResult.quality` |
+| `lineageGraph` | source -> Spark Job -> target dataset |
+
+S3A output은 정확한 bucket/prefix를 list해 Parquet object가 하나 이상 있는지 확인하고 byte를 합산한다. local output은 directory를 재귀 확인한다. 물리 output을 확인할 수 없으면 size를 `0`으로 성공 저장하지 않고 reconciliation을 실패시킨다. Catalog `sampleRows`는 Spark가 제공한 제한된 transformed output sample을 사용할 수 있으며, 그런 sample이 없으면 빈 배열을 사용한다. schema나 값이 달라질 수 있는 pre-transform source sample을 output sample로 가장해서는 안 된다.
+
+Catalog dataset upsert와 `taskStates.catalogResult` 성공 기록은 같은 PostgreSQL transaction으로 확정한다. `catalogResult`는 최소한 `status`, `runId`, `datasetId`, `reconciledAt`을 포함한다. 같은 `runId`가 다시 들어오면 기존 materialization을 교체해 하나만 유지하고, 다른 Run은 같은 dataset row에 append한다. append read-modify-write 동안 target dataset row를 lock해 동시 실행의 history 손실을 막는다. dataset이 아직 없을 때의 동시 create는 id/name unique constraint로 한 row만 허용하고, 충돌한 호출은 그 row를 다시 읽어 같은 run-keyed update를 적용한다. Airflow state sync가 Task Instance snapshot을 다시 만들 때도 `sparkResult`와 `catalogResult`를 모두 보존해야 한다.
+
+Failure contract:
+
+- 성공 Spark manifest가 없거나 아직 저장되지 않았으면 `409 SPARK_RESULT_NOT_READY`
+- Job/Run/Airflow identity가 다르면 `409 AIRFLOW_RUN_MISMATCH`
+- physical output 검증 또는 Catalog transaction이 실패하면 `500 CATALOG_RECONCILIATION_FAILED`
+- 실패 시 Catalog partial update는 rollback한다. Parquet와 성공 `sparkResult`는 삭제하지 않는다.
+- rollback 후 같은 Run에 `taskStates.catalogResult={ status: "failed", ... }`와 compact error를 별도 저장해 원인을 관찰할 수 있게 한다.
+- `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다.
+- 같은 Airflow task retry는 성공 `sparkResult`를 재사용해 Catalog만 재시도하고 Spark output을 다시 만들지 않는다.
+- Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
+
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 2의 현재 코드는 Catalog gate 없이 Airflow terminal state를 반영하므로, 이 규칙은 Phase 3 구현과 검증이 끝난 뒤 활성 계약이 된다.
 
 프론트 함수:
 
@@ -1442,7 +1503,7 @@ Response `200 OK`:
 
 - 앱 초기 로딩 때 `GET /api/catalog/datasets`로 hydrate합니다.
 - 생성 직후에는 Catalog에 추가하지 않습니다.
-- Spark run 성공 후 `POST /api/etl/jobs/{jobId}/commands` 응답의 `dataset`을 반영하고, 목록 재조회로 동기화하면 됩니다.
+- 비동기 `POST /api/etl/jobs/{jobId}/commands` 응답은 Catalog dataset을 포함하지 않습니다. frontend polling이 `publish_run_result`까지 끝난 terminal success를 처음 관찰한 시점에 `GET /api/catalog/datasets`를 다시 호출해 dataset과 append history를 반영합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `catalog_datasets.payload`를 Catalog API의 source of truth로 저장합니다. 기존 컬럼 기반 row는 읽기 호환 fallback으로만 사용합니다.
 - Spark run 결과 dataset과 SQL derived dataset은 모두 `size`를 표시용 저장 크기로 내려주고, 물리 위치/포맷/byte 크기는 `storageLocation`, `storageFormat`, `storageSizeBytes`에 담습니다.
 - Spark run 결과 dataset과 SQL derived dataset은 같은 `dataset.id`에 대해 `materializationRuns`를 idempotent하게 append합니다. 같은 `runId`가 다시 처리되면 기존 항목을 교체하고 중복 추가하지 않습니다.

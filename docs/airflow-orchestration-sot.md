@@ -27,8 +27,9 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
 - Phase 2 — real Spark execution: complete on the current branch. Airflow calls
   an authenticated FastAPI internal endpoint, PySpark writes Parquet to
   MinIO/S3, and the Spark manifest is reconciled into the AskLake Run.
-- Phase 3 — Catalog reconciliation: use the persisted Spark manifest to update
-  Catalog materialization and lineage only after a successful Airflow Run.
+- Phase 3 — Catalog reconciliation: contract complete; implementation pending.
+  The final `publish_run_result` task must reconcile the persisted successful
+  Spark manifest into Catalog before the Airflow DAG Run can become successful.
 - Phase 4 — operational commands and recovery: define and implement retry,
   cancel, and any honest pause semantics across Airflow and Spark.
 - Phase 5 — deployment and operations: define DAG deployment, versioning,
@@ -37,6 +38,90 @@ numbering so that a request to proceed has one unambiguous acceptance boundary.
 Phase 2 now validates real Spark processing and physical Parquet output. It does
 not claim that Catalog metadata was materialized; that claim becomes valid only
 after Phase 3 passes its own acceptance checks.
+
+### Phase 3 Contract Boundary
+
+Problem:
+
+- Phase 2 can leave valid Parquet in MinIO/S3 while Catalog still has no
+  materialization row or lineage.
+- Mapping Airflow `success` directly to AskLake `success` before Catalog commit
+  would claim a complete pipeline when only physical processing completed.
+
+Execution boundary:
+
+1. `spark_process_write` calls the existing authenticated FastAPI execution
+   endpoint and persists `taskStates.sparkResult`.
+2. `publish_run_result` calls
+   `POST /api/internal/airflow/spark-runs/{runId}/catalog` with `jobId`.
+3. FastAPI reloads the persisted Job, Run, and successful `sparkResult`; it does
+   not trust the Airflow request body as the result manifest.
+4. FastAPI validates the physical output, upserts the target Catalog dataset,
+   appends or replaces the run-keyed materialization, and persists
+   `taskStates.catalogResult` in one database transaction.
+5. Only a successful reconciliation response lets `publish_run_result` and the
+   Airflow DAG Run become `success`. AskLake polling continues to use the
+   terminal Airflow state after this gate.
+
+Sources of truth:
+
+- MinIO/S3 or the configured local lake path owns physical Parquet objects.
+- `etl_runs.task_states.sparkResult` owns persisted Spark execution evidence.
+- `catalog_datasets.payload` owns Catalog metadata, materialization history,
+  and lineage.
+- Airflow owns orchestration task state; its DAG Run cannot be successful while
+  Catalog reconciliation is pending or failed.
+
+Invariants:
+
+- A missing, failed, or identity-mismatched `sparkResult` never mutates Catalog.
+- `job.dataset_id` identifies the target Catalog row; the target name is not
+  recomputed as a second identity during reconciliation.
+- One `runId` appears at most once in one dataset's `materializationRuns`.
+  Retrying the same reconciliation replaces that entry instead of appending a
+  duplicate.
+- Different successful Run ids append to the same dataset row and recompute
+  aggregate rows, bytes, latest timestamp, and `sourceRunId` from successful
+  materializations.
+- Catalog `storageLocation` equals the successful Spark `outputPath` exactly.
+  S3A size comes from the object prefix and local size comes from the filesystem;
+  at least one Parquet object must exist before publication.
+- Catalog schema and quality come from the persisted Spark manifest. Bounded
+  output sample rows may be stored; pre-transform source samples must not be
+  presented as transformed output when they differ.
+
+Failure and recovery:
+
+- Spark failure stops at `spark_process_write`; `publish_run_result` does not
+  run and Catalog remains unchanged.
+- Catalog failure leaves the physical Parquet and successful `sparkResult` as
+  recovery evidence, records a failed `catalogResult`, and fails
+  `publish_run_result`. The AskLake Run reports `Catalog reconciliation` as the
+  failed stage instead of reporting success.
+- Airflow task retry reuses the persisted successful Spark manifest and retries
+  only reconciliation. It must not rerun Spark or create a second
+  materialization for the same `runId`.
+- Concurrent reconciliation locks the target dataset row while performing the
+  read-modify-write append so successful Run histories are not lost. First
+  creation relies on the dataset id/name uniqueness constraints; a create race
+  reloads the winning row and reapplies the same run-keyed update.
+- If the database commit succeeds but the HTTP response is lost, the retry reads
+  the existing successful `catalogResult` and materialization and returns the
+  same success response.
+
+Phase 3 implementation acceptance:
+
+- A real Airflow/Spark success creates or updates one Catalog dataset with the
+  exact Run id, output path, Parquet format, positive physical byte size,
+  manifest schema/quality, and source -> Spark Job -> target lineage.
+- Repeating reconciliation for the same Run keeps one materialization entry.
+- A second successful Run keeps one dataset row and adds a second history entry.
+- Spark failure and injected Catalog failure do not publish partial Catalog
+  metadata; the failed Airflow task and preserved manifests explain the stage.
+- Retrying only the failed final task can recover the Catalog commit without a
+  second Spark output.
+- After frontend polling observes terminal success, it refreshes
+  `GET /api/catalog/datasets` so the dataset appears without a full page reload.
 
 ## Historical Implementation Record
 

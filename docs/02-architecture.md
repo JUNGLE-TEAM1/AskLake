@@ -71,7 +71,18 @@ Node demo API는 기존 동작 비교용 reference로 남긴다.
 
 Airflow task는 Docker socket이나 MinIO credential을 직접 받지 않는다. `spark_process_write` task가 `AIRFLOW_EXECUTION_API_TOKEN`으로 FastAPI 내부 API를 호출하면 FastAPI가 저장된 Job/Run identity를 재검증하고 기존 Spark launcher를 통해 `backend/scripts/spark_job_run.py`를 실행한다. Node helper는 Spark container lifecycle과 environment 전달만 담당하며, 데이터 읽기·변환·품질 검사·Parquet 쓰기는 PySpark가 수행한다.
 
-Spark manifest의 input/output row count, output path, schema, quality, failure stage는 `etl_runs.task_states.sparkResult`와 Run summary에 보존한다. Phase 2는 물리 Parquet와 Run 성공/실패까지 책임지며 Catalog materialization/lineage 갱신은 Phase 3 경계다.
+Spark manifest의 input/output row count, output path, schema, quality, failure stage는 `etl_runs.task_states.sparkResult`와 Run summary에 보존한다. Phase 2는 물리 Parquet와 Spark/Airflow 결과 전파까지 책임지며 Catalog materialization/lineage와 최종 성공 gate는 Phase 3 경계다.
+
+Phase 3에서는 DAG의 마지막 `publish_run_result` task가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 요청 body의 결과값을 신뢰하지 않고 저장된 Job/Run identity와 `taskStates.sparkResult`를 다시 읽는다. 성공 manifest와 실제 Parquet를 확인한 뒤 `catalog_datasets.payload`와 같은 Run의 `taskStates.catalogResult`를 하나의 DB transaction으로 저장한다. 이 transaction이 완료되어야 `publish_run_result`와 Airflow DAG Run이 `success`가 될 수 있으므로, AskLake의 terminal success는 물리 적재와 Catalog 반영을 모두 뜻한다.
+
+Catalog reconciliation의 상태 소유권은 다음과 같다.
+
+- MinIO/S3 또는 local lake path: 실제 Parquet object의 source of truth
+- `etl_runs.task_states.sparkResult`: Spark 실행 결과의 source of truth
+- `catalog_datasets.payload`: dataset metadata, `materializationRuns`, lineage의 source of truth
+- Airflow Task Instance/DAG Run: orchestration 성공·실패의 source of truth
+
+같은 `runId` 재호출은 기존 materialization을 교체하고, 다른 Run은 같은 dataset row에 append한다. target dataset row는 append read-modify-write 동안 lock해 동시 갱신 손실을 막는다. Catalog 저장이 실패하면 Parquet와 `sparkResult`는 복구 증거로 남고 `publish_run_result`가 실패한다. Airflow task retry는 Spark를 다시 실행하지 않고 저장된 manifest로 Catalog 단계만 재시도한다. frontend는 polling에서 terminal success 전환을 확인한 뒤 Catalog 목록을 다시 hydrate한다.
 
 ### Kafka Snapshot Direct Target 전환 계획
 

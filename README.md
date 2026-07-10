@@ -34,7 +34,7 @@ $env:VITE_USE_MOCK_API = "false"
 npm run dev
 ```
 
-For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Create a pipeline from the UI to add them.
+For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Creating a pipeline adds the Job; its Catalog dataset appears only after the Airflow/Spark run and Catalog reconciliation succeed.
 The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
 ## Validation
