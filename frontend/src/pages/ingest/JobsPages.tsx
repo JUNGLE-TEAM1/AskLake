@@ -35,9 +35,11 @@ import {
   Zap,
 } from "lucide-react";
 import { ActionGroup } from "@/components/ui/action-group";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Chip } from "@/components/ui/chip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { DataTable, type DataTableColumnMeta } from "@/components/ui/data-table";
@@ -64,12 +66,12 @@ import { KeyValueList } from "@/components/ui/key-value-list";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
-import { SegmentedTabs } from "@/components/ui/segmented-tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusBadgeTone } from "@/components/ui/status-badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TagList } from "@/components/ui/tag-list";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Field } from "../../components/common";
 import type { AuditResult, JobCommand, JobDagStep, JobDagStepStatus, JobExecutionEvidence, JobListFacets, JobListQuery, JobRowData, JobRunStatus, JobRunSummary, JobScheduleKind, JobStats, JobStatus } from "../../types";
 import { jobStatusMeta } from "../../utils/statusMeta";
 
@@ -692,8 +694,8 @@ function JobsTableSection({
         const { job } = row.original;
 
         return (
-          <DataTableStackedCell className="gap-1.5">
-            <div className="flex min-w-0 items-center gap-2.5">
+          <DataTableStackedCell className="relative min-h-[76px] gap-0">
+            <div className="absolute left-0 top-1/2 flex min-w-0 -translate-y-1/2 items-center gap-2.5">
               <DataTableCellPrimary className="text-lg leading-7">{formatJobLastRun(job)}</DataTableCellPrimary>
               {getLatestRunOutcome(job) === "failed" && (
                 <Tooltip>
@@ -726,7 +728,7 @@ function JobsTableSection({
                 </Tooltip>
               )}
             </div>
-            <Button className="h-auto justify-self-start px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
+            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
               실행 이력
             </Button>
           </DataTableStackedCell>
@@ -1220,12 +1222,22 @@ function ruleRowsForJob(job: JobRowData): RuleDetailRow[] {
   ];
 }
 
+const detailKeyValueListClassName = "grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2 [&>div]:min-w-0 [&_dt]:mb-1 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:text-slate-500 [&_dd]:m-0 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:leading-6 [&_dd]:text-slate-900 [&_dd]:[overflow-wrap:anywhere]";
+
 function DetailSummaryStat({ label, tone, value }: { label: string; tone?: "danger" | "running" | "scheduled" | "canceled"; value: string }) {
+  const valueToneClassName = tone === "danger"
+    ? "text-red-700"
+    : tone === "running"
+      ? "text-emerald-700"
+      : tone === "canceled"
+        ? "text-slate-600"
+        : "text-slate-950";
+
   return (
-    <div className={tone ? `detail-summary-stat ${tone}` : "detail-summary-stat"}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <Card className="grid min-h-[72px] content-center gap-1.5 border-slate-200 bg-white/80 shadow-none" size="sm">
+      <span className="text-xs font-bold text-slate-500">{label}</span>
+      <strong className={`text-sm font-extrabold leading-snug ${valueToneClassName} [overflow-wrap:anywhere]`}>{value}</strong>
+    </Card>
   );
 }
 
@@ -1274,37 +1286,50 @@ function JobDetailHeader({
   };
 
   return (
-    <header className="job-detail-header">
-      <button className="job-detail-breadcrumb" type="button" onClick={onDetail}>수집/처리 &gt; 작업 목록</button>
-      <div className="job-detail-title-row">
-        <div>
-          <h1>{job.name}</h1>
-          <TagList className="job-detail-meta" density="compact">
+    <div className="grid gap-4">
+      <PageHeader
+        actions={(
+          <ActionGroup density="compact">
+            {getJobDetailActions(job).map((action) => (
+              <Button key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
+            ))}
+          </ActionGroup>
+        )}
+        eyebrow={(
+          <Button className="justify-start text-slate-500 hover:text-slate-900" size="content" type="button" variant="link" onClick={onDetail}>
+            수집/처리 / 작업 목록
+          </Button>
+        )}
+        icon={<Database aria-hidden="true" size={26} />}
+        iconClassName="size-14 rounded-xl"
+        meta={(
+          <TagList density="compact">
             <StatusPill job={job} />
-            <Chip className="owner-chip" tone="outline">Owner: {job.owner}</Chip>
-            <Chip className="tag-chip" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
+            <Chip size="default" tone="outline">Owner: {job.owner}</Chip>
+            <Chip size="default" tone="secondary">{job.tag.replace("[", "").replace("]", "")}</Chip>
           </TagList>
-        </div>
-        <ActionGroup className="job-detail-actions" density="compact">
-          {getJobDetailActions(job).map((action) => (
-            <Button className={action.className} key={action.label} size="sm" type="button" variant={getJobActionButtonVariant(action.className)} onClick={() => runAction(action.kind)}>{action.label}</Button>
-          ))}
-        </ActionGroup>
-      </div>
-      <SegmentedTabs
-        ariaLabel="작업 상세 탭"
-        className="job-detail-tabs"
-        items={[
-          { label: "작업 상세 정보", value: "detail" },
-          { label: "실행 이력", value: "runs" },
-        ]}
+        )}
+        title={job.name}
+        titleClassName="text-3xl font-bold"
+        variant="bordered"
+      />
+      <Tabs
         value={activeTab}
-        onValueChange={(value) => {
+        onValueChange={(value: string) => {
           if (value === "detail") onDetail();
           else onRuns();
         }}
-      />
-    </header>
+      >
+        <TabsList aria-label="작업 상세 탭" className="h-auto w-full justify-start gap-6 overflow-x-auto rounded-none border-b border-slate-200 bg-transparent p-0">
+          <TabsTrigger className="min-h-10 rounded-none border-b-2 border-transparent px-1 pb-3 pt-2 text-sm shadow-none data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:text-blue-700 data-[state=active]:shadow-none" value="detail">
+            작업 상세 정보
+          </TabsTrigger>
+          <TabsTrigger className="min-h-10 rounded-none border-b-2 border-transparent px-1 pb-3 pt-2 text-sm shadow-none data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:text-blue-700 data-[state=active]:shadow-none" value="runs">
+            실행 이력
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+    </div>
   );
 }
 
@@ -1345,170 +1370,212 @@ export function JobDetailPage({
             : "스케줄 정상";
   const schemaRows = schemaRowsForJob(job, stats);
   const ruleRows = ruleRowsForJob(job);
+  const summaryToneClassName = stripTone === "danger"
+    ? "border-red-200 bg-red-50"
+    : stripTone === "running"
+      ? "border-emerald-200 bg-emerald-50"
+      : stripTone === "canceled"
+        ? "border-slate-300 bg-slate-50"
+        : "border-blue-200 bg-blue-50";
 
   return (
     <div className="job-detail-page">
       <JobDetailHeader activeTab="detail" job={job} onAction={onAction} onCommand={onCommand} onDetail={onBack} onEdit={onEdit} onRuns={onRuns} />
 
-      <section className="job-detail-section">
-        <div className="job-detail-section-heading">
-          <h2>작업 핵심 정보</h2>
-        </div>
-        <div className="job-detail-overview-grid">
-          <article className={`job-ops-summary-card ${stripTone}`}>
-            <div className="job-ops-main">
-              <span className="job-ops-kicker">{stripTitle}</span>
-              <h3>{executionDisplay.summary}</h3>
-            </div>
-            {showPrimaryAction && (
-              <div className="job-next-actions">
-                <Button className="job-action-button primary" size="sm" type="button" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</Button>
+      <Panel overflow="visible">
+        <PanelHeader icon={<Info aria-hidden="true" size={18} />} title="작업 핵심 정보" />
+        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1.55fr)_minmax(300px,0.85fr)]">
+          <Card className={`grid gap-4 shadow-none ${summaryToneClassName}`} size="sm">
+            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+              <div className="grid min-w-0 gap-1.5">
+                <span className="text-xs font-extrabold text-slate-600">{stripTitle}</span>
+                <h3 className="text-lg font-bold leading-snug text-slate-950 [overflow-wrap:anywhere]">{executionDisplay.summary}</h3>
               </div>
-            )}
-            <div className="job-summary-stat-grid">
+              {showPrimaryAction && (
+                <Button size="sm" type="button" variant="primary" onClick={() => onCommand(job, primaryAction.kind)}>{primaryAction.label}</Button>
+              )}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
               <DetailSummaryStat label="최근 Run" value={latestRunId} />
               <DetailSummaryStat label="마지막 실행" value={formatCompactDateTime(job.lastRun)} />
               <DetailSummaryStat label="다음 실행" value={job.nextRun} />
             </div>
-          </article>
-          <article className="job-detail-card metadata-card">
-            <h3>기본 메타</h3>
-            <KeyValueList
-              className="detail-plain-kv-grid"
-              items={[
-                { label: "Job ID", value: job.id },
-                { label: "Target", value: job.target },
-                { className: "wide", label: "소스", value: job.source },
-                { className: "wide", label: "운영 조직", value: job.owner === "admin" ? "Data Platform" : "Analytics Ops" },
-              ]}
-            />
-          </article>
-        </div>
-      </section>
+          </Card>
 
-      <details className="job-detail-disclosure">
-        <summary>
-          <div>
-            <h2>소스 / 타겟 설정</h2>
-          </div>
-          <span className="disclosure-indicator">펼치기</span>
-        </summary>
-        <div className="job-detail-disclosure-body">
-        <div className="job-detail-card-grid two-up">
-          <article className="job-detail-card">
-            <h3>소스 연결 설정</h3>
-            <div className="detail-kv-grid">
-              <Field label="소스 유형" value={sourceType} />
-              <Field label="소스 경로" value={sourcePath} />
-              <Field label="연결 상태" value={job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료"} />
-              <Field label="인증 방식" value={sourceType.includes("S3") || sourceType.includes("File") ? "S3 호환 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector"} />
-              <Field label="읽기 방식" value={job.status === "running" ? "Streaming" : "Batch Scan"} />
-            </div>
-          </article>
-          <article className="job-detail-card">
-            <h3>Target 저장 설정</h3>
-            <div className="detail-kv-grid">
-              <Field label="타깃 데이터셋" value={job.target} />
-              <Field label="Lake 경로" value={physicalOutputPath} />
-              <Field label="저장 포맷" value="Parquet" />
-              <Field label="쓰기 모드" value={job.status === "running" ? "Append Stream" : "Append + compact"} />
-              <Field label="품질 체크" value={job.status === "failed" ? "변환 전 중단" : "행 수 / 스키마 검사"} />
-            </div>
-            <div className="detail-meta-line">
-              <span>Downstream: SQL · Dashboard · Catalog</span>
-            </div>
-          </article>
+          <Card size="sm">
+            <CardHeader>
+              <CardTitle className="text-sm">기본 메타</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <KeyValueList
+                className={`${detailKeyValueListClassName} [&>div:nth-child(n+3)]:sm:col-span-2`}
+                items={[
+                  { label: "Job ID", value: job.id },
+                  { label: "Target", value: job.target },
+                  { label: "소스", value: job.source },
+                  { label: "운영 조직", value: job.owner === "admin" ? "Data Platform" : "Analytics Ops" },
+                ]}
+              />
+            </CardContent>
+          </Card>
         </div>
-        </div>
-      </details>
+      </Panel>
 
-      <details className="job-detail-disclosure">
-        <summary>
-          <div>
-            <h2>스키마 / 변환</h2>
-          </div>
-          <span className="disclosure-indicator">펼치기</span>
-        </summary>
-        <div className="job-detail-disclosure-body">
-        <DetailTableSection
-          className="detail-table-card"
-          headerClassName="detail-table-header"
-          meta={<span>5 컬럼</span>}
-          title="스키마 매핑"
-        >
-          <table className="schema-table detail-table">
-            <thead>
-              <tr>
-                <th>순서</th>
-                <th>소스 필드</th>
-                <th>타깃 필드</th>
-                <th>추론 타입</th>
-                <th>Nullable</th>
-                <th>이슈</th>
-              </tr>
-            </thead>
-            <tbody>
-              {schemaRows.map((row) => (
-                <tr className={row[5].includes("실패") ? "detail-row-danger" : row[5].includes("처리") || row[5].includes("대기") ? "detail-row-running" : ""} key={row[0]}>{row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}</tr>
-              ))}
-            </tbody>
-          </table>
-        </DetailTableSection>
-        <DetailTableSection
-          className="detail-table-card"
-          headerClassName="detail-table-header"
-          meta={<span>{ruleRows.length} rules</span>}
-          title="변환 규칙"
-        >
-          <table className="schema-table detail-table">
-            <thead>
-              <tr>
-                <th>Rule</th>
-                <th>대상 필드</th>
-                <th>Config</th>
-                <th>오류 시</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ruleRows.map((row) => (
-                <tr className={row[3] === "FAILED" ? "detail-row-danger" : row[3] === "RUNNING" || row[3] === "PENDING" ? "detail-row-running" : ""} key={row[0]}>{row.map((cell, cellIndex) => <td key={`${row[0]}-${cellIndex}`}>{cell}</td>)}</tr>
-              ))}
-            </tbody>
-          </table>
-        </DetailTableSection>
-        </div>
-      </details>
+      <Accordion className="grid gap-4" defaultValue={["source-target", "schema-transform"]} type="multiple">
+        <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="source-target">
+          <AccordionTrigger className="min-h-14 px-5 text-base">소스 / 타겟 설정</AccordionTrigger>
+          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">소스 연결 설정</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <KeyValueList
+                  className={detailKeyValueListClassName}
+                  items={[
+                    { label: "소스 유형", value: sourceType },
+                    { label: "소스 경로", value: sourcePath },
+                    { label: "연결 상태", value: job.status === "failed" ? "생성 시 검증됨 · 처리 실패" : "생성 시 소스 검증 완료" },
+                    { label: "인증 방식", value: sourceType.includes("S3") || sourceType.includes("File") ? "S3 호환 access key" : sourceType.includes("Kafka") ? "Backend Kafka connector" : "Backend source connector" },
+                    { label: "읽기 방식", value: job.status === "running" ? "Streaming" : "Batch Scan" },
+                  ]}
+                />
+              </CardContent>
+            </Card>
 
-      <details className="job-detail-disclosure">
-        <summary>
-          <div>
-            <h2>Schedule / Permission</h2>
-          </div>
-          <span className="disclosure-indicator">펼치기</span>
-        </summary>
-        <div className="job-detail-disclosure-body">
-        <div className="job-detail-card-grid two-up">
-          <article className="job-detail-card">
-            <h3>Schedule</h3>
-            <div className="detail-kv-grid">
-              <Field label="실행 유형" value={job.status === "running" ? "실시간 수집" : "반복 스케줄"} />
-              <Field label="주기" value={job.schedule} />
-              <Field label="다음 실행" value={job.nextRun} />
-              <Field label="재시도 정책" value={job.status === "failed" ? "3회 · backoff 10m" : "3회 · backoff 5m"} />
-            </div>
-          </article>
-          <article className="job-detail-card">
-            <h3>Permission</h3>
-            <div className="detail-kv-grid">
-              <Field label="Owner" value={job.owner} />
-              <Field label="접근 그룹" value="Data Platform, Analytics" />
-              <Field label="canRun" value={job.status === "failed" ? "Owner 승인 후 가능" : "true"} />
-              <Field label="승인 상태" value={job.status === "failed" ? "재실행 승인 필요" : "승인됨"} />
-            </div>
-          </article>
-        </div>
-        </div>
-      </details>
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Target 저장 설정</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <KeyValueList
+                  className={detailKeyValueListClassName}
+                  items={[
+                    { label: "타깃 데이터셋", value: job.target },
+                    { label: "Lake 경로", value: physicalOutputPath },
+                    { label: "저장 포맷", value: "Parquet" },
+                    { label: "쓰기 모드", value: job.status === "running" ? "Append Stream" : "Append + compact" },
+                    { label: "품질 체크", value: job.status === "failed" ? "변환 전 중단" : "행 수 / 스키마 검사" },
+                  ]}
+                />
+              </CardContent>
+              <CardFooter className="mt-4 border-t border-slate-100 pt-4 text-xs font-semibold text-slate-500">
+                Downstream: SQL · Dashboard · Catalog
+              </CardFooter>
+            </Card>
+          </AccordionContent>
+        </AccordionItem>
+
+        <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="schema-transform">
+          <AccordionTrigger className="min-h-14 px-5 text-base">스키마 / 변환</AccordionTrigger>
+          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4">
+            <DetailTableSection
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+              headerClassName="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-slate-950"
+              meta={<Badge variant="muted">5 컬럼</Badge>}
+              scrollClassName="overflow-x-auto"
+              title="스키마 매핑"
+            >
+              <Table className="min-w-[760px]">
+                <TableHeader className="bg-slate-50">
+                  <TableRow className="hover:bg-slate-50">
+                    <TableHead>순서</TableHead>
+                    <TableHead>소스 필드</TableHead>
+                    <TableHead>타깃 필드</TableHead>
+                    <TableHead>추론 타입</TableHead>
+                    <TableHead>Nullable</TableHead>
+                    <TableHead>이슈</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {schemaRows.map((row) => {
+                    const isDanger = row[5].includes("실패");
+                    const isRunning = row[5].includes("처리") || row[5].includes("대기");
+                    return (
+                      <TableRow className={isDanger ? "bg-red-50 hover:bg-red-50" : isRunning ? "bg-slate-50" : undefined} key={row[0]}>
+                        {row.map((cell, cellIndex) => (
+                          <TableCell className={cellIndex === 5 && isDanger ? "font-bold text-red-700" : cellIndex === 5 && isRunning ? "font-bold text-emerald-700" : undefined} key={`${row[0]}-${cellIndex}`}>{cell}</TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </DetailTableSection>
+
+            <DetailTableSection
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+              headerClassName="flex min-h-14 items-center justify-between gap-3 border-b border-slate-200 px-4 [&_h3]:text-sm [&_h3]:font-bold [&_h3]:text-slate-950"
+              meta={<Badge variant="muted">{ruleRows.length} rules</Badge>}
+              scrollClassName="overflow-x-auto"
+              title="변환 규칙"
+            >
+              <Table className="min-w-[680px]">
+                <TableHeader className="bg-slate-50">
+                  <TableRow className="hover:bg-slate-50">
+                    <TableHead>Rule</TableHead>
+                    <TableHead>대상 필드</TableHead>
+                    <TableHead>Config</TableHead>
+                    <TableHead>오류 시</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ruleRows.map((row) => {
+                    const isDanger = row[3] === "FAILED";
+                    const isRunning = row[3] === "RUNNING" || row[3] === "PENDING";
+                    return (
+                      <TableRow className={isDanger ? "bg-red-50 hover:bg-red-50" : isRunning ? "bg-slate-50" : undefined} key={row[0]}>
+                        {row.map((cell, cellIndex) => (
+                          <TableCell className={cellIndex === 3 && isDanger ? "font-bold text-red-700" : cellIndex === 3 && isRunning ? "font-bold text-emerald-700" : undefined} key={`${row[0]}-${cellIndex}`}>{cell}</TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </DetailTableSection>
+          </AccordionContent>
+        </AccordionItem>
+
+        <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="schedule-permission">
+          <AccordionTrigger className="min-h-14 px-5 text-base">Schedule / Permission</AccordionTrigger>
+          <AccordionContent className="grid gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Schedule</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <KeyValueList
+                  className={detailKeyValueListClassName}
+                  items={[
+                    { label: "실행 유형", value: job.status === "running" ? "실시간 수집" : "반복 스케줄" },
+                    { label: "주기", value: job.schedule },
+                    { label: "다음 실행", value: job.nextRun },
+                    { label: "재시도 정책", value: job.status === "failed" ? "3회 · backoff 10m" : "3회 · backoff 5m" },
+                  ]}
+                />
+              </CardContent>
+            </Card>
+
+            <Card size="sm">
+              <CardHeader>
+                <CardTitle className="text-sm">Permission</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4">
+                <KeyValueList
+                  className={detailKeyValueListClassName}
+                  items={[
+                    { label: "Owner", value: job.owner },
+                    { label: "접근 그룹", value: "Data Platform, Analytics" },
+                    { label: "canRun", value: job.status === "failed" ? "Owner 승인 후 가능" : "true" },
+                    { label: "승인 상태", value: job.status === "failed" ? "재실행 승인 필요" : "승인됨" },
+                  ]}
+                />
+              </CardContent>
+            </Card>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
   );
 }
