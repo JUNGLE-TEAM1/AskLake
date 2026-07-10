@@ -194,8 +194,11 @@
   }
 
   .stepper-inner {
+    contain: paint;
     height: auto;
     justify-content: flex-start;
+    max-width: 100%;
+    overflow-x: auto;
     padding: 18px 20px;
   }
 

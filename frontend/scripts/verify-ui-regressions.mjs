@@ -40,6 +40,42 @@ const checks = [
     ],
   },
   {
+    name: "Dashboard DataTable keeps wide content inside its own viewport",
+    file: "src/styles/dashboard.css",
+    patterns: [
+      /\.dashboard-table-viewport\s*\{[^}]*contain:\s*paint;/s,
+      /\.dashboard-table-viewport\s*\{[^}]*max-width:\s*100%;/s,
+      /\.dashboard-table-list-body\s*\{[^}]*min-width:\s*0;/s,
+      /\.dashboard-table-list-body\s*\{[^}]*overflow:\s*hidden;/s,
+    ],
+  },
+  {
+    name: "ETL mobile scroll surfaces do not expand the document root",
+    file: "src/styles/responsive.css",
+    patterns: [
+      /\.stepper-inner\s*\{[^}]*contain:\s*paint;/s,
+      /\.stepper-inner\s*\{[^}]*max-width:\s*100%;/s,
+      /\.stepper-inner\s*\{[^}]*overflow-x:\s*auto;/s,
+    ],
+  },
+  {
+    name: "ETL stepper clips overflow at the shell boundary",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.stepper\s*\{[^}]*min-width:\s*0;/s,
+      /\.stepper\s*\{[^}]*overflow:\s*hidden;/s,
+    ],
+  },
+  {
+    name: "ETL review schema keeps wide columns inside its viewport",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.review-schema-table-viewport\s*\{[^}]*contain:\s*paint;/s,
+      /\.review-schema-table-viewport\s*\{[^}]*max-width:\s*100%;/s,
+      /\.review-schema-table-viewport\s*\{[^}]*overflow-x:\s*auto;/s,
+    ],
+  },
+  {
     name: "ApexCharts widget removes leaked foreignObject style text",
     file: "src/pages/dashboard/runtime/WidgetRenderer.tsx",
     patterns: [

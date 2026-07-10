@@ -530,6 +530,8 @@ p {
 }
 
 .stepper {
+  min-width: 0;
+  overflow: hidden;
   border-bottom: 1px solid #dee1e6;
   background: #fff;
 }

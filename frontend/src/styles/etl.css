@@ -6374,6 +6374,8 @@
 .review-schema-table-viewport {
   width: 100%;
   min-width: 0;
+  contain: paint;
+  max-width: 100%;
   overflow-x: auto;
   scrollbar-gutter: stable;
 }

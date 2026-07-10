@@ -441,6 +441,8 @@
 }
 
 .dashboard-table-viewport {
+  contain: paint;
+  max-width: 100%;
   border-radius: 8px;
 }
 
@@ -681,7 +683,9 @@
 
 .dashboard-table-list-body {
   display: grid;
+  min-width: 0;
   gap: 12px;
+  overflow: hidden;
   padding: 0;
 }
 
