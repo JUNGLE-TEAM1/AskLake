@@ -135,15 +135,19 @@
 | `e14b878` | Airflow와 frontend UI 검증 절차 통합 |
 | `1d6fdb2` | 통합 파일 EOF whitespace 정리 |
 | `6cac969` | Dashboard/ETL 좁은 화면 scroll containment 보강 |
+| `e115a6f` | 통합 결과, 과거 문서 상태와 검증 기록 확정 |
+| `c038fe2` | dev 신규 인증/프로필/관리 화면의 legacy xflow class 이름 제거와 회귀 검사 추가 |
+
+이 표를 갱신하는 마지막 문서 커밋은 자기 자신의 SHA를 문서 안에 안정적으로 기록할 수 없으므로 최종 `git log`와 작업 보고에서 확인합니다.
 
 ## 검증 결과
 
 | 검증 | 결과 |
 | --- | --- |
 | `git diff --check origin/dev..HEAD` | 통과 |
-| 충돌 marker 및 runtime MUI/xflow 잔여 검색 | runtime 코드에 충돌 marker 없음, MUI/Emotion package와 legacy xflow selector 제거 확인. 문서에는 변경 이력 설명이 남아 있음 |
+| 충돌 marker 및 runtime MUI/xflow 잔여 검색 | runtime 코드에 충돌 marker와 `xflow-` class 없음. MUI/Emotion 직접 dependency 제거 확인. `package-lock.json`에는 Motion의 선택적 Emotion peer 선언이 남고, 기존 worktree `node_modules`의 Emotion 설치본은 extraneous로 확인됨 |
 | `cd frontend && npm run build` | 통과. Vite가 약 2.57 MB JS chunk에 대한 500 kB 초과 경고를 출력함 |
-| `cd frontend && npm run verify:ui-regressions` | 17개 검사 통과 |
+| `cd frontend && npm run verify:ui-regressions` | 20개 검사 통과 |
 | `cd backend && npm run verify:job-list` | 통과 |
 | `cd backend && python3 -m compileall -q app scripts` | 통과 |
 | `cd backend && npm run verify` | 통과. sandbox listen 제한 때문에 권한이 있는 환경에서 재실행함 |
