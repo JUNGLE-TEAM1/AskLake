@@ -78,8 +78,7 @@
   }
 
   .job-detail-card-grid.two-up,
-  .job-detail-card-grid.summary-grid,
-  .detail-kv-grid.summary-kv {
+  .job-detail-card-grid.summary-grid {
     grid-template-columns: 1fr;
   }
 
@@ -197,64 +196,6 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .jobs-page-header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .create-job-button {
-    width: 100%;
-  }
-
-  .jobs-header-actions {
-    width: 100%;
-  }
-
-  .jobs-view-switch {
-    flex: 1 1 auto;
-  }
-
-  .jobs-view-switch button {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .jobs-header-actions .primary-button,
-  .jobs-header-actions .secondary-button {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .job-row {
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-main {
-    grid-template-areas:
-      "title"
-      "progress"
-      "details"
-      "actions";
-    grid-template-columns: 1fr;
-  }
-
-  .job-row-status {
-    justify-content: flex-start;
-  }
-
-  .job-row-details {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .job-row-actions {
-    justify-content: flex-start;
-  }
-
-  .job-card dl,
   .dag-node {
     grid-template-columns: 1fr;
   }
@@ -314,8 +255,6 @@
   .format-grid,
   .connector-row,
   .compact-cards,
-  .metric-grid,
-  .job-row-details,
   .dashboard-filter-bar,
   .dashboard-metric-grid,
   .dashboard-canvas,
@@ -346,32 +285,17 @@
     padding: 24px;
   }
 
-  .jobs-header-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .jobs-view-switch,
-  .create-job-button {
-    width: 100%;
-  }
-
-  .job-title-row,
   .job-detail-title-row,
-  .job-table-footer,
-  .jobs-table-preview-header,
   .job-log-modal-header,
   .run-dag-modal-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .job-log-modal,
   .run-dag-modal {
     padding: 12px;
   }
 
-  .job-log-modal section,
   .run-dag-modal > section,
   .run-dag-modal-panel {
     max-height: calc(100vh - 24px);
@@ -382,7 +306,6 @@
   }
 
   .detail-kv-grid,
-  .detail-metric-grid,
   .detail-plain-kv-grid,
   .job-detail-overview-grid,
   .job-summary-stat-grid {
@@ -401,24 +324,6 @@
 
   .job-next-actions .job-action-button {
     flex: 1 1 0;
-  }
-
-  .stats-card {
-    grid-template-areas:
-      "heading"
-      "metrics"
-      "meta"
-      "progress";
-    grid-template-columns: 1fr;
-  }
-
-  .stats-card-heading p {
-    max-width: none;
-  }
-
-  .detail-status-strip {
-    align-items: flex-start;
-    flex-direction: column;
   }
 
   .dag-run-select {
@@ -556,10 +461,7 @@
     overflow-x: auto;
   }
 
-  .job-owner,
-  .job-detail-actions,
-  .job-row-actions,
-  .job-table-footer div {
+  .job-detail-actions {
     flex-wrap: wrap;
     gap: 12px;
   }
