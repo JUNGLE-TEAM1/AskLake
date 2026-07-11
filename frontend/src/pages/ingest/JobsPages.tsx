@@ -246,6 +246,13 @@ function getJobScheduleKind(job: JobRowData): JobScheduleKind {
   return "other";
 }
 
+function formatJobSchedule(schedule: string) {
+  const normalizedSchedule = schedule.trim().toLocaleLowerCase();
+  return !normalizedSchedule || normalizedSchedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => normalizedSchedule.includes(token))
+    ? "스케줄 없음"
+    : schedule;
+}
+
 function matchesJobListQuery(job: JobRowData, query: JobListQuery) {
   const statuses = new Set(query.statuses ?? []);
   return (
@@ -747,7 +754,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.schedule,
-      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{row.original.job.schedule}</DataTableCellPrimary>,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatJobSchedule(row.original.job.schedule)}</DataTableCellPrimary>,
       header: () => onScheduleKindChange ? (
         <ScheduleKindFilter
           value={scheduleKind}
