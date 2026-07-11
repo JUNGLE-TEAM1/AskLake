@@ -12,6 +12,7 @@
 @import "./styles/etl.css";
 @import "./styles/ai.css";
 @import "./styles/responsive.css";
+@import "./styles/landing.css";
 
 .page-title h1,
 .dashboard-header h1 {

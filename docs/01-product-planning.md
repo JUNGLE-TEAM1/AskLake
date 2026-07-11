@@ -32,6 +32,8 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
+- `/`에서 AskLake 제품 소개, 기능, 영상, 팀 정보를 보여주는 반응형 랜딩
+- `Get Started`/`Start AskLake`에서 데모 로그인으로 이동하고 임의의 입력값으로 `/jobs` 작업 공간에 진입하는 UI-only 흐름
 - Source 연결 테스트와 Schema 추론
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -78,6 +80,15 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 
 ## 6) 핵심 사용자 흐름
 
+### Flow 0. 랜딩에서 작업 공간 진입
+
+1. 사용자는 `/`에서 AskLake 소개, Data Lakehouse/Catalog/Query 기능, 데모 영상, 팀 정보를 확인한다.
+2. `Solutions`와 `Team`은 같은 랜딩 안의 섹션으로 이동한다.
+3. `Get Started`, `Start AskLake`, `Start AskLake Now`는 `/login`으로 이동한다.
+4. 데모 로그인은 실제 인증을 수행하지 않으며 이메일과 비밀번호에 임의의 값을 입력하면 `/jobs`로 이동한다.
+5. `/jobs`에서 기존 수집/처리 작업 공간과 backend hydrate가 시작된다. `/jobs` 직접 접근도 계속 허용한다.
+6. 팀 섹션은 황선호·염태선을 Frontend Developer로, 박태정·유중일·이원재·이해건을 Backend Developer로 표시한다.
+
 ### Flow A. 수집/처리 생성
 
 1. 사용자는 source, schema, rule, schedule, permission, target을 설정한다.
@@ -114,10 +125,12 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 - 문서에 깨진 문자가 남아 있지 않다.
 - Source/Schema/Create/Run/Catalog/SQL live 경로가 문서와 코드에서 같은 범위를 말한다.
 - Dashboard 영역은 아직 FastAPI live 구현이라고 과장하지 않는다.
+- 랜딩의 시작 CTA가 데모 로그인으로 이동하고 임의 입력 후 `/jobs` 작업 공간으로 연결된다.
+- YouTube 영상, 자동 물결/Nessie 모션, 오른쪽에서 왼쪽으로 순환하는 팀 카드가 데스크톱과 모바일에서 레이아웃을 깨지 않는다.
 
 ## 8) 4일 데모 마일스톤
 
-단기 실행 목표는 작은 샘플 데이터라도 `Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL Preview -> Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
+단기 실행 목표는 작은 샘플 데이터라도 `Landing -> Demo Sign In -> Jobs -> Review 생성 -> ETL Job 실행 -> Catalog Dataset 확인 -> Lineage 확인 -> SQL Preview -> Lake Dataset 저장 -> Dashboard fallback 확인` 흐름이 브라우저에서 끝까지 끊기지 않게 만드는 것이다.
 이 마일스톤은 demo readiness 기준이며, 실제 production runtime 완성 범위를 과장하지 않는다.
 
 | Day | 목표 | 종료 시 보여야 하는 상태 |
