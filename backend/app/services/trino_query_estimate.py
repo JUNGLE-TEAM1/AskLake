@@ -41,9 +41,11 @@ def build_query_estimate(
     heuristic_bytes = int(known_input_bytes * multiplier) if known_input_bytes else None
     estimated_bytes = plan_estimated_bytes if plan_estimated_bytes is not None else heuristic_bytes
     warnings: list[str] = []
-    if unknown_datasets:
+    if unknown_datasets and plan_estimated_bytes is None:
         warnings.append(f"크기 정보를 확인할 수 없는 데이터셋: {', '.join(unknown_datasets)}")
-        warnings.append("크기 정보가 없어 보수적으로 실행 확인이 필요합니다.")
+        warnings.append("Trino plan과 Catalog 크기를 확인할 수 없어 실행 전 확인이 필요합니다.")
+    elif unknown_datasets:
+        warnings.append("Catalog 크기 정보는 없지만 Trino plan 추정치를 사용합니다.")
     if join_count:
         warnings.append(f"JOIN {join_count}개가 포함되어 있어 실제 처리량이 입력 크기보다 커질 수 있습니다.")
     if plan_unavailable:
@@ -60,7 +62,7 @@ def build_query_estimate(
         risk_level = "low"
 
     confirmation_required = bool(
-        unknown_datasets
+        (unknown_datasets and plan_estimated_bytes is None)
         or (
             estimated_bytes is not None
             and runtime_settings.trino_query_warning_bytes > 0

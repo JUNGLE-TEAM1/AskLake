@@ -1643,7 +1643,7 @@ export function SqlAnalysisPage({
             <header className="sql-materialize-dialog-header">
               <div>
                 <span>실행 확인</span>
-                <h2 id="sql-query-estimate-title">대용량 쿼리를 실행할까요?</h2>
+                <h2 id="sql-query-estimate-title">이 쿼리를 실행할까요?</h2>
               </div>
               <button type="button" onClick={() => setEstimateDialogOpen(false)} aria-label="쿼리 실행 확인 닫기">닫기</button>
             </header>
@@ -1652,7 +1652,7 @@ export function SqlAnalysisPage({
               <span>{queryEstimate.estimatedDurationSeconds != null ? `예상 시간 약 ${formatDuration(queryEstimate.estimatedDurationSeconds * 1000)}` : "예상 시간을 계산할 수 없습니다."}</span>
               {queryEstimate.warnings.map((warning) => <span key={warning}>{warning}</span>)}
             </div>
-            <div className="sql-result-actions">
+            <div className="sql-result-actions sql-query-estimate-actions">
               <button className="secondary-button" type="button" onClick={() => setEstimateDialogOpen(false)}>취소</button>
               <button className="primary-button" type="button" onClick={confirmEstimatedQueryRun}>실행</button>
             </div>

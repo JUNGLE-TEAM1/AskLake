@@ -263,6 +263,15 @@ def verify() -> None:
         runtime_settings=estimate_settings,
     )
     assert unknown_size_estimate.confirmation_required
+    plan_backed_unknown_size_estimate = build_query_estimate(
+        actor=estimate_actor,
+        context_datasets=[orders.model_copy(update={"size": "Trino managed"})],
+        query="SELECT * FROM orders",
+        runtime_settings=estimate_settings,
+        plan_estimated_bytes=9 * 1024,
+    )
+    assert not plan_backed_unknown_size_estimate.confirmation_required
+    assert plan_backed_unknown_size_estimate.risk_level == "low"
     assert parse_plan_estimated_bytes("Estimates: {rows: 230 (9.00kB), cpu: 9.00k}") == 9 * 1024
 
     completed_run = run.model_copy(update={"status": "succeeded"})

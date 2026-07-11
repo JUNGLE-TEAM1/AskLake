@@ -2395,7 +2395,16 @@
 }
 
 .sql-query-estimate-dialog .sql-result-actions {
+  display: flex;
+  width: 100%;
+  align-items: center;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.sql-query-estimate-dialog .sql-query-estimate-actions button {
+  min-width: 72px;
+  justify-content: center;
 }
 
 .sql-materialize-dialog-backdrop {

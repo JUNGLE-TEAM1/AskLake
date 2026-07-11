@@ -1366,6 +1366,7 @@ type QueryEstimateResponse = {
 
 - backend는 먼저 `EXPLAIN (TYPE DISTRIBUTED)`의 byte estimate를 사용하고, Trino plan을 읽지 못하면 Catalog 저장 크기와 JOIN 복잡도 heuristic으로 fallback한다. `estimateSource`는 어느 경로가 사용됐는지 표시한다. 어느 경우도 actual Trino stats나 청구 금액은 아니다.
 - `TRINO_QUERY_WARNING_BYTES` 이상이면 `confirmationRequired=true`와 query/actor/dataset/TTL-bound signed token을 반환한다.
+- Catalog 크기가 없어도 Trino plan byte estimate가 있으면 그 estimate로 threshold를 판정한다. plan과 Catalog 크기를 모두 얻지 못한 경우에만 불확실성 확인용 `confirmationRequired=true`를 반환한다.
 - 같은 조건에서 `POST /api/query/runs`는 `confirmationToken` 없이는 `409 QUERY_CONFIRMATION_REQUIRED`를 반환한다. token은 다른 SQL, 다른 사용자, 다른 Dataset에 재사용할 수 없다.
 - `TRINO_QUERY_MAX_ESTIMATED_BYTES`가 0보다 크고 estimate를 넘으면 확인 여부와 무관하게 `409 CONFLICT`로 실행을 차단한다.
 

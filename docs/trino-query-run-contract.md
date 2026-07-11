@@ -138,7 +138,7 @@ Run metadata/result/cancel과 materialization submit/status를 열 때도 현재
 - 예상값은 보장 비용이 아니며, 실제 처리량과 실행 시간은 완료된 Query Run stats를 source of truth로 한다.
 - UI는 editor 아래에 estimate를 표시한다. 확인 모달은 조직의 bytes/time/concurrency 정책 임계치를 넘는 경우에만 사용한다.
 - backend는 사용자/조직별 동시 실행 수, timeout, 최대 처리량 등의 guardrail을 적용한다. warning threshold 이상은 actor/query/dataset/TTL-bound confirmation token을 요구하며, hard byte limit은 backend가 차단한다.
-- Dataset 크기가 없거나 `Trino managed`처럼 추정할 수 없으면 차단하지 않되, 보수적으로 confirmation을 요구하고 불확실성을 UI에 표시한다.
+- Dataset 크기가 없거나 `Trino managed`처럼 Catalog 크기를 추정할 수 없어도 Trino plan byte estimate가 있으면 그 값을 사용해 저위험 실행은 바로 진행한다. plan과 Catalog 크기를 모두 얻지 못한 경우에만 보수적으로 confirmation을 요구하고 불확실성을 UI에 표시한다.
 
 ## 8. Dashboard And Materialization
 
