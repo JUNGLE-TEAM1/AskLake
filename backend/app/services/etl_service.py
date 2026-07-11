@@ -33,8 +33,17 @@ from app.schemas.etl import (
     CreatePipelineRequest,
     CreatePipelineResponse,
     JobCommandResponse,
+    JobListFacets,
+    JobListResponse,
     JobDagStep,
     JobRowData,
+    JobRunOutcome,
+    JobScheduleKind,
+    ReviewEntry,
+    ReviewPipelineRequest,
+    ReviewSchemaRow,
+    ReviewSnapshot,
+    ReviewValidationRow,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
     QueryRunRequest,
@@ -56,6 +65,7 @@ from app.services.resource_permission_service import job_with_persisted_permissi
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
+JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
 ACTIVE_RUN_STATUSES = {"queued", "running"}
 TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
 SPARK_OUTPUT_FORMAT = "parquet"
@@ -171,14 +181,59 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
     )
 
 
-def list_jobs(db: Session, actor: ActorContext | None = None) -> list[JobRowData]:
+def list_jobs(
+    db: Session,
+    actor: ActorContext | None = None,
+    last_run_outcome: JobRunOutcome | None = None,
+    owner: str | None = None,
+    statuses: list[str] | None = None,
+    schedule_kind: JobScheduleKind | None = None,
+) -> JobListResponse:
     for job in etl_repository.list_job_models(db):
         refresh_kafka_continuous_runtime(db, job)
-    jobs = [
-        with_job_permissions(db, job, actor or ActorContext())
+    actor_context = actor or ActorContext()
+    visible_jobs = [
+        with_job_permissions(db, job, actor_context)
         for job in etl_repository.list_jobs(db)
     ]
-    return [job for job in jobs if job.permissions.can_view]
+    all_jobs = [normalize_list_job(job) for job in visible_jobs if job.permissions.can_view]
+    selected_statuses = set(statuses or [])
+    filtered_jobs = [
+        job for job in all_jobs
+        if (not selected_statuses or job.status in selected_statuses)
+        and (not owner or job.owner == owner)
+        and (not last_run_outcome or latest_run_outcome(job) == last_run_outcome)
+    ]
+
+    if schedule_kind:
+        filtered_jobs = [job for job in filtered_jobs if job_schedule_kind(job.schedule) == schedule_kind]
+
+    return JobListResponse(
+        facets=JobListFacets(
+            latest_run_outcome_counts={
+                outcome: sum(latest_run_outcome(job) == outcome for job in all_jobs)
+                for outcome in ("success", "failed", "canceled")
+            },
+            owners=sorted({job.owner for job in all_jobs if job.owner}),
+            status_counts={status: sum(job.status == status for job in all_jobs) for status in JOB_STATUSES},
+            total=len(all_jobs),
+        ),
+        jobs=filtered_jobs,
+    )
+
+
+def normalize_list_job(job: JobRowData) -> JobRowData:
+    if job.status not in {"failed", "canceled", "paused"}:
+        return job
+    return job.model_copy(update={"status": "scheduled"})
+
+
+def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
+    latest_run = (job.run_history or [None])[0]
+    if latest_run is None:
+        return None
+    status_value = latest_run.status if hasattr(latest_run, "status") else latest_run.get("status")
+    return status_value if status_value in {"success", "failed", "canceled"} else None
 
 
 def sync_active_kafka_continuous_runtimes() -> None:
@@ -363,7 +418,7 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
         raise ApiError(ErrorCode.NOT_FOUND, f"Job not found: {job_id}", status.HTTP_404_NOT_FOUND)
 
     continuous_commands = {"startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"}
-    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", *continuous_commands}:
+    if command not in {"run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", *continuous_commands}:
         raise ApiError(ErrorCode.VALIDATION_ERROR, f"Unsupported job command: {command}", status.HTTP_400_BAD_REQUEST)
     actor_context = actor or ActorContext()
     required_action = "run" if command in {"run", "retry", "startContinuous", "resumeContinuous"} else "manage"
@@ -434,6 +489,12 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             f"Job has no schedule to stop: {job_id}",
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+    if command == "resumeSchedule" and (job.status != "stopped" or not has_scheduled_label(job.schedule)):
+        raise ApiError(
+            ErrorCode.INVALID_JOB_STATE,
+            f"Job has no paused schedule to resume: {job_id}",
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
 
     action_by_command = {
         "cancelRun": "etl.run.cancel_requested",
@@ -441,6 +502,7 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
         "retry": "etl.run.retry_requested",
         "run": "etl.run.requested",
         "stopSchedule": "etl.schedule.stop_requested",
+        "resumeSchedule": "etl.schedule.resume_requested",
     }
 
     run_schema = None
@@ -654,6 +716,79 @@ def infer_schema(request: SourceConnectorRequest) -> SchemaDraft:
     if analysis.draft_patch.schema_ is None:
         return SchemaDraft(columns=[], sample_rows=[], summary="스키마 없음")
     return analysis.draft_patch.schema_
+
+
+def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
+    source_ready = request.source_connection_status == "success"
+    if source_ready and request.source_type != "SQL Result":
+        try:
+            source_ready = test_source_connector(
+                SourceConnectorRequest(source_type=request.source_type, source_config=request.source_config)
+            ).status == "success"
+        except Exception:
+            source_ready = False
+
+    included_columns = [column for column in request.schema_columns if column.included and column.target_name.strip()]
+    output_columns = request.transform_output_columns or [
+        (column.target_name, column.type) for column in included_columns
+    ]
+    schema_ready = bool(included_columns)
+    processing_ready = bool(request.rule_summary.strip())
+    schedule_ready = bool(request.schedule_label.strip())
+    retry_ready = bool(request.retry_policy_summary.strip())
+    permission_ready = bool(request.permission_summary.strip() and request.target_dataset.strip() and request.owner.strip())
+    can_create = source_ready and schema_ready and bool(request.source_type.strip()) and bool(request.source_label.strip()) and bool(request.target_dataset.strip()) and bool(request.owner.strip())
+
+    source_type = "PostgreSQL" if request.source_type == "Database" else request.source_type
+    source_display = " · ".join(value for value in [source_type, request.source_label] if value.strip())
+
+    return ReviewSnapshot(
+        basic_information=[
+            review_entry("작업 ID", request.id),
+            review_entry("작업명", request.job_name),
+            review_entry("소스", source_display),
+            review_entry("대상 데이터셋", request.target_dataset),
+            review_entry("설명", request.target_description),
+        ],
+        can_create=can_create,
+        destination=[
+            review_entry("저장 경로", request.storage_path),
+            review_entry("데이터베이스", request.target_database or "asklake"),
+            review_entry("테이블 이름", request.target_dataset),
+            review_entry("형식", request.target_format),
+            review_entry("계층", request.target_layer),
+            review_entry("파티션", request.partition or "없음"),
+        ],
+        permission=[
+            review_entry("담당자", request.owner),
+            review_entry("요약", request.permission_summary),
+        ],
+        schema=[
+            ReviewSchemaRow(
+                column_name=name,
+                nullable=("예" if column.nullable else "아니요") if (column := next((item for item in included_columns if item.target_name == name or item.source_name == name), None)) else "생성",
+                transform=(f"원본.{column.source_name}" if column and column.source_name == name else f"{column.source_name} -> {name}" if column else "변환 출력"),
+                type=type_ or "string",
+            )
+            for name, type_ in output_columns
+        ],
+        validation=[
+            review_validation("소스 연결", source_ready, "완료", "확인 필요"),
+            review_validation("스키마", schema_ready, "확정됨", "추론 필요"),
+            review_validation("처리 테스트", processing_ready, "통과", "확인 필요"),
+            review_validation("스케줄", schedule_ready, "유효함", "확인 필요"),
+            review_validation("실패 재시도", retry_ready, "유효함", "확인 필요"),
+            review_validation("권한/타겟", permission_ready, "유효함", "확인 필요"),
+        ],
+    )
+
+
+def review_entry(label: str, value: str | None) -> ReviewEntry:
+    return ReviewEntry(label=label, value=(value or "").strip() or "미설정")
+
+
+def review_validation(label: str, ready: bool, ready_value: str, warning_value: str) -> ReviewValidationRow:
+    return ReviewValidationRow(label=label, status="ready" if ready else "warning", value=ready_value if ready else warning_value)
 
 
 def ingest_kafka_reviews(db: Session, request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
@@ -1406,6 +1541,7 @@ def job_payload_for_spark(job: ETLJobModel) -> dict[str, Any]:
         "id": job.id,
         "name": job.name,
         "owner": job.owner,
+        "partition": job.partition,
         "qualityInvalidRows": job.quality_invalid_rows or [],
         "qualityRules": job.quality_rules or [],
         "qualityScore": job.quality_score,
@@ -1827,7 +1963,7 @@ def finalize_job_from_spark_result(job: ETLJobModel, command: str, result: dict[
     )
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
-    job.status = "scheduled" if success else "failed"
+    job.status = "scheduled"
     job.target_path = result.get("outputPath") or job.target_path
 
 
@@ -3298,6 +3434,21 @@ def has_scheduled_label(schedule_label: str | None) -> bool:
     return not any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"])
 
 
+def job_schedule_kind(schedule_label: str | None) -> JobScheduleKind:
+    schedule = str(schedule_label or "").strip().lower()
+    if not schedule or schedule == "-" or any(token in schedule for token in ["manual", "수동", "스케줄 없음", "건너뛰기"]):
+        return "none"
+    if any(token in schedule for token in ["실시간", "realtime", "real-time", "stream", "kafka"]):
+        return "realtime"
+    if any(token in schedule for token in ["매일", "daily"]):
+        return "daily"
+    if any(token in schedule for token in ["매주", "weekly"]):
+        return "weekly"
+    if any(token in schedule for token in ["매월", "monthly"]):
+        return "monthly"
+    return "other"
+
+
 def schedule_policy_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> dict[str, Any]:
     watermark_policy = request.watermark_policy
     if hasattr(watermark_policy, "model_dump"):
@@ -3408,57 +3559,53 @@ def apply_job_command(job: ETLJobModel, command: str) -> None:
         job.status = "running"
         return
     if command == "pause":
+        job.last_run = iso_now()
         job.last_state = "사용자 일시정지"
         job.next_run = "재개 대기"
         job.progress = job.progress or {"label": "일시정지됨", "value": 50}
         job.status = "paused"
         return
     if command == "stopSchedule":
-        job.last_state = "스케줄 중지됨"
+        if job.status == "running" and job_schedule_kind(job.schedule) == "realtime":
+            job.last_run = iso_now()
+        job.last_state = "실시간 수집 중지" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 일시중지"
         job.next_run = "-"
         job.progress = None
-        job.schedule = "스케줄링 건너뛰기"
-        job.schedule_policy = {
-            "endDate": None,
-            "nextRunUtc": "",
-            "overlapPolicy": None,
-            "startDate": "",
-            "timezone": "",
-            "watermarkPolicy": {
-                "column": "updated_at",
-                "enabled": False,
-                "lookbackMinutes": 0,
-                "mode": "full_refresh",
-            },
-        }
-        job.schedule_summary = "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행"
         job.status = "stopped"
         return
+    if command == "resumeSchedule":
+        policy_next_run = (job.schedule_policy or {}).get("nextRunUtc")
+        job.last_state = "실시간 수집 재개됨" if job_schedule_kind(job.schedule) == "realtime" else "스케줄 재개됨"
+        job.next_run = schedule_next_run_label(job.schedule, policy_next_run)
+        job.progress = None
+        job.status = "scheduled"
+        return
 
-    job.last_run = "방금 취소"
+    job.last_run = iso_now()
     job.last_state = "취소됨"
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
-    job.status = "canceled"
+    job.status = "scheduled"
 
 
 def run_from_command(job: ETLJobModel, command: str) -> ETLRunModel:
     now = iso_now()
     run_id = stable_id("run", f"{job.id}:{command}:{now}")
     input_rows = job.stats.get("inputRows") or job.stats.get("input_rows") or "0"
-    if command == "cancelRun":
+    if command in {"cancelRun", "stopSchedule"}:
+        realtime_stop = command == "stopSchedule"
         return ETLRunModel(
             run_id=run_id,
             job_id=job.id,
             status="canceled",
             started_at=now,
             ended_at=now,
-            duration="-",
+            duration="수집 중지" if realtime_stop else "-",
             input_rows=input_rows,
             output_rows="0",
             output_path=None,
-            failed_stage="실행 취소",
-            error_summary="사용자 취소",
+            failed_stage="실시간 수집 중지" if realtime_stop else "실행 취소",
+            error_summary="사용자 요청으로 실시간 수집 중지" if realtime_stop else "사용자 취소",
         )
     return ETLRunModel(
         run_id=run_id,
@@ -3539,7 +3686,7 @@ def initial_dag_steps(request: CreatePipelineRequest, metrics: dict[str, Any]) -
 
 
 def dag_steps_from_command(job: ETLJobModel, command: str, run: dict[str, Any]) -> list[dict[str, str]]:
-    if command == "cancelRun":
+    if command in {"cancelRun", "stopSchedule"}:
         return [
             {"id": "source", "meta": job.source, "status": "blocked", "title": "1. 소스 연결"},
             {"id": "schema", "meta": job.stats.get("schemaColumns", "-"), "status": "blocked", "title": "2. 스키마 확인"},

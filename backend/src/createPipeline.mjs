@@ -22,8 +22,60 @@ const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".
 const scriptsDir = path.join(backendDir, "scripts");
 const sparkWorkerLogDir = path.resolve(process.env.ASKLAKE_SPARK_WORKER_LOG_DIR || path.join(backendDir, "tmp", "spark-workers"));
 
-export function listJobs() {
-  return listStoredJobs();
+export async function listJobs(query = {}) {
+  return buildJobListResult(await listStoredJobs(), query);
+}
+
+export function buildJobListResult(storedJobs, query = {}) {
+  const allJobs = storedJobs.map(normalizeListJob);
+  const selectedStatuses = new Set(query.statuses ?? []);
+  const jobs = allJobs.filter((job) => (
+    (selectedStatuses.size === 0 || selectedStatuses.has(job.status))
+    && (!query.lastRunOutcome || latestRunOutcome(job) === query.lastRunOutcome)
+    && (!query.owner || job.owner === query.owner)
+    && (!query.scheduleKind || jobScheduleKind(job.schedule) === query.scheduleKind)
+  ));
+
+  return {
+    facets: {
+      latestRunOutcomeCounts: Object.fromEntries(
+        ["success", "failed", "canceled"].map((outcome) => [
+          outcome,
+          allJobs.filter((job) => latestRunOutcome(job) === outcome).length,
+        ]),
+      ),
+      owners: [...new Set(allJobs.map((job) => job.owner).filter(Boolean))].sort(),
+      statusCounts: Object.fromEntries(
+        ["scheduled", "failed", "running", "paused", "canceled", "stopped"].map((status) => [
+          status,
+          allJobs.filter((job) => job.status === status).length,
+        ]),
+      ),
+      total: allJobs.length,
+    },
+    jobs,
+  };
+}
+
+function normalizeListJob(job) {
+  return ["failed", "canceled", "paused"].includes(job.status)
+    ? { ...job, status: "scheduled" }
+    : job;
+}
+
+function latestRunOutcome(job) {
+  const status = job.runHistory?.[0]?.status;
+  return ["success", "failed", "canceled"].includes(status) ? status : undefined;
+}
+
+function jobScheduleKind(scheduleLabel) {
+  const schedule = String(scheduleLabel ?? "").trim().toLowerCase();
+  if (!schedule || schedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token))) return "none";
+  if (isRealtimeSchedule(schedule)) return "realtime";
+  if (["매일", "daily"].some((token) => schedule.includes(token))) return "daily";
+  if (["매주", "weekly"].some((token) => schedule.includes(token))) return "weekly";
+  if (["매월", "monthly"].some((token) => schedule.includes(token))) return "monthly";
+  return "other";
 }
 
 export async function getPipelineJob(jobId) {
@@ -355,16 +407,20 @@ export async function commandJob(jobId, command) {
     retry: "etl.run.retry_requested",
     run: "etl.run.requested",
     stopSchedule: "etl.schedule.stop_requested",
+    resumeSchedule: "etl.schedule.resume_requested",
   };
   if (!actionByCommand[command]) throw validationError(`지원하지 않는 작업 명령입니다: ${command}`);
   if (command === "run" && job.status === "running") throw conflictError(`이미 실행 중인 작업입니다: ${jobId}`);
   if (command === "pause" && job.status !== "running") throw invalidStateError(`일시정지할 수 없는 상태입니다: ${job.status}`);
   if (command === "cancelRun" && job.status !== "running") throw invalidStateError(`현재 실행을 취소할 수 없는 상태입니다: ${job.status}`);
   if (command === "stopSchedule" && !hasScheduledExecution(job)) throw invalidStateError(`중지할 스케줄이 없습니다: ${jobId}`);
+  if (command === "resumeSchedule" && (job.status !== "stopped" || !hasScheduledLabel(job.schedule))) {
+    throw invalidStateError(`재개할 스케줄이 없습니다: ${jobId}`);
+  }
 
+  const run = runFromCommand(job, command);
   const startedJob = applyJobCommand(job, command);
   Object.assign(job, startedJob);
-  const run = runFromCommand(job, command);
   if (run) {
     const workerInfo = command === "run" || command === "retry"
       ? prepareSparkJobRunWorker(jobId, command, run.runId)
@@ -663,6 +719,11 @@ function hasScheduledLabel(scheduleLabel) {
   return !["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token));
 }
 
+function isRealtimeSchedule(scheduleLabel) {
+  const schedule = String(scheduleLabel ?? "").trim().toLowerCase();
+  return ["실시간", "realtime", "real-time", "stream", "kafka"].some((token) => schedule.includes(token));
+}
+
 function hasScheduledExecution(job) {
   return job.status !== "stopped" && hasScheduledLabel(job.schedule);
 }
@@ -788,6 +849,7 @@ function applyJobCommand(job, command) {
   if (command === "pause") {
     return {
       ...job,
+      lastRun: new Date().toISOString(),
       lastState: "사용자 일시정지",
       nextRun: "재개 대기",
       progress: job.progress ?? { label: "일시정지됨", value: 50 },
@@ -798,35 +860,31 @@ function applyJobCommand(job, command) {
   if (command === "stopSchedule") {
     return {
       ...job,
-      lastState: "스케줄 중지됨",
+      lastRun: job.status === "running" && isRealtimeSchedule(job.schedule) ? new Date().toISOString() : job.lastRun,
+      lastState: isRealtimeSchedule(job.schedule) ? "실시간 수집 중지" : "스케줄 일시중지",
       nextRun: "-",
       progress: undefined,
-      schedule: "스케줄링 건너뛰기",
-      schedulePolicy: {
-        endDate: "",
-        nextRunUtc: "",
-        overlapPolicy: undefined,
-        startDate: "",
-        timezone: "",
-        watermarkPolicy: {
-          column: "updated_at",
-          enabled: false,
-          lookbackMinutes: 0,
-          mode: "full_refresh",
-        },
-      },
-      scheduleSummary: "스케줄링 건너뛰기 · 나중에 목록에서 직접 실행",
       status: "stopped",
+    };
+  }
+
+  if (command === "resumeSchedule") {
+    return {
+      ...job,
+      lastState: isRealtimeSchedule(job.schedule) ? "실시간 수집 재개됨" : "스케줄 재개됨",
+      nextRun: scheduleNextRunLabel(job.schedule, job.schedulePolicy?.nextRunUtc),
+      progress: undefined,
+      status: "scheduled",
     };
   }
 
   return {
     ...job,
-    lastRun: "방금 취소",
+    lastRun: new Date().toISOString(),
     lastState: "취소됨",
     nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
-    status: "canceled",
+    status: "scheduled",
   };
 }
 
@@ -909,16 +967,18 @@ function initialDagSteps(request, metrics) {
 }
 
 function runFromCommand(job, command) {
-  if (command === "pause" || command === "stopSchedule") return undefined;
+  if (command === "pause" || command === "resumeSchedule") return undefined;
+  if (command === "stopSchedule" && (job.status !== "running" || !isRealtimeSchedule(job.schedule))) return undefined;
   const now = new Date();
   const runId = sourceId("run", `${job.id}:${command}:${now.toISOString()}`);
   const inputRows = job.stats?.inputRows && job.stats.inputRows !== "-" ? job.stats.inputRows : "0";
-  if (command === "cancelRun") {
+  if (command === "cancelRun" || command === "stopSchedule") {
+    const realtimeStop = command === "stopSchedule";
     return {
-      duration: "-",
+      duration: realtimeStop ? "수집 중지" : "-",
       endedAt: now.toISOString(),
-      errorSummary: "사용자 취소",
-      failedStage: "실행 취소",
+      errorSummary: realtimeStop ? "사용자 요청으로 실시간 수집 중지" : "사용자 취소",
+      failedStage: realtimeStop ? "실시간 수집 중지" : "실행 취소",
       inputRows,
       outputRows: "0",
       runId,
@@ -1025,7 +1085,7 @@ function finalizeJobFromSparkResult(job, command, result) {
       : job.qualityInvalidRows,
     qualityScore: success ? qualityScoreFromSparkResult(result, job.qualityScore) : job.qualityScore,
     qualityStatus,
-    status: success ? "scheduled" : "failed",
+    status: "scheduled",
     targetPath: result.outputPath ?? job.targetPath,
   };
 }
@@ -1206,7 +1266,7 @@ function statsFromRuns(job, runs) {
 }
 
 function dagStepsFromCommand(job, command, run, sparkResult) {
-  const canceled = command === "cancelRun";
+  const canceled = command === "cancelRun" || command === "stopSchedule";
   const transformMeta = `${(job.transformSteps ?? []).length}개 규칙`;
   const qualityMeta = `${(job.qualityRules ?? []).length}개 검사`;
   const sourcePath = sparkResult?.sourcePath ?? job.source;

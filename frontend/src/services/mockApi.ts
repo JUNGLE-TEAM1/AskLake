@@ -1,6 +1,6 @@
 import { catalogDatasets, etlJobs } from "../data/mockData";
 import { defaultDashboardCards } from "../pages/dashboard/dashboardListData";
-import type { CatalogDataset, CreateDerivedDatasetRequest, DashboardListResponse, DraftPipeline, JobCommand, JobDagStep, JobRowData, JobRunSummary, LineageGraph, LineageGraphDataset, LineageLayer, SavedDashboardCard, SqlResultDraft } from "../types";
+import type { CatalogDataset, CreateDerivedDatasetRequest, DashboardListResponse, DraftPipeline, JobCommand, JobDagStep, JobListFacets, JobListQuery, JobListResult, JobRowData, JobRunOutcome, JobRunSummary, JobScheduleKind, JobStatus, LineageGraph, LineageGraphDataset, LineageLayer, SavedDashboardCard, SqlResultDraft } from "../types";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import { apiClient, apiConfig } from "./apiClient";
 
@@ -29,10 +29,6 @@ type PageEnvelope = {
     cursor: string | null;
     hasNext: boolean;
   };
-};
-
-type JobsResponse = PageEnvelope & {
-  jobs: JobRowData[];
 };
 
 type DatasetsResponse = PageEnvelope & {
@@ -77,8 +73,10 @@ export type DashboardPageResult = {
 const mockLatencyMs = 120;
 const commerceRoiResultDatasetName = "gold_commerce_channel_roi";
 const commerceRoiJoinTables = ["commerce_orders_daily", "commerce_marketing_spend_daily"];
+let mockJobs = etlJobs.map((job) => ({ ...job }));
 
 function normalizeJob(job: JobRowData): JobRowData {
+  const status = normalizeJobStatus(job.status);
   const createdBy = job.createdBy?.trim() || job.owner || "demo-user";
   return {
     ...job,
@@ -86,7 +84,7 @@ function normalizeJob(job: JobRowData): JobRowData {
     createdByProfile: job.createdByProfile ?? buildIdentityProfile(createdBy),
     permissionGrants: job.permissionGrants ?? buildPermissionGrants(job.owner, ["view", "run"]),
     permissions: job.permissions ?? buildResourcePermissions({ canManage: true, canRun: true }),
-    status: normalizeJobStatus(job.status),
+    status: status === "failed" || status === "canceled" || status === "paused" ? "scheduled" : status,
   };
 }
 
@@ -149,19 +147,101 @@ function normalizeJobCommandResult(result: JobCommandResult): JobCommandResult {
   return result.job ? { ...result, job: normalizeJob(result.job) } : result;
 }
 
+function persistMockJob(job: JobRowData) {
+  const normalizedJob = normalizeJob(job);
+  const existingIndex = mockJobs.findIndex((item) => item.id === normalizedJob.id);
+  if (existingIndex < 0) {
+    mockJobs = [normalizedJob, ...mockJobs];
+    return normalizedJob;
+  }
+
+  mockJobs = mockJobs.map((item, index) => (index === existingIndex ? normalizedJob : item));
+  return normalizedJob;
+}
+
+async function resolveMockJobCommand(result: JobCommandResult): Promise<JobCommandResult> {
+  if (!result.job) return resolveMock(result);
+
+  const job = result.run
+    ? {
+      ...result.job,
+      runHistory: [result.run, ...(result.job.runHistory ?? []).filter((item) => item.runId !== result.run?.runId)],
+    }
+    : result.job;
+  return resolveMock({ ...result, job: persistMockJob(job) });
+}
+
 async function resolveMock<T>(payload: T): Promise<T> {
   await new Promise((resolve) => window.setTimeout(resolve, mockLatencyMs));
   return payload;
 }
 
-export async function getJobs(): Promise<JobRowData[]> {
+const jobStatuses: JobStatus[] = ["scheduled", "failed", "running", "paused", "canceled", "stopped"];
+
+function getLatestRunOutcome(job: JobRowData): JobRunOutcome | undefined {
+  const status = job.runHistory?.[0]?.status;
+  return status === "success" || status === "failed" || status === "canceled" ? status : undefined;
+}
+
+function getJobScheduleKind(job: JobRowData): JobScheduleKind {
+  const schedule = job.schedule.trim().toLocaleLowerCase();
+  if (!schedule || schedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => schedule.includes(token))) return "none";
+  if (["실시간", "realtime", "real-time", "stream", "kafka"].some((token) => schedule.includes(token))) return "realtime";
+  if (["매일", "daily"].some((token) => schedule.includes(token))) return "daily";
+  if (["매주", "weekly"].some((token) => schedule.includes(token))) return "weekly";
+  if (["매월", "monthly"].some((token) => schedule.includes(token))) return "monthly";
+  return "other";
+}
+
+function getJobListFacets(jobs: JobRowData[]): JobListFacets {
+  return {
+    latestRunOutcomeCounts: {
+      canceled: jobs.filter((job) => getLatestRunOutcome(job) === "canceled").length,
+      failed: jobs.filter((job) => getLatestRunOutcome(job) === "failed").length,
+      success: jobs.filter((job) => getLatestRunOutcome(job) === "success").length,
+    },
+    owners: Array.from(new Set(jobs.map((job) => job.owner).filter(Boolean))).sort((first, second) => first.localeCompare(second)),
+    statusCounts: Object.fromEntries(jobStatuses.map((status) => [status, jobs.filter((job) => job.status === status).length])) as JobListFacets["statusCounts"],
+    total: jobs.length,
+  };
+}
+
+function buildJobListResult(jobs: JobRowData[], query: JobListQuery): JobListResult {
+  const normalizedJobs = jobs.map(normalizeJob);
+  const selectedStatuses = new Set(query.statuses ?? []);
+  const filteredJobs = normalizedJobs.filter((job) => (
+    (selectedStatuses.size === 0 || selectedStatuses.has(job.status))
+    && (!query.lastRunOutcome || getLatestRunOutcome(job) === query.lastRunOutcome)
+    && (!query.scheduleKind || getJobScheduleKind(job) === query.scheduleKind)
+    && (!query.owner || job.owner === query.owner)
+  ));
+
+  return {
+    facets: getJobListFacets(normalizedJobs),
+    jobs: filteredJobs,
+  };
+}
+
+function toJobListSearchParams(query: JobListQuery) {
+  const searchParams = new URLSearchParams();
+  query.statuses?.forEach((status) => searchParams.append("status", status));
+  if (query.lastRunOutcome) searchParams.set("lastRunOutcome", query.lastRunOutcome);
+  if (query.owner) searchParams.set("owner", query.owner);
+  if (query.scheduleKind) searchParams.set("scheduleKind", query.scheduleKind);
+  const serialized = searchParams.toString();
+  return serialized ? `?${serialized}` : "";
+}
+
+export async function getJobs(query: JobListQuery = {}): Promise<JobListResult> {
   if (!apiConfig.useMock) {
-    const result = await apiClient.get<JobsResponse | JobRowData[]>("/api/etl/jobs");
-    const jobs = Array.isArray(result) ? result : result.jobs;
-    return jobs.map(normalizeJob);
+    const result = await apiClient.get<JobListResult>(`/api/etl/jobs${toJobListSearchParams(query)}`);
+    return {
+      facets: result.facets,
+      jobs: result.jobs.map(normalizeJob),
+    };
   }
 
-  return resolveMock(etlJobs.map(normalizeJob));
+  return resolveMock(buildJobListResult(mockJobs, query));
 }
 
 export async function getDatasets(): Promise<CatalogDataset[]> {
@@ -392,6 +472,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     pause: { action: "etl.job.pause_requested", apiPath: `/api/etl/jobs/${job.id}` },
     cancelRun: { action: "etl.run.cancel_requested", apiPath: `/api/etl/jobs/${job.id}/runs/current/cancel` },
     stopSchedule: { action: "etl.schedule.stop_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
+    resumeSchedule: { action: "etl.schedule.resume_requested", apiPath: `/api/etl/jobs/${job.id}/schedule` },
     startContinuous: { action: "etl.continuous.start_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
     pauseContinuous: { action: "etl.continuous.pause_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
     resumeContinuous: { action: "etl.continuous.resume_requested", apiPath: `/api/etl/jobs/${job.id}/commands` },
@@ -458,7 +539,7 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "pending", title: "8. Downstream 반영" },
     ];
 
-    return resolveMock({
+    return resolveMockJobCommand({
       ...audit,
       dagSteps,
       job: {
@@ -496,12 +577,13 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
       { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
     ];
 
-    return resolveMock({
+    return resolveMockJobCommand({
       ...audit,
       dagSteps,
       job: {
         ...job,
         status: "paused",
+        lastRun: new Date().toISOString(),
         lastState: "사용자 일시정지",
         nextRun: "재개 대기",
         progress: job.progress ?? { label: "일시정지됨", value: 50 },
@@ -510,15 +592,69 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     });
   }
 
+  if (command === "stopSchedule") {
+    const realtime = getJobScheduleKind(job) === "realtime";
+    const stoppedAt = new Date().toISOString();
+    const run: JobRunSummary | undefined = realtime && job.status === "running"
+      ? {
+        duration: "수집 중지",
+        endedAt: stoppedAt,
+        errorSummary: "사용자 요청으로 실시간 수집 중지",
+        failedStage: "실시간 수집 중지",
+        inputRows: job.stats?.inputRows ?? "-",
+        outputRows: job.stats?.outputRows ?? "-",
+        runId: `run_${Date.now()}`,
+        startedAt: stoppedAt,
+        status: "canceled",
+      }
+      : undefined;
+    const dagSteps: JobDagStep[] | undefined = run
+      ? [
+        { id: "step-1", meta: job.source, status: "success", title: "1. Source 연결" },
+        { id: "step-2", meta: "사용자 수집 중지", status: "blocked", title: "2. 실시간 수집" },
+        { id: "step-3", meta: job.target, status: "blocked", title: "3. Lake 적재" },
+      ]
+      : undefined;
+
+    return resolveMockJobCommand({
+      ...audit,
+      dagSteps,
+      job: {
+        ...job,
+        status: "stopped",
+        lastRun: run ? stoppedAt : job.lastRun,
+        lastState: realtime ? "실시간 수집 중지" : "스케줄 일시중지",
+        nextRun: "-",
+        progress: undefined,
+      },
+      run,
+    });
+  }
+
+  if (command === "resumeSchedule") {
+    const realtime = getJobScheduleKind(job) === "realtime";
+    return resolveMockJobCommand({
+      ...audit,
+      job: {
+        ...job,
+        status: "scheduled",
+        lastState: realtime ? "실시간 수집 재개됨" : "스케줄 재개됨",
+        nextRun: job.schedulePolicy?.nextRunUtc || "다음 예약 계산 중",
+        progress: undefined,
+      },
+    });
+  }
+
+  const canceledAt = new Date().toISOString();
   const run: JobRunSummary = {
     duration: "취소됨",
-    endedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    endedAt: canceledAt,
     errorSummary: "사용자 요청으로 취소",
     failedStage: "-",
     inputRows: "72,410",
     outputRows: "0",
     runId,
-    startedAt: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+    startedAt: canceledAt,
     status: "canceled",
   };
   const dagSteps: JobDagStep[] = [
@@ -532,13 +668,13 @@ export async function runJobCommand(job: JobRowData, command: Exclude<JobCommand
     { id: "step-8", meta: "SQL · Dashboard · Catalog", status: "blocked", title: "8. Downstream 반영" },
   ];
 
-  return resolveMock({
+  return resolveMockJobCommand({
     ...audit,
     dagSteps,
     job: {
       ...job,
-      status: "canceled",
-      lastRun: "방금 취소",
+      status: "scheduled",
+      lastRun: canceledAt,
       lastState: "취소됨",
       nextRun: job.schedule === "스케줄 없음" || job.schedule === "수동 실행" ? "-" : "다음 예약 대기",
       progress: undefined,

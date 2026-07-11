@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Loader2, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import type { DashboardRuntimeWidget, DashboardRuntimeWidgetConfig } from "../../../types";
 import {
   type DashboardAssistantCreateWidgetAction,
@@ -13,6 +13,7 @@ import {
 } from "../../../services/dashboardAssistantService";
 import askLakeNessiIconUrl from "../../../assets/asklake-nessi-icon.png";
 import type { CreateDraftWidgetFormInput, DashboardDatasetOption, UpdateDraftWidgetFormInput } from "./dashboardRuntimeTypes";
+import { VisualizationPromptInput, type VisualizationPromptInputHandle } from "./VisualizationPromptInput";
 
 type DashboardAssistantPanelProps = {
   dashboardId?: string;
@@ -63,14 +64,13 @@ export function DashboardAssistantPanel({
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [prompt, setPrompt] = useState("");
   const messagesEndRef = useRef<HTMLSpanElement | null>(null);
-  const promptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const promptInputRef = useRef<VisualizationPromptInputHandle | null>(null);
   const isConfigured = isDashboardAssistantConfigured();
   const targetWidgets = useMemo(() => {
     return selectedWidget ? [selectedWidget] : widgets;
   }, [selectedWidget, widgets]);
 
-  const submitQuestion = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitQuestion = async () => {
     const nextPrompt = prompt.trim();
     if (!nextPrompt || isSubmitting) return;
 
@@ -163,17 +163,25 @@ export function DashboardAssistantPanel({
           <div className="asklake-assistant-hero">
             <AskLakeAssistantMark />
             <strong>AskLake</strong>
-            <span>AI로 질문하세요</span>
+            <Bubble variant="secondary">
+              <BubbleContent>대시보드에 대해 무엇이든 물어보세요.</BubbleContent>
+            </Bubble>
           </div>
         )}
 
         {hasMessages && (
-          <div className="asklake-assistant-messages" aria-live="polite">
+          <BubbleGroup aria-live="polite" className="asklake-assistant-messages">
             {messages.map((message) => (
-              <p className={message.role} key={message.id}>{message.text}</p>
+              <Bubble
+                align={message.role === "user" ? "end" : "start"}
+                key={message.id}
+                variant={message.role === "user" ? "default" : "secondary"}
+              >
+              <BubbleContent className="whitespace-pre-wrap">{message.text}</BubbleContent>
+              </Bubble>
             ))}
             <span ref={messagesEndRef} aria-hidden="true" />
-          </div>
+          </BubbleGroup>
         )}
       </div>
 
@@ -184,19 +192,18 @@ export function DashboardAssistantPanel({
         </div>
       )}
 
-      <form className="asklake-assistant-form" onSubmit={(event) => void submitQuestion(event)}>
-        <textarea
-          aria-label="AskLake 질문"
-          placeholder="AskLake에게 질문하세요."
-          ref={promptInputRef}
-          rows={3}
-          value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
-        />
-        <button aria-label="질문 보내기" disabled={!prompt.trim() || isSubmitting} type="submit">
-          {isSubmitting ? <Loader2 className="spin" size={16} /> : <Send size={16} />}
-        </button>
-      </form>
+      <VisualizationPromptInput
+        ariaLabel="AskLake 질문"
+        isSubmitting={isSubmitting}
+        placeholder="AskLake에게 질문하세요."
+        ref={promptInputRef}
+        rows={3}
+        submitAriaLabel="질문 보내기"
+        textareaClassName="min-h-[72px] px-3 py-2 text-sm font-medium"
+        value={prompt}
+        onSubmit={() => void submitQuestion()}
+        onValueChange={setPrompt}
+      />
 
       {error && <span className="asklake-assistant-error">{error}</span>}
     </section>

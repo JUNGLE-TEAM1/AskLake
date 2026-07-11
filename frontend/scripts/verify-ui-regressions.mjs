@@ -7,14 +7,14 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 
 const checks = [
   {
-    name: "SQL sidebar tabs keep grid layout",
-    file: "src/styles/sql.css",
+    name: "SQL tool tabs use the shared shadcn layout and animated indicator",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /\.sql-sidebar-tabs\s*\{[^}]*display:\s*grid;/s,
-      /\.sql-sidebar-tabs\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*display:\s*inline-flex;/s,
-      /\.sql-sidebar-tabs button\s*\{[^}]*gap:\s*6px;/s,
-      /\.sql-sidebar-tabs button svg\s*\{[^}]*flex:\s*0 0 auto;/s,
+      /<Tabs[\s\S]*value=\{contextPanelTab\}/,
+      /<TabsList className="grid w-full grid-cols-2"/,
+      /<TabsTrigger[\s\S]*value="tables"/,
+      /data-sql-tab-indicator=""/,
+      /layoutId="sql-tools-active-tab"/,
     ],
   },
   {
@@ -29,14 +29,50 @@ const checks = [
     ],
   },
   {
-    name: "Dashboard list table stays compact",
+    name: "Dashboard list uses shared DataTable cells and permission-aware actions",
+    file: "src/pages/dashboard/components/DashboardTable.tsx",
+    patterns: [
+      /<DataTable/,
+      /<DataTableStackedCell/,
+      /<StatusBadge/,
+      /<Avatar size="lg">/,
+      /dashboard\.permissions\?\.canDelete !== false|row\.original\.permissions\?\.canDelete !== false/,
+    ],
+  },
+  {
+    name: "Dashboard DataTable keeps wide content inside its own viewport",
     file: "src/styles/dashboard.css",
     patterns: [
-      /\.dashboard-table-scroll \.schema-table\s*\{[^}]*table-layout:\s*fixed;/s,
-      /\.dashboard-table-list \.schema-table th,\s*\.dashboard-table-list \.schema-table td\s*\{[^}]*font-size:\s*13px;/s,
-      /\.dashboard-row-link\s*\{[^}]*white-space:\s*nowrap;/s,
-      /\.dashboard-row-tags\s*\{[^}]*flex-wrap:\s*nowrap;/s,
-      /\.dashboard-row-tag\s*\{[^}]*height:\s*22px;/s,
+      /\.dashboard-table-viewport\s*\{[^}]*contain:\s*paint;/s,
+      /\.dashboard-table-viewport\s*\{[^}]*max-width:\s*100%;/s,
+      /\.dashboard-table-list-body\s*\{[^}]*min-width:\s*0;/s,
+      /\.dashboard-table-list-body\s*\{[^}]*overflow:\s*hidden;/s,
+    ],
+  },
+  {
+    name: "ETL mobile scroll surfaces do not expand the document root",
+    file: "src/styles/responsive.css",
+    patterns: [
+      /\.stepper-inner\s*\{[^}]*contain:\s*paint;/s,
+      /\.stepper-inner\s*\{[^}]*max-width:\s*100%;/s,
+      /\.stepper-inner\s*\{[^}]*overflow-x:\s*auto;/s,
+    ],
+  },
+  {
+    name: "ETL stepper clips overflow at the shell boundary",
+    file: "src/styles/base.css",
+    patterns: [
+      /\.stepper\s*\{[^}]*min-width:\s*0;/s,
+      /\.stepper\s*\{[^}]*overflow:\s*hidden;/s,
+    ],
+  },
+  {
+    name: "ETL review schema keeps wide columns inside its viewport",
+    file: "src/styles/etl.css",
+    patterns: [
+      /\.review-schema-table-viewport\s*\{[^}]*contain:\s*paint;/s,
+      /\.review-schema-table-viewport\s*\{[^}]*max-width:\s*100%;/s,
+      /\.review-schema-table-viewport\s*\{[^}]*overflow-x:\s*auto;/s,
     ],
   },
   {
@@ -151,6 +187,24 @@ const checks = [
       /\.ai-conversation-sidebar\.open \{ transform: translateX\(0\); \}/,
     ],
   },
+  {
+    name: "Auth page uses AskLake-owned review class names",
+    file: "src/pages/auth/AuthPage.tsx",
+    patterns: [/asklake-review-card/, /asklake-review-card-header/, /asklake-review-icon/],
+    forbiddenPatterns: [/xflow-/],
+  },
+  {
+    name: "Profile page uses AskLake-owned review class names",
+    file: "src/pages/profile/ProfilePage.tsx",
+    patterns: [/asklake-review-stack/, /profile-review-stack/, /asklake-review-card/],
+    forbiddenPatterns: [/xflow-/],
+  },
+  {
+    name: "Admin page uses AskLake-owned review class names",
+    file: "src/pages/admin/AdminConsolePage.tsx",
+    patterns: [/asklake-review-card/, /asklake-review-card-header/, /asklake-review-icon/],
+    forbiddenPatterns: [/xflow-/],
+  },
 ];
 
 const failures = [];
@@ -160,6 +214,11 @@ for (const check of checks) {
   check.patterns.forEach((pattern, index) => {
     if (!pattern.test(contents)) {
       failures.push(`${check.name}: missing pattern #${index + 1} in ${check.file}`);
+    }
+  });
+  check.forbiddenPatterns?.forEach((pattern, index) => {
+    if (pattern.test(contents)) {
+      failures.push(`${check.name}: forbidden pattern #${index + 1} in ${check.file}`);
     }
   });
 }

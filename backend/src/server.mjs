@@ -46,7 +46,12 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/etl/jobs") {
-      sendJson(response, 200, await listJobs());
+      sendJson(response, 200, await listJobs({
+        lastRunOutcome: url.searchParams.get("lastRunOutcome") || undefined,
+        owner: url.searchParams.get("owner") || undefined,
+        scheduleKind: url.searchParams.get("scheduleKind") || undefined,
+        statuses: url.searchParams.getAll("status"),
+      }));
       return;
     }
 

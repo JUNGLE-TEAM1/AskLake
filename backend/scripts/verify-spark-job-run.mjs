@@ -106,7 +106,7 @@ try {
     sourceType: "File / S3",
     targetDataset: `spark_actual_verify_${suffix}`,
     compression: "Snappy",
-    partition: "year/month/region",
+    partition: "event_type/category_id",
     storagePath: `s3a://asklake-output/spark_actual_verify_${suffix}/gold/`,
     storageType: "S3",
     targetFormat: "Parquet",
@@ -125,6 +125,7 @@ try {
   const datasetsAfterRun = await getJson("/api/catalog/datasets");
   const datasetAfterRun = datasetsAfterRun[0] ?? {};
   const parquetFiles = listParquetFiles(run?.outputPath);
+  const partitionedParquetFiles = parquetFiles.map((filePath) => path.relative(run?.outputPath, filePath).replace(/\\/g, "/"));
   const datasetSchema = datasetAfterRun.schema ?? [];
   const schemaTypes = new Map(datasetSchema.map(([name, type]) => [name, type]));
   const schemaNames = datasetSchema.map(([name]) => name);
@@ -140,6 +141,7 @@ try {
     outputPath: run?.outputPath,
     outputRows: run?.outputRows,
     parquetFiles: parquetFiles.length,
+    partitionedParquetFiles,
     runStatus: run?.status,
     schemaNames,
     storageFormat: datasetAfterRun.storageFormat,
@@ -150,6 +152,7 @@ try {
   assert(run?.status === "success", `Spark run did not succeed: ${run?.errorSummary}`);
   assert(result.outputExists, `Spark output path was not copied to host: ${run?.outputPath}`);
   assert(parquetFiles.length > 0, `Spark output path has no parquet files: ${run?.outputPath}`);
+  assert(partitionedParquetFiles.every((filePath) => filePath.includes("event_type=") && filePath.includes("category_id=")), `Spark output should use both partition columns: ${partitionedParquetFiles.join(", ")}`);
   assert(completedJob.status === "scheduled", `Job did not return to scheduled status: ${completedJob.status}`);
   assert(datasetsAfterRun.length === 1, "Catalog should contain the dataset after the Spark run succeeds.");
   assert(schemaNames.includes("item_price"), `Approved target column was not written to catalog schema: ${schemaNames.join(", ")}`);
@@ -161,6 +164,7 @@ try {
   assert(completedJob.dagSteps?.every((step) => step.status === "success"), "DAG steps were not all successful.");
   assert(completedJob.dagStepsByRunId?.[run.runId]?.length === completedJob.dagSteps.length, "Job should preserve DAG steps under the server runId.");
   assert(completedJob.permissionRoles?.length === 1, "Job should preserve permissionRoles from the create request.");
+  assert(completedJob.partition === "event_type/category_id", `Job should preserve multi-column partition metadata: ${completedJob.partition}`);
   assert(completedJob.storagePath?.includes(`spark_actual_verify_${suffix}`), "Job should preserve target storagePath from the create request.");
   assert(completedJob.dagSteps?.some((step) => step.id === "transform"), "DAG should include a transform step.");
   assert(completedJob.dagSteps?.some((step) => step.id === "quality"), "DAG should include a quality step.");

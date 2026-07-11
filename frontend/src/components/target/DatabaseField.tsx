@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Database, RefreshCw, Search, X } from "lucide-react";
+import { Check, Database, RefreshCw, Search } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
 type DatabaseFieldProps = {
   disabled?: boolean;
   onChange: (databaseName: string) => void;
+  useShadcnStyles?: boolean;
   value: string;
 };
 
@@ -21,7 +26,7 @@ function mergeCurrentDatabase(databases: TargetDatabaseOption[], currentName: st
   return [{ description: "현재 설정된 DB", name: normalizedName }, ...databases];
 }
 
-export function DatabaseField({ disabled = false, onChange, value }: DatabaseFieldProps) {
+export function DatabaseField({ disabled = false, onChange, useShadcnStyles = false, value }: DatabaseFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   return (
@@ -29,13 +34,14 @@ export function DatabaseField({ disabled = false, onChange, value }: DatabaseFie
       <div className="database-display" title={value}>
         {value.trim() ? <span>{value}</span> : <em>DB를 선택하세요</em>}
       </div>
-      <button className="secondary-button database-field-action" disabled={disabled} type="button" onClick={() => setPickerOpen(true)}>
-        <Database size={14} />
+      <Button className={useShadcnStyles ? undefined : "secondary-button database-field-action"} disabled={disabled} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+        <Database data-icon="inline-start" />
         찾아보기
-      </button>
+      </Button>
       {pickerOpen && !disabled ? (
         <DatabasePicker
           value={value}
+          useShadcnStyles={useShadcnStyles}
           onCancel={() => setPickerOpen(false)}
           onSelect={(databaseName) => {
             onChange(databaseName);
@@ -50,10 +56,12 @@ export function DatabaseField({ disabled = false, onChange, value }: DatabaseFie
 function DatabasePicker({
   onCancel,
   onSelect,
+  useShadcnStyles,
   value,
 }: {
   onCancel: () => void;
   onSelect: (databaseName: string) => void;
+  useShadcnStyles: boolean;
   value: string;
 }) {
   const [databases, setDatabases] = useState<TargetDatabaseOption[]>(() => mergeCurrentDatabase(FALLBACK_DATABASES, value));
@@ -92,39 +100,44 @@ function DatabasePicker({
   }, []);
 
   return (
-    <div className="s3-picker-backdrop" role="presentation" onMouseDown={onCancel}>
-      <section aria-label="DB 선택" aria-modal="true" className="s3-picker-dialog database-picker-dialog" role="dialog" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="s3-picker-header">
-          <div>
-            <h2>DB 선택</h2>
-            <p>최종 데이터셋을 등록할 데이터베이스를 선택합니다.</p>
-          </div>
-          <button className="s3-picker-close" type="button" onClick={onCancel} aria-label="DB 선택 닫기">
-            <X size={16} />
-          </button>
-        </header>
-
+    <PickerDialog
+      contentClassName="s3-picker-dialog database-picker-dialog"
+      description="최종 데이터셋을 등록할 데이터베이스를 선택합니다."
+      footer={(
+        <>
+          <div className="s3-picker-preview" title={selectedName}>{selectedName ? `선택 DB: ${selectedName}` : "선택된 DB가 없습니다."}</div>
+          <Button className={useShadcnStyles ? undefined : "secondary-button"} type="button" variant="outline" onClick={onCancel}>취소</Button>
+          <Button className={useShadcnStyles ? undefined : "primary-button"} disabled={!selectedName} type="button" onClick={() => onSelect(selectedName)}>선택</Button>
+        </>
+      )}
+      footerClassName="s3-picker-footer"
+      headerClassName="s3-picker-header"
+      onClose={onCancel}
+      title="DB 선택"
+      toolbar={(
         <div className="s3-picker-toolbar database-picker-toolbar">
-          <label className="field">
-            <span>DB 검색</span>
-            <div className="s3-picker-search">
-              <Search size={14} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="데이터베이스 검색" />
-            </div>
-          </label>
+          <Field className="field">
+            <FieldLabel>DB 검색</FieldLabel>
+            <InputGroup className="s3-picker-search">
+              <InputGroupAddon>
+                <Search size={14} />
+              </InputGroupAddon>
+              <InputGroupInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder="데이터베이스 검색" />
+            </InputGroup>
+          </Field>
         </div>
-
-        {error ? (
-          <div className="s3-picker-error">
-            <span>{error}</span>
-            <button type="button" onClick={loadDatabases}>
-              <RefreshCw size={13} />
-              다시 시도
-            </button>
-          </div>
-        ) : null}
-
-        <div className="database-picker-body">
+      )}
+      error={error ? (
+        <div className="s3-picker-error">
+          <span>{error}</span>
+          <Button size="sm" type="button" variant="link" onClick={loadDatabases}>
+            <RefreshCw data-icon="inline-start" />
+            다시 시도
+          </Button>
+        </div>
+      ) : null}
+    >
+      <div className="database-picker-body">
           {loading ? <div className="database-picker-state">DB 목록을 불러오는 중입니다.</div> : null}
           {!loading && filteredDatabases.length === 0 ? <div className="database-picker-state">선택할 DB가 없습니다.</div> : null}
           {!loading && filteredDatabases.length > 0 ? (
@@ -132,31 +145,25 @@ function DatabasePicker({
               {filteredDatabases.map((database) => {
                 const selected = selectedName === database.name;
                 return (
-                  <button
+                  <Button
                     className={selected ? "database-picker-option active" : "database-picker-option"}
                     key={database.name}
                     type="button"
+                    variant="outline"
                     onClick={() => setSelectedName(database.name)}
                   >
-                    <Database size={15} />
+                    <Database data-icon="inline-start" />
                     <span>
                       <strong>{database.name}</strong>
                       <em>{database.description}</em>
                     </span>
-                    {selected ? <Check size={15} /> : null}
-                  </button>
+                    {selected ? <Check data-icon="inline-end" /> : null}
+                  </Button>
                 );
               })}
             </div>
           ) : null}
         </div>
-
-        <footer className="s3-picker-footer">
-          <div className="s3-picker-preview" title={selectedName}>{selectedName ? `선택 DB: ${selectedName}` : "선택된 DB가 없습니다."}</div>
-          <button className="secondary-button" type="button" onClick={onCancel}>취소</button>
-          <button className="primary-button" disabled={!selectedName} type="button" onClick={() => onSelect(selectedName)}>선택</button>
-        </footer>
-      </section>
-    </div>
+    </PickerDialog>
   );
 }
