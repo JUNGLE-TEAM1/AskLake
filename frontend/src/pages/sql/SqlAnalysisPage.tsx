@@ -10,13 +10,11 @@ import {
   PlayCircle,
   RotateCcw,
   Search,
-  Send,
   Table2,
 } from "lucide-react";
 import nessieIcon from "@/assets/asklake-nessi-icon.png";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Badge } from "@/components/ui/badge";
-import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -31,18 +29,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/u
 import { Field, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { FilterToolbarInput, FilterToolbarSearch } from "@/components/ui/filter-toolbar";
 import { Input } from "@/components/ui/input";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupTextarea,
-} from "@/components/ui/input-group";
 import { NativeSelect } from "@/components/ui/native-select";
 import { PageHeader } from "@/components/ui/page-header";
 import { PaginationBar } from "@/components/ui/pagination-bar";
 import { Panel, PanelHeader } from "@/components/ui/panel";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -55,6 +47,11 @@ import {
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
+import {
+  INITIAL_NESSIE_MESSAGES,
+  SqlNessieAssistant,
+  type NessieMessage,
+} from "./SqlNessieAssistant";
 import { SqlPreviewTable } from "./SqlPreviewTable";
 import {
   PREVIEW_ROW_LIMIT,
@@ -64,8 +61,6 @@ import {
   buildDefaultDerivedDatasetTags,
   buildDefaultQuery,
   escapeCsvCell,
-  formatDuration,
-  formatResultTimestamp,
   getAutocompleteContext,
   getPreflightSummary,
   parseDerivedDatasetTags,
@@ -74,24 +69,9 @@ import {
   type SqlPreflightResult,
 } from "./sqlLogic";
 
-const QUERY_AI_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
 const LazySqlResultChart = lazy(() => import("./SqlResultChart").then((module) => ({
   default: module.SqlResultChart,
 })));
-
-type NessieMessage = {
-  content: string;
-  id: string;
-  role: "assistant" | "user";
-  sql?: string;
-  tone?: "default" | "error";
-};
-
-const INITIAL_NESSIE_MESSAGES: NessieMessage[] = [{
-  content: "SQL 작성과 방금 실행한 결과의 차트 생성을 도와드릴게요.",
-  id: "nessie-welcome",
-  role: "assistant",
-}];
 
 function createNessieMessageId() {
   return `nessie-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -137,7 +117,6 @@ export function SqlAnalysisPage({
     [baseDatasetId, dataset, datasets],
   );
   const defaultQuery = useMemo(() => baseDataset ? buildDefaultQuery(baseDataset) : "", [baseDataset]);
-  const [executed, setExecuted] = useState(false);
   const [contextCollapsed, setContextCollapsed] = useState(false);
   const [contextPanelTab, setContextPanelTab] = useState<"tables" | "queryAi">("tables");
   const [datasetSearch, setDatasetSearch] = useState("");
@@ -145,7 +124,6 @@ export function SqlAnalysisPage({
   const [contextPageSize, setContextPageSize] = useState(() => Math.max(1, datasets.length));
   const [expandedDatasetId, setExpandedDatasetId] = useState<string | null>(null);
   const [referenceDatasetIds, setReferenceDatasetIds] = useState<string[]>([]);
-  const [executionMs, setExecutionMs] = useState<number | null>(null);
   const [queryPending, setQueryPending] = useState(false);
   const [query, setQuery] = useState(defaultQuery);
   const [previewRowLimit, setPreviewRowLimit] = useState(PREVIEW_ROW_LIMIT);
@@ -157,6 +135,7 @@ export function SqlAnalysisPage({
   const [queryAiPending, setQueryAiPending] = useState(false);
   const [queryAiError, setQueryAiError] = useState<string | null>(null);
   const [nessieMessages, setNessieMessages] = useState<NessieMessage[]>(INITIAL_NESSIE_MESSAGES);
+  const [chartGenerated, setChartGenerated] = useState(false);
   const [resultView, setResultView] = useState<"chart" | "table">("table");
   const [resultDialogOpen, setResultDialogOpen] = useState(false);
   const [derivedDatasetName, setDerivedDatasetName] = useState(dataset ? buildDefaultDerivedDatasetName(dataset) : "");
@@ -276,11 +255,9 @@ export function SqlAnalysisPage({
     }
 
     if (!baseDataset) {
-      setExecuted(false);
       setQuery("");
       setCursorIndex(0);
       setResultDraft(null);
-      setExecutionMs(null);
       setPreflightResult(null);
       setDerivedDatasetName("");
       setDerivedDatasetDescription("");
@@ -292,6 +269,7 @@ export function SqlAnalysisPage({
       setQueryAiSuggestion(null);
       setQueryAiError(null);
       setNessieMessages(INITIAL_NESSIE_MESSAGES);
+      setChartGenerated(false);
       setResultView("table");
       setResultDialogOpen(false);
       setReferenceDatasetIds([]);
@@ -301,11 +279,9 @@ export function SqlAnalysisPage({
 
     if (canRestoreCachedResult) return;
 
-    setExecuted(false);
     setQuery(defaultQuery);
     setCursorIndex(defaultQuery.length);
     setResultDraft(null);
-    setExecutionMs(null);
     setPreflightResult(null);
     setDerivedDatasetName(buildDefaultDerivedDatasetName(baseDataset));
     setDerivedDatasetDescription(buildDefaultDerivedDatasetDescription(baseDataset));
@@ -317,6 +293,7 @@ export function SqlAnalysisPage({
     setQueryAiSuggestion(null);
     setQueryAiError(null);
     setNessieMessages(INITIAL_NESSIE_MESSAGES);
+    setChartGenerated(false);
     setResultView("table");
     setResultDialogOpen(false);
     setReferenceDatasetIds((ids) => ids.filter((id) => id !== baseDataset.id));
@@ -328,18 +305,17 @@ export function SqlAnalysisPage({
 
     const cachedReferences = (cachedResult.referenceDatasetIds ?? []).filter((id) => id !== baseDataset.id);
 
-    setExecuted(true);
     setQuery(cachedResult.query);
     setPreviewRowLimit(cachedResult.previewLimit ?? PREVIEW_ROW_LIMIT);
     setCursorIndex(cachedResult.query.length);
     setReferenceDatasetIds(cachedReferences);
     setResultDraft(cachedResult);
-    setExecutionMs(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
     setQueryAiSuggestion(null);
     setQueryAiError(null);
     setNessieMessages(INITIAL_NESSIE_MESSAGES);
+    setChartGenerated(false);
     setResultView("table");
     setResultDialogOpen(false);
   }, [baseDataset, cachedResult, canRestoreCachedResult]);
@@ -432,10 +408,9 @@ export function SqlAnalysisPage({
   };
 
   const resetResultState = () => {
-    setExecuted(false);
     setResultDraft(null);
-    setExecutionMs(null);
     setPreflightResult(null);
+    setChartGenerated(false);
     setResultView("table");
     setResultDialogOpen(false);
     setMaterializeDialogOpen(false);
@@ -507,13 +482,11 @@ export function SqlAnalysisPage({
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
     }
-    const startedAt = performance.now();
     setQueryPending(true);
     try {
       const resultDraft = await buildPreviewDraft();
-      setExecuted(true);
-      setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
+      setChartGenerated(false);
       setResultView("table");
       onResultChange(resultDraft);
       onAction("analysis.query.preview_executed", queryContextPath("preview"), baseDataset.id);
@@ -531,6 +504,7 @@ export function SqlAnalysisPage({
   };
 
   const preflightSummary = getPreflightSummary(preflightResult);
+  const visiblePreflightSummary = preflightSummary?.tone === "success" ? null : preflightSummary;
 
   const requestQueryAiSuggestion = async () => {
     if (queryAiPending) return;
@@ -572,6 +546,7 @@ export function SqlAnalysisPage({
         return;
       }
 
+      setChartGenerated(true);
       setResultView("chart");
       setNessieMessages((messages) => [...messages, {
         content: `방금 실행한 SQL 결과 ${resultDraft.rows.length}행을 기준으로 차트를 만들었습니다. 결과 영역에서 표와 차트를 전환할 수 있어요.`,
@@ -639,6 +614,12 @@ export function SqlAnalysisPage({
     setContextPanelTab("queryAi");
     onAction("analysis.ai.opened", "/api/query/ai-suggestions", baseDataset?.id ?? "sql-empty");
     requestAnimationFrame(() => queryAiPromptRef.current?.focus());
+  };
+
+  const openChartAssistant = () => {
+    setQueryAiPrompt("방금 만든 SQL로 관련 차트를 만들어줘");
+    setQueryAiError(null);
+    openSqlAssistant();
   };
 
   const toggleContext = () => {
@@ -901,71 +882,20 @@ export function SqlAnalysisPage({
                     )}
                   </section>
                 </TabsContent>
-                <TabsContent className="mt-0 grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_max-content] gap-3 overflow-hidden" value="queryAi">
-                  <ScrollArea className="min-h-0" type="always">
-                    <BubbleGroup className="pr-3" aria-live="polite">
-                      {nessieMessages.map((message) => (
-                        <Bubble
-                          align={message.role === "user" ? "end" : "start"}
-                          className="sql-ai-suggestion"
-                          key={message.id}
-                          role={message.tone === "error" ? "alert" : undefined}
-                          variant={message.role === "user" ? "default" : message.tone === "error" ? "destructive" : "outline"}
-                        >
-                          <BubbleContent className="grid gap-2">
-                            <span>{message.content}</span>
-                            {message.sql && <pre>{message.sql}</pre>}
-                            {message.sql && (
-                              <Button onClick={() => applyQueryAiSuggestion(message.sql)} type="button" size="sm" variant="primary">
-                                SQL에 적용
-                              </Button>
-                            )}
-                          </BubbleContent>
-                        </Bubble>
-                      ))}
-                      {queryAiPending && (
-                        <Bubble variant="muted">
-                          <BubbleContent>Nessie가 SQL 초안을 만들고 있습니다.</BubbleContent>
-                        </Bubble>
-                      )}
-                    </BubbleGroup>
-                  </ScrollArea>
-                  <Field data-invalid={Boolean(queryAiError)}>
-                    <FieldLabel className="sr-only" htmlFor="sql-query-ai-prompt">Nessie에게 요청</FieldLabel>
-                    <InputGroup className="items-end">
-                      <InputGroupTextarea
-                        className="min-h-[76px]"
-                        id="sql-query-ai-prompt"
-                        ref={queryAiPromptRef}
-                        aria-invalid={Boolean(queryAiError)}
-                        disabled={queryAiPending}
-                        onChange={(event) => {
-                          setQueryAiPrompt(event.target.value);
-                          setQueryAiError(null);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter" || event.shiftKey) return;
-                          event.preventDefault();
-                          void requestQueryAiSuggestion();
-                        }}
-                        placeholder={QUERY_AI_PROMPT_PLACEHOLDER}
-                        rows={3}
-                        value={queryAiPrompt}
-                      />
-                      <InputGroupAddon className="h-auto self-end px-1 pb-1">
-                        <Button
-                          aria-label="Nessie에게 보내기"
-                          disabled={queryAiPending || queryAiPrompt.trim().length === 0}
-                          onClick={requestQueryAiSuggestion}
-                          type="button"
-                          size="icon"
-                          variant="primary"
-                        >
-                          <Send />
-                        </Button>
-                      </InputGroupAddon>
-                    </InputGroup>
-                  </Field>
+                <TabsContent className="mt-0 min-h-0 min-w-0 overflow-hidden" value="queryAi">
+                  <SqlNessieAssistant
+                    error={queryAiError}
+                    messages={nessieMessages}
+                    onApplySuggestion={applyQueryAiSuggestion}
+                    onPromptChange={(nextPrompt) => {
+                      setQueryAiPrompt(nextPrompt);
+                      setQueryAiError(null);
+                    }}
+                    onSubmit={requestQueryAiSuggestion}
+                    pending={queryAiPending}
+                    prompt={queryAiPrompt}
+                    promptRef={queryAiPromptRef}
+                  />
                 </TabsContent>
             </Tabs>
           </aside>
@@ -1046,20 +976,20 @@ export function SqlAnalysisPage({
               </div>
             </div>
           </div>
-          {preflightSummary && <div className="sql-editor-footer">
+          {visiblePreflightSummary && <div className="sql-editor-footer">
             <div className="sql-editor-status-line">
-              <StatusBadge
+              <Badge
                 size="sm"
-                tone={preflightSummary.tone === "success" ? "success" : preflightSummary.tone === "warning" ? "warning" : "danger"}
+                variant={visiblePreflightSummary.tone === "error" ? "destructive" : "warning"}
               >
-                {preflightSummary.label}
-              </StatusBadge>
-              {preflightSummary?.detail && (
+                {visiblePreflightSummary.label}
+              </Badge>
+              {visiblePreflightSummary.detail && (
                 <Badge
                   size="sm"
-                  variant={preflightSummary.tone === "error" ? "destructive" : preflightSummary.tone === "warning" ? "warning" : "outline"}
+                  variant={visiblePreflightSummary.tone === "error" ? "destructive" : "warning"}
                 >
-                  {preflightSummary.detail}
+                  {visiblePreflightSummary.detail}
                 </Badge>
               )}
             </div>
@@ -1068,15 +998,9 @@ export function SqlAnalysisPage({
 
         <Panel className="grid gap-4 p-5">
           <PanelHeader
-            actions={(queryPending || executed || executionMs !== null || resultDraft) ? (
+            actions={resultDraft ? (
               <ActionGroup density="compact">
-                {(queryPending || executed) && (
-                  <StatusBadge size="sm" tone={queryPending ? "default" : "success"}>
-                    {queryPending ? "실행 중" : "완료"}
-                  </StatusBadge>
-                )}
-                {executionMs !== null && <Badge size="sm" variant="secondary">{formatDuration(executionMs)}</Badge>}
-                {resultDraft && (
+                {chartGenerated ? (
                   <ToggleGroup
                     aria-label="SQL 결과 표시 방식"
                     onValueChange={(value) => value && setResultView(value as "chart" | "table")}
@@ -1090,12 +1014,15 @@ export function SqlAnalysisPage({
                       <BarChart3 /> 차트
                     </ToggleGroupItem>
                   </ToggleGroup>
-                )}
-                {resultDraft && (
-                  <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
-                    <Maximize2 data-icon="inline-start" /> 전체 보기
+                ) : (
+                  <Button type="button" onClick={openChartAssistant} size="sm" variant="outline">
+                    <img alt="" aria-hidden="true" className="size-5 rounded-sm object-contain" data-icon="inline-start" src={nessieIcon} />
+                    Nessie에게 차트 부탁하기
                   </Button>
                 )}
+                <Button type="button" onClick={() => setResultDialogOpen(true)} size="sm" variant="outline">
+                  <Maximize2 data-icon="inline-start" /> 전체 보기
+                </Button>
               </ActionGroup>
             ) : undefined}
             bordered={false}
@@ -1105,13 +1032,7 @@ export function SqlAnalysisPage({
           />
           {resultDraft ? (
             <>
-              <Panel className="grid min-h-9 items-start gap-3 p-3" variant="muted">
-                <Badge className="w-fit max-w-full" size="sm" variant="secondary">
-                  실행 ID {resultDraft.runId}
-                  {resultDraft.previewLimit ? ` · 최대 ${resultDraft.previewLimit}행 표시` : ""}
-                  {` · ${resultDraft.rows.length}/${resultDraft.rowCount}행 표시 · ${resultDraft.columns.length}컬럼`}
-                  {` · ${formatResultTimestamp(resultDraft.executedAt)}`}
-                </Badge>
+              <Panel className="grid min-h-9 items-start p-3" variant="muted">
                 <ActionGroup align="start" className="w-full" density="compact">
                   <Button type="button" onClick={downloadCsv} size="sm" variant="outline"><Download data-icon="inline-start" /> CSV 다운로드</Button>
                   <Button type="button" onClick={() => setMaterializeDialogOpen(true)} size="sm" variant="outline"><Database data-icon="inline-start" /> 처리 Job 생성</Button>
@@ -1119,7 +1040,7 @@ export function SqlAnalysisPage({
                 </ActionGroup>
               </Panel>
               <ScrollArea className="sql-result-scroll" scrollbars="both" type="always">
-                {resultView === "chart"
+                {chartGenerated && resultView === "chart"
                   ? <SqlResultChartView resultDraft={resultDraft} />
                   : <SqlPreviewTable resultDraft={resultDraft} />}
               </ScrollArea>
@@ -1140,13 +1061,17 @@ export function SqlAnalysisPage({
             <DialogHeader>
               <DialogTitle>SQL 결과 전체 보기</DialogTitle>
               <DialogDescription>
-                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {resultView === "chart" ? "차트" : "표"} 보기
+                {resultDraft.rows.length}/{resultDraft.rowCount}행 · {resultDraft.columns.length}컬럼 · {chartGenerated && resultView === "chart" ? "차트" : "표"} 보기
               </DialogDescription>
             </DialogHeader>
             <ScrollArea className="min-h-0" scrollbars="both" type="always">
-              {resultView === "chart"
+              {chartGenerated && resultView === "chart"
                 ? <SqlResultChartView resultDraft={resultDraft} />
-                : <SqlPreviewTable resultDraft={resultDraft} />}
+                : (
+                  <div className="min-w-0 px-4 pb-4 pt-6">
+                    <SqlPreviewTable resultDraft={resultDraft} />
+                  </div>
+                )}
             </ScrollArea>
           </DialogContent>
         </Dialog>
