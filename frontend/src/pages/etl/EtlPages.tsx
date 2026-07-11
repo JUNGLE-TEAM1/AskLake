@@ -1654,13 +1654,12 @@ export function SourceConnectionPage({
                         <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
                         <span className="kafka-execution-mode-copy">
                           <strong>Continuous</strong>
-                          <span>준실시간 micro-batch 적재</span>
+                          <span>실시간 데이터 적재</span>
                         </span>
                         <span className="kafka-execution-mode-tag">Streaming</span>
                         {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
                       </button>
                     </div>
-                    {kafkaExecutionMode === "continuous" && <p className="panel-note">Parquet append와 checkpoint를 사용합니다. transform/quality rule은 Continuous에서 지원되지 않습니다.</p>}
                   </section>
                 )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
