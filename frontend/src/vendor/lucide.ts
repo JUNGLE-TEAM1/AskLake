@@ -64,7 +64,6 @@ export { default as Info } from "lucide-react/dist/esm/icons/info.mjs";
 export { default as LayoutGrid } from "lucide-react/dist/esm/icons/layout-grid.mjs";
 export { default as LetterText } from "lucide-react/dist/esm/icons/letter-text.mjs";
 export { default as Loader2 } from "lucide-react/dist/esm/icons/loader-circle.mjs";
-export { default as LogIn } from "lucide-react/dist/esm/icons/log-in.mjs";
 export { default as LogOut } from "lucide-react/dist/esm/icons/log-out.mjs";
 export { default as Maximize2 } from "lucide-react/dist/esm/icons/maximize-2.mjs";
 export { default as Minus } from "lucide-react/dist/esm/icons/minus.mjs";
@@ -98,7 +97,6 @@ export { default as TerminalSquare } from "lucide-react/dist/esm/icons/terminal-
 export { default as Trash2 } from "lucide-react/dist/esm/icons/trash-2.mjs";
 export { default as Type } from "lucide-react/dist/esm/icons/type.mjs";
 export { default as Undo2 } from "lucide-react/dist/esm/icons/undo-2.mjs";
-export { default as UserPlus } from "lucide-react/dist/esm/icons/user-plus.mjs";
 export { default as Workflow } from "lucide-react/dist/esm/icons/workflow.mjs";
 export { default as X } from "lucide-react/dist/esm/icons/x.mjs";
 export { default as Zap } from "lucide-react/dist/esm/icons/zap.mjs";

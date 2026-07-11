@@ -111,4 +111,3 @@
 - 게시 조회 share URL은 `/dashboards/:dashboardId`로 고정하고, share `Sheet` 안에서 사용자가 직접 실행하는 copy action과 성공/실패 feedback을 제공한다.
 - 게시 revision/page/widget 없음 상태는 shadcn `Empty`와 `Button` composition을 사용하며 편집 모드 진입을 안내한다.
 - 게시 page가 없으면 빈 `tablist`를 렌더링하지 않는다.
-

@@ -1,5 +1,7 @@
 # Frontend Refactor Person B Plan
 
+> 현재 상태 (2026-07-11): 이 문서는 초기 분업 계획입니다. MUI와 `react-arborist` 관련 목표는 이후 구현에서 Kibo/shadcn-compatible Tree 및 AskLake 로컬 Tree composition으로 대체됐습니다. 현재 구현 판단에는 frontend inventory와 페이지 감사 문서를 우선합니다.
+
 ## B가 이 문서를 읽기 전에 알아야 할 맥락
 
 이번 작업은 기존 AskLake 프론트의 UI를 안정적으로 고치기 위한 전환 작업이다. 기존에는 화면별 CSS와 직접 작성한 class가 많아 UI를 조금만 고쳐도 다른 화면이 깨질 위험이 컸다.

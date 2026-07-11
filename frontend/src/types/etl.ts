@@ -1,6 +1,3 @@
-import type { IdentityProfile } from "./identity";
-import type { PermissionGrant, ResourcePermissions } from "./permissions";
-
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
 export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "delete";
@@ -53,25 +50,14 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
-  schemaColumns?: SchemaColumnDraft[];
-  schemaFingerprint?: string;
-  schemaSampleRows?: string[][];
-  schemaSummary?: string;
-  ruleSummary?: string;
   retryPolicy?: RetryPolicyDraft;
   retryPolicySummary?: string;
   runLimitSummary?: string;
   permissionRoles?: PermissionDraft["roles"];
-  permissionSummary?: string;
   compression?: "Snappy" | "Gzip" | "None";
   partition?: string;
-  partitionColumns?: string[];
-  indexColumns?: string[];
   storagePath?: string;
   storageType?: "S3" | "Local" | "HDFS";
-  targetDatabase?: string;
-  targetDescription?: string;
-  targetTags?: string[];
   targetFormat?: string;
   targetLayer?: TargetLayer;
   targetPath?: string;
@@ -119,7 +105,6 @@ export type JobStats = {
   averageDuration: string;
   currentStage: string;
   inputRows: string;
-  lastSyncedAt?: string;
   lastSuccess: string;
   outputRows: string;
   outputPath?: string;
@@ -138,34 +123,13 @@ export type SourceDraft = {
   sourceType: string;
 };
 
-export type TransformChainStepDraft = {
-  display?: string;
-  expression?: string;
-  onError?: string;
-  operation: string;
-  params: string;
-  type?: string;
-};
-
 export type SchemaColumnDraft = {
   confidence?: number;
-  expandedFrom?: string;
-  expandedIndex?: number;
-  expandedTotal?: number;
   included?: boolean;
   nullable: boolean;
-  reviewAnalysisAllowedValues?: string[];
-  reviewAnalysisFallbackAllowed?: boolean;
-  reviewAnalysisInstruction?: string;
-  reviewAnalysisMethod?: string;
-  reviewAnalysisModelArtifact?: string;
-  reviewAnalysisModelId?: string;
-  reviewAnalysisModelSelectionPolicy?: string;
-  reviewAnalysisRequireModel?: boolean;
   role?: string;
   sourceName: string;
   targetName: string;
-  transformChain?: TransformChainStepDraft[];
   type: string;
 };
 
@@ -199,7 +163,6 @@ export type QualityRuleDraft = {
   failureAction: "Warn" | "Quarantine" | "Fail Run" | "Drop Row" | "Set Null";
   id: string;
   kind: "notNull" | "range" | "acceptedValues" | "regex" | "unique";
-  params?: string;
   severity: "Warning" | "Error";
   targetColumn: string;
   validationType: "Not Null" | "Range Check" | "Regex Match" | "Accepted Values";
@@ -350,13 +313,8 @@ export type CreatePipelineRequest = {
   watermarkPolicy?: WatermarkPolicyDraft;
   permissionSummary: string;
   permissionRoles?: PermissionDraft["roles"];
-  permissionGrants?: PermissionGrant[];
-  createdBy?: string;
-  createdByProfile?: IdentityProfile;
   storageType?: "S3" | "Local" | "HDFS";
   partition?: string;
-  partitionColumns?: string[];
-  indexColumns?: string[];
   compression?: "Snappy" | "Gzip" | "None";
   storagePath?: string;
   targetDataset: string;
@@ -367,11 +325,6 @@ export type CreatePipelineRequest = {
   owner: string;
   rag: boolean;
 };
-
-export type UpdatePipelineRequest = Omit<
-  CreatePipelineRequest,
-  "id" | "sourceConfig" | "sourceLabel" | "sourceType" | "createdBy" | "createdByProfile" | "permissionGrants"
->;
 
 export type DraftPipelineSlicePatch = {
   id?: string;
@@ -387,10 +340,6 @@ export type DraftPipelineSlicePatch = {
 export type DraftPipelinePatch = DraftPipelineSlicePatch & Partial<CreatePipelineRequest>;
 
 export type JobRunSummary = {
-  airflowDagId?: string;
-  airflowDagRunId?: string;
-  airflowRunUrl?: string;
-  airflowState?: string;
   duration: string;
   endedAt: string;
   errorSummary: string;
@@ -401,46 +350,6 @@ export type JobRunSummary = {
   runId: string;
   startedAt: string;
   status: JobRunStatus;
-  syncError?: string;
-  taskStates?: Record<string, unknown>;
-  textStructuring?: TextStructuringColumnExecution[];
-  textStructuringExecution?: TextStructuringExecutionSummary;
-};
-
-export type TextStructuringColumnExecution = {
-  allowedValues?: string[];
-  distinctOutputValues?: number;
-  distributionWarning?: string;
-  executionMode?: string;
-  fallbackAllowed?: boolean;
-  fallbackUsed?: boolean;
-  invalidRows?: number;
-  method?: string;
-  metrics?: {
-    accuracy?: number;
-    macroF1?: number;
-    validationRows?: number;
-    [key: string]: unknown;
-  };
-  modelArtifact?: string;
-  modelRequired?: boolean;
-  modelSelectionPolicy?: string;
-  outputDistribution?: Array<{ count: number; value: string }>;
-  runtimeStatus?: string;
-  selectedModelArtifact?: string;
-  target?: string;
-  targetColumn?: string;
-  validationStatus?: string;
-  validationRows?: number;
-};
-
-export type TextStructuringExecutionSummary = {
-  columns: TextStructuringColumnExecution[];
-  fallbackColumns: string[];
-  modelColumns: string[];
-  missingModelColumns: string[];
-  oneOfValueColumns: number;
-  totalColumns: number;
 };
 
 export type JobDagStep = {

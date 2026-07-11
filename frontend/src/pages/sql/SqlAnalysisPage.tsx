@@ -44,9 +44,7 @@ import {
   generateQueryAiSuggestion,
   type QueryAiSuggestion,
 } from "../../services/queryAiService";
-import { ApiError } from "../../types";
-import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
-import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, DashboardEntry, DerivedDatasetLayer, SqlResultDraft } from "../../types";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import {
@@ -100,7 +98,6 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
 
 export function SqlAnalysisPage({
   cachedResult,
-  currentUser,
   dataset,
   datasets,
   onAction,
@@ -108,7 +105,6 @@ export function SqlAnalysisPage({
   onResultChange,
 }: {
   cachedResult?: SqlResultDraft | null;
-  currentUser?: CurrentUserResponse | null;
   dataset: CatalogDataset | null;
   datasets: CatalogDataset[];
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
@@ -190,22 +186,13 @@ export function SqlAnalysisPage({
     [datasets],
   );
   const dashboardDialogEntry = useMemo<DashboardEntry>(() => ({
-    baseDatasetId: dashboardBaseDataset?.id,
-    dashboardId: resultDraft && dashboardBaseDataset ? `dash_${dashboardBaseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
+    dashboardId: resultDraft && baseDataset ? `dash_${baseDataset.id}_${resultDraft.runId}` : "dash_sql_empty_draft",
     runtimeMode: "draft",
-    sqlResultDatasetId: resultDraft?.datasetId,
-    sqlRunId: resultDraft?.runId,
     source: "sql",
     view: "runtime",
     version: dashboardDialogVersion,
-  }), [dashboardBaseDataset, dashboardDialogVersion, resultDraft]);
-  const selectedReferenceDatasets = useMemo(
-    () => datasets.filter((item) => referenceDatasetIdSet.has(item.id)),
-    [datasets, referenceDatasetIdSet],
-  );
-  const hasQueryPermission = Boolean(baseDataset && canQueryDatasetAs(baseDataset, currentUser) && selectedReferenceDatasets.every((item) => canQueryDatasetAs(item, currentUser)));
-  const queryPermissionMessage = hasQueryPermission ? "" : permissionDeniedMessage("선택 데이터셋", "SQL 실행");
-  const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  }), [baseDataset, dashboardDialogVersion, resultDraft]);
+  const canRunPreview = Boolean(baseDataset && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -772,24 +759,10 @@ export function SqlAnalysisPage({
   };
 
   const openDashboardBuilder = () => {
-    if (!dashboardBaseDataset || !resultDraft) return;
+    if (!baseDataset || !resultDraft) return;
     setDashboardDialogVersion((version) => version + 1);
     setDashboardDialogOpen(true);
-    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${dashboardBaseDataset.id}/draft/ensure`, resultDraft.runId);
-  };
-
-  const handleDashboardBuilderMouseDown = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    openDashboardBuilder();
-  };
-
-  const updatePreviewRowLimit = (values: number[]) => {
-    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
-  };
-
-  const commitPreviewRowLimit = (values: number[]) => {
-    setPreviewRowLimit(values[0] ?? PREVIEW_ROW_LIMIT);
-    resetResultState();
+    onAction("dashboard.builder.modal_opened_from_sql", `/api/dashboards/${baseDataset.id}/draft/ensure`, resultDraft.runId);
   };
 
   return (
@@ -1194,12 +1167,11 @@ export function SqlAnalysisPage({
               닫기
             </Button>
             <DashboardPage
-              dataset={dashboardBaseDataset}
+              dataset={baseDataset}
               datasets={selectedContextDatasets}
               entry={dashboardDialogEntry}
               sqlResult={resultDraft}
               onAction={onAction}
-              onMissingSqlResult={() => setDashboardDialogOpen(false)}
             />
           </DialogContent>
         </Dialog>

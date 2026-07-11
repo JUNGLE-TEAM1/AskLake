@@ -1,4 +1,4 @@
-import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, JobRowData, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, UpdatePipelineRequest, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
+import type { CreatePipelineRequest, DraftPipeline, DraftPipelinePatch, RetryBackoffStrategy, RetryFailureAction, RetryPolicyDraft, ScheduleDraft, ScheduleOverlapPolicy, WatermarkPolicyDraft, WatermarkWindowMode } from "../types";
 
 export const retryFailureActionLabels: Record<RetryFailureAction, string> = {
   notify_only: "알림만 남기기",
@@ -25,8 +25,6 @@ export const watermarkWindowModeLabels: Record<WatermarkWindowMode, string> = {
 
 export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineRequest {
   const targetDataset = draft.target.datasetName.trim();
-  const partitionColumns = normalizeStringList(draft.target.partitionColumns);
-  const targetTags = normalizeStringList(draft.target.tags);
   const retryPolicy = normalizeRetryPolicy(draft.schedule.retryPolicy);
   const watermarkPolicy = normalizeWatermarkPolicy(draft.schedule.watermarkPolicy);
   return {
@@ -60,9 +58,7 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     sourceLabel: draft.source.sourceLabel,
     sourceType: draft.source.sourceType,
     compression: draft.target.compression,
-    partition: partitionColumns.length > 0 ? partitionColumns.join("/") : draft.target.partition,
-    partitionColumns,
-    indexColumns: normalizeStringList(draft.target.indexColumns),
+    partition: draft.target.partition,
     storagePath: draft.target.storagePath,
     storageType: draft.target.storageType,
     targetDataset,
@@ -73,102 +69,6 @@ export function toCreatePipelineRequest(draft: DraftPipeline): CreatePipelineReq
     transformOutputColumns: effectiveTransformOutputColumns(draft),
     transformSteps: draft.transform.steps,
   };
-}
-
-export function hydrateDraftPipelineFromJob(job: JobRowData, fallback: DraftPipeline): DraftPipeline {
-  const schedulePolicy = job.schedulePolicy;
-  const scheduleLabel = job.schedule || fallback.schedule.label;
-  const sourceConfig = job.sourceConfig ?? fallback.source.sourceConfig;
-  const sourceType = job.sourceType || fallback.source.sourceType;
-  const sourceLabel = job.sourceLabel || fallback.source.sourceLabel;
-  const transformSummary = job.ruleSummary || fallback.transform.summary;
-
-  return {
-    id: job.id,
-    permission: {
-      ...fallback.permission,
-      owner: job.owner || fallback.permission.owner,
-      roles: job.permissionRoles ?? fallback.permission.roles,
-      summary: job.permissionSummary || fallback.permission.summary,
-    },
-    quality: {
-      ...fallback.quality,
-      invalidRows: job.qualityInvalidRows ?? [],
-      rules: job.qualityRules ?? [],
-      score: job.qualityScore,
-      status: job.qualityStatus ?? fallback.quality.status,
-      summary: transformSummary,
-    },
-    schedule: {
-      ...fallback.schedule,
-      endDate: schedulePolicy?.endDate ?? fallback.schedule.endDate,
-      label: scheduleLabel,
-      mode: scheduleModeFromLabel(scheduleLabel),
-      nextRun: job.nextRun || fallback.schedule.nextRun,
-      nextRunUtc: schedulePolicy?.nextRunUtc,
-      overlapPolicy: schedulePolicy?.overlapPolicy ?? fallback.schedule.overlapPolicy,
-      retryPolicy: job.retryPolicy ?? fallback.schedule.retryPolicy,
-      startDate: schedulePolicy?.startDate ?? fallback.schedule.startDate,
-      summary: job.scheduleSummary || scheduleLabel,
-      timezone: schedulePolicy?.timezone ?? fallback.schedule.timezone,
-      watermarkPolicy: schedulePolicy?.watermarkPolicy ?? fallback.schedule.watermarkPolicy,
-    },
-    schema: {
-      columns: job.schemaColumns ?? [],
-      sampleRows: job.schemaSampleRows ?? [],
-      schemaFingerprint: job.schemaFingerprint,
-      summary: job.schemaSummary || fallback.schema.summary,
-    },
-    source: {
-      connectionMessage: "저장된 Job 소스 설정을 수정 모드로 불러왔습니다.",
-      connectionStatus: sourceType ? "success" : "idle",
-      sourceConfig,
-      sourceLabel,
-      sourceType,
-    },
-    target: {
-      ...fallback.target,
-      compression: job.compression ?? fallback.target.compression,
-      databaseName: job.targetDatabase ?? fallback.target.databaseName,
-      datasetName: job.target || fallback.target.datasetName,
-      description: job.targetDescription ?? fallback.target.description,
-      format: job.targetFormat ?? fallback.target.format,
-      indexColumns: job.indexColumns ?? fallback.target.indexColumns,
-      layer: job.targetLayer ?? fallback.target.layer,
-      partition: job.partition ?? fallback.target.partition,
-      partitionColumns: job.partitionColumns ?? fallback.target.partitionColumns,
-      rag: job.rag ?? fallback.target.rag,
-      storagePath: job.storagePath ?? job.targetPath ?? fallback.target.storagePath,
-      storageType: job.storageType ?? fallback.target.storageType,
-      tableName: job.target || fallback.target.tableName,
-      targetTableName: job.target || fallback.target.targetTableName,
-      tags: job.targetTags ?? fallback.target.tags,
-      testStatus: "success",
-    },
-    transform: {
-      outputColumns: job.transformOutputColumns ?? [],
-      steps: job.transformSteps ?? [],
-      summary: transformSummary,
-    },
-  };
-}
-
-export function toUpdatePipelineRequest(draft: DraftPipeline): UpdatePipelineRequest {
-  const {
-    createdBy: _createdBy,
-    createdByProfile: _createdByProfile,
-    id: _id,
-    permissionGrants: _permissionGrants,
-    sourceConfig: _sourceConfig,
-    sourceLabel: _sourceLabel,
-    sourceType: _sourceType,
-    ...request
-  } = toCreatePipelineRequest(draft);
-  return request;
-}
-
-function normalizeStringList(values: string[] | undefined): string[] {
-  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
 }
 
 function effectiveTransformOutputColumns(draft: DraftPipeline): Array<[string, string]> {

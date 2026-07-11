@@ -179,3 +179,10 @@ Airflow DAG ID, DAG Run ID, Airflow URL, 동기화 시각은 현재 계약에 �
 - Airflow 연결 정보
 - 실행 단계 재시도/건너뛰기 같은 제어 액션
 - React Flow 등 별도 DAG 엔진 도입
+
+## 8. Text Structuring Runtime Integration - 2026-07-11
+
+- `runHistory[].textStructuringExecution`과 호환 `textStructuring` 데이터를 보존한다.
+- 모델 실행 정보를 실행 단계 목록 위의 별도 전역 table로 중복 노출하지 않는다.
+- 사용자가 `변환`, `텍스트 구조화`, `모델` 관련 Timeline 단계를 선택했을 때 오른쪽 `DagStepInspector` 안에 대상 컬럼, 실제 사용 모델, 실행 방식, validation rows, invalid rows, fallback 여부를 표시한다.
+- Catalog materialization provenance는 요약만 담당하고, 모델 실행의 상세 진단 source of truth는 이 Run 단계 inspector다.
