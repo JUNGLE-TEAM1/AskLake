@@ -42,12 +42,15 @@
 .sql-context-rail-button {
   position: absolute;
   z-index: 3;
-  top: 0;
+  top: 20px;
   left: 0;
 }
 
 .sql-page.context-collapsed .sql-workspace {
-  padding-left: 44px;
+  grid-column: 1;
+  min-width: 0;
+  padding-left: 56px;
+  position: relative;
 }
 
 .sql-workspace {
@@ -346,7 +349,7 @@
   }
 
   .sql-page.context-collapsed .sql-workspace {
-    padding-left: 44px;
+    padding-left: 56px;
   }
 
 }
@@ -374,7 +377,6 @@
 
   .sql-context-rail-button {
     position: static;
-    margin-bottom: 10px;
   }
 
   .sql-preview-limit-field {

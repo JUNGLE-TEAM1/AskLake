@@ -246,6 +246,13 @@ function getJobScheduleKind(job: JobRowData): JobScheduleKind {
   return "other";
 }
 
+function formatJobSchedule(schedule: string) {
+  const normalizedSchedule = schedule.trim().toLocaleLowerCase();
+  return !normalizedSchedule || normalizedSchedule === "-" || ["manual", "수동", "스케줄 없음", "건너뛰기"].some((token) => normalizedSchedule.includes(token))
+    ? "스케줄 없음"
+    : schedule;
+}
+
 function matchesJobListQuery(job: JobRowData, query: JobListQuery) {
   const statuses = new Set(query.statuses ?? []);
   return (
@@ -1355,25 +1362,80 @@ function formatOperationalDelay(value: number | null) {
 }
 
 const jobDetailFieldLabelMap: Record<string, string> = {
+  Accept: "응답 형식",
   Aggregation: "집계 주기",
+  Authentication: "인증",
+  "Authentication Type": "인증 방식",
+  "Broker / Endpoint": "브로커 / 엔드포인트",
   "Bootstrap Server": "부트스트랩 서버",
   Bucket: "버킷",
+  "Bucket / Stage Name": "버킷 / 스테이지 이름",
+  "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
+  Collection: "컬렉션",
+  "Connection URI": "연결 URI",
   "Consumer Group": "컨슈머 그룹",
+  "CONSUMER GROUP ID": "컨슈머 그룹 ID",
+  "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
   Database: "데이터베이스",
+  "DATABASE / SCHEMA": "데이터베이스 / 스키마",
+  "Database Name": "데이터베이스 이름",
   Dataset: "데이터셋",
+  Delimiter: "구분자",
+  Encoding: "인코딩",
+  Endpoint: "엔드포인트",
+  "Endpoint / Host": "엔드포인트 / 호스트",
+  "Endpoint URL": "엔드포인트 URL",
+  "File Type": "파일 형식",
   Format: "파일 형식",
-  Header: "헤더 포함",
+  Header: "헤더 처리",
   Host: "호스트",
   "Incremental Key": "증분 기준 키",
+  "Lake Access": "레이크 접근",
+  "Lake Type": "레이크 유형",
+  "Message Format": "메시지 형식",
+  Method: "메서드",
   Offset: "시작 오프셋",
+  "Offset Policy": "오프셋 정책",
+  "Pagination Strategy": "페이지네이션 방식",
+  Path: "경로",
+  "Path / Prefix": "경로 / 프리픽스",
+  Port: "포트",
   Prefix: "경로 접두사",
+  Region: "리전",
+  "Root Path": "루트 경로",
+  "Storage Provider": "스토리지 제공자",
+  "Stream Type": "스트림 유형",
   Table: "테이블",
   Topic: "토픽",
+  "TOPIC / QUEUE NAME": "토픽 / 큐 이름",
+  Username: "사용자 이름",
+  "Use Path Style": "Path Style 사용",
   Window: "집계 범위",
+};
+
+const hiddenJobDetailFieldLabels = new Set([
+  "Access Key",
+  "Password / Auth Token",
+  "Secret Key",
+  "Token / Secret",
+]);
+
+const jobSourceTypeLabelMap: Record<string, string> = {
+  "Data Lake": "데이터 레이크",
+  "File / S3": "파일 / MinIO",
+  "Stream / Kafka": "스트림 / Kafka",
 };
 
 function getJobDetailFieldLabel(label: string) {
   return jobDetailFieldLabelMap[label] ?? label;
+}
+
+function isVisibleJobDetailField(label: string) {
+  return !label.startsWith("__") && !hiddenJobDetailFieldLabels.has(label);
+}
+
+function getJobSourceTypeLabel(value: string) {
+  return jobSourceTypeLabelMap[value] ?? value;
 }
 
 const ruleActionLabelMap: Record<string, string> = {
@@ -1677,8 +1739,9 @@ export function JobDetailPage({
   onCommand: (job: JobRowData, command: JobCommand) => void;
   onRuns: () => void;
 }) {
-  const sourceType = job.source.split(" / ")[0] ?? job.source;
-  const sourcePath = job.source.split(" / ")[1] ?? job.source;
+  const rawSourceType = job.sourceType ?? job.source.split(" / ")[0] ?? job.source;
+  const sourceType = getJobSourceTypeLabel(rawSourceType);
+  const sourcePath = job.sourceLabel ?? (job.source.split(" / ").slice(1).join(" / ") || job.source);
   const stats = job.stats ?? fallbackJobStats(job);
   const realtime = isRealtimeJob(job);
   const totalRunsLabel = stats.totalRuns === "-" || stats.totalRuns.endsWith("회") ? stats.totalRuns : `${stats.totalRuns}회`;
@@ -1800,7 +1863,7 @@ export function JobDetailPage({
               value={activeRun ? `${formatCompactDateTime(activeRun.startedAt)} 시작` : latestRun ? runStatusMeta[latestRun.status].label : "-"}
             />
             <OperationSummaryItem
-              detail={realtime ? job.scheduleSummary ?? job.schedule : job.schedule}
+              detail={realtime ? job.scheduleSummary ?? formatJobSchedule(job.schedule) : formatJobSchedule(job.schedule)}
               label={realtime ? "수집 방식" : "다음 실행"}
               tone="scheduled"
               value={realtime ? "실시간" : formatCompactDateTime(job.nextRun)}
@@ -1840,11 +1903,13 @@ export function JobDetailPage({
           </AccordionTrigger>
           <AccordionContent className="grid items-stretch gap-4 border-t border-slate-100 p-4 lg:grid-cols-2">
             <JobEndpointCard
-              badge={job.sourceType ?? sourceType}
+              badge={sourceType}
               icon={<Database aria-hidden="true" className="size-5" />}
               items={[
                 { label: "소스 경로", value: job.sourceLabel ?? sourcePath },
-                ...(job.sourceConfig ?? []).map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
+                ...(job.sourceConfig ?? [])
+                  .filter(([label]) => isVisibleJobDetailField(label))
+                  .map(([label, value]) => ({ label: getJobDetailFieldLabel(label), value })),
               ]}
               title="소스"
               tone="source"
@@ -1946,7 +2011,7 @@ export function JobDetailPage({
               </span>
               <span className="grid min-w-0 gap-1">
                 <span className="text-base font-[850] leading-tight text-slate-900">스케줄 / 권한</span>
-                <span className="text-sm font-semibold text-slate-500">{job.schedule} · 역할별 접근 권한</span>
+                <span className="text-sm font-semibold text-slate-500">{formatJobSchedule(job.schedule)} · 역할별 접근 권한</span>
               </span>
             </span>
           </AccordionTrigger>
@@ -1961,8 +2026,8 @@ export function JobDetailPage({
               <KeyValueList
                 className={detailKeyValueListClassName}
                 items={[
-                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : "반복 스케줄" },
-                  { label: "주기", value: job.schedule },
+                  { label: "실행 유형", value: isRealtimeJob(job) ? "실시간 수집" : getJobScheduleKind(job) === "none" ? "수동 실행" : "반복 스케줄" },
+                  { label: "주기", value: formatJobSchedule(job.schedule) },
                   { label: "다음 실행", value: formatCompactDateTime(job.nextRun) },
                   { label: "재시도 정책", value: retrySummary },
                 ]}

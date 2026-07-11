@@ -23,6 +23,17 @@ import {
 } from "lucide-react";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -58,8 +69,10 @@ import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
 
@@ -124,6 +137,7 @@ const catalogStatusFilterOptions: Array<{ label: string; value: CatalogStatusFil
 ];
 
 const catalogPageSize = 5;
+const materializationRunPageSize = 5;
 const catalogSearchDebounceMs = 300;
 const lineageNodeWidth = 220;
 const lineageNodeHeaderHeight = 76;
@@ -162,6 +176,44 @@ function getCatalogTagsByFrequency(datasets: CatalogDataset[]) {
   return Array.from(tagCounts.values())
     .sort((left, right) => right.count - left.count || left.firstIndex - right.firstIndex)
     .map(({ tag }) => tag);
+}
+
+function formatRunCreatedAt(value: string) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return value || "-";
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(parsed));
+}
+
+function formatRunStorageSize(sizeBytes: number) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "0B";
+  if (sizeBytes < 1024) return `${sizeBytes}B`;
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = sizeBytes;
+  for (const unit of units) {
+    size /= 1024;
+    if (size < 1024) return `${size.toFixed(1)}${unit}`;
+  }
+  return `${size.toFixed(1)}PB`;
+}
+
+function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
+  if (status === "success") return "성공";
+  if (status === "failed") return "실패";
+  if (status === "canceled") return "취소";
+  if (status === "running") return "실행 중";
+  return "대기";
+}
+
+function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
+  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
+  if (executionMode === "selected_model") return "선택 모델";
+  if (executionMode === "auto_model") return "자동 모델";
+  if (executionMode === "missing_model") return "모델 없음";
+  return executionMode || "처리 정보 없음";
 }
 
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
@@ -256,12 +308,16 @@ export function CatalogPage({
   error = null,
   loading = false,
   onAction,
+  onMaterializationRunDelete,
+  onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onMaterializationRunDelete: (datasetId: string, runId: string) => void;
+  onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
@@ -269,12 +325,15 @@ export function CatalogPage({
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+  const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
+  const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const tags = useMemo(() => getCatalogTagsByFrequency(datasets), [datasets]);
   const searchQuery = useMemo(() => parseCatalogSearchQuery(debouncedSearchText, tags), [debouncedSearchText, tags]);
+  const canQueryCurrentDataset = (dataset: CatalogDataset | null | undefined) => canQueryDatasetAs(dataset, undefined);
   const filteredDatasets = useMemo(() => datasets
     .map((dataset, index) => ({ dataset, index }))
     .filter(({ dataset }) => {
@@ -398,6 +457,36 @@ export function CatalogPage({
     setActiveModal(variant);
   };
 
+  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
+    const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
+    const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
+    setMaterializationRunPageByDatasetId((state) => ({
+      ...state,
+      [dataset.id]: normalizedPage,
+    }));
+    onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
+  };
+
+  const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
+    event.stopPropagation();
+    if (run.status !== "success" || !canQueryCurrentDataset(dataset)) return;
+    setPreviewDataset(dataset);
+    setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
+    onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
+  };
+
+  const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
+    event.stopPropagation();
+    setSelectedSqlRunTarget((target) => target?.datasetId === dataset.id && target.datasetName === dataset.name && target.runId === runId ? null : target);
+    onMaterializationRunDelete(dataset.id, runId);
+  };
+
+  const openSelectedSqlDataset = () => {
+    if (!canQueryCurrentDataset(previewDataset) || !selectedSqlRunTarget || selectedSqlRunTarget.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name) return;
+    onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
+    onOpenSql(previewDataset);
+  };
+
   const renderPreviewContent = (fromMobileSheet = false) => (
     <>
       <PanelHeader
@@ -470,7 +559,39 @@ export function CatalogPage({
                 </Button>
               </AccordionContent>
             </AccordionItem>
+            <AccordionItem value="materialization-runs">
+              <AccordionTrigger>
+                <span className="catalog-preview-accordion-label"><ExternalLink /> 데이터 버전</span>
+              </AccordionTrigger>
+              <AccordionContent>
+                <CatalogMaterializationRuns
+                  canQueryDatasetForCurrentUser={canQueryCurrentDataset}
+                  dataset={previewDataset}
+                  onDelete={deleteMaterializationRun}
+                  onPageChange={updateMaterializationRunPage}
+                  onSelectRun={selectSqlMaterializationRun}
+                  page={materializationRunPageByDatasetId[previewDataset.id] ?? 1}
+                  selectedRunId={selectedSqlRunTarget?.datasetId === previewDataset.id ? selectedSqlRunTarget.runId : null}
+                />
+              </AccordionContent>
+            </AccordionItem>
           </Accordion>
+          <Button
+            className="catalog-wide-button"
+            disabled={!canQueryCurrentDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
+            shape="compact"
+            size="sm"
+            title={!canQueryCurrentDataset(previewDataset)
+              ? permissionDeniedMessage("데이터셋", "SQL 실행")
+              : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
+                ? "선택한 데이터 버전을 기준으로 SQL 분석을 엽니다."
+                : "성공한 데이터 버전을 먼저 선택해 주세요."}
+            type="button"
+            variant="outline"
+            onClick={openSelectedSqlDataset}
+          >
+            <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+          </Button>
           <TagList align="center" className="catalog-preview-tags" density="compact">
             {previewDataset.tags.map((tag) => (
               <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
@@ -800,6 +921,144 @@ function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function CatalogMaterializationRuns({
+  canQueryDatasetForCurrentUser,
+  dataset,
+  onDelete,
+  onPageChange,
+  onSelectRun,
+  page,
+  selectedRunId,
+}: {
+  canQueryDatasetForCurrentUser: (dataset: CatalogDataset | null | undefined) => boolean;
+  dataset: CatalogDataset;
+  onDelete: (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => void;
+  onPageChange: (dataset: CatalogDataset, nextPage: number) => void;
+  onSelectRun: (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => void;
+  page: number;
+  selectedRunId: string | null;
+}) {
+  const runs = dataset.materializationRuns ?? [];
+  const totalPages = Math.max(1, Math.ceil(runs.length / materializationRunPageSize));
+  const currentPage = Math.min(Math.max(page, 1), totalPages);
+  const pageStartIndex = (currentPage - 1) * materializationRunPageSize;
+  const visibleRuns = runs.slice(pageStartIndex, pageStartIndex + materializationRunPageSize);
+
+  return (
+    <div className="catalog-materialization-panel grid gap-3" onClick={(event) => event.stopPropagation()}>
+      <p className="m-0 text-xs font-semibold leading-5 text-slate-500">
+        SQL 분석에 사용할 데이터 저장 시점을 선택합니다.
+      </p>
+      {visibleRuns.length > 0 ? (
+        <div className="grid gap-2">
+          {visibleRuns.map((run) => {
+            const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
+            const isSelected = run.runId === selectedRunId;
+            const statusTone = run.status === "success" ? "success" : run.status === "failed" ? "danger" : run.status === "running" ? "default" : "muted";
+            const textStructuringChecks = run.textStructuringExecution?.columns ?? run.textStructuring ?? [];
+            const modelProvenance = textStructuringChecks.map((check) => {
+              const targetColumn = check.targetColumn || check.target || check.output || "컬럼";
+              const modelArtifact = check.selectedModelArtifact || check.modelArtifact;
+              const execution = modelArtifact
+                ? `${formatCatalogModelExecution(check.executionMode, check.fallbackUsed)} · ${modelArtifact}`
+                : formatCatalogModelExecution(check.executionMode || check.runtimeStatus, check.fallbackUsed);
+              return `${targetColumn}: ${execution}`;
+            }).join(", ");
+            const quarantineRows = Number(run.quarantine?.rows ?? 0);
+
+            return (
+            <Card
+              aria-disabled={!isSelectable}
+              aria-pressed={isSelected}
+              className={cn(
+                "grid gap-2 p-3 transition-colors",
+                isSelectable ? "cursor-pointer hover:border-blue-300 hover:bg-blue-50/40" : "opacity-70",
+                isSelected && "border-blue-500 bg-blue-50 ring-1 ring-blue-200",
+              )}
+              key={run.runId}
+              role="button"
+              size="none"
+              tabIndex={isSelectable ? 0 : -1}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 데이터 버전만 SQL 분석 대상으로 선택할 수 있습니다."}
+              onClick={(event) => onSelectRun(event, dataset, run)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectRun(event, dataset, run);
+                }
+              }}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <StatusBadge shape="compact" size="sm" tone={statusTone}>{materializationRunStatusLabel(run.status)}</StatusBadge>
+                <strong className="min-w-0 truncate" title={run.runId}>{run.runId}</strong>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      aria-label={`${run.runId} 데이터 버전 삭제`}
+                      className="ml-auto"
+                      disabled={!canDeleteDatasetMaterializationRun(dataset)}
+                      shape="compact"
+                      size="sm"
+                      title={canDeleteDatasetMaterializationRun(dataset) ? "데이터 버전을 삭제합니다." : permissionDeniedMessage("데이터셋", "데이터 버전 삭제")}
+                      type="button"
+                      variant="ghost"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      삭제
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>데이터 버전을 삭제하시겠습니까?</AlertDialogTitle>
+                      <AlertDialogDescription>{run.runId} 버전은 삭제 후 복구할 수 없습니다.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>취소</AlertDialogCancel>
+                      <AlertDialogAction onClick={(event) => onDelete(event, dataset, run.runId)}>삭제</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              <div className="grid gap-1 text-xs text-slate-600 sm:grid-cols-2">
+                <span>{formatRunCreatedAt(run.createdAt)}</span>
+                <span>{run.rowCount.toLocaleString()}행 · {formatRunStorageSize(run.storageSizeBytes)}</span>
+                <span className="truncate sm:col-span-2" title={run.sourceLabel}>{run.sourceLabel}</span>
+                {modelProvenance ? (
+                  <span className="truncate font-semibold text-blue-700 sm:col-span-2" title={modelProvenance}>
+                    모델 기반 변환 · {modelProvenance}
+                  </span>
+                ) : null}
+                {quarantineRows > 0 ? (
+                  <span className="truncate font-semibold text-amber-700 sm:col-span-2" title={run.quarantine?.path || undefined}>
+                    검증 격리 · {quarantineRows.toLocaleString()}행
+                  </span>
+                ) : null}
+              </div>
+            </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <Empty size="sm" variant="bordered">
+          <EmptyHeader>
+            <EmptyTitle>데이터 버전이 없습니다.</EmptyTitle>
+            <EmptyDescription>데이터셋 생성 또는 append가 완료되면 여기에서 SQL 분석 대상을 선택할 수 있습니다.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+      {runs.length > materializationRunPageSize && (
+        <PaginationBar
+          currentPage={currentPage}
+          onNext={() => onPageChange(dataset, currentPage + 1)}
+          onPrevious={() => onPageChange(dataset, currentPage - 1)}
+          rangeLabel={`${pageStartIndex + 1}-${Math.min(pageStartIndex + visibleRuns.length, runs.length)} / ${runs.length}`}
+          totalPages={totalPages}
+        />
+      )}
+    </div>
+  );
+}
+
 function CatalogOverview({ dataset, onLineage }: { dataset: CatalogDataset; onLineage: () => void }) {
   return (
     <div className="catalog-detail-grid catalog-detail-grid-single">
@@ -907,9 +1166,44 @@ function CatalogSchemaTable({ dataset, maxRows, variant = "full" }: { dataset: C
 }
 
 function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
-  const columns = dataset.schema.map(([name]) => name);
+  const pageSize = 100;
+  const [offset, setOffset] = useState(0);
+  const [rowsResult, setRowsResult] = useState<CatalogDatasetRowsResponse | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
+  const [isLoadingRows, setIsLoadingRows] = useState(false);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const [horizontalScrollPercent, setHorizontalScrollPercent] = useState(0);
+  const fallbackColumns = dataset.schema.slice(0, 8).map(([name]) => name);
+  const columns = rowsResult?.columns.length ? rowsResult.columns : fallbackColumns;
+  const rows = rowsResult?.rows ?? dataset.sampleRows.slice(0, pageSize);
+  const totalRows = rowsResult?.rowCount ?? rows.length;
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingRows(true);
+    setRowsError(null);
+    getCatalogDatasetRows(dataset.id, { limit: pageSize, offset })
+      .then((result) => {
+        if (!cancelled) setRowsResult(result);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRowsError(error instanceof Error ? error.message : "데이터셋 행을 불러오지 못했습니다.");
+        setRowsResult(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingRows(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [dataset.id, offset]);
+
+  useEffect(() => {
+    setOffset(0);
+    setHorizontalScrollPercent(0);
+  }, [dataset.id]);
 
   useEffect(() => {
     const viewport = scrollViewportRef.current;
@@ -926,7 +1220,7 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     updateScrollState();
 
     return () => resizeObserver.disconnect();
-  }, [dataset.id]);
+  }, [dataset.id, rowsResult]);
 
   const updateHorizontalScroll = ([nextPercent]: number[]) => {
     const viewport = scrollViewportRef.current;
@@ -937,13 +1231,28 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
     setHorizontalScrollPercent(nextPercent);
   };
 
+  const nextOffset = offset + pageSize;
+  const previousOffset = Math.max(0, offset - pageSize);
+  const hasNext = rowsResult?.hasNext ?? false;
+  const startLabel = totalRows === 0 ? 0 : offset + 1;
+  const endLabel = Math.min(offset + rows.length, totalRows);
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const currentPage = Math.floor(offset / pageSize) + 1;
+
   return (
     <Panel asChild className="catalog-table-card">
       <section>
         <div className="catalog-section-header">
           <h2>샘플 데이터</h2>
-          <span>읽기 전용 미리보기</span>
+          <span>{isLoadingRows ? "불러오는 중..." : `${startLabel}-${endLabel} / ${totalRows.toLocaleString()}행`}</span>
         </div>
+        {rowsError ? (
+          <Alert className="m-4" variant="destructive">
+            <AlertCircle />
+            <AlertTitle>실제 데이터를 불러오지 못했습니다.</AlertTitle>
+            <AlertDescription>{rowsError} 저장된 미리보기 데이터를 표시합니다.</AlertDescription>
+          </Alert>
+        ) : null}
         <Slider
           aria-label="샘플 데이터 가로 이동"
           className="catalog-sample-slider"
@@ -970,14 +1279,24 @@ function CatalogSample({ dataset }: { dataset: CatalogDataset }) {
               <TableRow>{columns.map((column, index) => <TableHead key={`${column}-${index}`}>{column}</TableHead>)}</TableRow>
             </TableHeader>
             <TableBody>
-              {dataset.sampleRows.map((row, rowIndex) => (
-                <TableRow key={`sample-${rowIndex}`}>
-                  {row.map((cell, cellIndex) => <TableCell key={`${rowIndex}-${cellIndex}`}>{cell}</TableCell>)}
+              {rows.map((row, rowIndex) => (
+                <TableRow key={`dataset-row-${offset + rowIndex}`}>
+                  {columns.map((_, cellIndex) => <TableCell key={`${offset + rowIndex}-${cellIndex}`}>{row[cellIndex] ?? ""}</TableCell>)}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </ScrollArea>
+        <PaginationBar
+          className="catalog-pagination"
+          currentPage={currentPage}
+          nextDisabled={!hasNext || isLoadingRows}
+          onNext={() => setOffset(nextOffset)}
+          onPrevious={() => setOffset(previousOffset)}
+          previousDisabled={offset === 0 || isLoadingRows}
+          rangeLabel={`${startLabel}-${endLabel} / ${totalRows.toLocaleString()}`}
+          totalPages={totalPages}
+        />
       </section>
     </Panel>
   );
