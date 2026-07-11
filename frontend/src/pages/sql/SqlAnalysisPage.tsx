@@ -743,11 +743,6 @@ export function SqlAnalysisPage({
         title="SQL 분석"
         titleClassName="text-4xl"
       />
-      {contextCollapsed && (
-        <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
-          <PanelLeftOpen data-icon="inline-start" />
-        </Button>
-      )}
       {!contextCollapsed && (
         <Panel asChild>
           <aside className="sql-dataset-panel" ref={contextPanelRef}>
@@ -917,6 +912,11 @@ export function SqlAnalysisPage({
       )}
 
       <main className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3">
+        {contextCollapsed && (
+          <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">
+            <PanelLeftOpen data-icon="inline-start" />
+          </Button>
+        )}
         <Panel className="grid gap-4 p-5">
           <PanelHeader
             actions={(
