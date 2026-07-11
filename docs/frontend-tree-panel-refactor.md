@@ -1,5 +1,7 @@
 # Frontend TreePanel Refactor
 
+> 현재 상태 (2026-07-11): 이 문서는 Issue #401 당시의 중간 단계 기록입니다. 이후 MUI/Emotion과 `react-arborist` 의존성은 제거됐습니다. SQL과 Dashboard는 Kibo/shadcn-compatible Tree를 사용하고, S3/ETL은 `TreePanel`과 로컬 `TreeView`/`TreeRow` 조합을 사용합니다. 대용량 가상화가 필요하면 실제 데이터 규모를 측정한 뒤 별도 엔진 도입을 결정합니다.
+
 ## 목적
 
 Issue #401은 S3, ETL, SQL, Dashboard에 흩어진 tree/list shell을 한 번에 지우는 작업이 아니라, 먼저 공통으로 안전하게 묶을 수 있는 wrapper와 상태 shell을 분리하는 작업이다.

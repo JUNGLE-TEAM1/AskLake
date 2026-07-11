@@ -630,11 +630,6 @@
   flex: 1 1 auto;
 }
 
-.asklake-dashboard-edit-stage > .asklake-dashboard-empty-canvas {
-  min-height: 460px;
-  flex: 1 1 auto;
-}
-
 .asklake-dashboard-edit-toolbar {
   position: sticky;
   bottom: 16px;

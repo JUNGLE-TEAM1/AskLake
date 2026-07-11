@@ -304,3 +304,9 @@ type JobOperationalMetrics = BatchOperationalMetrics | RealtimeOperationalMetric
 - 실시간 Job: `operationalMetrics`가 있으면 수집 안정성, 가동률, 처리 지연을 표시하고 없으면 `측정 대기`로 표시
 - QA fixture의 JOB-003에는 화면 검증용 `operationalMetrics` mock을 사용하며, 컴포넌트 내부에 수치를 하드코딩하지 않음
 - `operationalMetrics` 계약이 구현되면 Frontend의 `fallbackJobStats` 기반 안정성 계산은 제거하거나 개발용 fallback으로 제한
+
+## Text Structuring Model Placement - 2026-07-11
+
+- 모델 선택과 fallback 정책은 Job의 변환 설정에 속하며, ETL 변환 편집 모달이 해당 설정을 소유한다.
+- Job 상세는 변환 규칙의 구성 정보를 보여주되 전체 model artifact inventory를 별도 section으로 만들지 않는다.
+- 실제로 어떤 모델이 사용됐는지, fallback이 발생했는지, 검증 결과가 어땠는지는 설정값이 아니라 Run 결과이므로 `/jobs/:jobId/runs`의 실행 단계 상세에서 표시한다.

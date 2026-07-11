@@ -338,110 +338,7 @@ function createDefaultConfigs(dataset: DashboardDatasetOption): Record<Dashboard
   };
 }
 
-function includesColumn(columns: DashboardDatasetColumn[], columnName: string | undefined) {
-  return Boolean(columnName && columns.some((column) => column.name === columnName));
-}
-
-function firstAllowedColumn(columns: DashboardDatasetColumn[], current: string | undefined, allowEmpty = false) {
-  if (includesColumn(columns, current)) return current;
-  if (allowEmpty && !current) return "";
-  return columns[0]?.name ?? "";
-}
-
-function sanitizeConfigForDataset(
-  type: DashboardRuntimeWidgetType,
-  config: WidgetConfigDraft,
-  dataset: DashboardDatasetOption | null | undefined,
-): WidgetConfigDraft {
-  if (!dataset) return config;
-
-  const allColumns = dataset.columns;
-  const numericColumns = allColumns.filter((column) => column.type === "number");
-  const dimensionColumns = allColumns.filter((column) => column.type === "string" || column.type === "date");
-  const categoricalColumns = allColumns.filter((column) => column.type === "string");
-  const categoryColumns = categoricalColumns.length ? categoricalColumns : dimensionColumns;
-  const usesCount = config.aggregation === "count";
-
-  if (type === "metric") {
-    return {
-      ...config,
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "table") {
-    const columns = (config.columns ?? []).filter((column) => includesColumn(allColumns, column));
-    const nextColumns = columns.length ? columns : columnNames(allColumns.slice(0, 5));
-    return {
-      ...config,
-      columns: nextColumns,
-      sortKey: nextColumns.includes(config.sortKey ?? "") ? config.sortKey : nextColumns[0] ?? "",
-    };
-  }
-
-  if (type === "bar_chart") {
-    return {
-      ...config,
-      groupKey: firstAllowedColumn(dimensionColumns, config.groupKey, true),
-      xKey: firstAllowedColumn(allColumns, config.xKey),
-      yKey: usesCount ? firstAllowedColumn(numericColumns, config.yKey, true) : firstAllowedColumn(numericColumns, config.yKey),
-    };
-  }
-
-  if (type === "line_chart" || type === "area_chart") {
-    const timeColumns = allColumns.filter((column) => column.type === "date");
-    const lineXAxisColumns = timeColumns.length ? timeColumns : dimensionColumns.length ? dimensionColumns : allColumns;
-    return {
-      ...config,
-      seriesKey: firstAllowedColumn(dimensionColumns, config.seriesKey, true),
-      xKey: firstAllowedColumn(lineXAxisColumns, config.xKey),
-      yKey: usesCount ? firstAllowedColumn(numericColumns, config.yKey, true) : firstAllowedColumn(numericColumns, config.yKey),
-    };
-  }
-
-  if (type === "donut_chart" || type === "pie_chart" || type === "treemap_chart") {
-    return {
-      ...config,
-      labelKey: firstAllowedColumn(categoryColumns, config.labelKey),
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "radial_bar_chart") {
-    return {
-      ...config,
-      labelKey: firstAllowedColumn(dimensionColumns, config.labelKey, true),
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-    };
-  }
-
-  if (type === "heatmap_chart") {
-    return {
-      ...config,
-      valueKey: usesCount ? firstAllowedColumn(numericColumns, config.valueKey, true) : firstAllowedColumn(numericColumns, config.valueKey),
-      xKey: firstAllowedColumn(dimensionColumns, config.xKey),
-      yKey: firstAllowedColumn(dimensionColumns, config.yKey),
-    };
-  }
-
-  return config;
-}
-
-function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft, dataset?: DashboardDatasetOption | null) {
-  if (dataset) {
-    const allColumns = dataset.columns;
-    const numericColumns = allColumns.filter((column) => column.type === "number");
-    const dimensionColumns = allColumns.filter((column) => column.type === "string" || column.type === "date");
-    const usesCount = config.aggregation === "count";
-
-    if (type !== "table" && !usesCount && ["metric", "bar_chart", "line_chart", "area_chart", "donut_chart", "pie_chart", "radial_bar_chart", "heatmap_chart", "treemap_chart"].includes(type) && numericColumns.length === 0) {
-      return "선택한 데이터소스에 숫자 컬럼이 없어 이 위젯 타입을 만들 수 없습니다.";
-    }
-    if ((type === "bar_chart" || type === "line_chart" || type === "area_chart" || type === "donut_chart" || type === "pie_chart" || type === "radial_bar_chart" || type === "heatmap_chart" || type === "treemap_chart") && dimensionColumns.length === 0) {
-      return "선택한 데이터소스에 분류/날짜 컬럼이 없어 이 위젯 타입을 만들 수 없습니다.";
-    }
-  }
-
+function validateConfig(type: DashboardRuntimeWidgetType, config: WidgetConfigDraft) {
   const usesCount = config.aggregation === "count";
   if (type === "metric" && !usesCount && !config.valueKey) return "값 컬럼을 선택해 주세요.";
   if (type === "table" && (!config.columns || config.columns.length === 0)) return "표시할 컬럼을 1개 이상 선택해 주세요.";
@@ -738,7 +635,7 @@ export function WidgetConfigPanel({
   const requiresDatasetSelection = !isEditMode || isVisualizationRequestEdit;
   const shouldShowDatasetSelect = !isEditMode || isVisualizationRequestEdit;
   const validationMessage = selectedDataset || isEditMode
-    ? validateConfig(type, currentConfig, selectedDataset)
+    ? validateConfig(type, currentConfig)
     : "왼쪽에서 데이터셋을 먼저 선택해 주세요.";
   const canSubmit = Boolean(
     (isEditMode || (selectedDatasetId && selectedDataset))
@@ -814,15 +711,14 @@ export function WidgetConfigPanel({
       return;
     }
 
-    const sanitizedConfig = sanitizeConfigForDataset(type, currentConfig, selectedDataset);
-    const error = validateConfig(type, sanitizedConfig, selectedDataset);
+    const error = validateConfig(type, currentConfig);
     if (error) {
       setFormError(error);
       return;
     }
 
     setFormError(null);
-    const nextConfig = buildConfig(type, sanitizedConfig, {
+    const nextConfig = buildConfig(type, currentConfig, {
       color,
       description: description.trim() || undefined,
     });

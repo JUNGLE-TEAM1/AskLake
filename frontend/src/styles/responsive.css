@@ -198,11 +198,8 @@
   }
 
   .stepper-inner {
-    contain: paint;
     height: auto;
     justify-content: flex-start;
-    max-width: 100%;
-    overflow-x: auto;
     padding: 18px 20px;
   }
 
@@ -232,13 +229,6 @@
   }
 
   .option-grid,
-  .admin-permission-form,
-  .admin-permission-form.compact,
-  .admin-permission-toolbar,
-  .admin-permission-workbench,
-  .admin-audit-filter,
-  .admin-console-metric-grid,
-  .profile-permission-grid,
   .form-grid,
   .form-grid.compact,
   .creation-validation-list,
@@ -257,35 +247,6 @@
   .hegun-test-strip,
   .hegun-rule-library {
     grid-template-columns: 1fr;
-  }
-
-  .admin-permission-actions {
-    grid-column: auto;
-    grid-row: auto;
-  }
-
-  .admin-permission-action-group {
-    grid-column: auto;
-    grid-row: auto;
-  }
-
-  .admin-permission-form .primary-button {
-    grid-column: auto;
-    grid-row: auto;
-    justify-self: stretch;
-    width: 100%;
-  }
-
-  .admin-grant-item {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-permission-detail > header {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-resource-state-actions {
-    justify-items: stretch;
   }
 
   .hegun-rule-footer {
@@ -319,21 +280,6 @@
   .run-dag-modal > section,
   .run-dag-modal-panel {
     max-height: calc(100vh - 24px);
-  }
-
-  .admin-activity-modal {
-    padding: 12px;
-  }
-
-  .admin-activity-modal > section {
-    max-height: calc(100vh - 24px);
-  }
-
-  .admin-activity-modal header,
-  .admin-activity-modal-status,
-  .admin-activity-log-heading,
-  .admin-activity-log-row {
-    align-items: flex-start;
   }
 
   .run-dag-modal-body {

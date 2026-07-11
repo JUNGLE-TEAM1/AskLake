@@ -43,6 +43,10 @@ export type JobRowData = {
   id: string;
   owner: string;
   ownerAvatarUrl?: string;
+  createdBy?: string;
+  createdByProfile?: IdentityProfile;
+  permissionGrants?: PermissionGrant[];
+  permissions?: ResourcePermissions;
   tag: string;
   source: string;
   target: string;
@@ -76,6 +80,7 @@ export type JobRowData = {
   targetLayer?: TargetLayer;
   targetPath?: string;
   schemaSampleValues?: Record<string, string>;
+  rag?: boolean;
   transformOutputColumns?: Array<[string, string]>;
   transformSteps?: TransformStepDraft[];
   qualityInvalidRows?: string[][];
@@ -362,6 +367,7 @@ export type CreatePipelineRequest = {
   targetDataset: string;
   targetDatabase?: string;
   targetDescription?: string;
+  targetTags?: string[];
   targetLayer: TargetLayer;
   targetFormat: string;
   owner: string;

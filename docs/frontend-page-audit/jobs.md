@@ -38,7 +38,7 @@
 3. 작업 목록 panel 안의 검색
 4. 작업 목록 table
 5. row action
-6. 실행 이력 route 이동
+6. 최근 실행 단계 modal
 7. empty/search-empty 상태
 
 목록 하단에는 페이지 이동 control만 표시하며 한 페이지에 5개 Job을 보여 줍니다. 현재 `/jobs`의 요약 행 수와 페이지 문구는 제거했습니다.
@@ -60,7 +60,7 @@
 | 상태/태그 | `StatusBadge`, `Spinner`, `Progress`, `ProgressLabel`, `ProgressValue`, `Chip`, `TagList` | 목록 상태는 legacy CSS를 제거하고 `StatusBadge`로 정렬했습니다. `running` 상태에는 공통 `Spinner`를 함께 표시하고, 실행 중인 배치 스케줄 Job은 상태 아래에 단계명과 진행률을 표시합니다. card/detail의 tag 패턴은 유지합니다. |
 | 소유자 | ReUI-style local `Avatar`, `AvatarImage`, `AvatarFallback` | Radix Avatar primitive를 직접 사용합니다. 목록 avatar는 `lg` 크기로 표시하고, mock owner에는 임의의 프로필 사진을 연결합니다. live API에서 이미지가 없으면 이니셜 fallback, 이름, `updatedAt` 우선의 최근 수정 시각을 함께 표시합니다. |
 | empty state | `EmptyState` | shadcn `Empty` 기준으로 재정렬 후보입니다. |
-| 마지막 실행 이동 | `Button` link | 상태와 관계없이 `실행 이력`으로 `/jobs/:jobId/runs`에 이동합니다. |
+| 마지막 실행 이동 | `Button` link + `RunDagModal` | 상태와 관계없이 `실행 이력`으로 최신 Run의 실행 단계 modal을 엽니다. Run이 아직 없을 때만 전체 실행 이력 route로 이동합니다. |
 
 ## 5. 이번 구현에서 정리한 영역
 
@@ -111,7 +111,7 @@ TanStack `DataTable`과 shadcn `Table` 조합은 유지했습니다. 제목/보�
 
 ### 5.5 마지막 실행의 상세 이동
 
-목록에서 긴 실패 로그를 modal로 바로 열지 않습니다. 상태와 관계없이 `실행 이력` link로 `/jobs/:jobId/runs`에 이동하고, 로그와 DAG는 실행 이력에서 해당 Run을 선택한 뒤 확인하는 흐름으로 통일합니다. 목록의 날짜 아래 실행 결과 텍스트는 제거합니다.
+목록에서 긴 실패 로그를 modal로 바로 열지 않습니다. 상태와 관계없이 `실행 이력` link는 최신 Run의 `RunDagModal`을 열어 단계 상태와 진단 메시지를 바로 확인하게 합니다. 전체 실행 이력과 과거 Run 비교는 Job 상세 화면의 `실행 이력 보기` route에서 확인합니다. Run이 없는 Job은 기존처럼 전체 실행 이력 route로 이동합니다. 목록의 날짜 아래 실행 결과 텍스트는 제거합니다.
 
 ### 5.6 panel hierarchy와 table 정보 순서
 
@@ -144,7 +144,7 @@ TanStack `DataTable`과 shadcn `Table` 조합은 유지했습니다. 제목/보�
 | row action | `IconButton` + `Tooltip` | 완료 | `/jobs` row action에 적용했습니다. 전역 흡수는 보류합니다. |
 | table stacked cell | AskLake composition | 완료 | `DataTableStackedCell` 계열을 추가했습니다. |
 | owner identity | ReUI-style local `Avatar` + `AvatarImage` + `AvatarFallback` | 완료 | Radix Avatar primitive 위에 이미지, 이니셜 fallback, owner label을 조합했습니다. |
-| 실행 상세 이동 | route link | 완료 | 목록의 긴 로그 modal을 제거하고 실행 이력 route로 보냅니다. |
+| 실행 상세 이동 | `RunDagModal` | 완료 | 목록의 `실행 이력`은 최신 Run의 단계 modal을 열고, 전체 이력은 Job 상세 화면에서 확인합니다. |
 | 실행 이력 로그/DAG | `RunLogModal`, `RunDagModal` | 중간 | `/jobs/:jobId/runs` 내부의 선택 흐름과 deep link는 후속 정리 대상입니다. |
 | empty state | shadcn `Empty` | 중간 | `EmptyState` 흡수 기준과 함께 처리합니다. |
 | status/owner/tag pill | `Badge` variant 또는 `StatusBadge` 유지 | 낮음 | 지금 당장 바꾸면 색상 회귀 위험이 있습니다. |
@@ -253,17 +253,17 @@ QA 메모:
 - icon-only action에 hover/focus 설명을 제공하는 Tooltip을 적용했습니다.
 - 클릭 시 route 이동 또는 command 실행이 발생하므로 실제 구현 작업에서는 route/command regression을 조심해야 합니다.
 
-### 8.5 실행 이력 이동
+### 8.5 최신 실행 단계 보기
 
 확인 대상:
 
 - 모든 row의 `실행 이력` link
-- `/jobs/:jobId/runs` route 이동
+- 최신 Run의 `RunDagModal` 열기
 
 QA 메모:
 
-- 목록 row는 long log를 직접 열지 않고 실행 이력 route로 이동합니다.
-- 실행 이력에서 Run을 선택해 DAG와 원문 로그를 확인하는 흐름을 유지합니다.
+- 목록 row는 long log를 직접 열지 않고 최신 Run의 단계 modal을 엽니다.
+- 전체 실행 이력과 과거 Run의 로그/DAG 비교는 `/jobs/:jobId/runs`에서 유지합니다.
 
 ## 9. 후속 작업 후보
 
@@ -314,7 +314,7 @@ QA 메모:
 
 `#440` merge 후 `#441` 브랜치를 최신 `refactor` 기준으로 갱신합니다. `/jobs/:jobId` 구현에서는 이번에 추가한 table cell/action 기준을 무조건 확대하지 않고, 역할과 interaction이 실제로 같을 때만 재사용합니다.
 
-`GET /api/etl/jobs`의 status/scheduleKind query와 facet contract를 적용했습니다. 다음 단계에서는 서버 페이지네이션과 검색 query를 같은 계약에 포함할지 검토합니다. `#442`에서는 실행 이력 route에 runId/DAG 선택 상태를 URL로 유지할지 결정합니다.
+`GET /api/etl/jobs`의 status/scheduleKind query와 facet contract를 적용했습니다. 다음 단계에서는 서버 페이지네이션과 검색 query를 같은 계약에 포함할지 검토합니다. 목록의 최신 Run 단계는 modal로 빠르게 확인하며, 과거 Run을 URL로 직접 선택하는 deep link는 별도 후속 과제로 둡니다.
 
 ## 13. #441 상세 페이지 감사에서 되돌아온 공통 후보
 
@@ -324,7 +324,7 @@ QA 메모:
 | --- | --- | --- |
 | action button variant 기준 | `/jobs`, `/jobs/:jobId`, `/jobs/:jobId/runs` | `ActionGroup`, `Button`, `IconButton`을 모두 쓰고 있어 tone/size/tooltip 기준을 한 번에 정리하는 편이 좋습니다. |
 | status/tag pill 기준 | `/jobs`, `/jobs/:jobId` | `StatusBadge`, `Chip`, `TagList`가 반복됩니다. 당장 제거보다 `Badge` 흡수 가능성을 문서로 추적합니다. |
-| 실행 이력 이동 기준 | `/jobs`, `/jobs/:jobId/runs` | 목록은 실행 이력 route로 이동합니다. #442에서 runId/DAG 선택 상태의 deep link 여부를 검증합니다. |
+| 실행 이력 이동 기준 | `/jobs`, `/jobs/:jobId/runs` | 목록은 최신 Run 단계 modal을 열고, 실행 이력 route는 전체 이력과 과거 Run 비교를 담당합니다. deep link는 별도 후속 과제로 둡니다. |
 | small table/read-only table 기준 | `/jobs/:jobId`, `/jobs/:jobId/runs` | 작은 read-only table은 shadcn `Table`, 실행 이력 table은 `DataTable` 후보로 나눠 보는 것이 좋습니다. |
 | detail header/tab 기준 | `/jobs/:jobId`, `/jobs/:jobId/runs` | 같은 `JobDetailHeader`를 공유하므로 tab/header 교체는 두 route를 함께 QA해야 합니다. |
 
@@ -335,5 +335,5 @@ QA 메모:
 | 공통 후보 | 관련 화면 | 판단 |
 | --- | --- | --- |
 | 서버 목록 filter 기준 | `/jobs`, `/jobs/:jobId/runs` | `/jobs`의 임시 로컬 필터는 제거했습니다. 서버 query/facet contract가 정해진 뒤 각 화면에 필요한 filter UI를 결정합니다. |
-| 실행 상세 기준 | `/jobs`, `/jobs/:jobId/runs` | 목록은 실행 이력 route로 이동하고, 로그와 DAG는 실행 이력에서 Run을 선택해 확인합니다. |
+| 실행 상세 기준 | `/jobs`, `/jobs/:jobId/runs` | 목록은 최신 Run의 단계 modal을 열고, 전체 이력과 과거 Run 비교는 실행 이력 route에서 확인합니다. |
 | table action label/tooltip | `/jobs`, `/jobs/:jobId/runs` | 목록 icon-only action에는 Tooltip을 적용했습니다. runs text action의 밀도와 비교해 공통 기준을 확정합니다. |

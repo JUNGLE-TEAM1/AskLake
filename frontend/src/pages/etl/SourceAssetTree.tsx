@@ -7,7 +7,6 @@ export type SourceAsset = [path: string, meta: string, status: string];
 
 type SourceAssetTreeProps = {
   assets: SourceAsset[];
-  disabled?: boolean;
   /** Folder paths the parent already fetched, including empty folders. */
   loadedFolderPaths?: readonly string[];
   loadingPath?: string;
@@ -38,7 +37,6 @@ const LABELS = {
 
 export function SourceAssetTree({
   assets,
-  disabled = false,
   loadedFolderPaths,
   loadingPath = "",
   selectedPath,
@@ -85,7 +83,6 @@ export function SourceAssetTree({
 
   const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
     const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isFileDisabled = canSelectFile && disabled;
     const isSelected = canSelectFile && node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const folderMeta = node.path === loadingPath

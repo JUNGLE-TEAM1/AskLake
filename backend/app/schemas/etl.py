@@ -282,6 +282,7 @@ class CreatePipelineRequest(CamelModel):
     target_dataset: str
     target_database: str | None = None
     target_description: str | None = None
+    target_tags: list[str] = Field(default_factory=list)
     target_layer: TargetLayer
     target_format: str
     owner: str
@@ -322,6 +323,50 @@ class ReviewSnapshot(CamelModel):
     permission: list[ReviewEntry]
     schema_: list[ReviewSchemaRow] = Field(alias="schema")
     validation: list[ReviewValidationRow]
+
+
+class UpdatePipelineRequest(CamelModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, use_enum_values=True, extra="forbid")
+
+    job_name: str
+    schema_columns: list[SchemaColumnDraft] = Field(default_factory=list)
+    schema_fingerprint: str | None = None
+    schema_sample_rows: list[list[str]] = Field(default_factory=list)
+    schema_summary: str = ""
+    rule_summary: str = ""
+    transform_output_columns: SourceFieldRows = Field(default_factory=list)
+    transform_steps: list[TransformStepDraft] = Field(default_factory=list)
+    quality_invalid_rows: list[list[str]] = Field(default_factory=list)
+    quality_rules: list[QualityRuleDraft] = Field(default_factory=list)
+    quality_score: float | None = None
+    quality_status: str = "idle"
+    schedule_label: str
+    schedule_summary: str | None = None
+    retry_policy: RetryPolicyDraft | None = None
+    retry_policy_summary: str = ""
+    run_limit_summary: str = ""
+    start_date: str | None = None
+    end_date: str | None = None
+    next_run_utc: str | None = None
+    overlap_policy: str | None = None
+    timezone: str | None = None
+    watermark_policy: WatermarkPolicyDraft | dict[str, Any] | None = None
+    permission_summary: str = ""
+    permission_roles: list[dict[str, Any]] | None = None
+    storage_type: str | None = None
+    partition: str | None = None
+    partition_columns: list[str] | None = None
+    index_columns: list[str] | None = None
+    compression: str | None = None
+    storage_path: str | None = None
+    target_dataset: str
+    target_database: str | None = None
+    target_description: str | None = None
+    target_tags: list[str] = Field(default_factory=list)
+    target_layer: TargetLayer
+    target_format: str
+    owner: str
+    rag: bool = False
 
 
 class JobCommandRequest(CamelModel):
