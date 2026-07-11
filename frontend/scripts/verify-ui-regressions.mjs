@@ -275,14 +275,15 @@ const checks = [
     ],
   },
   {
-    name: "Catalog explains materialization runs as selectable data versions",
+    name: "Catalog requires explicit dataset selection before SQL analysis",
     file: "src/pages/catalog/CatalogPage.tsx",
     patterns: [
-      /<ExternalLink \/> 데이터 버전/,
-      /SQL 분석에 사용할 데이터 저장 시점을 선택합니다\./,
-      /선택한 데이터 버전을 기준으로 SQL 분석을 엽니다\./,
+      /setSelectedSqlDatasetId\(dataset\.id\);/,
+      /selectedSqlDatasetId !== previewDataset\.id \|\| !canQueryCurrentDataset\(previewDataset\)/,
+      /onOpenSql\(previewDataset\);/,
+      /왼쪽 목록에서 데이터셋을 선택해 주세요\./,
     ],
-    forbiddenPatterns: [/생성 결과/],
+    forbiddenPatterns: [/<AccordionItem value="materialization-runs">/, /생성 결과/],
   },
   {
     name: "Catalog wide action button keeps icon and label aligned",

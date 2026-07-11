@@ -308,7 +308,6 @@ export function CatalogPage({
   error = null,
   loading = false,
   onAction,
-  onMaterializationRunDelete,
   onOpenSql,
   selectedDataset,
 }: {
@@ -316,7 +315,6 @@ export function CatalogPage({
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
-  onMaterializationRunDelete: (datasetId: string, runId: string) => void;
   onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
@@ -325,9 +323,8 @@ export function CatalogPage({
   const [filterState, setFilterState] = useState<CatalogFilterState>({ approvalRequired: false, available: false, rag: false });
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
-  const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
-  const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
+  const [selectedSqlDatasetId, setSelectedSqlDatasetId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [debouncedSearchText, setDebouncedSearchText] = useState("");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
@@ -444,7 +441,13 @@ export function CatalogPage({
 
   const selectPreviewDataset = (dataset: CatalogDataset) => {
     setPreviewDataset(dataset);
+    setSelectedSqlDatasetId(dataset.id);
     onAction("catalog.dataset.preview_selected", `/api/catalog/datasets/${dataset.id}`, dataset.id);
+  };
+
+  const openSelectedSqlDataset = () => {
+    if (selectedSqlDatasetId !== previewDataset.id || !canQueryCurrentDataset(previewDataset)) return;
+    onOpenSql(previewDataset);
   };
 
   const openPreviewModal = (variant: "lineage" | "schema", fromMobileSheet = false) => {
@@ -455,38 +458,6 @@ export function CatalogPage({
       previewDataset.id,
     );
     setActiveModal(variant);
-  };
-
-  const updateMaterializationRunPage = (dataset: CatalogDataset, nextPage: number) => {
-    const totalPages = Math.max(1, Math.ceil((dataset.materializationRuns?.length ?? 0) / materializationRunPageSize));
-    const normalizedPage = Math.min(Math.max(nextPage, 1), totalPages);
-    setMaterializationRunPageByDatasetId((state) => ({
-      ...state,
-      [dataset.id]: normalizedPage,
-    }));
-    onAction("catalog.dataset.materialization_runs_page_changed", `/api/catalog/datasets/${dataset.id}/materialization-runs?page=${normalizedPage}`, dataset.id);
-  };
-
-  const selectSqlMaterializationRun = (event: React.MouseEvent | React.KeyboardEvent, dataset: CatalogDataset, run: DatasetMaterializationRun) => {
-    event.stopPropagation();
-    if (run.status !== "success" || !canQueryCurrentDataset(dataset)) return;
-    setPreviewDataset(dataset);
-    setSelectedSqlRunTarget({ datasetId: dataset.id, datasetName: dataset.name, runId: run.runId });
-    onAction("catalog.dataset.materialization_run_selected_for_sql", `/api/catalog/datasets/${dataset.id}/materialization-runs/${run.runId}`, dataset.id);
-  };
-
-  const deleteMaterializationRun = (event: React.MouseEvent, dataset: CatalogDataset, runId: string) => {
-    event.stopPropagation();
-    setSelectedSqlRunTarget((target) => target?.datasetId === dataset.id && target.datasetName === dataset.name && target.runId === runId ? null : target);
-    onMaterializationRunDelete(dataset.id, runId);
-  };
-
-  const openSelectedSqlDataset = () => {
-    if (!canQueryCurrentDataset(previewDataset)) return;
-    if (selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name) {
-      onAction("catalog.open_in_sql.materialization_run_confirmed", `/api/catalog/datasets/${previewDataset.id}/materialization-runs/${selectedSqlRunTarget.runId}/query`, previewDataset.id, "success");
-    }
-    onOpenSql(previewDataset);
   };
 
   const renderPreviewContent = (fromMobileSheet = false) => (
@@ -561,33 +532,17 @@ export function CatalogPage({
                 </Button>
               </AccordionContent>
             </AccordionItem>
-            <AccordionItem value="materialization-runs">
-              <AccordionTrigger>
-                <span className="catalog-preview-accordion-label"><ExternalLink /> 데이터 버전</span>
-              </AccordionTrigger>
-              <AccordionContent>
-                <CatalogMaterializationRuns
-                  canQueryDatasetForCurrentUser={canQueryCurrentDataset}
-                  dataset={previewDataset}
-                  onDelete={deleteMaterializationRun}
-                  onPageChange={updateMaterializationRunPage}
-                  onSelectRun={selectSqlMaterializationRun}
-                  page={materializationRunPageByDatasetId[previewDataset.id] ?? 1}
-                  selectedRunId={selectedSqlRunTarget?.datasetId === previewDataset.id ? selectedSqlRunTarget.runId : null}
-                />
-              </AccordionContent>
-            </AccordionItem>
           </Accordion>
           <Button
             className="catalog-wide-button"
-            disabled={!canQueryCurrentDataset(previewDataset)}
+            disabled={selectedSqlDatasetId !== previewDataset.id || !canQueryCurrentDataset(previewDataset)}
             shape="compact"
             size="sm"
             title={!canQueryCurrentDataset(previewDataset)
               ? permissionDeniedMessage("데이터셋", "SQL 실행")
-              : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
-                ? "선택한 데이터 버전을 기준으로 SQL 분석을 엽니다."
-                : "현재 데이터셋을 기준으로 SQL 분석을 엽니다."}
+              : selectedSqlDatasetId === previewDataset.id
+                ? "선택한 데이터셋을 SQL 분석에서 엽니다."
+                : "왼쪽 목록에서 데이터셋을 선택해 주세요."}
             type="button"
             variant="outline"
             onClick={openSelectedSqlDataset}
@@ -733,6 +688,7 @@ export function CatalogPage({
                         type="button"
                         variant="ghost"
                         onClick={() => selectPreviewDataset(dataset)}
+                        title="데이터셋 선택"
                       >
                         <div className="catalog-result-summary">
                           <div className="catalog-result-title">
