@@ -62,9 +62,9 @@ import { TagList } from "@/components/ui/tag-list";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { getCatalogDatasetRows, getCatalogModelArtifacts } from "../../services/catalogApi";
+import { getCatalogDatasetRows } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
-import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
+import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
 import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 import { cn } from "@/lib/utils";
@@ -194,6 +194,14 @@ function materializationRunStatusLabel(status: DatasetMaterializationRun["status
   return "대기";
 }
 
+function formatCatalogModelExecution(executionMode?: string, fallbackUsed?: boolean) {
+  if (fallbackUsed || executionMode === "fallback_rule") return "규칙 Fallback";
+  if (executionMode === "selected_model") return "선택 모델";
+  if (executionMode === "auto_model") return "자동 모델";
+  if (executionMode === "missing_model") return "모델 없음";
+  return executionMode || "처리 정보 없음";
+}
+
 function parseCatalogSearchQuery(query: string, knownTags: string[]): CatalogSearchQuery {
   let remainingQuery = normalizeCatalogText(query);
   const tags: string[] = [];
@@ -306,8 +314,6 @@ export function CatalogPage({
   const [currentPage, setCurrentPage] = useState(1);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [materializationRunPageByDatasetId, setMaterializationRunPageByDatasetId] = useState<Record<string, number>>({});
-  const [modelArtifacts, setModelArtifacts] = useState<CatalogModelArtifact[]>([]);
-  const [modelArtifactsError, setModelArtifactsError] = useState<string | null>(null);
   const [pinnedDatasetIds, setPinnedDatasetIds] = useState<string[]>([]);
   const [selectedSqlRunTarget, setSelectedSqlRunTarget] = useState<{ datasetId: string; datasetName: string; runId: string } | null>(null);
   const [searchText, setSearchText] = useState("");
@@ -365,24 +371,6 @@ export function CatalogPage({
     if (currentPage === currentCatalogPage) return;
     setCurrentPage(currentCatalogPage);
   }, [currentCatalogPage, currentPage]);
-
-  useEffect(() => {
-    let cancelled = false;
-    getCatalogModelArtifacts()
-      .then((items) => {
-        if (cancelled) return;
-        setModelArtifacts(items);
-        setModelArtifactsError(null);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setModelArtifacts([]);
-        setModelArtifactsError(error instanceof Error ? error.message : "Failed to load model artifacts.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!hasCatalogResults || paginatedDatasets.length === 0) return;
@@ -758,7 +746,6 @@ export function CatalogPage({
                 totalPages={totalCatalogPages}
               />
             )}
-            <ModelArtifactsPanel artifacts={modelArtifacts} error={modelArtifactsError} />
           </Panel>
         </div>
 
@@ -911,48 +898,6 @@ export function DatasetStatusBadge({ dataset, shape = "default" }: { dataset: Ca
   );
 }
 
-function ModelArtifactsPanel({ artifacts, error }: { artifacts: CatalogModelArtifact[]; error: string | null }) {
-  const visibleArtifacts = artifacts.slice(0, 6);
-
-  return (
-    <Panel className="catalog-model-artifacts-panel">
-      <PanelHeader
-        icon={<TerminalSquare size={16} />}
-        meta={<Badge shape="compact" size="sm" variant="secondary">{artifacts.length}개</Badge>}
-        title="모델 아티팩트"
-      />
-      {error ? (
-        <Alert className="m-4" variant="destructive">
-          <AlertCircle />
-          <AlertTitle>모델 아티팩트를 불러오지 못했습니다.</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : visibleArtifacts.length > 0 ? (
-        <div className="grid gap-2 p-4">
-          {visibleArtifacts.map((artifact) => (
-            <Card className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]" key={artifact.id} size="none">
-              <StatusBadge shape="compact" size="sm" tone={artifact.status === "available" ? "success" : "muted"}>
-                {artifact.status || "tracked"}
-              </StatusBadge>
-              <strong className="min-w-0 truncate" title={artifact.id}>{artifact.targetColumn || artifact.outputColumn || artifact.id}</strong>
-              <span className="text-sm text-slate-600">{artifact.method || artifact.modelArtifact || artifact.runtimeStatus || "-"}</span>
-              <span className="text-sm text-slate-600">{typeof artifact.totalRows === "number" ? artifact.totalRows.toLocaleString() : "-"}행</span>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <Empty className="m-4" size="sm" variant="bordered">
-          <EmptyIcon><TerminalSquare /></EmptyIcon>
-          <EmptyHeader>
-            <EmptyTitle>모델 아티팩트가 없습니다.</EmptyTitle>
-            <EmptyDescription>연결된 모델 처리 결과가 생기면 이 영역에 표시됩니다.</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      )}
-    </Panel>
-  );
-}
-
 function CatalogMiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <Card className="catalog-mini-metric" size="sm" variant="muted">
@@ -993,6 +938,16 @@ function CatalogMaterializationRuns({
             const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
             const isSelected = run.runId === selectedRunId;
             const statusTone = run.status === "success" ? "success" : run.status === "failed" ? "danger" : run.status === "running" ? "default" : "muted";
+            const textStructuringChecks = run.textStructuringExecution?.columns ?? run.textStructuring ?? [];
+            const modelProvenance = textStructuringChecks.map((check) => {
+              const targetColumn = check.targetColumn || check.target || check.output || "컬럼";
+              const modelArtifact = check.selectedModelArtifact || check.modelArtifact;
+              const execution = modelArtifact
+                ? `${formatCatalogModelExecution(check.executionMode, check.fallbackUsed)} · ${modelArtifact}`
+                : formatCatalogModelExecution(check.executionMode || check.runtimeStatus, check.fallbackUsed);
+              return `${targetColumn}: ${execution}`;
+            }).join(", ");
+            const quarantineRows = Number(run.quarantine?.rows ?? 0);
 
             return (
             <Card
@@ -1051,6 +1006,16 @@ function CatalogMaterializationRuns({
                 <span>{formatRunCreatedAt(run.createdAt)}</span>
                 <span>{run.rowCount.toLocaleString()}행 · {formatRunStorageSize(run.storageSizeBytes)}</span>
                 <span className="truncate sm:col-span-2" title={run.sourceLabel}>{run.sourceLabel}</span>
+                {modelProvenance ? (
+                  <span className="truncate font-semibold text-blue-700 sm:col-span-2" title={modelProvenance}>
+                    모델 기반 변환 · {modelProvenance}
+                  </span>
+                ) : null}
+                {quarantineRows > 0 ? (
+                  <span className="truncate font-semibold text-amber-700 sm:col-span-2" title={run.quarantine?.path || undefined}>
+                    검증 격리 · {quarantineRows.toLocaleString()}행
+                  </span>
+                ) : null}
               </div>
             </Card>
             );
