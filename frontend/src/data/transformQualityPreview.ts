@@ -80,18 +80,6 @@ export type TransformQualityRunnerResult = {
   previewByStepId: Record<string, TransformQualityStepPreview>;
 };
 
-type CustomCsvClassifierRule = {
-  condition: string;
-  pattern: string;
-  value: string;
-};
-
-type CustomCsvClassifierConfig = {
-  fallbackValue: string;
-  rules: CustomCsvClassifierRule[];
-  sourceField: string;
-};
-
 export function runTransformQualitySamplePreview(
   recipeSteps: TransformQualityRecipeStepInput[],
   qualityRules: TransformQualityRuleInput[],
@@ -156,11 +144,12 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
     if (operation.includes("sql expression")) {
       return { failed: false, value: inputValue };
     }
-    if (operation.includes("custom csv classifier") || operation.includes("csv classifier")) {
-      return { failed: false, value: classifyCustomCsvValue(row, step, inputValue) };
-    }
     if (operation.includes("json")) {
       return { failed: false, value: readJsonPath(inputValue, step.params) };
+    }
+    if (operation.includes("regex")) {
+      const match = new RegExp(step.params || "^/products/([^/]+)").exec(inputValue);
+      return match?.[1] ? { failed: false, value: match[1] } : { failed: true, value: "" };
     }
     if (operation.includes("lower") || operation.includes("trim")) {
       return { failed: false, value: inputValue.trim().toLowerCase() };
@@ -180,51 +169,6 @@ function applyTransformStep(row: TransformQualitySampleRow, step: TransformQuali
   } catch {
     return { failed: true, value: "" };
   }
-}
-
-function classifyCustomCsvValue(row: TransformQualitySampleRow, step: TransformQualityRecipeStepInput, inputValue: string) {
-  const config = parseCustomCsvClassifierConfig(step.params, step.input);
-  const sourceValue = String(row[config.sourceField] ?? row[step.input] ?? inputValue ?? "");
-  const fallback = config.rules.find((rule) => rule.condition === "else")?.value
-    || config.fallbackValue
-    || config.rules.at(-1)?.value
-    || sourceValue;
-  const matched = config.rules.find((rule) => rule.condition !== "else" && matchesCustomCsvRule(sourceValue, rule));
-  return matched?.value ?? fallback;
-}
-
-function parseCustomCsvClassifierConfig(params: string, input: string) {
-  try {
-    const parsed = JSON.parse(params || "{}");
-    const rules: CustomCsvClassifierRule[] = Array.isArray(parsed.rules)
-      ? parsed.rules
-        .map((rule: Record<string, unknown>) => ({
-          condition: String(rule.condition || "keyword_any"),
-          pattern: String(rule.pattern || ""),
-          value: String(rule.value || "").trim(),
-        }))
-        .filter((rule: { value: string }) => rule.value)
-      : [];
-    return {
-      fallbackValue: String(parsed.fallbackValue || ""),
-      rules,
-      sourceField: String(parsed.sourceField || input),
-    } satisfies CustomCsvClassifierConfig;
-  } catch {
-    return { fallbackValue: "", rules: [], sourceField: input } satisfies CustomCsvClassifierConfig;
-  }
-}
-
-function matchesCustomCsvRule(value: string, rule: CustomCsvClassifierRule) {
-  const normalized = value.toLowerCase();
-  if (rule.condition === "empty") return value.trim().length === 0;
-  if (rule.condition === "not_empty") return value.trim().length > 0;
-  if (rule.condition === "numeric_lte") return Number(value) <= (Number(rule.pattern) || 0);
-  if (rule.condition === "numeric_gte") return Number(value) >= (Number(rule.pattern) || 0);
-  const keywords = rule.pattern.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-  if (keywords.length === 0) return false;
-  if (rule.condition === "keyword_all") return keywords.every((keyword) => normalized.includes(keyword));
-  return keywords.some((keyword) => normalized.includes(keyword));
 }
 
 function readJsonPath(rawJson: string, path: string) {

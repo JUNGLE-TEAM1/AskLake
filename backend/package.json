@@ -20,6 +20,7 @@
     "verify:fastapi-pair2": "node scripts/verify-fastapi-pair2.mjs",
     "verify:fastapi-sources": "node scripts/verify-fastapi-sources.mjs",
     "verify:target-metadata": "node scripts/verify-target-metadata-contract.mjs",
+    "verify:delimited-parser": "node scripts/verify-delimited-text-parser.mjs",
     "verify:dashboard-assistant-guard": "node scripts/verify-dashboard-assistant-guard.mjs",
     "verify:sources": "node scripts/verify-all-sources.mjs",
     "verify:spark-run": "node scripts/verify-spark-job-run.mjs",

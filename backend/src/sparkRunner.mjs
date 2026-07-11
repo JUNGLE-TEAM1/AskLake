@@ -134,6 +134,8 @@ function writeSparkJobManifest(manifestPath, job) {
     partitionColumns: job.partition || "",
     qualityRules: job.qualityRules ?? [],
     schemaColumns: job.schemaColumns ?? [],
+    sourceCollection: sourceCollectionFromConfig(job.sourceConfig ?? []),
+    sourceParsing: sourceParsingFromConfig(job.sourceConfig ?? []),
     transformSteps: job.transformSteps ?? [],
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
@@ -348,14 +350,107 @@ function sparkRowLimitFromJob(job) {
 function inferFormat(sourceConfig, prefix, fallback) {
   const sampleObject = fieldValue(sourceConfig, "__Sample Object");
   const fileType = String(fieldValue(sourceConfig, "File Type") || "").toLowerCase();
+  const parserMode = String(fieldValue(sourceConfig, "Parser Mode") || "").toLowerCase();
+  const delimitedFields = fieldValue(sourceConfig, "Delimited Fields");
   const probe = `${sampleObject} ${prefix} ${fileType}`.toLowerCase();
   if (probe.includes(".jsonl") || probe.includes("jsonl") || probe.includes("ndjson")) return "jsonl";
   if (probe.includes(".json") || probe.includes("json")) return "json";
   if (probe.includes(".parquet") || probe.includes("parquet")) return "parquet";
+  if (parserMode === "delimited" || delimitedFields || probe.includes(".log") || probe.includes("delimited")) return "csv";
   if (probe.includes(".txt") || probe.includes(".text") || probe.includes("txt")) return "txt";
   if (probe.includes(".tsv") || probe.includes("tsv")) return "csv";
   if (probe.includes(".csv") || probe.includes("csv")) return "csv";
   return fallback;
+}
+
+export function sourceParsingFromConfig(sourceConfig) {
+  const fields = parseDelimitedFields(fieldValue(sourceConfig, "Delimited Fields"));
+  const delimiter = decodeDelimiter(fieldValue(sourceConfig, "Delimiter"))
+    || decodeDelimiter(fieldValue(sourceConfig, "__Detected Delimiter"));
+  const header = parseHeader(
+    fieldValue(sourceConfig, "Header"),
+    fieldValue(sourceConfig, "__Detected Header"),
+  );
+  const quote = decodeSingleCharacter(fieldValue(sourceConfig, "Quote Character"), '"', "");
+  const escape = decodeSingleCharacter(fieldValue(sourceConfig, "Escape Character"), "", "");
+  const mode = String(fieldValue(sourceConfig, "Parser Mode") || "auto").trim().toLowerCase();
+  const rowDelimiter = decodeRowDelimiter(fieldValue(sourceConfig, "Row Delimiter"))
+    || decodeRowDelimiter(fieldValue(sourceConfig, "__Detected Row Delimiter"));
+  if (mode !== "delimited" && fields.length === 0 && !delimiter) return null;
+  return {
+    delimiter: delimiter || null,
+    encoding: fieldValue(sourceConfig, "Encoding") || "UTF-8",
+    escape,
+    fields,
+    header,
+    mode: mode === "raw" ? "raw" : "delimited",
+    quote,
+    rowDelimiter,
+  };
+}
+
+export function sourceCollectionFromConfig(sourceConfig) {
+  const scope = String(fieldValue(sourceConfig, "Collection Scope") || "file").trim().toLowerCase() === "folder"
+    ? "folder"
+    : "file";
+  return {
+    filePattern: scope === "folder" ? fieldValue(sourceConfig, "File Pattern") || null : null,
+    recursive: scope === "folder" && parseConfigBoolean(fieldValue(sourceConfig, "Recursive")),
+    scope,
+  };
+}
+
+function parseDelimitedFields(value) {
+  if (!String(value || "").trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 200).map((field, index) => ({
+      name: String(field?.name || `column_${index + 1}`).trim(),
+      nullable: field?.nullable !== false,
+      type: String(field?.type || "String"),
+    }));
+  } catch {
+    throw sparkError("Delimited Fields must be valid JSON before Spark execution.");
+  }
+}
+
+function decodeDelimiter(value) {
+  const raw = String(value || "").trim();
+  if (!raw || raw.toLowerCase() === "auto") return "";
+  const aliases = { "\\t": "\t", comma: ",", pipe: "|", semicolon: ";", space: " ", tab: "\t" };
+  const decoded = aliases[raw.toLowerCase()] ?? raw;
+  if (Array.from(decoded).length !== 1) throw sparkError("Spark CSV delimiter must be exactly one character.");
+  return decoded;
+}
+
+function decodeSingleCharacter(value, fallback, noneValue = fallback) {
+  const raw = String(value || "");
+  if (!raw) return fallback;
+  if (raw.toLowerCase() === "none") return noneValue;
+  const decoded = raw === "\\t" ? "\t" : raw === "\\\\" ? "\\" : raw;
+  if (Array.from(decoded).length !== 1) throw sparkError("Spark quote and escape values must be one character or none.");
+  return decoded;
+}
+
+function decodeRowDelimiter(value) {
+  const normalized = String(value || "auto").trim().toLowerCase();
+  if (!normalized || normalized === "auto") return null;
+  const aliases = { "\\n": "\n", "\\r": "\r", "\\r\\n": "\r\n", cr: "\r", crlf: "\r\n", lf: "\n", newline: "\n" };
+  const decoded = aliases[normalized];
+  if (!decoded) throw sparkError("Spark row delimiter must be auto, \\n, \\r, or \\r\\n.");
+  return decoded;
+}
+
+function parseConfigBoolean(value) {
+  return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function parseHeader(value, detectedValue) {
+  const normalized = String(value || "auto").trim().toLowerCase();
+  if (["true", "yes", "1", "header", "treat first row as header"].includes(normalized)) return true;
+  if (["false", "no", "0", "none", "no header"].includes(normalized)) return false;
+  return ["true", "yes", "1"].includes(String(detectedValue || "true").trim().toLowerCase());
 }
 
 function toS3APath(value) {

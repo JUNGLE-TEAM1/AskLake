@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import { Check } from "lucide-react";
 import { TreePanel } from "@/components/ui/tree-panel";
 import { TreeGroup, TreeRow, TreeView } from "@/components/ui/tree-view";
 
@@ -11,7 +12,7 @@ type SourceAssetTreeProps = {
   loadedFolderPaths?: readonly string[];
   loadingPath?: string;
   selectedPath: string;
-  onOpenFolder?: (folderPath: string) => void | Promise<void>;
+  onOpenFolder?: (folderPath: string) => void | Promise<unknown>;
   onSelect: (assetPath: string) => void | Promise<void>;
 };
 
@@ -69,9 +70,9 @@ export function SourceAssetTree({
     });
   };
 
-  const toggleFolder = (node: SourceAssetTreeNode) => {
+  const toggleFolder = (node: SourceAssetTreeNode, requestChildren = true) => {
     const isOpen = expandedItems.includes(node.id);
-    if (!isOpen) {
+    if (!isOpen && requestChildren) {
       requestFolderChildren(node);
     }
     setExpandedItems((current) => (
@@ -82,8 +83,8 @@ export function SourceAssetTree({
   };
 
   const renderNode = (node: SourceAssetTreeNode, depth = 0): React.ReactNode => {
-    const canSelectFile = !node.isFolder && typeof node.assetIndex === "number";
-    const isSelected = canSelectFile && node.path === selectedPath;
+    const canSelect = node.isFolder || typeof node.assetIndex === "number";
+    const isSelected = canSelect && node.path === selectedPath;
     const isExpanded = expandedItems.includes(node.id);
     const folderMeta = node.path === loadingPath
       ? LABELS.loading
@@ -93,37 +94,51 @@ export function SourceAssetTree({
 
     return (
       <div className="source-asset-tree-item" key={node.id}>
-        <TreeRow
-          aria-expanded={node.isFolder ? isExpanded : undefined}
-          className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
-          expanded={node.isFolder ? isExpanded : undefined}
-          leaf={!node.isFolder}
-          level={depth}
-          selected={isSelected}
-          title={node.path}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (node.isFolder) {
-              toggleFolder(node);
-              return;
-            }
-            if (canSelectFile) {
-              void onSelect(node.path);
-            }
-          }}
-        >
-          <span
-            className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
-            aria-hidden="true"
+        <div className={`source-asset-tree-row-shell ${node.isFolder ? "folder" : "file"}`}>
+          <TreeRow
+            aria-expanded={node.isFolder ? isExpanded : undefined}
+            className={isSelected ? "source-asset-tree-label active" : "source-asset-tree-label"}
+            expanded={node.isFolder ? isExpanded : undefined}
+            leaf={!node.isFolder}
+            level={depth}
+            selected={isSelected}
+            title={node.path}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (node.isFolder) {
+                toggleFolder(node);
+                return;
+              }
+              if (canSelect) void onSelect(node.path);
+            }}
           >
-            {node.isFolder ? (isExpanded ? "v" : ">") : ""}
-          </span>
-          <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
-            {node.isFolder ? LABELS.folder : LABELS.file}
-          </span>
-          <strong>{node.name}</strong>
-          <em>{node.isFolder ? folderMeta : node.meta}</em>
-        </TreeRow>
+            <span
+              className={node.isFolder ? "source-asset-disclosure folder" : "source-asset-disclosure"}
+              aria-hidden="true"
+            >
+              {node.isFolder ? (isExpanded ? "v" : ">") : ""}
+            </span>
+            <span className={node.isFolder ? "source-asset-kind folder" : "source-asset-kind file"}>
+              {node.isFolder ? LABELS.folder : LABELS.file}
+            </span>
+            <strong>{node.name}</strong>
+            <em>{node.isFolder ? folderMeta : node.meta}</em>
+          </TreeRow>
+          {node.isFolder && canSelect ? (
+            <button
+              aria-label={`폴더 ${node.name} 선택`}
+              className={isSelected ? "source-asset-folder-select active" : "source-asset-folder-select"}
+              title="이 폴더를 수집 범위로 선택"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                void onSelect(node.path);
+              }}
+            >
+              <Check size={15} />
+            </button>
+          ) : null}
+        </div>
         {node.isFolder && isExpanded ? (
           <TreeGroup className="source-asset-tree-group" level={depth + 1}>
             {node.children.map((child) => renderNode(child, depth + 1))}

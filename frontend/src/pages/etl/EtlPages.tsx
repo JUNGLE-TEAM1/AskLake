@@ -38,7 +38,6 @@ import {
   SlidersHorizontal,
   Table2,
   TerminalSquare,
-  Trash2,
 } from "lucide-react";
 import { Field, InfoBox, RetryPolicy, StatusTile } from "../../components/common";
 import { CreationFlowLayout, CreationTopActions, CreationValidationPanel } from "../../components/creation/CreationFlow";
@@ -88,6 +87,14 @@ type RepeatScheduleDraft = {
   time: string;
 };
 type ScheduleOptionId = "skip" | "repeat";
+
+type DelimitedFieldDraft = {
+  name: string;
+  nullable: boolean;
+  type: string;
+};
+
+const DELIMITED_FIELD_TYPES = ["String", "Integer", "Long", "Float", "Double", "Boolean", "Timestamp", "Date"];
 
 export function SchedulePage({
   draftSchedule,
@@ -270,12 +277,16 @@ const sourceFieldLabels: Record<string, string> = {
   "CONSUMER GROUP ID": "컨슈머 그룹 ID",
   "CATALOG / NAMESPACE": "카탈로그 / 네임스페이스",
   Collection: "컬렉션",
+  "Collection Scope": "수집 범위",
   "Connection URI": "연결 URI",
   "DATASET OR TABLE SELECTOR": "데이터셋 또는 테이블 선택자",
   "DATABASE / SCHEMA": "데이터베이스 / 스키마",
   "Database Name": "데이터베이스 이름",
   Delimiter: "구분자",
+  "Delimited Fields": "사용자 필드",
   Encoding: "인코딩",
+  "Escape Character": "이스케이프 문자",
+  "File Pattern": "파일 패턴",
   Endpoint: "엔드포인트",
   "Endpoint / Host": "엔드포인트 / 호스트",
   "Endpoint URL": "엔드포인트 URL",
@@ -288,14 +299,18 @@ const sourceFieldLabels: Record<string, string> = {
   Objects: "오브젝트",
   Partitions: "파티션",
   "Password / Auth Token": "비밀번호 / 인증 토큰",
+  "Parser Mode": "파싱 방식",
   Path: "경로",
   "Path / Prefix": "경로 / 프리픽스",
   "Preview Limit": "Preview 제한",
   "Preview Row Count": "Preview 행 수",
   Port: "포트",
+  "Quote Character": "따옴표 문자",
   Query: "SQL Query",
+  Recursive: "하위 폴더 포함",
   "Reference Dataset IDs": "참조 데이터셋 ID",
   Region: "리전",
+  "Row Delimiter": "행 구분자",
   Response: "응답",
   Result: "결과",
   Schema: "스키마",
@@ -764,18 +779,6 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
 
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
 const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
-const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
-  { included: true, nullable: false, sourceName: "order_date", targetName: "order_date", type: "date" },
-  { included: true, nullable: false, sourceName: "order_count", targetName: "order_count", type: "integer" },
-  { included: true, nullable: false, sourceName: "gross_sales", targetName: "gross_sales", type: "decimal" },
-  { included: true, nullable: false, sourceName: "updated_at", targetName: "updated_at", type: "timestamp" },
-];
-const SAMPLE_TARGET_ROWS = [
-  ["2026-07-07", "128", "10200.50", "2026-07-07T09:30:00Z"],
-  ["2026-07-08", "96", "15700.00", "2026-07-08T09:30:00Z"],
-  ["2026-07-09", "141", "99900.25", "2026-07-09T09:30:00Z"],
-];
-
 function normalizeTargetFileFormat(value: string | undefined): TargetFileFormat {
   const normalized = value?.trim().toLowerCase();
   return TARGET_FILE_FORMAT_VALUES.find((format) => format === normalized) ?? "parquet";
@@ -847,8 +850,8 @@ function stringifyPreviewValue(value: unknown) {
 }
 
 function inferTargetSchema(columns: SchemaColumnDraft[], rows: string[][], existingRules: TargetSchemaRule[] | undefined) {
-  const sourceColumns = columns.length > 0 ? columns : SAMPLE_TARGET_SCHEMA_COLUMNS;
-  const sourceRows = rows.length > 0 ? rows : SAMPLE_TARGET_ROWS;
+  const sourceColumns = columns;
+  const sourceRows = rows;
   const dataColumnIndex = sourceColumns.findIndex((column) => (column.targetName || column.sourceName).toLowerCase() === "data");
   const jsonColumnIndex = dataColumnIndex >= 0 ? dataColumnIndex : sourceColumns.length === 1 ? 0 : -1;
   const existingByName = new Map(existingRules?.map((rule) => [rule.name, rule]));
@@ -1004,7 +1007,7 @@ function getTargetDraftValues(draft: DraftPipeline) {
     description: getDisplayText(target?.description ?? draft.target.description, ""),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
-    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
+    partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? [],
     rag: typeof target?.rag === "boolean" ? target.rag : compatDraft.rag ?? draft.target.rag,
     storagePath,
     tableName: getDisplayText(target?.tableName ?? draft.target.tableName, targetDataset),
@@ -1046,6 +1049,7 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
+  const [parserDirty, setParserDirty] = useState(false);
   const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1148,9 +1152,17 @@ export function SourceConnectionPage({
         ["Secret Key", ""],
         ["Use Path Style", "true"],
         ["File Type", "auto"],
-        ["Delimiter", ","],
+        ["Collection Scope", "file"],
+        ["File Pattern", ""],
+        ["Recursive", "false"],
+        ["Parser Mode", "auto"],
+        ["Row Delimiter", "auto"],
+        ["Delimiter", "auto"],
+        ["Quote Character", "\""],
+        ["Escape Character", "none"],
         ["Encoding", "UTF-8"],
-        ["Header", "Treat first row as header"],
+        ["Header", "auto"],
+        ["Delimited Fields", "[]"],
       ],
       testItems: [["Endpoint", "Not tested"], ["Bucket", "Not listed"], ["샘플 프로파일", "Pending"]],
       logs: ["MinIO 소스 식별이 아직 검증되지 않았습니다.", "연결 테스트를 실행하면 제한 샘플을 가져옵니다."],
@@ -1273,6 +1285,23 @@ export function SourceConnectionPage({
   const verifiedSourceFields = connectionStatus === "success" && runtimeSourceConfig ? runtimeSourceConfig : editableFields;
   const displayPreviewFormat = activeSourceType === "File / S3" ? sourceFormatFromConfig(verifiedSourceFields, activeSourceType) : sourceTypeLabel(activeSourceType);
   const usesJsonSampleTree = displayPreviewFormat === "JSON" || displayPreviewFormat === "JSONL";
+  const parserMode = normalizeParserMode(sourceConfigValue(editableFields, "Parser Mode"));
+  const parserRowDelimiter = normalizeRowDelimiterMode(sourceConfigValue(editableFields, "Row Delimiter"));
+  const parserDelimiter = sourceConfigValue(editableFields, "Delimiter") || "auto";
+  const parserHeader = normalizeHeaderMode(sourceConfigValue(editableFields, "Header"));
+  const parserQuote = sourceConfigValue(editableFields, "Quote Character") || '"';
+  const parserEscape = sourceConfigValue(editableFields, "Escape Character") || "none";
+  const detectedDelimiter = sourceConfigValue(runtimeSourceConfig ?? editableFields, "__Detected Delimiter");
+  const sampleObjectPath = sourceConfigValue(runtimeSourceConfig ?? editableFields, "__Sample Object")
+    || (selectedAsset?.[1] !== "folder" ? selectedAsset?.[0] ?? "" : "");
+  const collectionScope = normalizeCollectionScope(sourceConfigValue(editableFields, "Collection Scope"));
+  const collectionPrefix = sourceConfigValue(editableFields, "Path / Prefix");
+  const collectionPattern = sourceConfigValue(editableFields, "File Pattern");
+  const collectionRecursive = parseSourceBoolean(sourceConfigValue(editableFields, "Recursive"));
+  const showCollectionPolicy = activeSourceType === "File / S3" && Boolean(selectedAsset);
+  const showDelimitedParser = activeSourceType === "File / S3"
+    && Boolean(selectedAsset)
+    && supportsDelimitedParsing(sampleObjectPath || selectedAsset?.[0] || "", editableFields);
   const sourceSummaryRows: Array<[string, string]> = [
     ["선택 커넥터", hasSelectedSource ? sourceTypeLabel(activeSourceType) : "미선택"],
     ["연결 상태", isSqlResultSource ? (hasSqlResultPreview && connectionStatus === "success" ? "SQL Preview 검증됨" : "SQL Preview 필요") : connectionStatus === "success" ? publicConnectionMessage : connectionStatus === "testing" ? "테스트 중" : connectionStatus === "failed" ? "실패" : "테스트 필요"],
@@ -1324,6 +1353,7 @@ export function SourceConnectionPage({
     setSourceType(value);
     setSourceRuntime(null);
     setSelectedAssetPath("");
+    setParserDirty(false);
     setConnectionStatus(nextStatus);
     setConnectionMessage(nextMessage);
     applySourceDraft(value, nextFields, nextStatus, nextMessage);
@@ -1342,12 +1372,34 @@ export function SourceConnectionPage({
     applySourceDraft(activeSourceType, nextFields, nextStatus, nextMessage);
   };
 
+  const updateDelimitedConfig = (patches: Array<[string, string]>, forceDelimited = true) => {
+    const nextFields = upsertSourceFields(
+      editableFields,
+      forceDelimited ? [["Parser Mode", "delimited"], ...patches] : patches,
+    );
+    const nextMessage = "구분 텍스트 파싱 설정이 변경되었습니다. 파싱 적용으로 샘플을 다시 확인하세요.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setParserDirty(true);
+    setConnectionStatus("idle");
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, "idle", nextMessage);
+  };
+
+  const updateCollectionConfig = (patches: Array<[string, string]>) => {
+    const nextFields = upsertSourceFields(editableFields, patches);
+    const nextMessage = "파일 수집 범위가 변경되었습니다.";
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(nextMessage);
+    applySourceDraft(activeSourceType, nextFields, connectionStatus, nextMessage);
+  };
+
   const loadSourceAssetChildren = async (folderPath: string) => {
     if (!hasSelectedSource || !(activeSourceType === "File / S3" || activeSourceType === "Data Lake")) return;
     const folderPrefix = normalizeFolderPrefix(folderPath);
     setLoadingAssetPath(folderPrefix);
     try {
       const result = await listSourceAssets(activeSourceType, editableFields, folderPrefix);
+      const mergedAssets = mergeSourceAssets(displayAssets, result.assets ?? []);
       setSourceRuntime((runtime) => runtime
         ? { ...runtime, assets: mergeSourceAssets(runtime.assets ?? [], result.assets ?? []) }
         : {
@@ -1363,10 +1415,56 @@ export function SourceConnectionPage({
           testItems: displayTestItems,
         });
       onAction("etl.source.folder_opened", "/api/etl/sources/assets", folderPrefix);
+      return mergedAssets;
     } catch (error) {
       onNotify(error instanceof Error ? error.message : "하위 목록을 가져오지 못했습니다.");
     } finally {
       setLoadingAssetPath("");
+    }
+    return undefined;
+  };
+
+  const sampleSourceAsset = async (
+    assetPath: string,
+    nextFields: Array<[string, string]>,
+    currentAssets: Array<[string, string, string]>,
+    action = "etl.source.asset_sampled",
+    selectedPath = assetPath,
+  ) => {
+    const selectedFolder = selectedPath.endsWith("/");
+    const nextMessage = selectedFolder ? `폴더 ${selectedPath} 선택됨` : `파일 ${assetPath} 선택됨`;
+    setSelectedAssetPath(selectedPath);
+    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
+    setConnectionMessage(nextMessage);
+    setConnectionStatus("testing");
+    applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
+    onAction("etl.source.asset_selected", "/api/etl/sources/assets", selectedPath);
+    try {
+      const result = mergeConnectorAnalysisSourceConfig(
+        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
+        nextFields,
+      );
+      const sampledObject = sourceConfigValue(result.draftPatch.source?.sourceConfig ?? nextFields, "__Sample Object");
+      const successMessage = selectedFolder
+        ? `${selectedPath} 폴더에서 ${sampledObject || "대표 파일"} 샘플을 가져왔습니다.`
+        : `${assetPath} 기준 샘플을 가져왔습니다.`;
+      if (result.draftPatch.source?.sourceConfig) {
+        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? nextFields }));
+      }
+      setSourceRuntime({ ...result, assets: mergeSourceAssets(currentAssets, result.assets ?? []), message: successMessage });
+      setConnectionStatus(result.status);
+      setConnectionMessage(successMessage);
+      setParserDirty(false);
+      onDraftChange(result.draftPatch);
+      onAction(action, result.actionPath, selectedPath);
+      onNotify(successMessage);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "선택한 오브젝트의 샘플을 가져오지 못했습니다.";
+      setConnectionStatus("failed");
+      setConnectionMessage(message);
+      applySourceDraft(activeSourceType, nextFields, "failed", message);
+      onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", selectedPath, "failed");
+      onNotify(message);
     }
   };
 
@@ -1375,7 +1473,25 @@ export function SourceConnectionPage({
     if (!asset) return;
     const [, assetMeta] = asset;
     if (assetMeta === "folder" || assetPath.endsWith("/")) {
-      await loadSourceAssetChildren(assetPath);
+      const folderPath = normalizeFolderPrefix(assetPath);
+      setSelectedAssetPath(folderPath);
+      const currentAssets = await loadSourceAssetChildren(folderPath) ?? displayAssets;
+      const sampleAsset = currentAssets.find(([path, meta]) => (
+        meta !== "folder" && sourceFolderForPath(path) === folderPath
+      ));
+      const samplePath = sampleAsset?.[0] ?? "";
+      const nextFields = upsertSourceFields(editableFields.map(([fieldLabel, fieldValue]) => (
+        fieldLabel === "Path / Prefix" || fieldLabel === "Path" || fieldLabel === "DATASET OR TABLE SELECTOR"
+          ? [fieldLabel, folderPath] as [string, string]
+          : [fieldLabel, fieldValue] as [string, string]
+      )), [
+        ["Collection Scope", "folder"],
+        ["File Pattern", samplePath ? sourceFilePattern(samplePath) : "*"],
+        ["Recursive", "true"],
+        ["__Selected Object", samplePath],
+        ["__Sample Object", samplePath],
+      ]);
+      await sampleSourceAsset(samplePath || folderPath, nextFields, currentAssets, "etl.source.folder_selected", folderPath);
       return;
     }
     const currentAssets = displayAssets;
@@ -1384,39 +1500,22 @@ export function SourceConnectionPage({
         ? [fieldLabel, assetPath] as [string, string]
         : [fieldLabel, fieldValue] as [string, string]
     )), [
+      ["Collection Scope", "file"],
+      ["File Pattern", ""],
+      ["Recursive", "false"],
       ["__Selected Object", assetPath],
       ["__Sample Object", assetPath],
     ]);
-    const nextMessage = `${assetMeta === "folder" ? "폴더" : "파일"} ${assetPath} 선택됨`;
-    setSelectedAssetPath(assetPath);
-    setSourceFields((fields) => ({ ...fields, [activeSourceType]: nextFields }));
-    setConnectionMessage(nextMessage);
-    setConnectionStatus("testing");
-    applySourceDraft(activeSourceType, nextFields, "testing", nextMessage);
-    onAction("etl.source.asset_selected", "/api/etl/sources/assets", assetPath);
-    try {
-      const result = mergeConnectorAnalysisSourceConfig(
-        publicConnectorAnalysis(await testSourceConnector(activeSourceType, nextFields)),
-        nextFields,
-      );
-      const successMessage = `${assetPath} 기준 샘플을 가져왔습니다.`;
-      if (result.draftPatch.source?.sourceConfig) {
-        setSourceFields((fields) => ({ ...fields, [activeSourceType]: result.draftPatch.source?.sourceConfig ?? nextFields }));
-      }
-      setSourceRuntime({ ...result, assets: mergeSourceAssets(currentAssets, result.assets ?? []), message: successMessage });
-      setConnectionStatus(result.status);
-      setConnectionMessage(successMessage);
-      onDraftChange(result.draftPatch);
-      onAction("etl.source.asset_sampled", result.actionPath, assetPath);
-      onNotify(successMessage);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "선택한 오브젝트의 샘플을 가져오지 못했습니다.";
-      setConnectionStatus("failed");
-      setConnectionMessage(message);
-      applySourceDraft(activeSourceType, nextFields, "failed", message);
-      onAction("etl.source.asset_sample_failed", "/api/etl/sources/test", assetPath, "failed");
-      onNotify(message);
+    await sampleSourceAsset(assetPath, nextFields, currentAssets);
+  };
+
+  const applyDelimitedParser = async () => {
+    if (!selectedAssetPath || !selectedAsset || !sampleObjectPath) {
+      onNotify("파싱할 파일 또는 대표 샘플이 있는 폴더를 먼저 선택하세요.");
+      return;
     }
+    const nextFields = upsertSourceFields(editableFields, [["Parser Mode", parserMode === "auto" ? "delimited" : parserMode]]);
+    await sampleSourceAsset(sampleObjectPath, nextFields, displayAssets, "etl.source.delimited_parser_applied", selectedAssetPath);
   };
 
   const testConnection = async () => {
@@ -1646,13 +1745,123 @@ export function SourceConnectionPage({
                 )}
               </section>
               <section className="source-flow-panel">
+                {showCollectionPolicy && (
+                  <section className="collection-policy-editor" aria-label="파일 수집 정책">
+                    <div className="collection-policy-header">
+                      <div>
+                        <HardDrive size={18} />
+                        <strong>파일 수집 정책</strong>
+                        <span>{collectionScope === "folder" ? `${collectionPattern || "*"} · ${collectionRecursive ? "하위 폴더 포함" : "현재 폴더"}` : "선택 파일 1개"}</span>
+                      </div>
+                    </div>
+                    <div className="collection-policy-grid">
+                      <FormFieldGroup label={collectionScope === "folder" ? "폴더 경로" : "파일 경로"}>
+                        <Input
+                          aria-label={collectionScope === "folder" ? "수집 폴더 경로" : "수집 파일 경로"}
+                          readOnly
+                          value={collectionPrefix}
+                        />
+                      </FormFieldGroup>
+                      <FormFieldGroup label="파일 패턴">
+                        <Input
+                          aria-label="수집 파일 패턴"
+                          disabled={collectionScope === "file"}
+                          value={collectionPattern}
+                          onChange={(event) => updateCollectionConfig([["File Pattern", event.target.value]])}
+                        />
+                      </FormFieldGroup>
+                      <label className="collection-recursive-toggle">
+                        <Checkbox
+                          aria-label="하위 폴더 포함"
+                          checked={collectionRecursive}
+                          disabled={collectionScope === "file"}
+                          onCheckedChange={(checked) => updateCollectionConfig([["Recursive", String(checked === true)]])}
+                        />
+                        <span>하위 폴더 포함</span>
+                      </label>
+                    </div>
+                  </section>
+                )}
+                {showDelimitedParser && (
+                  <section className="delimited-parser-editor" aria-label="구분 텍스트 파싱">
+                    <div className="delimited-parser-header">
+                      <div>
+                        <FileText size={18} />
+                        <strong>구분 텍스트 파싱</strong>
+                        <span>{parserDirty ? "변경됨" : detectedDelimiter ? `감지 ${displayDelimiter(detectedDelimiter)}` : "자동 감지"}</span>
+                      </div>
+                      <Button
+                        disabled={connectionStatus === "testing"}
+                        size="sm"
+                        type="button"
+                        onClick={applyDelimitedParser}
+                      >
+                        <RefreshCw /> 파싱 적용
+                      </Button>
+                    </div>
+                    <div className="delimited-dialect-grid">
+                      <NativeSelectField
+                        label="파싱 방식"
+                        value={parserMode}
+                        onChange={(event) => updateDelimitedConfig([["Parser Mode", event.target.value]], false)}
+                      >
+                        <option value="auto">자동 감지</option>
+                        <option value="delimited">구분자 기반</option>
+                      </NativeSelectField>
+                      <NativeSelectField
+                        label="행 구분자"
+                        value={parserRowDelimiter}
+                        onChange={(event) => updateDelimitedConfig([["Row Delimiter", event.target.value]])}
+                      >
+                        <option value="auto">자동 감지</option>
+                        <option value={"\\n"}>LF (\n)</option>
+                        <option value={"\\r\\n"}>CRLF (\r\n)</option>
+                        <option value={"\\r"}>CR (\r)</option>
+                      </NativeSelectField>
+                      <FormFieldGroup label="구분자" hint={detectedDelimiter ? `감지값 ${displayDelimiter(detectedDelimiter)}` : undefined}>
+                        <Input
+                          aria-label="구분자"
+                          value={parserDelimiter}
+                          onChange={(event) => updateDelimitedConfig([["Delimiter", event.target.value]])}
+                        />
+                      </FormFieldGroup>
+                      <NativeSelectField
+                        label="헤더"
+                        value={parserHeader}
+                        onChange={(event) => updateDelimitedConfig([["Header", event.target.value]])}
+                      >
+                        <option value="auto">자동 감지</option>
+                        <option value="true">첫 행을 헤더로 사용</option>
+                        <option value="false">헤더 없음</option>
+                      </NativeSelectField>
+                      <FormFieldGroup label="따옴표">
+                        <Input
+                          aria-label="따옴표 문자"
+                          maxLength={4}
+                          value={parserQuote}
+                          onChange={(event) => updateDelimitedConfig([["Quote Character", event.target.value]])}
+                        />
+                      </FormFieldGroup>
+                      <FormFieldGroup label="이스케이프">
+                        <Input
+                          aria-label="이스케이프 문자"
+                          maxLength={4}
+                          value={parserEscape}
+                          onChange={(event) => updateDelimitedConfig([["Escape Character", event.target.value]])}
+                        />
+                      </FormFieldGroup>
+                    </div>
+                  </section>
+                )}
                 <section className="source-step-section active">
                   <div className="source-step-header">
                     <em>2</em>
                     <div>
                       <strong>제한 샘플 미리보기</strong>
                     </div>
-                    <span className="source-select-pill active">{selectedAsset ? selectedAsset[0] : "선택 대기"}</span>
+                    <span className="source-select-pill active">
+                      {selectedAsset ? `${selectedAsset[0]}${collectionScope === "folder" && sampleObjectPath ? ` · 대표 ${sampleObjectPath.split("/").pop()}` : ""}` : "선택 대기"}
+                    </span>
                   </div>
                   <div className="source-preview-format-strip">
                     <strong>{displayPreviewFormat}</strong>
@@ -1697,6 +1906,8 @@ export function SourceConnectionPage({
 function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: string) {
   const fieldMap = new Map(fields.map(([label, value]) => [label, value]));
   const declaredFormat = (fieldMap.get("File Type") || "").trim().toLowerCase();
+  const parserMode = normalizeParserMode(fieldMap.get("Parser Mode") || "auto");
+  const hasDelimitedFields = parseDelimitedFields(fieldMap.get("Delimited Fields") || "[]").length > 0;
   const selectedPath = [
     fieldMap.get("Path / Prefix"),
     fieldMap.get("Path"),
@@ -1707,11 +1918,84 @@ function sourceFormatFromConfig(fields: Array<[string, string]>, _sourceType?: s
     : selectedPath.replace(/^.*\./, "");
   if (rawFormat.includes("jsonl")) return "JSONL";
   if (rawFormat.includes("json")) return "JSON";
+  if (parserMode === "delimited" || hasDelimitedFields || rawFormat.includes("log") || rawFormat.includes("delimited")) return "DELIMITED";
   if (rawFormat.includes("csv")) return "CSV";
   if (rawFormat.includes("tsv")) return "TSV";
   if (rawFormat.includes("txt")) return "TXT";
   if (rawFormat.includes("parquet")) return "PARQUET";
   return "AUTO";
+}
+
+function parseDelimitedFields(value: string): DelimitedFieldDraft[] {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 200).map((field, index) => ({
+      name: String(field?.name ?? `field_${index + 1}`),
+      nullable: field?.nullable !== false,
+      type: normalizeDelimitedFieldType(field?.type),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function normalizeDelimitedFieldType(value: unknown) {
+  const normalized = String(value || "String").toLowerCase();
+  return DELIMITED_FIELD_TYPES.find((type) => type.toLowerCase() === normalized) ?? "String";
+}
+
+function supportsDelimitedParsing(path: string, fields: Array<[string, string]>) {
+  const parserMode = normalizeParserMode(sourceConfigValue(fields, "Parser Mode"));
+  const fileType = sourceConfigValue(fields, "File Type").toLowerCase();
+  if (parserMode === "delimited" || fileType.includes("delimited")) return true;
+  return /\.(csv|tsv|txt|log)$/i.test(path);
+}
+
+function normalizeParserMode(value: string) {
+  return String(value || "auto").trim().toLowerCase() === "delimited" ? "delimited" : "auto";
+}
+
+function normalizeRowDelimiterMode(value: string) {
+  const normalized = String(value || "auto").trim().toLowerCase();
+  if (["\\n", "lf", "newline"].includes(normalized)) return "\\n";
+  if (["\\r\\n", "crlf"].includes(normalized)) return "\\r\\n";
+  if (["\\r", "cr"].includes(normalized)) return "\\r";
+  return "auto";
+}
+
+function normalizeCollectionScope(value: string) {
+  return String(value || "file").trim().toLowerCase() === "folder" ? "folder" : "file";
+}
+
+function parseSourceBoolean(value: string) {
+  return ["true", "1", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function sourceFolderForPath(path: string) {
+  const normalized = String(path || "").replace(/^\/+/, "").replace(/\/+$/, "");
+  const separator = normalized.lastIndexOf("/");
+  return separator >= 0 ? `${normalized.slice(0, separator + 1)}` : "";
+}
+
+function sourceFilePattern(path: string) {
+  const fileName = String(path || "").split("/").pop() || "";
+  const extensionIndex = fileName.lastIndexOf(".");
+  return extensionIndex > 0 ? `*${fileName.slice(extensionIndex)}` : "*";
+}
+
+function normalizeHeaderMode(value: string) {
+  const normalized = String(value || "auto").trim().toLowerCase();
+  if (["true", "yes", "1", "header", "treat first row as header"].includes(normalized)) return "true";
+  if (["false", "no", "0", "none", "no header"].includes(normalized)) return "false";
+  return "auto";
+}
+
+function displayDelimiter(value: string) {
+  if (value === "\t" || value.toLowerCase() === "tab") return "TAB";
+  if (value === " " || value.toLowerCase() === "space") return "SPACE";
+  if (value.toLowerCase() === "auto") return "AUTO";
+  return value;
 }
 
 function mergeSourceAssets(currentAssets: Array<[string, string, string]>, nextAssets: Array<[string, string, string]>) {
@@ -1750,7 +2034,22 @@ function sourceStatusIcon(status: SourceDraft["connectionStatus"]) {
 function isVisibleSourceField(sourceType: string, label: string) {
   if (isInternalSourceField(label)) return false;
   if (sourceType === "File / S3") {
-    return !["Storage Provider", "Region", "Use Path Style", "Header", "Path / Prefix"].includes(label);
+    return ![
+      "Storage Provider",
+      "Region",
+      "Use Path Style",
+      "Collection Scope",
+      "File Pattern",
+      "Recursive",
+      "Header",
+      "Path / Prefix",
+      "Parser Mode",
+      "Row Delimiter",
+      "Delimiter",
+      "Quote Character",
+      "Escape Character",
+      "Delimited Fields",
+    ].includes(label);
   }
   return true;
 }
@@ -1919,6 +2218,16 @@ function summarizeSchemaColumns(columns: SchemaColumnDraft[], lowConfidenceCount
 
 function isSchemaColumnIncluded(column: SchemaColumnDraft) {
   return column.included !== false;
+}
+
+function validateExecutableSchemaColumns(columns: SchemaColumnDraft[]) {
+  const includedNames = columns
+    .filter(isSchemaColumnIncluded)
+    .map((column) => String(column.targetName || "").trim());
+  if (includedNames.some((name) => !name)) return "출력 컬럼명은 비워둘 수 없습니다.";
+  const normalizedNames = includedNames.map((name) => name.toLowerCase());
+  if (new Set(normalizedNames).size !== normalizedNames.length) return "중복된 출력 컬럼명을 수정하세요.";
+  return "";
 }
 
 function normalizeTargetColumnName(value: string) {
@@ -2170,6 +2479,9 @@ export function SchemaInferencePage({
     ? Math.round(schemaColumns.reduce((sum, column) => sum + (column.confidence ?? 70), 0) / schemaColumns.length)
     : 0;
   const sourceFormat = detectSchemaSourceFormat(draft);
+  const schemaSampleObject = sourceConfigValue(draft.source.sourceConfig, "__Sample Object") || draft.source.sourceLabel;
+  const syncDelimitedSourceSchema = draft.source.sourceType === "File / S3"
+    && supportsDelimitedParsing(schemaSampleObject, draft.source.sourceConfig);
   const isFlattenedJson = schemaColumns.some((column) => column.sourceName.includes(".")) || ["JSON", "JSONL"].includes(sourceFormat);
   const nestedFieldCount = schemaColumns.filter((column) => column.sourceName.includes(".")).length;
   const mappingModeText = hasInferredSchema
@@ -2204,29 +2516,44 @@ export function SchemaInferencePage({
       return `${column.sourceName} ${column.targetName} ${column.type} ${column.role ?? ""}`.toLowerCase().includes(keyword);
     });
 
-  const applySchemaDraft = (summary: string, columns = schemaColumns, sampleRows = schemaSampleRows) => {
-    if (columns.length === 0) return false;
-    onDraftChange({
+  const commitSchemaDraft = (summary: string, columns: SchemaColumnDraft[], sampleRows: string[][]) => {
+    const patch: DraftPipelinePatch = {
       schema: {
         columns,
         sampleRows,
         schemaFingerprint: buildSchemaFingerprint(columns),
         summary,
       },
-    });
+    };
+    if (syncDelimitedSourceSchema) {
+      patch.source = {
+        sourceConfig: upsertConfigValue(
+          draft.source.sourceConfig,
+          "Delimited Fields",
+          JSON.stringify(columns.map((column, index) => ({
+            name: String(column.role === "schema-added" ? column.targetName : column.sourceName).trim() || `column_${index + 1}`,
+            nullable: column.nullable !== false,
+            type: normalizeDelimitedFieldType(column.type),
+          }))),
+        ),
+      };
+    }
+    onDraftChange(patch);
+  };
+
+  const applySchemaDraft = (summary: string, columns = schemaColumns, sampleRows = schemaSampleRows) => {
+    if (columns.length === 0) return false;
+    commitSchemaDraft(summary, columns, sampleRows);
     return true;
   };
 
   const patchSchemaColumns = (columns: SchemaColumnDraft[], sampleRows = schemaSampleRows) => {
     const reviewCount = columns.filter((column) => (column.confidence ?? 100) < 80).length;
-    onDraftChange({
-      schema: {
-        columns,
-        sampleRows,
-        schemaFingerprint: buildSchemaFingerprint(columns),
-        summary: columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
-      },
-    });
+    commitSchemaDraft(
+      columns.length > 0 ? summarizeSchemaColumns(columns, reviewCount, sourceFormat) : "출력 컬럼 없음 · 스키마 매핑 필요",
+      columns,
+      sampleRows,
+    );
   };
 
   const currentSourceLabel = draft.source.sourceLabel || draft.source.sourceType || "source";
@@ -2321,6 +2648,12 @@ export function SchemaInferencePage({
     if (includedSchemaColumns.length === 0) {
       onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
       onNotify("출력에 포함된 컬럼이 없습니다. 최소 1개 컬럼을 포함해야 실행할 수 있습니다.");
+      return false;
+    }
+    const invalidColumnMessage = validateExecutableSchemaColumns(schemaColumns);
+    if (invalidColumnMessage) {
+      onAction("etl.schema.confirm_blocked", "/api/etl/schema-inference/confirm", draft.source.sourceLabel || "source", "failed");
+      onNotify(invalidColumnMessage);
       return false;
     }
     schemaAction("etl.schema.confirmed", "/api/etl/schema-inference/confirm", approvedSummary);
@@ -2536,7 +2869,7 @@ const FALLBACK_QUALITY_RULES: QualityRule[] = [{
   targetColumn: "value",
   validationType: "Not Null",
 }];
-const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Lowercase + Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
+const TRANSFORM_OPERATION_OPTIONS = ["Extract JSONPath", "Extract Regex", "Lowercase + Trim", "Cast Decimal", "Parse Timestamp", "Mask"] as const;
 const TRANSFORM_FAILURE_POLICY_OPTIONS = ["Warn", "Set Null", "Drop Row", "Fail Run"] as const;
 const QUALITY_VALIDATION_OPTIONS: Array<QualityRule["validationType"]> = ["Not Null", "Regex Match", "Range Check", "Accepted Values"];
 const QUALITY_SEVERITY_OPTIONS: Array<QualityRule["severity"]> = ["Warning", "Error"];
@@ -2545,6 +2878,7 @@ const QUALITY_FAILURE_ACTION_OPTIONS: Array<QualityRule["failureAction"]> = ["Wa
 const TRANSFORM_OPERATION_LABELS: Record<TransformOperation, string> = {
   "Cast Decimal": "숫자 타입 변환",
   "Extract JSONPath": "JSON 경로 추출",
+  "Extract Regex": "정규식 추출",
   "Lowercase + Trim": "소문자/공백 정리",
   Mask: "마스킹",
   "Parse Timestamp": "시간 타입 변환",
@@ -2673,6 +3007,10 @@ function getRuleDatasetId(draft: DraftPipeline) {
     draft.source.sourceLabel,
     draft.schema.schemaFingerprint,
     draft.schema.columns.map((column) => schemaColumnOutputName(column)).join(","),
+    draft.transform.steps
+      .filter((step) => step.enabled !== false)
+      .map((step) => `${step.input}:${step.operation}:${step.output}:${step.params}`)
+      .join("|"),
   ].filter(Boolean).join("|");
 }
 
@@ -2711,6 +3049,11 @@ function isEmailLikeColumn(column: SchemaColumnDraft) {
   return `${column.sourceName} ${column.targetName}`.toLowerCase().includes("email");
 }
 
+function isPageUrlLikeColumn(column: SchemaColumnDraft) {
+  const probe = `${column.sourceName} ${column.targetName}`.toLowerCase();
+  return probe.includes("page_url") || probe === "url url" || probe.includes(" product_url");
+}
+
 function isCountryLikeColumn(column: SchemaColumnDraft) {
   const probe = `${column.sourceName} ${column.targetName}`.toLowerCase();
   return probe.includes("country") || probe.includes("region");
@@ -2719,6 +3062,17 @@ function isCountryLikeColumn(column: SchemaColumnDraft) {
 function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
   const columns = draft.schema.columns.filter(isSchemaColumnIncluded);
   if (columns.length === 0) return FALLBACK_RECIPE_STEPS.slice(0, 1);
+  const configuredSteps = draft.transform.steps
+    .filter((step) => step.enabled !== false && TRANSFORM_OPERATION_OPTIONS.includes(step.operation as TransformOperation))
+    .map((step, index) => ({
+      id: step.id || `schema-step-${index + 1}`,
+      input: step.input,
+      onError: getTransformFailurePolicy(step.onError),
+      operation: step.operation as TransformOperation,
+      output: step.output,
+      params: step.params,
+    }));
+  if (configuredSteps.length > 0) return configuredSteps;
   const candidates: RecipeStep[] = [];
   const addStep = (column: SchemaColumnDraft, operation: TransformOperation, output?: string, params?: string, onError: TransformFailurePolicy = "Warn") => {
     const input = schemaColumnOutputName(column);
@@ -2735,6 +3089,8 @@ function buildDefaultRecipeSteps(draft: DraftPipeline): RecipeStep[] {
 
   const jsonColumn = columns.find(isJsonLikeColumn);
   if (jsonColumn) addStep(jsonColumn, "Extract JSONPath", `${schemaColumnOutputName(jsonColumn)}_value`, "$.value", "Set Null");
+  const pageUrlColumn = columns.find(isPageUrlLikeColumn);
+  if (pageUrlColumn) addStep(pageUrlColumn, "Extract Regex", "parent_asin", "^/products/([^/]+)", "Set Null");
   const emailColumn = columns.find(isEmailLikeColumn);
   if (emailColumn) addStep(emailColumn, "Lowercase + Trim");
   const numericColumn = columns.find(isNumericLikeColumn);
@@ -3060,10 +3416,13 @@ export function RuleApplicationPage({
     const nextRunnerResult = steps === recipeSteps && rules === qualityRules ? runnerResult : runTransformQualitySamplePreview(steps, rules, ruleSampleRows);
     const nextValidation = nextRunnerResult.validation;
     const nextStats = getRuleStats(steps, rules, nextValidation.invalidRowCount, sourceColumns.length);
+    const schemaOnlyTransformSteps = draft.transform.steps.filter((step) => (
+      step.enabled !== false && !TRANSFORM_OPERATION_OPTIONS.includes(step.operation as TransformOperation)
+    ));
     return {
       transform: {
         outputColumns: buildTransformOutputColumns(steps, draft.schema.columns, nextRunnerResult.transformedRows),
-        steps: toDraftTransformSteps(steps),
+        steps: [...schemaOnlyTransformSteps, ...toDraftTransformSteps(steps)],
         summary: formatTransformSummary(nextStats),
       },
       quality: {
@@ -3580,6 +3939,8 @@ function getDefaultParamForOperation(operation: TransformOperation) {
   switch (operation) {
     case "Extract JSONPath":
       return "$.user.contact.email";
+    case "Extract Regex":
+      return "^/products/([^/]+)";
     case "Lowercase + Trim":
       return "lower(), trim()";
     case "Cast Decimal":
@@ -3595,6 +3956,7 @@ function getDefaultParamForOperation(operation: TransformOperation) {
 
 function getRecommendedOutputColumn(operation: TransformOperation, inputColumn: string) {
   if (operation === "Extract JSONPath" && inputColumn === "meta_json") return "user_email";
+  if (operation === "Extract Regex" && inputColumn === "page_url") return "parent_asin";
   if (operation === "Parse Timestamp" && inputColumn === "created_at") return "created_at_utc";
   if (operation === "Mask" && inputColumn === "phone_number") return "phone_masked";
   return inputColumn || "normalized_value";
@@ -3639,6 +4001,7 @@ function RuleStepBuilder({
   const [outputColumn, setOutputColumn] = useState(selectedTransformPreset.output);
   const [outputColumnTouched, setOutputColumnTouched] = useState(false);
   const [jsonPath, setJsonPath] = useState(getDefaultParamForOperation("Extract JSONPath"));
+  const [regexPattern, setRegexPattern] = useState(getDefaultParamForOperation("Extract Regex"));
   const [decimalFormat, setDecimalFormat] = useState(getDefaultParamForOperation("Cast Decimal"));
   const [timestampFormat, setTimestampFormat] = useState(getDefaultParamForOperation("Parse Timestamp"));
   const [maskPolicy, setMaskPolicy] = useState(getDefaultParamForOperation("Mask"));
@@ -3653,6 +4016,8 @@ function RuleStepBuilder({
     switch (operation) {
       case "Extract JSONPath":
         return jsonPath.trim() || getDefaultParamForOperation(operation);
+      case "Extract Regex":
+        return regexPattern.trim() || getDefaultParamForOperation(operation);
       case "Lowercase + Trim":
         return getDefaultParamForOperation(operation);
       case "Cast Decimal":
@@ -3690,6 +4055,7 @@ function RuleStepBuilder({
     setOutputColumn(preset.output || getRecommendedOutputColumn(operation, preset.input));
     setOutputColumnTouched(false);
     setJsonPath(operation === "Extract JSONPath" ? preset.params : getDefaultParamForOperation("Extract JSONPath"));
+    setRegexPattern(operation === "Extract Regex" ? preset.params : getDefaultParamForOperation("Extract Regex"));
     setDecimalFormat(operation === "Cast Decimal" ? preset.params : getDefaultParamForOperation("Cast Decimal"));
     setTimestampFormat(operation === "Parse Timestamp" ? preset.params : getDefaultParamForOperation("Parse Timestamp"));
     setMaskPolicy(operation === "Mask" ? preset.params : getDefaultParamForOperation("Mask"));
@@ -3708,6 +4074,7 @@ function RuleStepBuilder({
     setOutputColumn(draft.output || getRecommendedOutputColumn(operation, draft.input));
     setOutputColumnTouched(true);
     setJsonPath(operation === "Extract JSONPath" ? draft.params : getDefaultParamForOperation("Extract JSONPath"));
+    setRegexPattern(operation === "Extract Regex" ? draft.params : getDefaultParamForOperation("Extract Regex"));
     setDecimalFormat(operation === "Cast Decimal" ? draft.params : getDefaultParamForOperation("Cast Decimal"));
     setTimestampFormat(operation === "Parse Timestamp" ? draft.params : getDefaultParamForOperation("Parse Timestamp"));
     setMaskPolicy(operation === "Mask" ? draft.params : getDefaultParamForOperation("Mask"));
@@ -3920,10 +4287,12 @@ function RuleStepBuilder({
                   jsonPath={jsonPath}
                   maskPolicy={maskPolicy}
                   operation={selectedOperation}
+                  regexPattern={regexPattern}
                   timestampFormat={timestampFormat}
                   onDecimalFormatChange={setDecimalFormat}
                   onJsonPathChange={setJsonPath}
                   onMaskPolicyChange={setMaskPolicy}
+                  onRegexPatternChange={setRegexPattern}
                   onTimestampFormatChange={setTimestampFormat}
                 />
               ) : (
@@ -3970,8 +4339,10 @@ function TransformParameterControl({
   onDecimalFormatChange,
   onJsonPathChange,
   onMaskPolicyChange,
+  onRegexPatternChange,
   onTimestampFormatChange,
   operation,
+  regexPattern,
   timestampFormat,
 }: {
   decimalFormat: string;
@@ -3980,8 +4351,10 @@ function TransformParameterControl({
   onDecimalFormatChange: (value: string) => void;
   onJsonPathChange: (value: string) => void;
   onMaskPolicyChange: (value: string) => void;
+  onRegexPatternChange: (value: string) => void;
   onTimestampFormatChange: (value: string) => void;
   operation: TransformOperation;
+  regexPattern: string;
   timestampFormat: string;
 }) {
   if (operation === "Lowercase + Trim") {
@@ -3998,6 +4371,15 @@ function TransformParameterControl({
       <div className="hegun-rule-control-stack">
         <Input className="input control-input" type="text" value={jsonPath} onChange={(event) => onJsonPathChange(event.target.value)} />
         <em>JSON 컬럼에서 꺼낼 경로</em>
+      </div>
+    );
+  }
+
+  if (operation === "Extract Regex") {
+    return (
+      <div className="hegun-rule-control-stack">
+        <Input className="input control-input" type="text" value={regexPattern} onChange={(event) => onRegexPatternChange(event.target.value)} />
+        <em>첫 번째 캡처 그룹을 출력 컬럼으로 저장합니다.</em>
       </div>
     );
   }
@@ -4649,7 +5031,6 @@ export function TargetPage({
     () => inferTargetSchema(draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules),
     [draft.schema.columns, draft.schema.sampleRows, draftTarget?.schemaRules],
   );
-  const sampleTargetSchema = useMemo(() => inferTargetSchema([], [], undefined), []);
   const [targetDataset, setTargetDataset] = useState(initialTarget.targetDataset);
   const [databaseName, setDatabaseName] = useState(draftTarget?.databaseName ?? "");
   const [targetStoragePath, setTargetStoragePath] = useState(initialTarget.storagePath);
@@ -4677,13 +5058,9 @@ export function TargetPage({
     }
   }, [isTargetStoragePathCustomized, targetDataset, targetLayer]);
 
-  const shouldUseSampleTargetSchema = useMemo(
-    () => !schemaRules.some((rule) => rule.partitionable && !rule.raw),
-    [schemaRules],
-  );
-  const activeSchemaRules = shouldUseSampleTargetSchema ? sampleTargetSchema.schemaRules : schemaRules;
-  const activePreviewRows = shouldUseSampleTargetSchema ? sampleTargetSchema.previewRows : inferredTarget.previewRows;
-  const activeJsonParseFailed = shouldUseSampleTargetSchema ? sampleTargetSchema.jsonParseFailed : inferredTarget.jsonParseFailed;
+  const activeSchemaRules = schemaRules;
+  const activePreviewRows = inferredTarget.previewRows;
+  const activeJsonParseFailed = inferredTarget.jsonParseFailed;
   const orderedSchemaRules = useMemo(() => [...activeSchemaRules], [activeSchemaRules]);
   const usedSchemaRules = useMemo(() => orderedSchemaRules.filter((rule) => rule.use), [orderedSchemaRules]);
   const partitionCandidates = useMemo(() => orderedSchemaRules.filter((rule) => rule.partitionable && !rule.raw), [orderedSchemaRules]);
@@ -5004,9 +5381,16 @@ export function PermissionPage({
     onNext();
   };
   const selectedRoleCount = PERMISSION_ROLES.filter((role) => Boolean(roleChecks[role.name])).length;
+  const sensitiveColumns = draft.schema.columns
+    .filter(isSchemaColumnIncluded)
+    .map((column) => column.targetName || column.sourceName)
+    .filter((name) => /(^|_)(user_id|customer_id|email|phone|mobile|ssn|resident|password|secret|token|ip_address|address|birth|dob|card_number|account_number)($|_)/i.test(name));
+  const sensitiveDataLabel = sensitiveColumns.length > 0
+    ? `${sensitiveColumns.slice(0, 3).join(", ")} 포함`
+    : "감지된 민감 컬럼 없음";
   const governanceChecks = [
     ["공유 범위", visibility, visibility === "외부 공유" ? "검토 필요" : "안전"],
-    ["민감 데이터", "review_text 포함", "검토 필요"],
+    ["민감 데이터", sensitiveDataLabel, sensitiveColumns.length > 0 ? "검토 필요" : "안전"],
     ["승인자", dataOwner, approvalStatus === "승인 완료" ? "준비됨" : "대기"],
   ];
 

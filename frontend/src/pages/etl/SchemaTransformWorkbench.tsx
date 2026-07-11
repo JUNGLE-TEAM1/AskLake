@@ -6,14 +6,26 @@ import type { SchemaColumnDraft, TransformStepDraft } from "../../types";
 
 type SchemaTransformColumn = {
   defaultValue?: string;
+  isAdded?: boolean;
   name: string;
   notNull?: boolean;
+  onError?: string;
   originalName?: string;
   originalType?: string;
   sourceId?: string | null;
   sourceName?: string;
   transform?: string | null;
+  transformChain?: Array<{
+    display?: string;
+    expression?: string;
+    onError?: string;
+    operation: string;
+    params?: string;
+    type?: string;
+  }>;
   transformDisplay?: string | null;
+  transformOperation?: string | null;
+  transformParams?: string;
   type: string;
 };
 
@@ -41,11 +53,13 @@ export function SchemaTransformWorkbench({
   onSelectedIndexChange,
   onTransformStepsChange,
 }: SchemaTransformWorkbenchProps) {
-  const sourceSchema = useMemo(() => columns.map((column) => ({
-    field: column.sourceName,
-    name: column.sourceName,
-    type: toSchemaTransformType(column.type),
-  })), [columns]);
+  const sourceSchema = useMemo(() => columns
+    .filter((column) => column.role !== "schema-added")
+    .map((column) => ({
+      field: column.sourceName,
+      name: column.sourceName,
+      type: toSchemaTransformType(column.type),
+    })), [columns]);
 
   const targetSchema = useMemo(
     () => columns
@@ -110,18 +124,33 @@ export function SchemaTransformWorkbench({
 }
 
 function toSchemaTransformTargetColumn(column: SchemaColumnDraft, transformSteps: TransformStepDraft[]): SchemaTransformColumn {
-  const outputName = column.targetName || column.sourceName;
-  const step = transformSteps.find((item) => item.output === outputName);
+  const outputName = column.targetName ?? column.sourceName;
+  const steps = transformSteps.filter((item) => item.output === outputName && item.enabled !== false);
+  const dataStep = steps.find((item) => !["Default Value", "Null Guard"].includes(item.operation));
+  const defaultStep = steps.find((item) => item.operation === "Default Value");
+  const nullGuardStep = steps.find((item) => item.operation === "Null Guard");
   return {
-    defaultValue: step?.operation === "Default Value" ? step.params : "",
+    defaultValue: defaultStep?.params ?? "",
+    isAdded: column.role === "schema-added",
     name: outputName,
-    notNull: column.nullable === false || step?.operation === "Null Guard",
+    notNull: column.nullable === false || Boolean(nullGuardStep),
+    onError: dataStep?.onError ?? "Warn",
     originalName: column.sourceName,
     originalType: toSchemaTransformType(column.type),
     sourceId: SCHEMA_TRANSFORM_SOURCE_ID,
     sourceName: "Source",
-    transform: step?.operation === "SQL Expression" ? step.params : null,
-    transformDisplay: step?.operation === "SQL Expression" ? step.params : null,
+    transform: dataStep?.operation === "SQL Expression" ? dataStep.params : null,
+    transformChain: dataStep ? [{
+      display: dataStep.operation === "SQL Expression" ? dataStep.params : `${dataStep.operation}: ${dataStep.params}`,
+      expression: dataStep.operation === "SQL Expression" ? dataStep.params : "",
+      onError: dataStep.onError,
+      operation: dataStep.operation,
+      params: dataStep.params,
+      type: toSchemaTransformType(column.type),
+    }] : [],
+    transformDisplay: dataStep ? (dataStep.operation === "SQL Expression" ? dataStep.params : `${dataStep.operation}: ${dataStep.params}`) : null,
+    transformOperation: dataStep?.operation ?? null,
+    transformParams: dataStep?.params ?? "",
     type: toSchemaTransformType(column.type),
   };
 }
@@ -137,21 +166,45 @@ function projectSchemaTransformSchema(
     if (!targetBySourceName.has(sourceName)) targetBySourceName.set(sourceName, { order, target });
   });
 
-  const nextColumns = currentColumns.map((column) => {
+  const retainedIndexes: number[] = [];
+  const matchedOrders = new Set<number>();
+  const nextColumns: SchemaColumnDraft[] = [];
+  currentColumns.forEach((column, columnIndex) => {
     const selected = targetBySourceName.get(normalizeSourceName(column.sourceName));
-    if (!selected) return { ...column, included: false, targetOrder: undefined };
+    if (!selected && column.role === "schema-added") return;
+    retainedIndexes.push(columnIndex);
+    if (!selected) {
+      nextColumns.push({ ...column, included: false, targetOrder: undefined });
+      return;
+    }
     const { order, target } = selected;
-    return {
+    matchedOrders.add(order);
+    nextColumns.push({
       ...column,
       included: true,
       nullable: !target.notNull,
-      role: target.transform ? `schema-transform:${target.transform}` : column.role,
       targetName: target.name,
       targetOrder: order,
       type: fromSchemaTransformType(target.type),
-    } satisfies SchemaColumnDraft;
+    });
   });
-  const nextRows = sampleRows.map((row) => [...row]);
+  const nextRows = sampleRows.map((row) => retainedIndexes.map((index) => row[index] ?? ""));
+
+  nextTargetSchema.forEach((target, order) => {
+    if (matchedOrders.has(order)) return;
+    const sourceName = String(target.originalName || target.name || `column_${order + 1}`).trim();
+    nextColumns.push({
+      confidence: 100,
+      included: true,
+      nullable: !target.notNull,
+      role: "schema-added",
+      sourceName,
+      targetName: target.name || sourceName,
+      targetOrder: order,
+      type: fromSchemaTransformType(target.type),
+    });
+    nextRows.forEach((row) => row.push(""));
+  });
 
   return { nextColumns, nextRows };
 }
@@ -159,24 +212,28 @@ function projectSchemaTransformSchema(
 function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformStepDraft[] {
   return targetSchema.flatMap((column) => {
     const output = column.name;
-    const input = normalizeSourceName(column.originalName || column.name);
-    if (column.transform) {
-      return [{
+    const input = column.isAdded ? output : normalizeSourceName(column.originalName || column.name);
+    const chainStep = column.transformChain?.find((step) => !["Default Value", "Null Guard"].includes(step.operation));
+    const operation = chainStep?.operation || column.transformOperation || (column.transform ? "SQL Expression" : "");
+    const params = chainStep?.params ?? column.transformParams ?? column.transform ?? "";
+    const steps: TransformStepDraft[] = [];
+    if (operation) {
+      steps.push({
         enabled: true,
-        id: `schema-transform-${output}`,
+        id: `schema-transform-${output}-data`,
         input,
         kind: "derive",
-        label: `SQL Expression: ${output}`,
-        onError: "Warn",
-        operation: "SQL Expression",
+        label: `${operation}: ${output}`,
+        onError: chainStep?.onError || column.onError || "Warn",
+        operation,
         output,
-        params: column.transform,
-      } satisfies TransformStepDraft];
+        params,
+      });
     }
     if (column.defaultValue) {
-      return [{
+      steps.push({
         enabled: true,
-        id: `schema-transform-${output}`,
+        id: `schema-transform-${output}-default`,
         input,
         kind: "derive",
         label: `Default Value: ${output}`,
@@ -184,12 +241,12 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
         operation: "Default Value",
         output,
         params: column.defaultValue,
-      } satisfies TransformStepDraft];
+      });
     }
     if (column.notNull) {
-      return [{
+      steps.push({
         enabled: true,
-        id: `schema-transform-${output}`,
+        id: `schema-transform-${output}-required`,
         input,
         kind: "derive",
         label: `Null Guard: ${output}`,
@@ -197,9 +254,9 @@ function buildTransformSteps(targetSchema: SchemaTransformColumn[]): TransformSt
         operation: "Null Guard",
         output,
         params: "required",
-      } satisfies TransformStepDraft];
+      });
     }
-    return [];
+    return steps;
   });
 }
 

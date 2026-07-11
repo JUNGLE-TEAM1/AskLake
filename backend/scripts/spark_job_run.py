@@ -19,6 +19,8 @@ def main():
     source_format = os.environ.get("ASKLAKE_SPARK_SOURCE_FORMAT", "unknown").lower()
     output_path = os.environ.get("ASKLAKE_SPARK_OUTPUT_PATH", "-")
     run_id = os.environ.get("ASKLAKE_SPARK_RUN_ID", "unknown")
+    source_collection = {}
+    source_parsing = {}
     spark = None
     try:
         source_path = required_env("ASKLAKE_SPARK_SOURCE_PATH")
@@ -31,10 +33,12 @@ def main():
             manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
         )
         schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
+        source_collection = manifest.get("sourceCollection") or {}
+        source_parsing = manifest.get("sourceParsing") or {}
         transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
         quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
         spark = make_spark()
-        source_df = read_source(spark, source_format, source_path, schema_columns)
+        source_df = read_source(spark, source_format, source_path, schema_columns, source_parsing, source_collection)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
         working_df = source_df if row_limit <= 0 else source_df.limit(row_limit)
         normalized_df = normalize_columns(working_df)
@@ -53,9 +57,6 @@ def main():
         written_df = spark.read.parquet(output_path)
         output_rows = written_df.count()
         quality = evaluate_quality_rules(written_df, quality_rules, total_rows=output_rows)
-        classifier_checks = evaluate_custom_csv_classifier_checks(written_df, transform_steps, total_rows=output_rows)
-        if classifier_checks:
-            quality["classifierChecks"] = classifier_checks
         sample_rows = collect_sample_rows(written_df, 10)
         if quality["status"] == "fail":
             ended_at = now_iso()
@@ -80,6 +81,8 @@ def main():
                     for field in output_df.schema.fields
                 ],
                 "sourcePath": source_path,
+                "sourceCollection": source_collection,
+                "sourceParsing": source_parsing,
                 "startedAt": started_at,
                 "status": "failed",
             }
@@ -106,6 +109,8 @@ def main():
                 for field in output_df.schema.fields
             ],
             "sourcePath": source_path,
+            "sourceCollection": source_collection,
+            "sourceParsing": source_parsing,
             "startedAt": started_at,
             "status": "success",
         }
@@ -124,6 +129,8 @@ def main():
             "outputRows": 0,
             "runId": run_id,
             "sourcePath": source_path,
+            "sourceCollection": source_collection,
+            "sourceParsing": source_parsing,
             "startedAt": started_at,
             "status": "failed",
         }
@@ -161,19 +168,85 @@ def make_spark():
     return spark
 
 
-def read_source(spark, source_format, source_path, schema_columns):
+def read_source(spark, source_format, source_path, schema_columns, source_parsing=None, source_collection=None):
+    base_reader = apply_source_collection(spark.read, source_collection or {})
     if source_format == "csv":
-        infer_schema = "false" if schema_columns else "true"
-        return spark.read.option("header", "true").option("inferSchema", infer_schema).csv(source_path)
+        parsing = source_parsing or {}
+        fields = parsing.get("fields") or []
+        reader = base_reader
+        if fields:
+            reader = reader.schema(delimited_struct_type(fields))
+        else:
+            infer_schema = "false" if schema_columns else "true"
+            reader = reader.option("inferSchema", infer_schema)
+        reader = (
+            reader
+            .option("header", str(bool(parsing.get("header", True))).lower())
+            .option("mode", "PERMISSIVE")
+            .option("multiLine", "false")
+            .option("encoding", str(parsing.get("encoding") or "UTF-8"))
+            .option("sep", str(parsing.get("delimiter") or ","))
+        )
+        if parsing.get("quote") is not None:
+            reader = reader.option("quote", str(parsing.get("quote") or ""))
+        if parsing.get("escape") is not None:
+            reader = reader.option("escape", str(parsing.get("escape") or ""))
+        row_delimiter = parsing.get("rowDelimiter")
+        if row_delimiter and row_delimiter != "\r\n":
+            reader = reader.option("lineSep", str(row_delimiter))
+        return reader.csv(source_path)
     if source_format == "jsonl":
-        return spark.read.option("multiLine", "false").json(source_path)
+        return base_reader.option("multiLine", "false").json(source_path)
     if source_format == "json":
-        return spark.read.option("multiLine", "true").json(source_path)
+        return base_reader.option("multiLine", "true").json(source_path)
     if source_format == "parquet":
-        return spark.read.parquet(source_path)
+        return base_reader.parquet(source_path)
     if source_format in {"txt", "text"}:
-        return spark.read.text(source_path)
+        return base_reader.text(source_path)
     raise ValueError(f"Unsupported Spark source format: {source_format}")
+
+
+def apply_source_collection(reader, source_collection):
+    if str(source_collection.get("scope") or "file").lower() != "folder":
+        return reader
+    file_pattern = str(source_collection.get("filePattern") or "").strip()
+    if file_pattern:
+        reader = reader.option("pathGlobFilter", file_pattern)
+    if bool(source_collection.get("recursive")):
+        reader = reader.option("recursiveFileLookup", "true")
+    return reader
+
+
+def delimited_struct_type(fields):
+    seen = set()
+    struct_fields = []
+    for index, field in enumerate(fields):
+        name = str(field.get("name") or f"column_{index + 1}").strip()
+        normalized = normalize_column_name(name)
+        if not normalized or normalized in seen:
+            raise ValueError("Delimited field names must be non-empty and unique.")
+        seen.add(normalized)
+        struct_fields.append(T.StructField(name, spark_data_type(field.get("type")), bool(field.get("nullable", True))))
+    return T.StructType(struct_fields)
+
+
+def spark_data_type(logical_type):
+    normalized = str(logical_type or "string").strip().lower()
+    if normalized in {"integer", "int"}:
+        return T.IntegerType()
+    if normalized in {"long", "bigint"}:
+        return T.LongType()
+    if normalized in {"float"}:
+        return T.FloatType()
+    if normalized in {"double", "decimal", "number", "numeric"}:
+        return T.DoubleType()
+    if normalized in {"boolean", "bool"}:
+        return T.BooleanType()
+    if normalized in {"timestamp", "datetime"}:
+        return T.TimestampType()
+    if normalized == "date":
+        return T.DateType()
+    return T.StringType()
 
 
 def parse_partition_columns(value):
@@ -330,9 +403,13 @@ def cast_for_schema(frame, column_name, logical_type):
     source = F.col(quote_identifier(column_name))
     if "bool" in normalized:
         return try_cast_type(column_name, "boolean")
-    if any(token in normalized for token in ["int", "long", "bigint"]):
+    if normalized in {"integer", "int", "int32"}:
+        return try_cast_type(column_name, "int")
+    if normalized in {"long", "bigint", "int64"}:
         return try_cast_type(column_name, "bigint")
-    if any(token in normalized for token in ["float", "double", "decimal", "number", "numeric"]):
+    if normalized in {"float", "float32"}:
+        return try_cast_type(column_name, "float")
+    if normalized in {"double", "float64", "decimal", "number", "numeric"}:
         return try_cast_type(column_name, "double")
     if "timestamp" in normalized or "datetime" in normalized:
         return F.to_timestamp(source.cast("string"))
@@ -349,9 +426,13 @@ def spark_sql_type(logical_type):
     normalized = str(logical_type or "").lower()
     if "bool" in normalized:
         return "boolean"
-    if any(token in normalized for token in ["int", "long", "bigint"]):
+    if normalized in {"integer", "int", "int32"}:
+        return "int"
+    if normalized in {"long", "bigint", "int64"}:
         return "bigint"
-    if any(token in normalized for token in ["float", "double", "decimal", "number", "numeric"]):
+    if normalized in {"float", "float32"}:
+        return "float"
+    if normalized in {"double", "float64", "decimal", "number", "numeric"}:
         return "double"
     if "timestamp" in normalized or "datetime" in normalized:
         return "timestamp"
@@ -394,10 +475,10 @@ def apply_transform_steps(spark, frame, steps):
             continue
         elif "sql expression" in operation and params.strip():
             expression = F.expr(params)
-        elif "custom csv classifier" in operation or "csv classifier" in operation:
-            expression = custom_csv_classifier_expression(source, params)
         elif "json" in operation:
             expression = F.get_json_object(source.cast("string"), params or "$.value")
+        elif "regex" in operation:
+            expression = F.regexp_extract(source.cast("string"), params or r"^/products/([^/]+)", 1)
         elif "lower" in operation or "trim" in operation:
             expression = F.lower(F.trim(source.cast("string")))
         elif "decimal" in operation or "cast" in operation:
@@ -411,181 +492,6 @@ def apply_transform_steps(spark, frame, steps):
         current = current.withColumn(output_column, expression)
         index += 1
     return current
-
-
-def custom_csv_classifier_expression(source, params):
-    config = parse_custom_csv_classifier_config(params)
-    rules = config.get("rules") or []
-    fallback = next((rule.get("value") for rule in rules if rule.get("condition") == "else"), None)
-    fallback = fallback or config.get("fallbackValue") or (rules[-1].get("value") if rules else "")
-    expression = None
-    for rule in rules:
-        if rule.get("condition") == "else":
-            continue
-        condition = custom_csv_classifier_condition(source, rule)
-        if condition is None:
-            continue
-        value = F.lit(str(rule.get("value") or ""))
-        expression = F.when(condition, value) if expression is None else expression.when(condition, value)
-    if expression is None:
-        return F.lit(str(fallback))
-    return expression.otherwise(F.lit(str(fallback)))
-
-
-def parse_custom_csv_classifier_config(params):
-    try:
-        parsed = json.loads(params or "{}")
-    except Exception:
-        parsed = {}
-    raw_rules = parsed.get("rules") if isinstance(parsed, dict) else []
-    rules = []
-    if isinstance(raw_rules, list):
-        for rule in raw_rules:
-            if not isinstance(rule, dict):
-                continue
-            value = str(rule.get("value") or "").strip()
-            if not value:
-                continue
-            rules.append({
-                "condition": str(rule.get("condition") or "keyword_any"),
-                "pattern": str(rule.get("pattern") or ""),
-                "value": value,
-            })
-    return {
-        "fallbackValue": str(parsed.get("fallbackValue") or "") if isinstance(parsed, dict) else "",
-        "rules": rules,
-    }
-
-
-def custom_csv_classifier_condition(source, rule):
-    condition = str(rule.get("condition") or "keyword_any")
-    pattern = str(rule.get("pattern") or "")
-    text_value = source.cast("string")
-    lowered = F.lower(text_value)
-    if condition == "empty":
-        return source.isNull() | (F.length(F.trim(text_value)) == 0)
-    if condition == "not_empty":
-        return source.isNotNull() & (F.length(F.trim(text_value)) > 0)
-    if condition == "numeric_lte":
-        return source.cast("double") <= safe_float(pattern)
-    if condition == "numeric_gte":
-        return source.cast("double") >= safe_float(pattern)
-    keywords = [item.strip().lower() for item in pattern.split(",") if item.strip()]
-    if not keywords:
-        return None
-    checks = [lowered.contains(keyword) for keyword in keywords]
-    current = checks[0]
-    for check in checks[1:]:
-        current = current & check if condition == "keyword_all" else current | check
-    return current
-
-
-def evaluate_custom_csv_classifier_checks(frame, steps, total_rows=None):
-    classifier_steps = [
-        step
-        for step in steps
-        if step
-        and step.get("enabled") is not False
-        and is_custom_csv_classifier_step(step)
-    ]
-    if not classifier_steps:
-        return []
-
-    checks = []
-    total_rows = int(total_rows) if total_rows is not None else frame.count()
-    for step in classifier_steps:
-        input_column = str(step.get("input") or "").strip()
-        output_column = normalize_column_name(step.get("output") or input_column)
-        config = parse_custom_csv_classifier_config(str(step.get("params") or ""))
-        rules = config.get("rules") or []
-        fallback = custom_csv_classifier_fallback(config)
-        resolved_output = resolve_column_name(frame, output_column)
-        blank_pattern_rules = [
-            rule
-            for rule in rules
-            if classifier_condition_needs_pattern(rule.get("condition")) and not str(rule.get("pattern") or "").strip()
-        ]
-        invalid_numeric_rules = [
-            rule
-            for rule in rules
-            if classifier_numeric_condition(rule.get("condition")) and not classifier_pattern_is_number(rule.get("pattern"))
-        ]
-
-        check = {
-            "blankPatternRules": len(blank_pattern_rules),
-            "fallbackValue": fallback,
-            "id": str(step.get("id") or output_column),
-            "input": input_column,
-            "invalidNumericRules": len(invalid_numeric_rules),
-            "output": output_column,
-            "rules": len(rules),
-            "runtimeStatus": "recorded",
-            "totalRows": total_rows,
-        }
-        if not resolved_output:
-            check["runtimeStatus"] = "missing_output_column"
-            checks.append(check)
-            continue
-
-        output_value = F.col(quote_identifier(resolved_output)).cast("string")
-        fallback_rows = frame.filter(output_value == F.lit(str(fallback))).count() if fallback != "" else 0
-        distribution_rows = (
-            frame.select(output_value.alias("__classifier_value"))
-            .groupBy("__classifier_value")
-            .count()
-            .orderBy(F.desc("count"))
-            .limit(20)
-            .collect()
-        )
-        check.update({
-            "explicitRows": max(total_rows - fallback_rows, 0),
-            "fallbackRows": fallback_rows,
-            "outputDistribution": [
-                {
-                    "count": int(row["count"]),
-                    "value": "" if row["__classifier_value"] is None else str(row["__classifier_value"]),
-                }
-                for row in distribution_rows
-            ],
-        })
-        if blank_pattern_rules or invalid_numeric_rules:
-            check["runtimeStatus"] = "rules_need_attention"
-        checks.append(check)
-    return checks
-
-
-def is_custom_csv_classifier_step(step):
-    operation = str(step.get("operation") or step.get("kind") or "").lower()
-    return "custom csv classifier" in operation or "csv classifier" in operation
-
-
-def custom_csv_classifier_fallback(config):
-    rules = config.get("rules") or []
-    fallback = next((rule.get("value") for rule in rules if rule.get("condition") == "else"), None)
-    return str(fallback or config.get("fallbackValue") or (rules[-1].get("value") if rules else ""))
-
-
-def classifier_condition_needs_pattern(condition):
-    return str(condition or "keyword_any") not in {"else", "empty", "not_empty"}
-
-
-def classifier_numeric_condition(condition):
-    return str(condition or "") in {"numeric_lte", "numeric_gte"}
-
-
-def classifier_pattern_is_number(pattern):
-    try:
-        float(str(pattern or "").strip())
-        return True
-    except Exception:
-        return False
-
-
-def safe_float(value):
-    try:
-        return float(value)
-    except Exception:
-        return 0.0
 
 
 def evaluate_quality_rules(frame, rules, total_rows=None):
