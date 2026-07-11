@@ -11,7 +11,6 @@ import { listS3Buckets, listS3Prefixes, type S3PrefixesResponse, type S3PrefixFo
 import { buildS3Path, normalizePrefix, parseS3Path, S3_SCHEME } from "../../utils/s3Path";
 
 type S3PathFieldProps = {
-  disabled?: boolean;
   onChange: (path: string) => void;
   useShadcnStyles?: boolean;
   value: string;
@@ -49,7 +48,7 @@ function S3PathText({ value }: { value: string }) {
   return <span className="s3-path-text" title={parsed.path}>{parsed.path}</span>;
 }
 
-export function S3PathField({ disabled = false, onChange, useShadcnStyles = false, value }: S3PathFieldProps) {
+export function S3PathField({ onChange, useShadcnStyles = false, value }: S3PathFieldProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const parsed = useMemo(() => parseS3Path(value), [value]);
@@ -66,7 +65,7 @@ export function S3PathField({ disabled = false, onChange, useShadcnStyles = fals
       <div className="s3-path-display" title={parsed.path || value}>
         <S3PathText value={value} />
       </div>
-      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} disabled={disabled} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
+      <Button className={useShadcnStyles ? undefined : "secondary-button s3-path-action"} type="button" variant="outline" onClick={() => setPickerOpen(true)}>
         <FolderSearch data-icon="inline-start" />
         찾아보기
       </Button>
@@ -74,7 +73,7 @@ export function S3PathField({ disabled = false, onChange, useShadcnStyles = fals
         {copied ? <Check data-icon="inline-start" /> : <Clipboard data-icon="inline-start" />}
         {copied ? "복사됨" : "복사"}
       </Button>
-      {pickerOpen && !disabled ? (
+      {pickerOpen ? (
         <S3PathPicker
           value={value}
           useShadcnStyles={useShadcnStyles}

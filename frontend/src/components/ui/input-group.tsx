@@ -47,7 +47,7 @@ export const InputGroupAddon = React.forwardRef<
   React.HTMLAttributes<HTMLSpanElement>
 >(({ className, ...props }, ref) => (
   <span
-    className={cn("inline-flex h-9 shrink-0 items-center gap-2 px-3 text-sm text-slate-500", className)}
+    className={cn("inline-flex h-9 shrink-0 items-center gap-2 px-3 text-base text-slate-500", className)}
     ref={ref}
     {...props}
   />
@@ -58,7 +58,7 @@ export const InputGroupText = React.forwardRef<
   HTMLSpanElement,
   React.HTMLAttributes<HTMLSpanElement>
 >(({ className, ...props }, ref) => (
-  <span className={cn("truncate text-sm text-slate-500", className)} ref={ref} {...props} />
+  <span className={cn("truncate text-base text-slate-500", className)} ref={ref} {...props} />
 ));
 InputGroupText.displayName = "InputGroupText";
 

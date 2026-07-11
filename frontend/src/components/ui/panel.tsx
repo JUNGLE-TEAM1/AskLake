@@ -47,7 +47,7 @@ export const Panel = React.forwardRef<HTMLElement, PanelProps>(
 Panel.displayName = "Panel";
 
 const panelHeaderIconVariants = cva(
-  "inline-grid size-8 shrink-0 place-items-center rounded-lg",
+  "inline-grid size-11 shrink-0 place-items-center rounded-lg [&_svg]:size-[22px]",
   {
     defaultVariants: {
       variant: "default",
@@ -105,11 +105,11 @@ export const PanelHeader = React.forwardRef<HTMLDivElement, PanelHeaderProps>(
         </span>
       ) : null}
       <div className="grid min-w-0 gap-0.5">
-        <h2 className="m-0 text-base font-[850] leading-tight tracking-normal text-slate-900 [overflow-wrap:anywhere]">
+        <h2 className="m-0 text-xl font-[850] leading-tight tracking-normal text-slate-900 [overflow-wrap:anywhere]">
           {title}
         </h2>
         {description ? (
-          <p className="m-0 text-xs font-bold leading-snug tracking-normal text-slate-500 [overflow-wrap:anywhere]">
+          <p className="m-0 text-sm font-bold leading-snug tracking-normal text-slate-500 [overflow-wrap:anywhere]">
             {description}
           </p>
         ) : null}

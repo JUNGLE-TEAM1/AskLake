@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export function DashboardTopBar({
-  canManage = true,
   hasPublishedRevision,
   isPublishing = false,
   isRefreshing = false,
@@ -18,7 +17,6 @@ export function DashboardTopBar({
   onShare,
   title,
 }: {
-  canManage?: boolean;
   hasPublishedRevision?: boolean;
   isPublishing?: boolean;
   isRefreshing?: boolean;
@@ -34,7 +32,7 @@ export function DashboardTopBar({
 }) {
   const [draftTitle, setDraftTitle] = useState(title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const canRename = mode === "draft" && canManage && Boolean(onRenameTitle);
+  const canRename = mode === "draft" && Boolean(onRenameTitle);
 
   useEffect(() => {
     if (!isEditingTitle) setDraftTitle(title);
@@ -99,15 +97,7 @@ export function DashboardTopBar({
       </div>
       <div className="asklake-dashboard-actions">
         {mode === "published" ? (
-          <Button
-            className="asklake-dashboard-action primary"
-            disabled={!canManage}
-            onClick={onOpenDraft}
-            size="sm"
-            title={canManage ? "편집 모드" : "대시보드 편집 권한이 없습니다."}
-            type="button"
-            variant="primary"
-          >
+          <Button className="asklake-dashboard-action primary" type="button" onClick={onOpenDraft} size="sm" variant="primary">
             <Pencil size={16} />
             편집 모드
           </Button>
@@ -115,8 +105,7 @@ export function DashboardTopBar({
           <>
             <Button
               className="asklake-dashboard-action primary"
-              disabled={isPublishing || !canManage}
-              title={canManage ? "대시보드 저장" : "대시보드 편집 권한이 없습니다."}
+              disabled={isPublishing}
               type="button"
               size="sm"
               variant="primary"

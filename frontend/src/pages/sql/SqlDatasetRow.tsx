@@ -166,8 +166,8 @@ function SqlDatasetTreeRow({
         <TreeExpander hasChildren />
         <TreeIcon hasChildren icon={<Table2 />} />
         <TreeLabel className="grid min-w-0 gap-1">
-          <strong className="truncate text-sm font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
-          <span className="text-xs font-semibold text-slate-500">{dataset.schema.length} columns</span>
+          <strong className="truncate text-base font-black text-slate-950" title={dataset.name}>{dataset.name}</strong>
+          <span className="text-sm font-semibold text-slate-500">{dataset.schema.length} columns</span>
         </TreeLabel>
         {selected && <StatusBadge className="ml-auto shrink-0" size="sm" tone="success">선택됨</StatusBadge>}
       </TreeNodeTrigger>
@@ -195,8 +195,8 @@ function SqlDatasetTreeRow({
                 <TreeExpander />
                 <TreeIcon icon={<Icon />} />
                 <TreeLabel className="grid min-w-0 gap-0.5">
-                  <strong className="truncate text-sm font-bold text-slate-900" title={name}>{name}</strong>
-                  <span className="text-xs font-semibold text-slate-500">{formatColumnType(type)}</span>
+                  <strong className="truncate text-base font-bold text-slate-900" title={name}>{name}</strong>
+                  <span className="text-sm font-semibold text-slate-500">{formatColumnType(type)}</span>
                 </TreeLabel>
               </TreeNodeTrigger>
             </TreeNode>
@@ -215,7 +215,6 @@ function SqlDatasetHoverCard({ info }: { info: HoverInfo }) {
       { label: "레이어", value: info.dataset.layer },
       { label: "컬럼", value: `${info.dataset.schema.length}개` },
       { label: "담당자", value: info.dataset.owner },
-      { label: "만든 사람", value: info.dataset.createdByProfile?.displayName || info.dataset.createdBy || info.dataset.owner },
     ]
     : [
       { label: "유형", value: formatColumnType(info.columnType) },
