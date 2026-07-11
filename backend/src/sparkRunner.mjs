@@ -107,7 +107,8 @@ export function runSparkPipeline(job, command, runId) {
     process.env.ASKLAKE_SPARK_IMAGE || "apache/spark:4.0.1",
     "/opt/spark/bin/spark-submit",
     "--master",
-    process.env.ASKLAKE_SPARK_MASTER_URL || "spark://asklake-spark-master:7077",
+    process.env.ASKLAKE_SPARK_MASTER_URL
+      || `spark://${process.env.ASKLAKE_SPARK_MASTER_CONTAINER || "asklake-spark-master"}:7077`,
     "--driver-memory",
     process.env.ASKLAKE_SPARK_DRIVER_MEMORY || "4g",
     "--executor-memory",
@@ -389,12 +390,17 @@ function setSourceField(item, name, value) {
 }
 
 function sparkOutputPath(job, runId) {
-  const bucket = fieldValue(job.sourceConfig ?? [], "Bucket / Stage Name") || process.env.MINIO_BUCKET || "m3-raw";
   const layer = normalizeColumnName(job.targetLayer || "gold") || "gold";
   const dataset = normalizeColumnName(job.target || job.name || "asklake_dataset");
   const prefix = normalizePrefix(process.env.ASKLAKE_SPARK_OUTPUT_PREFIX || "asklake-output");
   if ((process.env.ASKLAKE_SPARK_OUTPUT_MODE || "local").toLowerCase() === "s3a") {
-    const sparkPath = `s3a://${bucket}/${prefix}${layer}/${dataset}/${runId}`;
+    // storagePath is the configured destination root. targetPath is the latest
+    // observed Run output and must not become the next Run's parent directory.
+    const configuredTarget = String(job.storagePath || "").trim();
+    const targetBase = /^s3a?:\/\//i.test(configuredTarget)
+      ? toS3APath(configuredTarget).replace(/\/+$/, "")
+      : `s3a://${process.env.ASKLAKE_SPARK_OUTPUT_BUCKET || "asklake-output"}/${prefix}${layer}/${dataset}`;
+    const sparkPath = targetBase.endsWith(`/${runId}`) ? targetBase : `${targetBase}/${runId}`;
     return { displayPath: sparkPath, sparkPath };
   }
 
