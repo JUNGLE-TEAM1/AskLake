@@ -12,14 +12,6 @@
   font-family: var(--jobs-font-family);
 }
 
-.catalog-page-header > div > div:first-child {
-  align-items: center;
-}
-
-.catalog-page-header > div > div:first-child > span {
-  margin-top: 0;
-}
-
 .catalog-content-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(320px, 24vw, 420px);

@@ -111,9 +111,13 @@ export function DashboardLandingPage({
           </Button>
         )}
         className="dashboard-page-header"
-        icon={<BarChart3 size={18} />}
-        iconClassName="mt-0"
+        description="데이터셋을 기반으로 지표를 구성하고 대시보드를 공유합니다."
+        descriptionClassName="text-xl leading-8"
+        icon={<BarChart3 size={30} />}
+        iconClassName="mt-0 size-16 rounded-xl"
+        size="lg"
         title="대시보드"
+        titleClassName="text-4xl"
       />
 
       <div className="dashboard-panel-stack">

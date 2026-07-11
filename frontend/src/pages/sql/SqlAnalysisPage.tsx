@@ -735,8 +735,13 @@ export function SqlAnalysisPage({
     <div className={cn("sql-page", contextCollapsed && "context-collapsed")}>
       <PageHeader
         className="sql-page-header"
-        icon={<Table2 size={18} />}
+        description="데이터셋을 탐색하고 SQL 쿼리를 실행해 결과를 분석합니다."
+        descriptionClassName="text-xl leading-8"
+        icon={<Table2 size={30} />}
+        iconClassName="mt-0 size-16 rounded-xl"
+        size="lg"
         title="SQL 분석"
+        titleClassName="text-4xl"
       />
       {contextCollapsed && (
         <Button className="sql-context-rail-button" type="button" onClick={toggleContext} aria-label="분석 테이블 열기" title="분석 테이블 열기" size="icon" variant="outline">

@@ -590,8 +590,13 @@ export function CatalogPage({
     <div className="catalog-page">
       <PageHeader
         className="catalog-page-header"
-        icon={<Search size={18} />}
+        description="데이터셋을 검색하고 메타데이터, 스키마, 계보를 확인합니다."
+        descriptionClassName="text-xl leading-8"
+        icon={<Search size={30} />}
+        iconClassName="mt-0 size-16 rounded-xl"
+        size="lg"
         title="검색/카탈로그"
+        titleClassName="text-4xl"
       />
       {error ? (
         <Alert className="border-red-200 bg-red-50 text-red-800" variant="destructive">
