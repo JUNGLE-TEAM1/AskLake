@@ -1206,6 +1206,16 @@ type SubmitQueryRunResponse = {
   engine: "trino";
   status: "queued" | "running" | "succeeded" | "failed";
   submittedAt: string;
+  estimate?: QueryRunEstimateSnapshot;
+};
+
+type QueryRunEstimateSnapshot = {
+  estimatedBytes?: number;
+  estimatedDurationSeconds?: number;
+  estimateSource: "trino_plan" | "catalog_heuristic";
+  knownInputBytes: number;
+  riskLevel: "low" | "medium" | "high";
+  warnings: string[];
 };
 ```
 
@@ -1274,6 +1284,8 @@ type GetQueryRunResponse = {
   submittedAt: string;
   startedAt?: string;
   completedAt?: string;
+  // Submit 시점의 실행 전 평가 snapshot. confirmation token은 절대 저장/반환하지 않는다.
+  estimate?: QueryRunEstimateSnapshot;
   stats?: {
     elapsedMs?: number;
     queuedMs?: number;
@@ -1281,6 +1293,10 @@ type GetQueryRunResponse = {
     processedRows?: number;
     processedBytes?: number;
     peakMemoryBytes?: number;
+    completedSplits?: number;
+    totalSplits?: number;
+    // Trino가 제공하면 사용하고, 없으면 split 비율을 사용한다. 알 수 없으면 생략한다.
+    progressPercentage?: number;
   };
   result?: {
     storage: "minio";
@@ -1341,7 +1357,7 @@ type QueryRunResultPage = {
 - 결과 retention 또는 cursor가 만료되면 명시적 오류를 반환하고, 사용자에게 재실행 또는 materialization을 안내합니다.
 - cleanup worker는 terminal run을 keyset batch로 끝까지 순회하므로 최근 N건만 정리하지 않습니다. 실행 중 run과 durable materialized Dataset은 cleanup 대상이 아닙니다.
 
-`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Catalog metadata heuristic 기반 예상 처리량과 위험도를 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다.
+`POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소합니다. `POST /api/query/estimates`는 SQL을 실행하지 않고 Catalog metadata heuristic 기반 예상 처리량과 위험도를 반환합니다. 예상값은 실제 Query Run stats를 대체하지 않습니다. 제출 시점에 계산한 예상값은 run response에 snapshot으로 남겨 실행 이력을 다시 열어도 비교할 수 있지만, 재실행 승인용 `confirmationToken`은 persistence와 Query Run response에 포함하지 않습니다.
 
 `POST /api/query/estimates`
 
@@ -1373,9 +1389,9 @@ type QueryEstimateResponse = {
 프론트 기대 동작:
 
 - `실행` 클릭은 Trino 전체 실행을 제출하고 status polling을 시작합니다.
-- SQL 분석 화면은 최대 5개의 내 최근 실행을 표시하며, 항목을 선택하면 저장된 Query Run과 cursor 결과 첫 페이지를 다시 엽니다.
+- SQL 분석 화면은 유효한 SQL을 editor 아래에서 자동 평가하고, 최대 5개의 내 최근 실행을 표시합니다. 항목을 선택하면 저장된 Query Run과 cursor 결과 첫 페이지를 다시 엽니다.
 - 결과 table은 server cursor page를 요청해 렌더링합니다.
-- 실행 결과 영역은 `stats.queuedMs`, `elapsedMs`, `processedBytes`, `processedRows`, `peakMemoryBytes`를 표시하며, estimate가 있으면 예상 처리량과 실제 처리량을 함께 비교합니다.
+- 실행 중 결과 영역은 실행 단계, `stats.queuedMs`, `elapsedMs`, `processedBytes`, `processedRows`, `peakMemoryBytes`, 예상/남은 시간을 표시하며, estimate가 있으면 예상 처리량과 실제 처리량을 함께 비교합니다. 진행률은 Trino `progressPercentage`를 우선하고 `completedSplits / totalSplits`를 fallback으로 사용한다. 둘 다 없으면 숫자를 표시하지 않고 indeterminate 상태로 렌더링한다. `succeeded` terminal run만 100%로 확정하며, 결과 page를 object storage에 쓰는 시간은 query progress가 아닌 별도 `결과 수집 중` 단계다.
 - Dashboard draft는 retention 내 completed run을 임시 source로 쓸 수 있으나, publish 또는 반복 사용은 materialized Dataset을 source로 사용합니다.
 - 실패·취소·권한 차단은 Query Run 상태와 admin audit log에 기록합니다.
 

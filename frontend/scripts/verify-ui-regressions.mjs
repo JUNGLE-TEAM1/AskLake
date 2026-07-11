@@ -41,6 +41,19 @@ const checks = [
     ],
   },
   {
+    name: "SQL query evaluation and active run monitor distinguish estimates from runtime progress",
+    file: "src/pages/sql/SqlAnalysisPage.tsx",
+    patterns: [
+      /const activeQueryEstimate = queryEstimateKey === queryValidationKey \? queryEstimate : null;/,
+      /setTimeout\(\(\) => \{[\s\S]*estimateSqlQueryRun\(baseDataset, query, \[\.\.\.referenceDatasetIds\]\.sort\(\)\)/,
+      /className=\{`sql-query-evaluation \$\{activeQueryEstimate\?\.riskLevel \?\? "neutral"\}`\}/,
+      /const runProgressPercentage = trinoRun \? getRunProgressPercentage\(trinoRun\) : null;/,
+      /runProgressPercentage == null \? "진행률 계산 중" : `\$\{Math\.round\(runProgressPercentage\)\}%`/,
+      /className=\{runProgressPercentage == null \? "sql-run-progress indeterminate" : "sql-run-progress"\}/,
+      /\{runPhase\}/,
+    ],
+  },
+  {
     name: "SQL Query Run history reopens persisted runs without rendering every result",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [

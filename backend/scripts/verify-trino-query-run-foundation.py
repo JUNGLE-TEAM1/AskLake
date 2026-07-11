@@ -13,6 +13,8 @@ from app.services.trino_query_run_service import (
     decode_cursor_position,
     encode_cursor,
     is_run_submitter,
+    query_run_estimate_snapshot,
+    trino_stats,
     trino_request_fingerprint,
 )
 from app.services.trino_sql_compiler import compile_trino_read_query
@@ -272,7 +274,18 @@ def verify() -> None:
     )
     assert not plan_backed_unknown_size_estimate.confirmation_required
     assert plan_backed_unknown_size_estimate.risk_level == "low"
+    snapshot = query_run_estimate_snapshot(plan_backed_unknown_size_estimate)
+    assert "confirmationToken" not in snapshot.model_dump(by_alias=True)
+    assert snapshot.estimated_bytes == 9 * 1024
     assert parse_plan_estimated_bytes("Estimates: {rows: 230 (9.00kB), cpu: 9.00k}") == 9 * 1024
+
+    split_stats = trino_stats({"completedSplits": 25, "totalSplits": 100, "state": "RUNNING"})
+    assert split_stats and split_stats.progress_percentage == 25
+    assert split_stats.completed_splits == 25 and split_stats.total_splits == 100
+    finished_stats = trino_stats({"state": "FINISHED"})
+    assert finished_stats and finished_stats.progress_percentage == 100
+    unknown_progress_stats = trino_stats({"state": "RUNNING"})
+    assert unknown_progress_stats and unknown_progress_stats.progress_percentage is None
 
     completed_run = run.model_copy(update={"status": "succeeded"})
     materialization_sql = build_trino_materialization_statement(

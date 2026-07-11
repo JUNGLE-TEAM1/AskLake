@@ -15,11 +15,14 @@ class TrinoQueryRunError(CamelModel):
 
 class TrinoQueryRunStats(CamelModel):
     cpu_ms: int | None = None
+    completed_splits: int | None = None
     elapsed_ms: int | None = None
     peak_memory_bytes: int | None = None
+    progress_percentage: float | None = Field(default=None, ge=0, le=100)
     processed_bytes: int | None = None
     processed_rows: int | None = None
     queued_ms: int | None = None
+    total_splits: int | None = None
 
 
 class TrinoQueryRunResult(CamelModel):
@@ -88,6 +91,15 @@ class TrinoQueryEstimate(CamelModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class TrinoQueryRunEstimate(CamelModel):
+    estimated_bytes: int | None = None
+    estimated_duration_seconds: int | None = None
+    estimate_source: Literal["trino_plan", "catalog_heuristic"] = "catalog_heuristic"
+    known_input_bytes: int = 0
+    risk_level: Literal["low", "medium", "high"]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class QueryRunSubmitRequest(CamelModel):
     base_dataset_id: str | None = None
     client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -128,6 +140,7 @@ class TrinoQueryRunResponse(CamelModel):
     base_dataset_id: str
     completed_at: str | None = None
     engine: Literal["trino"] = "trino"
+    estimate: TrinoQueryRunEstimate | None = None
     error: TrinoQueryRunError | None = None
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)

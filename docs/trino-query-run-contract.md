@@ -80,13 +80,13 @@ type QueryRun = {
 };
 ```
 
-- `POST /api/query/runs`는 `202 Accepted`와 `runId`, 최초로 저장된 실행 상태를 반환한다.
+- `POST /api/query/runs`는 `202 Accepted`와 `runId`, 최초로 저장된 실행 상태, 제출 시점 estimate snapshot을 반환한다. snapshot에는 예상 처리량/시간, source, risk, warning만 저장하며 confirmation token은 저장하거나 run response로 다시 반환하지 않는다.
 - 최초 Trino response가 이미 진행 또는 완료 상태이면 initial response는 `running`, `succeeded`, `failed`일 수 있다.
 - Frontend는 실행 시도마다 `clientRequestId`를 보내고 confirmation/network retry에는 같은 값을 재사용한다. Backend는 `(actorKey, clientRequestId)` unique reservation과 request fingerprint로 중복 Trino submit을 막는다.
 - actor별 active run limit은 PostgreSQL advisory lock 안에서 reservation row를 먼저 저장해 원자적으로 적용한다. 초과는 `429`, 같은 key의 다른 request는 `409`다.
 - `GET /api/query/runs/{runId}`는 lifecycle, Trino query ID, 실행 통계, 오류, 결과 metadata를 반환한다.
 - `GET /api/query/runs`는 현재 submitter의 최근 실행 요약만 반환한다. actor user ID가 있으면 ID를 기준으로 분리하고, ID 없는 legacy run에만 display name fallback을 적용한다. 동일 display name의 다른 user ID는 run을 열거나 materialize할 수 없다.
-- SQL 분석 UI는 polling 응답의 queued/elapsed time, processed bytes/rows, peak memory를 실행 중과 완료 뒤에 함께 표시한다. 실행 전 estimate는 참고값이고 실제 stats가 우선한다.
+- SQL 분석 UI는 polling 응답의 queued/elapsed time, processed bytes/rows, peak memory를 실행 중과 완료 뒤에 함께 표시한다. 실행 전 estimate는 editor 아래에서 자동 평가해 보여 주는 참고값이고 실제 stats가 우선한다. 해당 estimate snapshot은 이력 재열기에도 사용한다.
 - `POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소할 수 있다.
 - terminal state는 `succeeded`, `failed`, `cancelled`다.
 - run 상태는 poll 또는 후속 event transport로 갱신한다. Phase 0에서는 polling을 canonical client 흐름으로 둔다.
@@ -137,6 +137,7 @@ Run metadata/result/cancel과 materialization submit/status를 열 때도 현재
 - `POST /api/query/estimates`는 SQL을 실행하지 않고 우선 `EXPLAIN (TYPE DISTRIBUTED)` plan의 byte estimate를 사용한다. plan을 읽지 못하면 Catalog size/JOIN complexity heuristic으로 fallback하며, UI는 source를 표시한다. 이 값은 actual Trino run stats나 청구 금액이 아니다.
 - 예상값은 보장 비용이 아니며, 실제 처리량과 실행 시간은 완료된 Query Run stats를 source of truth로 한다.
 - UI는 editor 아래에 estimate를 표시한다. 확인 모달은 조직의 bytes/time/concurrency 정책 임계치를 넘는 경우에만 사용한다.
+- 실행 중 진행률은 Trino가 준 `progressPercentage`를 우선하고, 없을 때만 `completedSplits / totalSplits`로 계산한다. 둘 다 없으면 UI는 진행률 숫자를 만들지 않고 indeterminate 상태를 유지한다. terminal `succeeded` 상태만 100%로 확정한다. query가 끝난 뒤 private result page object를 저장하는 collector 구간은 progress percentage와 분리된 `결과 수집 중` 상태다.
 - backend는 사용자/조직별 동시 실행 수, timeout, 최대 처리량 등의 guardrail을 적용한다. warning threshold 이상은 actor/query/dataset/TTL-bound confirmation token을 요구하며, hard byte limit은 backend가 차단한다.
 - Dataset 크기가 없거나 `Trino managed`처럼 Catalog 크기를 추정할 수 없어도 Trino plan byte estimate가 있으면 그 값을 사용해 저위험 실행은 바로 진행한다. plan과 Catalog 크기를 모두 얻지 못한 경우에만 보수적으로 confirmation을 요구하고 불확실성을 UI에 표시한다.
 

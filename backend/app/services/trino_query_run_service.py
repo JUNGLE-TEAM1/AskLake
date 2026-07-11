@@ -31,6 +31,7 @@ from app.schemas.trino import (
     TrinoQueryRunStats,
     TrinoQueryEstimate,
     TrinoQueryEstimateRequest,
+    TrinoQueryRunEstimate,
 )
 from app.services.governance_enforcement import require_governed_access
 from app.services.resource_permission_service import dataset_with_persisted_permission_grants
@@ -90,7 +91,13 @@ class TrinoQueryRunService:
             estimate=estimate,
         )
         request_fingerprint = trino_request_fingerprint(request)
-        reserved = build_reserved_run_response(request, actor_context, self.settings.trino_result_retention_seconds)
+        estimate_snapshot = query_run_estimate_snapshot(estimate)
+        reserved = build_reserved_run_response(
+            request,
+            actor_context,
+            self.settings.trino_result_retention_seconds,
+            estimate=estimate_snapshot,
+        )
         reservation_payload = reserved.model_dump(by_alias=True, exclude_none=True, mode="json")
         reservation_payload["resultPageSize"] = normalized_result_page_size(request.result_page_size)
         reservation = self.repository.reserve_trino_submission(
@@ -132,6 +139,7 @@ class TrinoQueryRunService:
             page,
             actor_context,
             self.settings.trino_result_retention_seconds,
+            estimate=estimate_snapshot,
             run_id=reserved.run_id,
             submitted_at=reserved.submitted_at,
         )
@@ -754,12 +762,14 @@ def build_run_response(
     actor: ActorContext,
     retention_seconds: int,
     *,
+    estimate: TrinoQueryRunEstimate | None = None,
     run_id: str | None = None,
     submitted_at: str | None = None,
 ) -> TrinoQueryRunResponse:
     submitted_at = submitted_at or current_utc_timestamp()
     response = TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
+        estimate=estimate,
         error=page.error,
         query=request.query,
         reference_dataset_ids=unique_values(request.reference_dataset_ids),
@@ -782,9 +792,12 @@ def build_reserved_run_response(
     request: SubmitTrinoQueryRunRequest,
     actor: ActorContext,
     retention_seconds: int,
+    *,
+    estimate: TrinoQueryRunEstimate | None = None,
 ) -> TrinoQueryRunResponse:
     return TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
+        estimate=estimate,
         query=request.query,
         reference_dataset_ids=unique_values(request.reference_dataset_ids),
         result=TrinoQueryRunResult(
@@ -838,13 +851,25 @@ def trino_status(page: TrinoClientPage) -> str:
 def trino_stats(raw_stats: dict[str, object]) -> TrinoQueryRunStats | None:
     if not raw_stats:
         return None
+    completed_splits = int_or_none(raw_stats.get("completedSplits"))
+    total_splits = int_or_none(raw_stats.get("totalSplits"))
+    progress_percentage = float_or_none(raw_stats.get("progressPercentage"))
+    if progress_percentage is None and completed_splits is not None and total_splits and total_splits > 0:
+        progress_percentage = (completed_splits / total_splits) * 100
+    if progress_percentage is None and str(raw_stats.get("state") or "").upper() == "FINISHED":
+        progress_percentage = 100.0
+    if progress_percentage is not None:
+        progress_percentage = max(0.0, min(100.0, progress_percentage))
     return TrinoQueryRunStats(
         cpu_ms=int_or_none(raw_stats.get("cpuTimeMillis")),
+        completed_splits=completed_splits,
         elapsed_ms=int_or_none(raw_stats.get("elapsedTimeMillis")),
         peak_memory_bytes=int_or_none(raw_stats.get("peakMemoryBytes")),
+        progress_percentage=progress_percentage,
         processed_bytes=int_or_none(raw_stats.get("processedBytes")),
         processed_rows=int_or_none(raw_stats.get("processedRows")),
         queued_ms=int_or_none(raw_stats.get("queuedTimeMillis")),
+        total_splits=total_splits,
     )
 
 
@@ -855,6 +880,26 @@ def int_or_none(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def float_or_none(value: object) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def query_run_estimate_snapshot(estimate: TrinoQueryEstimate) -> TrinoQueryRunEstimate:
+    return TrinoQueryRunEstimate(
+        estimated_bytes=estimate.estimated_bytes,
+        estimated_duration_seconds=estimate.estimated_duration_seconds,
+        estimate_source=estimate.estimate_source,
+        known_input_bytes=estimate.known_input_bytes,
+        risk_level=estimate.risk_level,
+        warnings=estimate.warnings,
+    )
 
 
 def query_audit_metadata(query: str) -> dict[str, object]:

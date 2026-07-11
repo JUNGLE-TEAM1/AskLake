@@ -31,10 +31,13 @@ export type TrinoQueryEstimate = {
   warnings: string[];
 };
 
+export type TrinoQueryRunEstimate = Omit<TrinoQueryEstimate, "confirmationRequired" | "confirmationToken">;
+
 export type TrinoQueryRun = {
   baseDatasetId: string;
   completedAt?: string;
   engine: "trino";
+  estimate?: TrinoQueryRunEstimate | null;
   error?: { code: string; message: string };
   query: string;
   referenceDatasetIds: string[];
@@ -53,11 +56,14 @@ export type TrinoQueryRun = {
   startedAt?: string;
   stats?: {
     cpuMs?: number;
+    completedSplits?: number;
     elapsedMs?: number;
     peakMemoryBytes?: number;
+    progressPercentage?: number;
     processedBytes?: number;
     processedRows?: number;
     queuedMs?: number;
+    totalSplits?: number;
   };
   status: TrinoQueryRunStatus;
   submittedAt: string;

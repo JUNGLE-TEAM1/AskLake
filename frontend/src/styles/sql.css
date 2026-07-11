@@ -2031,6 +2031,73 @@
   background: #fffbeb;
 }
 
+.sql-query-evaluation {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.8fr);
+  gap: 16px;
+  align-items: center;
+  border-top: 1px solid #dbe3ef;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.sql-query-evaluation-heading {
+  display: grid;
+  gap: 4px;
+}
+
+.sql-query-evaluation-heading span,
+.sql-run-monitor-heading span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sql-query-evaluation-heading strong,
+.sql-run-monitor-heading strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.sql-query-evaluation-metrics {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.sql-query-evaluation-metrics > span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sql-query-evaluation-metrics > span strong {
+  color: #334155;
+  font-weight: 850;
+}
+
+.sql-query-evaluation-warning {
+  min-width: 0;
+  color: #a16207;
+  font-size: 12px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+}
+
+.sql-query-evaluation.high .sql-query-evaluation-heading strong {
+  color: #c2410c;
+}
+
+.sql-query-evaluation.medium .sql-query-evaluation-heading strong {
+  color: #a16207;
+}
+
 .sql-result-action-group {
   display: flex;
   flex-wrap: wrap;
@@ -2054,6 +2121,90 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.sql-run-monitor {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #dbe3ef;
+  border-bottom: 1px solid #dbe3ef;
+  margin: 0 0 14px;
+  padding: 14px 0;
+}
+
+.sql-run-monitor-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sql-run-monitor-heading strong {
+  color: #2563eb;
+}
+
+.sql-run-progress {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.sql-run-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width 240ms ease;
+}
+
+.sql-run-progress.indeterminate > span {
+  width: 36%;
+  animation: sql-run-progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes sql-run-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(310%); }
+}
+
+.sql-run-monitor-metrics {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.sql-run-monitor-metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sql-run-monitor-metrics strong {
+  color: #334155;
+  font-weight: 850;
+}
+
+@media (max-width: 760px) {
+  .sql-query-evaluation {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .sql-run-monitor-heading {
+    align-items: flex-start;
+  }
+
+  .sql-run-monitor-metrics {
+    gap: 8px 12px;
+  }
 }
 
 .sql-result-toolbar button,

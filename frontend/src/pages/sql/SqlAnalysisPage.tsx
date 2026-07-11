@@ -1,6 +1,8 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   BarChart3,
+  Clock3,
   Database,
   Download,
   History,
@@ -72,6 +74,27 @@ function getTrinoResultStatusLabel(run: TrinoQueryRun | null) {
   if (run.status === "failed") return "실행 실패";
   if (run.status === "cancelled") return "실행 취소됨";
   return run.status === "queued" ? "실행 대기 중" : "실행 중";
+}
+
+function getTrinoExecutionPhase(run: TrinoQueryRun) {
+  if (run.status === "failed") return "실행 실패";
+  if (run.status === "cancelled") return "실행 취소됨";
+  if (run.result?.storageStatus === "collecting") return "결과 수집 중";
+  if (run.status === "queued") return "실행 대기 중";
+  if (run.status === "running") return "실행 중";
+  return "실행 완료";
+}
+
+function getRunProgressPercentage(run: TrinoQueryRun) {
+  const value = run.stats?.progressPercentage;
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.min(100, value));
+  if (run.status === "succeeded") return 100;
+  return null;
+}
+
+function getEstimatedRemainingMs(estimatedDurationSeconds: number | null | undefined, elapsedMs: number | null | undefined) {
+  if (estimatedDurationSeconds == null || elapsedMs == null) return null;
+  return Math.max(0, (estimatedDurationSeconds * 1000) - elapsedMs);
 }
 
 function getTrinoHistoryStatusLabel(run: TrinoQueryRunHistoryItem) {
@@ -192,6 +215,9 @@ export function SqlAnalysisPage({
   const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
   const [trinoMaterializationPending, setTrinoMaterializationPending] = useState(false);
   const [queryEstimate, setQueryEstimate] = useState<TrinoQueryEstimate | null>(null);
+  const [queryEstimateError, setQueryEstimateError] = useState<string | null>(null);
+  const [queryEstimateKey, setQueryEstimateKey] = useState<string | null>(null);
+  const [queryEstimatePending, setQueryEstimatePending] = useState(false);
   const [estimateDialogOpen, setEstimateDialogOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
   const [queryAiPrompt, setQueryAiPrompt] = useState("");
@@ -279,6 +305,8 @@ export function SqlAnalysisPage({
   const queryPermissionMessage = hasQueryPermission ? "" : datasetQueryBlockedMessage(blockedQueryDataset, "선택 데이터셋");
   const usesTrinoRuntime = Boolean(baseDataset?.queryEngineRequired);
   const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
+  const activeQueryEstimate = queryEstimateKey === queryValidationKey ? queryEstimate : null;
+  const activeQueryEstimateError = queryEstimateKey === queryValidationKey ? queryEstimateError : null;
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
     const lineCount = Math.max(query.split("\n").length, 7);
@@ -505,6 +533,37 @@ export function SqlAnalysisPage({
     setPreflightResult(runSqlPreflight(query, baseDataset, selectedReferenceDatasets, queryValidationKey, usesTrinoRuntime));
   }, [baseDataset, hasQueryPermission, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets, usesTrinoRuntime]);
 
+  useEffect(() => {
+    if (!usesTrinoRuntime || apiConfig.useMock || !baseDataset || !canRunPreview) {
+      setQueryEstimatePending(false);
+      return;
+    }
+    let disposed = false;
+    const evaluationKey = queryValidationKey;
+    const timeoutId = window.setTimeout(() => {
+      setQueryEstimatePending(true);
+      setQueryEstimateError(null);
+      void estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort())
+        .then((estimate) => {
+          if (disposed) return;
+          setQueryEstimate(estimate);
+          setQueryEstimateKey(evaluationKey);
+        })
+        .catch((error) => {
+          if (disposed) return;
+          setQueryEstimateError(error instanceof Error ? error.message : "실행 평가를 완료하지 못했습니다.");
+          setQueryEstimateKey(evaluationKey);
+        })
+        .finally(() => {
+          if (!disposed) setQueryEstimatePending(false);
+        });
+    }, 500);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [baseDataset, canRunPreview, query, queryValidationKey, referenceDatasetIds, usesTrinoRuntime]);
+
   const buildPreviewDraft = (): Promise<SqlResultDraft> => {
     if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
     return executeQueryPreview(baseDataset, query, {
@@ -589,6 +648,8 @@ export function SqlAnalysisPage({
     setTrinoMaterializationError(null);
     setTrinoMaterializationPending(false);
     setQueryEstimate(null);
+    setQueryEstimateError(null);
+    setQueryEstimateKey(null);
     queryClientRequestRef.current = null;
     setEstimateDialogOpen(false);
     setExecutionMs(null);
@@ -673,8 +734,10 @@ export function SqlAnalysisPage({
     try {
       if (!apiConfig.useMock) {
         if (usesTrinoRuntime && !confirmationToken) {
-          const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
+          const estimate = activeQueryEstimate ?? await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           setQueryEstimate(estimate);
+          setQueryEstimateError(null);
+          setQueryEstimateKey(queryValidationKey);
           if (estimate.confirmationRequired) {
             setEstimateDialogOpen(true);
             return;
@@ -721,6 +784,8 @@ export function SqlAnalysisPage({
         try {
           const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           setQueryEstimate(estimate);
+          setQueryEstimateError(null);
+          setQueryEstimateKey(queryValidationKey);
           setEstimateDialogOpen(estimate.confirmationRequired);
           return;
         } catch {
@@ -740,7 +805,7 @@ export function SqlAnalysisPage({
   };
 
   const confirmEstimatedQueryRun = () => {
-    const confirmationToken = queryEstimate?.confirmationToken;
+    const confirmationToken = activeQueryEstimate?.confirmationToken;
     if (!confirmationToken) return;
     setEstimateDialogOpen(false);
     const requestId = queryClientRequestRef.current?.key === queryValidationKey
@@ -750,6 +815,13 @@ export function SqlAnalysisPage({
   };
 
   const activeTrinoPage = trinoResultPage;
+  const runEstimate = trinoRun?.estimate ?? activeQueryEstimate;
+  const runProgressPercentage = trinoRun ? getRunProgressPercentage(trinoRun) : null;
+  const runPhase = trinoRun ? getTrinoExecutionPhase(trinoRun) : null;
+  const runIsActive = Boolean(trinoRun && (["queued", "running"].includes(trinoRun.status) || trinoRun.result?.storageStatus === "collecting"));
+  const runRemainingMs = trinoRun && runIsActive
+    ? getEstimatedRemainingMs(runEstimate?.estimatedDurationSeconds, trinoRun.stats?.elapsedMs)
+    : null;
   const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
@@ -875,6 +947,8 @@ export function SqlAnalysisPage({
       setTrinoMaterializationError(null);
       setTrinoMaterializationPending(false);
       setQueryEstimate(null);
+      setQueryEstimateError(null);
+      setQueryEstimateKey(null);
       queryClientRequestRef.current = null;
       setPreflightResult(null);
       trinoResultLoadKeyRef.current = "";
@@ -1434,15 +1508,29 @@ export function SqlAnalysisPage({
               </button>
             )}
           </div>
-          {queryEstimate && (
-            <div className={`sql-result-toolbar query-estimate ${queryEstimate.riskLevel}`}>
-              <span>
-                예상 처리량 {formatEstimateBytes(queryEstimate.estimatedBytes)}
-                {queryEstimate.estimatedDurationSeconds != null ? ` · 약 ${formatDuration(queryEstimate.estimatedDurationSeconds * 1000)}` : ""}
-              </span>
-              <span>{queryEstimate.estimateSource === "trino_plan" ? "Trino plan 기준" : "Catalog 크기 기준"}</span>
-              {queryEstimate.warnings.length > 0 && <span>{queryEstimate.warnings[0]}</span>}
-            </div>
+          {usesTrinoRuntime && baseDataset && (
+            <section className={`sql-query-evaluation ${activeQueryEstimate?.riskLevel ?? "neutral"}`} aria-live="polite">
+              <div className="sql-query-evaluation-heading">
+                <span><Activity size={14} /> 실행 평가</span>
+                <strong>
+                  {queryEstimatePending
+                    ? "Trino plan 평가 중"
+                    : activeQueryEstimateError
+                      ? "평가를 완료하지 못했습니다"
+                      : activeQueryEstimate
+                        ? activeQueryEstimate.estimateSource === "trino_plan" ? "Trino plan 기준" : "Catalog 기준"
+                        : canRunPreview ? "평가 대기 중" : "실행 불가"}
+                </strong>
+              </div>
+              {activeQueryEstimate && (
+                <div className="sql-query-evaluation-metrics">
+                  <span>예상 처리량 <strong>{formatEstimateBytes(activeQueryEstimate.estimatedBytes)}</strong></span>
+                  <span>예상 시간 <strong>{activeQueryEstimate.estimatedDurationSeconds != null ? formatDuration(activeQueryEstimate.estimatedDurationSeconds * 1000) : "계산 중"}</strong></span>
+                  {activeQueryEstimate.warnings[0] && <span className="sql-query-evaluation-warning">{activeQueryEstimate.warnings[0]}</span>}
+                </div>
+              )}
+              {activeQueryEstimateError && <span className="sql-query-evaluation-warning">{activeQueryEstimateError}</span>}
+            </section>
           )}
         </section>
 
@@ -1460,6 +1548,30 @@ export function SqlAnalysisPage({
               {executionMs !== null && <span>{formatDuration(executionMs)}</span>}
             </div>
           </div>
+          {trinoRun && runIsActive && (
+            <section className="sql-run-monitor" aria-live="polite">
+              <div className="sql-run-monitor-heading">
+                <span><Activity size={15} /> {runPhase}</span>
+                <strong>{runProgressPercentage == null ? "진행률 계산 중" : `${Math.round(runProgressPercentage)}%`}</strong>
+              </div>
+              <div
+                className={runProgressPercentage == null ? "sql-run-progress indeterminate" : "sql-run-progress"}
+                role="progressbar"
+                aria-label={runPhase ?? "쿼리 실행 상태"}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={runProgressPercentage ?? undefined}
+              >
+                <span style={runProgressPercentage == null ? undefined : { width: `${runProgressPercentage}%` }} />
+              </div>
+              <div className="sql-run-monitor-metrics">
+                <span><Clock3 size={14} /> 경과 <strong>{trinoRun.stats?.elapsedMs != null ? formatDuration(trinoRun.stats.elapsedMs) : "-"}</strong></span>
+                <span>예상 <strong>{runEstimate?.estimatedDurationSeconds != null ? formatDuration(runEstimate.estimatedDurationSeconds * 1000) : "계산 중"}</strong></span>
+                <span>남은 시간 <strong>{runRemainingMs == null ? "계산 중" : formatDuration(runRemainingMs)}</strong></span>
+                <span>처리량 <strong>{formatEstimateBytes(trinoRun.stats?.processedBytes)}</strong></span>
+              </div>
+            </section>
+          )}
           {!apiConfig.useMock && (
             <section className="sql-run-history" aria-label="내 최근 실행">
               <div className="sql-run-history-header">
@@ -1487,14 +1599,14 @@ export function SqlAnalysisPage({
               )}
             </section>
           )}
-          {trinoRun && (trinoRun.stats || queryEstimate) && (
+          {trinoRun && (trinoRun.stats || runEstimate) && (
             <div className="sql-execution-metrics" aria-label="쿼리 실행 지표">
               <div><span>대기</span><strong>{trinoRun.stats?.queuedMs != null ? formatDuration(trinoRun.stats.queuedMs) : "-"}</strong></div>
               <div><span>경과</span><strong>{trinoRun.stats?.elapsedMs != null ? formatDuration(trinoRun.stats.elapsedMs) : "-"}</strong></div>
               <div><span>실제 처리량</span><strong>{formatEstimateBytes(trinoRun.stats?.processedBytes)}</strong></div>
               <div><span>피크 메모리</span><strong>{formatEstimateBytes(trinoRun.stats?.peakMemoryBytes)}</strong></div>
               <div><span>처리 행</span><strong>{formatMetricNumber(trinoRun.stats?.processedRows)}</strong></div>
-              {queryEstimate && <div><span>예상 처리량</span><strong>{formatEstimateBytes(queryEstimate.estimatedBytes)}</strong></div>}
+              {runEstimate && <div><span>예상 처리량</span><strong>{formatEstimateBytes(runEstimate.estimatedBytes)}</strong></div>}
             </div>
           )}
           {visibleResult ? (
