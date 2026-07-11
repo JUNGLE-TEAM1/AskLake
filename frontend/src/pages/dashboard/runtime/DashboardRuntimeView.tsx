@@ -570,6 +570,7 @@ export function DashboardRuntimeView({
             error={dashboardDatasetsError}
             isOpen={isDatasetSidebarOpen}
             isLoading={dashboardDatasetsLoading}
+            onClose={onToggleDatasetSidebar}
             selectedDatasetId={selectedDatasetId}
             onSelectColumn={handleSelectDatasetColumn}
             onSelectDataset={handleSelectDataset}

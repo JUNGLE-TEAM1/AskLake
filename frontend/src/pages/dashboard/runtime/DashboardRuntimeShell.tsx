@@ -3,6 +3,7 @@ import { Check, Copy, Database } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -11,6 +12,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DashboardPageTabs } from "./DashboardPageTabs";
 import { DashboardTopBar } from "./DashboardTopBar";
 
@@ -183,33 +185,46 @@ export function DashboardRuntimeShell({
         </SheetContent>
       </Sheet>
       <div className="asklake-dashboard-subnav">
-        {canToggleDatasetSidebar && (
-          <Button
-            aria-controls="asklake-dashboard-dataset-sidebar"
-            aria-pressed={datasetSidebarOpen}
-            className={datasetSidebarOpen ? "asklake-dashboard-data-tab active" : "asklake-dashboard-data-tab"}
-            size="sm"
-            type="button"
-            variant={datasetSidebarOpen ? "secondary" : "ghost"}
-            onClick={onToggleDatasetSidebar}
-          >
-            <Database data-icon="inline-start" />
-            데이터
-          </Button>
-        )}
-        {(mode === "draft" || pages.length > 0) ? (
-          <DashboardPageTabs
-            isAddingPage={isAddingPage}
-            mode={mode}
-            pages={pages}
-            renamingPageId={renamingPageId}
-            selectedPageId={selectedPageId}
-            onAddPage={onAddPage}
-            onDeletePage={onDeletePage}
-            onRenamePage={onRenamePage}
-            onSelectPage={onSelectPage}
-          />
-        ) : null}
+        <div className="asklake-dashboard-view-switcher">
+          {canToggleDatasetSidebar && (
+            <ToggleGroup
+              aria-label="대시보드 편집 패널"
+              className="asklake-dashboard-data-toggle"
+              type="single"
+              value={datasetSidebarOpen ? "data" : ""}
+              onValueChange={(value) => {
+                const nextOpen = value === "data";
+                if (nextOpen !== datasetSidebarOpen) onToggleDatasetSidebar?.();
+              }}
+            >
+              <ToggleGroupItem
+                aria-controls="asklake-dashboard-dataset-sidebar"
+                aria-expanded={datasetSidebarOpen}
+                className="asklake-dashboard-data-tab"
+                value="data"
+              >
+                <Database />
+                데이터
+              </ToggleGroupItem>
+            </ToggleGroup>
+          )}
+          {canToggleDatasetSidebar && (mode === "draft" || pages.length > 0) ? (
+            <Separator className="asklake-dashboard-view-separator" orientation="vertical" />
+          ) : null}
+          {(mode === "draft" || pages.length > 0) ? (
+            <DashboardPageTabs
+              isAddingPage={isAddingPage}
+              mode={mode}
+              pages={pages}
+              renamingPageId={renamingPageId}
+              selectedPageId={selectedPageId}
+              onAddPage={onAddPage}
+              onDeletePage={onDeletePage}
+              onRenamePage={onRenamePage}
+              onSelectPage={onSelectPage}
+            />
+          ) : null}
+        </div>
       </div>
       <div className={workspaceClassName}>
         {datasetSidebar}

@@ -202,12 +202,34 @@
 
 .asklake-dashboard-subnav {
   display: flex;
-  min-height: 52px;
+  min-height: 58px;
   align-items: center;
-  gap: 14px;
   border-bottom: 1px solid var(--dash-border);
+  background: #ffffff;
+  padding: 8px 20px;
+}
+
+.asklake-dashboard-view-switcher {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
   background: #f8fafc;
-  padding: 0 24px;
+  padding: 4px;
+}
+
+.asklake-dashboard-view-separator {
+  height: 24px;
+  margin: 0 2px;
+}
+
+.asklake-dashboard-data-toggle {
+  flex: 0 0 auto;
+  background: transparent;
+  padding: 0;
 }
 
 .asklake-dashboard-runtime-notice {
@@ -259,55 +281,42 @@
 }
 
 .asklake-dashboard-data-tab {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
   min-height: 34px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dash-text);
-  font-size: 14px;
-  font-weight: 800;
-  padding: 0 8px;
+  padding: 0 12px;
   white-space: nowrap;
-}
-
-.asklake-dashboard-data-tab.active,
-.asklake-dashboard-data-tab:hover:not(:disabled) {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .asklake-dashboard-data-tab:disabled {
   cursor: default;
 }
 
-.asklake-dashboard-data-tab span {
-  color: #475569;
-  font-size: 17px;
-  line-height: 1;
+.asklake-dashboard-tabs-root {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .asklake-dashboard-tabs {
   display: flex;
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
-  align-items: stretch;
+  min-height: 34px;
+  justify-content: flex-start;
+  align-items: center;
   gap: 2px;
   overflow-x: auto;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
 }
 
 .asklake-dashboard-page-tab {
   position: relative;
   display: inline-flex;
   min-width: max-content;
-  height: 40px;
+  height: 34px;
   align-items: center;
-  border: 1px solid transparent;
-  border-radius: 6px 6px 0 0;
+  border-radius: 6px;
   background: transparent;
 }
 
@@ -386,22 +395,12 @@
 }
 
 .asklake-dashboard-page-tab.active {
-  border-color: var(--dash-border-strong);
   background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .asklake-dashboard-page-tab.active .asklake-dashboard-tab-button {
   color: #0f172a;
-}
-
-.asklake-dashboard-page-tab.active::after {
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 3px;
-  background: #93c5fd;
-  content: "";
 }
 
 .asklake-dashboard-tab-delete {
@@ -429,12 +428,12 @@
 
 .asklake-dashboard-tabs .asklake-dashboard-tab-add {
   display: grid;
-  width: 40px !important;
-  min-width: 40px !important;
-  height: 40px !important;
-  min-height: 40px !important;
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px !important;
+  min-height: 34px !important;
   border: 1px solid transparent !important;
-  border-radius: 6px 6px 0 0;
+  border-radius: 6px;
   background: transparent !important;
   box-shadow: none !important;
   color: #475569;
@@ -1821,6 +1820,7 @@
 
   .asklake-dashboard-workspace.has-dataset-sidebar.dataset-sidebar-open,
   .asklake-dashboard-workspace.has-dataset-sidebar.has-inspector.dataset-sidebar-open {
+    grid-template-columns: 1fr;
     grid-template-rows: minmax(150px, 220px) minmax(0, 1fr);
   }
 
