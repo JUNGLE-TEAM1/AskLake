@@ -287,6 +287,7 @@ export function JobsLandingPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
+  const [activeLatestRun, setActiveLatestRun] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -312,6 +313,18 @@ export function JobsLandingPage({
   const clearSearch = () => {
     setSearchQuery("");
     onAction("etl.jobs.search_reset", "/api/etl/jobs", "search");
+  };
+
+  const openLatestRun = (job: JobRowData) => {
+    const latestRun = job.runHistory?.[0];
+
+    if (!latestRun) {
+      onRuns(job);
+      return;
+    }
+
+    onAction("etl.job.latest_run_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
+    setActiveLatestRun({ job, run: latestRun });
   };
 
   const toggleFailureFilter = () => {
@@ -383,7 +396,7 @@ export function JobsLandingPage({
           onCommand={handleJobCommand}
           onCreate={onCreate}
           onDetail={onDetail}
-          onRuns={onRuns}
+          onLatestRun={openLatestRun}
           toolbar={<JobsToolbar searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} />}
           statusFilters={jobQuery.statuses}
           scheduleKind={jobQuery.scheduleKind}
@@ -396,6 +409,14 @@ export function JobsLandingPage({
           title="작업 목록"
         />
       </div>
+      {activeLatestRun && (
+        <RunDagModal
+          job={activeLatestRun.job}
+          onAction={onAction}
+          onClose={() => setActiveLatestRun(null)}
+          run={activeLatestRun.run}
+        />
+      )}
     </div>
   );
 }
@@ -506,7 +527,7 @@ type JobsTableSectionProps = {
   onCommand: (job: JobRowData, command: JobCommand) => Promise<void> | void;
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
-  onRuns: (job: JobRowData) => void;
+  onLatestRun: (job: JobRowData) => void;
   onScheduleKindChange?: (scheduleKind?: JobScheduleKind) => void;
   onStatusFilterChange?: (statuses?: JobStatus[]) => void;
   onOwnerChange?: (owner?: string) => void;
@@ -695,7 +716,7 @@ function JobsTableSection({
   onCommand,
   onCreate,
   onDetail,
-  onRuns,
+  onLatestRun,
   onScheduleKindChange,
   onStatusFilterChange,
   onOwnerChange,
@@ -822,7 +843,7 @@ function JobsTableSection({
                 </Tooltip>
               )}
             </div>
-            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
+            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onLatestRun(job)}>
               실행 이력
             </Button>
           </DataTableStackedCell>
@@ -846,7 +867,7 @@ function JobsTableSection({
         widthClassName: "w-[220px]",
       } satisfies DataTableColumnMeta,
     },
-  ], [onOwnerChange, onRuns, onScheduleKindChange, onStatusFilterChange, owner, owners, scheduleKind, statusFilters]);
+  ], [onLatestRun, onOwnerChange, onScheduleKindChange, onStatusFilterChange, owner, owners, scheduleKind, statusFilters]);
 
   return (
     <TooltipProvider delayDuration={250}>
