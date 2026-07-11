@@ -35,11 +35,6 @@
   min-width: 0;
 }
 
-.catalog-search-panel {
-  display: grid;
-  gap: 0;
-}
-
 .catalog-results-header h2,
 .catalog-overview-card h2,
 .catalog-section-header h2 {

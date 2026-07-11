@@ -482,29 +482,6 @@ export function CatalogPage({
       ) : null}
       <div className="catalog-content-grid">
         <div className="catalog-main">
-          <Panel className="catalog-search-panel">
-            <PanelHeader
-              icon={<Search size={16} />}
-              title="검색 조건"
-            />
-            <FilterToolbar layout="stacked">
-              <FilterToolbarSearch icon={<Search size={18} />}>
-                <FilterToolbarInput
-                  aria-label="카탈로그 검색"
-                  onChange={(event) => setSearchText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      handleSearchSubmit();
-                    }
-                  }}
-                  placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
-                  type="search"
-                  value={searchText}
-                />
-              </FilterToolbarSearch>
-            </FilterToolbar>
-          </Panel>
-
           {hasCatalogResults && (
             <Sheet open={mobilePreviewOpen} onOpenChange={setMobilePreviewOpen}>
               <SheetTrigger asChild>
@@ -529,10 +506,21 @@ export function CatalogPage({
                 icon={<LayoutGrid size={16} />}
                 title="검색 결과"
               />
-              <FilterToolbar
-                className="grid-cols-1 gap-3 py-3"
-                layout="actions"
-              >
+              <FilterToolbar className="py-3" layout="actions">
+                <FilterToolbarSearch icon={<Search size={18} />}>
+                  <FilterToolbarInput
+                    aria-label="카탈로그 검색"
+                    onChange={(event) => setSearchText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        handleSearchSubmit();
+                      }
+                    }}
+                    placeholder="테이블명, 컬럼명 또는 업무 키워드로 검색하세요..."
+                    type="search"
+                    value={searchText}
+                  />
+                </FilterToolbarSearch>
                 <FilterToolbarActions>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
