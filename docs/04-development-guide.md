@@ -260,6 +260,8 @@ npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit
 --max-cycles <count>    loop replay의 최대 cycle 수
 --max-messages <count>  전체 replay의 최대 메시지 수
 --cycle-delay-ms <ms>   loop cycle 사이 대기 시간
+--burst-min-messages <n> / --burst-max-messages <n> / --burst-interval-seconds <n>
+                         loop mode에서 interval마다 랜덤 n건을 빠르게 전송하는 burst mode
 --recreate-topic        시작 전에 topic을 삭제하고 다시 생성(명시적 요청만)
 --dry-run               Kafka 전송 없이 메시지 계약만 검증
 --no-recreate-topic     기존 topic을 삭제하지 않고 사용(기본값)
@@ -270,6 +272,12 @@ Continuous 적재를 눈으로 확인하려면 낮은 rate로 loop producer를 �
 ```bash
 cd backend
 npm run kafka:reviews-loop -- --topic reviews.raw --rate 2 --max-cycles 5
+```
+
+Continuous trigger와 같은 cadence를 재현하려면 burst mode를 쓴다. 아래는 10초마다 500~1,000건을 Kafka에 넣는다.
+
+```bash
+npm run kafka:reviews-loop -- --topic reviews.raw --burst-min-messages 500 --burst-max-messages 1000 --burst-interval-seconds 10
 ```
 
 배포 Compose에서는 Kafka broker가 내부 `redpanda:9092`만 노출되므로 backend API를 사용한다. `POST`/`DELETE`는 admin `manage` 권한이 필요하며, producer 하나만 동시에 실행할 수 있다. 기본 fixture 외 대용량 `.jsonl`/`.jsonl.gz`를 쓰려면 host의 `ASKLAKE_REPLAY_HOST_INPUT_DIR`에 파일을 두고 body의 `inputPath`에 상대 경로를 넣는다.

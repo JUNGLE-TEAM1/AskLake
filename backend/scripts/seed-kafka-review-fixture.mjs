@@ -30,10 +30,20 @@ const loop = options.loop ?? process.env.ASKLAKE_REVIEW_REPLAY_LOOP === "true";
 const maxCycles = positiveInteger(options.maxCycles ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_CYCLES, "max-cycles");
 const maxMessages = positiveInteger(options.maxMessages ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_MESSAGES, "max-messages");
 const cycleDelayMs = nonnegativeInteger(options.cycleDelayMs ?? process.env.ASKLAKE_REVIEW_REPLAY_CYCLE_DELAY_MS, "cycle-delay-ms") || 0;
+const burstMinMessages = positiveInteger(options.burstMinMessages ?? process.env.ASKLAKE_REVIEW_BURST_MIN_MESSAGES, "burst-min-messages");
+const burstMaxMessages = positiveInteger(options.burstMaxMessages ?? process.env.ASKLAKE_REVIEW_BURST_MAX_MESSAGES, "burst-max-messages");
+const burstIntervalSeconds = positiveInteger(options.burstIntervalSeconds ?? process.env.ASKLAKE_REVIEW_BURST_INTERVAL_SECONDS, "burst-interval-seconds");
+const burstMode = burstMinMessages !== null || burstMaxMessages !== null || burstIntervalSeconds !== null;
 let stopRequested = false;
 
 if (maxCycles && !loop) {
   throw new Error("--max-cycles requires --loop");
+}
+if (burstMode && (!loop || !burstMinMessages || !burstMaxMessages || !burstIntervalSeconds)) {
+  throw new Error("Burst mode requires --loop, --burst-min-messages, --burst-max-messages, and --burst-interval-seconds");
+}
+if (burstMinMessages && burstMaxMessages && burstMinMessages > burstMaxMessages) {
+  throw new Error("--burst-min-messages must be less than or equal to --burst-max-messages");
 }
 
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -57,6 +67,7 @@ if (dryRun) {
   console.log(`Loop: ${loop ? "enabled" : "disabled"}`);
   console.log(`Max cycles: ${maxCycles || "unlimited"}`);
   console.log(`Max messages: ${maxMessages || "unlimited"}`);
+  console.log(`Burst mode: ${burstMode ? `${burstMinMessages}-${burstMaxMessages} messages every ${burstIntervalSeconds}s` : "disabled"}`);
   console.log(`Topic recreation: ${recreateTopic ? "enabled" : "disabled"}`);
   process.exit(0);
 }
@@ -99,29 +110,35 @@ async function produceRecords(producerClient) {
     const cycle = completedCycles + 1;
     let batch = [];
     let recordsInCycle = 0;
+    const cycleTarget = burstMode ? randomInteger(burstMinMessages, burstMaxMessages) : null;
 
-    for await (const baseRecord of readStandardReviewRecords()) {
-      if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages)) break;
-      const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
-      batch.push({ key: record.event_id, value: JSON.stringify(record) });
-      recordsInCycle += 1;
-      if (batch.length >= batchSize) {
-        sentRecords += await sendBatch(producerClient, batch);
-        lastProgressAt = logProgress(sentRecords, lastProgressAt, false, cycle);
-        batch = [];
+    do {
+      let sourceRecords = 0;
+      for await (const baseRecord of readStandardReviewRecords()) {
+        if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages) || (cycleTarget && recordsInCycle >= cycleTarget)) break;
+        const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
+        batch.push({ key: record.event_id, value: JSON.stringify(record) });
+        recordsInCycle += 1;
+        sourceRecords += 1;
+        if (batch.length >= batchSize) {
+          sentRecords += await sendBatch(producerClient, batch);
+          lastProgressAt = logProgress(sentRecords, lastProgressAt, false, cycle);
+          batch = [];
+        }
       }
-    }
+      if (sourceRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
+    } while (burstMode && !stopRequested && recordsInCycle < cycleTarget && (!maxMessages || sentRecords + batch.length < maxMessages));
 
     if (batch.length > 0) {
       sentRecords += await sendBatch(producerClient, batch);
       lastProgressAt = logProgress(sentRecords, lastProgressAt, true, cycle);
     }
-    if (recordsInCycle === 0 && sentRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
     completedCycles += 1;
-    console.log(`Review Kafka replay cycle ${cycle} complete: ${recordsInCycle.toLocaleString()} messages sent`);
+    console.log(`Review Kafka replay ${burstMode ? "burst" : "cycle"} ${cycle} complete: ${recordsInCycle.toLocaleString()} messages sent`);
 
     if (stopRequested || !loop || (maxCycles && completedCycles >= maxCycles) || (maxMessages && sentRecords >= maxMessages)) break;
-    if (cycleDelayMs > 0) await sleep(cycleDelayMs);
+    if (burstMode) await sleep(burstIntervalSeconds * 1000);
+    else if (cycleDelayMs > 0) await sleep(cycleDelayMs);
   }
 
   return { sentRecords, completedCycles, stopped: stopRequested };
@@ -130,7 +147,7 @@ async function produceRecords(producerClient) {
 async function sendBatch(producerClient, messages) {
   const startedAt = Date.now();
   await producerClient.send({ topic, messages });
-  if (rate) {
+  if (rate && !burstMode) {
     const targetMs = Math.ceil((messages.length / rate) * 1000);
     const elapsedMs = Date.now() - startedAt;
     if (targetMs > elapsedMs) await sleep(targetMs - elapsedMs);
@@ -148,7 +165,7 @@ function decorateReplayRecord(record, cycle, streamOffset) {
   if (!loop) return record;
   return {
     ...record,
-    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}`,
+    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}--offset-${streamOffset}`,
     offset: streamOffset,
   };
 }
@@ -324,6 +341,10 @@ function nonnegativeInteger(value, label) {
   return number;
 }
 
+function randomInteger(minimum, maximum) {
+  return minimum + Math.floor(Math.random() * (maximum - minimum + 1));
+}
+
 function printUsage() {
   console.log(`Usage: node scripts/seed-kafka-review-fixture.mjs [options]
 
@@ -337,6 +358,9 @@ function printUsage() {
   --max-cycles <count>       Stop after this many cycles (requires --loop)
   --max-messages <count>     Stop after this many total messages
   --cycle-delay-ms <ms>      Wait between loop cycles
+  --burst-min-messages <n>   Random burst lower bound (requires loop mode)
+  --burst-max-messages <n>   Random burst upper bound (requires loop mode)
+  --burst-interval-seconds <n> Wait between bursts; sends each burst without rate throttling
   --recreate-topic           Delete and recreate the topic before sending
   --no-recreate-topic        Keep the current topic (default)
   --dry-run                  Validate input and print the resolved settings

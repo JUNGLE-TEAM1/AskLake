@@ -40,6 +40,9 @@ def main() -> None:
         max_messages=200,
         rate=2,
         topic="reviews.producer.verify",
+        burst_min_messages=500,
+        burst_max_messages=1000,
+        burst_interval_seconds=10,
     )
     with patch.object(producer_service.subprocess, "Popen", side_effect=fake_popen):
         manager.start(request)
@@ -54,6 +57,9 @@ def main() -> None:
     assert "--recreate-topic" not in command
     assert command[command.index("--max-cycles") + 1] == "2"
     assert command[command.index("--max-messages") + 1] == "200"
+    assert command[command.index("--burst-min-messages") + 1] == "500"
+    assert command[command.index("--burst-max-messages") + 1] == "1000"
+    assert command[command.index("--burst-interval-seconds") + 1] == "10"
     producer_status = manager.status()
     assert not producer_status.running
     assert producer_status.exit_code == 0
@@ -74,6 +80,13 @@ def main() -> None:
         pass
     else:
         raise AssertionError("maxCycles without loop must be rejected")
+
+    try:
+        KafkaReplayProducerRequest(loop=True, burst_min_messages=1000, burst_max_messages=500, burst_interval_seconds=10)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid burst bounds must be rejected")
 
     print("verify-kafka-replay-producer: ok")
 

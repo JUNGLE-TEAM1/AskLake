@@ -576,10 +576,13 @@ type KafkaReplayProducerRequest = {
   maxCycles?: number;
   maxMessages?: number;
   cycleDelayMs?: number;
+  burstMinMessages?: number;
+  burstMaxMessages?: number;
+  burstIntervalSeconds?: number;
 };
 ```
 
-loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
+loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
 
 Continuous runtime operations:
 

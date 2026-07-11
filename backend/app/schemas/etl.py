@@ -619,6 +619,9 @@ class KafkaReplayProducerRequest(CamelModel):
     max_cycles: int | None = Field(default=None, ge=1, le=1_000_000)
     max_messages: int | None = Field(default=None, ge=1, le=100_000_000)
     cycle_delay_ms: int = Field(default=0, ge=0, le=3_600_000)
+    burst_min_messages: int | None = Field(default=None, ge=1, le=1_000_000)
+    burst_max_messages: int | None = Field(default=None, ge=1, le=1_000_000)
+    burst_interval_seconds: int | None = Field(default=None, ge=1, le=3_600)
 
     @field_validator("input_path")
     @classmethod
@@ -634,6 +637,12 @@ class KafkaReplayProducerRequest(CamelModel):
     def validate_loop_bounds(self) -> "KafkaReplayProducerRequest":
         if self.max_cycles is not None and not self.loop:
             raise ValueError("maxCycles requires loop=true")
+        burst_values = [self.burst_min_messages, self.burst_max_messages, self.burst_interval_seconds]
+        if any(value is not None for value in burst_values):
+            if not self.loop or any(value is None for value in burst_values):
+                raise ValueError("burst mode requires loop=true, burstMinMessages, burstMaxMessages, and burstIntervalSeconds")
+            if self.burst_min_messages > self.burst_max_messages:
+                raise ValueError("burstMinMessages must be less than or equal to burstMaxMessages")
         return self
 
 

@@ -60,6 +60,10 @@ class ReplayProducerManager:
                 command.extend(["--max-messages", str(request.max_messages)])
             if request.cycle_delay_ms:
                 command.extend(["--cycle-delay-ms", str(request.cycle_delay_ms)])
+            if request.burst_min_messages is not None:
+                command.extend(["--burst-min-messages", str(request.burst_min_messages)])
+                command.extend(["--burst-max-messages", str(request.burst_max_messages)])
+                command.extend(["--burst-interval-seconds", str(request.burst_interval_seconds)])
 
             self._logs.clear()
             self._sent_messages = 0
@@ -68,6 +72,9 @@ class ReplayProducerManager:
             self._finished_at = None
             self._config = {
                 "batchSize": request.batch_size,
+                "burstIntervalSeconds": request.burst_interval_seconds,
+                "burstMaxMessages": request.burst_max_messages,
+                "burstMinMessages": request.burst_min_messages,
                 "cycleDelayMs": request.cycle_delay_ms,
                 "inputPath": str(input_path),
                 "loop": request.loop,
