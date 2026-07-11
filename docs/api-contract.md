@@ -499,6 +499,10 @@ type CatalogDataset = {
   partition?: string;
   partitionColumns?: string[];
   indexColumns?: string[];
+  queryEngineStatus: "pending" | "available" | "registration_failed" | "unavailable";
+  queryEngineRequired: boolean;
+  queryEngineTable?: QueryEngineTableRef;
+  queryEngineError?: string;
   materializationRuns?: Array<{
     runId: string;
     jobId: string;
@@ -1130,7 +1134,28 @@ type QueryEngineTableRef = {
 
 type CatalogDatasetResponse = {
   // Existing fields omitted.
+  queryEngineStatus: "pending" | "available" | "registration_failed" | "unavailable";
+  queryEngineRequired: boolean;
   queryEngineTable?: QueryEngineTableRef;
+  queryEngineError?: string;
+};
+```
+
+`queryEngineTable`은 `queryEngineStatus=available`일 때만 응답한다. `queryEngineRequired`는 현재 API runtime이 Trino physical mapping을 요구하는지 나타내며 `TRINO_ENABLED`와 같다. SQL 결과 Dataset 생성은 Catalog `pending` 저장, Iceberg CTAS, `DESCRIBE` 물리 확인, `available` 전환 순서로 처리하며 사용자가 physical mapping을 입력하지 않는다. CTAS는 성공했지만 확인이 실패하면 `registration_failed`와 안전한 오류 코드만 남기고 mapping을 제거한다. `GET /api/catalog/trino-materializations/{materializationId}`를 다시 호출하면 같은 table 확인을 재시도한다. `TRINO_ENABLED=true`에서는 `available` mapping이 없는 Dataset의 `permissions.canQuery`를 false로 응답하고 backend compiler도 동일 Dataset을 `422 VALIDATION_ERROR`로 차단한다.
+
+전환 전 내부 writer가 저장한 payload 중 `queryEngineTable`은 있지만 `queryEngineStatus`가 없는 row는 migration read compatibility로 `available`을 추론한다. 새 writer와 API는 이 fallback에 의존하지 않고 상태를 명시해야 하며, 사용자 입력만으로 mapping을 생성하는 endpoint는 제공하지 않는다.
+
+현재 Spark ETL Parquet 및 Kafka direct JSONL 결과는 Iceberg metadata를 생성하지 않는다. 이 경로는 `queryEngineStatus=unavailable`이며 SQL downstream을 표시하지 않는다. ETL runtime이 `queryEngineVerified=true`와 완전한 `queryEngineTable`을 반환한 경우에만 `available`로 저장한다. Catalog row 생성만으로 물리 table 등록 성공을 추정해서는 안 된다.
+
+```ts
+type TrinoMaterializationRunResponse = {
+  datasetId: string;
+  datasetName: string;
+  materializationId: string;
+  sourceRunId: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  queryEngineStatus: "pending" | "available" | "registration_failed" | "unavailable";
+  trinoQueryId?: string;
 };
 ```
 

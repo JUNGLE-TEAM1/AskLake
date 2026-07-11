@@ -98,6 +98,7 @@ export type TrinoMaterializationRun = {
   materializationId: string;
   sourceRunId: string;
   status: TrinoQueryRunStatus;
+  queryEngineStatus: "pending" | "available" | "registration_failed" | "unavailable";
   trinoQueryId?: string;
 };
 

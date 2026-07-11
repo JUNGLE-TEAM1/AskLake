@@ -22,7 +22,7 @@ import {
 } from "../../services/queryAiService";
 import { ApiError } from "../../types";
 import type { AuditResult, CatalogDataset, CreateDerivedDatasetRequest, CurrentUserResponse, DashboardEntry, DerivedDatasetLayer, SqlResultDraft, TrinoMaterializationRun, TrinoQueryEstimate, TrinoQueryRun, TrinoQueryRunHistoryItem, TrinoQueryRunResultPage } from "../../types";
-import { canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import { canQueryDatasetAs, datasetQueryBlockedMessage } from "../../utils/permissions";
 import { DashboardPage } from "../dashboard/DashboardPage";
 import { SqlDatasetTree } from "./SqlDatasetRow";
 import { SqlPreviewTable } from "./SqlPreviewTable";
@@ -53,7 +53,9 @@ function isSqlCandidateDataset(dataset: CatalogDataset) {
   const normalizedName = dataset.name.toLowerCase();
   const normalizedTags = dataset.tags.map((tag) => tag.toLowerCase());
 
-  return !normalizedName.includes("legacy") && !normalizedTags.includes("#legacy");
+  return dataset.permissions?.canQuery !== false
+    && !normalizedName.includes("legacy")
+    && !normalizedTags.includes("#legacy");
 }
 
 function getTrinoResultStatusLabel(run: TrinoQueryRun | null) {
@@ -75,6 +77,15 @@ function getTrinoHistoryStatusLabel(run: TrinoQueryRunHistoryItem) {
   if (run.status === "failed") return "실행 실패";
   if (run.status === "cancelled") return "실행 취소됨";
   return run.status === "queued" ? "실행 대기 중" : "실행 중";
+}
+
+function getTrinoMaterializationStatusLabel(run: TrinoMaterializationRun) {
+  if (run.status === "failed") return "Iceberg Dataset 생성 실패";
+  if (run.status === "cancelled") return "Iceberg Dataset 생성 취소됨";
+  if (run.queryEngineStatus === "registration_failed") return "테이블 생성 후 SQL 등록 검증 실패";
+  if (run.queryEngineStatus === "available") return "Dataset 생성 완료 · SQL 사용 가능";
+  if (run.status === "succeeded") return "Trino 테이블 등록 확인 중";
+  return run.status === "queued" ? "Dataset 생성 대기 중" : "Dataset 생성 중";
 }
 
 function toTrinoHistoryItem(run: TrinoQueryRun): TrinoQueryRunHistoryItem {
@@ -171,6 +182,7 @@ export function SqlAnalysisPage({
   const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
   const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
   const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
+  const [trinoMaterializationPending, setTrinoMaterializationPending] = useState(false);
   const [queryEstimate, setQueryEstimate] = useState<TrinoQueryEstimate | null>(null);
   const [estimateDialogOpen, setEstimateDialogOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<SqlPreflightResult | null>(null);
@@ -251,7 +263,10 @@ export function SqlAnalysisPage({
     [datasets, referenceDatasetIdSet],
   );
   const hasQueryPermission = Boolean(baseDataset && canQueryDatasetAs(baseDataset, currentUser) && selectedReferenceDatasets.every((item) => canQueryDatasetAs(item, currentUser)));
-  const queryPermissionMessage = hasQueryPermission ? "" : permissionDeniedMessage("선택 데이터셋", "SQL 실행");
+  const blockedQueryDataset = baseDataset && !canQueryDatasetAs(baseDataset, currentUser)
+    ? baseDataset
+    : selectedReferenceDatasets.find((item) => !canQueryDatasetAs(item, currentUser));
+  const queryPermissionMessage = hasQueryPermission ? "" : datasetQueryBlockedMessage(blockedQueryDataset, "선택 데이터셋");
   const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
@@ -522,7 +537,13 @@ export function SqlAnalysisPage({
   }, [trinoResultPages.length, trinoRun]);
 
   useEffect(() => {
-    if (!trinoMaterialization || !["queued", "running"].includes(trinoMaterialization.status)) return;
+    if (
+      !trinoMaterialization
+      || (
+        !["queued", "running"].includes(trinoMaterialization.status)
+        && trinoMaterialization.queryEngineStatus !== "pending"
+      )
+    ) return;
     const timeoutId = window.setTimeout(() => {
       void getTrinoMaterialization(trinoMaterialization.materializationId)
         .then((nextMaterialization) => {
@@ -546,6 +567,7 @@ export function SqlAnalysisPage({
     setTrinoResultRetryCursor(undefined);
     setTrinoMaterialization(null);
     setTrinoMaterializationError(null);
+    setTrinoMaterializationPending(false);
     setQueryEstimate(null);
     setEstimateDialogOpen(false);
     setExecutionMs(null);
@@ -643,6 +665,7 @@ export function SqlAnalysisPage({
           setTrinoResultRetryCursor(undefined);
           setTrinoMaterialization(null);
           setTrinoMaterializationError(null);
+          setTrinoMaterializationPending(false);
           setTrinoRunHistory((items) => [toTrinoHistoryItem(response), ...items.filter((item) => item.runId !== response.runId)].slice(0, 8));
           onResultChange(null);
           onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
@@ -781,6 +804,7 @@ export function SqlAnalysisPage({
       setTrinoResultRetryCursor(undefined);
       setTrinoMaterialization(null);
       setTrinoMaterializationError(null);
+      setTrinoMaterializationPending(false);
       setQueryEstimate(null);
       setPreflightResult(null);
       onResultChange(null);
@@ -1072,8 +1096,18 @@ export function SqlAnalysisPage({
       sourceRunId: trinoRun.runId,
     };
     setTrinoMaterializationError(null);
-    setTrinoMaterialization(await materializeTrinoQueryRun(trinoRun.runId, request));
-    setMaterializeDialogOpen(false);
+    setTrinoMaterializationPending(true);
+    try {
+      setTrinoMaterialization(await materializeTrinoQueryRun(trinoRun.runId, request));
+      setMaterializeDialogOpen(false);
+      onNotify("Iceberg Dataset 생성 요청을 접수했습니다.", "success");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Iceberg Dataset 생성 요청에 실패했습니다.";
+      setTrinoMaterializationError(message);
+      onNotify(message, "info");
+    } finally {
+      setTrinoMaterializationPending(false);
+    }
   };
 
   const retryTrinoMaterializationStatus = async () => {
@@ -1424,9 +1458,14 @@ export function SqlAnalysisPage({
                 </div>
               )}
               {trinoMaterialization && (
-                <div className={trinoMaterializationError ? "sql-result-toolbar error" : "sql-result-toolbar"} role={trinoMaterializationError ? "alert" : undefined}>
-                  <span>{trinoMaterializationError ?? `Iceberg Dataset ${trinoMaterialization.datasetName}: ${trinoMaterialization.status}`}</span>
-                  {trinoMaterializationError && <button type="button" onClick={() => void retryTrinoMaterializationStatus()}><RotateCcw size={14} /> 상태 다시 확인</button>}
+                <div
+                  className={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "sql-result-toolbar error" : "sql-result-toolbar"}
+                  role={trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed" ? "alert" : undefined}
+                >
+                  <span>{trinoMaterializationError ?? `${trinoMaterialization.datasetName}: ${getTrinoMaterializationStatusLabel(trinoMaterialization)}`}</span>
+                  {(trinoMaterializationError || trinoMaterialization.queryEngineStatus === "registration_failed") && (
+                    <button type="button" onClick={() => void retryTrinoMaterializationStatus()}><RotateCcw size={14} /> 등록 다시 확인</button>
+                  )}
                 </div>
               )}
               <div className="sql-result-scroll">
@@ -1512,12 +1551,12 @@ export function SqlAnalysisPage({
               </label>
               <button
                 className="primary-button"
-                disabled={!hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
+                disabled={trinoMaterializationPending || !hasQueryPermission || derivedDatasetName.trim().length === 0 || derivedDatasetTagList.length === 0}
                 onClick={trinoRun ? () => void materializeTrinoRun() : prepareDerivedDatasetJob}
                 title={hasQueryPermission ? trinoRun ? "Iceberg Dataset을 생성합니다." : "처리 Job 생성 검토로 이동합니다." : queryPermissionMessage}
                 type="button"
               >
-                <Database size={15} /> {trinoRun ? "Iceberg Dataset 생성" : "Job 생성 검토로 이동"}
+                <Database size={15} /> {trinoMaterializationPending ? "생성 요청 중" : trinoRun ? "Iceberg Dataset 생성" : "Job 생성 검토로 이동"}
               </button>
             </div>
             <div className="sql-materialize-summary">

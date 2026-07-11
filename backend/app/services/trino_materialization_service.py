@@ -1,7 +1,10 @@
-from uuid import uuid4
+import hashlib
 import re
+import unicodedata
+from uuid import uuid4
 
 from fastapi import status
+from sqlalchemy.exc import IntegrityError
 
 from app.core.auth_context import ActorContext
 from app.core.config import Settings, settings
@@ -9,23 +12,39 @@ from app.core.errors import ApiError
 from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.sql_repository import SqlRepository
 from app.repositories.catalog_repository import CatalogRepository
-from app.schemas.catalog import CatalogDatasetResponse, CreateDerivedDatasetRequest, QueryEngineTableRef
+from app.schemas.catalog import CreateDerivedDatasetRequest, QueryEngineTableRef
 from app.schemas.common import ErrorCode
 from app.schemas.trino import TrinoMaterializationRunResponse, TrinoQueryRunResponse
 from app.services.trino_client import TrinoClient
 from app.services.trino_materialization import build_trino_materialization_statement
 from app.services.trino_query_run_service import trino_status
+from app.services.query_engine_registration_service import (
+    QueryEngineRegistrationService,
+    build_query_engine_table,
+)
 
 
 class TrinoMaterializationService:
-    def __init__(self, repository: SqlRepository, catalog_repository: CatalogRepository, runtime_settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        repository: SqlRepository,
+        catalog_repository: CatalogRepository,
+        runtime_settings: Settings | None = None,
+        *,
+        client: TrinoClient | None = None,
+    ) -> None:
         self.repository = repository
         self.catalog_repository = catalog_repository
         self.settings = runtime_settings or settings
-        self.client = TrinoClient(
+        self.client = client or TrinoClient(
             self.settings,
             username=self.settings.trino_materializer_username,
             password=self.settings.trino_materializer_password,
+        )
+        self.registration = QueryEngineRegistrationService(
+            self.catalog_repository,
+            client=self.client,
+            runtime_settings=self.settings,
         )
 
     def submit(self, source_run_id: str, request: CreateDerivedDatasetRequest, actor: ActorContext) -> TrinoMaterializationRunResponse:
@@ -42,23 +61,66 @@ class TrinoMaterializationService:
             raise ApiError(ErrorCode.VALIDATION_ERROR, "Materialization request does not match the source query run", status.HTTP_422_UNPROCESSABLE_ENTITY)
         compiled_query = str(payload.get("compiledQuery") or "")
         dataset_name = request.dataset.name.strip() or f"{source_run.base_dataset_id}_analysis"
-        dataset_slug = re.sub(r"[^a-z0-9_]+", "_", dataset_name.lower()).strip("_") or "sql_derived"
-        dataset_id = f"ds_{dataset_slug}"
-        target = QueryEngineTableRef(
-            catalog=self.settings.trino_catalog,
-            schema=self.settings.trino_schema,
-            table=f"{dataset_id.removeprefix('ds_')}_mat",
-            format="iceberg",
-        )
-        statement = build_trino_materialization_statement(source_run, target, compiled_query)
-        page = self.client.submit(statement)
+        dataset_id = materialized_dataset_id(dataset_name)
+        self._require_available_dataset_name(dataset_id, dataset_name)
         materialization_id = f"materialize_{uuid4().hex[:12]}"
+        target = build_query_engine_table(dataset_name, materialization_id, self.settings)
+        statement = build_trino_materialization_statement(source_run, target, compiled_query)
+        response = TrinoMaterializationRunResponse(
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            materialization_id=materialization_id,
+            source_run_id=source_run_id,
+            status="queued",
+            query_engine_status="pending",
+        )
+        dataset_payload = self._catalog_dataset_payload(
+            source_run=source_run,
+            request=request,
+            response=response,
+            owner=actor.name,
+            target=target,
+        )
+        try:
+            self.registration.save_pending(
+                dataset_payload,
+                actor=actor,
+                run_id=materialization_id,
+                target=target,
+            )
+        except IntegrityError as exc:
+            self.repository.db.rollback()
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "A Dataset with this name already exists",
+                status.HTTP_409_CONFLICT,
+                {"datasetId": dataset_id, "datasetName": dataset_name},
+            ) from exc
+        try:
+            page = self.client.submit(statement)
+        except Exception as exc:
+            failed_response = response.model_copy(update={"status": "failed", "query_engine_status": "registration_failed"})
+            self.registration.mark_failed(
+                self._catalog_dataset_payload(
+                    source_run=source_run,
+                    request=request,
+                    response=failed_response,
+                    owner=actor.name,
+                    target=target,
+                ),
+                actor=actor,
+                run_id=materialization_id,
+                target=target,
+                error=exc,
+            )
+            raise
         response = TrinoMaterializationRunResponse(
             dataset_id=dataset_id,
             dataset_name=dataset_name,
             materialization_id=materialization_id,
             source_run_id=source_run_id,
             status=trino_status(page),
+            query_engine_status="pending",
             trino_query_id=page.query_id or None,
         )
         persisted = response.model_dump(by_alias=True, mode="json")
@@ -71,11 +133,9 @@ class TrinoMaterializationService:
             "submittedByName": actor.name,
             "submittedByUserId": actor.id,
         })
-        self.repository.save_run_payload({"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted})
-        if response.status == "succeeded":
-            self._register_catalog_dataset(persisted, response)
-            persisted["catalogRegisteredAt"] = "registered"
-            self.repository.save_run_payload({"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted})
+        persisted_payload = {"runId": materialization_id, "baseDatasetId": source_run.base_dataset_id, **persisted}
+        self.repository.save_run_payload(persisted_payload)
+        response = self._sync_catalog_registration(persisted_payload, response, actor, page.error)
         safe_record_audit_event(self.repository.db, action="trino_materialization.submit", actor=actor, api_path=f"/api/catalog/trino-runs/{source_run_id}/materializations", http_method="POST", metadata={"materializationId": materialization_id, "trinoQueryId": response.trino_query_id}, target_id=materialization_id, target_type="dataset")
         return response
 
@@ -88,31 +148,94 @@ class TrinoMaterializationService:
             raise ApiError(ErrorCode.FORBIDDEN, "Only the materialization submitter can view it", status.HTTP_403_FORBIDDEN)
         response = TrinoMaterializationRunResponse.model_validate(payload)
         next_uri = str(payload.get("trinoNextUri") or "")
-        if response.status in {"succeeded", "failed", "cancelled"} or not next_uri:
-            return response
-        page = self.client.fetch(next_uri)
-        updated = response.model_copy(update={
-            "status": trino_status(page),
-            "trino_query_id": page.query_id or response.trino_query_id,
-        })
+        page_error = None
+        updated = response
         updated_payload = dict(payload)
-        updated_payload.update(updated.model_dump(by_alias=True, mode="json"))
-        updated_payload["trinoNextUri"] = page.next_uri
-        self.repository.save_run_payload(updated_payload)
-        if updated.status == "succeeded" and not payload.get("catalogRegisteredAt"):
-            self._register_catalog_dataset(updated_payload, updated)
-            updated_payload["catalogRegisteredAt"] = "registered"
+        if response.status not in {"succeeded", "failed", "cancelled"} and next_uri:
+            page = self.client.fetch(next_uri)
+            page_error = page.error
+            updated = response.model_copy(update={
+                "status": trino_status(page),
+                "trino_query_id": page.query_id or response.trino_query_id,
+            })
+            updated_payload.update(updated.model_dump(by_alias=True, mode="json"))
+            updated_payload["trinoNextUri"] = page.next_uri
             self.repository.save_run_payload(updated_payload)
+        updated = self._sync_catalog_registration(updated_payload, updated, actor, page_error)
         if updated.status in {"succeeded", "failed", "cancelled"} and updated.status != response.status:
             safe_record_audit_event(self.repository.db, action=f"trino_materialization.{updated.status}", actor=actor, api_path=f"/api/catalog/trino-materializations/{materialization_id}", http_method="GET", metadata={"trinoQueryId": updated.trino_query_id}, result="success" if updated.status == "succeeded" else "failed", target_id=materialization_id, target_type="dataset")
         return updated
 
-    def _register_catalog_dataset(self, payload: dict[str, object], response: TrinoMaterializationRunResponse) -> CatalogDatasetResponse:
+    def _sync_catalog_registration(
+        self,
+        payload: dict[str, object],
+        response: TrinoMaterializationRunResponse,
+        actor: ActorContext,
+        trino_error: object | None,
+    ) -> TrinoMaterializationRunResponse:
+        if response.status not in {"succeeded", "failed", "cancelled"}:
+            return response
+        if response.status == "succeeded" and response.query_engine_status == "available":
+            return response
+        if response.status in {"failed", "cancelled"} and response.query_engine_status == "registration_failed":
+            return response
+
         request = CreateDerivedDatasetRequest.model_validate(payload["request"])
         target = QueryEngineTableRef.model_validate(payload["target"])
         source_payload = self.repository.get_run_payload(response.source_run_id) or {}
         source_run = TrinoQueryRunResponse.model_validate(source_payload)
+        owner_actor = materialization_owner_actor(payload, actor)
+        terminal_response = response.model_copy(update={
+            "query_engine_status": "available" if response.status == "succeeded" else "registration_failed",
+        })
+        dataset_payload = self._catalog_dataset_payload(
+            source_run=source_run,
+            request=request,
+            response=terminal_response,
+            owner=str(payload.get("submittedByName") or actor.name),
+            target=target,
+        )
+        if response.status == "succeeded":
+            dataset = self.registration.finalize(
+                dataset_payload,
+                actor=owner_actor,
+                run_id=response.materialization_id,
+                target=target,
+            )
+        else:
+            error = trino_error if hasattr(trino_error, "code") else RuntimeError(f"TRINO_MATERIALIZATION_{response.status.upper()}")
+            dataset = self.registration.mark_failed(
+                dataset_payload,
+                actor=owner_actor,
+                run_id=response.materialization_id,
+                target=target,
+                error=error,
+            )
+        updated = response.model_copy(update={"query_engine_status": dataset.query_engine_status})
+        updated_payload = dict(payload)
+        updated_payload.update(updated.model_dump(by_alias=True, mode="json"))
+        if dataset.query_engine_status == "available":
+            updated_payload["catalogRegisteredAt"] = "registered"
+        self.repository.save_run_payload(updated_payload)
+        return updated
+
+    def _catalog_dataset_payload(
+        self,
+        *,
+        source_run: TrinoQueryRunResponse,
+        request: CreateDerivedDatasetRequest,
+        response: TrinoMaterializationRunResponse,
+        owner: str,
+        target: QueryEngineTableRef,
+    ) -> dict[str, object]:
         columns = source_run.result.columns if source_run.result else []
+        materialization_status = {
+            "queued": "queued",
+            "running": "running",
+            "succeeded": "success",
+            "failed": "failed",
+            "cancelled": "canceled",
+        }[response.status]
         dataset_payload = {
             "id": response.dataset_id,
             "name": response.dataset_name,
@@ -121,7 +244,7 @@ class TrinoMaterializationService:
             "freshness": "latest",
             "lastUpdated": source_run.completed_at or source_run.submitted_at,
             "nextRefresh": "수동 갱신",
-            "owner": payload.get("submittedByName") or "AskLake",
+            "owner": owner or "AskLake",
             "quality": "Trino Iceberg materialized",
             "rag": request.dataset.rag,
             "rows": f"{source_run.result.row_count or 0:,} rows",
@@ -134,10 +257,10 @@ class TrinoMaterializationService:
             "storageFormat": "iceberg",
             "storageLocation": f"iceberg://{target.catalog}/{target.schema_}/{target.table}",
             "storageSizeBytes": 0,
-            "queryEngineTable": target.model_dump(by_alias=True),
+            "queryEngineStatus": response.query_engine_status,
             "tags": request.dataset.tags,
             "upstream": [response.source_run_id, *request.reference_dataset_ids],
-            "downstream": ["대시보드"],
+            "downstream": ["SQL 분석", "대시보드"],
             "materializationRuns": [{
                 "createdAt": source_run.completed_at or source_run.submitted_at,
                 "jobId": "trino-ctas",
@@ -145,10 +268,44 @@ class TrinoMaterializationService:
                 "runId": response.materialization_id,
                 "sourceKind": "sql",
                 "sourceLabel": "Trino Iceberg CTAS",
-                "status": "success",
+                "status": materialization_status,
                 "storageLocation": f"iceberg://{target.catalog}/{target.schema_}/{target.table}",
                 "storageSizeBytes": 0,
             }],
         }
-        saved = self.catalog_repository.save_dataset_payload(dataset_payload)
-        return CatalogDatasetResponse.model_validate(saved)
+        return dataset_payload
+
+    def _require_available_dataset_name(self, dataset_id: str, dataset_name: str) -> None:
+        existing = self.catalog_repository.get_dataset_payload(dataset_id) or self.catalog_repository.get_dataset_payload_by_name(dataset_name)
+        if existing is None:
+            return
+        materialization_runs = existing.get("materializationRuns")
+        failed_run_id = str(materialization_runs[0].get("runId") or "") if isinstance(materialization_runs, list) and materialization_runs and isinstance(materialization_runs[0], dict) else ""
+        if (
+            existing.get("queryEngineStatus") == "registration_failed"
+            and str(existing.get("source") or "").startswith("Trino CTAS")
+            and (not failed_run_id or self.repository.get_run_payload(failed_run_id) is None)
+        ):
+            return
+        raise ApiError(
+            ErrorCode.CONFLICT,
+            "A Dataset with this name already exists",
+            status.HTTP_409_CONFLICT,
+            {"datasetId": dataset_id, "datasetName": dataset_name},
+        )
+
+
+def materialized_dataset_id(dataset_name: str) -> str:
+    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", dataset_name).strip()).casefold()
+    slug = re.sub(r"[^a-z0-9_]+", "_", normalized).strip("_")
+    slug = re.sub(r"_+", "_", slug)[:36].rstrip("_") or "dataset"
+    suffix = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return f"ds_{slug}_{suffix}"
+
+
+def materialization_owner_actor(payload: dict[str, object], fallback: ActorContext) -> ActorContext:
+    return ActorContext(
+        name=str(payload.get("submittedByName") or fallback.name),
+        role="viewer",
+        id=str(payload.get("submittedByUserId") or "") or None,
+    )

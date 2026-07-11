@@ -111,6 +111,14 @@ def verify() -> None:
     else:
         raise AssertionError("missing Trino mapping should fail")
 
+    unavailable_mapping = orders.model_copy(update={"query_engine_status": "unavailable"})
+    try:
+        compile_trino_read_query("SELECT * FROM orders", [unavailable_mapping])
+    except ApiError as error:
+        assert error.code == "VALIDATION_ERROR"
+    else:
+        raise AssertionError("unverified Trino mapping should fail")
+
     for unsafe_query in [
         "SELECT * FROM iceberg.asklake.orders_clean",
         "SELECT * FROM TABLE(system.query(query => 'SELECT 1'))",

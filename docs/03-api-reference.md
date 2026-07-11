@@ -13,7 +13,7 @@
 - `frontend/src/services/pipelineApi.ts`가 create/run/query 호출 진입점이다.
 - live backend mode에서 ETL job, catalog dataset, SQL run snapshot은 Postgres JSONB metadata tables에 저장된다.
 - ETL/Catalog 초기 hydrate 결과가 Postgres에 비어 있으면 UI도 빈 목록으로 시작한다.
-- Issue #488 Phase 1은 local/prod Compose의 Trino 482 + Iceberg JDBC catalog baseline과 Catalog `queryEngineTable` response field를 제공한다. 현재 구현된 `/api/query/runs` DuckDB Preview 호환 runtime과 결과 snapshot은 후속 Phase에서 전환한다.
+- Issue #488은 local/prod Compose의 Trino 482 + Iceberg JDBC catalog baseline, canonical Query Run, cursor result storage, Iceberg CTAS Dataset 자동 등록을 제공한다. `/api/query/runs`는 `TRINO_ENABLED`에 따라 Trino runtime과 DuckDB compatibility runtime을 전환한다.
 
 ## 2) 환경 변수
 
@@ -65,7 +65,7 @@ MINIO_REGION=us-east-1
 - Target DB 선택은 `GET /api/target/databases` 서버 API를 통해 허용 DB 목록을 조회한다. `TARGET_DATABASES`가 없으면 local demo 기본값을 사용한다.
 - Query AI live mode는 backend env의 `OPENAI_API_KEY`와 `OPENAI_QUERY_AI_MODEL`을 사용한다. 브라우저 env에는 OpenAI 키를 두지 않는다.
 - Query AI 요청은 선택된 dataset id와 dataset metadata 전체를 함께 전달해 backend가 선택 context 안에서 JOIN SQL 초안을 생성할 수 있게 한다. live 응답이 선택 reference JOIN을 포함하지 않으면 frontend가 동일 metadata로 JOIN 초안 fallback을 적용한다.
-- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs`(현재 사용자 실행 이력), `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog의 `queryEngineTable`은 Trino physical table mapping을 저장/응답하는 optional metadata다.
+- `TRINO_ENABLED=false`에서는 `/api/query/runs`가 DuckDB compatibility response를 유지한다. `true`이면 같은 endpoint가 Trino full Query Run을 `202 Accepted`로 접수하고, `GET /api/query/runs`(현재 사용자 실행 이력), `GET /api/query/runs/{runId}`, `GET /api/query/runs/{runId}/results`, `POST /api/query/runs/{runId}/cancel` lifecycle를 사용한다. Catalog는 `queryEngineStatus`로 등록 상태를 응답하며, 실제 `DESCRIBE` 검증을 통과한 `available` Dataset에만 `queryEngineTable`을 포함한다.
 - Trino 전환 시에는 backend만 coordinator continuation URL을 보관한다. result는 cursor page로만 반환하며, run 조회/결과 조회는 submitter 또는 admin, 취소는 submitter/admin/base Dataset `manage` 권한자로 제한한다.
 - 현재 Trino result page는 private MinIO object로 저장하고 PostgreSQL에는 metadata만 남긴다. 기존 PostgreSQL page row는 migration compatibility read 경로로만 유지한다. `GET /api/query/runs/{runId}`는 collector가 저장한 상태만 읽고, Trino continuation fetch는 `trino-result-collector` worker만 수행한다. signed cursor는 다음 Phase에서 진행한다. 상세 계약은 `docs/trino-query-result-storage-contract.md`를 따른다.
 
@@ -96,6 +96,7 @@ Canonical status values:
 | Run | `status` | `queued`, `running`, `success`, `failed`, `canceled` |
 | Dataset | `status` | `available`, `approval_required` |
 | Dataset | `freshness` | `latest`, `stale`, `approval` |
+| Dataset | `queryEngineStatus` | `pending`, `available`, `registration_failed`, `unavailable` |
 | Dashboard | `status` | `draft`, `published` |
 
 ## 4) P0 API
@@ -117,6 +118,8 @@ Canonical status values:
 | `POST` | `/api/query/estimates` | `query` | 실행 전 Trino plan 기반 처리량/위험도 추정 | `docs/trino-query-run-contract.md` |
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
+| `POST` | `/api/catalog/trino-runs/{runId}/materializations` | source run submitter/admin | 완료된 Trino run을 Iceberg CTAS Dataset으로 생성하고 자동 등록 시작 | `docs/trino-query-run-contract.md` |
+| `GET` | `/api/catalog/trino-materializations/{materializationId}` | submitter/admin | CTAS 및 Query Engine 등록 상태 조회, 실패한 table 검증 재시도 | `docs/trino-query-run-contract.md` |
 
 `POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
 

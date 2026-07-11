@@ -46,7 +46,7 @@ import { PageTitle } from "../../components/common";
 import { getCatalogDatasetRows, getCatalogModelArtifacts } from "../../services/catalogApi";
 import { getDatasetLineageGraph } from "../../services/mockApi";
 import type { AuditResult, CatalogDataset, CatalogDatasetRowsResponse, CatalogModelArtifact, CurrentUserResponse, DatasetMaterializationRun, LineageGraph, LineageGraphDataset, LineageLayer } from "../../types";
-import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, permissionDeniedMessage } from "../../utils/permissions";
+import { canDeleteDatasetMaterializationRun, canQueryDatasetAs, datasetQueryBlockedMessage, permissionDeniedMessage } from "../../utils/permissions";
 import { datasetStatusMeta } from "../../utils/statusMeta";
 
 type LineageColumn = {
@@ -750,7 +750,7 @@ export function CatalogPage({
           <button
             className="primary-button catalog-wide-button"
             disabled={!canQueryCurrentDataset(previewDataset) || selectedSqlRunTarget?.datasetId !== previewDataset.id || selectedSqlRunTarget.datasetName !== previewDataset.name}
-            title={!canQueryCurrentDataset(previewDataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
+            title={!canQueryCurrentDataset(previewDataset) ? datasetQueryBlockedMessage(previewDataset) : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "선택한 append 결과 기준으로 SQL 분석을 엽니다." : "생성/append 결과를 먼저 선택해 주세요."}
             type="button"
             onClick={openSelectedSqlDataset}
           >
@@ -758,7 +758,7 @@ export function CatalogPage({
           </button>
           <p className={selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name ? "catalog-sql-target-hint active" : "catalog-sql-target-hint"}>
             {!canQueryCurrentDataset(previewDataset)
-              ? permissionDeniedMessage("데이터셋", "SQL 실행")
+              ? datasetQueryBlockedMessage(previewDataset)
               : selectedSqlRunTarget?.datasetId === previewDataset.id && selectedSqlRunTarget.datasetName === previewDataset.name
               ? `선택된 결과: ${selectedSqlRunTarget.runId}`
               : "생성/append 결과를 선택하면 SQL 분석 이동이 활성화됩니다."}
@@ -857,7 +857,7 @@ export function CatalogDetailPage({
             </div>
           </div>
           <div className="job-detail-actions">
-            <button className="job-action-button primary" disabled={!canQueryCurrentDataset} title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : permissionDeniedMessage("데이터셋", "SQL 실행")} type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
+            <button className="job-action-button primary" disabled={!canQueryCurrentDataset} title={canQueryCurrentDataset ? "SQL 분석에서 엽니다." : datasetQueryBlockedMessage(dataset)} type="button" onClick={onOpenSql}><ExternalLink size={14} /> SQL 분석에서 열기</button>
             <button className="job-action-button" type="button" onClick={openLineage}>리니지 보기</button>
             <button className="job-action-button" type="button" onClick={() => onAction("catalog.dataset.refreshed", `/api/catalog/datasets/${dataset.id}`, dataset.id)}>새로고침</button>
           </div>
@@ -984,7 +984,7 @@ function CatalogMaterializationRuns({
               key={run.runId}
               role="button"
               tabIndex={isSelectable ? 0 : -1}
-              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? permissionDeniedMessage("데이터셋", "SQL 실행") : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
+              title={isSelectable ? "SQL 분석 대상으로 선택" : !canQueryDatasetForCurrentUser(dataset) ? datasetQueryBlockedMessage(dataset) : "성공한 append 결과만 SQL 분석 대상으로 선택할 수 있습니다."}
               onClick={(event) => onSelectRun(event, dataset, run)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {

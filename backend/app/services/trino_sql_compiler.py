@@ -77,12 +77,16 @@ def compile_trino_read_query(
                 {"table": raw_name},
             )
         mapping = dataset.query_engine_table
-        if mapping is None:
+        if dataset.query_engine_status != "available" or mapping is None:
             raise ApiError(
                 ErrorCode.VALIDATION_ERROR,
-                "Dataset is missing its Trino table mapping",
+                "Dataset is not available in the Trino query engine",
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                {"datasetId": dataset.id, "datasetName": dataset.name},
+                {
+                    "datasetId": dataset.id,
+                    "datasetName": dataset.name,
+                    "queryEngineStatus": dataset.query_engine_status,
+                },
             )
         table.set("this", exp.to_identifier(mapping.table, quoted=True))
         table.set("db", exp.to_identifier(mapping.schema_, quoted=True))

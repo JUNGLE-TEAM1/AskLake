@@ -25,7 +25,7 @@ const checks = [
       /const retryTrinoResultPage = async \(\) => \{/,
       /const retryTrinoMaterializationStatus = async \(\) => \{/,
       /결과를 불러오지 못했습니다\./,
-      /상태 다시 확인/,
+      /등록 다시 확인/,
     ],
   },
   {

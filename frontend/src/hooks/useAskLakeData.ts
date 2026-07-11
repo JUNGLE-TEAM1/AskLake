@@ -16,7 +16,7 @@ import {
   runJobCommand as runLiveJobCommand,
   updatePipelineDraft as updateLivePipelineDraft,
 } from "../services/pipelineApi";
-import { canQueryDatasetAs, canRunJobCommand, permissionDeniedMessage } from "../utils/permissions";
+import { canQueryDatasetAs, canRunJobCommand, datasetQueryBlockedMessage, permissionDeniedMessage } from "../utils/permissions";
 import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta";
 import type {
   AuditResult,
@@ -1192,7 +1192,7 @@ export function useAskLakeData({
   const openDatasetInSql = (dataset: CatalogDataset) => {
     if (!canQueryDatasetAs(dataset, currentUser)) {
       writeAuditLog("catalog.open_in_sql.forbidden", `/api/catalog/datasets/${dataset.id}/query`, dataset.id, "failed", { targetType: "dataset" });
-      showToast(permissionDeniedMessage("데이터셋", "SQL 실행"), "info");
+      showToast(datasetQueryBlockedMessage(dataset), "info");
       return;
     }
     setSelectedDataset(dataset);

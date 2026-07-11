@@ -409,7 +409,10 @@ Issue #488 Phase 2의 Trino protocol parser, Query Run lifecycle mapping, Datase
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
 ```
+
+`verify:query-engine-registration`은 한글 Dataset의 안정적 ID/물리 table 이름, Catalog `pending -> available`, `registration_failed`에서 mapping 제거, 동일 materialization 재검증 복구, coordinator 제출 실패 후 재생성, Spark ETL의 검증된 mapping만 SQL 노출하는 조건을 확인한다. 실제 local Trino E2E에서는 임시 Iceberg CTAS 뒤 `DESCRIBE`와 Catalog mapping을 확인하고 검증 table/metadata를 반드시 정리한다.
 
 Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 MinIO page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
 

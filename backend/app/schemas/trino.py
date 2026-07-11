@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.schemas.common import CamelModel
+from app.schemas.catalog import QueryEngineStatus
 
 TrinoQueryRunStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
@@ -47,6 +48,7 @@ class TrinoMaterializationRunResponse(CamelModel):
     materialization_id: str
     source_run_id: str
     status: TrinoQueryRunStatus
+    query_engine_status: QueryEngineStatus = "pending"
     trino_query_id: str | None = None
 
 

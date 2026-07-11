@@ -95,8 +95,10 @@ Phase 0에서는 용어와 경계를 먼저 고정한다. `createdBy`, `owner`, 
 4. 사용자는 선택 테이블과 schema context를 기반으로 Query AI 생성 기능에서 SQL 초안을 받을 수 있다.
 5. AI 제안은 자동 실행되지 않고 editor에 반영한 뒤 기존 read-only/preflight 검증을 통과해야 실행할 수 있다.
 6. 완료된 SQL run은 수집/처리 Job 초안으로 넘겨 Review에서 Lake Dataset materialize 요청을 만들 수 있다.
-7. 완료된 run 결과는 retention 안에서 임시 Dashboard draft source로 쓸 수 있고, publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
-8. Dashboard builder 진입은 실제 Dataset 또는 완료된 SQL run이 있을 때만 허용한다.
+7. Trino materialize 요청은 Iceberg CTAS를 실행하고 실제 table 확인까지 성공한 뒤 Dataset을 SQL 분석 대상으로 자동 등록한다. 사용자가 physical catalog/schema/table을 따로 입력하지 않는다.
+8. 등록 중이거나 검증에 실패한 Dataset은 Catalog에는 상태를 남기되 SQL 실행 대상으로 노출하지 않는다.
+9. 완료된 run 결과는 retention 안에서 임시 Dashboard draft source로 쓸 수 있고, publish 또는 반복 사용은 materialized Dataset을 source로 사용한다.
+10. Dashboard builder 진입은 실제 Dataset 또는 완료된 SQL run이 있을 때만 허용한다.
 
 ### Flow C. FastAPI live backend 연결
 

@@ -1134,7 +1134,7 @@ def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing
         schema_json=schema_json,
         sample_rows=job.schema_sample_rows or [],
         upstream=[job.source_label, job.name],
-        downstream=["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        downstream=dataset_payload["downstream"],
     )
 
 
@@ -1168,9 +1168,16 @@ def dataset_payload_from_spark_result(
         },
     )
     aggregate = aggregate_materialization_runs(materialization_runs)
+    query_engine_table = result.get("queryEngineTable")
+    query_engine_available = (
+        result.get("queryEngineVerified") is True
+        and isinstance(query_engine_table, dict)
+        and all(str(query_engine_table.get(key) or "").strip() for key in ("catalog", "schema", "table", "format"))
+    )
+    downstream = (["SQL 분석"] if query_engine_available else []) + (["RAG 인덱싱"] if job.rag else [])
     return {
         "description": target_dataset_description(job),
-        "downstream": ["SQL 분석", "RAG 인덱싱"] if job.rag else ["SQL 분석"],
+        "downstream": downstream,
         "freshness": "latest",
         "id": dataset_id,
         "layer": job.target_layer,
@@ -1196,11 +1203,13 @@ def dataset_payload_from_spark_result(
         "storageFormat": "parquet",
         "storageLocation": output_path,
         "storageSizeBytes": aggregate["storageSizeBytes"],
+        "queryEngineStatus": "available" if query_engine_available else "unavailable",
         "partition": partition,
         "partitionColumns": partition_columns,
         "indexColumns": index_columns,
         "tags": target_dataset_tags(job),
         "upstream": [job.source_label, job.name],
+        **({"queryEngineTable": query_engine_table} if query_engine_available else {}),
     }
 
 
