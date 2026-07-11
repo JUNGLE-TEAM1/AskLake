@@ -172,3 +172,39 @@
 5. 실제 권한 조합, Backend 오류 응답, 15인치 화면과 발표용 대형 디스플레이에서 최종 시각 QA와 반응형 폴리싱이 필요합니다.
 
 이 브랜치는 로컬 통합 결과만 보유합니다. 원격 push, PR merge, force push는 수행하지 않습니다.
+
+## 2026-07-11 Text Structuring Runtime 후속 통합
+
+- 통합 전 HEAD: `52da1b53649a2b5ee33d3c449dc054ba8c57428c`
+- 대상 `origin/dev`: `4852a77af30f1983fe9df71e5949ef12e0a31c50`
+- merge-base: `02f5487e84aad9c289d777d571502266036c4b60`
+- 로컬 안전 브랜치: `backup/pre-dev-merge-20260711-52da1b5`
+- 실제 merge commit: `f0c858f`
+
+### 후속 통합 결정
+
+1. `dev`의 portable text model 학습, manifest, Spark model selection, explicit fallback, quality/quarantine, model artifact 저장과 API 계약을 모두 보존했다.
+2. 기존 다중 partition 계약은 manifest의 `partitionColumns`로 옮겨 model runtime과 같은 Spark 실행 경로에서 적용했다.
+3. Job의 lifecycle status는 실행 결과와 분리한다. 실패 Run은 Run history와 최근 실행 결과에 남기고 Job은 자동 실행 가능한 `scheduled` 상태로 복귀한다.
+4. Catalog 메인의 model artifact 전역 Panel은 제거했다. 모델 저장/API와 ETL 재사용은 유지하고, Dataset materialization Card에는 모델 기반 변환과 quarantine을 provenance로 표시한다.
+5. Run 단계 Dialog는 기존 Timeline UI를 유지하고 선택한 변환 관련 단계의 Inspector에 실제 모델, 실행 방식, 검증 행과 fallback을 표시한다.
+
+### 후속 작은 커밋
+
+| SHA | 목적 |
+| --- | --- |
+| `ebf81f7` | Spark text model runtime과 다중 partition manifest 통합 |
+| `c5e426e` | 모델 실행 품질 metadata와 Job lifecycle 상태 계약 통합 |
+| `7da8b3a` | ETL 모델 선택 설정과 shadcn 생성 화면 통합 |
+| `0cfe2ef` | Run/Catalog 모델 관측 타입 계약 통합 |
+| `70800b5` | Job Run 단계 Inspector에 모델 runtime 진단 연결 |
+| `ffb5527` | Catalog 전역 모델 Panel 제거 및 materialization provenance 통합 |
+| `f0c858f` | 최신 `dev`의 나머지 비충돌 변경 병합 |
+
+### 후속 검증
+
+- `cd frontend && npm run build`: 통과. 기존 Vite 대형 chunk 경고만 남는다.
+- `cd backend && npm run verify`: 통과. sandbox의 listen 제한을 피해 권한 있는 환경에서 실행했다.
+- Python AST 및 Node `--check`: Spark runner, model training/finalize script, server 모두 통과했다.
+- `cd backend && npm run verify:spark-run`: 검증용 ecommerce CSV fixture로 통과했다. 3행 입력, 7개 DAG 단계 성공, Catalog dataset 생성, Job `scheduled` 복귀, `event_type/category_id` 다중 partition Parquet 3개를 확인했다.
+- 저장소의 `minio:seed-verify`는 taxi schema를 쓰지만 `verify:spark-run`은 ecommerce schema를 기대한다. 검증 시 로컬 MinIO 객체만 ecommerce fixture로 교체했으며, 두 스크립트의 fixture 계약 정리는 별도 후속 작업으로 남긴다.
