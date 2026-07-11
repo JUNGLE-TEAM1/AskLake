@@ -24,6 +24,8 @@ from app.schemas.etl import (
     ReviewSnapshot,
     KafkaReviewIngestRequest,
     KafkaReviewIngestResponse,
+    KafkaReplayProducerRequest,
+    KafkaReplayProducerStatus,
     ScheduledJobRunRequest,
     ScheduledJobRunResponse,
     SchemaDraft,
@@ -34,6 +36,7 @@ from app.schemas.etl import (
     UpdatePipelineRequest,
 )
 from app.services import etl_service
+from app.services.kafka_replay_producer_service import replay_producer_manager
 
 router = APIRouter(prefix="/etl", tags=["etl"])
 
@@ -64,6 +67,37 @@ def ingest_kafka_reviews(
     db: Session = Depends(get_db),
 ) -> KafkaReviewIngestResponse:
     return etl_service.ingest_kafka_reviews(db, request)
+
+
+@router.get("/kafka/replay-producer", response_model=KafkaReplayProducerStatus)
+def get_kafka_replay_producer(
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.status()
+
+
+@router.post("/kafka/replay-producer", response_model=KafkaReplayProducerStatus, status_code=status.HTTP_202_ACCEPTED)
+def start_kafka_replay_producer(
+    request: KafkaReplayProducerRequest,
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.start(request)
+
+
+@router.delete("/kafka/replay-producer", response_model=KafkaReplayProducerStatus)
+def stop_kafka_replay_producer(
+    actor: ActorContext = Depends(get_actor_context),
+) -> KafkaReplayProducerStatus:
+    require_kafka_replay_producer_access(actor)
+    return replay_producer_manager.stop()
+
+
+def require_kafka_replay_producer_access(actor: ActorContext) -> None:
+    from app.core.auth_context import require_permission
+
+    require_permission(actor, "manage", resource_label="Kafka replay producer")
 
 
 @router.post(

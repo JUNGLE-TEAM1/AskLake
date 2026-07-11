@@ -561,6 +561,26 @@ Frontend `DraftPipeline.source` carries optional `executionMode` and `continuous
 
 Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책을 저장한다. Continuous Job은 그 단계를 건너뛰며 `scheduleLabel: "스케줄링 건너뛰기"`, stream lifecycle 설명, `continuousConfig`만 생성 request에 보낸다. Continuous의 시작 위치, trigger 간격, micro-batch 최대 메시지는 Source 단계의 접힌 고급 설정에서 지정한다.
 
+### Kafka Replay Producer
+
+`GET|POST|DELETE /api/etl/kafka/replay-producer`는 Continuous 적재를 수동 검증할 때만 쓰는 admin `manage` 도구다. producer 상태는 process-local이며 backend 재시작 또는 배포 교체 시 함께 종료된다. `POST` body는 아래와 같고 topic 삭제를 요청할 수 없다.
+
+```ts
+type KafkaReplayProducerRequest = {
+  topic?: string; // default: reviews.raw
+  inputPath?: string; // ASKLAKE_REPLAY_INPUT_DIR 아래 상대 경로
+  rate?: number; // default: 10 messages/sec
+  batchSize?: number; // default: 100
+  progressEvery?: number; // default: 100
+  loop?: boolean; // default: true
+  maxCycles?: number;
+  maxMessages?: number;
+  cycleDelayMs?: number;
+};
+```
+
+loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
+
 Continuous runtime operations:
 
 ```text

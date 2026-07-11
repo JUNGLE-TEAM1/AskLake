@@ -256,8 +256,32 @@ npm run kafka:reviews-replay -- --input /path/to/amazon_reviews.jsonl.gz --limit
 --limit <count>         생략하면 전체 replay
 --rate <count>          초당 전송 메시지 수 제한
 --batch-size <count>    Kafka send batch 크기, 기본값 100
+--loop                  파일 끝에서 다시 시작하며 cycle별 고유 event_id/offset을 생성
+--max-cycles <count>    loop replay의 최대 cycle 수
+--max-messages <count>  전체 replay의 최대 메시지 수
+--cycle-delay-ms <ms>   loop cycle 사이 대기 시간
+--recreate-topic        시작 전에 topic을 삭제하고 다시 생성(명시적 요청만)
 --dry-run               Kafka 전송 없이 메시지 계약만 검증
---no-recreate-topic     기존 topic을 삭제하지 않고 사용
+--no-recreate-topic     기존 topic을 삭제하지 않고 사용(기본값)
+```
+
+Continuous 적재를 눈으로 확인하려면 낮은 rate로 loop producer를 실행한다. 기본 실행은 topic을 보존하므로 이미 실행 중인 Continuous worker의 checkpoint를 훼손하지 않는다.
+
+```bash
+cd backend
+npm run kafka:reviews-loop -- --topic reviews.raw --rate 2 --max-cycles 5
+```
+
+배포 Compose에서는 Kafka broker가 내부 `redpanda:9092`만 노출되므로 backend API를 사용한다. `POST`/`DELETE`는 admin `manage` 권한이 필요하며, producer 하나만 동시에 실행할 수 있다. 기본 fixture 외 대용량 `.jsonl`/`.jsonl.gz`를 쓰려면 host의 `ASKLAKE_REPLAY_HOST_INPUT_DIR`에 파일을 두고 body의 `inputPath`에 상대 경로를 넣는다.
+
+```bash
+curl -X POST "$ASKLAKE_API_URL/api/etl/kafka/replay-producer" \
+  -H 'Content-Type: application/json' \
+  -H 'X-AskLake-Role: admin' \
+  -d '{"topic":"reviews.raw","rate":2,"loop":true,"maxMessages":500}'
+
+curl -H 'X-AskLake-Role: admin' "$ASKLAKE_API_URL/api/etl/kafka/replay-producer"
+curl -X DELETE -H 'X-AskLake-Role: admin' "$ASKLAKE_API_URL/api/etl/kafka/replay-producer"
 ```
 
 Kafka Source -> direct target -> Catalog 등록 -> schedule tick 계약까지 한 번에 확인하려면 아래 smoke를 실행한다. 이 스크립트는 고유 `reviews.raw.verify.*` topic에 100건 fixture를 넣고, due 상태의 Kafka ETL Job을 만든 뒤 `/api/etl/schedules/run-due`로 실행해 다음 예약 시각이 advance되는지까지 확인한다. 이 smoke는 durable snapshot range 재사용, 실패 후 capture 이후 메시지 append, malformed payload raw quarantine, custom Regex quality parameter, `Fail Run` offset 미커밋, failed Job Run/DAG, 2개 partition의 독립된 max range/offset commit, target write 뒤 Catalog 실패 후 idempotent retry까지 함께 검증한다.

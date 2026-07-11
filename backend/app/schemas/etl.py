@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -607,6 +607,46 @@ class KafkaReviewIngestResponse(CamelModel):
     topic: str
     transform: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
+
+
+class KafkaReplayProducerRequest(CamelModel):
+    topic: str = "reviews.raw"
+    input_path: str | None = None
+    rate: int = Field(default=10, ge=1, le=100_000)
+    batch_size: int = Field(default=100, ge=1, le=10_000)
+    progress_every: int = Field(default=100, ge=1, le=100_000)
+    loop: bool = True
+    max_cycles: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_messages: int | None = Field(default=None, ge=1, le=100_000_000)
+    cycle_delay_ms: int = Field(default=0, ge=0, le=3_600_000)
+
+    @field_validator("input_path")
+    @classmethod
+    def validate_input_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized or normalized.startswith("/") or ".." in normalized.split("/"):
+            raise ValueError("inputPath must be a relative path inside the replay input directory")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_loop_bounds(self) -> "KafkaReplayProducerRequest":
+        if self.max_cycles is not None and not self.loop:
+            raise ValueError("maxCycles requires loop=true")
+        return self
+
+
+class KafkaReplayProducerStatus(CamelModel):
+    running: bool
+    pid: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    exit_code: int | None = None
+    sent_messages: int = 0
+    completed_cycles: int = 0
+    config: dict[str, Any] | None = None
+    logs: list[str] = Field(default_factory=list)
 
 
 class QueryRunRequest(CamelModel):

@@ -116,6 +116,7 @@ services:
       ASKLAKE_MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
       ASKLAKE_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-asklake}_default
       ASKLAKE_KAFKA_BROKER: ${ASKLAKE_KAFKA_BROKER:-redpanda:9092}
+      ASKLAKE_REPLAY_INPUT_DIR: ${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}
       CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS: ${CONTINUOUS_RUNTIME_SYNC_INTERVAL_SECONDS:-5}
       ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS: ${ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS:-900}
       ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE: ${ASKLAKE_CONTINUOUS_FAIL_AFTER_DATA_WRITE_ONCE:-false}
@@ -156,6 +157,7 @@ services:
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-output
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/spark-runs
       - ${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples:${ASKLAKE_HOST_DATA_DIR:-/tmp/asklake}/samples
+      - ${ASKLAKE_REPLAY_HOST_INPUT_DIR:-/tmp/asklake/replay-input}:${ASKLAKE_REPLAY_INPUT_DIR:-/var/lib/asklake/replay-input}:ro
       - spark_output:/var/lib/asklake/spark-output-volume
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5).read()\""]

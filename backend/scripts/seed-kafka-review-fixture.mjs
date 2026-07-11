@@ -8,6 +8,10 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultFixturePath = path.resolve(scriptDir, "../fixtures/kafka/amazon-review-fixture.jsonl");
 
 const options = parseArgs(process.argv.slice(2));
+if (options.help) {
+  printUsage();
+  process.exit(0);
+}
 const dryRun = options.dryRun;
 const broker = options.broker || process.env.ASKLAKE_KAFKA_BROKER || "127.0.0.1:19092";
 const topic = options.topic || process.env.ASKLAKE_REVIEW_KAFKA_TOPIC || "reviews.raw";
@@ -17,11 +21,27 @@ const inputPath = path.resolve(
 );
 const sourceName = options.source || process.env.ASKLAKE_REVIEW_SOURCE || "amazon-review-dataset";
 const eventPrefix = options.eventPrefix || process.env.ASKLAKE_REVIEW_EVENT_PREFIX || "amazon-review";
-const recreateTopic = options.recreateTopic ?? process.env.ASKLAKE_RECREATE_REVIEW_TOPIC !== "false";
+const recreateTopic = options.recreateTopic ?? process.env.ASKLAKE_RECREATE_REVIEW_TOPIC === "true";
 const limit = positiveInteger(options.limit ?? process.env.ASKLAKE_REVIEW_REPLAY_LIMIT, "limit");
 const rate = positiveInteger(options.rate ?? process.env.ASKLAKE_REVIEW_REPLAY_RATE, "rate");
 const batchSize = positiveInteger(options.batchSize ?? process.env.ASKLAKE_REVIEW_REPLAY_BATCH_SIZE, "batch-size") || 100;
 const progressEvery = positiveInteger(options.progressEvery ?? process.env.ASKLAKE_REVIEW_REPLAY_PROGRESS_EVERY, "progress-every") || 1000;
+const loop = options.loop ?? process.env.ASKLAKE_REVIEW_REPLAY_LOOP === "true";
+const maxCycles = positiveInteger(options.maxCycles ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_CYCLES, "max-cycles");
+const maxMessages = positiveInteger(options.maxMessages ?? process.env.ASKLAKE_REVIEW_REPLAY_MAX_MESSAGES, "max-messages");
+const cycleDelayMs = nonnegativeInteger(options.cycleDelayMs ?? process.env.ASKLAKE_REVIEW_REPLAY_CYCLE_DELAY_MS, "cycle-delay-ms") || 0;
+let stopRequested = false;
+
+if (maxCycles && !loop) {
+  throw new Error("--max-cycles requires --loop");
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    stopRequested = true;
+    console.log(`Review Kafka replay stop requested (${signal}). Finishing the current send batch.`);
+  });
+}
 
 if (!existsSync(inputPath)) {
   throw new Error(`Review replay input does not exist: ${inputPath}`);
@@ -34,6 +54,10 @@ if (dryRun) {
   console.log(`Broker: ${broker}`);
   console.log(`Limit: ${limit || "all"}`);
   console.log(`Rate: ${rate || "unlimited"} messages/sec`);
+  console.log(`Loop: ${loop ? "enabled" : "disabled"}`);
+  console.log(`Max cycles: ${maxCycles || "unlimited"}`);
+  console.log(`Max messages: ${maxMessages || "unlimited"}`);
+  console.log(`Topic recreation: ${recreateTopic ? "enabled" : "disabled"}`);
   process.exit(0);
 }
 
@@ -51,7 +75,7 @@ try {
   await ensureTopic(admin, topic);
   await producer.connect();
   const stats = await produceRecords(producer);
-  console.log(`Review Kafka replay produced: ${stats.sentRecords} messages to ${topic} at ${broker}`);
+  console.log(`Review Kafka replay finished: ${stats.sentRecords} messages across ${stats.completedCycles} cycle(s) to ${topic} at ${broker}${stats.stopped ? " (stopped by signal)" : ""}`);
 } finally {
   await producer.disconnect().catch(() => {});
   await admin.disconnect().catch(() => {});
@@ -67,26 +91,40 @@ async function inspectInput() {
 }
 
 async function produceRecords(producerClient) {
-  let batch = [];
   let sentRecords = 0;
   let lastProgressAt = 0;
+  let completedCycles = 0;
 
-  for await (const record of readStandardReviewRecords()) {
-    batch.push({ key: record.event_id, value: JSON.stringify(record) });
-    if (batch.length >= batchSize) {
-      sentRecords += await sendBatch(producerClient, batch);
-      lastProgressAt = logProgress(sentRecords, lastProgressAt);
-      batch = [];
+  while (!stopRequested && (loop || completedCycles === 0) && (!maxCycles || completedCycles < maxCycles) && (!maxMessages || sentRecords < maxMessages)) {
+    const cycle = completedCycles + 1;
+    let batch = [];
+    let recordsInCycle = 0;
+
+    for await (const baseRecord of readStandardReviewRecords()) {
+      if (stopRequested || (maxMessages && sentRecords + batch.length >= maxMessages)) break;
+      const record = decorateReplayRecord(baseRecord, cycle, sentRecords + batch.length + 1);
+      batch.push({ key: record.event_id, value: JSON.stringify(record) });
+      recordsInCycle += 1;
+      if (batch.length >= batchSize) {
+        sentRecords += await sendBatch(producerClient, batch);
+        lastProgressAt = logProgress(sentRecords, lastProgressAt, false, cycle);
+        batch = [];
+      }
     }
+
+    if (batch.length > 0) {
+      sentRecords += await sendBatch(producerClient, batch);
+      lastProgressAt = logProgress(sentRecords, lastProgressAt, true, cycle);
+    }
+    if (recordsInCycle === 0 && sentRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
+    completedCycles += 1;
+    console.log(`Review Kafka replay cycle ${cycle} complete: ${recordsInCycle.toLocaleString()} messages sent`);
+
+    if (stopRequested || !loop || (maxCycles && completedCycles >= maxCycles) || (maxMessages && sentRecords >= maxMessages)) break;
+    if (cycleDelayMs > 0) await sleep(cycleDelayMs);
   }
 
-  if (batch.length > 0) {
-    sentRecords += await sendBatch(producerClient, batch);
-    logProgress(sentRecords, lastProgressAt, true);
-  }
-
-  if (sentRecords === 0) throw new Error(`Review replay input produced no messages: ${inputPath}`);
-  return { sentRecords };
+  return { sentRecords, completedCycles, stopped: stopRequested };
 }
 
 async function sendBatch(producerClient, messages) {
@@ -100,10 +138,19 @@ async function sendBatch(producerClient, messages) {
   return messages.length;
 }
 
-function logProgress(sentRecords, lastProgressAt, force = false) {
+function logProgress(sentRecords, lastProgressAt, force = false, cycle = 1) {
   if (!force && sentRecords - lastProgressAt < progressEvery) return lastProgressAt;
-  console.log(`Review Kafka replay progress: ${sentRecords.toLocaleString()} messages sent`);
+  console.log(`Review Kafka replay progress: ${sentRecords.toLocaleString()} messages sent (cycle ${cycle})`);
   return sentRecords;
+}
+
+function decorateReplayRecord(record, cycle, streamOffset) {
+  if (!loop) return record;
+  return {
+    ...record,
+    event_id: `${record.event_id}--cycle-${String(cycle).padStart(6, "0")}`,
+    offset: streamOffset,
+  };
 }
 
 async function* readStandardReviewRecords() {
@@ -231,12 +278,15 @@ function parseArgs(argv) {
   const parsed = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--dry-run") {
-      parsed.dryRun = true;
+    if (arg === "--help" || arg === "-h") {
+      parsed.help = true;
       continue;
     }
-    if (arg === "--no-recreate-topic") {
-      parsed.recreateTopic = false;
+    if (arg === "--dry-run" || arg === "--loop" || arg === "--no-recreate-topic" || arg === "--recreate-topic") {
+      if (arg === "--dry-run") parsed.dryRun = true;
+      if (arg === "--loop") parsed.loop = true;
+      if (arg === "--no-recreate-topic") parsed.recreateTopic = false;
+      if (arg === "--recreate-topic") parsed.recreateTopic = true;
       continue;
     }
     if (!arg.startsWith("--")) {
@@ -263,6 +313,36 @@ function positiveInteger(value, label) {
     throw new Error(`--${label} must be a positive integer`);
   }
   return number;
+}
+
+function nonnegativeInteger(value, label) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0) {
+    throw new Error(`--${label} must be a non-negative integer`);
+  }
+  return number;
+}
+
+function printUsage() {
+  console.log(`Usage: node scripts/seed-kafka-review-fixture.mjs [options]
+
+  --input <path>             JSONL or JSONL.gz review input
+  --topic <topic>            Kafka topic (default: reviews.raw)
+  --broker <host:port>       Kafka broker (default: 127.0.0.1:19092)
+  --limit <count>            Maximum records per replay cycle
+  --rate <count>             Messages per second limit
+  --batch-size <count>       Kafka send batch size (default: 100)
+  --loop                     Replay input continuously
+  --max-cycles <count>       Stop after this many cycles (requires --loop)
+  --max-messages <count>     Stop after this many total messages
+  --cycle-delay-ms <ms>      Wait between loop cycles
+  --recreate-topic           Delete and recreate the topic before sending
+  --no-recreate-topic        Keep the current topic (default)
+  --dry-run                  Validate input and print the resolved settings
+  --help, -h                 Print this help
+
+Loop mode appends a cycle suffix to event_id and emits a globally increasing logical offset.`);
 }
 
 function firstPresent(...values) {
