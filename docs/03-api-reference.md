@@ -74,6 +74,7 @@ Canonical status values:
 | `POST` | `/api/etl/jobs` | TBD | 새 수집/처리 job 생성 | `docs/api-contract.md` |
 | `PATCH` | `/api/etl/jobs/{jobId}` | `manage` | 생성된 Job의 허용 설정 업데이트. source identity는 요청에 포함할 수 없음 | `docs/etl-job-edit-contract.md` |
 | `POST` | `/api/etl/jobs/{jobId}/commands` | TBD | 실행, 재실행, 일시정지, 현재 Run 취소, 스케줄 중지 | `docs/api-contract.md` |
+| `POST` | `/api/etl/internal/airflow/jobs/{jobId}/runs/{runId}/execute` | Airflow internal token | Airflow worker가 기존 Spark runner를 실행하고 Run 결과와 Catalog materialization을 저장 | `docs/api-contract.md` |
 | `POST` | `/api/etl/schedules/run-due` | TBD | due 상태의 반복 Job을 검사하고 실행 | 이 문서 |
 | `POST` | `/api/etl/kafka/reviews/ingest` | TBD | Kafka snapshot range를 direct target에 저장하고 Catalog 등록 | 이 문서 |
 | `POST` | `/api/query/runs` | TBD | read-only SQL 실행 | `docs/api-contract.md` |
@@ -81,7 +82,9 @@ Canonical status values:
 | `POST` | `/api/query/ai-suggestions` | TBD | 선택 테이블 context 기반 Query AI SQL 초안 생성 | `docs/api-contract.md` |
 | `POST` | `/api/catalog/derived-datasets` | TBD | SQL 결과 기반 Lake Dataset 생성 | `docs/api-contract.md` |
 
-`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 실행 접수 직후 `running` 상태를 응답하고, Spark 완료 후 최종 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다.
+`POST /api/etl/jobs/{jobId}/commands`의 `run`/`retry`는 Airflow 접수 직후 non-terminal 상태를 응답한다. Airflow의 처리 task는 내부 실행 endpoint로 기존 Spark runner를 호출하고, 같은 Run에 실제 행 수/출력 경로를 저장한 뒤 성공 시 Catalog dataset을 원자적으로 materialize한다. 최종 Airflow 상태는 `GET /api/etl/jobs/{jobId}` polling으로 반영한다. Airflow만 `success`이고 해당 `runId`의 Catalog materialization이 없으면 AskLake Run은 실패로 판정한다.
+
+ETL 성공 dataset의 `lineageGraph`는 transform-aware column lineage를 사용한다. source node는 실제 transform input만 포함하고, 하나의 source `text`에서 여러 분류 컬럼을 파생하면 `text -> 각 output` edge를 각각 반환한다. Spark가 생성한 `_asklake_*` 컬럼은 job node에서 시작한다.
 
 `GET /api/etl/jobs/{jobId}`는 Job 상세와 실행 polling뿐 아니라 향후 수정 화면 hydrate의 source of truth다. 응답은 source config, schema columns/fingerprint/sample/summary, transform/quality, schedule/retry/watermark, permission summary/roles, target database/metadata를 함께 유지한다. Issue #460의 update endpoint 구현 전에는 이 응답을 수정 저장에 사용하지 않는다.
 
@@ -608,6 +611,7 @@ type LineageContext = {
 ```
 
 정식 Catalog lineage modal은 `LineageGraph` contract를 React Flow node/edge로 변환해 표시한다.
+ETL graph의 source는 `SOURCE · <fileFormat|connectorType>`, 가운데 Job은 `PROCESS · SPARK`, target은 `<targetLayer> LAYER · <persistedFormat>`으로 표시한다. 현재 Spark runner는 physical output을 Parquet로 저장하므로 요청 `targetFormat`과 무관하게 target engine은 `PARQUET`이다. 따라서 Parquet source에서 GOLD로 처리한 결과는 `SOURCE · PARQUET -> PROCESS · SPARK -> GOLD LAYER · PARQUET`이며 Job을 BRONZE dataset이나 ICEBERG target으로 추정하지 않는다. 화면의 상위 데이터셋 수에는 `PROCESS` node를 포함하지 않는다.
 Lineage API가 없으면 `CatalogDataset.upstream`으로 mock fallback graph를 만들고, `CatalogDataset.downstream`은 별도 영향도 context로 분리할 수 있다.
 
 ### Optional Large-Scale Evidence Extension

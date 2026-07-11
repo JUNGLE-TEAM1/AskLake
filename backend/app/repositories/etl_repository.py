@@ -282,6 +282,11 @@ def create_run(db: Session, run: ETLRunModel) -> JobRunSummary:
     return run_to_schema(run)
 
 
+def get_run(db: Session, run_id: str) -> ETLRunModel | None:
+    ensure_schema(db)
+    return db.get(ETLRunModel, run_id)
+
+
 def get_active_kafka_snapshot(
     db: Session,
     topic: str,

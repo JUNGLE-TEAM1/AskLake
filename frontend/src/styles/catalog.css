@@ -1289,6 +1289,12 @@
   color: #ea580c;
 }
 
+.xflow-schema-node.process .xflow-schema-icon {
+  border-color: #a5f3fc;
+  background: #ecfeff;
+  color: #0e7490;
+}
+
 .xflow-schema-node.silver .xflow-schema-icon {
   border-color: #bfdbfe;
   background: #eff6ff;

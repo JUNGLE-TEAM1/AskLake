@@ -1,7 +1,7 @@
 import type { IdentityProfile } from "./identity";
 import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
-export type LineageLayer = "SOURCE" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
+export type LineageLayer = "SOURCE" | "PROCESS" | "RAW" | "BRONZE" | "SILVER" | "GOLD" | "CONSUMER";
 
 export type LineageGraphColumn = {
   id: string;
