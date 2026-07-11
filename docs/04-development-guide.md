@@ -56,14 +56,15 @@ VITE_API_BASE_URL=http://localhost:8080
 
 Backend `DATABASE_URL`은 미설정 시 `postgres://asklake:asklake_dev@127.0.0.1:54328/asklake`를 사용한다. `npm run verify`와 `npm run verify:spark-run`은 검증 시작 시 metadata를 초기화하지만, 일반 `npm run dev`는 생성한 Job과 Dataset을 Postgres에 유지한다.
 
-### Local Airflow smoke runtime
+### Local Airflow + Spark batch runtime
 
-Airflow run polling을 실제로 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local smoke 전용 `airflow` / `airflow`다.
+Airflow run polling과 실제 Spark batch를 확인하려면 AskLake backend와 별도로 local Airflow API server를 띄운다. Airflow는 `http://127.0.0.1:8081`에서 열리며 기본 계정은 local 전용 `airflow` / `airflow`다. `AIRFLOW_EXECUTION_API_TOKEN`은 Airflow task와 FastAPI에 같은 값을 설정하고 저장소나 로그에 운영 token을 남기지 않는다.
 
 ```bash
+export AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 docker compose up airflow-init
 docker compose up -d airflow-apiserver airflow-scheduler airflow-dag-processor
-curl -u airflow:airflow http://127.0.0.1:8081/api/v2/monitor/health
+curl -fsS http://127.0.0.1:8081/api/v2/monitor/health
 ```
 
 FastAPI backend는 아래 환경변수를 준 뒤 재시작한다.
@@ -74,11 +75,70 @@ AIRFLOW_DAG_ID=asklake_etl_job
 AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081
 AIRFLOW_USERNAME=airflow
 AIRFLOW_PASSWORD=airflow
+AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution
 AIRFLOW_INTERNAL_TOKEN=asklake-local-airflow-token
+ASKLAKE_SPARK_OUTPUT_MODE=s3a
+MINIO_ENDPOINT=http://127.0.0.1:9000
+MINIO_ENDPOINT_IN_DOCKER=http://m3-minio:9000
+MINIO_ACCESS_KEY=m3admin
+MINIO_SECRET_KEY=wishuponastar
+MINIO_BUCKET=asklake-output
 ```
 
-Local Compose의 Airflow task에는 `AIRFLOW_INTERNAL_BASE_URL=http://host.docker.internal:8080`과 같은 내부 토큰이 기본 주입된다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 Airflow가 backend의 실 Spark runner를 호출하고, Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다. Spark 성공 뒤에는 같은 `runId`의 Catalog dataset materialization도 확인한다.
-대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 기본적으로 `/api/dashboards/assistant`를 사용한다. 다른 Assistant API 경로 또는 origin이 필요할 때만 아래 값을 지정한다.
+Local Compose의 Airflow task에는 backend URL과 `AIRFLOW_EXECUTION_API_TOKEN` 기반 bearer token이 주입된다. `AIRFLOW_INTERNAL_TOKEN`은 기존 단일 호출 endpoint 호환용으로 함께 유지한다. 그 다음 `수집/처리` 화면에서 Job 실행 버튼을 누르면 `spark_process_write`가 실제 Spark runner를 호출하고, `publish_run_result`가 물리 Parquet를 검증해 Catalog를 확정한다. Run History와 DAG modal은 `GET /api/etl/jobs/{jobId}` polling으로 DAG Run/Task Instance 상태를 반영한다.
+
+실행 중인 local Airflow 자체의 DAG 발견/import error/성공 Run/강제 실패 Run을 한 번에 확인할 때는 아래 smoke를 실행한다.
+
+```bash
+cd backend
+AIRFLOW_API_BASE_URL=http://127.0.0.1:8081 \
+AIRFLOW_DAG_ID=asklake_etl_job \
+AIRFLOW_USERNAME=airflow \
+AIRFLOW_PASSWORD=airflow \
+npm run verify:airflow-smoke
+```
+
+AskLake backend의 `run` 접수, 실제 PySpark 처리, MinIO Parquet, terminal polling/task state 동기화를 확인하려면 `asklake-output` bucket을 준비하고 같은 Airflow/Spark 환경변수와 Python interpreter로 아래 검증을 실행한다.
+
+```bash
+cd backend
+AIRFLOW_API_BASE_URL=http://127.0.0.1:8081 \
+AIRFLOW_DAG_ID=asklake_etl_job \
+AIRFLOW_UI_BASE_URL=http://127.0.0.1:8081 \
+AIRFLOW_USERNAME=airflow \
+AIRFLOW_PASSWORD=airflow \
+AIRFLOW_EXECUTION_API_TOKEN=asklake-local-airflow-execution \
+ASKLAKE_SPARK_OUTPUT_MODE=s3a \
+MINIO_ENDPOINT=http://127.0.0.1:9000 \
+MINIO_ENDPOINT_IN_DOCKER=http://m3-minio:9000 \
+MINIO_BUCKET=asklake-output \
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python \
+npm run verify:airflow-spark
+```
+
+품질 실패 전파는 같은 명령에 `ASKLAKE_FASTAPI_ETL_EXPECT_SPARK_FAILURE=true`를 추가해 확인한다. 검증 fixture의 음수 amount가 `Fail Run` 규칙에 걸리면 Spark manifest, Airflow DAG Run, AskLake Run/Job이 모두 `failed`가 되고 대상 Catalog dataset은 생성되지 않아야 한다.
+
+현재 `asklake_etl_job`은 `receive_asklake_run -> validate_spark_request -> spark_process_write -> publish_run_result`로 실행된다. 실제 source read/transform/quality/Parquet write는 PySpark가 담당한다. 실제 Spark mode의 `publish_run_result`는 저장된 성공 manifest를 `POST /api/internal/airflow/spark-runs/{runId}/catalog`로 멱등 반영하고, 그 commit 뒤에만 DAG Run을 성공시킨다. 독립 Airflow runtime 확인용 `executionMode=smoke`는 실제 Job/Run/Parquet가 없으므로 Catalog 호출을 건너뛴다.
+
+Live frontend는 같은 Run id를 `queued` 또는 `running`으로 관찰한 뒤 `success`가 된 경우에만 `GET /api/catalog/datasets`를 한 번 다시 호출한다. 실행 버튼 직후의 optimistic 상태에서 서버의 이전 성공 Run을 읽더라도 조기 refresh하지 않는다. Catalog 재조회만 실패한 경우에는 이미 확정된 Job/Run 성공을 되돌리지 않고 기존 목록과 수동 새로고침 안내를 유지한다. 정적 연결과 production build는 `cd frontend && npm run verify:ui-regressions && npm run build`로 확인한다.
+
+DAG에서 Catalog endpoint를 호출하는 경로, 인증 header/body, smoke 우회, Run identity mismatch, Catalog HTTP 실패 전파를 외부 runtime 없이 확인할 때는 아래 명령을 실행한다.
+
+```bash
+cd backend
+npm run verify:airflow-catalog-wiring
+```
+
+Phase 3 FastAPI Catalog endpoint의 transaction과 실패 계약은 아래 명령으로 검증한다. script는 고유 fixture를 만들고 종료 시 정리한다. 같은 Run 중복 방지, 두 번째 Run append, local/S3 physical evidence, Spark 미완료, identity mismatch, output 부재, 강제 transaction rollback, stale polling 동시성, Airflow sync 후 failure evidence 보존을 확인한다.
+
+```bash
+cd backend
+DATABASE_URL=postgresql+psycopg://asklake:asklake_dev@127.0.0.1:54328/asklake \
+PYTHONPATH=. .venv/bin/python scripts/verify-airflow-catalog-reconciliation.py
+```
+
+
+대시보드 draft editor의 AskLake 보조 패널과 시각화 요청 위젯은 아래 optional 값으로 Assistant API 경로를 지정한다.
 현재 FastAPI는 `POST /api/dashboards/assistant`에서 DB runtime/catalog 컨텍스트를 모아 OpenAI Responses API를 호출한다.
 
 ```bash
@@ -210,7 +270,7 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:kafka-review-scheduled-in
 ### FastAPI scaffold
 
 FastAPI 전환 작업은 `backend/app/`를 기준으로 한다.
-기존 Node backend scripts는 비교와 검증을 위해 유지하고, 새 FastAPI 서버는 아래 명령으로 실행한다.
+기존 Node helper와 호환성 검증 scripts는 Spark/Kafka launcher 및 회귀 비교를 위해 유지하고, FastAPI 서버는 아래 명령으로 실행한다.
 FastAPI backend는 Python 3.13 환경에서 검증한다. production Docker image도 `python:3.13-slim`과 `backend/requirements.txt`를 기준으로 빌드한다.
 
 ```bash
@@ -390,12 +450,14 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:permission-job-dashboard
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:auth-session
 ```
 
-Docker/Spark까지 켜진 환경에서 ETL run -> Catalog payload/storage/lineage 계약을 확인할 때는 아래 smoke를 추가로 실행한다.
+FastAPI ETL Job 생성과 Airflow 비동기 접수/polling 계약만 확인할 때는 아래 호환 smoke를 실행한다. `AIRFLOW_API_BASE_URL`을 지정하지 않으면 내장 mock을 사용한다. 실제 Spark/MinIO까지 확인할 때는 위 Local Airflow + Spark batch runtime의 `npm run verify:airflow-spark`를 사용한다.
 
 ```bash
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-etl-catalog
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 ```
+
+이 검증 명령의 이름은 기존 호환을 위해 유지한다. 실제 Airflow 환경변수를 지정하면 같은 script가 Spark manifest, 물리 Parquet, 성공 `catalogResult`, Catalog dataset/materialization/lineage까지 검증한다. Airflow URL이 없으면 내장 mock으로 비동기 접수와 상태 동기화 계약만 확인한다.
 
 - live backend browser smoke tests
 - Spark run regression tests
