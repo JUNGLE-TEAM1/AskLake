@@ -11,6 +11,8 @@ from app.schemas.etl import (
     ContinuousQuarantineResponse,
     ContinuousReplayRequest,
     ContinuousWorkerLogsResponse,
+    AirflowRunExecutionRequest,
+    AirflowRunExecutionResponse,
     JobCommandRequest,
     JobCommandResponse,
     JobRowData,
@@ -51,6 +53,20 @@ def ingest_kafka_reviews(
     db: Session = Depends(get_db),
 ) -> KafkaReviewIngestResponse:
     return etl_service.ingest_kafka_reviews(db, request)
+
+
+@router.post(
+    "/internal/airflow/jobs/{job_id}/runs/{run_id}/execute",
+    response_model=AirflowRunExecutionResponse,
+)
+def execute_airflow_run(
+    job_id: str,
+    run_id: str,
+    request: AirflowRunExecutionRequest,
+    airflow_token: str | None = Header(default=None, alias="X-AskLake-Airflow-Token"),
+    db: Session = Depends(get_db),
+) -> AirflowRunExecutionResponse:
+    return etl_service.execute_airflow_run(db, job_id, run_id, request.command, airflow_token)
 
 
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)

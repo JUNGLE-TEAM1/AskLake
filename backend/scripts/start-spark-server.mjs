@@ -16,13 +16,15 @@ const reportHostDir = path.resolve(process.env.ASKLAKE_SPARK_REPORT_DIR || path.
 const reportContainerDir = process.env.ASKLAKE_SPARK_REPORT_CONTAINER_DIR || "/work/reports";
 const outputVolumeName = process.env.ASKLAKE_SPARK_OUTPUT_VOLUME || "asklake-spark-output";
 const outputContainerDir = process.env.ASKLAKE_SPARK_OUTPUT_CONTAINER_DIR || "/work/output";
+const workerCores = process.env.ASKLAKE_SPARK_WORKER_CORES || "4";
+const workerMemory = process.env.ASKLAKE_SPARK_WORKER_MEMORY || "10g";
 mkdirSync(sampleHostDir, { recursive: true });
 mkdirSync(reportHostDir, { recursive: true });
 
 ensureOutputVolumeWritable();
 ensureMaster();
 ensureWorker();
-console.log("Spark standalone server ready: spark://asklake-spark-master:7077");
+console.log(`Spark standalone server ready: spark://${masterName}:7077`);
 console.log("Spark master UI: http://127.0.0.1:18080");
 console.log("Spark worker UI: http://127.0.0.1:18081");
 console.log(`Spark sample mount: ${sampleHostDir} -> ${sampleContainerDir}`);
@@ -90,6 +92,10 @@ function createWorkerArgs() {
       "/opt/spark/bin/spark-class",
       "org.apache.spark.deploy.worker.Worker",
       `spark://${masterName}:7077`,
+      "--cores",
+      workerCores,
+      "--memory",
+      workerMemory,
       "--webui-port",
       "8081",
   ];
@@ -107,7 +113,14 @@ function containerNeedsCreate(name) {
   const hostGatewayMapped = (metadata?.HostConfig?.ExtraHosts ?? []).some((entry) => (
     String(entry || "").startsWith("host.docker.internal:")
   ));
-  if (sampleMounted && reportMounted && outputMounted && hostGatewayMapped) return false;
+  const args = (metadata?.Args ?? []).map(String);
+  const workerResourceMatches = name !== workerName || (
+    args.includes("--cores")
+    && args.includes(workerCores)
+    && args.includes("--memory")
+    && args.includes(workerMemory)
+  );
+  if (sampleMounted && reportMounted && outputMounted && hostGatewayMapped && workerResourceMatches) return false;
   run("docker", ["rm", "-f", name], { allowFailure: true });
   return true;
 }

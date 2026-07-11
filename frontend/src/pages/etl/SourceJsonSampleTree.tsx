@@ -136,7 +136,7 @@ function normalizeJsonValue(value: unknown): JsonValue {
 function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, depth: number, rootKind?: "row"): BuiltTree {
   if (depth > MAX_DEPTH) {
     return {
-      node: <TreeItem itemId={itemId} label={<JsonTreeLabel muted name={label} value="..." />} />,
+      node: <TreeItem itemId={itemId} key={itemId} label={<JsonTreeLabel muted name={label} value="..." />} />,
     };
   }
 
@@ -144,11 +144,11 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
     const preview = value.slice(0, MAX_CHILDREN_PER_NODE);
     const children = preview.map((item, index) => buildJsonTreeItem(item, `${itemId}-${index}`, `[${index}]`, depth + 1));
     const overflow = value.length > preview.length
-      ? <TreeItem itemId={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${value.length - preview.length}${TEXT.items}`} />} />
+      ? <TreeItem itemId={`${itemId}-more`} key={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${value.length - preview.length}${TEXT.items}`} />} />
       : null;
     return {
       node: (
-        <TreeItem itemId={itemId} label={<JsonTreeLabel kind="array" name={label} value={`Array[${value.length}]`} />}>
+        <TreeItem itemId={itemId} key={itemId} label={<JsonTreeLabel kind="array" name={label} value={`Array[${value.length}]`} />}>
           {children.map((child) => child.node)}
           {overflow}
         </TreeItem>
@@ -163,11 +163,11 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
     );
     const totalCount = Object.keys(value).length;
     const overflow = totalCount > entries.length
-      ? <TreeItem itemId={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${totalCount - entries.length}${TEXT.items}`} />} />
+      ? <TreeItem itemId={`${itemId}-more`} key={`${itemId}-more`} label={<JsonTreeLabel muted name={TEXT.more} value={`+${totalCount - entries.length}${TEXT.items}`} />} />
       : null;
     return {
       node: (
-        <TreeItem itemId={itemId} label={<JsonTreeLabel kind={rootKind ?? "object"} name={label} value={`${totalCount}${TEXT.fields}`} />}>
+        <TreeItem itemId={itemId} key={itemId} label={<JsonTreeLabel kind={rootKind ?? "object"} name={label} value={`${totalCount}${TEXT.fields}`} />}>
           {children.map((child) => child.node)}
           {overflow}
         </TreeItem>
@@ -176,7 +176,7 @@ function buildJsonTreeItem(value: JsonValue, itemId: string, label: string, dept
   }
 
   return {
-    node: <TreeItem itemId={itemId} label={<JsonTreeLabel name={label} value={formatPrimitive(value)} />} />,
+    node: <TreeItem itemId={itemId} key={itemId} label={<JsonTreeLabel name={label} value={formatPrimitive(value)} />} />,
   };
 }
 

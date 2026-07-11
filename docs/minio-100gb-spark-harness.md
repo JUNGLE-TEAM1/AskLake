@@ -178,6 +178,8 @@ This verifier starts from an empty ETL/Catalog metadata state, creates one live 
 
 Connector-backed jobs such as REST, PostgreSQL, and MongoDB write bounded sample rows to `ASKLAKE_SPARK_REPORT_DIR` as JSONL before Spark reads them. `start-spark-server.mjs` mounts that same host directory into the submit, master, and worker containers at `ASKLAKE_SPARK_REPORT_CONTAINER_DIR` (`/work/reports` by default). If a Codex worktree or repo path changes, the Spark containers must be recreated with the new report mount before run command verification.
 
+Text structuring runs must also verify `quality.reviewRowAnalysisChecks`, `textStructuring.execution`, `runHistory[].textStructuringExecution`, and Catalog `materializationRuns[].textStructuringExecution`. `one_of_values` columns without a compatible model fail preflight unless the column explicitly sets `fallbackAllowed: true`.
+
 ## 8. Kafka Continuous Large-Data Soak
 
 Continuous soak는 `ASKLAKE_RUN_KAFKA_CONTINUOUS_SOAK=true`일 때만 실행한다. `ASKLAKE_CONTINUOUS_SOAK_INPUT`을 생략하면 synthetic event를 만들고, 지정하면 `.jsonl` 또는 `.jsonl.gz`를 line streaming으로 읽는다. 전체 Electronics 파일은 CI가 아니라 수동 환경에서 실행하며, `ASKLAKE_CONTINUOUS_SOAK_COUNT`를 생략하면 파일 끝까지 replay한다.

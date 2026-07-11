@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.admin import router as admin_router
+from app.api.airflow_execution import router as airflow_execution_router
 from app.api.auth import router as auth_router
 from app.api.catalog import router as catalog_router
 from app.api.dashboard_assistant import router as dashboard_assistant_router
@@ -20,6 +21,7 @@ api_router.include_router(harness_router)
 api_router.include_router(auth_router)
 api_router.include_router(users_router)
 api_router.include_router(admin_router)
+api_router.include_router(airflow_execution_router)
 api_router.include_router(etl_router)
 api_router.include_router(catalog_router)
 api_router.include_router(sql_router)
