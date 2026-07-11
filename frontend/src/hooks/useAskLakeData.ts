@@ -52,6 +52,10 @@ type JobRunStateMaps = {
 
 type ServerJobCommand = Exclude<JobCommand, "edit" | "delete">;
 type CommandPendingByJobId = Partial<Record<string, ServerJobCommand>>;
+type CatalogRefreshRequest = {
+  runIds: string[];
+  version: number;
+};
 
 const catalogDatasetStorageKey = "asklake.catalogDatasets";
 const legacyDerivedDatasetStorageKey = "asklake.derivedDatasets";
@@ -640,6 +644,18 @@ function isActiveRun(run: JobRunSummary) {
   return run.status === "queued" || run.status === "running";
 }
 
+function trackCatalogRefreshCandidate(job: JobRowData, activeRunIds: Set<string>) {
+  const latestRun = job.runHistory?.[0];
+  if (!latestRun) return null;
+  if (isActiveRun(latestRun)) {
+    activeRunIds.add(latestRun.runId);
+    return null;
+  }
+
+  const wasObservedActive = activeRunIds.delete(latestRun.runId);
+  return wasObservedActive && latestRun.status === "success" ? latestRun.runId : null;
+}
+
 function activePollingJobIds(jobs: JobRowData[], runsByJobId: RunsByJobId) {
   return jobs
     .filter((job) => job.status === "running" || (runsByJobId[job.id] ?? []).some(isActiveRun))
@@ -809,10 +825,13 @@ export function useAskLakeData({
   const [dataLoading, setDataLoading] = useState(false);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
+  const [catalogRefreshRequest, setCatalogRefreshRequest] = useState<CatalogRefreshRequest>({ runIds: [], version: 0 });
   const createPendingRef = useRef(false);
   const pollingFailureRef = useRef<Set<string>>(new Set());
   const commandPendingRef = useRef<Set<string>>(new Set());
   const jobsFilterRequestRef = useRef(0);
+  const catalogRefreshRunIdsRef = useRef<Set<string>>(new Set());
+  const catalogActiveRunIdsRef = useRef<Set<string>>(new Set());
   const showToastRef = useRef(showToast);
 
   useEffect(() => {
@@ -853,6 +872,16 @@ export function useAskLakeData({
       ...hydratedRunState.dagStepsByRunId,
     }));
   };
+
+  const applyHydratedDatasets = useCallback((incomingDatasets: CatalogDataset[]) => {
+    const normalizedDatasets = incomingDatasets.map(normalizeDatasetRow);
+    setDatasets(normalizedDatasets);
+    setSelectedDataset((current) => (
+      normalizedDatasets.find((dataset) => dataset.id === current.id)
+      ?? normalizedDatasets[0]
+      ?? emptySelectedDataset
+    ));
+  }, []);
 
   const applyInitialSnapshot = useCallback((snapshot: InitialDataSnapshot) => {
     const normalizedJobs = snapshot.jobs;
@@ -933,11 +962,25 @@ export function useAskLakeData({
       const normalizedJobs = snapshot.jobs;
       const normalizedDatasets = snapshot.datasets;
       const hydratedRunState = snapshot.hydratedRunState;
+      normalizedJobs.forEach((job) => {
+        const latestRun = job.runHistory?.[0];
+        if (latestRun && isActiveRun(latestRun)) {
+          catalogActiveRunIdsRef.current.add(latestRun.runId);
+        }
+      });
       setJobs(normalizedJobs);
       setJobListFacets(snapshot.jobListFacets);
       setDatasets(normalizedDatasets);
-      setSelectedJob(normalizedJobs[0] ?? emptySelectedJob);
-      setSelectedDataset(normalizedDatasets[0] ?? emptySelectedDataset);
+      setSelectedJob((current) => (
+        normalizedJobs.find((job) => job.id === current.id)
+        ?? normalizedJobs[0]
+        ?? emptySelectedJob
+      ));
+      setSelectedDataset((current) => (
+        normalizedDatasets.find((dataset) => dataset.id === current.id)
+        ?? normalizedDatasets[0]
+        ?? emptySelectedDataset
+      ));
       setRunsByJobId(hydratedRunState.runsByJobId);
       setSelectedRunIdByJobId(hydratedRunState.selectedRunIdByJobId);
       setDagStepsByRunId(hydratedRunState.dagStepsByRunId);
@@ -959,6 +1002,43 @@ export function useAskLakeData({
     };
   }, [enabled]);
 
+  useEffect(() => {
+    const requestVersion = catalogRefreshRequest.version;
+    const runIds = catalogRefreshRequest.runIds;
+    if (!enabled || apiConfig.useMock || requestVersion === 0 || runIds.length === 0) return;
+
+    let cancelled = false;
+
+    async function refreshCatalog() {
+      try {
+        const refreshedDatasets = await getDatasets();
+        if (cancelled) return;
+        applyHydratedDatasets(refreshedDatasets);
+        runIds.forEach((runId) => {
+          writeAuditLog("catalog.datasets.refreshed_after_run", "/api/catalog/datasets", runId);
+        });
+      } catch {
+        if (cancelled) return;
+        runIds.forEach((runId) => {
+          writeAuditLog("catalog.datasets.refresh_after_run_failed", "/api/catalog/datasets", runId, "failed");
+        });
+        showToastRef.current("작업은 성공했지만 Catalog 최신 목록을 불러오지 못했습니다. 화면을 새로고침해 다시 확인해 주세요.", "info");
+      } finally {
+        if (!cancelled) {
+          setCatalogRefreshRequest((current) => (
+            current.version === requestVersion ? { ...current, runIds: [] } : current
+          ));
+        }
+      }
+    }
+
+    void refreshCatalog();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyHydratedDatasets, catalogRefreshRequest.version, enabled, writeAuditLog]);
+
 
   useEffect(() => {
     if (!enabled || apiConfig.useMock || !activePollingKey) return;
@@ -971,7 +1051,16 @@ export function useAskLakeData({
         try {
           const job = await getLiveJob(jobId);
           if (cancelled) return;
-          applyHydratedJob(job);
+          const normalizedJob = normalizeJobRow(job);
+          const terminalSuccessRunId = trackCatalogRefreshCandidate(normalizedJob, catalogActiveRunIdsRef.current);
+          applyHydratedJob(normalizedJob);
+          if (terminalSuccessRunId && !catalogRefreshRunIdsRef.current.has(terminalSuccessRunId)) {
+            catalogRefreshRunIdsRef.current.add(terminalSuccessRunId);
+            setCatalogRefreshRequest((current) => ({
+              runIds: [...new Set([...current.runIds, terminalSuccessRunId])],
+              version: current.version + 1,
+            }));
+          }
           pollingFailureRef.current.delete(jobId);
         } catch {
           if (cancelled || pollingFailureRef.current.has(jobId)) return;
@@ -1278,6 +1367,9 @@ export function useAskLakeData({
         setJobListFacets((facets) => moveJobFacetCounts(facets, previousJob, nextJob));
       }
       if (run) {
+        if (isActiveRun(run)) {
+          catalogActiveRunIdsRef.current.add(run.runId);
+        }
         setRunsByJobId((state) => ({
           ...state,
           [job.id]: tempRunId ? replaceTempRunByRunId(state[job.id] ?? [], tempRunId, run) : upsertRunByRunId(state[job.id] ?? [], run),
