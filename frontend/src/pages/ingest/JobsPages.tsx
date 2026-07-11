@@ -272,7 +272,6 @@ export function JobsLandingPage({
   onCreate,
   onDetail,
   onFilter,
-  onRuns,
 }: {
   jobListFacets: JobListFacets;
   jobsLoading: boolean;
@@ -282,11 +281,11 @@ export function JobsLandingPage({
   onCreate: () => void;
   onDetail: (job: JobRowData) => void;
   onFilter: (query: JobListQuery) => Promise<void> | void;
-  onRuns: (job: JobRowData) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [jobQuery, setJobQuery] = useState<JobListQuery>({});
   const [excludedJobIds, setExcludedJobIds] = useState<Set<string>>(() => new Set());
+  const [latestRunModal, setLatestRunModal] = useState<{ job: JobRowData; run: JobRunSummary } | null>(null);
   const metrics = getJobMetrics(jobListFacets);
   const failureFilterActive = jobQuery.lastRunOutcome === "failed";
   const failedRunCount = jobListFacets.latestRunOutcomeCounts.failed;
@@ -312,6 +311,13 @@ export function JobsLandingPage({
   const clearSearch = () => {
     setSearchQuery("");
     onAction("etl.jobs.search_reset", "/api/etl/jobs", "search");
+  };
+
+  const openLatestRunTimeline = (job: JobRowData) => {
+    const latestRun = job.runHistory?.[0];
+    if (!latestRun) return;
+    onAction("etl.run.detail_opened", `/api/etl/jobs/${job.id}/runs/${latestRun.runId}`, latestRun.runId);
+    setLatestRunModal({ job, run: latestRun });
   };
 
   const toggleFailureFilter = () => {
@@ -383,7 +389,7 @@ export function JobsLandingPage({
           onCommand={handleJobCommand}
           onCreate={onCreate}
           onDetail={onDetail}
-          onRuns={onRuns}
+          onRuns={openLatestRunTimeline}
           toolbar={<JobsToolbar searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} />}
           statusFilters={jobQuery.statuses}
           scheduleKind={jobQuery.scheduleKind}
@@ -396,6 +402,14 @@ export function JobsLandingPage({
           title="작업 목록"
         />
       </div>
+      {latestRunModal && (
+        <RunDagModal
+          job={latestRunModal.job}
+          onAction={onAction}
+          onClose={() => setLatestRunModal(null)}
+          run={latestRunModal.run}
+        />
+      )}
     </div>
   );
 }
@@ -754,7 +768,7 @@ function JobsTableSection({
     },
     {
       accessorFn: (row) => row.job.schedule,
-      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{row.original.job.schedule}</DataTableCellPrimary>,
+      cell: ({ row }) => <DataTableCellPrimary className="text-lg">{formatJobSchedule(row.original.job.schedule)}</DataTableCellPrimary>,
       header: () => onScheduleKindChange ? (
         <ScheduleKindFilter
           value={scheduleKind}
@@ -786,6 +800,7 @@ function JobsTableSection({
       accessorFn: (row) => row.job.lastRun,
       cell: ({ row }) => {
         const { job } = row.original;
+        const latestRun = job.runHistory?.[0];
 
         return (
           <DataTableStackedCell className="relative min-h-[76px] gap-0">
@@ -822,7 +837,15 @@ function JobsTableSection({
                 </Tooltip>
               )}
             </div>
-            <Button className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base" size="sm" type="button" variant="link" onClick={() => onRuns(job)}>
+            <Button
+              className="absolute left-0 top-[calc(50%+18px)] h-auto px-0 py-0 text-base"
+              disabled={!latestRun}
+              size="sm"
+              title={latestRun ? "최근 실행 단계 보기" : "아직 실행 이력이 없습니다."}
+              type="button"
+              variant="link"
+              onClick={() => onRuns(job)}
+            >
               실행 이력
             </Button>
           </DataTableStackedCell>
@@ -1237,13 +1260,10 @@ function truncateText(value: string, maxLength: number) {
 }
 
 function StatusPill({ job }: { job: JobRowData }) {
-  const showScheduledBatchProgress = job.status === "running"
-    && hasAutomaticSchedule(job)
-    && !isRealtimeJob(job)
-    && job.progress !== undefined;
+  const showExecutionProgress = job.status === "running" && job.progress !== undefined;
 
   return (
-    <div className={`grid h-full min-w-[184px] content-center justify-items-center gap-3 px-3 py-3 ${showScheduledBatchProgress ? "min-h-[116px]" : "min-h-[100px]"}`}>
+    <div className={`grid h-full min-w-[184px] content-center justify-items-center gap-3 px-3 py-3 ${showExecutionProgress ? "min-h-[116px]" : "min-h-[100px]"}`}>
       <StatusBadge
         className="min-w-[160px] justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2.5 text-base font-semibold"
         tone={getJobStatusTone(job.status)}
@@ -1251,7 +1271,7 @@ function StatusPill({ job }: { job: JobRowData }) {
         {job.status === "running" && <Spinner className="size-4" aria-label="실행 중" />}
         {jobStatusMeta[job.status].label}
       </StatusBadge>
-      {showScheduledBatchProgress && job.progress ? (
+      {showExecutionProgress && job.progress ? (
         <div className="w-full text-left">
           <Progress
             aria-label={`${job.progress.label} ${job.progress.value}%`}
