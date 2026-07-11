@@ -4,7 +4,6 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -70,20 +69,17 @@ export function DashboardListToolbar({
                   <ChevronDown size={18} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu">
-                <DropdownMenuLabel>소유자</DropdownMenuLabel>
-                <DropdownMenuItem className={ownerFilter === "all" ? "dashboard-menu-option active" : "dashboard-menu-option"} onSelect={() => onSelectOwner("all")}>
-                  모든 소유자
-                </DropdownMenuItem>
-                {owners.map((owner) => (
-                  <DropdownMenuItem
-                    className={ownerFilter === owner ? "dashboard-menu-option active" : "dashboard-menu-option"}
-                    key={owner}
-                    onSelect={() => onSelectOwner(owner)}
-                  >
-                    {owner}
-                  </DropdownMenuItem>
-                ))}
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuLabel>소유자 필터</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioGroup value={ownerFilter} onValueChange={onSelectOwner}>
+                  <DropdownMenuRadioItem value="all">전체</DropdownMenuRadioItem>
+                  {owners.map((owner) => (
+                    <DropdownMenuRadioItem key={owner} value={owner}>
+                      {owner}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
           </FilterToolbarMenu>
@@ -95,16 +91,19 @@ export function DashboardListToolbar({
                   <ChevronRight size={18} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu">
-                <DropdownMenuLabel>태그</DropdownMenuLabel>
-                <DropdownMenuItem className="dashboard-menu-option" onSelect={onClearTags}>
-                  전체 태그
-                </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="min-w-44">
+                <DropdownMenuLabel>태그 필터</DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuCheckboxItem
+                  checked={selectedTags.length === 0}
+                  onCheckedChange={onClearTags}
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  전체
+                </DropdownMenuCheckboxItem>
                 {tags.map((tag) => (
                   <DropdownMenuCheckboxItem
                     checked={selectedTags.includes(tag)}
-                    className="dashboard-menu-option checkbox"
                     key={tag}
                     onCheckedChange={() => onToggleTag(tag)}
                     onSelect={(event) => event.preventDefault()}
@@ -123,11 +122,12 @@ export function DashboardListToolbar({
                   <ArrowUpDown size={24} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="dashboard-list-menu sort">
+              <DropdownMenuContent align="end" className="min-w-56">
                 <DropdownMenuLabel>정렬 기준</DropdownMenuLabel>
+                <DropdownMenuSeparator />
                 <DropdownMenuRadioGroup value={sortOption} onValueChange={(value) => onSelectSort(value as DashboardSortOption)}>
                   {dashboardSortOptions.map((option) => (
-                    <DropdownMenuRadioItem className="dashboard-menu-option" key={option.id} value={option.id} aria-label={option.ariaLabel}>
+                    <DropdownMenuRadioItem className="gap-2" key={option.id} value={option.id} aria-label={option.ariaLabel}>
                       <span>{option.label}</span>
                       {option.direction === "asc" ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
                     </DropdownMenuRadioItem>
