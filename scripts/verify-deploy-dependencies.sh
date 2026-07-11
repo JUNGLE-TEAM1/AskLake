@@ -9,6 +9,7 @@ BACKEND_IMAGE="${ASKLAKE_VERIFY_BACKEND_IMAGE:-asklake-backend-deploy-check:loca
 FRONTEND_IMAGE="${ASKLAKE_VERIFY_FRONTEND_IMAGE:-asklake-frontend-deploy-check:local}"
 SPARK_IMAGE="${ASKLAKE_SPARK_IMAGE:-apache/spark:4.0.1}"
 AIRFLOW_IMAGE="${AIRFLOW_IMAGE_NAME:-apache/airflow:3.3.0}"
+REDPANDA_IMAGE="${REDPANDA_IMAGE:-redpandadata/redpanda:v24.3.6}"
 
 cd "$ROOT_DIR"
 
@@ -49,6 +50,11 @@ fi
 echo "Checking Airflow runtime image availability..."
 if ! docker image inspect "$AIRFLOW_IMAGE" >/dev/null 2>&1; then
   docker pull "$AIRFLOW_IMAGE"
+fi
+
+echo "Checking Redpanda Kafka runtime image availability..."
+if ! docker image inspect "$REDPANDA_IMAGE" >/dev/null 2>&1; then
+  docker pull "$REDPANDA_IMAGE"
 fi
 
 echo "Checking Airflow DAG import dependencies..."

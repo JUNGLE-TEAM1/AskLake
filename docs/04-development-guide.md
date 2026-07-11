@@ -325,6 +325,26 @@ scripts/deploy.sh stop
 세부 운영 절차는 `docs/deployment-runbook.md`를 기준으로 한다.
 서버 `deploy/.env`와 로컬 `deploy/ec2.env`에는 실제 secret이나 AWS resource 값이 들어갈 수 있으므로 커밋하지 않는다.
 
+### EC2 Kafka 데모 의존성
+
+Kafka review replay/ingest 코드는 backend deploy image에 포함되어 있고, EC2 production Compose는 demo/dev용 단일 Redpanda broker를 포함한다. 배포 서버 안에서 접근할 broker endpoint는 `redpanda:9092`다. Kafka source 화면이나 Kafka ingest job을 배포 서버에서 검증하려면 Redpanda 기동 뒤 `reviews.raw` topic seed가 먼저 준비되어야 한다.
+
+Kafka demo를 배포 완료로 판단하는 최소 기준은 다음과 같다.
+
+- Compose 내부 broker endpoint가 정해져 있다. 현재 값은 `redpanda:9092`다.
+- `reviews.raw` topic에 100건 이상 review fixture가 seed되어 있다.
+- UI source connection test가 배포 backend에서 성공한다.
+- Kafka ingest job이 MinIO landing path에 JSONL을 저장한다.
+- Catalog에 target dataset이 등록되고 Job 실행 결과에서 consumed/stored count를 확인할 수 있다.
+
+EC2 demo topic seed는 repo root에서 아래 명령으로 실행한다.
+
+```bash
+scripts/seed-kafka-demo-data.sh
+```
+
+기본값은 `redpanda:9092`, `reviews.raw`, 100건이다. 증분 소비 테스트에서는 `ASKLAKE_KAFKA_DEMO_RECREATE_TOPIC=false`를 설정해 기존 topic을 유지한 채 추가 메시지를 넣는다.
+
 ## 5) 브랜치 전략
 
 `main`과 `dev`는 보호 브랜치다.

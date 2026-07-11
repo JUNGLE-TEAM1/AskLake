@@ -239,6 +239,34 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  redpanda:
+    image: ${REDPANDA_IMAGE:-redpandadata/redpanda:v24.3.6}
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:9092
+      - --rpc-addr=0.0.0.0:33145
+      - --advertise-rpc-addr=redpanda:33145
+    expose:
+      - "9092"
+      - "9644"
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster info --brokers=127.0.0.1:9092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -297,6 +325,7 @@ volumes:
   caddy_config:
   postgres_data:
   airflow_postgres_data:
+  redpanda_data:
   mongo_data:
   minio_data:
   lake_data:
