@@ -180,6 +180,8 @@ Job 목록의 query/facet/legacy 상태 정규화는 외부 인프라 없이 `cd
 
 `AI 활용` 메뉴의 대화형 화면은 현재 UI-only 범위다. 실제 OpenAI/RAG runtime을 호출하지 않으며, 질문을 전송하면 사용자 메시지와 `AI runtime 연결 대기` 상태만 표시한다. 답변, 근거, SQL, 결과 미리보기는 가짜 데이터로 만들지 않는다.
 
+화면 연결 smoke는 `/` 공개 랜딩에서 시작해 `/login`의 로그인/회원가입 전환을 확인하고, 인증 후 `/jobs`로 이동하는지 확인한다. 일반 계정은 관리 메뉴가 숨겨져야 하며 `/admin` 직접 진입 시 `/profile`로 이동해야 한다. admin 계정은 실제 `AdminConsolePage`를, `AI 활용` 메뉴는 placeholder가 아닌 `AiChatPage`를 렌더링해야 한다.
+
 수동 확인은 다음 순서로 한다.
 
 1. `AI 활용` 메뉴를 열어 empty state와 composer가 겹치지 않는지 확인한다.

@@ -32,6 +32,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 
 현재 브랜치에서 보여줄 수 있어야 하는 범위:
 
+- 공개 랜딩과 기존 AskLake 로그인 UI를 통한 로그인/회원가입, 세션 확인, 로그아웃
 - Source 연결 테스트와 Schema 추론
 - 새 수집/처리 Job 생성
 - 작업 명령 UI: 실행, 재실행, 일시정지, 취소
@@ -41,6 +42,7 @@ AskLake는 사용자가 데이터셋의 출처, 품질, 권한, 실행 결과, �
 - Dataset 범위의 read-only SQL preview
 - SQL 분석 화면 안의 Query AI 생성 기능: 자연어 요청 기반 SQL 초안 제안
 - AI 활용 메뉴의 ChatGPT형 UI skeleton: Catalog Dataset 컨텍스트를 고르는 대화 화면만 제공하며, 실제 AI 호출과 RAG runtime은 후속 범위로 둔다.
+- 실제 `AiChatPage` 연결과 admin role 전용 관리 콘솔/내 프로필 접근 제어
 - 수집/처리 Transform 화면은 필드 매핑과 quick transform function 중심으로 유지하며, AI 기반 필드 transform 버튼은 현재 MVP 범위에서 노출하지 않는다.
 - SQL preview 결과 기반 처리 Job 초안 생성 및 Lake Dataset materialize 준비
 - Dashboard 목록/빌더/런타임은 FastAPI Pair3 전까지 local/mock fallback으로 유지
