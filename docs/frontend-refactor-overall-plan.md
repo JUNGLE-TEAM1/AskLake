@@ -1,7 +1,5 @@
 # Frontend Refactor Overall Plan
 
-> 현재 상태 (2026-07-11): 이 문서는 초기 분업 계획이며 완료 이력을 보존합니다. 현재 통합 코드에는 MUI/Emotion과 `react-arborist`가 남아 있지 않습니다. SQL/Dashboard Tree는 Kibo/shadcn-compatible UI, S3/ETL Tree는 AskLake 로컬 Tree composition을 사용합니다. 최신 기준은 frontend inventory, 페이지 감사 문서와 `docs/frontend-dev-integration-resolution.md`입니다.
-
 ## 목적과 배경
 
 이 문서는 AskLake 프론트엔드 UI 전환 작업을 팀원과 팀원 AI가 같은 맥락으로 이해하고 병렬 구현할 수 있도록 정리한 전체 계획이다.

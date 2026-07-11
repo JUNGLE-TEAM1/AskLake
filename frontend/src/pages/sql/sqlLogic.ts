@@ -26,6 +26,7 @@ export type SqlPreflightMessage = {
 };
 
 export type SqlPreflightResult = {
+  autoFixQuery?: string;
   key: string;
   canExecute: boolean;
   messages: SqlPreflightMessage[];
@@ -38,10 +39,36 @@ const { Parser: SqlParser } = postgresqlParser;
 const sqlParser = new SqlParser();
 
 export function buildDefaultQuery(dataset: CatalogDataset) {
-  const columns = dataset.schema.slice(0, 4).map(([name]) => name).join(", ") || "*";
+  const columns = dataset.schema.slice(0, 4).map(([name]) => quoteSqlIdentifier(name)).join(", ") || "*";
   return `SELECT ${columns}
-FROM ${dataset.name}
+FROM ${getDatasetSqlReference(dataset)}
 LIMIT 100;`;
+}
+
+export function quoteSqlIdentifier(identifier: string) {
+  const trimmed = identifier.trim();
+  if (isQuotedSqlIdentifier(trimmed)) return trimmed;
+  return `"${trimmed.replace(/"/g, '""')}"`;
+}
+
+export function getDatasetSqlReference(dataset: CatalogDataset) {
+  return quoteSqlIdentifier(dataset.name);
+}
+
+function getColumnSqlReference(columnName: string) {
+  return quoteSqlIdentifier(columnName);
+}
+
+function getQualifiedColumnSqlReference(dataset: CatalogDataset, columnName: string) {
+  return `${getDatasetSqlReference(dataset)}.${getColumnSqlReference(columnName)}`;
+}
+
+function isQuotedSqlIdentifier(identifier: string) {
+  return identifier.length >= 2 && identifier.startsWith("\"") && identifier.endsWith("\"");
+}
+
+function needsQuotedIdentifier(identifier: string) {
+  return !/^[a-zA-Z_][a-zA-Z0-9_$]*$/.test(identifier);
 }
 
 type JoinEdge = {
@@ -259,7 +286,10 @@ function insertJoinClauses(query: string, joins: JoinEdge[]) {
   const existingTables = new Set(extractReferencedTableNamesFromText(baseQuery));
   const joinText = joins
     .filter((join) => !existingTables.has(normalizeSqlIdentifier(join.rightDataset.name)))
-    .map((join) => `JOIN ${join.rightDataset.name} ON ${join.leftDataset.name}.${join.leftColumn} = ${join.rightDataset.name}.${join.rightColumn}`)
+    .map((join) => (
+      `JOIN ${getDatasetSqlReference(join.rightDataset)} ON `
+      + `${getQualifiedColumnSqlReference(join.leftDataset, join.leftColumn)} = ${getQualifiedColumnSqlReference(join.rightDataset, join.rightColumn)}`
+    ))
     .join("\n");
 
   if (!joinText) return `${baseQuery};`;
@@ -299,7 +329,7 @@ function qualifyAmbiguousSelectColumns(query: string, joins: JoinEdge[]) {
       if (!simpleColumn) return part;
       const normalizedColumn = normalizeColumnName(simpleColumn);
       if (!baseColumnNames.has(normalizedColumn) || !joinedColumnNames.has(normalizedColumn)) return part;
-      return part.replace(simpleColumn, `${baseDataset.name}.${simpleColumn}`);
+      return part.replace(simpleColumn, getQualifiedColumnSqlReference(baseDataset, simpleColumn));
     })
     .join(",");
 
@@ -324,7 +354,7 @@ function appendJoinComment(
   const rightColumn = targetDataset.schema[0]?.[0] ?? "key";
   const comment = [
     "/* JOIN 키를 자동으로 찾지 못했습니다. ON 조건을 확인해서 바꿔 주세요.",
-    `JOIN ${targetDataset.name} ON ${leftDataset.name}.${leftColumn} = ${targetDataset.name}.${rightColumn}`,
+    `JOIN ${getDatasetSqlReference(targetDataset)} ON ${getQualifiedColumnSqlReference(leftDataset, leftColumn)} = ${getQualifiedColumnSqlReference(targetDataset, rightColumn)}`,
     "*/",
   ].join("\n");
   return `${cleanedQuery || buildDefaultQuery(leftDataset).replace(/;\s*$/, "")}\n${comment};`;
@@ -332,7 +362,7 @@ function appendJoinComment(
 
 function extractReferencedTableNamesFromText(query: string) {
   const names = new Set<string>();
-  const matcher = /\b(?:from|join)\s+([`"\[]?[a-zA-Z_][a-zA-Z0-9_.-]*[`"\]]?)/gi;
+  const matcher = /\b(?:from|join)\s+((?:"(?:[^"]|"")+"|`[^`]+`|\[[^\]]+\])|(?:[a-zA-Z_][a-zA-Z0-9_.-]*))/gi;
   let match = matcher.exec(query);
   while (match) {
     names.add(normalizeSqlIdentifier(match[1]));
@@ -347,7 +377,7 @@ export function getColumnInsertText(dataset: CatalogDataset, columnName: string,
     item.schema.some(([name]) => name.trim().toLowerCase() === normalizedColumnName)
   )).length;
 
-  return matchingDatasetCount > 1 ? `${dataset.name}.${columnName}` : columnName;
+  return matchingDatasetCount > 1 ? getQualifiedColumnSqlReference(dataset, columnName) : getColumnSqlReference(columnName);
 }
 
 export function buildDefaultDerivedDatasetName(dataset: CatalogDataset) {
@@ -394,6 +424,7 @@ export function runSqlPreflight(
 ): SqlPreflightResult {
   const normalizedQuery = stripSqlComments(query).trim();
   const messages: SqlPreflightMessage[] = [];
+  const contextDatasets = [baseDataset, ...referenceDatasets];
   if (!normalizedQuery) {
     return {
       key,
@@ -404,6 +435,18 @@ export function runSqlPreflight(
 
   const parsedQuery = parseSqlQuery(normalizedQuery);
   if (!parsedQuery.ok) {
+    const autoFixQuery = buildUnquotedKoreanIdentifierFix(query, contextDatasets);
+    if (autoFixQuery && autoFixQuery !== query) {
+      return {
+        autoFixQuery,
+        key,
+        canExecute: false,
+        messages: [{
+          tone: "error",
+          text: "한글/공백이 있는 테이블명은 큰따옴표가 필요합니다. 자동 보정으로 안전한 SQL 식별자 형식을 적용할 수 있습니다.",
+        }],
+      };
+    }
     return {
       key,
       canExecute: false,
@@ -439,7 +482,7 @@ export function runSqlPreflight(
   }
 
   const allowedTableNames = new Set(
-    [baseDataset, ...referenceDatasets]
+    contextDatasets
       .flatMap((item) => [item.name, item.id])
       .map(normalizeSqlIdentifier),
   );
@@ -459,13 +502,13 @@ export function runSqlPreflight(
   }
 
   const referencedDatasetNames = new Set(referencedTableNames.map(normalizeSqlIdentifier));
-  const referencedContextDatasets = [baseDataset, ...referenceDatasets].filter((dataset) => (
+  const referencedContextDatasets = contextDatasets.filter((dataset) => (
     referencedDatasetNames.has(normalizeSqlIdentifier(dataset.name))
       || referencedDatasetNames.has(normalizeSqlIdentifier(dataset.id))
   ));
   const ambiguousColumns = findAmbiguousUnqualifiedSelectColumns(
     normalizedQuery,
-    referencedContextDatasets.length > 0 ? referencedContextDatasets : [baseDataset, ...referenceDatasets],
+    referencedContextDatasets.length > 0 ? referencedContextDatasets : contextDatasets,
   );
   if (ambiguousColumns.length > 0) {
     return {
@@ -489,6 +532,22 @@ export function runSqlPreflight(
   }
 
   return { key, canExecute: true, messages };
+}
+
+function buildUnquotedKoreanIdentifierFix(query: string, datasets: CatalogDataset[]) {
+  return datasets
+    .filter((dataset) => needsQuotedIdentifier(dataset.name))
+    .reduce((nextQuery, dataset) => replaceUnquotedRelationName(nextQuery, dataset.name, getDatasetSqlReference(dataset)), query);
+}
+
+function replaceUnquotedRelationName(query: string, tableName: string, quotedTableName: string) {
+  const escapedName = escapeRegExp(tableName);
+  const matcher = new RegExp(`\\b(from|join)\\s+(${escapedName})(?=\\s|;|$)`, "gi");
+  return query.replace(matcher, (_match, keyword: string) => `${keyword} ${quotedTableName}`);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function stripSqlComments(query: string) {
@@ -521,7 +580,21 @@ function findAmbiguousUnqualifiedSelectColumns(query: string, datasets: CatalogD
 }
 
 function normalizeSqlIdentifier(identifier: string) {
-  return identifier.replace(/^[`"[]|[`"\]]$/g, "").toLowerCase();
+  const stripped = stripSqlIdentifier(identifier.trim());
+  return stripped.toLowerCase();
+}
+
+function stripSqlIdentifier(identifier: string) {
+  if (identifier.length >= 2 && identifier.startsWith("\"") && identifier.endsWith("\"")) {
+    return identifier.slice(1, -1).replace(/""/g, "\"");
+  }
+  if (identifier.length >= 2 && identifier.startsWith("`") && identifier.endsWith("`")) {
+    return identifier.slice(1, -1);
+  }
+  if (identifier.length >= 2 && identifier.startsWith("[") && identifier.endsWith("]")) {
+    return identifier.slice(1, -1);
+  }
+  return identifier;
 }
 
 type SqlAstNode = {
@@ -760,7 +833,7 @@ const SQL_AUTOCOMPLETE_KEYWORDS = [
 export function getAutocompleteContext(query: string, cursorIndex: number): AutocompleteContext {
   const end = Math.max(0, Math.min(cursorIndex, query.length));
   const beforeCursor = query.slice(0, end);
-  const tokenMatch = beforeCursor.match(/[a-zA-Z0-9_.-]*$/);
+  const tokenMatch = beforeCursor.match(/[\p{L}\p{N}_.-]*$/u);
   const token = tokenMatch?.[0] ?? "";
   const start = end - token.length;
   const beforeToken = query.slice(0, start);
@@ -803,7 +876,7 @@ export function buildAutocompleteCandidates({
       id: `table-${item.id}`,
       type: "table",
       label: item.name,
-      insertText: item.name,
+      insertText: getDatasetSqlReference(item),
       detail: "table · selected",
       datasetId: item.id,
     }));
@@ -814,7 +887,7 @@ export function buildAutocompleteCandidates({
         id: `column-${item.id}-${name}`,
         type: "column",
         label: name,
-        insertText: name,
+        insertText: getColumnSqlReference(name),
         detail: `column · ${item.name} · ${type}`,
         datasetId: item.id,
       });
@@ -825,7 +898,7 @@ export function buildAutocompleteCandidates({
         id: `column-qualified-${item.id}-${name}`,
         type: "column",
         label: qualifiedName,
-        insertText: qualifiedName,
+        insertText: getQualifiedColumnSqlReference(item, name),
         detail: `column · ${type}`,
         datasetId: item.id,
       });

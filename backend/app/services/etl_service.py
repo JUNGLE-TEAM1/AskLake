@@ -34,18 +34,13 @@ from app.schemas.etl import (
     JobRowData,
     JobRunOutcome,
     JobScheduleKind,
+    QueryRunRequest,
+    QueryRunResponse,
     ReviewEntry,
     ReviewPipelineRequest,
     ReviewSchemaRow,
     ReviewSnapshot,
     ReviewValidationRow,
-    KafkaReviewIngestRequest,
-    KafkaReviewIngestResponse,
-    QueryRunRequest,
-    QueryRunResponse,
-    ScheduledJobRunItem,
-    ScheduledJobRunRequest,
-    ScheduledJobRunResponse,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -61,9 +56,6 @@ from app.services.resource_permission_service import job_with_persisted_permissi
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
 JOB_STATUSES = ("scheduled", "failed", "running", "paused", "canceled", "stopped")
-ACTIVE_RUN_STATUSES = {"queued", "running"}
-TERMINAL_RUN_STATUSES = {"success", "failed", "canceled"}
-SPARK_OUTPUT_FORMAT = "parquet"
 
 
 def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str = "demo-user") -> CreatePipelineResponse:
@@ -161,18 +153,12 @@ def create_pipeline(db: Session, request: CreatePipelineRequest, actor_name: str
 
 def list_jobs(
     db: Session,
-    actor: ActorContext | None = None,
     last_run_outcome: JobRunOutcome | None = None,
     owner: str | None = None,
     statuses: list[str] | None = None,
     schedule_kind: JobScheduleKind | None = None,
 ) -> JobListResponse:
-    actor_context = actor or ActorContext()
-    visible_jobs = [
-        with_job_permissions(db, job, actor_context)
-        for job in etl_repository.list_jobs(db)
-    ]
-    all_jobs = [normalize_list_job(job) for job in visible_jobs if job.permissions.can_view]
+    all_jobs = [normalize_list_job(job) for job in etl_repository.list_jobs(db)]
     selected_statuses = set(statuses or [])
     filtered_jobs = [
         job for job in all_jobs
@@ -196,6 +182,20 @@ def list_jobs(
         ),
         jobs=filtered_jobs,
     )
+
+
+def normalize_list_job(job: JobRowData) -> JobRowData:
+    if job.status not in {"failed", "canceled", "paused"}:
+        return job
+    return job.model_copy(update={"status": "scheduled"})
+
+
+def latest_run_outcome(job: JobRowData) -> JobRunOutcome | None:
+    latest_run = (job.run_history or [None])[0]
+    if latest_run is None:
+        return None
+    status_value = latest_run.status if hasattr(latest_run, "status") else latest_run.get("status")
+    return status_value if status_value in {"success", "failed", "canceled"} else None
 
 
 def normalize_list_job(job: JobRowData) -> JobRowData:
@@ -484,7 +484,14 @@ def command_job(db: Session, job_id: str, command: str, actor: ActorContext | No
             job.dag_steps = dag_steps_from_airflow_submit(job, command, run_schema.model_dump(by_alias=True))
         job.dag_steps_by_run_id = {**(job.dag_steps_by_run_id or {}), run_schema.run_id: job.dag_steps}
         job.stats = stats_from_runs(job, [run_schema, *etl_repository.list_runs_for_job(db, job.id)])
-    elif command == "cancelRun":
+        if spark_result.get("status") == "success":
+            existing_dataset = etl_repository.get_dataset_by_id(db, job.dataset_id) if job.dataset_id else None
+            dataset_model = dataset_from_spark_result(job, spark_result, existing_dataset)
+    elif command == "cancelRun" or (
+        command == "stopSchedule"
+        and job.status == "running"
+        and job_schedule_kind(job.schedule) == "realtime"
+    ):
         run_model = run_from_command(job, command)
         run_schema = etl_repository.run_to_schema(run_model)
         apply_job_command(job, command)
@@ -634,176 +641,6 @@ def review_entry(label: str, value: str | None) -> ReviewEntry:
 
 def review_validation(label: str, ready: bool, ready_value: str, warning_value: str) -> ReviewValidationRow:
     return ReviewValidationRow(label=label, status="ready" if ready else "warning", value=ready_value if ready else warning_value)
-
-
-def ingest_kafka_reviews(db: Session, request: KafkaReviewIngestRequest) -> KafkaReviewIngestResponse:
-    result = run_kafka_ingest_request(db, request.model_dump(by_alias=True, exclude_none=True), "ingest", None)
-    return KafkaReviewIngestResponse.model_validate(result)
-
-
-def run_kafka_ingest_job(db: Session, job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
-    request = kafka_ingest_request_from_job(job, run_id)
-    return run_kafka_ingest_request(db, request, command, job.id)
-
-
-def run_kafka_ingest_request(db: Session, request: dict[str, Any], command: str, job_id: str | None) -> dict[str, Any]:
-    snapshot_record, request_with_snapshot = kafka_request_with_durable_snapshot(db, request, job_id)
-    try:
-        result = run_node_bridge(
-            "ingest-kafka-reviews.mjs",
-            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-            request_with_snapshot,
-            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
-        )
-    except ApiError as exc:
-        etl_repository.update_kafka_snapshot(db, snapshot_record, "failed", exc.message)
-        raise
-    etl_repository.update_kafka_snapshot(db, snapshot_record, "success")
-    result["command"] = command
-    return result
-
-
-def kafka_request_with_durable_snapshot(
-    db: Session,
-    request: dict[str, Any],
-    job_id: str | None,
-) -> tuple[KafkaSnapshotModel, dict[str, Any]]:
-    topic = str(request.get("topic") or "reviews.raw")
-    consumer_group_id = str(request.get("consumerGroupId") or "")
-    existing = etl_repository.get_active_kafka_snapshot(db, topic, consumer_group_id, job_id)
-    if existing is None:
-        capture_request = {**request, "snapshotOnly": True}
-        captured = run_node_bridge(
-            "ingest-kafka-reviews.mjs",
-            "ASKLAKE_KAFKA_REVIEW_INGEST_RESULT",
-            capture_request,
-            error_marker="ASKLAKE_KAFKA_REVIEW_INGEST_ERROR",
-            timeout_seconds=max(30, int(request["timeoutMs"] / 1000) + 30),
-        )
-        snapshot = captured.get("snapshot")
-        if not isinstance(snapshot, dict):
-            raise ApiError("KAFKA_SNAPSHOT_BAD_RESPONSE", "Kafka snapshot capture did not return a snapshot.", status.HTTP_502_BAD_GATEWAY)
-        existing = KafkaSnapshotModel(
-            snapshot_id=str(snapshot["snapshotId"]),
-            job_id=job_id,
-            topic=topic,
-            consumer_group_id=consumer_group_id,
-            status="running",
-            snapshot=snapshot,
-        )
-        existing = etl_repository.save_kafka_snapshot(db, existing)
-    return existing, {**request, "snapshot": existing.snapshot}
-
-
-def kafka_failure_result(request: dict[str, Any], run_id: str, error: ApiError, bridge_error: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "broker": bridge_error.get("broker") or request.get("broker"),
-        "consumedCount": int(bridge_error.get("consumedCount") or 0),
-        "endedAt": bridge_error.get("endedAt") or iso_now(),
-        "error": bridge_error.get("message") or error.message,
-        "failedCount": int(bridge_error.get("failedCount") or 0),
-        "failedStage": bridge_error.get("failedStage") or "Kafka ingest",
-        "runId": bridge_error.get("runId") or run_id,
-        "snapshot": bridge_error.get("snapshot"),
-        "startedAt": bridge_error.get("startedAt") or iso_now(),
-        "status": "failed",
-        "storedCount": 0,
-        "targetLayer": request.get("targetLayer") or "BRONZE",
-        "topic": bridge_error.get("topic") or request.get("topic"),
-        "transform": bridge_error.get("transform"),
-        "quality": bridge_error.get("quality"),
-    }
-
-
-def kafka_ingest_request_from_job(job: ETLJobModel, run_id: str) -> dict[str, Any]:
-    fields = job.source_config or []
-    topic = (
-        field_value(fields, "TOPIC / QUEUE NAME")
-        or field_value(fields, "Topic")
-        or field_value(fields, "topic")
-        or "reviews.raw"
-    )
-    target = parse_kafka_target_path(job.storage_path or job.target_path, job.target, job.target_layer)
-    max_messages = (
-        parse_positive_integer(field_value(fields, "Batch Max Messages (per partition)"))
-        or parse_positive_integer(field_value(fields, "Batch Max Messages"))
-        or parse_positive_integer(field_value(fields, "Max Messages"))
-        or parse_positive_integer(field_value(fields, "__Batch Max Messages"))
-        or 100
-    )
-    timeout_ms = (
-        parse_positive_integer(field_value(fields, "Timeout Ms"))
-        or parse_positive_integer(field_value(fields, "Timeout Milliseconds"))
-        or 10000
-    )
-    consumer_group_id = (
-        field_value(fields, "CONSUMER GROUP ID")
-        or field_value(fields, "Consumer Group ID")
-        or f"asklake-{normalize_column_name(job.id)}"
-    )
-    offset_policy = kafka_offset_policy(field_value(fields, "Offset Policy") or field_value(fields, "offsetPolicy"))
-    return {
-        "allowEmpty": True,
-        "broker": field_value(fields, "Broker / Endpoint") or field_value(fields, "Broker") or "127.0.0.1:19092",
-        "consumerGroupId": consumer_group_id,
-        "datasetId": job.dataset_id or f"ds_{normalize_column_name(job.target)}",
-        "datasetName": job.target or "reviews_raw",
-        "landingBucket": target["bucket"],
-        "landingEndpoint": (
-            field_value(fields, "Landing Endpoint URL")
-            or field_value(fields, "Target Endpoint URL")
-            or os.environ.get("MINIO_ENDPOINT_IN_DOCKER")
-            or os.environ.get("MINIO_ENDPOINT")
-            or "http://127.0.0.1:19000"
-        ),
-        "landingPrefix": target["prefix"],
-        "maxMessages": max_messages,
-        "offsetPolicy": offset_policy,
-        "registerCatalog": True,
-        "runId": run_id,
-        "storageMode": target["storageMode"],
-        "targetBucket": target["bucket"],
-        "targetDescription": job.target_description or None,
-        "targetFormat": job.target_format or "jsonl",
-        "targetLayer": job.target_layer or "BRONZE",
-        "targetPrefix": target["prefix"],
-        "timeoutMs": timeout_ms,
-        "topic": topic,
-        "transformSteps": job.transform_steps or [],
-        "qualityRules": job.quality_rules or [],
-    }
-
-
-def kafka_offset_policy(value: str) -> str:
-    normalized = str(value or "").strip().lower()
-    if "latest" in normalized or "new" in normalized:
-        return "latest"
-    return "earliest"
-
-
-def parse_kafka_target_path(storage_path: str | None, target_dataset: str, target_layer: str | None) -> dict[str, str]:
-    default_prefix = f"{normalize_column_name(target_dataset or 'reviews_raw')}/{str(target_layer or 'BRONZE').lower()}"
-    if storage_path:
-        match = re.match(r"^s3a?://([^/]+)(?:/(.*))?$", storage_path.strip())
-        if match:
-            prefix = (match.group(2) or default_prefix).strip("/") or default_prefix
-            if prefix == "kafka-landing" or prefix.startswith("kafka-landing/"):
-                return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
-            return {
-                "bucket": match.group(1),
-                "prefix": prefix,
-                "storageMode": "s3",
-            }
-    return {"bucket": "asklake-output", "prefix": default_prefix, "storageMode": "s3"}
-
-
-def is_kafka_job(job: ETLJobModel) -> bool:
-    source_type = str(job.source_type or "").lower()
-    if "kafka" in source_type:
-        return True
-    fields = job.source_config or []
-    return bool(field_value(fields, "Broker / Endpoint") and (field_value(fields, "TOPIC / QUEUE NAME") or field_value(fields, "Topic")))
 
 
 def run_spark_job(job: ETLJobModel, command: str, run_id: str) -> dict[str, Any]:
@@ -1826,33 +1663,8 @@ def finalize_job_from_kafka_result(job: ETLJobModel, command: str, result: dict[
     )
     job.next_run = schedule_next_run_label(job.schedule, job.next_run)
     job.progress = None
-    job.status = "scheduled" if success else "failed"
-    job.target_path = result.get("storageLocation") or job.target_path
-    job.stats = {
-        **(job.stats or {}),
-        "currentStage": "Kafka snapshot target 저장 완료" if success else "Kafka snapshot target 저장 실패",
-        "inputRows": format_rows(result.get("consumedCount")),
-        "lastSuccess": str(result.get("endedAt") or iso_now()) if success else job.stats.get("lastSuccess", "-"),
-        "outputPath": result.get("storageLocation") or job.target_path,
-        "outputRows": format_rows(result.get("storedCount")),
-        "sampleScope": f"{result.get('topic') or 'Kafka'} batch",
-        "sourceUnits": "Kafka topic",
-        "successRate": "100%" if success and failed_count == 0 else "확인 필요",
-    }
-
-
-def spark_output_sample_rows(result: dict[str, Any], schema_json: list[list[str]]) -> list[list[str]]:
-    rows = result.get("sampleRows")
-    if not isinstance(rows, list):
-        return []
-    columns = [str(column[0]) for column in schema_json if column]
-    normalized_rows: list[list[str]] = []
-    for row in rows[:20]:
-        if isinstance(row, dict):
-            normalized_rows.append([str(row.get(column) if row.get(column) is not None else "") for column in columns])
-        elif isinstance(row, (list, tuple)):
-            normalized_rows.append([str(value if value is not None else "") for value in row])
-    return normalized_rows
+    job.status = "scheduled"
+    job.target_path = result.get("outputPath") or job.target_path
 
 
 def dataset_from_spark_result(job: ETLJobModel, result: dict[str, Any], existing_dataset: CatalogDatasetModel | None = None) -> CatalogDatasetModel:
@@ -2603,7 +2415,7 @@ def job_schedule_kind(schedule_label: str | None) -> JobScheduleKind:
     return "other"
 
 
-def schedule_policy_from_request(request: CreatePipelineRequest | UpdatePipelineRequest) -> dict[str, Any]:
+def schedule_policy_from_request(request: CreatePipelineRequest) -> dict[str, Any]:
     watermark_policy = request.watermark_policy
     if hasattr(watermark_policy, "model_dump"):
         watermark_policy = watermark_policy.model_dump(mode="json", by_alias=True)

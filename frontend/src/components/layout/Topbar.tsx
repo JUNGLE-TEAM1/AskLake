@@ -3,18 +3,29 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { IconButton } from "@/components/ui/icon-button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { AuditEntry } from "../../types";
+import type { CurrentUserResponse } from "../../types";
 
 export function Topbar({
   auditLogs,
   auditOpen,
+  currentUser,
+  onAccount,
   onAuditToggle,
+  onLogin,
+  onLogout,
   onRefresh,
 }: {
   auditLogs: AuditEntry[];
   auditOpen: boolean;
+  currentUser: CurrentUserResponse | null;
+  onAccount: () => void;
   onAuditToggle: () => void;
+  onLogin: () => void;
+  onLogout: () => void;
   onRefresh: () => void;
 }) {
+  const displayName = currentUser?.profile.displayName || currentUser?.displayName || "";
+  const initials = currentUser?.profile.avatarInitials || displayName.slice(0, 2).toUpperCase();
   return (
     <header className="topbar">
       <TooltipProvider delayDuration={300}>

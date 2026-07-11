@@ -108,8 +108,8 @@ async function runSmoke() {
     targetDataset,
     compression: "Snappy",
     partition: "customer_id/amount",
-    storagePath: targetStoragePath,
-    storageType: sparkOutputMode === "s3a" ? "S3" : "Local",
+    storagePath: "",
+    storageType: "Local",
     targetFormat: "Parquet",
     targetLayer: "GOLD",
   });

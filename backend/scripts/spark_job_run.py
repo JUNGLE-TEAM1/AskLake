@@ -60,13 +60,10 @@ def main():
         output_path = required_env("ASKLAKE_SPARK_OUTPUT_PATH")
         run_id = required_env("ASKLAKE_SPARK_RUN_ID")
         row_limit = int(os.environ.get("ASKLAKE_SPARK_RUN_ROW_LIMIT", "0") or "0")
-        manifest = load_spark_job_manifest()
-        partition_columns = parse_partition_columns(
-            manifest.get("partitionColumns") or os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS")
-        )
-        schema_columns = manifest.get("schemaColumns") or load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
-        transform_steps = manifest.get("transformSteps") or load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
-        quality_rules = manifest.get("qualityRules") or load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
+        partition_columns = parse_partition_columns(os.environ.get("ASKLAKE_SPARK_PARTITION_COLUMNS"))
+        schema_columns = load_json_env("ASKLAKE_SPARK_SCHEMA_COLUMNS", [])
+        transform_steps = load_json_env("ASKLAKE_SPARK_TRANSFORM_STEPS", [])
+        quality_rules = load_json_env("ASKLAKE_SPARK_QUALITY_RULES", [])
         spark = make_spark()
         source_df = read_source(spark, source_format, source_path, schema_columns)
         input_rows = source_df.count() if row_limit <= 0 else source_df.limit(row_limit).count()
@@ -168,6 +165,17 @@ def main():
             write_report(report_file, result)
             print(f"ASKLAKE_SPARK_JOB_RESULT={json.dumps(result, ensure_ascii=False, sort_keys=True)}")
             return 1
+
+        output_df = transformed_df.withColumn("_asklake_run_id", F.lit(run_id)).withColumn(
+            "_asklake_ingested_at",
+            F.current_timestamp(),
+        )
+        resolved_partition_columns = resolve_partition_columns(output_df, partition_columns)
+        writer = output_df.write.mode("overwrite")
+        if resolved_partition_columns:
+            writer = writer.partitionBy(*resolved_partition_columns)
+        writer.parquet(output_path)
+        output_rows = spark.read.parquet(output_path).count()
         ended_at = now_iso()
         result = {
             "durationMs": int(time.time() * 1000) - started_ms,
@@ -280,7 +288,7 @@ def resolve_partition_columns(frame, partition_columns):
     return resolved
 
 
-def apply_schema_contract(frame, schema_columns, transform_steps=None):
+def apply_schema_contract(frame, schema_columns):
     if not schema_columns:
         return frame
 

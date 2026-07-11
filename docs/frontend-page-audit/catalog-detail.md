@@ -113,3 +113,4 @@
 - catalog list와 같은 `CatalogPage.tsx`, `catalog.css`를 공유한다.
 - #422가 공통 table 또는 search style을 변경하면 schema/sample selector를 다시 확인해야 한다.
 - ReactFlow node/edge data contract와 API 응답은 이번 문서 범위에서 변경하지 않는다.
+

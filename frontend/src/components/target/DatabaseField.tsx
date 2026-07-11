@@ -7,6 +7,7 @@ import { PickerDialog } from "@/components/ui/picker-dialog";
 import { listTargetDatabases, type TargetDatabaseOption } from "../../services/targetDatabaseApi";
 
 type DatabaseFieldProps = {
+  disabled?: boolean;
   onChange: (databaseName: string) => void;
   useShadcnStyles?: boolean;
   value: string;

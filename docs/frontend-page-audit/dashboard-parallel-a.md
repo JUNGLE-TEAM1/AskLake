@@ -40,3 +40,4 @@
 - A가 수정한 파일 목록이 위 전용 파일 또는 새 목록 전용 파일에만 한정된다.
 - `cd frontend && npm run verify:ui-regressions`
 - `cd frontend && npm run build`
+

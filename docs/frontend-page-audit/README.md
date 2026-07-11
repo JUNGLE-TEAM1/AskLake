@@ -29,7 +29,7 @@
 ## 공통 컴포넌트 판단 기준
 
 - `Button`, `Input`, `Tabs`, `Dialog`, `DropdownMenu`, `Tooltip`, `ScrollArea` 같은 기본 UI는 shadcn primitive를 우선합니다.
-- 계층 탐색은 현재 Kibo/shadcn-compatible Tree 또는 AskLake 로컬 Tree composition을 사용합니다. 실제 노드 규모에서 가상화가 필요하다고 확인되면 `react-arborist` 같은 동작 엔진을 별도로 도입하고 ReUI/shadcn 스타일 계층은 유지합니다.
+- 계층 탐색처럼 대용량 렌더링이 필요한 UI는 `react-arborist` 같은 동작 엔진을 유지하고 ReUI/shadcn 스타일을 적용할 수 있습니다.
 - 표는 TanStack Table의 상태/행 모델과 shadcn Table UI 조합을 유지합니다.
 - 두 페이지 이상에서 역할, 상태, interaction이 같을 때 공통 AskLake composition으로 승격합니다.
 - 공통 컴포넌트 수정이 다른 route에 영향을 주면 해당 route도 같은 PR에서 회귀 QA하되, unrelated 화면 폴리싱까지 확장하지 않습니다.

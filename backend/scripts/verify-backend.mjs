@@ -163,10 +163,7 @@ try {
   assert(jobs.jobs.length === 1, "Backend hydrate jobs should contain the created job only.");
   assert(jobs.facets.total === 1, "Backend hydrate facets should count all jobs.");
   assert(ownerJobs.jobs.length === 1, "Backend job filters should accept owner and status query parameters.");
-  assert(
-    !datasets.some((dataset) => dataset.id === created.catalogTarget.id || dataset.name === createRequest.targetDataset),
-    "Catalog should not expose the pending target dataset until a job run succeeds.",
-  );
+  assert(datasets.length === 0, "Catalog should stay empty until a job run succeeds.");
 
   console.log("verify-backend: ok");
 } finally {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Header, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.auth_context import ActorContext, get_actor_context
@@ -17,10 +17,6 @@ from app.schemas.etl import (
     JobStatus,
     ReviewPipelineRequest,
     ReviewSnapshot,
-    KafkaReviewIngestRequest,
-    KafkaReviewIngestResponse,
-    ScheduledJobRunRequest,
-    ScheduledJobRunResponse,
     SchemaDraft,
     SourceAssetsRequest,
     SourceAssetsResponse,
@@ -53,28 +49,6 @@ def review_pipeline(request: ReviewPipelineRequest) -> ReviewSnapshot:
     return etl_service.review_pipeline(request)
 
 
-@router.post("/kafka/reviews/ingest", response_model=KafkaReviewIngestResponse)
-def ingest_kafka_reviews(
-    request: KafkaReviewIngestRequest,
-    db: Session = Depends(get_db),
-) -> KafkaReviewIngestResponse:
-    return etl_service.ingest_kafka_reviews(db, request)
-
-
-@router.post(
-    "/internal/airflow/jobs/{job_id}/runs/{run_id}/execute",
-    response_model=AirflowRunExecutionResponse,
-)
-def execute_airflow_run(
-    job_id: str,
-    run_id: str,
-    request: AirflowRunExecutionRequest,
-    airflow_token: str | None = Header(default=None, alias="X-AskLake-Airflow-Token"),
-    db: Session = Depends(get_db),
-) -> AirflowRunExecutionResponse:
-    return etl_service.execute_airflow_run(db, job_id, run_id, request.command, airflow_token)
-
-
 @router.post("/jobs", response_model=CreatePipelineResponse, status_code=status.HTTP_201_CREATED)
 def create_job(
     request: CreatePipelineRequest,
@@ -91,16 +65,8 @@ def list_jobs(
     status_filter: list[JobStatus] = Query(default_factory=list, alias="status"),
     schedule_kind: JobScheduleKind | None = Query(default=None, alias="scheduleKind"),
     db: Session = Depends(get_db),
-    actor: ActorContext = Depends(get_actor_context),
 ) -> JobListResponse:
-    return etl_service.list_jobs(
-        db,
-        actor,
-        last_run_outcome=last_run_outcome,
-        owner=owner,
-        statuses=status_filter,
-        schedule_kind=schedule_kind,
-    )
+    return etl_service.list_jobs(db, last_run_outcome=last_run_outcome, owner=owner, statuses=status_filter, schedule_kind=schedule_kind)
 
 
 @router.get("/jobs/{job_id}", response_model=JobRowData)

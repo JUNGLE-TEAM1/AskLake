@@ -5,7 +5,13 @@ import { normalizeDatasetStatus, normalizeJobStatus } from "../utils/statusMeta"
 import { apiClient, apiConfig } from "./apiClient";
 
 export type PipelineCreationResult = {
-  dataset: CatalogDataset;
+  catalogTarget?: {
+    id: string;
+    layer: string;
+    name: string;
+    status: "pending_run";
+  };
+  dataset?: CatalogDataset;
   job: JobRowData;
 };
 
@@ -75,12 +81,56 @@ function normalizeJob(job: JobRowData): JobRowData {
 }
 
 function normalizeDataset(dataset: CatalogDataset): CatalogDataset {
-  return { ...dataset, status: normalizeDatasetStatus(dataset.status) };
+  const createdBy = dataset.createdBy?.trim() || dataset.owner || "demo-user";
+  return {
+    ...dataset,
+    createdBy,
+    createdByProfile: dataset.createdByProfile ?? buildIdentityProfile(createdBy),
+    permissionGrants: dataset.permissionGrants ?? buildPermissionGrants(dataset.owner, ["view", "query"]),
+    permissions: dataset.permissions ?? buildResourcePermissions({ canManage: true, canQuery: true }),
+    status: normalizeDatasetStatus(dataset.status),
+  };
+}
+
+function buildIdentityProfile(name: string) {
+  const displayName = name.trim() || "demo-user";
+  const initials = displayName
+    .replace(/[_-]+/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase())
+    .join("") || displayName.slice(0, 2).toUpperCase();
+  return {
+    avatarInitials: initials.slice(0, 2),
+    displayName,
+  };
+}
+
+function buildPermissionGrants(owner: string, actions: Array<"view" | "query" | "run" | "manage" | "delete" | "share">) {
+  return owner
+    ? [{ actions, principalId: owner, principalType: "group" as const, source: "owner" }]
+    : [];
+}
+
+function buildResourcePermissions(overrides: Partial<NonNullable<CatalogDataset["permissions"]>> = {}) {
+  return {
+    canDelete: false,
+    canManage: false,
+    canQuery: false,
+    canRun: false,
+    canShare: false,
+    canView: true,
+    computedFor: "demo-user",
+    enforced: false,
+    ...overrides,
+  };
 }
 
 function normalizePipelineCreationResult(result: PipelineCreationResult): PipelineCreationResult {
   return {
-    dataset: normalizeDataset(result.dataset),
+    ...(result.catalogTarget ? { catalogTarget: result.catalogTarget } : {}),
+    ...(result.dataset ? { dataset: normalizeDataset(result.dataset) } : {}),
     job: normalizeJob(result.job),
   };
 }
@@ -305,6 +355,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: `${draftPipeline.target.datasetName}_pipeline`,
     id: `JOB-${String(jobCount + 1).padStart(3, "0")}`,
     owner: draftPipeline.permission.owner,
+    createdBy: "demo-user",
+    createdByProfile: buildIdentityProfile("demo-user"),
     tag: "[리뷰]",
     source: `${draftPipeline.source.sourceType} / ${draftPipeline.source.sourceLabel}`,
     target: draftPipeline.target.datasetName,
@@ -339,16 +391,22 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
   const sampleRows = draftPipeline.schema.sampleRows.length > 0
     ? draftPipeline.schema.sampleRows.map((row) => row.slice(0, Math.max(schema.length, 1)))
     : [["-", "-", "-", "-", "Pipeline queued"]];
-  const normalizedTags = normalizeDerivedDatasetTags(
-    isSqlResultSource
-      ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
-      : ["#customer", "#RAG", "#리뷰"],
-  );
+  const targetTags = normalizeCatalogTags(draftPipeline.target.tags ?? []);
+  const normalizedTags = targetTags.length > 0
+    ? targetTags
+    : normalizeDerivedDatasetTags(
+      isSqlResultSource
+        ? ["#sql-derived", `#${draftPipeline.target.layer.toLowerCase()}`]
+        : ["#customer", "#RAG", "#리뷰"],
+    );
+  const partitionColumns = normalizeStringList(draftPipeline.target.partitionColumns);
+  const indexColumns = normalizeStringList(draftPipeline.target.indexColumns);
+  const partition = partitionColumns.length > 0 ? partitionColumns.join("/") : draftPipeline.target.partition;
 
   const dataset: CatalogDataset = {
-    description: isSqlResultSource
+    description: draftPipeline.target.description?.trim() || (isSqlResultSource
       ? `${draftPipeline.target.datasetName} SQL Result 처리 Job으로 생성한 데이터셋`
-      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋",
+      : "생성 플로우에서 만든 고객 리뷰 분석용 데이터셋"),
     downstream: ["SQL 분석", "대시보드", draftPipeline.target.rag ? "AI 활용" : "카탈로그"],
     freshness: "latest",
     id: `ds_${draftPipeline.target.datasetName}`,
@@ -357,6 +415,8 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     name: draftPipeline.target.datasetName,
     nextRefresh: draftPipeline.schedule.label,
     owner: draftPipeline.permission.owner,
+    createdBy: job.createdBy,
+    createdByProfile: job.createdByProfile,
     quality: isSqlResultSource ? "SQL Preview verified" : "95% (Draft verified)",
     rag: draftPipeline.target.rag,
     rows: isSqlResultSource ? `${(Number(previewRowCount) || sampleRows.length).toLocaleString()} preview rows` : "0 rows",
@@ -367,6 +427,9 @@ export async function createPipelineDraft(draftPipeline: DraftPipeline, jobCount
     size: isSqlResultSource ? "Preview result" : "Pending",
     source: job.name,
     status: "available",
+    partition,
+    partitionColumns,
+    indexColumns,
     tags: normalizedTags,
     upstream: [
       draftPipeline.source.sourceLabel,
@@ -670,6 +733,8 @@ export async function createDerivedDatasetFromSql({
     name: normalizedName,
     nextRefresh: "수동 갱신",
     owner: sourceDataset.owner,
+    createdBy: "demo-user",
+    createdByProfile: buildIdentityProfile("demo-user"),
     quality: "Preview verified",
     rag: request.dataset.rag,
     rows: `${sqlResult.rowCount.toLocaleString()} preview rows`,
@@ -691,12 +756,20 @@ function inferColumnType(dataset: CatalogDataset, columnName: string) {
 }
 
 function normalizeDerivedDatasetTags(tags: string[]) {
-  const normalizedTags = tags
-    .map((tag) => tag.trim())
-    .filter(Boolean)
-    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`);
+  const normalizedTags = normalizeCatalogTags(tags);
 
   return Array.from(new Set(normalizedTags.length > 0 ? normalizedTags : ["#sql-derived"]));
+}
+
+function normalizeCatalogTags(tags: string[]) {
+  return Array.from(new Set(tags
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .map((tag) => tag.startsWith("#") ? tag : `#${tag}`)));
+}
+
+function normalizeStringList(values: string[] | undefined) {
+  return Array.from(new Set((values ?? []).map((value) => value.trim()).filter(Boolean)));
 }
 
 function normalizeDerivedDatasetId(name: string) {

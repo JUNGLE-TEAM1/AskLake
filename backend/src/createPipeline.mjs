@@ -18,10 +18,6 @@ import {
   saveSqlRun,
 } from "./metadataStore.mjs";
 
-const backendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const scriptsDir = path.join(backendDir, "scripts");
-const sparkWorkerLogDir = path.resolve(process.env.ASKLAKE_SPARK_WORKER_LOG_DIR || path.join(backendDir, "tmp", "spark-workers"));
-
 export async function listJobs(query = {}) {
   return buildJobListResult(await listStoredJobs(), query);
 }
@@ -1080,11 +1076,6 @@ function finalizeJobFromSparkResult(job, command, result) {
       : `Spark 실행 실패 · ${result.error ?? "원인 확인 필요"}`,
     nextRun: scheduleNextRunLabel(job.schedule, job.nextRun),
     progress: undefined,
-    qualityInvalidRows: success
-      ? qualityInvalidRowsFromSparkResult(result, job.qualityInvalidRows)
-      : job.qualityInvalidRows,
-    qualityScore: success ? qualityScoreFromSparkResult(result, job.qualityScore) : job.qualityScore,
-    qualityStatus,
     status: "scheduled",
     targetPath: result.outputPath ?? job.targetPath,
   };

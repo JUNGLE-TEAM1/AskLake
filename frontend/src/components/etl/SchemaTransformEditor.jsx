@@ -2,20 +2,12 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   ChevronRight,
   ChevronsRight,
-  ChevronLeft,
-  ChevronsLeft,
   ChevronUp,
   ChevronDown,
   Braces,
-  Play,
-  Loader2,
-  AlertTriangle,
-  Sparkles,
+  Trash2,
 } from "lucide-react";
-import { API_BASE_URL } from "../../config/api";
-import { schemaTransformApi } from "../../services/schemaTransformApi";
 import TransformFunctionModal from "./TransformFunctionModal";
-import InlineAIInput from "../ai/InlineAIInput";
 
 /**
  * SchemaTransformEditor - Dual List Box style schema transformation UI
@@ -50,6 +42,37 @@ const normalizeType = (type) => {
   };
   return typeMap[lowerType] || lowerType;
 };
+
+const FIELD_ONLY_TRANSFORMS = new Set(["Default Value", "Null Guard"]);
+
+const formatTransformChainStep = (step) => {
+  if (!step) return "";
+  if (step.display) return step.display;
+  if (step.operation === "SQL Expression") return step.params || step.expression || "SQL Expression";
+  return `${step.operation}${step.params ? `: ${step.params}` : ""}`;
+};
+
+const normalizeTransformChain = (chain, fallbackType) => {
+  if (!Array.isArray(chain)) return [];
+  return chain
+    .filter((step) => step && (step.operation || step.params || step.expression))
+    .map((step) => {
+      const operation = step.operation || "SQL Expression";
+      const params = step.params ?? step.expression ?? "";
+      return {
+        display: step.display || (operation === "SQL Expression" ? params : `${operation}${params ? `: ${params}` : ""}`),
+        expression: step.expression || (operation === "SQL Expression" ? params : ""),
+        onError: step.onError || "Warn",
+        operation,
+        params,
+        type: step.type || fallbackType,
+      };
+    });
+};
+
+const primaryTransformStep = (chain) => chain.find((step) => !FIELD_ONLY_TRANSFORMS.has(step.operation)) || null;
+const dataTransformChain = (chain) => (Array.isArray(chain) ? chain.filter((step) => !FIELD_ONLY_TRANSFORMS.has(step.operation)) : []);
+
 export default function SchemaTransformEditor({
   sourceSchema = [],
   sourceName = "Source",
@@ -75,20 +98,9 @@ export default function SchemaTransformEditor({
   const [showFunctionModal, setShowFunctionModal] = useState(false);
   const [editingColumn, setEditingColumn] = useState(null);
 
-  // Test preview
-  const [isTestLoading, setIsTestLoading] = useState(false);
-  const [testResult, setTestResult] = useState(null);
-  const [testError, setTestError] = useState(null);
-  const [isTestOpen, setIsTestOpen] = useState(false);
-  const [isTestSuccessful, setIsTestSuccessful] = useState(false);
-  const [activeSourceSampleTab, setActiveSourceSampleTab] = useState(0); // For source sample tabs
-  const [sparkWarnings, setSparkWarnings] = useState([]); // DuckDB -> Spark compatibility warnings
-  const [sqlConversions, setSqlConversions] = useState([]); // Spark -> DuckDB conversions made
-
   // Tab UI: Column Selection vs SQL Transform
   const [activeTab, setActiveTab] = useState("columns"); // 'columns' | 'sql'
   const [customSql, setCustomSql] = useState("");
-  const [showAI, setShowAI] = useState(false);
 
   // Initialize beforeColumns when sourceSchema changes (source tab switches)
   useEffect(() => {
@@ -114,16 +126,23 @@ export default function SchemaTransformEditor({
     ) {
       const initialAfter = initialTargetSchema.map((col) => {
         const normalizedType = normalizeType(col.type);
+        const normalizedChain = normalizeTransformChain(col.transformChain, normalizedType);
+        const visibleChain = dataTransformChain(normalizedChain);
+        const visibleStep = primaryTransformStep(visibleChain);
+        const visibleDisplay = visibleChain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
         return {
           ...col,
-          type: normalizedType, // 타입 정규화
+          type: normalizedType, // ?�???�규??
           notNull: col.notNull || false,
           defaultValue: col.defaultValue || "",
-          transform: col.transform || null,
-          transformDisplay:
-            col.transformDisplay || (col.transform ? `${col.transform}` : null),
+          transform: visibleStep?.expression || (visibleStep?.operation === "SQL Expression" ? visibleStep.params : col.transform || null),
+          transformDisplay: visibleDisplay || (visibleStep ? col.transformDisplay : null) || (col.transform ? `${col.transform}` : null),
+          transformChain: visibleChain,
+          transformOperation: visibleStep?.operation || col.transformOperation || null,
+          transformParams: visibleStep?.params || col.transformParams || "",
+          onError: col.onError || "Warn",
           originalName: col.originalName || col.name,
-          originalType: normalizeType(col.originalType) || normalizedType, // 원본 타입 보존
+          originalType: normalizeType(col.originalType) || normalizedType, // ?�본 ?�??보존
           sourceId: col.sourceId || sourceId,
           sourceName: col.sourceName || sourceName,
         };
@@ -137,7 +156,7 @@ export default function SchemaTransformEditor({
   // Notify parent when customSql changes (SQL tab only)
   useEffect(() => {
     if (onSqlChange && activeTab === "sql" && customSql.trim()) {
-      onSqlChange(customSql);
+      onSqlChange(customSql, "sql");
     }
   }, [customSql, activeTab]);
 
@@ -218,12 +237,16 @@ export default function SchemaTransformEditor({
         ...c,
         name: getUniqueColumnName(convertedName),
         originalName: convertedOriginalName,
-        type: normalizedType, // 타입 명시적 설정
-        originalType: normalizedType, // 원본 타입 저장
+        type: normalizedType, // ?�??명시???�정
+        originalType: normalizedType, // ?�본 ?�???�??
         notNull: false,
         defaultValue: "",
         transform: null,
         transformDisplay: null,
+        transformChain: [],
+        transformOperation: null,
+        transformParams: "",
+        onError: "Warn",
         sourceId: sourceId,
         sourceName: sourceName,
       };
@@ -231,8 +254,6 @@ export default function SchemaTransformEditor({
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());
-    // Reset test status
-    setIsTestSuccessful(false);
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
@@ -257,12 +278,16 @@ export default function SchemaTransformEditor({
         ...c,
         name: getUniqueColumnName(convertedName),
         originalName: convertedOriginalName,
-        type: normalizedType, // 타입 명시적 설정
-        originalType: normalizedType, // 원본 타입 저장
+        type: normalizedType, // ?�??명시???�정
+        originalType: normalizedType, // ?�본 ?�???�??
         notNull: false,
         defaultValue: "",
         transform: null,
         transformDisplay: null,
+        transformChain: [],
+        transformOperation: null,
+        transformParams: "",
+        onError: "Warn",
         sourceId: sourceId,
         sourceName: sourceName,
       };
@@ -270,8 +295,6 @@ export default function SchemaTransformEditor({
 
     onSchemaChange([...targetSchema, ...enriched]);
     setSelectedBefore(new Set());
-    // Reset test status
-    setIsTestSuccessful(false);
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
@@ -280,8 +303,6 @@ export default function SchemaTransformEditor({
     const newSchema = targetSchema.filter((c) => !selectedAfter.has(c.name));
     onSchemaChange(newSchema);
     setSelectedAfter(new Set());
-    // Reset test status
-    setIsTestSuccessful(false);
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
@@ -289,8 +310,6 @@ export default function SchemaTransformEditor({
     // Clear all target columns
     onSchemaChange([]);
     setSelectedAfter(new Set());
-    // Reset test status
-    setIsTestSuccessful(false);
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
@@ -314,8 +333,6 @@ export default function SchemaTransformEditor({
     const next = [...targetSchema];
     next[index] = { ...next[index], [property]: value };
     onSchemaChange(next);
-    // Reset test status when properties change
-    setIsTestSuccessful(false);
     if (onTestStatusChange) onTestStatusChange(false);
   };
 
@@ -326,26 +343,144 @@ export default function SchemaTransformEditor({
   };
 
   // Apply transform function
-  const applyTransform = (transformExpr, newName, newType) => {
+  const applyTransform = (transformExpr, newName, newType, transformMeta = {}) => {
     if (editingColumn) {
       const next = [...targetSchema];
+      const existing = next[editingColumn.index];
+      if (transformMeta.mode === "csvMultiOutput" && Array.isArray(transformMeta.columns)) {
+        const sourceField = transformMeta.sourceField || existing.originalName || existing.sourceName || existing.name || newName;
+        const outputColumns = transformMeta.columns
+          .map((column, columnIndex) => {
+            const method = column.method || "copy";
+            const isOneOfValues = method === "one_of_values";
+            const fallbackAllowed = isOneOfValues && Boolean(column.fallbackAllowed || column.allowFallback);
+            const modelArtifact = isOneOfValues ? column.modelArtifact || column.selectedModelArtifact || "" : "";
+            const modelId = isOneOfValues ? column.modelId || column.selectedModelId || "" : "";
+            return {
+              allowedValues: Array.isArray(column.allowedValues) ? column.allowedValues : [],
+              fallbackAllowed,
+              instruction: column.instruction || "",
+              method,
+              modelArtifact,
+              modelId,
+              modelSelectionPolicy: isOneOfValues ? (column.modelSelectionPolicy || (modelArtifact || modelId ? "explicit" : "auto")) : "none",
+              nullable: column.nullable !== false,
+              requireModel: isOneOfValues && !fallbackAllowed,
+              targetName: String(column.targetName || `column_${columnIndex + 1}`).trim().replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || `column_${columnIndex + 1}`,
+              type: column.type || "String",
+            };
+          })
+          .filter((column, columnIndex, columns) => column.targetName && columns.findIndex((item) => item.targetName === column.targetName) === columnIndex);
+        if (outputColumns.length > 0) {
+          const params = JSON.stringify({ columns: outputColumns, sourceField, version: 1 });
+          const expansionId = existing.expansionId
+            || transformMeta.expansionId
+            || `text-row-${sourceField}-${Date.now().toString(36)}`;
+          const generated = outputColumns.map((column, columnIndex) => ({
+            defaultValue: existing.defaultValue || "",
+            expansionId,
+            expandedFrom: sourceField,
+            expandedIndex: columnIndex + 1,
+            expandedTotal: outputColumns.length,
+            included: true,
+            name: column.targetName,
+            nullable: column.nullable,
+            notNull: existing.notNull || false,
+            originalName: sourceField,
+            originalType: existing.originalType || existing.type,
+            role: `text-row-analysis:${column.instruction || column.targetName}`,
+            sourceId: existing.sourceId,
+            sourceName: `__text_analysis.${column.targetName}`,
+            targetName: column.targetName,
+            reviewAnalysisMethod: column.method,
+            reviewAnalysisAllowedValues: column.allowedValues || [],
+            reviewAnalysisFallbackAllowed: Boolean(column.fallbackAllowed),
+            reviewAnalysisModelArtifact: column.modelArtifact || "",
+            reviewAnalysisModelId: column.modelId || "",
+            reviewAnalysisModelSelectionPolicy: column.modelSelectionPolicy || "none",
+            reviewAnalysisRequireModel: Boolean(column.requireModel),
+            reviewAnalysisInstruction: column.instruction || "",
+            transform: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
+            transformChain: [{
+              display: `Text row -> ${column.targetName}`,
+              expression: `TEXT_ANALYZE(${sourceField}).${column.targetName}`,
+              onError: transformMeta.onError || "Warn",
+              operation: transformMeta.operation || "Text Row Analysis",
+              params,
+              type: column.type,
+            }],
+            transformDisplay: `Text row -> ${column.targetName}`,
+            transformOperation: transformMeta.operation || "Text Row Analysis",
+            transformParams: params,
+            type: column.type,
+          }));
+          const groupIndexes = existing.expansionId
+            ? next.map((item, itemIndex) => (item.expansionId === existing.expansionId ? itemIndex : -1)).filter((itemIndex) => itemIndex >= 0)
+            : existing.expandedFrom
+              ? next
+                .map((item, itemIndex) => (
+                  item.expandedFrom === existing.expandedFrom && String(item.sourceName || "").startsWith("__text_analysis.")
+                    ? itemIndex
+                    : -1
+                ))
+                .filter((itemIndex) => itemIndex >= 0)
+              : [editingColumn.index];
+          const replaceStartIndex = Math.min(...groupIndexes, editingColumn.index);
+          const filtered = next.filter((_, itemIndex) => !groupIndexes.includes(itemIndex));
+          filtered.splice(Math.min(replaceStartIndex, filtered.length), 0, ...generated);
+          onSchemaChange(filtered);
+          if (onTestStatusChange) onTestStatusChange(false);
+          setShowFunctionModal(false);
+          setEditingColumn(null);
+          return;
+        }
+      }
+      const fallbackOperation = transformMeta.operation || "SQL Expression";
+      const fallbackParams = transformMeta.params ?? (fallbackOperation === "SQL Expression" ? transformExpr : "");
+      const fallbackStep = {
+        display: transformMeta.display || (
+          fallbackOperation === "SQL Expression"
+            ? transformExpr
+            : `${fallbackOperation}${fallbackParams ? `: ${fallbackParams}` : ""}`
+        ),
+        expression: transformMeta.expression || (fallbackOperation === "SQL Expression" ? transformExpr : ""),
+        onError: transformMeta.onError || existing.onError || "Warn",
+        operation: fallbackOperation,
+        params: fallbackParams,
+        type: transformMeta.type || newType || existing.type,
+      };
+      const rawChain = normalizeTransformChain(
+        Array.isArray(transformMeta.chain) && transformMeta.chain.length > 0
+          ? transformMeta.chain
+          : [fallbackStep],
+        newType || transformMeta.type || existing.type,
+      );
+      const chain = dataTransformChain(rawChain);
+      const dataStep = primaryTransformStep(chain);
+      const defaultStep = rawChain.find((step) => step.operation === "Default Value");
+      const hasNullGuard = rawChain.some((step) => step.operation === "Null Guard");
+      const display = chain.map(formatTransformChainStep).filter(Boolean).join(" -> ");
       next[editingColumn.index] = {
-        ...next[editingColumn.index],
-        name: newName || next[editingColumn.index].name,
-        type: newType || next[editingColumn.index].type,
-        transform: transformExpr,
-        transformDisplay: transformExpr ? `${transformExpr}` : null,
+        ...existing,
+        name: newName || existing.name,
+        type: newType || transformMeta.type || existing.type,
+        defaultValue: defaultStep ? defaultStep.params : existing.defaultValue,
+        notNull: hasNullGuard ? true : existing.notNull,
+        onError: dataStep?.onError || transformMeta.onError || existing.onError || "Warn",
+        transform: dataStep?.expression || (dataStep?.operation === "SQL Expression" ? dataStep.params : null),
+        transformChain: chain,
+        transformDisplay: display || null,
+        transformOperation: dataStep?.operation || null,
+        transformParams: dataStep?.params || "",
       };
       onSchemaChange(next);
-      // Reset test status
-      setIsTestSuccessful(false);
       if (onTestStatusChange) onTestStatusChange(false);
     }
     setShowFunctionModal(false);
     setEditingColumn(null);
   };
 
-  // Spark SQL 타입 매핑
+  // Spark SQL ?�??매핑
   const TYPE_MAP = {
     string: "STRING",
     integer: "INT",
@@ -391,16 +526,16 @@ export default function SchemaTransformEditor({
 
       let expr = `\`${columnName}\``;
 
-      // 1. Type Cast 적용 (타입이 변경된 경우에만)
+      // 1. Type Cast ?�용 (?�?�이 변경된 경우?�만)
       const sparkType = TYPE_MAP[col.type];
       const originalType = col.originalType || "string";
       if (col.type !== originalType && sparkType) {
         expr = `CAST(${expr} AS ${sparkType})`;
       }
 
-      // 2. Default Value 적용 (COALESCE)
+      // 2. Default Value ?�용 (COALESCE)
       if (col.defaultValue && col.defaultValue.trim() !== "") {
-        // 숫자 타입이면 따옴표 없이, 아니면 따옴표로 감싸기
+        // ?�자 ?�?�이�??�옴???�이, ?�니�??�옴?�로 감싸�?
         const isNumericType = ["integer", "long", "double", "float"].includes(
           col.type,
         );
@@ -415,7 +550,7 @@ export default function SchemaTransformEditor({
         }
       }
 
-      // 3. AS alias 추가 (컬럼명 변경, CAST, 또는 COALESCE 적용된 경우)
+      // 3. AS alias 추�? (컬럼�?변�? CAST, ?�는 COALESCE ?�용??경우)
       const typeChanged = col.type !== originalType;
       const needsAlias =
         col.name !== columnName ||
@@ -429,7 +564,7 @@ export default function SchemaTransformEditor({
       return expr;
     });
 
-    // NOT NULL 필터 적용
+    // NOT NULL ?�터 ?�용
     const notNullCols = columnsToUse.filter((c) => c.notNull);
     let whereClause = "";
     if (notNullCols.length > 0) {
@@ -451,173 +586,9 @@ export default function SchemaTransformEditor({
   useEffect(() => {
     if (onSqlChange && activeTab === "columns" && targetSchema.length > 0) {
       const sql = generateSql();
-      onSqlChange(sql);
+      onSqlChange(sql, "columns");
     }
   }, [targetSchema, activeTab]);
-
-  // Test transform
-  const handleTestTransform = async () => {
-    setIsTestOpen(true);
-    setIsTestSuccessful(false);
-    if (onTestStatusChange) onTestStatusChange(false);
-
-    // Validation based on active tab
-    if (activeTab === "columns") {
-      // Visual Transform: check if columns are selected
-      if (targetSchema.length === 0) {
-        setTestError(
-          'Please move at least one column to the "After (Target)" list to test.',
-        );
-        return;
-      }
-    } else if (activeTab === "sql") {
-      // SQL Transform: check if SQL query is provided
-      if (!customSql.trim()) {
-        setTestError("Please enter a SQL query to test.");
-        return;
-      }
-    }
-
-    setIsTestLoading(true);
-    setTestError(null);
-    setTestResult(null);
-    setSparkWarnings([]);
-    setSqlConversions([]);
-
-    try {
-      // Build sources array based on active tab
-      let sources;
-
-      if (activeTab === "sql") {
-        // SQL Transform: include ALL columns from ALL sources
-        // This allows users to reference any column in their SQL query
-        sources = allSources
-          .map((source) => {
-            const sourceColumns = source.schema?.map((col) => col.name) || [];
-            // Convert dot notation to underscore for MongoDB sources
-            const convertedColumns =
-              source.sourceType === "mongodb"
-                ? sourceColumns.map((col) => col.replace(/\./g, "_"))
-                : sourceColumns;
-
-            return {
-              source_dataset_id: source.datasetId,
-              columns: convertedColumns,
-            };
-          })
-          .filter((source) => source.columns.length > 0);
-      } else {
-        // Visual Transform: only include columns that are in targetSchema
-        sources = allSources
-          .map((source) => {
-            const sourceColumns = targetSchema
-              .filter((col) => col.sourceId === source.id)
-              .map((col) => col.originalName);
-            // Convert dot notation to underscore for MongoDB sources
-            const convertedColumns =
-              source.sourceType === "mongodb"
-                ? sourceColumns.map((col) => col.replace(/\./g, "_"))
-                : sourceColumns;
-
-            return {
-              source_dataset_id: source.datasetId,
-              columns: convertedColumns,
-            };
-          })
-          .filter((source) => source.columns.length > 0);
-      }
-
-      if (sources.length === 0) {
-        setTestError("No data sources available.");
-        return;
-      }
-
-      // Generate SQL with all columns (no filtering by sourceId)
-      const sql = generateSql();
-
-      // Use API service instead of direct fetch
-      const result = await schemaTransformApi.testSqlTransform(sources, sql);
-
-      if (result.valid) {
-        setTestResult({
-          beforeRows: result.before_rows || [],
-          afterRows: result.sample_rows || [],
-          source_samples: result.source_samples || [],
-          sql: sql,
-        });
-        setIsTestSuccessful(true);
-        if (onTestStatusChange) onTestStatusChange(true);
-
-        // Store Spark compatibility warnings
-        if (result.spark_warnings && result.spark_warnings.length > 0) {
-          setSparkWarnings(result.spark_warnings);
-        }
-
-        // Store SQL conversions info (Spark SQL -> DuckDB)
-        if (result.sql_conversions && result.sql_conversions.length > 0) {
-          setSqlConversions(result.sql_conversions);
-        }
-
-        // For SQL Transform: extract result schema and update targetSchema
-        // This populates the Output Schema section in dataset page
-        if (activeTab === "sql" && result.schema) {
-          const resultSchema = result.schema.map((col) => ({
-            name: col.name,
-            type: col.type,
-            originalName: col.name,
-            sourceId: null, // SQL result doesn't belong to specific source
-            transform: null,
-            nullable: col.nullable !== false,
-          }));
-          if (onSchemaChange) {
-            onSchemaChange(resultSchema); // Replaces targetSchema completely
-          }
-        }
-
-        // For Visual Transform: update beforeColumns with flattened schema from preview
-        // This ensures MongoDB nested structures are shown as flattened columns
-        if (
-          activeTab === "columns" &&
-          result.source_samples &&
-          result.source_samples.length > 0
-        ) {
-          const currentSource = result.source_samples.find(
-            (s) => s.source_id === sourceId,
-          );
-          if (
-            currentSource &&
-            currentSource.rows &&
-            currentSource.rows.length > 0
-          ) {
-            // Extract column names from preview result (already flattened by backend)
-            const flattenedColumns = Array.from(
-              new Set(currentSource.rows.flatMap(Object.keys)),
-            );
-
-            // Convert to column schema format
-            const newBeforeColumns = flattenedColumns.map((colName) => ({
-              name: colName,
-              type: "unknown", // Type inference could be added here
-              originalName: colName,
-              sourceId: sourceId,
-              inTarget: targetSchema.some(
-                (tc) => tc.originalName === colName && tc.sourceId === sourceId,
-              ),
-            }));
-
-            setBeforeColumns(newBeforeColumns);
-          }
-        }
-      } else {
-        setTestError(result.error || "Invalid SQL");
-      }
-    } catch (err) {
-      console.error("Test failed:", err);
-      setTestError(err.message);
-    } finally {
-      setIsTestLoading(false);
-    }
-  };
 
   return (
     <div className="flex flex-col bg-gray-50 rounded-lg border border-gray-200">
@@ -745,17 +716,19 @@ export default function SchemaTransformEditor({
               onClick={moveSelectedToLeft}
               disabled={selectedAfter.size === 0}
               className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Remove selected"
+              aria-label="Remove selected target columns"
+              title="Remove selected target columns"
             >
-              <ChevronLeft className="w-5 h-5 text-gray-600" />
+              <Trash2 className="w-5 h-5 text-gray-600" />
             </button>
             <button
               onClick={moveAllToLeft}
               disabled={targetSchema.length === 0}
               className="p-2 rounded-md bg-white border border-gray-300 hover:bg-red-50 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              title="Remove all"
+              aria-label="Remove all target columns"
+              title="Remove all target columns"
             >
-              <ChevronsLeft className="w-6 h-6 text-gray-600" />
+              <Trash2 className="w-6 h-6 text-gray-600" />
             </button>
           </div>
 
@@ -780,7 +753,9 @@ export default function SchemaTransformEditor({
                       className={`p-2.5 rounded-xl border transition-all ${
                         selectedAfter.has(col.name)
                           ? "bg-slate-50 border-indigo-300 shadow-sm ring-1 ring-indigo-300"
-                          : "bg-white border-slate-200 hover:border-slate-300"
+                          : col.expandedFrom
+                            ? "bg-indigo-50/60 border-indigo-200 hover:border-indigo-300"
+                            : "bg-white border-slate-200 hover:border-slate-300"
                       }`}
                     >
                       {/* Column Header */}
@@ -797,6 +772,11 @@ export default function SchemaTransformEditor({
                             <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
                           )}
                         </div>
+                        {col.expandedFrom && (
+                          <span className="shrink-0 rounded-full bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-700" title={`Expanded from ${col.expandedFrom}`}>
+                            expanded {col.expandedIndex || index + 1}/{col.expandedTotal || 1}
+                          </span>
+                        )}
                         <input
                           type="text"
                           value={col.name}
@@ -824,7 +804,7 @@ export default function SchemaTransformEditor({
                         <button
                           onClick={() => openFunctionEditor(col, index)}
                           className={`p-1.5 rounded transition-colors ${
-                            col.transform
+                            col.transform || col.transformOperation || dataTransformChain(col.transformChain).length
                               ? "bg-purple-100 text-purple-600 hover:bg-purple-200"
                               : "bg-gray-100 text-gray-500 hover:bg-gray-200"
                           }`}
@@ -963,38 +943,8 @@ export default function SchemaTransformEditor({
                 <span className="w-1 h-3 bg-purple-600 rounded-full"></span>
                 SQL Query Editor
               </h3>
-              <button
-                onClick={() => setShowAI(!showAI)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium
-                                    bg-gradient-to-r from-indigo-50 to-purple-50 text-indigo-600
-                                    hover:from-indigo-100 hover:to-purple-100 transition-all
-                                    border border-indigo-200/50"
-                title="AI Assistant"
-              >
-                <Sparkles size={14} />
-                <span>AI</span>
-              </button>
             </div>
             <div className="flex-1 flex flex-col p-4">
-              {/* AI Input Panel - appears between header and textarea */}
-              {showAI && (
-                <InlineAIInput
-                  promptType="sql_transform"
-                  metadata={{
-                    sources: allSources.map((s) => ({
-                      name: s.name,
-                      schema: s.schema || [],
-                    })),
-                  }}
-                  placeholder="e.g., join tables, aggregate data, filter rows..."
-                  onApply={(suggestion) => {
-                    setCustomSql(suggestion);
-                    setShowAI(false);
-                  }}
-                  onCancel={() => setShowAI(false)}
-                />
-              )}
-
               <textarea
                 value={customSql}
                 onChange={(e) => setCustomSql(e.target.value)}
@@ -1018,328 +968,6 @@ export default function SchemaTransformEditor({
           </div>
         </div>
       )}
-
-      {/* Run Preview Test Button - Works for both tabs */}
-      <div className="flex items-center justify-end p-4 border-t border-slate-100 bg-white">
-        <div className="flex items-center gap-3">
-          {isTestSuccessful && (
-            <div className="flex items-center gap-1 text-green-600 bg-green-50 px-3 py-1 rounded-lg border border-green-200 animate-in fade-in slide-in-from-right-4 duration-300">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-xs font-bold uppercase tracking-tight">
-                Test Passed
-              </span>
-            </div>
-          )}
-          <button
-            onClick={handleTestTransform}
-            disabled={isTestLoading}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all shadow-md active:scale-95 ${
-              isTestLoading
-                ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-indigo-100"
-            }`}
-          >
-            {isTestLoading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Play className="w-3.5 h-3.5" />
-            )}
-            Run Preview Test
-          </button>
-          {isTestOpen && (
-            <button
-              onClick={() => setIsTestOpen(false)}
-              className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-all"
-              title="Close Preview"
-            >
-              <ChevronUp className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Test Results (Collapsible) */}
-      <div
-        className={`transition-all duration-500 ease-in-out border-t border-slate-100 bg-slate-50/30 overflow-hidden ${isTestOpen ? "max-h-[800px] opacity-100" : "max-h-0 opacity-0"}`}
-      >
-        <div className="p-6 space-y-4 max-w-full overflow-hidden">
-          {/* Error */}
-          {testError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm mb-3">
-              {testError}
-            </div>
-          )}
-
-          {/* Spark SQL Conversion Info (success) */}
-          {/*
-                    {sqlConversions.length > 0 && (
-                        <div className="p-3 bg-green-50 border border-green-200 rounded-lg mb-3">
-                            <div className="flex items-center gap-2 mb-2">
-                                <span className="text-sm font-semibold text-green-800">Spark SQL Mode</span>
-                            </div>
-                            <p className="text-xs text-green-700 mb-1">
-                                Spark SQL syntax detected and converted for preview:
-                            </p>
-                            <ul className="space-y-1">
-                                {sqlConversions.map((conversion, idx) => (
-                                    <li key={idx} className="text-xs text-green-700 font-mono">
-                                        {conversion}
-                                    </li>
-                                ))}
-                            </ul>
-                            <p className="text-xs text-green-600 mt-2">
-                                This SQL will run directly on Spark during ETL execution.
-                            </p>
-                        </div>
-                    )}
-            */}
-
-          {/* Spark Compatibility Warnings (for DuckDB SQL) */}
-          {sparkWarnings.length > 0 && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg mb-3">
-              <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600" />
-                <span className="text-sm font-semibold text-amber-800">
-                  Spark SQL Compatibility Warning
-                </span>
-              </div>
-              <ul className="space-y-1">
-                {sparkWarnings.map((warning, idx) => (
-                  <li key={idx} className="text-xs text-amber-700">
-                    <span className="font-mono bg-amber-100 px-1 rounded">
-                      {warning.function}()
-                    </span>
-                    {" → "}
-                    <span className="font-mono bg-green-100 text-green-700 px-1 rounded">
-                      {warning.spark_equivalent}()
-                    </span>
-                    <span className="text-amber-600 ml-2">
-                      will be auto-converted during ETL execution
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Test Result Header */}
-          <div className="flex items-center justify-between mb-3 pb-1 border-b border-slate-200">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
-              <span className="w-1 h-3 bg-indigo-500 rounded-full"></span>
-              Result Preview
-            </h4>
-            {isTestSuccessful && (
-              <span className="text-xs font-bold text-green-600 flex items-center gap-1">
-                Ready to proceed
-              </span>
-            )}
-          </div>
-
-          {/* Results Container */}
-          {testResult && (
-            <div className="grid grid-cols-2 gap-4">
-              {/* Before */}
-              <div className="flex flex-col min-w-0">
-                {/* Header with inline tabs */}
-                <div className="flex items-center gap-3 mb-1.5 min-h-[28px]">
-                  <h5 className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">
-                    Source Sample
-                  </h5>
-                  {/* Source sample tabs - inline with header */}
-                  {testResult.source_samples &&
-                    testResult.source_samples.length > 1 && (
-                      <div className="flex gap-1">
-                        {testResult.source_samples.map((sample, idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => setActiveSourceSampleTab(idx)}
-                            className={`px-2 py-0.5 text-[10px] font-medium rounded transition-colors ${
-                              activeSourceSampleTab === idx
-                                ? "bg-blue-100 text-blue-700 border border-blue-300"
-                                : "bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
-                            }`}
-                          >
-                            {sample.source_name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                </div>
-
-                <div className="overflow-x-auto border border-slate-200 rounded-xl bg-slate-50/50">
-                  {testResult.source_samples &&
-                  testResult.source_samples.length > 0 ? (
-                    (() => {
-                      const currentSample =
-                        testResult.source_samples[activeSourceSampleTab];
-                      return currentSample &&
-                        currentSample.rows &&
-                        currentSample.rows.length > 0 ? (
-                        <table className="w-full text-xs box-border border-separate border-spacing-0">
-                          <thead className="bg-slate-100 sticky top-0 z-10">
-                            <tr>
-                              {Array.from(
-                                new Set(
-                                  currentSample.rows.flatMap(Object.keys),
-                                ),
-                              ).map((key) => (
-                                <th
-                                  key={key}
-                                  className="px-3 py-2 text-left text-[10px] font-bold text-slate-600 border-b border-slate-200 whitespace-nowrap bg-slate-100"
-                                >
-                                  {key}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white">
-                            {currentSample.rows.slice(0, 5).map((row, i) => (
-                              <tr
-                                key={i}
-                                className="hover:bg-slate-50/50 transition-colors"
-                              >
-                                {Array.from(
-                                  new Set(
-                                    currentSample.rows.flatMap(Object.keys),
-                                  ),
-                                ).map((key, j) => (
-                                  <td
-                                    key={j}
-                                    className="px-3 py-2 border-b border-slate-50 font-mono text-slate-500 whitespace-nowrap text-[11px]"
-                                  >
-                                    {String(
-                                      row[key] !== undefined &&
-                                        row[key] !== null
-                                        ? row[key]
-                                        : "",
-                                    )}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      ) : (
-                        <div className="flex items-center justify-center h-full text-slate-400 text-xs italic">
-                          No data
-                        </div>
-                      );
-                    })()
-                  ) : testResult.beforeRows &&
-                    testResult.beforeRows.length > 0 ? (
-                    <table className="w-full text-xs box-border border-separate border-spacing-0">
-                      <thead className="bg-slate-100 sticky top-0 z-10">
-                        <tr>
-                          {Array.from(
-                            new Set(testResult.beforeRows.flatMap(Object.keys)),
-                          ).map((key) => (
-                            <th
-                              key={key}
-                              className="px-3 py-2 text-left text-[10px] font-bold text-slate-600 border-b border-slate-200 whitespace-nowrap bg-slate-100"
-                            >
-                              {key}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white">
-                        {testResult.beforeRows.slice(0, 5).map((row, i) => (
-                          <tr
-                            key={i}
-                            className="hover:bg-slate-50/50 transition-colors"
-                          >
-                            {Array.from(
-                              new Set(
-                                testResult.beforeRows.flatMap(Object.keys),
-                              ),
-                            ).map((key, j) => (
-                              <td
-                                key={j}
-                                className="px-3 py-2 border-b border-slate-50 font-mono text-slate-500 whitespace-nowrap text-[11px]"
-                              >
-                                {String(
-                                  row[key] !== undefined && row[key] !== null
-                                    ? row[key]
-                                    : "",
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-slate-400 text-xs italic">
-                      Source preview not available
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* After */}
-              <div className="flex flex-col min-w-0">
-                {/* Header with fixed height to match Source Sample */}
-                <div className="flex items-center gap-3 mb-1.5 min-h-[28px]">
-                  <h5 className="text-[9px] font-bold text-indigo-500 uppercase tracking-tight">
-                    Transformed Sample
-                  </h5>
-                </div>
-                <div className="overflow-x-auto border border-indigo-100 rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
-                  <table className="w-full text-xs box-border border-separate border-spacing-0">
-                    <thead className="bg-indigo-600 sticky top-0 z-10">
-                      <tr>
-                        {(testResult.afterRows.length > 0
-                          ? Array.from(
-                              new Set(
-                                testResult.afterRows.flatMap(Object.keys),
-                              ),
-                            )
-                          : []
-                        ).map((key) => (
-                          <th
-                            key={key}
-                            className="px-3 py-2 text-left text-[10px] font-bold text-white border-b border-indigo-700 whitespace-nowrap bg-indigo-600"
-                          >
-                            {key}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {testResult.afterRows.map((row, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-indigo-50/30 transition-colors"
-                        >
-                          {(testResult.afterRows.length > 0
-                            ? Array.from(
-                                new Set(
-                                  testResult.afterRows.flatMap(Object.keys),
-                                ),
-                              )
-                            : []
-                          ).map((key, j) => (
-                            <td
-                              key={j}
-                              className="px-3 py-2 border-b border-slate-50 font-mono text-slate-900 whitespace-nowrap text-[11px] font-medium"
-                            >
-                              {String(
-                                row[key] !== undefined && row[key] !== null
-                                  ? row[key]
-                                  : "",
-                              )}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Transform Function Modal */}
       {showFunctionModal && editingColumn && (
