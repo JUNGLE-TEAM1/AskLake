@@ -484,15 +484,7 @@ export function App() {
   }
 
   if (!currentUser || activeFlow === "login") {
-    return (
-      <div className="auth-only-shell" data-last-action={auditSignal}>
-        <main className="auth-only-main">
-          {toast && <div className={`app-toast ${toast.tone}`}>{toast.message}</div>}
-          <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />
-        </main>
-        <Footer />
-      </div>
-    );
+    return <AuthPage onAction={writeAuditLog} onAuthenticated={handleAuthenticated} />;
   }
 
   if (activeFlow === "rules") {

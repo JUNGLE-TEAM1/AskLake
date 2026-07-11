@@ -1001,6 +1001,46 @@ html:has(.landing-page) {
   text-align: center;
 }
 
+.login-card-description {
+  margin: -24px auto 0;
+  color: #667085;
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.login-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border-radius: 11px;
+  background: #eef2f7;
+  padding: 4px;
+}
+
+.login-card .login-mode-switch button {
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #667085;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.login-card .login-mode-switch button:hover {
+  transform: none;
+  box-shadow: none;
+  color: #1d4ed8;
+}
+
+.login-card .login-mode-switch button.active {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  color: #1d4ed8;
+}
+
 .login-card label {
   display: grid;
   gap: 12px;
@@ -1052,6 +1092,12 @@ html:has(.landing-page) {
   color: #788397;
   font-size: 12px;
   text-align: center;
+}
+
+.login-account-help {
+  display: grid;
+  min-height: 18px;
+  place-items: center;
 }
 
 .login-error {
