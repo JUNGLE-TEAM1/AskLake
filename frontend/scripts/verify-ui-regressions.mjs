@@ -7,7 +7,7 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 
 const checks = [
   {
-    name: "SQL analysis keeps shadcn tabs and functional preview limit",
+    name: "SQL analysis uses Nessie assistant and scrollable result views",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
       /import \{ Tabs, TabsContent, TabsList, TabsTrigger \} from "@\/components\/ui\/tabs";/,
@@ -19,16 +19,23 @@ const checks = [
       /transition=\{\{ type: "spring", stiffness: 420, damping: 32 \}\}/,
       /className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3"/,
       /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
-      /<Slider[\s\S]*max=\{PREVIEW_ROW_LIMIT\}[\s\S]*value=\{\[previewRowLimit\]\}/,
+      /import nessieIcon from "@\/assets\/asklake-nessi-icon\.png";/,
       /limit: previewRowLimit,/,
-      /<Bubble[\s\S]*variant=\{queryAiSuggestion \? "outline" : queryAiError \? "destructive" : "muted"\}/,
+      /<BubbleGroup[\s\S]*nessieMessages\.map/,
+      /<InputGroupTextarea[\s\S]*id="sql-query-ai-prompt"/,
       /<FieldGroup className="grid-cols-12 gap-3 max-\[860px\]:grid-cols-1">/,
       /<PanelHeader[\s\S]*title="선택 데이터셋 기준 SQL"/,
       /import \{ ScrollArea \} from "@\/components\/ui\/scroll-area";/,
-      /<ScrollArea className="h-\[300px\] min-h-0" type="always">/,
       /<ScrollArea className="sql-result-scroll" scrollbars="both" type="always">/,
+      /<DialogTitle>SQL 결과 전체 보기<\/DialogTitle>/,
+      /<SqlResultChartView resultDraft=\{resultDraft\} \/>/,
       /import \{ StatusBadge \} from "@\/components\/ui\/status-badge";/,
-      /<StatusBadge size="sm" tone=\{queryPending \? "default" : executed \? "success" : "muted"\}>/,
+      /<StatusBadge size="sm" tone=\{queryPending \? "default" : "success"\}>/,
+    ],
+    forbiddenPatterns: [
+      /import \{ Slider \} from "@\/components\/ui\/slider";/,
+      /<Slider/,
+      /> Query AI</,
     ],
   },
   {
