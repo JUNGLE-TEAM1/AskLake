@@ -466,13 +466,6 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:etl-lineage
 
 ## 11) Manual Smoke Checklist
 
-- backend가 없어도 `/` 랜딩의 header, hero, Solutions, 영상, Team, 최종 CTA가 표시된다.
-- `Solutions`, `Team`, `Watch Video`가 랜딩 내부의 올바른 섹션으로 이동한다.
-- `Get Started`, `Start AskLake`, `Start AskLake Now`가 `/login`으로 이동한다.
-- 데모 로그인에 임의의 이메일·비밀번호를 입력하고 `Sign In`을 누르면 `/jobs`로 이동한다.
-- `/jobs`와 기존 deep link 직접 접근 및 새로고침이 유지된다.
-- 데스크톱과 모바일에서 Nessie/물결 모션, 오른쪽에서 왼쪽으로 순환하는 팀 카드, 영상 프레임에 overflow나 잘림이 없다.
-- `prefers-reduced-motion`에서는 Nessie, 물결, 팀 카드 자동 모션이 정지한다.
 - 수집/처리 목록이 열린다.
 - 새 수집/처리 생성 flow가 Review까지 이동한다.
 - 생성 요청 후 job과 dataset이 반영된다.
