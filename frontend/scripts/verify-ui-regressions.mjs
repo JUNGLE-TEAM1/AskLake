@@ -19,7 +19,7 @@ const checks = [
       /transition=\{\{ type: "spring", stiffness: 420, damping: 32 \}\}/,
       /className="sql-workspace grid min-w-0 auto-rows-max content-start gap-3"/,
       /className="focus-visible:ring-0 focus-visible:ring-offset-0"[\s\S]*id="sql-query-editor"/,
-      /import nessieIcon from "@\/assets\/asklake-nessi-icon\.png";/,
+      /import \{ NessieMark \} from "\.\/NessieMark";/,
       /limit: previewRowLimit,/,
       /import \{[\s\S]*SqlNessieAssistant,[\s\S]*\} from "\.\/SqlNessieAssistant";/,
       /<SqlNessieAssistant[\s\S]*messages=\{nessieMessages\}/,
@@ -46,11 +46,11 @@ const checks = [
     name: "SQL Nessie assistant composes the official shadcn Bubble pattern",
     file: "src/pages/sql/SqlNessieAssistant.tsx",
     patterns: [
-      /import \{ Avatar, AvatarFallback, AvatarImage \} from "@\/components\/ui\/avatar";/,
+      /import \{ Avatar, AvatarFallback \} from "@\/components\/ui\/avatar";/,
       /import \{ Bubble, BubbleContent, BubbleGroup \} from "@\/components\/ui\/bubble";/,
       /<Card[\s\S]*grid-rows-\[max-content_1px_minmax\(0,1fr\)_1px_max-content\]/,
       /<Avatar className="rounded-lg bg-muted p-1" size=\{compact \? "default" : "lg"\}>/,
-      /<AvatarImage alt="Nessie" className="object-contain"/,
+      /<NessieMark className="size-full" \/>/,
       /viewportProps=\{\{ className: "\[&>div\]:!block \[&>div\]:h-full" \}\}/,
       /<BubbleGroup aria-live="polite" className="h-full justify-end p-4 pr-5">/,
       /variant=\{message\.role === "user" \? "default" : message\.tone === "error" \? "destructive" : "secondary"\}/,
@@ -439,7 +439,7 @@ const checks = [
     name: "Frontend defaults to live API mode",
     file: "src/services/apiClient.ts",
     patterns: [
-      /VITE_USE_MOCK_API \?\? "false"/,
+      /const useMockApi = false;/,
     ],
   },
   {
