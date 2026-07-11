@@ -505,18 +505,11 @@ export default function SchemaTransformEditor({
 
     if (columnsToUse.length === 0) return "SELECT * FROM input";
 
-    // For UNION ALL, use the original column names from input DataFrame
-    // which already has all columns aligned
+    // Spark applies the approved schema contract before these SQL steps, so
+    // expressions must address the normalized target columns (for example,
+    // MongoDB `_id` becomes `id`).
     const selectClauses = columnsToUse.map((col) => {
-      // Get the source info to check if it's MongoDB
-      const source = allSources.find((s) => s.id === col.sourceId);
-      const isMongoDB = source?.sourceType === "mongodb";
-
-      // Use originalName for SELECT since that's what exists in the source data
-      // For MongoDB, convert dot notation to underscore to match backend conversion
-      const columnName = isMongoDB
-        ? col.originalName.replace(/\./g, "_")
-        : col.originalName;
+      const columnName = col.name;
 
       if (col.transform) {
         // Quote the alias to handle reserved words
@@ -568,11 +561,7 @@ export default function SchemaTransformEditor({
     let whereClause = "";
     if (notNullCols.length > 0) {
       const conditions = notNullCols.map((col) => {
-        const source = allSources.find((s) => s.id === col.sourceId);
-        const isMongoDB = source?.sourceType === "mongodb";
-        const columnName = isMongoDB
-          ? col.originalName.replace(/\./g, "_")
-          : col.originalName;
+        const columnName = col.name;
         return `\`${columnName}\` IS NOT NULL`;
       });
       whereClause = ` WHERE ${conditions.join(" AND ")}`;
