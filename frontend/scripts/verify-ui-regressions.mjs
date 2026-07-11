@@ -62,6 +62,7 @@ const checks = [
       /className="sql-run-history"/,
       /내 최근 실행/,
       /getTrinoQueryRun\(summary\.runId\)/,
+      /toTrinoHistoryItem\(nextRun\),/,
       /onNotify\(message, "info"\)/,
     ],
   },

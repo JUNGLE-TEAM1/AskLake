@@ -577,7 +577,13 @@ export function SqlAnalysisPage({
     if (!trinoRun || !["queued", "running"].includes(trinoRun.status)) return;
     const timeoutId = window.setTimeout(() => {
       void getTrinoQueryRun(trinoRun.runId)
-        .then((nextRun) => setTrinoRun(nextRun))
+        .then((nextRun) => {
+          setTrinoRun(nextRun);
+          setTrinoRunHistory((items) => [
+            toTrinoHistoryItem(nextRun),
+            ...items.filter((item) => item.runId !== nextRun.runId),
+          ].slice(0, 8));
+        })
         .catch((error) => {
           const message = error instanceof Error ? error.message : "Trino 실행 상태를 확인하지 못했습니다.";
           setTrinoRun((current) => current ? {
