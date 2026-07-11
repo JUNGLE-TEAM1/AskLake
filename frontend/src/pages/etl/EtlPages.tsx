@@ -1637,14 +1637,30 @@ export function SourceConnectionPage({
                       <em>2</em>
                       <div><strong>Kafka 실행 방식</strong></div>
                     </div>
-                    <div className="source-stage-tabs" role="group" aria-label="Kafka 실행 방식 선택">
-                      <button aria-pressed={kafkaExecutionMode === "snapshot"} className={kafkaExecutionMode === "snapshot" ? "active" : ""} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>Snapshot</button>
-                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={kafkaExecutionMode === "continuous" ? "active" : ""} disabled={sourceLocked} type="button" onClick={() => onDraftChange({
+                    <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
+                      <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
+                        <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Snapshot</strong>
+                          <span>수동 또는 스케줄 실행</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Batch</span>
+                        {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
+                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({
                         source: { executionMode: "continuous", continuousConfig: draft.source.continuousConfig ?? { initialOffsetPolicy: "earliest", triggerIntervalSeconds: 30, maxOffsetsPerTrigger: 10000 } },
                         target: { format: "parquet" },
-                      })}>Continuous</button>
+                      })}>
+                        <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Continuous</strong>
+                          <span>준실시간 micro-batch 적재</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
                     </div>
-                    {kafkaExecutionMode === "continuous" && <p className="panel-note">Spark micro-batch로 Parquet에 append합니다. 현재 transform/quality rule은 Continuous에서 지원되지 않습니다.</p>}
+                    {kafkaExecutionMode === "continuous" && <p className="panel-note">Parquet append와 checkpoint를 사용합니다. transform/quality rule은 Continuous에서 지원되지 않습니다.</p>}
                   </section>
                 )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
