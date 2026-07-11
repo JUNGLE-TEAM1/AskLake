@@ -256,12 +256,14 @@ export function CatalogPage({
   error = null,
   loading = false,
   onAction,
+  onOpenSql,
   selectedDataset,
 }: {
   datasets: CatalogDataset[];
   error?: string | null;
   loading?: boolean;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
+  onOpenSql: (dataset: CatalogDataset) => void;
   selectedDataset: CatalogDataset;
 }) {
   const [previewDataset, setPreviewDataset] = useState<CatalogDataset>(selectedDataset);
@@ -398,6 +400,11 @@ export function CatalogPage({
     setActiveModal(variant);
   };
 
+  const openPreviewInSql = (fromMobileSheet = false) => {
+    if (fromMobileSheet) setMobilePreviewOpen(false);
+    onOpenSql(previewDataset);
+  };
+
   const renderPreviewContent = (fromMobileSheet = false) => (
     <>
       <PanelHeader
@@ -471,6 +478,9 @@ export function CatalogPage({
               </AccordionContent>
             </AccordionItem>
           </Accordion>
+          <Button className="catalog-wide-button" shape="compact" size="sm" type="button" variant="outline" onClick={() => openPreviewInSql(fromMobileSheet)}>
+            <ExternalLink data-icon="inline-start" /> SQL 분석에서 열기
+          </Button>
           <TagList align="center" className="catalog-preview-tags" density="compact">
             {previewDataset.tags.map((tag) => (
               <Badge key={tag} shape="compact" size="sm" variant="secondary">{tag}</Badge>
