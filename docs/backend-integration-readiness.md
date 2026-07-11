@@ -137,6 +137,8 @@ Spark runner 입력:
 
 Spark runner 결과:
 
+- Text structuring `one_of_values` execution must record whether each column used `selected_model`, `auto_model`, `fallback_rule`, or `missing_model`. Model artifacts stay in the model registry (`/api/catalog/models`), while transformed rows stay as Catalog datasets/materialization runs.
+
 - transformed Parquet output
 - output schema
 - input/output row count
@@ -153,7 +155,7 @@ Airflow sync 결과:
 
 ### Phase 3 Catalog reconciliation target
 
-Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, and backend live end-to-end verification complete on the current branch. Frontend terminal-success refresh is pending.
+Status: contract, FastAPI backend implementation, real-mode Airflow DAG call, frontend terminal-success Catalog refresh, and live end-to-end verification are complete on the current branch.
 
 Phase 3에서는 `publish_run_result`가 `POST /api/internal/airflow/spark-runs/{runId}/catalog`를 호출한다. FastAPI는 bearer token과 저장된 Job/Run/Airflow identity를 다시 검증하고 `taskStates.sparkResult`에서만 실행 결과를 읽는다. 성공 Spark manifest와 실제 Parquet가 모두 확인된 경우에만 Catalog dataset을 create/upsert한다.
 
@@ -171,7 +173,7 @@ Failure/recovery boundary:
 
 - Spark failure는 `spark_process_write`에서 DAG를 실패시키며 Catalog endpoint를 호출하지 않는다.
 - Catalog 실패는 성공 Parquet와 `sparkResult`를 남긴 채 `publish_run_result`를 실패시킨다. 실패 `catalogResult`에는 `runId`, `datasetId`, compact error, failed timestamp를 남긴다.
-- 같은 Airflow task retry는 Spark를 다시 실행하지 않고 persisted manifest로 Catalog만 재시도한다.
+- `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 Airflow DAG Run의 persisted manifest로 Catalog만 최대 3회 시도하고 Spark를 다시 실행하지 않는다.
 - commit 뒤 response가 유실돼도 retry는 기존 성공 `catalogResult`를 읽어 같은 success를 반환한다.
 - Catalog commit 전에는 Airflow DAG Run과 AskLake Run을 최종 `success`로 간주하지 않는다.
 - polling sync는 Airflow 응답 뒤 Run row를 refresh/lock하고 task snapshot을 저장해 동시 commit된 Spark/Catalog evidence 유실을 막는다.

@@ -1434,9 +1434,11 @@ def sync_airflow_run(
         run.ended_at = synced_at
         run.duration = format_iso_duration(run.started_at, synced_at)
 
+    catalog_failed = isinstance(catalog_result, dict) and catalog_result.get("status") == "failed"
+    catalog_committed = isinstance(catalog_result, dict) and catalog_result.get("status") == "success"
+
     if run.status == "failed":
         failed_task = first_problem_task(task_instances)
-        catalog_failed = isinstance(catalog_result, dict) and catalog_result.get("status") == "failed"
         spark_failed = isinstance(spark_result, dict) and bool(spark_result.get("failedStage") or spark_result.get("error"))
         if catalog_failed:
             run.failed_stage = "Catalog reconciliation"
@@ -1448,12 +1450,13 @@ def sync_airflow_run(
             run.failed_stage = task_title(failed_task.task_id) if failed_task else "Airflow DAG Run"
             run.error_summary = f"Airflow task failed: {failed_task.task_id}" if failed_task else "Airflow DAG Run failed."
     elif run.status == "success":
-        catalog_committed = isinstance(catalog_result, dict) and catalog_result.get("status") == "success"
-        if catalog_committed or airflow_run_has_materialization(run, dataset) or airflow_run_has_persisted_spark_result(run):
+        if catalog_failed:
+            mark_airflow_catalog_reconciliation_failure(run, catalog_result)
+        elif catalog_committed or airflow_run_has_materialization(run, dataset):
             run.failed_stage = "-"
             run.error_summary = "-"
         else:
-            mark_airflow_success_without_materialization(run)
+            mark_airflow_success_without_catalog_reconciliation(run)
 
     run_schema = etl_repository.run_to_schema(run)
     dag_steps = dag_steps_from_airflow_sync(job, run_schema.model_dump(by_alias=True), task_instances)
@@ -1470,13 +1473,17 @@ def repair_incomplete_airflow_successes(
 ) -> bool:
     repaired = False
     for run in runs:
-        if (
-            run.status == "success"
-            and run.airflow_dag_run_id
+        if run.status != "success" or not run.airflow_dag_run_id:
+            continue
+        catalog_result = (run.task_states or {}).get("catalogResult")
+        if isinstance(catalog_result, dict) and catalog_result.get("status") == "failed":
+            mark_airflow_catalog_reconciliation_failure(run, catalog_result)
+            repaired = True
+        elif (
+            not (isinstance(catalog_result, dict) and catalog_result.get("status") == "success")
             and not airflow_run_has_materialization(run, dataset)
-            and not airflow_run_has_persisted_spark_result(run)
         ):
-            mark_airflow_success_without_materialization(run)
+            mark_airflow_success_without_catalog_reconciliation(run)
             repaired = True
     return repaired
 
@@ -1498,16 +1505,16 @@ def airflow_run_has_materialization(
     )
 
 
-def airflow_run_has_persisted_spark_result(run: ETLRunModel) -> bool:
-    output_rows = str(run.output_rows or "").strip()
-    output_path = str(run.output_path or "").strip()
-    return output_rows not in {"", "-"} and output_path not in {"", "-"}
-
-
-def mark_airflow_success_without_materialization(run: ETLRunModel) -> None:
+def mark_airflow_catalog_reconciliation_failure(run: ETLRunModel, catalog_result: dict[str, Any]) -> None:
     run.status = "failed"
-    run.failed_stage = "Spark ETL materialization"
-    run.error_summary = "Airflow completed without a persisted Spark result or Catalog materialization."
+    run.failed_stage = "Catalog reconciliation"
+    run.error_summary = str(catalog_result.get("error") or "Catalog reconciliation failed.")
+
+
+def mark_airflow_success_without_catalog_reconciliation(run: ETLRunModel) -> None:
+    run.status = "failed"
+    run.failed_stage = "Catalog reconciliation"
+    run.error_summary = "Airflow completed without a successful Catalog reconciliation."
 
 
 def apply_job_state_from_latest_run(job: ETLJobModel, latest_run: ETLRunModel) -> None:

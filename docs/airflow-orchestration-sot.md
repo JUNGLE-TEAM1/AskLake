@@ -103,9 +103,13 @@ Failure and recovery:
   recovery evidence, records a failed `catalogResult`, and fails
   `publish_run_result`. The AskLake Run reports `Catalog reconciliation` as the
   failed stage instead of reporting success.
-- Airflow task retry reuses the persisted successful Spark manifest and retries
-  only reconciliation. It must not rerun Spark or create a second
-  materialization for the same `runId`.
+- `publish_run_result` retries up to 2 times at 30-second intervals, for at
+  most 3 Catalog attempts on the same DAG Run. Each retry reuses the upstream
+  XCom and persisted successful Spark manifest; it must not rerun Spark or
+  create a second materialization for the same `runId`.
+- An explicit failed `catalogResult` always keeps the AskLake Run failed. A
+  Spark row count and output path alone are not evidence of a committed
+  Catalog transaction.
 - Concurrent reconciliation locks the target dataset row while performing the
   read-modify-write append so successful Run histories are not lost. First
   creation relies on the dataset id/name uniqueness constraints; a create race

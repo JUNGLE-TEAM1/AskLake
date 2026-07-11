@@ -935,6 +935,15 @@ Response 예시:
 - ETL `lineageGraph`의 source node에는 실제 source/transform input 컬럼만 포함합니다. source-to-job edge는 transform step의 `input -> output` 또는 명시적 sourceName-to-targetName mapping으로 만들고, job-to-target edge는 같은 output column name으로 연결합니다. 결과 schema를 source node에 복제하거나 컬럼 순번만으로 연결하지 않습니다. `_asklake_run_id`, `_asklake_ingested_at` 같은 실행 metadata는 source가 아니라 Spark job에서 생성된 것으로 표현합니다.
 - ETL source node의 engine은 파일 확장자 또는 connector type을 사용합니다. ETL job node의 layer는 dataset layer가 아닌 `PROCESS`, engine은 `SPARK`로 표현합니다. target node의 layer는 `targetLayer`, engine은 요청값이 아니라 현재 Spark runner가 실제 저장한 physical output format(`PARQUET`)을 사용합니다.
 
+Text structuring run metadata:
+
+- `POST /api/text-structuring/training-runs` accepts `{ columns, trainRows, evalRows? }` and stores only `one_of_values` portable models that pass the internal quality gate.
+- `GET /api/catalog/models` and `GET /api/text-structuring/models` return model artifacts separately from Catalog datasets. Each model artifact includes `targetColumn`, `method`, `allowedValues`, `modelArtifact`, `metrics.accuracy`, `metrics.macroF1`, and `validationRows` when available.
+- Text row transform params store per output column: `targetName`, `method`, `allowedValues`, `modelSelectionPolicy`, `modelArtifact`, `fallbackAllowed`, and `requireModel`.
+- `modelSelectionPolicy: "auto"` means Spark may select a compatible model by target column and exact allowed-values set. Rule fallback is explicit through `fallbackAllowed: true` and `requireModel: false`.
+- Spark result payloads include `textStructuring.definition` and `textStructuring.execution`. The same execution summary is copied to `runHistory[].textStructuringExecution`, `CatalogDataset.textStructuringExecution`, and `DatasetMaterializationRun.textStructuringExecution`.
+- Column execution records use `executionMode: "selected_model" | "auto_model" | "fallback_rule" | "missing_model" | "copy" | "instruction"`. Fallback output must also set `fallbackUsed: true`.
+
 Validation:
 
 - `jobName`, `sourceType`, `sourceLabel`, `targetDataset`, `targetLayer`, `owner`는 필수입니다.
@@ -1054,10 +1063,10 @@ Failure contract:
 - 실패 시 Catalog partial update는 rollback한다. Parquet와 성공 `sparkResult`는 삭제하지 않는다.
 - rollback 후 같은 Run에 `taskStates.catalogResult={ status: "failed", ... }`와 compact error를 별도 저장해 원인을 관찰할 수 있게 한다.
 - `publish_run_result`는 endpoint 실패를 Airflow task 실패로 전파한다. 따라서 Airflow DAG Run과 AskLake Run은 성공으로 표시되지 않으며 failed stage는 `Catalog reconciliation`이다.
-- 같은 Airflow task retry는 성공 `sparkResult`를 재사용해 Catalog만 재시도하고 Spark output을 다시 만들지 않는다.
+- `publish_run_result`는 30초 간격으로 최대 2회 재시도하며, 같은 DAG Run의 성공 `sparkResult`를 재사용해 Catalog만 최대 3회 시도하고 Spark output을 다시 만들지 않는다.
 - Catalog commit 뒤 HTTP response만 유실된 경우 retry는 저장된 성공 `catalogResult`와 동일 `runId` materialization을 읽어 같은 success response를 반환한다.
 
-최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
+최종 상태 규칙은 `spark_process_write success + Catalog transaction success = publish_run_result success = Airflow DAG Run success = AskLake Run success`다. Phase 3 FastAPI Catalog endpoint와 transaction, 실제 Spark mode의 `publish_run_result` 호출 연결은 구현됐고 실제 Airflow/Spark/MinIO/Catalog 성공 및 Spark 실패 경로를 검증했다. polling sync는 Airflow 상태 조회 뒤 Run row를 다시 읽고 lock한 다음 task snapshot을 저장해, 동시에 commit된 `sparkResult`/`catalogResult`를 잃지 않는다. 명시적인 failed `catalogResult`는 Airflow success보다 우선해 AskLake Run을 실패로 유지하며, 성공 `catalogResult` 또는 같은 Run의 성공 materialization이 없으면 Spark 행 수·경로만으로 성공 처리하지 않는다. 독립 DAG import/status 검증용 `executionMode=smoke`만 물리 Catalog 호출을 건너뛴다. frontend는 동일 Run id를 queued/running으로 관찰한 뒤 success가 됐을 때만 `GET /api/catalog/datasets`를 한 번 호출한다. 낙관적 실행 직후 서버가 돌려준 이전 성공 Run은 refresh trigger가 아니다. 재조회 실패는 성공 Run을 rollback하지 않고 기존 Catalog 화면을 유지하며 수동 새로고침 안내를 표시한다.
 
 프론트 함수:
 

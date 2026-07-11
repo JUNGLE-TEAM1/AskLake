@@ -123,6 +123,25 @@ def main() -> None:
             assert (transaction_run.task_states or {}).get("sparkResult", {}).get("status") == "success"
             assert (transaction_run.task_states or {}).get("catalogResult", {}).get("status") == "failed"
 
+            sync_airflow_run(db, job, transaction_run, SuccessfulAirflowClient())
+            assert transaction_run.status == "failed"
+            assert transaction_run.failed_stage == "Catalog reconciliation"
+            assert "injected Catalog transaction failure" in transaction_run.error_summary
+
+            missing_catalog_run_id = f"run_catalog_{suffix}_missing_catalog"
+            missing_catalog_output = write_parquet_fixture(
+                output_root,
+                missing_catalog_run_id,
+                b"PAR1-missing-catalog",
+            )
+            add_run(db, job_id, missing_catalog_run_id, missing_catalog_output)
+            missing_catalog_run = etl_repository.get_run_model(db, missing_catalog_run_id)
+            assert missing_catalog_run is not None
+            sync_airflow_run(db, job, missing_catalog_run, SuccessfulAirflowClient())
+            assert missing_catalog_run.status == "failed"
+            assert missing_catalog_run.failed_stage == "Catalog reconciliation"
+            assert missing_catalog_run.error_summary == "Airflow completed without a successful Catalog reconciliation."
+
             stale_sync_run_id = f"run_catalog_{suffix}_stale_sync"
             add_run(db, job_id, stale_sync_run_id, None, spark_status=None)
             stale_sync_run = etl_repository.get_run_model(db, stale_sync_run_id)
@@ -310,6 +329,26 @@ class FailedCatalogAirflowClient:
             "dag_id": "asklake_etl_job",
             "dag_run_id": run_id,
             "state": "failed",
+            "task_id": "publish_run_result",
+        })]
+
+    def dag_run_url(self, run_id: str) -> str:
+        return f"http://airflow.local/dags/asklake_etl_job/runs/{run_id}"
+
+
+class SuccessfulAirflowClient:
+    def get_dag_run(self, run_id: str) -> AirflowDagRun:
+        return AirflowDagRun.from_payload({
+            "dag_id": "asklake_etl_job",
+            "dag_run_id": run_id,
+            "state": "success",
+        })
+
+    def list_task_instances(self, run_id: str) -> list[AirflowTaskInstance]:
+        return [AirflowTaskInstance.from_payload({
+            "dag_id": "asklake_etl_job",
+            "dag_run_id": run_id,
+            "state": "success",
             "task_id": "publish_run_result",
         })]
 

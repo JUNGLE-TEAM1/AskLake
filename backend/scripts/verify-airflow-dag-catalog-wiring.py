@@ -60,6 +60,12 @@ def load_dag_module():
 
 def main() -> None:
     module = load_dag_module()
+    dag_source = DAG_PATH.read_text(encoding="utf-8")
+    assert '''@task(
+        task_id="publish_run_result",
+        retries=2,
+        retry_delay=timedelta(seconds=30),
+    )''' in dag_source, "publish_run_result must retry Catalog reconciliation without rerunning Spark."
     conf = {
         "executionMode": "spark",
         "jobId": "job-phase3",

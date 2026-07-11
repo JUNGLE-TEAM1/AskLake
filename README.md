@@ -34,7 +34,7 @@ $env:VITE_USE_MOCK_API = "false"
 npm run dev
 ```
 
-For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Creating a pipeline adds the Job. The Phase 3 backend Catalog reconciliation endpoint is implemented, while the Airflow final-task call and automatic frontend Catalog refresh remain the next integration slice.
+For frontend-only mock mode, omit `VITE_USE_MOCK_API` or set it to `"true"`. In live mode, initial ETL jobs and catalog datasets may start empty. Creating a pipeline adds the Job. In Phase 3, Airflow's final task publishes a verified Spark result to Catalog, and the frontend refreshes Catalog after observing that Run's terminal success.
 The local backend stores ETL jobs, catalog datasets, and SQL run snapshots in the Postgres JSONB metadata tables from `docker-compose.yml`. Override `DATABASE_URL` only when using a different metadata database.
 
 ## Validation

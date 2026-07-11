@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 import os
 import time
@@ -178,7 +179,11 @@ def asklake_etl_job() -> None:
             error = result.get("error") or "Spark execution failed."
             raise RuntimeError(f"{failed_stage}: {error}")
         return result
-    @task(task_id="publish_run_result")
+    @task(
+        task_id="publish_run_result",
+        retries=2,
+        retry_delay=timedelta(seconds=30),
+    )
     def publish_run_result(conf: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
         return publish_catalog_result(conf, result)
 

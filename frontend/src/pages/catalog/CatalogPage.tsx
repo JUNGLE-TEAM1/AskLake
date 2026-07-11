@@ -167,6 +167,18 @@ function formatRunStorageSize(sizeBytes: number) {
   return `${size.toFixed(1)}PB`;
 }
 
+function formatModelMetric(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "-";
+}
+
+function modelExecutionLabel(artifact: CatalogModelArtifact) {
+  if (artifact.executionMode) return artifact.executionMode;
+  if (artifact.fallbackUsed) return "fallback_rule";
+  if (artifact.modelArtifact) return "model";
+  return artifact.runtimeStatus || "-";
+}
+
 function materializationRunStatusLabel(status: DatasetMaterializationRun["status"]) {
   if (status === "success") return "성공";
   if (status === "failed") return "실패";
@@ -919,9 +931,10 @@ function ModelArtifactsPanel({ artifacts, error }: { artifacts: CatalogModelArti
             <div className="catalog-materialization-row selectable" key={artifact.id}>
               <span className={`catalog-run-status ${artifact.status === "available" ? "success" : "queued"}`}>{artifact.status || "tracked"}</span>
               <strong title={artifact.id}>{artifact.targetColumn || artifact.outputColumn || artifact.id}</strong>
-              <span>{artifact.method || "-"}</span>
-              <span>{artifact.modelArtifact || artifact.runtimeStatus || "-"}</span>
-              <span>{typeof artifact.totalRows === "number" ? artifact.totalRows.toLocaleString() : "-"} rows</span>
+              <span title={(artifact.allowedValues ?? []).join(", ")}>{artifact.method || "-"} - {(artifact.allowedValues ?? []).length || 0} values</span>
+              <span title={artifact.modelArtifact || artifact.runtimeStatus || "-"}>{modelExecutionLabel(artifact)}</span>
+              <span>acc {formatModelMetric(artifact.metrics?.accuracy)} / F1 {formatModelMetric(artifact.metrics?.macroF1)}</span>
+              <span>{Number(artifact.validationRows ?? artifact.metrics?.validationRows ?? artifact.totalRows ?? 0).toLocaleString()} rows</span>
             </div>
           ))}
         </div>
@@ -975,6 +988,22 @@ function CatalogMaterializationRuns({
           {visibleRuns.map((run) => {
             const isSelectable = run.status === "success" && canQueryDatasetForCurrentUser(dataset);
             const isSelected = run.runId === selectedRunId;
+            const textStructuringLabel = run.textStructuring?.length
+              ? run.textStructuring
+                .map((check) => `${check.target || check.output || "column"}:${check.executionMode || check.runtimeStatus || "-"}`)
+                .join(", ")
+              : "";
+            const quarantineLabel = run.quarantine?.rows
+              ? `Quarantine: ${Number(run.quarantine.rows).toLocaleString()} rows`
+              : "";
+            const executionArtifactLabel = [
+              textStructuringLabel ? `Text structuring: ${textStructuringLabel}` : "",
+              quarantineLabel,
+            ].filter(Boolean).join(" | ");
+            const executionArtifactTitle = [
+              textStructuringLabel || "",
+              run.quarantine?.path ? `quarantine=${run.quarantine.path}` : "",
+            ].filter(Boolean).join(" | ");
 
             return (
             <div
@@ -999,6 +1028,7 @@ function CatalogMaterializationRuns({
               <span>{run.rowCount.toLocaleString()} rows</span>
               <span>{formatRunStorageSize(run.storageSizeBytes)}</span>
               <span title={run.sourceLabel}>{run.sourceLabel}</span>
+              <span title={executionArtifactTitle || "-"}>{executionArtifactLabel || "-"}</span>
               <button
                 aria-label={`${run.runId} append 결과 삭제`}
                 className="catalog-materialization-delete"

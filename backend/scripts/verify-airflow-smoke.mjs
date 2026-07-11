@@ -50,6 +50,10 @@ async function runSmoke() {
       `Expected ${taskId}=success, received ${successTasks.get(taskId)?.state || "missing"}.`,
     );
   }
+  assert(
+    Number(successTasks.get("publish_run_result")?.max_tries) === 2,
+    `Expected publish_run_result max_tries=2, received ${successTasks.get("publish_run_result")?.max_tries ?? "missing"}.`,
+  );
 
   const failedRun = await triggerRun(headers, "failure", true);
   const completedFailedRun = await waitForTerminalRun(headers, failedRun.dag_run_id);
