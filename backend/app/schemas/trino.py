@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from app.schemas.common import CamelModel
 from app.schemas.catalog import QueryEngineStatus
@@ -54,11 +54,21 @@ class TrinoMaterializationRunResponse(CamelModel):
 
 class SubmitTrinoQueryRunRequest(CamelModel):
     base_dataset_id: str
-    client_request_id: str | None = None
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     confirmation_token: str | None = None
     query: str
     reference_dataset_ids: list[str] = Field(default_factory=list)
     result_page_size: int | None = Field(default=None, ge=1, le=1000)
+
+    @field_validator("client_request_id")
+    @classmethod
+    def normalize_client_request_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientRequestId must not be blank")
+        return normalized
 
 
 class TrinoQueryEstimateRequest(CamelModel):
@@ -80,7 +90,7 @@ class TrinoQueryEstimate(CamelModel):
 
 class QueryRunSubmitRequest(CamelModel):
     base_dataset_id: str | None = None
-    client_request_id: str | None = None
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=128)
     confirmation_token: str | None = None
     dataset_id: str | None = None
     limit: int | None = Field(default=None, ge=1, le=500)
@@ -89,6 +99,16 @@ class QueryRunSubmitRequest(CamelModel):
     reference_dataset_ids: list[str] = Field(default_factory=list)
     result_page_size: int | None = Field(default=None, ge=1, le=1000)
     validation_key: str | None = None
+
+    @field_validator("client_request_id")
+    @classmethod
+    def normalize_client_request_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("clientRequestId must not be blank")
+        return normalized
 
     def trino_request(self) -> SubmitTrinoQueryRunRequest:
         base_dataset_id = self.base_dataset_id or self.dataset_id

@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
-from sqlalchemy import and_, delete, inspect, or_, select, text
+from sqlalchemy import and_, delete, func, inspect, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.sql import SqlRunModel, SqlRunResultPageModel
@@ -12,10 +13,17 @@ _schema_ready_bind_ids: set[int] = set()
 
 @dataclass(frozen=True)
 class TrinoCollectorClaim:
+    engine: str
     generation: int
     next_uri: str
     recovered: bool
     run_id: str
+
+
+@dataclass(frozen=True)
+class TrinoSubmissionReservation:
+    outcome: Literal["created", "existing", "conflict", "limit"]
+    payload: dict[str, Any] | None = None
 
 
 class SqlRepository:
@@ -49,7 +57,11 @@ class SqlRepository:
             model.query = query
             model.payload = payload
 
-        if payload.get("engine") == "trino":
+        model.actor_key = string_or_none(payload.get("actorKey")) or model.actor_key
+        model.client_request_id = string_or_none(payload.get("clientRequestId")) or model.client_request_id
+        model.request_fingerprint = string_or_none(payload.get("requestFingerprint")) or model.request_fingerprint
+
+        if payload.get("engine") in {"trino", "trino-materialization"}:
             model.collector_next_uri = string_or_none(payload.get("trinoNextUri"))
             if str(payload.get("status") or "") in {"succeeded", "failed", "cancelled"} or not model.collector_next_uri:
                 model.collector_owner = None
@@ -58,6 +70,92 @@ class SqlRepository:
         self.db.flush()
         self.db.commit()
         return payload
+
+    def reserve_trino_submission(
+        self,
+        payload: dict[str, Any],
+        *,
+        actor_key: str,
+        client_request_id: str | None,
+        request_fingerprint: str,
+        max_active_runs: int,
+    ) -> TrinoSubmissionReservation:
+        """Atomically reserve an actor slot before submitting work to Trino."""
+        ensure_sql_schema(self.db)
+        if self.db.get_bind().dialect.name == "postgresql":
+            self.db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:actor_key, 0))"),
+                {"actor_key": actor_key},
+            )
+
+        if client_request_id:
+            existing = self.db.scalar(
+                select(SqlRunModel)
+                .where(SqlRunModel.actor_key == actor_key)
+                .where(SqlRunModel.client_request_id == client_request_id)
+                .with_for_update()
+            )
+            if existing is not None:
+                if existing.request_fingerprint != request_fingerprint:
+                    self.db.rollback()
+                    return TrinoSubmissionReservation(outcome="conflict")
+                existing_payload = dict(existing.payload or {})
+                self.db.rollback()
+                return TrinoSubmissionReservation(outcome="existing", payload=existing_payload)
+
+        active_count = int(self.db.scalar(
+            select(func.count())
+            .select_from(SqlRunModel)
+            .where(
+                or_(
+                    SqlRunModel.actor_key == actor_key,
+                    and_(
+                        SqlRunModel.actor_key.is_(None),
+                        or_(
+                            SqlRunModel.payload["submittedByUserId"].astext == actor_key,
+                            SqlRunModel.payload["submittedByName"].astext == actor_key,
+                        ),
+                    ),
+                ),
+                SqlRunModel.payload["engine"].astext == "trino",
+                SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
+            )
+        ) or 0)
+        if active_count >= max_active_runs:
+            self.db.rollback()
+            return TrinoSubmissionReservation(outcome="limit")
+
+        reserved_payload = dict(payload)
+        reserved_payload.update({
+            "actorKey": actor_key,
+            "clientRequestId": client_request_id,
+            "requestFingerprint": request_fingerprint,
+        })
+        model = SqlRunModel(
+            id=str(reserved_payload["runId"]),
+            dataset_id=str(reserved_payload["baseDatasetId"]),
+            query=str(reserved_payload["query"]),
+            payload=reserved_payload,
+            actor_key=actor_key,
+            client_request_id=client_request_id,
+            request_fingerprint=request_fingerprint,
+        )
+        self.db.add(model)
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            if not client_request_id:
+                raise
+            existing = self.db.scalar(
+                select(SqlRunModel)
+                .where(SqlRunModel.actor_key == actor_key)
+                .where(SqlRunModel.client_request_id == client_request_id)
+            )
+            if existing is None or existing.request_fingerprint != request_fingerprint:
+                return TrinoSubmissionReservation(outcome="conflict")
+            return TrinoSubmissionReservation(outcome="existing", payload=dict(existing.payload or {}))
+        return TrinoSubmissionReservation(outcome="created", payload=reserved_payload)
 
     def save_result_page(
         self,
@@ -129,6 +227,60 @@ class SqlRepository:
             model.checksum = checksum
             model.source_next_uri = source_next_uri
         self.db.commit()
+
+    def save_result_page_metadata_if_owned(
+        self,
+        *,
+        run_id: str,
+        worker_id: str,
+        generation: int,
+        page_index: int,
+        columns: list[str],
+        object_key: str,
+        row_count: int,
+        compressed_bytes: int,
+        checksum: str,
+        source_next_uri: str,
+    ) -> Literal["saved", "duplicate", "fenced"]:
+        ensure_sql_schema(self.db)
+        run = self.db.scalar(select(SqlRunModel).where(SqlRunModel.id == run_id).with_for_update())
+        now = datetime.now(timezone.utc)
+        if (
+            run is None
+            or run.collector_owner != worker_id
+            or run.collector_generation != generation
+            or run.collector_lease_expires_at is None
+            or run.collector_lease_expires_at <= now
+        ):
+            self.db.rollback()
+            return "fenced"
+        duplicate = self.db.scalar(
+            select(SqlRunResultPageModel)
+            .where(SqlRunResultPageModel.run_id == run_id)
+            .where(SqlRunResultPageModel.source_next_uri == source_next_uri)
+        )
+        if duplicate is not None:
+            self.db.rollback()
+            return "duplicate"
+        self.db.add(SqlRunResultPageModel(
+            id=f"{run_id}:{page_index}",
+            run_id=run_id,
+            page_index=page_index,
+            columns=columns,
+            rows=[],
+            byte_size=compressed_bytes,
+            storage_backend="minio",
+            object_key=object_key,
+            row_count=row_count,
+            checksum=checksum,
+            source_next_uri=source_next_uri,
+        ))
+        try:
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            return "duplicate"
+        return "saved"
 
     def get_result_page(self, run_id: str, page_index: int) -> SqlRunResultPageModel | None:
         ensure_sql_schema(self.db)
@@ -203,6 +355,32 @@ class SqlRepository:
         ).all()
         return [model.payload for model in models]
 
+    def list_terminal_trino_run_payload_batch(
+        self,
+        *,
+        after_run_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        ensure_sql_schema(self.db)
+        conditions = [
+            SqlRunModel.payload["engine"].astext == "trino",
+            SqlRunModel.payload["status"].astext.in_(["succeeded", "failed", "cancelled"]),
+        ]
+        if after_run_id:
+            conditions.append(SqlRunModel.id > after_run_id)
+        models = self.db.scalars(
+            select(SqlRunModel)
+            .where(*conditions)
+            .order_by(SqlRunModel.id.asc())
+            .limit(max(1, min(limit, 500)))
+        ).all()
+        payloads: list[dict[str, Any]] = []
+        for model in models:
+            payload = dict(model.payload or {})
+            payload.setdefault("runId", model.id)
+            payloads.append(payload)
+        return payloads
+
     def claim_next_trino_run(self, worker_id: str, lease_seconds: int) -> TrinoCollectorClaim | None:
         """Claim one active run. Expired leases are intentionally recoverable."""
         ensure_sql_schema(self.db)
@@ -211,6 +389,8 @@ class SqlRepository:
             select(SqlRunModel)
             .where(
                 SqlRunModel.collector_next_uri.is_not(None),
+                SqlRunModel.payload["engine"].astext.in_(["trino", "trino-materialization"]),
+                SqlRunModel.payload["status"].astext.in_(["queued", "running"]),
                 or_(
                     SqlRunModel.collector_lease_expires_at.is_(None),
                     SqlRunModel.collector_lease_expires_at < now,
@@ -228,19 +408,23 @@ class SqlRepository:
             self.db.rollback()
             return None
         payload = model.payload or {}
-        if payload.get("engine") != "trino" or str(payload.get("status") or "") not in {"queued", "running"}:
-            self.db.rollback()
-            return None
         next_uri = string_or_none(model.collector_next_uri)
         if not next_uri:
             self.db.rollback()
             return None
         recovered = model.collector_lease_expires_at is not None
+        model.collector_generation = int(model.collector_generation or 0) + 1
         model.collector_owner = worker_id
         model.collector_lease_expires_at = now + timedelta(seconds=lease_seconds)
         model.collector_next_attempt_at = None
         self.db.commit()
-        return TrinoCollectorClaim(generation=model.collector_generation, next_uri=next_uri, recovered=recovered, run_id=model.id)
+        return TrinoCollectorClaim(
+            engine=str(payload.get("engine") or ""),
+            generation=model.collector_generation,
+            next_uri=next_uri,
+            recovered=recovered,
+            run_id=model.id,
+        )
 
     def renew_trino_collector_lease(self, run_id: str, worker_id: str, generation: int, lease_seconds: int) -> bool:
         ensure_sql_schema(self.db)
@@ -323,17 +507,6 @@ class SqlRepository:
             .execution_options(populate_existing=True)
         )
 
-    def count_active_trino_runs_for_actor(self, actor_id: str) -> int:
-        ensure_sql_schema(self.db)
-        models = self.db.scalars(select(SqlRunModel).where(SqlRunModel.payload["engine"].astext == "trino")).all()
-        return sum(
-            1
-            for model in models
-            if str((model.payload or {}).get("submittedByUserId") or (model.payload or {}).get("submittedByName") or "") == actor_id
-            and str((model.payload or {}).get("status") or "") in {"queued", "running"}
-        )
-
-
 def ensure_sql_schema(db: Session) -> None:
     bind = db.get_bind()
     bind_key = id(bind)
@@ -347,6 +520,9 @@ def ensure_sql_schema(db: Session) -> None:
         else:
             existing_run_columns = {column["name"] for column in inspector.get_columns("sql_runs")}
             run_column_defs = {
+                "actor_key": "TEXT",
+                "client_request_id": "TEXT",
+                "request_fingerprint": "TEXT",
                 "collector_owner": "TEXT",
                 "collector_lease_expires_at": "TIMESTAMP WITH TIME ZONE",
                 "collector_next_uri": "TEXT",
@@ -372,6 +548,8 @@ def ensure_sql_schema(db: Session) -> None:
                 if column_name not in existing_columns:
                     connection.execute(text(f"ALTER TABLE sql_run_result_pages ADD COLUMN {column_name} {column_type}"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_sql_runs_collector_claim ON sql_runs (collector_next_uri, collector_lease_expires_at, collector_next_attempt_at)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_sql_runs_actor_key ON sql_runs (actor_key)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_sql_run_actor_client_request ON sql_runs (actor_key, client_request_id) WHERE client_request_id IS NOT NULL"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_sql_run_result_pages_source_uri ON sql_run_result_pages (run_id, source_next_uri)"))
 
     _schema_ready_bind_ids.add(bind_key)

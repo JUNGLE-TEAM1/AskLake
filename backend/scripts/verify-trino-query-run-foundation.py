@@ -1,12 +1,20 @@
 import base64
 from typing import Any
 
+from app.core.auth_context import ActorContext, can
 from app.core.config import Settings
 from app.core.errors import ApiError
 from app.schemas.catalog import CatalogDatasetResponse
 from app.schemas.trino import QueryRunSubmitRequest, SubmitTrinoQueryRunRequest, TrinoClientPage
 from app.services.trino_client import TrinoClient, parse_trino_page, validate_next_uri
-from app.services.trino_query_run_service import build_run_response, decode_cursor, encode_cursor
+from app.services.trino_query_run_service import (
+    build_run_response,
+    decode_cursor,
+    decode_cursor_position,
+    encode_cursor,
+    is_run_submitter,
+    trino_request_fingerprint,
+)
 from app.services.trino_sql_compiler import compile_trino_read_query
 from app.services.trino_materialization import build_trino_materialization_statement
 from app.services.trino_query_estimate import build_query_estimate, parse_plan_estimated_bytes, require_estimate_confirmation
@@ -86,6 +94,18 @@ def verify() -> None:
 
     canonical_request = QueryRunSubmitRequest(datasetId="ds_orders", query="SELECT * FROM orders")
     assert canonical_request.trino_request().base_dataset_id == "ds_orders"
+    normalized_request = SubmitTrinoQueryRunRequest(
+        baseDatasetId="ds_orders",
+        clientRequestId="  request-1  ",
+        query="SELECT * FROM orders",
+    )
+    assert normalized_request.client_request_id == "request-1"
+    try:
+        SubmitTrinoQueryRunRequest(baseDatasetId="ds_orders", clientRequestId="   ", query="SELECT * FROM orders")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Blank clientRequestId must be rejected")
     orders = make_dataset("ds_orders", "orders", "orders_clean")
     customers = make_dataset("ds_customers", "customers", "customers_clean")
     compiled, references = compile_trino_read_query(
@@ -160,6 +180,19 @@ def verify() -> None:
         retention_expires_at=run.result.retention_expires_at,
         secret="verify-secret",
     ) == 2
+    offset_cursor = encode_cursor(
+        2,
+        run_id=run.run_id,
+        retention_expires_at=run.result.retention_expires_at,
+        secret="verify-secret",
+        row_offset=75,
+    )
+    assert decode_cursor_position(
+        offset_cursor,
+        run_id=run.run_id,
+        retention_expires_at=run.result.retention_expires_at,
+        secret="verify-secret",
+    ) == (2, 75)
     try:
         decode_cursor(
             opaque_cursor,
@@ -171,6 +204,36 @@ def verify() -> None:
         pass
     else:
         raise AssertionError("cursor must be bound to its Query Run")
+
+    identified_actor = ActorContext(id="user_1", name="Shared Name", role="viewer")
+    same_name_actor = ActorContext(id="user_2", name="Shared Name", role="viewer")
+    assert is_run_submitter("user_1", "Shared Name", identified_actor)
+    assert not is_run_submitter("user_1", "Shared Name", same_name_actor)
+    assert is_run_submitter(None, "Shared Name", same_name_actor)
+    assert can(
+        identified_actor,
+        "query",
+        grants=[{"actions": ["query"], "principalId": "user_1", "principalType": "user"}],
+    )
+
+    request_a = SubmitTrinoQueryRunRequest(
+        baseDatasetId="ds_orders",
+        clientRequestId="request-1",
+        query="SELECT * FROM orders\r\n",
+        referenceDatasetIds=["ds_customers", "ds_orders"],
+        resultPageSize=25,
+    )
+    request_b = SubmitTrinoQueryRunRequest(
+        baseDatasetId="ds_orders",
+        clientRequestId="request-2",
+        query="SELECT * FROM orders\n",
+        referenceDatasetIds=["ds_orders", "ds_customers"],
+        resultPageSize=25,
+    )
+    assert trino_request_fingerprint(request_a) == trino_request_fingerprint(request_b)
+    assert trino_request_fingerprint(request_a) != trino_request_fingerprint(
+        request_b.model_copy(update={"query": "SELECT order_id FROM orders"}),
+    )
 
     estimate_dataset = orders.model_copy(update={"size": "2 GB"})
     estimate_settings = Settings(

@@ -40,6 +40,10 @@ from app.services.trino_query_estimate import build_query_estimate, parse_plan_e
 from app.services.trino_sql_compiler import compile_trino_read_query
 
 
+class CollectorLeaseLost(RuntimeError):
+    pass
+
+
 class TrinoQueryRunService:
     """Canonical Query Run foundation. API routing switches to this in Phase 3."""
 
@@ -68,13 +72,6 @@ class TrinoQueryRunService:
 
         actor_context = actor or ActorContext()
         actor_key = actor_context.id or actor_context.name
-        if self.repository.count_active_trino_runs_for_actor(actor_key) >= self.settings.trino_max_concurrent_runs_per_user:
-            raise ApiError(
-                ErrorCode.CONFLICT,
-                "Concurrent query run limit reached",
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                {"limit": self.settings.trino_max_concurrent_runs_per_user},
-            )
         context_datasets = self._resolve_context(request)
         self._require_query_access(context_datasets, actor_context, request.query)
         compiled_query, _ = compile_trino_read_query(request.query, context_datasets)
@@ -92,8 +89,52 @@ class TrinoQueryRunService:
             runtime_settings=self.settings,
             estimate=estimate,
         )
-        page = self.client.submit(compiled_query)
-        response = build_run_response(request, page, actor_context, self.settings.trino_result_retention_seconds)
+        request_fingerprint = trino_request_fingerprint(request)
+        reserved = build_reserved_run_response(request, actor_context, self.settings.trino_result_retention_seconds)
+        reservation_payload = reserved.model_dump(by_alias=True, exclude_none=True, mode="json")
+        reservation_payload["resultPageSize"] = normalized_result_page_size(request.result_page_size)
+        reservation = self.repository.reserve_trino_submission(
+            reservation_payload,
+            actor_key=actor_key,
+            client_request_id=request.client_request_id,
+            request_fingerprint=request_fingerprint,
+            max_active_runs=self.settings.trino_max_concurrent_runs_per_user,
+        )
+        if reservation.outcome == "existing" and reservation.payload is not None:
+            return TrinoQueryRunResponse.model_validate(reservation.payload)
+        if reservation.outcome == "conflict":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "clientRequestId was already used for a different query request",
+                status.HTTP_409_CONFLICT,
+                {"clientRequestId": request.client_request_id},
+            )
+        if reservation.outcome == "limit":
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Concurrent query run limit reached",
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                {"limit": self.settings.trino_max_concurrent_runs_per_user},
+            )
+
+        try:
+            page = self.client.submit(compiled_query)
+        except ApiError as exc:
+            failed = reserved.model_copy(update={
+                "completed_at": current_utc_timestamp(),
+                "error": TrinoQueryRunError(code=exc.code, message=exc.message),
+                "status": "failed",
+            })
+            self._save_response(failed, compiled_query=compiled_query, trino_next_uri=None)
+            raise
+        response = build_run_response(
+            request,
+            page,
+            actor_context,
+            self.settings.trino_result_retention_seconds,
+            run_id=reserved.run_id,
+            submitted_at=reserved.submitted_at,
+        )
         try:
             response = self._finalize_result_storage(self._store_result_page(response, page))
         except ApiError as exc:
@@ -234,11 +275,26 @@ class TrinoQueryRunService:
                 return response
 
             page = self.client.fetch(next_uri)
+            if not self.repository.renew_trino_collector_lease(
+                run_id,
+                worker_id,
+                generation,
+                self.settings.trino_collector_lease_seconds,
+            ):
+                return TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
             updated = apply_trino_page(response, page)
             try:
                 updated = self._finalize_result_storage(
-                    self._store_result_page(updated, page, source_next_uri=next_uri),
+                    self._store_result_page(
+                        updated,
+                        page,
+                        source_next_uri=next_uri,
+                        worker_id=worker_id,
+                        generation=generation,
+                    ),
                 )
+            except CollectorLeaseLost:
+                return TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
             except ApiError:
                 self._cancel_after_result_persistence_failure(page.next_uri)
                 updated = self._result_persistence_failed(updated)
@@ -250,7 +306,6 @@ class TrinoQueryRunService:
                 worker_id=worker_id,
                 generation=generation,
             ):
-                self._delete_partial_result_pages(run_id)
                 return TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
             if updated.status in {"succeeded", "failed", "cancelled"}:
                 self._record_terminal_audit(updated, ActorContext(name="AskLake Collector", role="admin"))
@@ -314,8 +369,9 @@ class TrinoQueryRunService:
         response = TrinoQueryRunResponse.model_validate(self._get_payload(run_id))
         self._require_access_for_response(response, actor or ActorContext(), operation="view")
         self._require_result_retention(response)
+        payload = self._get_payload(run_id)
         retention_expires_at = response.result.retention_expires_at if response.result else None
-        page_index = decode_cursor(
+        page_index, row_offset = decode_cursor_position(
             cursor,
             run_id=run_id,
             retention_expires_at=retention_expires_at,
@@ -330,14 +386,13 @@ class TrinoQueryRunService:
                     status.HTTP_409_CONFLICT,
                 )
             raise ApiError(ErrorCode.NOT_FOUND, "Query result page not found", status.HTTP_404_NOT_FOUND)
-        next_page = self.repository.get_result_page(run_id, page_index + 1)
         safe_record_audit_event(
             self.repository.db,
             action="query_run.result.view",
             actor=actor or ActorContext(),
             api_path=f"/api/query/runs/{run_id}/results",
             http_method="GET",
-            metadata={"pageIndex": page_index, "trinoQueryId": response.trino_query_id},
+            metadata={"pageIndex": page_index, "rowOffset": row_offset, "trinoQueryId": response.trino_query_id},
             target_id=run_id,
             target_type="query_run",
         )
@@ -349,16 +404,26 @@ class TrinoQueryRunService:
         else:
             columns = page.columns
             rows = page.rows
+        result_page_size = normalized_result_page_size(payload.get("resultPageSize"))
+        visible_rows = rows[row_offset:row_offset + result_page_size]
+        next_page = self.repository.get_result_page(run_id, page_index + 1)
+        if row_offset + len(visible_rows) < len(rows):
+            next_position = (page_index, row_offset + len(visible_rows))
+        elif next_page is not None:
+            next_position = (page_index + 1, 0)
+        else:
+            next_position = None
         return TrinoQueryRunResultPage(
             columns=columns,
             next_cursor=encode_cursor(
-                page_index + 1,
+                next_position[0],
                 run_id=run_id,
                 retention_expires_at=retention_expires_at,
                 secret=self.settings.trino_result_cursor_secret,
-            ) if next_page else None,
-            page_size=len(rows),
-            rows=rows,
+                row_offset=next_position[1],
+            ) if next_position else None,
+            page_size=len(visible_rows),
+            rows=visible_rows,
             run_id=run_id,
         )
 
@@ -389,14 +454,17 @@ class TrinoQueryRunService:
         datasets: Iterable[CatalogDatasetResponse],
         actor: ActorContext,
         query: str,
+        *,
+        api_path: str = "/api/query/runs",
+        http_method: str = "POST",
     ) -> None:
         for dataset in datasets:
             require_governed_access(
                 self.repository.db,
                 actor,
                 action="query",
-                api_path="/api/query/runs",
-                http_method="POST",
+                api_path=api_path,
+                http_method=http_method,
                 metadata={"owner": dataset.owner, **query_audit_metadata(query)},
                 resource_id=dataset.id,
                 resource_name=dataset.name,
@@ -415,8 +483,8 @@ class TrinoQueryRunService:
                     self.repository.db,
                     action="dataset.query.forbidden",
                     actor=actor,
-                    api_path="/api/query/runs",
-                    http_method="POST",
+                    api_path=api_path,
+                    http_method=http_method,
                     metadata={"owner": dataset.owner, **query_audit_metadata(query)},
                     result="forbidden",
                     status_code=exc.status_code,
@@ -426,16 +494,35 @@ class TrinoQueryRunService:
                 )
                 raise
 
-    def _require_access_for_response(self, response: TrinoQueryRunResponse, actor: ActorContext, *, operation: str) -> None:
+    def require_query_access_for_run(
+        self,
+        response: TrinoQueryRunResponse,
+        actor: ActorContext,
+        *,
+        api_path: str,
+        http_method: str,
+    ) -> list[CatalogDatasetResponse]:
         context_datasets = [
             self._get_dataset(response.base_dataset_id, label="Base dataset"),
             *(self._get_dataset(dataset_id, label="Reference dataset") for dataset_id in response.reference_dataset_ids),
         ]
-        self._require_query_access(context_datasets, actor, response.query)
-        is_submitter = (
-            (response.submitted_by_user_id and actor.id == response.submitted_by_user_id)
-            or actor.name == response.submitted_by_name
+        self._require_query_access(
+            context_datasets,
+            actor,
+            response.query,
+            api_path=api_path,
+            http_method=http_method,
         )
+        return context_datasets
+
+    def _require_access_for_response(self, response: TrinoQueryRunResponse, actor: ActorContext, *, operation: str) -> None:
+        context_datasets = self.require_query_access_for_run(
+            response,
+            actor,
+            api_path=f"/api/query/runs/{response.run_id}",
+            http_method="POST" if operation == "cancel" else "GET",
+        )
+        is_submitter = is_run_submitter(response.submitted_by_user_id, response.submitted_by_name, actor)
         can_manage = can(
             actor,
             "manage",
@@ -468,6 +555,8 @@ class TrinoQueryRunService:
         page: TrinoClientPage,
         *,
         source_next_uri: str | None = None,
+        worker_id: str | None = None,
+        generation: int | None = None,
     ) -> TrinoQueryRunResponse:
         if source_next_uri and self.repository.get_result_page_by_source_uri(response.run_id, source_next_uri):
             return self._with_result_manifest(response, page.columns, next_uri=page.next_uri)
@@ -482,17 +571,36 @@ class TrinoQueryRunService:
             page_index=page_count,
             columns=columns,
             rows=page.rows,
+            attempt_id=f"g{generation}" if worker_id is not None and generation is not None else None,
         )
-        self.repository.save_result_page_metadata(
-            run_id=response.run_id,
-            page_index=page_count,
-            columns=stored_page.columns,
-            object_key=stored_page.object_key,
-            row_count=stored_page.row_count,
-            compressed_bytes=stored_page.compressed_bytes,
-            checksum=stored_page.checksum,
-            source_next_uri=source_next_uri,
-        )
+        if worker_id is not None and generation is not None and source_next_uri:
+            outcome = self.repository.save_result_page_metadata_if_owned(
+                run_id=response.run_id,
+                worker_id=worker_id,
+                generation=generation,
+                page_index=page_count,
+                columns=stored_page.columns,
+                object_key=stored_page.object_key,
+                row_count=stored_page.row_count,
+                compressed_bytes=stored_page.compressed_bytes,
+                checksum=stored_page.checksum,
+                source_next_uri=source_next_uri,
+            )
+            if outcome != "saved":
+                self.result_storage.delete_object(stored_page.object_key, suppress_errors=True)
+            if outcome == "fenced":
+                raise CollectorLeaseLost(response.run_id)
+        else:
+            self.repository.save_result_page_metadata(
+                run_id=response.run_id,
+                page_index=page_count,
+                columns=stored_page.columns,
+                object_key=stored_page.object_key,
+                row_count=stored_page.row_count,
+                compressed_bytes=stored_page.compressed_bytes,
+                checksum=stored_page.checksum,
+                source_next_uri=source_next_uri,
+            )
         return self._with_result_manifest(response, columns, next_uri=page.next_uri)
 
     def _with_result_manifest(
@@ -537,9 +645,7 @@ class TrinoQueryRunService:
         })
 
     def _save_response(self, response: TrinoQueryRunResponse, *, compiled_query: str, trino_next_uri: str | None) -> None:
-        payload = response.model_dump(by_alias=True, exclude_none=True, mode="json")
-        payload["compiledQuery"] = compiled_query
-        payload["trinoNextUri"] = trino_next_uri
+        payload = self._response_payload(response, compiled_query=compiled_query, trino_next_uri=trino_next_uri)
         self.repository.save_run_payload(payload)
 
     def _save_collector_response(
@@ -551,10 +657,24 @@ class TrinoQueryRunService:
         worker_id: str,
         generation: int,
     ) -> bool:
-        payload = response.model_dump(by_alias=True, exclude_none=True, mode="json")
+        payload = self._response_payload(response, compiled_query=compiled_query, trino_next_uri=trino_next_uri)
+        return self.repository.save_collector_run_payload(payload, worker_id=worker_id, generation=generation)
+
+    def _response_payload(
+        self,
+        response: TrinoQueryRunResponse,
+        *,
+        compiled_query: str,
+        trino_next_uri: str | None,
+    ) -> dict[str, object]:
+        existing = self.repository.get_run_payload(response.run_id) or {}
+        payload: dict[str, object] = response.model_dump(by_alias=True, exclude_none=True, mode="json")
         payload["compiledQuery"] = compiled_query
         payload["trinoNextUri"] = trino_next_uri
-        return self.repository.save_collector_run_payload(payload, worker_id=worker_id, generation=generation)
+        for key in ("actorKey", "clientRequestId", "requestFingerprint", "resultPageSize"):
+            if key in existing:
+                payload[key] = existing[key]
+        return payload
 
     def _cancel_after_result_persistence_failure(self, next_uri: str | None) -> None:
         if not next_uri:
@@ -633,8 +753,11 @@ def build_run_response(
     page: TrinoClientPage,
     actor: ActorContext,
     retention_seconds: int,
+    *,
+    run_id: str | None = None,
+    submitted_at: str | None = None,
 ) -> TrinoQueryRunResponse:
-    submitted_at = current_utc_timestamp()
+    submitted_at = submitted_at or current_utc_timestamp()
     response = TrinoQueryRunResponse(
         base_dataset_id=request.base_dataset_id,
         error=page.error,
@@ -644,7 +767,7 @@ def build_run_response(
             columns=page.columns,
             retention_expires_at=(datetime.now(timezone.utc) + timedelta(seconds=retention_seconds)).isoformat(),
         ),
-        run_id=f"trino_{uuid4().hex[:12]}",
+        run_id=run_id or f"trino_{uuid4().hex[:12]}",
         stats=trino_stats(page.raw_stats),
         status=trino_status(page),
         submitted_at=submitted_at,
@@ -653,6 +776,27 @@ def build_run_response(
         trino_query_id=page.query_id or None,
     )
     return apply_terminal_timestamps(response)
+
+
+def build_reserved_run_response(
+    request: SubmitTrinoQueryRunRequest,
+    actor: ActorContext,
+    retention_seconds: int,
+) -> TrinoQueryRunResponse:
+    return TrinoQueryRunResponse(
+        base_dataset_id=request.base_dataset_id,
+        query=request.query,
+        reference_dataset_ids=unique_values(request.reference_dataset_ids),
+        result=TrinoQueryRunResult(
+            retention_expires_at=(datetime.now(timezone.utc) + timedelta(seconds=retention_seconds)).isoformat(),
+            storage_status="collecting",
+        ),
+        run_id=f"trino_{uuid4().hex[:12]}",
+        status="queued",
+        submitted_at=current_utc_timestamp(),
+        submitted_by_name=actor.name,
+        submitted_by_user_id=actor.id,
+    )
 
 
 def apply_trino_page(response: TrinoQueryRunResponse, page: TrinoClientPage) -> TrinoQueryRunResponse:
@@ -732,6 +876,30 @@ def unique_values(values: Iterable[str]) -> list[str]:
     return result
 
 
+def is_run_submitter(submitted_by_user_id: str | None, submitted_by_name: str | None, actor: ActorContext) -> bool:
+    if submitted_by_user_id:
+        return bool(actor.id and actor.id == submitted_by_user_id)
+    return bool(submitted_by_name and actor.name == submitted_by_name)
+
+
+def trino_request_fingerprint(request: SubmitTrinoQueryRunRequest) -> str:
+    canonical = json.dumps({
+        "baseDatasetId": request.base_dataset_id,
+        "query": request.query.replace("\r\n", "\n").strip(),
+        "referenceDatasetIds": sorted(unique_values(request.reference_dataset_ids)),
+        "resultPageSize": normalized_result_page_size(request.result_page_size),
+    }, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def normalized_result_page_size(value: object) -> int:
+    try:
+        page_size = int(value or 100)
+    except (TypeError, ValueError):
+        page_size = 100
+    return max(1, min(page_size, 1_000))
+
+
 def decode_cursor(
     cursor: str | None,
     *,
@@ -739,8 +907,23 @@ def decode_cursor(
     retention_expires_at: str | None,
     secret: str,
 ) -> int:
+    return decode_cursor_position(
+        cursor,
+        run_id=run_id,
+        retention_expires_at=retention_expires_at,
+        secret=secret,
+    )[0]
+
+
+def decode_cursor_position(
+    cursor: str | None,
+    *,
+    run_id: str,
+    retention_expires_at: str | None,
+    secret: str,
+) -> tuple[int, int]:
     if cursor is None:
-        return 0
+        return 0, 0
     try:
         payload_encoded, signature = cursor.split(".", maxsplit=1)
         expected_signature = sign_cursor(payload_encoded, secret)
@@ -748,10 +931,11 @@ def decode_cursor(
             raise ValueError("invalid signature")
         payload = json.loads(base64.urlsafe_b64decode(pad_base64(payload_encoded)).decode("utf-8"))
         page_index = int(payload["pageIndex"])
+        row_offset = int(payload.get("rowOffset") or 0)
         expires_at = str(payload["expiresAt"])
     except (AttributeError, KeyError, TypeError, ValueError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError) as exc:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
-    if payload.get("version") != 1 or payload.get("runId") != run_id or page_index < 0:
+    if payload.get("version") != 1 or payload.get("runId") != run_id or page_index < 0 or row_offset < 0:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if not retention_expires_at or expires_at != retention_expires_at:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Query result cursor does not match this run", status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -761,7 +945,7 @@ def decode_cursor(
         raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid query result cursor", status.HTTP_422_UNPROCESSABLE_ENTITY) from exc
     if expiry <= datetime.now(timezone.utc):
         raise ApiError(ErrorCode.RESULT_EXPIRED, "Query result cursor has expired", status.HTTP_410_GONE)
-    return page_index
+    return page_index, row_offset
 
 
 def encode_cursor(
@@ -770,12 +954,14 @@ def encode_cursor(
     run_id: str,
     retention_expires_at: str | None,
     secret: str,
+    row_offset: int = 0,
 ) -> str:
-    if page_index < 0 or not retention_expires_at:
+    if page_index < 0 or row_offset < 0 or not retention_expires_at:
         raise ApiError(ErrorCode.RESULT_EXPIRED, "Query result is unavailable", status.HTTP_410_GONE)
     payload = json.dumps({
         "expiresAt": retention_expires_at,
         "pageIndex": page_index,
+        "rowOffset": row_offset,
         "runId": run_id,
         "version": 1,
     }, separators=(",", ":"), sort_keys=True).encode("utf-8")

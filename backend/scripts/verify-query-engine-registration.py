@@ -21,6 +21,8 @@ class FakeSqlRepository:
     def __init__(self, source_payload: dict[str, Any]) -> None:
         self.db = FakeDb()
         self.payloads = {str(source_payload["runId"]): source_payload}
+        self.lease_renewals: list[tuple[str, str, int]] = []
+        self.lease_releases: list[tuple[str, str, int]] = []
 
     def get_run_payload(self, run_id: str) -> dict[str, Any] | None:
         payload = self.payloads.get(run_id)
@@ -29,6 +31,17 @@ class FakeSqlRepository:
     def save_run_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.payloads[str(payload["runId"])] = dict(payload)
         return payload
+
+    def renew_trino_collector_lease(self, run_id: str, worker_id: str, generation: int, _: int) -> bool:
+        self.lease_renewals.append((run_id, worker_id, generation))
+        return True
+
+    def release_trino_collector_lease(self, run_id: str, worker_id: str, generation: int) -> None:
+        self.lease_releases.append((run_id, worker_id, generation))
+
+    def save_collector_run_payload(self, payload: dict[str, Any], *, worker_id: str, generation: int) -> bool:
+        self.payloads[str(payload["runId"])] = dict(payload)
+        return True
 
 
 class FakeCatalogRepository:
@@ -56,7 +69,7 @@ class FakeTrinoClient:
 
     def submit(self, query: str) -> TrinoClientPage:
         self.queries.append(query)
-        if not query.startswith("DESCRIBE ") and not self.submit_succeeds:
+        if query.startswith("CREATE TABLE ") and not self.submit_succeeds:
             raise RuntimeError("TRINO_COORDINATOR_UNAVAILABLE")
         if query.startswith("DESCRIBE ") and not self.describe_succeeds:
             return TrinoClientPage(
@@ -80,6 +93,66 @@ class FakeTrinoClient:
 
     def fetch(self, next_uri: str) -> TrinoClientPage:
         raise AssertionError(f"Unexpected continuation: {next_uri}")
+
+
+class AsyncMaterializationTrinoClient(FakeTrinoClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fetches: list[str] = []
+
+    def submit(self, query: str) -> TrinoClientPage:
+        self.queries.append(query)
+        if query.startswith("CREATE TABLE "):
+            return TrinoClientPage(
+                nextUri="http://trino:8080/v1/statement/materialization-next",
+                queryId="materialization_running",
+                rawStats={"state": "RUNNING"},
+                state="RUNNING",
+            )
+        if query.startswith("DESCRIBE "):
+            return TrinoClientPage(
+                queryId="materialization_described",
+                rawStats={"state": "FINISHED"},
+                rows=[["order_id", "varchar", "", ""]],
+                state="FINISHED",
+            )
+        return TrinoClientPage(
+            queryId="schema_ready",
+            rawStats={"state": "FINISHED"},
+            state="FINISHED",
+        )
+
+    def fetch(self, next_uri: str) -> TrinoClientPage:
+        self.fetches.append(next_uri)
+        return TrinoClientPage(
+            queryId="materialization_finished",
+            rawStats={"state": "FINISHED"},
+            state="FINISHED",
+        )
+
+
+class FakeQueryAccess:
+    def __init__(self) -> None:
+        self.checked_run_ids: list[str] = []
+
+    def require_query_access_for_run(
+        self,
+        response: Any,
+        actor: ActorContext,
+        *,
+        api_path: str,
+        http_method: str,
+    ) -> list[Any]:
+        assert actor.id == "user_demo"
+        assert api_path.startswith("/api/catalog/trino-")
+        assert http_method in {"GET", "POST"}
+        self.checked_run_ids.append(response.run_id)
+        return []
+
+
+class DeniedQueryAccess:
+    def require_query_access_for_run(self, *_: Any, **__: Any) -> list[Any]:
+        raise ApiError(ErrorCode.FORBIDDEN, "Query permission was revoked", 403)
 
 
 def source_run_payload() -> dict[str, Any]:
@@ -129,11 +202,24 @@ def build_service(client: FakeTrinoClient) -> tuple[TrinoMaterializationService,
         Settings(_env_file=None, trino_enabled=True),
         client=client,  # type: ignore[arg-type]
     )
+    service.query_access = FakeQueryAccess()  # type: ignore[assignment]
     return service, sql_repository, catalog_repository
 
 
 def verify() -> None:
     actor = ActorContext(name="Demo User", role="viewer", id="user_demo")
+    denied_client = FakeTrinoClient()
+    denied_service, _, denied_catalog_repository = build_service(denied_client)
+    denied_service.query_access = DeniedQueryAccess()  # type: ignore[assignment]
+    try:
+        denied_service.submit("trino_source_verify", materialization_request("권한 회수 데이터셋"), actor)
+    except ApiError as error:
+        assert error.code == ErrorCode.FORBIDDEN
+    else:
+        raise AssertionError("Revoked query permission must block materialization before Trino submission")
+    assert denied_client.queries == []
+    assert denied_catalog_repository.payloads == {}
+
     client = FakeTrinoClient()
     service, _, catalog_repository = build_service(client)
     response = service.submit("trino_source_verify", materialization_request("한국어 주문 분석"), actor)
@@ -146,6 +232,7 @@ def verify() -> None:
     assert any(query.startswith("CREATE TABLE ") for query in client.queries)
     assert any(query.startswith("DESCRIBE ") for query in client.queries)
     assert dataset["permissionGrants"][0]["principalType"] == "user"
+    assert dataset["permissionGrants"][0]["principalId"] == "user_demo"
     assert set(dataset["permissionGrants"][0]["actions"]) == {"view", "query", "run", "manage", "delete", "share"}
 
     malformed_pending = CatalogDatasetResponse.model_validate({
@@ -180,6 +267,24 @@ def verify() -> None:
     assert recovered_dataset["queryEngineStatus"] == "available"
     assert "queryEngineError" not in recovered_dataset
     assert failing_sql_repository.payloads[recovered.materialization_id]["queryEngineStatus"] == "available"
+
+    async_client = AsyncMaterializationTrinoClient()
+    async_service, async_sql_repository, async_catalog_repository = build_service(async_client)
+    running = async_service.submit("trino_source_verify", materialization_request("비동기 등록 데이터셋"), actor)
+    assert running.status == "running"
+    assert running.query_engine_status == "pending"
+    refreshed = async_service.refresh(running.materialization_id, actor)
+    assert refreshed.status == "running"
+    assert async_client.fetches == []
+    completed = async_service.collect_claimed_run(running.materialization_id, "materialization-worker", 3)
+    assert completed.status == "succeeded"
+    assert completed.query_engine_status == "available"
+    assert async_client.fetches == ["http://trino:8080/v1/statement/materialization-next"]
+    assert async_catalog_repository.payloads[completed.dataset_id]["queryEngineStatus"] == "available"
+    assert async_sql_repository.lease_renewals == [
+        (running.materialization_id, "materialization-worker", 3),
+        (running.materialization_id, "materialization-worker", 3),
+    ]
 
     unavailable_client = FakeTrinoClient()
     unavailable_client.submit_succeeds = False

@@ -43,9 +43,10 @@ class TrinoResultStorage:
         page_index: int,
         columns: list[str],
         rows: list[list[object]],
+        attempt_id: str | None = None,
     ) -> StoredTrinoResultPage:
         self._ensure_bucket()
-        object_key = self.page_object_key(run_id, page_index)
+        object_key = self.page_object_key(run_id, page_index, attempt_id=attempt_id)
         payload = {
             "columns": columns,
             "formatVersion": RESULT_PAGE_FORMAT_VERSION,
@@ -140,10 +141,14 @@ class TrinoResultStorage:
             if not suppress_errors:
                 raise self._storage_error("Unable to remove Trino result page") from exc
 
-    def page_object_key(self, run_id: str, page_index: int) -> str:
+    def page_object_key(self, run_id: str, page_index: int, *, attempt_id: str | None = None) -> str:
         if page_index < 0 or not run_id.startswith("trino_"):
             raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid Trino result page identity", status.HTTP_422_UNPROCESSABLE_ENTITY)
-        filename = f"{page_index:08d}.json.gz"
+        normalized_attempt = "" if attempt_id is None else "".join(character for character in attempt_id if character.isalnum() or character in {"-", "_"})
+        if attempt_id is not None and not normalized_attempt:
+            raise ApiError(ErrorCode.VALIDATION_ERROR, "Invalid Trino result page attempt", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        suffix = f".{normalized_attempt}" if normalized_attempt else ""
+        filename = f"{page_index:08d}{suffix}.json.gz"
         return f"{self.prefix}/{run_id}/pages/{filename}" if self.prefix else f"{run_id}/pages/{filename}"
 
     def _ensure_bucket(self) -> None:
@@ -168,8 +173,16 @@ class TrinoResultStorage:
         if self.client is not None:
             return self.client
         endpoint = self.settings.minio_endpoint
-        access_key = self.settings.minio_access_key
-        secret_key = self.settings.minio_secret_key
+        dedicated_access_key = self.settings.trino_result_storage_access_key
+        dedicated_secret_key = self.settings.trino_result_storage_secret_key
+        if bool(dedicated_access_key) != bool(dedicated_secret_key):
+            raise ApiError(
+                ErrorCode.RESULT_STORAGE_UNAVAILABLE,
+                "Trino result storage credentials are incomplete",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        access_key = dedicated_access_key or self.settings.minio_access_key
+        secret_key = dedicated_secret_key or self.settings.minio_secret_key
         if not self.bucket or not endpoint or not access_key or not secret_key:
             raise ApiError(
                 ErrorCode.RESULT_STORAGE_UNAVAILABLE,

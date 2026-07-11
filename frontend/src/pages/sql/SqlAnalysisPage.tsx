@@ -49,6 +49,11 @@ import {
 
 const QUERY_AI_PROMPT_PLACEHOLDER = "만들고 싶은 분석을 자연어로 입력해 주세요.";
 
+function createClientRequestId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `query-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function isSqlCandidateDataset(dataset: CatalogDataset) {
   const normalizedName = dataset.name.toLowerCase();
   const normalizedTags = dataset.tags.map((tag) => tag.toLowerCase());
@@ -176,10 +181,13 @@ export function SqlAnalysisPage({
   const [trinoRun, setTrinoRun] = useState<TrinoQueryRun | null>(null);
   const [trinoRunHistory, setTrinoRunHistory] = useState<TrinoQueryRunHistoryItem[]>([]);
   const [trinoRunHistoryError, setTrinoRunHistoryError] = useState<string | null>(null);
-  const [trinoResultPages, setTrinoResultPages] = useState<TrinoQueryRunResultPage[]>([]);
+  const [trinoResultPage, setTrinoResultPage] = useState<TrinoQueryRunResultPage | null>(null);
+  const [trinoResultCursors, setTrinoResultCursors] = useState<Array<string | null>>([null]);
   const [trinoResultPageIndex, setTrinoResultPageIndex] = useState(0);
+  const [trinoResultPagePending, setTrinoResultPagePending] = useState(false);
   const [trinoResultError, setTrinoResultError] = useState<string | null>(null);
   const [trinoResultRetryCursor, setTrinoResultRetryCursor] = useState<string | null | undefined>(undefined);
+  const [trinoResultRetryTargetIndex, setTrinoResultRetryTargetIndex] = useState(0);
   const [trinoMaterialization, setTrinoMaterialization] = useState<TrinoMaterializationRun | null>(null);
   const [trinoMaterializationError, setTrinoMaterializationError] = useState<string | null>(null);
   const [trinoMaterializationPending, setTrinoMaterializationPending] = useState(false);
@@ -206,7 +214,9 @@ export function SqlAnalysisPage({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const queryAiPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const lineNumberRef = useRef<HTMLPreElement | null>(null);
+  const queryClientRequestRef = useRef<{ id: string; key: string } | null>(null);
   const skipNextBaseDatasetResetRef = useRef(false);
+  const trinoResultLoadKeyRef = useRef("");
   const referenceDatasetIdSet = useMemo(() => new Set(referenceDatasetIds), [referenceDatasetIds]);
   const queryValidationKey = useMemo(
     () => JSON.stringify({
@@ -267,6 +277,7 @@ export function SqlAnalysisPage({
     ? baseDataset
     : selectedReferenceDatasets.find((item) => !canQueryDatasetAs(item, currentUser));
   const queryPermissionMessage = hasQueryPermission ? "" : datasetQueryBlockedMessage(blockedQueryDataset, "선택 데이터셋");
+  const usesTrinoRuntime = Boolean(baseDataset?.queryEngineRequired);
   const canRunPreview = Boolean(baseDataset && hasQueryPermission && preflightResult?.canExecute === true && preflightResult.key === queryValidationKey);
   const lineNumbers = useMemo(() => {
     if (!baseDataset) return "";
@@ -491,8 +502,8 @@ export function SqlAnalysisPage({
       });
       return;
     }
-    setPreflightResult(runSqlPreflight(query, baseDataset, selectedReferenceDatasets, queryValidationKey));
-  }, [baseDataset, hasQueryPermission, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets]);
+    setPreflightResult(runSqlPreflight(query, baseDataset, selectedReferenceDatasets, queryValidationKey, usesTrinoRuntime));
+  }, [baseDataset, hasQueryPermission, query, queryPermissionMessage, queryValidationKey, selectedReferenceDatasets, usesTrinoRuntime]);
 
   const buildPreviewDraft = (): Promise<SqlResultDraft> => {
     if (!baseDataset) return Promise.reject(new Error("No dataset selected"));
@@ -522,19 +533,26 @@ export function SqlAnalysisPage({
   }, [queryValidationKey, trinoRun]);
 
   useEffect(() => {
-    if (!trinoRun || trinoResultPages.length > 0 || !trinoRun.result || (trinoRun.result.availablePageCount ?? 0) < 1) return;
-    void getTrinoQueryRunResultPage(trinoRun.runId)
+    const availablePageCount = trinoRun?.result?.availablePageCount ?? 0;
+    if (!trinoRun || availablePageCount < 1 || trinoResultPagePending || trinoResultPage?.nextCursor) return;
+    const cursor = trinoResultCursors[trinoResultPageIndex] ?? null;
+    const loadKey = [trinoRun.runId, trinoRun.status, availablePageCount, trinoResultPageIndex, cursor ?? "first"].join(":");
+    if (trinoResultLoadKeyRef.current === loadKey) return;
+    trinoResultLoadKeyRef.current = loadKey;
+    setTrinoResultPagePending(true);
+    void getTrinoQueryRunResultPage(trinoRun.runId, cursor)
       .then((page) => {
-        setTrinoResultPages([page]);
-        setTrinoResultPageIndex(0);
+        setTrinoResultPage(page);
         setTrinoResultError(null);
         setTrinoResultRetryCursor(undefined);
       })
       .catch((error) => {
         setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 불러오지 못했습니다.");
-        setTrinoResultRetryCursor(null);
-      });
-  }, [trinoResultPages.length, trinoRun]);
+        setTrinoResultRetryCursor(cursor);
+        setTrinoResultRetryTargetIndex(trinoResultPageIndex);
+      })
+      .finally(() => setTrinoResultPagePending(false));
+  }, [trinoResultCursors, trinoResultPage, trinoResultPageIndex, trinoResultPagePending, trinoRun]);
 
   useEffect(() => {
     if (
@@ -561,19 +579,23 @@ export function SqlAnalysisPage({
     setExecuted(false);
     setResultDraft(null);
     setTrinoRun(null);
-    setTrinoResultPages([]);
+    setTrinoResultPage(null);
+    setTrinoResultCursors([null]);
     setTrinoResultPageIndex(0);
+    setTrinoResultPagePending(false);
     setTrinoResultError(null);
     setTrinoResultRetryCursor(undefined);
     setTrinoMaterialization(null);
     setTrinoMaterializationError(null);
     setTrinoMaterializationPending(false);
     setQueryEstimate(null);
+    queryClientRequestRef.current = null;
     setEstimateDialogOpen(false);
     setExecutionMs(null);
     setPreflightResult(null);
     setMaterializeDialogOpen(false);
     setDashboardDialogOpen(false);
+    trinoResultLoadKeyRef.current = "";
     onResultChange(null);
   };
 
@@ -636,16 +658,21 @@ export function SqlAnalysisPage({
     }
   };
 
-  const executePreview = async (confirmationToken?: string) => {
+  const executePreview = async (confirmationToken?: string, clientRequestId?: string) => {
     if (!baseDataset || !canRunPreview) {
       onAction("analysis.query.preview_blocked", queryContextPath("preview"), baseDataset?.id ?? "sql-empty", "failed");
       return;
     }
     const startedAt = performance.now();
+    const reusableRequest = queryClientRequestRef.current?.key === queryValidationKey
+      ? queryClientRequestRef.current
+      : null;
+    const requestId = clientRequestId ?? reusableRequest?.id ?? createClientRequestId();
+    queryClientRequestRef.current = { id: requestId, key: queryValidationKey };
     setQueryPending(true);
     try {
       if (!apiConfig.useMock) {
-        if (!confirmationToken) {
+        if (usesTrinoRuntime && !confirmationToken) {
           const estimate = await estimateSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort());
           setQueryEstimate(estimate);
           if (estimate.confirmationRequired) {
@@ -653,19 +680,23 @@ export function SqlAnalysisPage({
             return;
           }
         }
-        const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort(), confirmationToken);
+        const response = await submitSqlQueryRun(baseDataset, query, [...referenceDatasetIds].sort(), confirmationToken, requestId);
+        queryClientRequestRef.current = null;
         if (isTrinoQueryRun(response)) {
           setExecuted(true);
           setExecutionMs(Math.round(performance.now() - startedAt));
           setResultDraft(null);
           setTrinoRun(response);
-          setTrinoResultPages([]);
+          setTrinoResultPage(null);
+          setTrinoResultCursors([null]);
           setTrinoResultPageIndex(0);
+          setTrinoResultPagePending(false);
           setTrinoResultError(null);
           setTrinoResultRetryCursor(undefined);
           setTrinoMaterialization(null);
           setTrinoMaterializationError(null);
           setTrinoMaterializationPending(false);
+          trinoResultLoadKeyRef.current = "";
           setTrinoRunHistory((items) => [toTrinoHistoryItem(response), ...items.filter((item) => item.runId !== response.runId)].slice(0, 8));
           onResultChange(null);
           onAction("analysis.query.run_submitted", queryContextPath("run"), baseDataset.id);
@@ -679,6 +710,7 @@ export function SqlAnalysisPage({
         return;
       }
       const resultDraft = await buildPreviewDraft();
+      queryClientRequestRef.current = null;
       setExecuted(true);
       setExecutionMs(Math.round(performance.now() - startedAt));
       setResultDraft(resultDraft);
@@ -711,10 +743,13 @@ export function SqlAnalysisPage({
     const confirmationToken = queryEstimate?.confirmationToken;
     if (!confirmationToken) return;
     setEstimateDialogOpen(false);
-    void executePreview(confirmationToken);
+    const requestId = queryClientRequestRef.current?.key === queryValidationKey
+      ? queryClientRequestRef.current.id
+      : undefined;
+    void executePreview(confirmationToken, requestId);
   };
 
-  const activeTrinoPage = trinoResultPages[trinoResultPageIndex] ?? null;
+  const activeTrinoPage = trinoResultPage;
   const trinoResultStatusLabel = getTrinoResultStatusLabel(trinoRun);
   const trinoDisplayResult = useMemo<SqlResultDraft | null>(() => {
     if (!trinoRun || !activeTrinoPage || !baseDataset) return null;
@@ -735,36 +770,68 @@ export function SqlAnalysisPage({
   const visibleResult = resultDraft ?? trinoDisplayResult;
 
   const loadNextTrinoResultPage = async () => {
-    if (!trinoRun || !activeTrinoPage?.nextCursor) return;
+    if (!trinoRun || !activeTrinoPage?.nextCursor || trinoResultPagePending) return;
     const nextCursor = activeTrinoPage.nextCursor;
+    const targetIndex = trinoResultPageIndex + 1;
+    setTrinoResultPagePending(true);
     setTrinoResultError(null);
     try {
       const page = await getTrinoQueryRunResultPage(trinoRun.runId, nextCursor);
-      setTrinoResultPages((pages) => [...pages, page]);
-      setTrinoResultPageIndex((index) => index + 1);
+      setTrinoResultCursors((cursors) => [...cursors.slice(0, targetIndex), nextCursor]);
+      setTrinoResultPage(page);
+      setTrinoResultPageIndex(targetIndex);
       setTrinoResultRetryCursor(undefined);
+      trinoResultLoadKeyRef.current = "";
     } catch (error) {
       setTrinoResultError(error instanceof Error ? error.message : "다음 결과 페이지를 불러오지 못했습니다.");
       setTrinoResultRetryCursor(nextCursor);
+      setTrinoResultRetryTargetIndex(targetIndex);
+    } finally {
+      setTrinoResultPagePending(false);
+    }
+  };
+
+  const loadPreviousTrinoResultPage = async () => {
+    if (!trinoRun || trinoResultPageIndex < 1 || trinoResultPagePending) return;
+    const targetIndex = trinoResultPageIndex - 1;
+    const cursor = trinoResultCursors[targetIndex] ?? null;
+    setTrinoResultPagePending(true);
+    setTrinoResultError(null);
+    try {
+      const page = await getTrinoQueryRunResultPage(trinoRun.runId, cursor);
+      setTrinoResultPage(page);
+      setTrinoResultPageIndex(targetIndex);
+      setTrinoResultRetryCursor(undefined);
+      trinoResultLoadKeyRef.current = "";
+    } catch (error) {
+      setTrinoResultError(error instanceof Error ? error.message : "이전 결과 페이지를 불러오지 못했습니다.");
+      setTrinoResultRetryCursor(cursor);
+      setTrinoResultRetryTargetIndex(targetIndex);
+    } finally {
+      setTrinoResultPagePending(false);
     }
   };
 
   const retryTrinoResultPage = async () => {
-    if (!trinoRun || trinoResultRetryCursor === undefined) return;
+    if (!trinoRun || trinoResultRetryCursor === undefined || trinoResultPagePending) return;
     const retryCursor = trinoResultRetryCursor;
+    setTrinoResultPagePending(true);
     setTrinoResultError(null);
     try {
       const page = await getTrinoQueryRunResultPage(trinoRun.runId, retryCursor);
-      if (retryCursor === null) {
-        setTrinoResultPages([page]);
-        setTrinoResultPageIndex(0);
-      } else {
-        setTrinoResultPages((pages) => [...pages, page]);
-        setTrinoResultPageIndex((index) => index + 1);
-      }
+      setTrinoResultCursors((cursors) => {
+        const next = [...cursors];
+        next[trinoResultRetryTargetIndex] = retryCursor;
+        return next.slice(0, trinoResultRetryTargetIndex + 1);
+      });
+      setTrinoResultPage(page);
+      setTrinoResultPageIndex(trinoResultRetryTargetIndex);
       setTrinoResultRetryCursor(undefined);
+      trinoResultLoadKeyRef.current = "";
     } catch (error) {
       setTrinoResultError(error instanceof Error ? error.message : "실행 결과를 다시 불러오지 못했습니다.");
+    } finally {
+      setTrinoResultPagePending(false);
     }
   };
 
@@ -798,15 +865,19 @@ export function SqlAnalysisPage({
       setExecutionMs(null);
       setResultDraft(null);
       setTrinoRun(selectedRun);
-      setTrinoResultPages([]);
+      setTrinoResultPage(null);
+      setTrinoResultCursors([null]);
       setTrinoResultPageIndex(0);
+      setTrinoResultPagePending(false);
       setTrinoResultError(null);
       setTrinoResultRetryCursor(undefined);
       setTrinoMaterialization(null);
       setTrinoMaterializationError(null);
       setTrinoMaterializationPending(false);
       setQueryEstimate(null);
+      queryClientRequestRef.current = null;
       setPreflightResult(null);
+      trinoResultLoadKeyRef.current = "";
       onResultChange(null);
       onAction("analysis.query.history_opened", `/api/query/runs/${selectedRun.runId}`, selectedRun.baseDatasetId);
     } catch (error) {
@@ -1140,7 +1211,7 @@ export function SqlAnalysisPage({
       <header className="sql-page-header">
         <div>
           <h1>SQL 분석</h1>
-          <p>선택한 데이터셋을 기준으로 SQL을 작성하고 Preview 결과를 처리 Job으로 전환합니다.</p>
+          <p>선택한 데이터셋에 SQL을 실행하고 결과를 페이지 단위로 확인합니다.</p>
         </div>
       </header>
       {contextCollapsed && (
@@ -1473,8 +1544,9 @@ export function SqlAnalysisPage({
                   resultDraft={visibleResult}
                   remotePageIndex={trinoRun ? trinoResultPageIndex : undefined}
                   remoteNextCursor={activeTrinoPage?.nextCursor}
+                  remotePending={trinoResultPagePending}
                   onRemoteNext={trinoRun ? () => void loadNextTrinoResultPage() : undefined}
-                  onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => setTrinoResultPageIndex((index) => index - 1) : undefined}
+                  onRemotePrevious={trinoRun && trinoResultPageIndex > 0 ? () => void loadPreviousTrinoResultPage() : undefined}
                 />
               </div>
             </>

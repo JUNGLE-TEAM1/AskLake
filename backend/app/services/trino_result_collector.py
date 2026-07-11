@@ -10,6 +10,7 @@ from app.repositories.audit_repository import safe_record_audit_event
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.sql_repository import SqlRepository
 from app.services.trino_query_run_service import TrinoQueryRunService
+from app.services.trino_materialization_service import TrinoMaterializationService
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,11 @@ class TrinoResultCollector:
             catalog_repository=catalog_repository,
             runtime_settings=self.settings,
         )
+        self.materialization_service = TrinoMaterializationService(
+            repository=repository,
+            catalog_repository=catalog_repository,
+            runtime_settings=self.settings,
+        )
 
     def collect_available(self, *, max_runs: int = 20) -> TrinoCollectorSummary:
         claimed_runs = 0
@@ -52,9 +58,14 @@ class TrinoResultCollector:
             if claim is None:
                 break
             claimed_runs += 1
+            is_materialization = claim.engine == "trino-materialization"
             safe_record_audit_event(
                 self.repository.db,
-                action="query_run.collector.recovered" if claim.recovered else "query_run.collector.started",
+                action=(
+                    "trino_materialization.collector.recovered" if claim.recovered else "trino_materialization.collector.started"
+                ) if is_materialization else (
+                    "query_run.collector.recovered" if claim.recovered else "query_run.collector.started"
+                ),
                 actor=ActorContext(name="AskLake Collector", role="admin"),
                 api_path="/internal/trino-result-collector",
                 http_method="POST",
@@ -62,10 +73,14 @@ class TrinoResultCollector:
                 result="success",
                 status_code=status.HTTP_202_ACCEPTED,
                 target_id=claim.run_id,
-                target_type="query_run",
+                target_type="dataset" if is_materialization else "query_run",
             )
             try:
-                response = self.query_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                response = (
+                    self.materialization_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                    if is_materialization
+                    else self.query_service.collect_claimed_run(claim.run_id, self.worker_id, claim.generation)
+                )
                 if response.status in {"succeeded", "failed", "cancelled"}:
                     completed_runs += 1
             except ApiError as exc:
@@ -78,7 +93,7 @@ class TrinoResultCollector:
                 )
                 safe_record_audit_event(
                     self.repository.db,
-                    action="query_run.collector.retry",
+                    action="trino_materialization.collector.retry" if is_materialization else "query_run.collector.retry",
                     actor=ActorContext(name="AskLake Collector", role="admin"),
                     api_path="/internal/trino-result-collector",
                     http_method="POST",
@@ -91,7 +106,7 @@ class TrinoResultCollector:
                     result="failed",
                     status_code=exc.status_code,
                     target_id=claim.run_id,
-                    target_type="query_run",
+                    target_type="dataset" if is_materialization else "query_run",
                 )
 
         return TrinoCollectorSummary(

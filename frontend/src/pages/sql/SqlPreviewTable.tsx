@@ -23,19 +23,24 @@ export function SqlPreviewTable({
   resultDraft,
   remoteNextCursor,
   remotePageIndex,
+  remotePending = false,
   onRemoteNext,
   onRemotePrevious,
 }: {
   resultDraft: SqlResultDraft;
   remoteNextCursor?: string | null;
   remotePageIndex?: number;
+  remotePending?: boolean;
   onRemoteNext?: () => void;
   onRemotePrevious?: () => void;
 }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
   useEffect(() => {
-    setPagination({ pageIndex: 0, pageSize: SQL_RESULT_PAGE_SIZE });
-  }, [resultDraft.runId]);
+    setPagination({
+      pageIndex: 0,
+      pageSize: remotePageIndex === undefined ? SQL_RESULT_PAGE_SIZE : Math.max(1, resultDraft.rows.length),
+    });
+  }, [remotePageIndex, resultDraft.rows.length, resultDraft.runId]);
 
   const columns = useMemo<ColumnDef<SqlPreviewRow>[]>(
     () => resultDraft.columns.map((column, index) => ({
@@ -110,8 +115,8 @@ export function SqlPreviewTable({
       <div className="sql-result-pagination" aria-label="SQL 실행 결과 페이지">
         <span>{pageStart}-{pageEnd} / {data.length}행 · {remotePageIndex === undefined ? pagination.pageIndex + 1 : remotePageIndex + 1} / {remotePageIndex === undefined ? pageCount : "?"}쪽</span>
         <div>
-          <button type="button" disabled={!canGoPrevious} onClick={goPrevious}>이전</button>
-          <button type="button" disabled={!canGoNext} onClick={goNext}>다음</button>
+          <button type="button" disabled={remotePending || !canGoPrevious} onClick={goPrevious}>이전</button>
+          <button type="button" disabled={remotePending || !canGoNext} onClick={goNext}>다음</button>
         </div>
       </div>
     </div>

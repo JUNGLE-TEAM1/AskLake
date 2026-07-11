@@ -10,11 +10,15 @@ from app.models.base import Base
 
 class SqlRunModel(Base):
     __tablename__ = "sql_runs"
+    __table_args__ = (UniqueConstraint("actor_key", "client_request_id", name="uq_sql_run_actor_client_request"),)
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     dataset_id: Mapped[str] = mapped_column(Text, nullable=False)
     query: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    actor_key: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    client_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
     collector_owner: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     collector_lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     collector_next_uri: Mapped[str | None] = mapped_column(Text, nullable=True)

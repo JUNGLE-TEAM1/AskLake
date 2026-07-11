@@ -1,6 +1,6 @@
 # Trino Query Run Contract
 
-이 문서는 Issue #488에서 확정한 SQL 분석의 목표 실행 계약입니다. 현재 구현된 DuckDB Preview runtime의 동작 설명이 아니라, 후속 Phase에서 구현할 Trino 기반 실제 SQL 실행의 기준입니다. 대용량 결과의 durable storage, collector, retention 상세는 `docs/trino-query-result-storage-contract.md`를 따른다.
+이 문서는 Issue #488에서 구현한 Trino 기반 실제 SQL 실행 계약입니다. `TRINO_ENABLED=false`의 DuckDB bounded runtime은 전환 호환 경로이며 이 계약의 대용량 실행으로 해석하지 않습니다. 대용량 결과의 durable storage, collector, retention 상세는 `docs/trino-query-result-storage-contract.md`를 따른다.
 
 ## 1. 핵심 결정
 
@@ -17,8 +17,10 @@ SQL editor
   -> local syntax/context preflight (UX)
   -> POST /api/query/runs
   -> backend read-only/context/permission/governance validation
+  -> atomic actor slot + idempotency reservation
   -> Trino submit
   -> query_runs persistence
+  -> trino-result-collector continuation drain
   -> queued/running/succeeded/failed/cancelled polling
   -> GET /api/query/runs/{runId}/results?cursor=...
 ```
@@ -78,9 +80,12 @@ type QueryRun = {
 };
 ```
 
-- `POST /api/query/runs`는 `202 Accepted`와 `runId`, 초기 `queued` 상태를 반환한다.
+- `POST /api/query/runs`는 `202 Accepted`와 `runId`, 최초로 저장된 실행 상태를 반환한다.
+- 최초 Trino response가 이미 진행 또는 완료 상태이면 initial response는 `running`, `succeeded`, `failed`일 수 있다.
+- Frontend는 실행 시도마다 `clientRequestId`를 보내고 confirmation/network retry에는 같은 값을 재사용한다. Backend는 `(actorKey, clientRequestId)` unique reservation과 request fingerprint로 중복 Trino submit을 막는다.
+- actor별 active run limit은 PostgreSQL advisory lock 안에서 reservation row를 먼저 저장해 원자적으로 적용한다. 초과는 `429`, 같은 key의 다른 request는 `409`다.
 - `GET /api/query/runs/{runId}`는 lifecycle, Trino query ID, 실행 통계, 오류, 결과 metadata를 반환한다.
-- `GET /api/query/runs`는 현재 submitter의 최근 실행 요약만 반환한다. actor user ID가 있으면 ID를 기준으로 분리하고, ID 없는 legacy run에만 display name fallback을 적용한다.
+- `GET /api/query/runs`는 현재 submitter의 최근 실행 요약만 반환한다. actor user ID가 있으면 ID를 기준으로 분리하고, ID 없는 legacy run에만 display name fallback을 적용한다. 동일 display name의 다른 user ID는 run을 열거나 materialize할 수 없다.
 - SQL 분석 UI는 polling 응답의 queued/elapsed time, processed bytes/rows, peak memory를 실행 중과 완료 뒤에 함께 표시한다. 실행 전 estimate는 참고값이고 실제 stats가 우선한다.
 - `POST /api/query/runs/{runId}/cancel`은 `queued` 또는 `running` run만 취소할 수 있다.
 - terminal state는 `succeeded`, `failed`, `cancelled`다.
@@ -99,9 +104,10 @@ type QueryRunResultPage = {
 };
 ```
 
-- `GET /api/query/runs/{runId}/results?cursor=<opaque>`만 결과 행을 반환한다. page size는 submit 시 고정한다.
-- cursor는 opaque value이며 frontend가 offset 또는 SQL을 조합하지 않는다.
+- `GET /api/query/runs/{runId}/results?cursor=<opaque>`만 결과 행을 반환한다. page size는 submit 시 고정하고 마지막 page만 작을 수 있다.
+- cursor는 storage page index와 row offset을 감춘 opaque value이며 frontend가 offset 또는 SQL을 조합하지 않는다.
 - 실행 결과 전체를 API response 또는 frontend memory에 적재하지 않는다.
+- Frontend는 현재 page row와 cursor history만 보관하고 이전 page 이동 시 서버에서 다시 읽는다.
 - row count는 Trino가 확정할 수 있을 때만 반환하며, pagination을 위해 별도 `COUNT(*)`를 강제하지 않는다.
 - 결과 retention 만료 또는 cursor 만료는 결과 page endpoint에서 명시적 오류로 응답한다. run metadata 조회는 만료 후에도 유지해 사용자가 SQL, 상태, 통계를 확인할 수 있게 한다. 재실행 여부는 사용자에게 선택하게 한다.
 - 새 Trino Query Run 결과는 private MinIO gzip page object에 저장하고 PostgreSQL에는 page metadata만 남긴다. 기존 PostgreSQL JSONB page storage는 migration read compatibility로만 유지한다. browser-independent collector lifecycle은 `docs/trino-query-result-storage-contract.md`를 canonical source로 둔다.
@@ -114,9 +120,12 @@ Trino 제출 전에 backend는 다음 순서로 검증합니다.
 2. SQL이 참조한 Dataset을 selected context와 physical mapping으로 해석한다.
 3. 모든 참조 Dataset에 대해 `query` 권한을 확인한다.
 4. 사용자/그룹 차단과 resource lock을 확인한다.
-5. Trino에 제출하고 `trinoQueryId`를 Query Run에 기록한다.
+5. actor slot과 idempotency key를 원자적으로 reserve한다.
+6. Trino에 제출하고 `trinoQueryId`를 Query Run에 기록한다.
 
 권한이 없거나 차단/잠금된 요청은 Trino에 제출하지 않고 `403 FORBIDDEN`으로 종료합니다. 감사 로그에는 submit, cancel, terminal result, forbidden attempt를 남기며 다음을 포함합니다.
+
+Run metadata/result/cancel과 materialization submit/status를 열 때도 현재 base/reference Dataset의 `query` grant, principal block, resource lock을 다시 확인합니다. Frontend에서 목록이 늦게 사라지거나 직접 URL/API를 호출해도 backend 403이 최종 보안 경계입니다. User grant principal은 ID와 email을 우선 지원하고 legacy display name grant를 읽기 호환합니다.
 
 - actor와 참조 Dataset
 - AskLake `runId`, Trino query ID
@@ -137,6 +146,8 @@ Trino 제출 전에 backend는 다음 순서로 검증합니다.
 - publish, 공유, 반복 refresh가 필요한 dashboard는 `POST /api/catalog/derived-datasets` 또는 후속 materialization API로 생성한 Iceberg/Parquet Dataset을 source로 사용한다.
 - materialized Dataset은 Catalog, lineage, permission grant, audit 흐름에 등록된다.
 - dashboard가 결과의 한 frontend page를 source로 저장하는 것은 금지한다.
+- Materialization 요청은 source run submitter ID 또는 admin 여부와 현재 Dataset query/governance 상태를 다시 확인한 뒤 `asklake-materializer`로 CTAS를 제출한다.
+- CTAS continuation은 `trino-result-collector`가 durable lease로 처리한다. `GET /api/catalog/trino-materializations/{materializationId}`는 persisted 상태를 읽을 뿐 실행을 진전시키지 않으며, terminal success 뒤 등록 검증만 안전하게 재시도할 수 있다.
 
 ## 9. Phase Boundary
 
@@ -144,8 +155,8 @@ Phase 1은 Trino single-node coordinator와 Iceberg JDBC catalog, MinIO S3 wareh
 
 Phase 2는 `TrinoClient`의 statement/nextUri/cancel protocol adapter, canonical Trino Query Run payload persistence, Dataset display name -> physical table compiler, Trino submit/refresh/cancel service를 추가합니다. 보안 보완으로 AST 기반 single SELECT validation, physical table 직접 입력/table function 차단, server-side bounded result page 저장, opaque cursor, run submitter ownership, nextUri coordinator origin 검증, audit lifecycle를 포함합니다.
 
-production Trino는 backend-only internal network, HTTPS/password authentication, file-based read-only access control, separate Iceberg JDBC/MinIO credentials를 전제로 한다. TLS CA, keystore, password hash file은 서버 secret 경로에서 mount하며 repository에 저장하지 않는다. Phase 3부터 `TRINO_ENABLED=true`이면 `/api/query/runs` routing은 Trino runtime을 사용한다. Phase 4 frontend는 run status polling, cancel, cursor 결과 page를 사용하며 preview-only `LIMIT`을 기본 SQL에 넣지 않는다.
+production Trino는 backend-only internal network, client/internal HTTPS, password authentication, file-based least-privilege access control, separate Iceberg JDBC/warehouse/result-storage credentials를 전제로 한다. `asklake-api`는 SELECT와 자기 query 실행/관리만, `asklake-materializer`는 `asklake` schema의 CTAS/검증에 필요한 권한만 가진다. TLS CA, keystore, bcrypt cost 8 이상 또는 PBKDF2 password hash file은 서버 secret 경로에서 mount하며 repository에 저장하지 않는다. Bootstrap job은 기존 volume에도 JDBC role과 Iceberg metadata table 소유권, 전용 bucket/service account를 멱등 반영한다. `TRINO_ENABLED=true`이면 `/api/query/runs` routing은 Trino runtime을 사용하고 frontend는 run polling, cancel, cursor 결과 page를 사용하며 preview-only `LIMIT`을 기본 SQL에 넣지 않는다.
 
 Phase 5는 legacy JSONL derived dataset 경로와 Trino run을 명확히 분리한다. Trino run은 전체 결과 page를 재조합하지 않고, succeeded run의 SQL을 Iceberg CTAS statement로 materialize한다.
 
-Phase 6은 `POST /api/catalog/trino-runs/{runId}/materializations`로 CTAS를 Trino materializer service account에 제출하고 materialization run을 별도 저장한다. 일반 Query Run은 `asklake-api`, CTAS는 `asklake-materializer`를 Basic auth와 `X-Trino-User`에 동일하게 사용한다. 로그인 사용자의 actor identity는 Trino service account로 대체하지 않고 AskLake audit log에 별도로 기록한다. 생성 요청은 Catalog `pending` row를 먼저 만들고, terminal success 뒤 별도 `DESCRIBE`가 성공해야 `queryEngineStatus=available`과 physical mapping을 공개한다. 확인 실패는 `registration_failed`로 남고 `GET /api/catalog/trino-materializations/{materializationId}`가 같은 table 검증을 재시도한다. 표시명은 한글을 허용하되 Dataset ID와 Iceberg table은 hash suffix가 있는 안전한 ASCII identity로 자동 생성한다.
+Phase 6은 `POST /api/catalog/trino-runs/{runId}/materializations`로 CTAS를 Trino materializer service account에 제출하고 materialization run을 별도 저장한다. 일반 Query Run은 `asklake-api`, CTAS는 `asklake-materializer`를 Basic auth와 `X-Trino-User`에 동일하게 사용한다. 로그인 사용자의 actor identity는 Trino service account로 대체하지 않고 AskLake audit log에 별도로 기록한다. 생성 요청은 Catalog `pending` row를 먼저 만들고, collector가 CTAS terminal state를 저장한 뒤 별도 `DESCRIBE`가 성공해야 `queryEngineStatus=available`과 physical mapping을 공개한다. 확인 실패는 `registration_failed`로 남고 terminal materialization GET이 같은 table 검증을 재시도할 수 있다. 표시명은 한글을 허용하되 Dataset ID와 Iceberg table은 hash suffix가 있는 안전한 ASCII identity로 자동 생성한다.

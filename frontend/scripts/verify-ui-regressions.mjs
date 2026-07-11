@@ -21,7 +21,8 @@ const checks = [
     name: "SQL Trino result and materialization failures expose retries",
     file: "src/pages/sql/SqlAnalysisPage.tsx",
     patterns: [
-      /setTrinoResultRetryCursor\(null\);/,
+      /setTrinoResultRetryCursor\(cursor\);/,
+      /setTrinoResultRetryTargetIndex\(trinoResultPageIndex\);/,
       /const retryTrinoResultPage = async \(\) => \{/,
       /const retryTrinoMaterializationStatus = async \(\) => \{/,
       /결과를 불러오지 못했습니다\./,

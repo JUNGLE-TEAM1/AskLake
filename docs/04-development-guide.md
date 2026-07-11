@@ -62,15 +62,16 @@ TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=true \\
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run trino:cleanup-results
 ```
 
-Production cleanup은 scheduler/cron에서 같은 `npm run trino:cleanup-results`를 실행한다. 결과 retention은 `TRINO_RESULT_RETENTION_SECONDS`이며, cleanup은 만료 object와 metadata page를 지우고 Query Run audit metadata는 유지한다.
+Production cleanup은 Compose의 `trino-result-cleanup` worker가 `TRINO_CLEANUP_POLL_SECONDS` 간격으로 수행한다. 결과 retention은 `TRINO_RESULT_RETENTION_SECONDS`이며, worker는 terminal run을 keyset batch로 끝까지 순회해 만료 object와 metadata page를 지우고 Query Run/audit metadata는 유지한다. `npm run trino:cleanup-results`는 local one-shot 검증용이다.
 
 Collector retry는 `5s -> 15s -> 60s -> max 5m` backoff를 사용한다. `trino:collect-results`를 반복 실행해도 `nextAttemptAt` 전의 실패 run은 다시 claim하지 않는다. cancel은 collector generation을 무효화하므로 이미 진행 중인 fetch가 취소된 run을 다시 running/succeeded로 저장할 수 없다.
 
-Collector fencing, retry backoff, active-run retention cleanup 경계는 아래 검증으로 확인한다.
+Collector generation fencing, stale worker takeover, 고정 크기 API pagination, 100건 초과 retention cleanup 경계는 아래 검증으로 확인한다. Actor별 idempotency와 동시 실행 slot의 PostgreSQL 원자성은 두 번째 명령이 실제 두 session을 경합시켜 확인한다.
 
 ```bash
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
 
 Trino Query Run collector는 API request와 분리된 worker다. local에서 query를 제출한 뒤 브라우저 polling 없이 한 번 수집하려면 아래 명령을 실행한다. production Compose의 `trino-result-collector` service는 같은 명령을 poll loop로 계속 실행하며, DB lease가 만료된 run을 다른 worker가 재시작 뒤 이어받는다.
@@ -471,11 +472,18 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
 ```
 
-`verify:query-engine-registration`은 한글 Dataset의 안정적 ID/물리 table 이름, Catalog `pending -> available`, `registration_failed`에서 mapping 제거, 동일 materialization 재검증 복구, coordinator 제출 실패 후 재생성, Spark ETL의 검증된 mapping만 SQL 노출하는 조건을 확인한다. 실제 local Trino E2E에서는 임시 Iceberg CTAS 뒤 `DESCRIBE`와 Catalog mapping을 확인하고 검증 table/metadata를 반드시 정리한다.
+`verify:query-engine-registration`은 한글 Dataset의 안정적 ID/물리 table 이름, user ID owner grant, materialization 전 현재 query 권한 재검사, browser-independent collector 완료, Catalog `pending -> available`, `registration_failed` mapping 제거/재검증 복구, coordinator 제출 실패 후 재생성, Spark ETL의 검증된 mapping만 SQL 노출하는 조건을 확인한다. 실제 local Trino E2E에서는 임시 Iceberg CTAS 뒤 `DESCRIBE`와 Catalog mapping을 확인하고 검증 table/metadata를 반드시 정리한다.
 
 Query Result Phase 0 이후 대용량 결과 작업은 `docs/trino-query-result-storage-contract.md`를 먼저 따른다. Phase 1~3에서는 MinIO page storage, collector restart recovery, signed cursor, expiry cleanup을 각각 검증하며, PostgreSQL에 result row를 저장하는 현재 smoke만으로 대용량 결과 완료를 주장하지 않는다.
 
-production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. password file은 bcrypt/PBKDF2 hash만 포함하며, Trino JDBC/MinIO credential은 backend/Postgres/MinIO root credential과 분리한다.
+Production Trino를 켜기 전에는 `deploy/.env`의 `TRINO_TLS_CA_FILE`, `TRINO_TLS_KEYSTORE_FILE`, `TRINO_PASSWORD_FILE`가 서버에 존재하는지 확인한다. Password file은 bcrypt/PBKDF2 hash만 포함하며, Trino JDBC, warehouse MinIO, query-result MinIO credential은 backend/Postgres/MinIO root credential과 각각 분리한다. `scripts/deploy.sh`는 bootstrap service를 실행하고 Trino health 뒤 아래 readiness를 자동 호출한다. 수동 확인도 같은 명령을 사용한다.
+
+```bash
+cd backend
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-production-readiness
+```
+
+Readiness는 query identity `SELECT`, production read-only CTAS 차단, materializer schema/CTAS/`DESCRIBE`/drop, 전용 result bucket write/read/delete를 확인한다. `TRINO_ENABLED=false`인 배포는 deploy script에서 명시적으로 skip한다.
 
 Dataset 권한 기준을 확인할 때는 아래 smoke를 실행한다. 권한 없는 viewer의 Catalog 목록/상세/SQL preview 차단, user grant에 따른 view/query 허용, group grant에 따른 detail 허용, `delete` grant의 materialization-run 삭제 허용을 검증한다.
 

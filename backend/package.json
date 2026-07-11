@@ -22,6 +22,8 @@
     "verify:trino-query-history": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-query-run-history.py",
     "verify:trino-result-storage": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-result-storage.py",
     "verify:trino-collector-resilience": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-collector-resilience.py",
+    "verify:trino-submission-guard": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-submission-guard.py",
+    "verify:trino-production-readiness": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/verify-trino-production-readiness.py",
     "trino:cleanup-results": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/cleanup-expired-trino-results.py",
     "trino:collect-results": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/collect-trino-results.py --once",
     "trino:collector-worker": "PYTHONPATH=. ${ASKLAKE_FASTAPI_PYTHON:-python3} scripts/collect-trino-results.py",

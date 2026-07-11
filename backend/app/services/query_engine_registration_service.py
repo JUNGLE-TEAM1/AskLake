@@ -134,7 +134,7 @@ class QueryEngineRegistrationService:
         owner = str(payload.get("owner") or actor.name)
         owner_grant = {
             "actions": OWNER_ACTIONS,
-            "principalId": actor.name or owner,
+            "principalId": actor.id or actor.name or owner,
             "principalType": "user",
             "source": "owner",
         }

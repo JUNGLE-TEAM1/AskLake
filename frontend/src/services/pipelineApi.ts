@@ -53,9 +53,16 @@ export function isTrinoQueryRun(response: SqlQueryRunResponse): response is Trin
   return "engine" in response && response.engine === "trino";
 }
 
-export async function submitSqlQueryRun(dataset: CatalogDataset, query: string, referenceDatasetIds: string[], confirmationToken?: string): Promise<SqlQueryRunResponse> {
+export async function submitSqlQueryRun(
+  dataset: CatalogDataset,
+  query: string,
+  referenceDatasetIds: string[],
+  confirmationToken?: string,
+  clientRequestId?: string,
+): Promise<SqlQueryRunResponse> {
   return apiClient.post<SqlQueryRunResponse>("/api/query/runs", {
     baseDatasetId: dataset.id,
+    clientRequestId,
     confirmationToken,
     datasetId: dataset.id,
     query,

@@ -114,18 +114,20 @@ MINIO_REGION=us-east-1
 TRINO_RESULT_STORAGE_BUCKET=asklake-query-results
 TRINO_RESULT_STORAGE_PREFIX=query-results
 TRINO_RESULT_STORAGE_AUTO_CREATE_BUCKET=false
+TRINO_RESULT_STORAGE_ACCESS_KEY=asklake-query-results
+TRINO_RESULT_STORAGE_SECRET_KEY=replace-with-query-result-minio-secret
 S3_ENDPOINT=http://minio:9000
 S3_FORCE_PATH_STYLE=true
 S3_ALLOWED_BUCKETS=m3-raw,asklake-output
 ```
 
-Trino는 Issue #488 Phase 1부터 같은 Compose stack의 내부 service로 실행한다. 외부에 포트를 열지 않고 backend가 `http://trino:8080`으로 접근한다. Iceberg catalog metadata는 AskLake Postgres에, table data는 MinIO warehouse에 저장한다. server `deploy/.env`에는 아래 값도 확인한다.
+Trino는 Issue #488부터 같은 Compose stack의 `trino_internal` network에서 실행한다. 외부에 포트를 열지 않고 backend가 CA 검증을 포함한 `https://trino:8443`으로 접근한다. Iceberg catalog metadata는 AskLake Postgres에, table data와 임시 query result는 서로 다른 MinIO bucket/service account에 저장한다. Server `deploy/.env`에는 아래 값도 확인한다.
 
-`trino-result-collector`는 backend와 같은 image/environment로 실행되는 별도 Compose worker다. API request가 아닌 worker만 Trino continuation을 소비하며, worker restart는 DB lease expiry를 통해 recover한다.
+`trino-result-collector`는 backend와 같은 image/environment로 실행되는 별도 Compose worker다. API request가 아닌 worker만 Query Run과 materialization continuation을 소비하며, worker restart는 DB lease expiry를 통해 recover한다. `trino-result-cleanup`은 terminal result retention을 batch로 계속 정리한다.
 
 ```bash
-TRINO_ENABLED=false
-TRINO_BASE_URL=http://trino:8080
+TRINO_ENABLED=true
+TRINO_BASE_URL=https://trino:8443
 TRINO_CATALOG=iceberg
 TRINO_SCHEMA=asklake
 TRINO_USER=asklake-api
@@ -140,17 +142,31 @@ TRINO_QUERY_ESTIMATED_THROUGHPUT_BYTES_PER_SECOND=268435456
 TRINO_COLLECTOR_LEASE_SECONDS=60
 TRINO_COLLECTOR_PAGES_PER_LEASE=100
 TRINO_COLLECTOR_POLL_SECONDS=1
+TRINO_CLEANUP_POLL_SECONDS=3600
 TRINO_IMAGE=trinodb/trino:482
+TRINO_AUTH_USERNAME=asklake-api
+TRINO_AUTH_PASSWORD=replace-with-trino-backend-password
+TRINO_MATERIALIZER_USERNAME=asklake-materializer
+TRINO_MATERIALIZER_PASSWORD=replace-with-trino-materializer-password
+TRINO_TLS_CA_FILE=/opt/asklake/secrets/trino-ca.pem
+TRINO_TLS_KEYSTORE_FILE=/opt/asklake/secrets/trino-keystore.jks
+TRINO_TLS_KEYSTORE_PASSWORD=replace-with-trino-keystore-password
+TRINO_PASSWORD_FILE=/opt/asklake/secrets/trino-password.db
+TRINO_INTERNAL_SHARED_SECRET=replace-with-base64-trino-shared-secret
 TRINO_ICEBERG_CATALOG_NAME=asklake
+TRINO_ICEBERG_JDBC_USER=asklake_trino
+TRINO_ICEBERG_JDBC_PASSWORD=replace-with-trino-jdbc-password
 TRINO_ICEBERG_WAREHOUSE_BUCKET=asklake-warehouse
 TRINO_ICEBERG_WAREHOUSE_PREFIX=warehouse
+TRINO_S3_ACCESS_KEY=asklake-trino
+TRINO_S3_SECRET_KEY=replace-with-trino-minio-secret
 ```
 
-`TRINO_ENABLED`은 Query Run adapter가 도입되는 후속 Phase에서 true로 전환한다. Phase 1의 backend SQL API는 아직 DuckDB compatibility runtime을 사용한다.
+`TRINO_ENABLED=false`는 DuckDB bounded compatibility runtime이다. Production에서 위 TLS/credential/bootstrap/readiness가 준비된 뒤에만 `true`로 켜며, `true`에서는 SQL 분석 실행이 곧 Trino full Query Run이다.
 
-Iceberg JDBC catalog의 metadata table은 `deploy/postgres/init/02-create-iceberg-jdbc-catalog.sql`로 bootstrap한다. `scripts/deploy.sh`는 새 DB와 기존 Postgres volume 모두에 이 idempotent migration을 실행한다.
+새 Postgres volume은 `deploy/postgres/init/02-create-iceberg-jdbc-catalog.sql`을 사용한다. 기존 volume을 포함한 모든 배포는 `trino-postgres-bootstrap`이 전용 JDBC role/password를 만들고 Iceberg metadata table 소유권을 해당 role로 멱등 이전한다. Trino JDBC catalog가 version schema를 확인·갱신하므로 단순 CRUD grant만으로는 부족하다. `trino-storage-bootstrap`은 warehouse/result bucket, 서로 다른 MinIO service account와 최소 권한 policy를 멱등 반영한다. JDBC role은 Postgres application user와 달라야 하고 warehouse/result account는 MinIO root 및 서로와 달라야 bootstrap이 성공한다.
 
-Production Trino는 public port를 열지 않고 backend와만 공유하는 internal network에서 HTTPS/password authentication으로 실행한다. 아래 secret files는 서버에만 만들고 Git에 올리지 않는다.
+Production Trino는 public port를 열지 않고 backend와만 공유하는 internal network에서 HTTPS/password authentication으로 실행한다. `internal-communication.https.required=true`와 shared secret으로 coordinator/worker 내부 통신도 인증·암호화한다. 아래 secret files는 서버에만 만들고 Git에 올리지 않는다.
 
 ```text
 /opt/asklake/secrets/trino-ca.pem
@@ -158,7 +174,12 @@ Production Trino는 public port를 열지 않고 backend와만 공유하는 inte
 /opt/asklake/secrets/trino-password.db
 ```
 
-`trino-password.db`에는 bcrypt 또는 PBKDF2 hash만 넣고, `asklake-api`와 `asklake-materializer` service account를 모두 등록한다. 일반 Query Run은 `asklake-api`, Iceberg CTAS는 `asklake-materializer` identity를 Basic auth와 `X-Trino-User`에 동일하게 사용한다. 실제 로그인 사용자는 AskLake audit actor로 별도 기록한다. `TRINO_S3_*`와 `TRINO_ICEBERG_JDBC_*`는 MinIO root/Postgres application account를 재사용하지 않는 전용 account를 사용한다.
+`trino-password.db`에는 bcrypt cost 8 이상(권장 10) 또는 PBKDF2 hash만 넣고, `asklake-api`와 `asklake-materializer` service account를 모두 등록한다. 일반 Query Run은 `asklake-api`, Iceberg CTAS는 `asklake-materializer` identity를 Basic auth와 `X-Trino-User`에 동일하게 사용한다. 실제 로그인 사용자는 AskLake audit actor로 별도 기록한다. File access control은 query identity에 SELECT/자기 query 실행만, materializer에 `asklake` schema CTAS/검증 권한만 허용한다. `TRINO_S3_*`, `TRINO_RESULT_STORAGE_*`, `TRINO_ICEBERG_JDBC_*`는 각각 전용 account를 사용한다.
+
+```bash
+htpasswd -B -C 10 -bn asklake-api '<query-password>' > /opt/asklake/secrets/trino-password.db
+htpasswd -B -C 10 -bn asklake-materializer '<materializer-password>' >> /opt/asklake/secrets/trino-password.db
+```
 
 ## 4. 재배포
 
@@ -180,12 +201,22 @@ EC2 running 보장
   -> git fetch origin <branch>
   -> git checkout <branch>
   -> git pull --ff-only origin <branch>
+  -> Postgres/MinIO 기동
+  -> JDBC role/table + MinIO bucket/service-account bootstrap
   -> docker compose up -d --build
-  -> frontend/API health check
+  -> Trino/backend/frontend health check
+  -> Trino ACL/CTAS/result-storage readiness
   -> docker compose ps
 ```
 
 `git pull --ff-only`가 실패하면 서버 작업 tree가 배포 branch와 다르다는 뜻이므로 자동으로 덮어쓰지 않고 실패시킨다.
+
+배포 script가 호출하는 readiness를 서버에서 다시 확인하려면 아래 명령을 사용한다. 이 검증은 임시 Iceberg table과 result object를 성공 여부와 무관하게 정리한다.
+
+```bash
+docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml \
+  exec -T backend python scripts/verify-trino-production-readiness.py
+```
 
 ## 5. Compose만 재시작
 

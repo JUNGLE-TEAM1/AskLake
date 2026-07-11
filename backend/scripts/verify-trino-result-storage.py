@@ -1,10 +1,25 @@
 from uuid import uuid4
 
 from app.core.config import Settings
+from app.core.errors import ApiError
 from app.services.trino_result_storage import TrinoResultStorage
 
 
 def verify() -> None:
+    incomplete_storage = TrinoResultStorage(Settings(
+        _env_file=None,
+        minio_access_key="root-user",
+        minio_endpoint="http://127.0.0.1:9000",
+        minio_secret_key="root-secret",
+        trino_result_storage_access_key="result-user",
+    ))
+    try:
+        incomplete_storage._client()
+    except ApiError as error:
+        assert error.code == "RESULT_STORAGE_UNAVAILABLE"
+    else:
+        raise AssertionError("Partial dedicated result storage credentials must be rejected")
+
     runtime_settings = Settings(
         _env_file=None,
         minio_access_key="m3admin",

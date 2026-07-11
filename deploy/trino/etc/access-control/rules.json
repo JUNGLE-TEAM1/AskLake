@@ -17,7 +17,7 @@
       "catalog": "iceberg",
       "schema": "asklake",
       "table": ".*",
-      "privileges": ["SELECT"]
+      "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]
     },
     {
       "user": "asklake-api",
@@ -32,6 +32,16 @@
       "user": "asklake-materializer",
       "schema": "asklake",
       "owner": true
+    }
+  ],
+  "queries": [
+    {
+      "user": "asklake-materializer",
+      "allow": ["execute"]
+    },
+    {
+      "user": "asklake-api",
+      "allow": ["execute"]
     }
   ],
   "functions": []

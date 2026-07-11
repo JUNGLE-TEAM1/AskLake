@@ -47,9 +47,9 @@ ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:fastapi-pair2
 - `POST /api/catalog/derived-datasets`
 - 생성된 derived dataset의 catalog 재조회와 lineage 조회
 
-`POST /api/query/runs` live mode는 현재 DuckDB in-memory compatibility runtime을 사용한다. Catalog dataset의 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고, 없으면 catalog `schema`/`sampleRows`를 DuckDB 임시 table로 등록해 preview SQL을 실행한다.
+`POST /api/query/runs`는 `TRINO_ENABLED=true`일 때 idempotent reservation 뒤 Trino full Query Run을 제출한다. `false`일 때만 DuckDB in-memory compatibility runtime을 사용하며, Catalog dataset의 로컬 `storageLocation`이 `jsonl`/`parquet`이면 물리 파일을 우선 읽고 없으면 catalog `schema`/`sampleRows`를 임시 table로 등록해 bounded SQL을 실행한다.
 
-Issue #488은 `docker compose up -d trino`로 사용할 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse와 canonical Query Run service를 제공한다. `TRINO_ENABLED=true`이면 `/api/query/runs`가 Trino로 실행되고, SQL 결과 Dataset은 Iceberg CTAS 뒤 `DESCRIBE` 검증을 통과해야 `queryEngineStatus=available`과 `queryEngineTable` mapping이 자동 저장된다. Spark Parquet/Kafka JSONL처럼 아직 Iceberg table을 만들지 않는 writer는 `unavailable`로 남는다. 기본값은 전환 호환을 위해 `false`다.
+Issue #488은 Trino 482 coordinator, Iceberg JDBC catalog, MinIO S3 warehouse와 canonical Query Run service를 제공한다. Query Run과 Iceberg CTAS continuation은 `trino-result-collector`가 browser와 독립적으로 처리하고, result는 private MinIO page와 signed cursor로 조회한다. SQL 결과 Dataset은 CTAS 뒤 `DESCRIBE` 검증을 통과해야 `queryEngineStatus=available`과 `queryEngineTable` mapping이 자동 저장된다. Spark Parquet/Kafka JSONL처럼 아직 Iceberg table을 만들지 않는 writer는 `unavailable`로 남는다. 기본값은 전환 호환을 위해 `false`다.
 
 Trino client protocol/compiler unit verification:
 
@@ -57,7 +57,11 @@ Trino client protocol/compiler unit verification:
 cd backend
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-query-foundation
 ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:query-engine-registration
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-collector-resilience
+ASKLAKE_FASTAPI_PYTHON=.venv/bin/python npm run verify:trino-submission-guard
 ```
+
+Production 환경의 TLS/ACL/materializer/result bucket은 `npm run verify:trino-production-readiness`로 확인한다. `scripts/deploy.sh`는 Trino가 enabled일 때 같은 검증을 자동 실행한다.
 
 Node demo API 전체 검증은 MinIO 샘플 fixture가 필요하다.
 
