@@ -25,15 +25,15 @@
 .sql-dataset-panel {
   position: sticky;
   z-index: 20;
-  top: 0;
+  top: 12px;
   display: grid;
   grid-column: 1;
   grid-row: 2;
   grid-template-rows: minmax(0, 1fr);
   align-self: start;
-  height: 0;
-  min-height: 100%;
-  max-height: none;
+  height: min(860px, calc(100vh - 24px));
+  min-height: min(620px, calc(100vh - 24px));
+  max-height: 860px;
   min-width: 0;
   overflow: hidden;
   padding: 20px;
@@ -249,10 +249,9 @@
 }
 
 .sql-editor-footer {
-  display: grid;
-  min-height: 40px;
-  align-items: stretch;
-  gap: 12px;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
   color: #64748b;
   font-size: 12px;
 }
@@ -266,26 +265,9 @@
   gap: 8px;
 }
 
-.sql-editor-footer-controls {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-}
-
-.sql-editor-footer-controls > button {
-  justify-self: end;
-}
-
-.sql-preview-limit-field {
-  grid-template-columns: max-content minmax(64px, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
 .sql-result-scroll {
-  height: min(560px, 58vh);
-  min-height: 320px;
+  height: min(460px, 48vh);
+  min-height: 300px;
   min-width: 0;
 }
 
