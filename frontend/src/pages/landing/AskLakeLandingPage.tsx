@@ -218,7 +218,6 @@ export function AskLakeLandingPage() {
         </section>
 
         <section className="landing-video-section" id="video" aria-labelledby="landing-video-title">
-          <span className="landing-section-label">AskLake Demo</span>
           <h2 id="landing-video-title">See AskLake in motion.</h2>
           <div className="landing-video-frame">
             <iframe
