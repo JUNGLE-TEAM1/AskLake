@@ -1182,6 +1182,7 @@ function getLineageTableHeight(columnCount: number): number {
 function LineageTableNode({ data }: { data: LineageTableNodeData }) {
   const updateNodeInternals = useUpdateNodeInternals();
   const layerVariant = getLineageLayerBadgeVariant(data.dataset.layer);
+  const displayName = getLineageNodeDisplayName(data.dataset);
 
   useEffect(() => {
     updateNodeInternals(data.nodeId);
@@ -1202,7 +1203,7 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
           <Table2 className="size-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <CardTitle className="break-words text-sm leading-5" title={data.dataset.name}>{data.dataset.name}</CardTitle>
+          <CardTitle className="break-words text-sm leading-5" title={displayName}>{displayName}</CardTitle>
           <CardDescription className="mt-1 flex flex-wrap items-center gap-1 text-xs leading-4">
             <Badge shape="compact" size="sm" variant={layerVariant}>{data.dataset.layer}</Badge>
             <span>{data.dataset.engine}</span>
@@ -1222,6 +1223,13 @@ function LineageTableNode({ data }: { data: LineageTableNodeData }) {
       </CardContent>
     </Card>
   );
+}
+
+function getLineageNodeDisplayName(dataset: LineageGraphDataset): string {
+  if (dataset.layer !== "SOURCE") return dataset.name;
+
+  const enginePrefix = new RegExp(`^${escapeRegExp(dataset.engine)}\\s+`, "i");
+  return dataset.name.replace(enginePrefix, "").trim() || dataset.name;
 }
 
 function LineageColumnRow({ column, data }: { column: LineageColumn; data: LineageTableNodeData }) {
