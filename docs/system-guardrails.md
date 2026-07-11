@@ -33,7 +33,7 @@
 | Protected integration branches | GitHub repository ruleset on `main`, `dev`, and `pair` | `enabled` | block direct push or force push; require changes through PR | repo admin | ruleset: `Push 금지` |
 | PR source branch policy | GitHub Actions check required by ruleset on `main` and `dev` | `enabled` | block PR merge when source branch does not match the allowed chain | repo admin | `main <- dev`; `dev <- pair1, pair2, pair3` |
 | Default PR and issue templates | GitHub `.github` templates | `enabled` | prompt contributors to document scope, verification, impact, and acceptance criteria | maintainer | advisory template, not a hard gate |
-| Deployment env files ignored | `.gitignore`, review checklist | `enabled` | prevent committing server `.env` and local EC2 env values | maintainer | `deploy/.env` and `deploy/ec2.env` are ignored; only examples are committed. MinIO access key/secret and `AIRFLOW_EXECUTION_API_TOKEN` stay in server `.env` or secret storage. The Airflow and backend token values must match |
+| Deployment env files ignored | `.gitignore`, review checklist | `enabled` | prevent committing server `.env` and local EC2 env values | maintainer | `deploy/.env` and `deploy/ec2.env` are ignored; only examples are committed. MinIO access key/secret and `AIRFLOW_EXECUTION_API_TOKEN` stay in server `.env` or secret storage. The Airflow and backend token values must match. Kafka replay input은 `ASKLAKE_REPLAY_HOST_INPUT_DIR`의 읽기 전용 mount만 사용하며 arbitrary host path API 입력은 금지한다. |
 | API contract drift check | repo-local script or review checklist | `planned` | warn or block when API docs and code drift | maintainer | backend 구현 후 후보 |
 
 ## 3) Team Guide
@@ -67,7 +67,7 @@
 
 | Failure | How to fix |
 | --- | --- |
-| `npm run verify:ui-regressions` failed | SQL 분석 탭, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
+| `npm run verify:ui-regressions` failed | SQL 분석의 Nessie SQL 모달·인라인 차트 설정·차트/데이터 전환·Job wizard, Catalog wide button, Dashboard 목록, ApexCharts 위젯의 최근 회귀 방지 스타일/렌더 계약을 확인하고 관련 파일을 수정한다. |
 | `npm run build` failed | TypeScript error와 Vite build output을 확인하고 관련 파일을 수정한다. |
 | Live API mode failed | `VITE_API_BASE_URL`, backend server 상태, `docs/api-contract.md` response shape를 확인한다. |
 | Prod compose config failed | `deploy/.env.example`의 필수 env key, `deploy/docker-compose.prod.yml`, Dockerfile path를 확인한다. |

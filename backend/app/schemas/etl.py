@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import CamelModel, to_camel
 from app.schemas.permissions import PermissionGrant, ResourcePermissions
@@ -11,7 +11,9 @@ JobScheduleKind = Literal["daily", "weekly", "monthly", "realtime", "none", "oth
 JobRunStatus = Literal["queued", "running", "success", "failed", "canceled"]
 JobRunOutcome = Literal["success", "failed", "canceled"]
 JobDagStepStatus = Literal["pending", "running", "success", "failed", "blocked"]
-JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule"]
+KafkaExecutionMode = Literal["snapshot", "continuous"]
+ContinuousRuntimeStatus = Literal["starting", "running", "pausing", "paused", "stopping", "stopped", "failed"]
+JobCommand = Literal["run", "retry", "pause", "cancelRun", "stopSchedule", "resumeSchedule", "startContinuous", "pauseContinuous", "resumeContinuous", "stopContinuous"]
 
 SourceFieldRows = list[tuple[str, str]]
 
@@ -87,6 +89,138 @@ class WatermarkPolicyDraft(CamelModel):
     mode: str = "last_success_to_scheduled_at"
 
 
+class KafkaSchemaEvolutionPolicy(CamelModel):
+    additive_nullable: Literal["allow", "quarantine", "pause"] = "allow"
+    missing_required: Literal["quarantine", "pause"] = "quarantine"
+    incompatible_type: Literal["quarantine", "pause"] = "quarantine"
+    unknown_field: Literal["preserve", "ignore", "quarantine", "pause"] = "preserve"
+
+
+class KafkaContinuousConfigDraft(CamelModel):
+    initial_offset_policy: Literal["earliest", "latest"] = "earliest"
+    trigger_interval_seconds: int = Field(default=30, ge=1, le=3600)
+    max_offsets_per_trigger: int = Field(default=10000, ge=1, le=1_000_000)
+    schema_evolution_policy: KafkaSchemaEvolutionPolicy = Field(default_factory=KafkaSchemaEvolutionPolicy)
+
+
+class KafkaContinuousRuntime(CamelModel):
+    status: ContinuousRuntimeStatus
+    checkpoint_path: str
+    heartbeat_at: str | None = None
+    last_flush_at: str | None = None
+    last_batch_id: str | None = None
+    lag: int | None = None
+    max_partition_lag: int | None = None
+    lagging_partition_count: int = 0
+    lag_available: bool = False
+    partition_progress: dict[str, dict[str, int]] = Field(default_factory=dict)
+    last_batch_duration_ms: int | None = None
+    last_batch_input_rows: int = 0
+    throughput_rows_per_second: float | None = None
+    schema_version: int = 1
+    schema_fingerprint: str | None = None
+    schema_status: str = "stable"
+    schema_changes: list[dict[str, Any]] = Field(default_factory=list)
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    replayed_count: int = 0
+    failed_count: int = 0
+    last_error: str | None = None
+
+
+class ContinuousWorkerLogsResponse(CamelModel):
+    job_id: str
+    container_state: str
+    lines: list[str] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class KafkaContinuousSession(CamelModel):
+    session_id: str
+    job_id: str
+    worker_attempt_id: str | None = None
+    status: Literal["starting", "running", "stopping", "stopped", "failed"]
+    started_at: str
+    ended_at: str | None = None
+    end_reason: str | None = None
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    failed_count: int = 0
+    last_batch_id: str | None = None
+    last_flush_at: str | None = None
+    lag: int | None = None
+    checkpoint_path: str
+    last_error: str | None = None
+
+
+class KafkaContinuousBatch(CamelModel):
+    batch_id: int
+    session_id: str
+    published_at: str | None = None
+    consumed_count: int = 0
+    stored_count: int = 0
+    quarantined_count: int = 0
+    duration_ms: int | None = None
+    source_ranges: list[dict[str, Any]] = Field(default_factory=list)
+    data_path: str | None = None
+    quarantine_path: str | None = None
+    manifest_path: str | None = None
+
+
+class ContinuousQuarantineRecord(CamelModel):
+    topic: str
+    partition: int
+    offset: int
+    raw_payload: str
+    reason: str
+    schema_fingerprint: str | None = None
+    quarantined_at: str | None = None
+    replay_status: str = "pending"
+
+
+class ContinuousQuarantineResponse(CamelModel):
+    job_id: str
+    records: list[ContinuousQuarantineRecord] = Field(default_factory=list)
+    total: int = 0
+
+
+class ContinuousReplayRequest(CamelModel):
+    offsets: list[str] = Field(default_factory=list)
+    approve_unknown_fields: bool = False
+
+    @field_validator("offsets")
+    @classmethod
+    def validate_offsets(cls, values: list[str]) -> list[str]:
+        if len(values) > 1000:
+            raise ValueError("offsets supports at most 1000 partition:offset values")
+        normalized = []
+        for value in values:
+            parts = str(value).split(":", 1)
+            if len(parts) != 2 or not all(part.isdigit() for part in parts):
+                raise ValueError("each offset must use non-negative partition:offset format")
+            normalized.append(f"{int(parts[0])}:{int(parts[1])}")
+        return list(dict.fromkeys(normalized))
+
+
+class ContinuousCompactionRequest(CamelModel):
+    target_file_size_mb: int = Field(default=256, ge=128, le=512)
+
+
+class ContinuousMaintenanceRun(CamelModel):
+    run_id: str
+    job_id: str
+    kind: Literal["quarantine_replay", "compaction"]
+    status: Literal["queued", "running", "success", "failed"]
+    requested_by: str
+    config: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    last_error: str | None = None
+
+
 class JobRunSummary(CamelModel):
     airflow_dag_id: str | None = None
     airflow_dag_run_id: str | None = None
@@ -136,6 +270,9 @@ class JobRowData(CamelModel):
     source_config: SourceFieldRows | None = None
     source_label: str | None = None
     source_type: str | None = None
+    execution_mode: KafkaExecutionMode = "snapshot"
+    continuous_config: dict[str, Any] | None = None
+    continuous_runtime: KafkaContinuousRuntime | None = None
     schema_columns: list[SchemaColumnDraft] | list[dict[str, Any]] | None = None
     schema_fingerprint: str | None = None
     schema_sample_rows: list[list[str]] | None = None
@@ -249,6 +386,8 @@ class CreatePipelineRequest(CamelModel):
     source_config: SourceFieldRows = Field(default_factory=list)
     source_type: str
     source_label: str
+    execution_mode: KafkaExecutionMode = "snapshot"
+    continuous_config: KafkaContinuousConfigDraft | None = None
     schema_summary: str = ""
     rule_summary: str = ""
     transform_output_columns: SourceFieldRows = Field(default_factory=list)
@@ -501,6 +640,55 @@ class KafkaReviewIngestResponse(CamelModel):
     topic: str
     transform: dict[str, Any] | None = None
     quality: dict[str, Any] | None = None
+
+
+class KafkaReplayProducerRequest(CamelModel):
+    topic: str = "reviews.raw"
+    input_path: str | None = None
+    rate: int = Field(default=10, ge=1, le=100_000)
+    batch_size: int = Field(default=100, ge=1, le=10_000)
+    progress_every: int = Field(default=100, ge=1, le=100_000)
+    loop: bool = True
+    max_cycles: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_messages: int | None = Field(default=None, ge=1, le=100_000_000)
+    cycle_delay_ms: int = Field(default=0, ge=0, le=3_600_000)
+    burst_min_messages: int | None = Field(default=None, ge=1, le=1_000_000)
+    burst_max_messages: int | None = Field(default=None, ge=1, le=1_000_000)
+    burst_interval_seconds: int | None = Field(default=None, ge=1, le=3_600)
+
+    @field_validator("input_path")
+    @classmethod
+    def validate_input_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized or normalized.startswith("/") or ".." in normalized.split("/"):
+            raise ValueError("inputPath must be a relative path inside the replay input directory")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_loop_bounds(self) -> "KafkaReplayProducerRequest":
+        if self.max_cycles is not None and not self.loop:
+            raise ValueError("maxCycles requires loop=true")
+        burst_values = [self.burst_min_messages, self.burst_max_messages, self.burst_interval_seconds]
+        if any(value is not None for value in burst_values):
+            if not self.loop or any(value is None for value in burst_values):
+                raise ValueError("burst mode requires loop=true, burstMinMessages, burstMaxMessages, and burstIntervalSeconds")
+            if self.burst_min_messages > self.burst_max_messages:
+                raise ValueError("burstMinMessages must be less than or equal to burstMaxMessages")
+        return self
+
+
+class KafkaReplayProducerStatus(CamelModel):
+    running: bool
+    pid: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    exit_code: int | None = None
+    sent_messages: int = 0
+    completed_cycles: int = 0
+    config: dict[str, Any] | None = None
+    logs: list[str] = Field(default_factory=list)
 
 
 class QueryRunRequest(CamelModel):

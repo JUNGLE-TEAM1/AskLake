@@ -3,7 +3,126 @@ import type { PermissionGrant, ResourcePermissions } from "./permissions";
 
 export type JobStatus = "scheduled" | "failed" | "running" | "paused" | "canceled" | "stopped";
 export type JobScheduleKind = "daily" | "weekly" | "monthly" | "realtime" | "none" | "other";
-export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "delete";
+export type JobCommand = "edit" | "run" | "retry" | "pause" | "cancelRun" | "stopSchedule" | "resumeSchedule" | "startContinuous" | "pauseContinuous" | "resumeContinuous" | "stopContinuous" | "delete";
+export type KafkaExecutionMode = "snapshot" | "continuous";
+export type ContinuousRuntimeStatus = "starting" | "running" | "pausing" | "paused" | "stopping" | "stopped" | "failed";
+
+export type KafkaSchemaEvolutionPolicy = {
+  additiveNullable: "allow" | "quarantine" | "pause";
+  missingRequired: "quarantine" | "pause";
+  incompatibleType: "quarantine" | "pause";
+  unknownField: "preserve" | "ignore" | "quarantine" | "pause";
+};
+
+export type KafkaContinuousConfigDraft = {
+  initialOffsetPolicy: "earliest" | "latest";
+  triggerIntervalSeconds: number;
+  maxOffsetsPerTrigger: number;
+  schemaEvolutionPolicy?: KafkaSchemaEvolutionPolicy;
+};
+
+export type KafkaContinuousRuntime = {
+  status: ContinuousRuntimeStatus;
+  checkpointPath: string;
+  heartbeatAt?: string | null;
+  lastFlushAt?: string | null;
+  lastBatchId?: string | null;
+  lag?: number | null;
+  maxPartitionLag?: number | null;
+  laggingPartitionCount: number;
+  lagAvailable: boolean;
+  partitionProgress: Record<string, { processedOffset: number; latestOffset: number; lag: number }>;
+  lastBatchDurationMs?: number | null;
+  lastBatchInputRows: number;
+  throughputRowsPerSecond?: number | null;
+  schemaVersion: number;
+  schemaFingerprint?: string | null;
+  schemaStatus: string;
+  schemaChanges: Array<Record<string, unknown>>;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  replayedCount: number;
+  failedCount: number;
+  lastError?: string | null;
+};
+
+export type ContinuousWorkerLogsResponse = {
+  jobId: string;
+  containerState: string;
+  lines: string[];
+  truncated: boolean;
+};
+
+export type KafkaContinuousSessionStatus = "starting" | "running" | "stopping" | "stopped" | "failed";
+
+export type KafkaContinuousSession = {
+  sessionId: string;
+  jobId: string;
+  workerAttemptId?: string | null;
+  status: KafkaContinuousSessionStatus;
+  startedAt: string;
+  endedAt?: string | null;
+  endReason?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastBatchId?: string | null;
+  lastFlushAt?: string | null;
+  lag?: number | null;
+  checkpointPath: string;
+  lastError?: string | null;
+};
+
+export type KafkaContinuousBatch = {
+  batchId: number;
+  sessionId: string;
+  publishedAt?: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  durationMs?: number | null;
+  sourceRanges: Array<{
+    topic?: string;
+    partition?: number;
+    startOffset?: number;
+    endOffset?: number;
+  }>;
+  dataPath?: string | null;
+  quarantinePath?: string | null;
+  manifestPath?: string | null;
+};
+
+export type ContinuousQuarantineRecord = {
+  topic: string;
+  partition: number;
+  offset: number;
+  rawPayload: string;
+  reason: string;
+  schemaFingerprint?: string | null;
+  quarantinedAt?: string | null;
+  replayStatus: string;
+};
+
+export type ContinuousQuarantineResponse = {
+  jobId: string;
+  records: ContinuousQuarantineRecord[];
+  total: number;
+};
+
+export type ContinuousMaintenanceRun = {
+  runId: string;
+  jobId: string;
+  kind: "quarantine_replay" | "compaction";
+  status: "queued" | "running" | "success" | "failed";
+  requestedBy: string;
+  config: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  lastError?: string | null;
+};
 export type TargetLayer = "RAW" | "BRONZE" | "SILVER" | "GOLD";
 export type JobRunStatus = "queued" | "running" | "success" | "failed" | "canceled";
 export type JobRunOutcome = "success" | "failed" | "canceled";
@@ -57,6 +176,9 @@ export type JobRowData = {
   sourceConfig?: Array<[string, string]>;
   sourceLabel?: string;
   sourceType?: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft & { checkpointPath?: string };
+  continuousRuntime?: KafkaContinuousRuntime | null;
   schemaColumns?: SchemaColumnDraft[];
   schemaFingerprint?: string;
   schemaSampleRows?: string[][];
@@ -141,6 +263,8 @@ export type SourceDraft = {
   sourceConfig: Array<[string, string]>;
   sourceLabel: string;
   sourceType: string;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type TransformChainStepDraft = {
@@ -373,6 +497,8 @@ export type CreatePipelineRequest = {
   targetFormat: string;
   owner: string;
   rag: boolean;
+  executionMode?: KafkaExecutionMode;
+  continuousConfig?: KafkaContinuousConfigDraft;
 };
 
 export type UpdatePipelineRequest = Omit<

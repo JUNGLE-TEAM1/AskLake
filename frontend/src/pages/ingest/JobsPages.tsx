@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -50,6 +50,12 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { Field, PageTitle } from "../../components/common";
+import { getCatalogDataset } from "../../services/catalogApi";
+import { getCellphonesReviewAnalysis, runCellphonesReviewAnalysis, type ReviewAnalysisSummary } from "../../services/reviewAnalysisApi";
+import { compactContinuousTarget, getContinuousMaintenanceRuns, getContinuousQuarantine, getContinuousSessionBatches, getContinuousSessions, getContinuousWorkerLogs, replayContinuousQuarantine } from "../../services/pipelineApi";
+import type { ContinuousMaintenanceRun, ContinuousQuarantineRecord, KafkaContinuousBatch, KafkaContinuousSession, KafkaContinuousSessionStatus } from "../../types";
+import { canRunJobCommand, permissionDeniedMessage } from "../../utils/permissions";
 import { ActionGroup } from "@/components/ui/action-group";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -190,6 +196,21 @@ function hasSameStatuses(first?: JobStatus[], second?: JobStatus[]) {
   if (!first?.length && !second?.length) return true;
   if (!first || !second || first.length !== second.length) return false;
   return first.every((status) => second.includes(status));
+}
+
+function isContinuousKafkaJob(job: JobRowData) {
+  return job.executionMode === "continuous";
+}
+
+function continuousRuntimeLabel(job: JobRowData) {
+  const runtime = job.continuousRuntime;
+  if (!runtime) return "Continuous 설정 대기";
+  return `${runtime.status} · ${runtime.storedCount.toLocaleString()}건 적재`;
+}
+
+function jobActionDisabled(job: JobRowData, action: JobListActionKind | JobCommand) {
+  if (action === "detail" || action === "runs") return false;
+  return !canRunJobCommand(job, action);
 }
 
 function getJobsQueryPath(query: JobListQuery) {
@@ -726,8 +747,12 @@ function JobsTableSection({
       onDetail(job);
       return;
     }
+    if (action === "runs") {
+      onRuns(job);
+      return;
+    }
     onCommand(job, action);
-  }, [onCommand, onDetail]);
+  }, [onCommand, onDetail, onRuns]);
   const columns = useMemo<ColumnDef<JobsTableRow>[]>(() => [
     {
       accessorFn: (row) => row.job.status,
@@ -934,7 +959,7 @@ function JobsTableSection({
   );
 }
 
-type JobListActionKind = Exclude<JobCommand, "delete"> | "detail";
+type JobListActionKind = Exclude<JobCommand, "delete"> | "detail" | "runs";
 
 type JobListAction = {
   className: string;
@@ -949,6 +974,17 @@ function getJobListActions(job: JobRowData): JobListAction[] {
   const actions: JobListAction[] = [
     { className: "job-action-button", kind: "detail", label: "작업 정보" },
   ];
+
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (runtimeStatus === "stopping") {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "중지 중" }];
+    }
+    if (["starting", "running", "pausing"].includes(runtimeStatus)) {
+      return [...actions, { className: "job-action-button primary soft", kind: "runs", label: "런타임" }, { className: "job-action-button danger", kind: "stopContinuous", label: "중지" }];
+    }
+    return [...actions, { className: "job-action-button primary soft", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
 
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
@@ -1057,6 +1093,16 @@ type JobDetailAction = {
 };
 
 function getJobDetailActions(job: JobRowData): JobDetailAction[] {
+  if (isContinuousKafkaJob(job)) {
+    const runtimeStatus = job.continuousRuntime?.status ?? "stopped";
+    if (runtimeStatus === "stopping") {
+      return [];
+    }
+    if (["starting", "running", "pausing"].includes(runtimeStatus)) {
+      return [{ className: "job-action-button danger", kind: "stopContinuous", label: "스트림 중지" }];
+    }
+    return [{ className: "job-action-button primary", kind: "startContinuous", label: "스트림 시작" }, { className: "job-action-button", kind: "edit", label: "수정" }];
+  }
   if (job.status === "running") {
     if (isRealtimeJob(job)) {
       return [{ className: "job-action-button danger realtime-stop", kind: "stopSchedule", label: "실행 중지" }];
@@ -1908,6 +1954,8 @@ export function JobDetailPage({
         </div>
       </Panel>
 
+      {isContinuousKafkaJob(job) && <ContinuousRuntimeCard job={job} />}
+
       <Accordion className="grid gap-4" defaultValue={["source-target", "schema-transform"]} type="multiple">
         <AccordionItem className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" value="source-target">
           <AccordionTrigger className="h-[72px] min-h-0 px-5 py-0 text-base">
@@ -2079,19 +2127,487 @@ export function JobDetailPage({
   );
 }
 
-export function JobRunsPage({
-  evidence,
-  job,
-  onAction,
-  onBack,
-  onCommand,
-}: {
+function ContinuousRuntimeCard({ job }: { job: JobRowData }) {
+  const runtime = job.continuousRuntime;
+  const maintenanceBlocked = runtime ? !["paused", "stopped"].includes(runtime.status) : true;
+  const [logs, setLogs] = useState<string[]>([]);
+  const [logError, setLogError] = useState("");
+  const [loadingLogs, setLoadingLogs] = useState(false);
+  const [quarantine, setQuarantine] = useState<ContinuousQuarantineRecord[]>([]);
+  const [maintenanceRuns, setMaintenanceRuns] = useState<ContinuousMaintenanceRun[]>([]);
+  const [maintenanceBusy, setMaintenanceBusy] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  const loadLogs = useCallback(async () => {
+    setLoadingLogs(true);
+    setLogError("");
+    try {
+      setLogs((await getContinuousWorkerLogs(job.id, 100)).lines);
+    } catch (error) {
+      setLogError(error instanceof Error ? error.message : "Worker 로그를 불러오지 못했습니다.");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [job.id]);
+  useEffect(() => { void loadLogs(); }, [loadLogs]);
+  const refreshMaintenance = useCallback(async () => {
+    try {
+      const runs = await getContinuousMaintenanceRuns(job.id);
+      setMaintenanceRuns(runs);
+      if (maintenanceBlocked) {
+        setQuarantine([]);
+      } else {
+        setQuarantine((await getContinuousQuarantine(job.id, 25)).records);
+      }
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 정보를 불러오지 못했습니다.");
+    }
+  }, [job.id, maintenanceBlocked]);
+  useEffect(() => { void refreshMaintenance(); }, [refreshMaintenance]);
+  const runMaintenance = async (kind: "replay" | "compact") => {
+    setMaintenanceBusy(true);
+    setMaintenanceMessage("");
+    try {
+      const run = kind === "replay"
+        ? await replayContinuousQuarantine(job.id)
+        : await compactContinuousTarget(job.id, 256);
+      if (kind === "replay") {
+        const stored = Number(run.result?.storedCount ?? 0);
+        const failed = Number(run.result?.failedCount ?? 0);
+        const skipped = Number(run.result?.skippedCount ?? 0);
+        setMaintenanceMessage(`격리 재처리 ${run.status} · 적재 ${stored.toLocaleString()} · 정책 거부 ${failed.toLocaleString()} · 이미 처리 ${skipped.toLocaleString()}`);
+      } else {
+        setMaintenanceMessage(`Compaction ${run.status}`);
+      }
+      await refreshMaintenance();
+    } catch (error) {
+      setMaintenanceMessage(error instanceof Error ? error.message : "Maintenance 실행에 실패했습니다.");
+    } finally {
+      setMaintenanceBusy(false);
+    }
+  };
+  return (
+    <article className="job-detail-card metadata-card">
+      <h3>Continuous Runtime</h3>
+      <div className="detail-kv-grid">
+        <Field label="상태" value={continuousRuntimeLabel(job)} />
+        <Field label="마지막 batch" value={runtime?.lastBatchId ?? "-"} />
+        <Field label="소비 / 적재" value={`${runtime?.consumedCount?.toLocaleString() ?? "0"} / ${runtime?.storedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="격리 / 재처리" value={`${runtime?.quarantinedCount?.toLocaleString() ?? "0"} / ${runtime?.replayedCount?.toLocaleString() ?? "0"}`} />
+        <Field label="실패" value={runtime?.failedCount?.toLocaleString() ?? "0"} />
+        <Field label="Kafka Lag" value={runtime?.lagAvailable ? `${runtime.lag?.toLocaleString() ?? 0}건 · 최대 ${runtime.maxPartitionLag?.toLocaleString() ?? 0}` : "측정 대기"} />
+        <Field label="처리량" value={runtime?.throughputRowsPerSecond != null ? `${runtime.throughputRowsPerSecond.toLocaleString()} rows/s` : "-"} />
+        <Field label="최근 Batch" value={runtime?.lastBatchDurationMs != null ? `${runtime.lastBatchInputRows.toLocaleString()}건 · ${runtime.lastBatchDurationMs.toLocaleString()}ms` : "-"} />
+        <Field label="Schema" value={`v${runtime?.schemaVersion ?? 1} · ${runtime?.schemaStatus ?? "stable"}`} />
+        <Field label="Heartbeat" value={runtime?.heartbeatAt ? formatCompactDateTime(runtime.heartbeatAt) : "-"} />
+        <Field label="Checkpoint" value={runtime?.checkpointPath ?? "-"} />
+        {runtime?.lastError && <Field label="최근 오류" value={runtime.lastError} />}
+      </div>
+      <div className="job-runtime-log-header">
+        <strong>Worker Log</strong>
+        <button className="job-action-button" disabled={loadingLogs} onClick={() => void loadLogs()} type="button"><RefreshCw size={15} />새로고침</button>
+      </div>
+      {logError ? <p className="job-inline-error">{logError}</p> : <pre className="job-runtime-log">{logs.length ? logs.join("\n") : loadingLogs ? "로그 불러오는 중..." : "표시할 로그가 없습니다."}</pre>}
+      <div className="job-runtime-log-header">
+        <strong>Quarantine · Maintenance</strong>
+        <div className="job-runtime-actions">
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || !quarantine.some((item) => item.replayStatus !== "replayed")} onClick={() => void runMaintenance("replay")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><Repeat2 size={15} />전체 재처리</button>
+          <button className="job-action-button" disabled={maintenanceBlocked || maintenanceBusy || (runtime?.storedCount ?? 0) === 0} onClick={() => void runMaintenance("compact")} title={maintenanceBlocked ? "스트림을 중지한 뒤 실행할 수 있습니다." : undefined} type="button"><HardDrive size={15} />Compaction</button>
+        </div>
+      </div>
+      {maintenanceMessage && <p className="panel-note">{maintenanceMessage}</p>}
+      <div className="job-maintenance-summary">
+        <span>격리 샘플 {quarantine.length.toLocaleString()}건</span>
+        <span>실행 이력 {maintenanceRuns.length.toLocaleString()}건</span>
+        <span>최근 {maintenanceRuns[0] ? `${maintenanceRuns[0].kind} · ${maintenanceRuns[0].status}` : "-"}</span>
+      </div>
+      {quarantine.length > 0 && <div className="job-quarantine-list">{quarantine.slice(0, 5).map((item) => <div key={`${item.partition}:${item.offset}`}><code>{item.partition}:{item.offset}</code><span>{item.reason}</span><span>{item.replayStatus}</span><span>{item.rawPayload}</span></div>)}</div>}
+    </article>
+  );
+}
+
+type JobRunsPageProps = {
+  catalogDatasetId?: string;
+  catalogRowCount?: string;
   evidence?: JobExecutionEvidence;
   job: JobRowData;
   onAction: (action: string, apiPath: string, targetId: string, result?: AuditResult) => void;
   onBack: () => void;
   onCommand: (job: JobRowData, command: JobCommand) => void;
-}) {
+};
+
+const activeContinuousSessionStatuses = new Set<KafkaContinuousSessionStatus>(["starting", "running", "stopping"]);
+
+const continuousSessionStatusMeta: Record<KafkaContinuousSessionStatus, { label: string; tone: StatusBadgeTone }> = {
+  failed: { label: "실패", tone: "danger" },
+  running: { label: "실행 중", tone: "success" },
+  starting: { label: "시작 중", tone: "default" },
+  stopped: { label: "종료", tone: "muted" },
+  stopping: { label: "종료 중", tone: "default" },
+};
+
+export function JobRunsPage(props: JobRunsPageProps) {
+  if (props.job.executionMode === "continuous") {
+    return <ContinuousJobRunsPage {...props} />;
+  }
+  return <SnapshotJobRunsPage {...props} />;
+}
+
+function ContinuousJobRunsPage({
+  catalogDatasetId,
+  catalogRowCount,
+  job,
+  onAction,
+  onBack,
+  onCommand,
+}: JobRunsPageProps) {
+  const [sessions, setSessions] = useState<KafkaContinuousSession[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<KafkaContinuousSession | null>(null);
+  const [batches, setBatches] = useState<KafkaContinuousBatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
+  const [currentCatalogRowCount, setCurrentCatalogRowCount] = useState(catalogRowCount);
+  const [sessionPollingActive, setSessionPollingActive] = useState(false);
+  const inFlightRef = useRef(false);
+  const requestSequenceRef = useRef(0);
+  const activeSessionsRef = useRef(false);
+  const hasLoadedRef = useRef(false);
+
+  const loadSessions = useCallback(async () => {
+    if (inFlightRef.current) return { active: activeSessionsRef.current, ok: true };
+    inFlightRef.current = true;
+    const requestSequence = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestSequence;
+    if (!hasLoadedRef.current) setLoading(true);
+    try {
+      const [nextSessions, nextCatalogDataset] = await Promise.all([
+        getContinuousSessions(job.id),
+        catalogDatasetId ? getCatalogDataset(catalogDatasetId).catch(() => null) : Promise.resolve(null),
+      ]);
+      const nextSelectedId = nextSessions.some((session) => session.sessionId === selectedSessionId)
+        ? selectedSessionId
+        : nextSessions[0]?.sessionId ?? null;
+      const nextSelectedSession = nextSessions.find((session) => session.sessionId === nextSelectedId) ?? null;
+      const nextBatches = nextSelectedId
+        ? await getContinuousSessionBatches(job.id, nextSelectedId, 100)
+        : [];
+      if (requestSequence !== requestSequenceRef.current) return { active: false, ok: true };
+      setSessions(nextSessions);
+      setSelectedSessionId(nextSelectedId);
+      setSelectedSession(nextSelectedSession);
+      setBatches(nextBatches);
+      setCurrentCatalogRowCount(nextCatalogDataset?.rows ?? catalogRowCount);
+      setRefreshError(null);
+      setLastRefreshedAt(new Date().toISOString());
+      activeSessionsRef.current = nextSessions.some((session) => activeContinuousSessionStatuses.has(session.status));
+      setSessionPollingActive(activeSessionsRef.current);
+      return { active: activeSessionsRef.current, ok: true };
+    } catch {
+      if (requestSequence === requestSequenceRef.current) {
+        setRefreshError("실시간 실행 이력을 갱신하지 못했습니다. 마지막으로 확인한 값을 유지합니다.");
+      }
+      return { active: true, ok: false };
+    } finally {
+      if (requestSequence === requestSequenceRef.current) {
+        hasLoadedRef.current = true;
+        setLoading(false);
+      }
+      inFlightRef.current = false;
+    }
+  }, [catalogDatasetId, catalogRowCount, job.id, selectedSessionId]);
+
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    inFlightRef.current = false;
+    hasLoadedRef.current = false;
+    activeSessionsRef.current = false;
+    setSessions([]);
+    setSelectedSessionId(null);
+    setSelectedSession(null);
+    setBatches([]);
+    setSessionPollingActive(false);
+    setLoading(true);
+    setRefreshError(null);
+  }, [job.id]);
+
+  const runtimeActive = job.continuousRuntime
+    ? ["starting", "running", "pausing", "stopping"].includes(job.continuousRuntime.status)
+    : false;
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    let failures = 0;
+
+    const schedule = (delay: number) => {
+      if (!cancelled) timer = window.setTimeout(() => void poll(), delay);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden") {
+        schedule(5000);
+        return;
+      }
+      const result = await loadSessions();
+      if (cancelled) return;
+      failures = result.ok ? 0 : Math.min(failures + 1, 3);
+      if (result.active || runtimeActive || sessionPollingActive || !result.ok) {
+        schedule(result.ok ? 3000 : 3000 * (2 ** failures));
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (timer) window.clearTimeout(timer);
+      void poll();
+    };
+
+    void poll();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      requestSequenceRef.current += 1;
+      if (timer) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadSessions, runtimeActive, sessionPollingActive]);
+
+  const selectSession = (session: KafkaContinuousSession) => {
+    setSelectedSessionId(session.sessionId);
+    setSelectedSession(session);
+    setBatches([]);
+    onAction("etl.continuous.session_opened", `/api/etl/jobs/${job.id}/continuous/sessions/${session.sessionId}`, session.sessionId);
+  };
+
+  const refreshNow = async () => {
+    setManualRefreshing(true);
+    try {
+      const result = await loadSessions();
+      onAction("etl.continuous.sessions_refreshed", `/api/etl/jobs/${job.id}/continuous/sessions`, job.id, result.ok ? "success" : "failed");
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
+
+  const latestSession = sessions[0] ?? null;
+  const metricSession = selectedSession ?? latestSession;
+  const sessionColumns: ColumnDef<KafkaContinuousSession>[] = [
+    {
+      accessorKey: "sessionId",
+      header: "세션 ID",
+      cell: ({ row }) => (
+        <Button className="h-auto max-w-[210px] justify-start truncate px-0 text-left font-semibold" size="content" type="button" variant="link" onClick={() => selectSession(row.original)}>
+          {row.original.sessionId}
+        </Button>
+      ),
+      meta: { widthClassName: "w-[220px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "status",
+      header: "상태",
+      cell: ({ row }) => <ContinuousSessionStatus status={row.original.status} />,
+      meta: { align: "center", widthClassName: "w-[100px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "period",
+      header: "실행 구간",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary>{formatCompactDateTime(row.original.startedAt)}</DataTableCellPrimary>
+          <DataTableCellSecondary>{row.original.endedAt ? `${formatCompactDateTime(row.original.endedAt)} · ${formatContinuousDuration(row.original.startedAt, row.original.endedAt)}` : "진행 중"}</DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[210px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "counts",
+      header: "세션 처리량",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary>소비 {row.original.consumedCount.toLocaleString()}건</DataTableCellPrimary>
+          <DataTableCellSecondary>적재 {row.original.storedCount.toLocaleString()} · 격리 {row.original.quarantinedCount.toLocaleString()}</DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[190px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "lag",
+      header: "Kafka Lag",
+      cell: ({ row }) => row.original.lag == null ? "-" : `${row.original.lag.toLocaleString()}건`,
+      meta: { align: "right", widthClassName: "w-[110px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "lastFlushAt",
+      header: "최근 적재",
+      cell: ({ row }) => row.original.lastFlushAt ? formatCompactDateTime(row.original.lastFlushAt) : "-",
+      meta: { widthClassName: "w-[160px]" } satisfies DataTableColumnMeta,
+    },
+  ];
+  const batchColumns: ColumnDef<KafkaContinuousBatch>[] = [
+    {
+      accessorKey: "batchId",
+      header: "Batch",
+      cell: ({ row }) => <strong className="tabular-nums">#{row.original.batchId}</strong>,
+      meta: { widthClassName: "w-[90px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "publishedAt",
+      header: "적재 시각",
+      cell: ({ row }) => row.original.publishedAt ? formatCompactDateTime(row.original.publishedAt) : "-",
+      meta: { widthClassName: "w-[170px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "counts",
+      header: "처리 건수",
+      cell: ({ row }) => `소비 ${row.original.consumedCount.toLocaleString()} · 적재 ${row.original.storedCount.toLocaleString()} · 격리 ${row.original.quarantinedCount.toLocaleString()}`,
+      meta: { widthClassName: "w-[270px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      accessorKey: "durationMs",
+      header: "소요 시간",
+      cell: ({ row }) => row.original.durationMs == null ? "-" : `${row.original.durationMs.toLocaleString()}ms`,
+      meta: { align: "right", widthClassName: "w-[110px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "offsets",
+      header: "Kafka Offset 범위",
+      cell: ({ row }) => formatSourceRanges(row.original.sourceRanges),
+      meta: { widthClassName: "w-[260px]" } satisfies DataTableColumnMeta,
+    },
+    {
+      id: "paths",
+      header: "저장 경로",
+      cell: ({ row }) => (
+        <DataTableStackedCell>
+          <DataTableCellPrimary className="max-w-[260px] truncate" title={row.original.dataPath ?? row.original.quarantinePath ?? undefined}>
+            {row.original.dataPath ?? row.original.quarantinePath ?? "-"}
+          </DataTableCellPrimary>
+          <DataTableCellSecondary className="max-w-[260px] truncate" title={row.original.manifestPath ?? undefined}>
+            {row.original.manifestPath ? `manifest ${row.original.manifestPath}` : "manifest -"}
+          </DataTableCellSecondary>
+        </DataTableStackedCell>
+      ),
+      meta: { widthClassName: "w-[280px]" } satisfies DataTableColumnMeta,
+    },
+  ];
+
+  return (
+    <TooltipProvider delayDuration={250}>
+      <div className="job-detail-page job-runs-page">
+        <JobDetailHeader backLabel="작업 상세로 돌아가기" job={job} onBack={onBack} onCommand={onCommand} />
+        <section className="runs-body-content">
+          {refreshError && (
+            <Alert variant="destructive">
+              <AlertCircle aria-hidden="true" />
+              <AlertTitle>자동 갱신 지연</AlertTitle>
+              <AlertDescription>{refreshError}</AlertDescription>
+            </Alert>
+          )}
+          <Panel overflow="visible">
+            <PanelHeader icon={<Activity aria-hidden="true" size={18} />} title="실시간 실행 요약" />
+            <div className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard detail={metricSession?.lastFlushAt ? formatCompactDateTime(metricSession.lastFlushAt) : "세션 기록 없음"} icon={<Activity aria-hidden="true" />} label="세션 상태" size="default" tone={metricSession?.status === "failed" ? "failed" : metricSession?.status === "running" ? "running" : "scheduled"} value={metricSession ? continuousSessionStatusMeta[metricSession.status].label : "-"} />
+              <MetricCard detail="선택 세션 기준" icon={<Database aria-hidden="true" />} label="세션 누적 적재" size="default" tone="running" value={`${(metricSession?.storedCount ?? 0).toLocaleString()}건`} />
+              <MetricCard detail="Catalog 현재 행 수" icon={<Table2 aria-hidden="true" />} label="현재 데이터셋" size="default" value={currentCatalogRowCount ?? "미등록"} />
+              <MetricCard detail={metricSession?.lastBatchId ? `최근 batch ${metricSession.lastBatchId}` : "batch 기록 없음"} icon={<Zap aria-hidden="true" />} label="Kafka Lag" size="default" tone={(metricSession?.lag ?? 0) > 0 ? "scheduled" : "total"} value={metricSession?.lag == null ? "-" : `${metricSession.lag.toLocaleString()}건`} />
+            </div>
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              actions={(
+                <Button disabled={loading || manualRefreshing} size="sm" type="button" variant="outline" onClick={() => void refreshNow()}>
+                  <RefreshCw aria-hidden="true" className={loading || manualRefreshing ? "animate-spin" : undefined} />
+                  새로고침
+                </Button>
+              )}
+              icon={<History aria-hidden="true" size={18} />}
+              meta={<Badge shape="compact" size="lg" variant="muted">{sessions.length}개 세션</Badge>}
+              title="스트림 세션 이력"
+            />
+            <DataTable
+              columns={sessionColumns}
+              data={sessions}
+              emptyState={{ title: loading ? "세션 이력을 불러오는 중입니다." : "아직 실시간 실행 세션이 없습니다." }}
+              getRowClassName={(row) => row.original.sessionId === selectedSessionId ? "bg-blue-50/70" : row.original.status === "failed" ? "bg-red-50/45" : undefined}
+              pagination={{ label: "스트림 세션", pageSize: 5, showSummary: false }}
+              resetPaginationKey={`${sessions.length}-${selectedSessionId ?? "none"}`}
+              tableClassName="min-w-[960px] table-fixed"
+              viewportClassName="rounded-none border-0 bg-transparent"
+            />
+            {lastRefreshedAt && <p className="px-5 pb-4 text-right text-xs text-slate-500">최근 갱신 {formatCompactDateTime(lastRefreshedAt)}</p>}
+          </Panel>
+
+          <Panel>
+            <PanelHeader
+              icon={<Workflow aria-hidden="true" size={18} />}
+              meta={<Badge shape="compact" size="lg" variant="muted">{batches.length}개 batch</Badge>}
+              title="세션 Batch 상세"
+            />
+            {selectedSession && (
+              <div className="grid gap-3 border-b border-slate-200 px-5 py-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                <Field label="종료 사유" value={formatContinuousEndReason(selectedSession.endReason)} />
+                <Field label="실패 건수" value={`${selectedSession.failedCount.toLocaleString()}건`} />
+                <Field label="Checkpoint" value={selectedSession.checkpointPath} />
+                <Field label="최근 오류" value={selectedSession.lastError ?? "-"} />
+              </div>
+            )}
+            <DataTable
+              columns={batchColumns}
+              data={batches}
+              emptyState={{ title: selectedSession ? "이 세션에 기록된 micro-batch가 없습니다." : "확인할 세션을 선택해 주세요." }}
+              pagination={{ label: "micro-batch", pageSize: 10, showSummary: false }}
+              resetPaginationKey={`${selectedSessionId ?? "none"}-${batches.length}`}
+              tableClassName="min-w-[1180px] table-fixed"
+              viewportClassName="rounded-none border-0 bg-transparent"
+            />
+          </Panel>
+        </section>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function ContinuousSessionStatus({ status }: { status: KafkaContinuousSessionStatus }) {
+  const meta = continuousSessionStatusMeta[status];
+  return <StatusBadge className="min-w-[76px] justify-center" shape="compact" size="lg" tone={meta.tone}>{meta.label}</StatusBadge>;
+}
+
+function formatContinuousDuration(startedAt: string, endedAt?: string | null) {
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt ?? new Date().toISOString());
+  if (Number.isNaN(start) || Number.isNaN(end)) return "-";
+  const totalSeconds = Math.max(0, Math.round((end - start) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0 ? `${hours}시간 ${minutes}분` : minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
+}
+
+function formatContinuousEndReason(reason?: string | null) {
+  const labels: Record<string, string> = {
+    paused: "일시정지",
+    start_failed: "시작 실패",
+    stopped: "사용자 중지",
+    worker_failed: "Worker 실패",
+    worker_stopped: "Worker 종료",
+  };
+  return reason ? labels[reason] ?? reason : "-";
+}
+
+function formatSourceRanges(ranges: KafkaContinuousBatch["sourceRanges"]) {
+  if (!ranges.length) return "-";
+  return ranges.map((range) => `${range.partition ?? 0}:${range.startOffset ?? 0}-${range.endOffset ?? 0}`).join(", ");
+}
+
+function SnapshotJobRunsPage({
+  evidence,
+  job,
+  onAction,
+  onBack,
+  onCommand,
+}: JobRunsPageProps) {
   const [activeRun, setActiveRun] = useState<JobRunSummary | null>(null);
   const [activeLogRun, setActiveLogRun] = useState<JobRunSummary | null>(null);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | JobRunStatus>("all");

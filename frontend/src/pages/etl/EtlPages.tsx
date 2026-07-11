@@ -760,6 +760,27 @@ function buildTargetStoragePath(targetDataset: string, targetLayer: TargetLayer)
   return `s3a://asklake-output/${targetDataset}/${targetLayer.toLowerCase()}/`;
 }
 
+function normalizeKafkaDatasetName(topic: string) {
+  const normalized = topic.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized || "kafka_events";
+}
+
+function isDefaultTargetDataset(value: string | undefined) {
+  return !value?.trim() || value.trim() === DEFAULT_TARGET_DATASET;
+}
+
+function isDefaultTargetStoragePath(value: string | undefined) {
+  return !value?.trim() || value.trim() === buildTargetStoragePath(DEFAULT_TARGET_DATASET, DEFAULT_TARGET_LAYER);
+}
+
+function isLegacyKafkaLandingPath(value: string | undefined) {
+  return Boolean(value?.includes("kafka-landing/"));
+}
+
+function isDefaultTargetDescription(value: string | undefined) {
+  return !value?.trim() || value.trim() === "고객 리뷰 분석용 정제 데이터셋";
+}
+
 const TARGET_CONFIG_STORAGE_KEY = "asklake.targetConfigDraft";
 const TARGET_FILE_FORMAT_VALUES: TargetFileFormat[] = ["parquet", "csv", "json"];
 const SAMPLE_TARGET_SCHEMA_COLUMNS: SchemaColumnDraft[] = [
@@ -992,13 +1013,34 @@ function getPermissionDraftValues(draft: DraftPipeline) {
 function getTargetDraftValues(draft: DraftPipeline) {
   const compatDraft = draft as DraftPipelineWithSlices;
   const target = compatDraft.target;
-  const targetDataset = getDisplayText(target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset, DEFAULT_TARGET_DATASET);
-  const targetFormat = getKnownOption(target?.targetFormat ?? target?.format ?? compatDraft.targetFormat, TARGET_FORMAT_OPTIONS, DEFAULT_TARGET_FORMAT);
-  const targetLayer = normalizeTargetLayer(target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer);
-  const storagePath = getDisplayText(target?.storagePath ?? draft.target.storagePath, buildTargetStoragePath(targetDataset, targetLayer));
+  const isKafkaSource = draft.source.sourceType === "Stream / Kafka" || draft.source.sourceType === "Kafka JSON";
+  const isContinuousKafka = isKafkaSource && draft.source.executionMode === "continuous";
+  const kafkaTopic = sourceConfigValue(draft.source.sourceConfig, "TOPIC / QUEUE NAME") || sourceConfigValue(draft.source.sourceConfig, "Topic") || "reviews.raw";
+  const kafkaDatasetName = normalizeKafkaDatasetName(kafkaTopic);
+  const rawTargetDataset = target?.targetDataset ?? target?.datasetName ?? compatDraft.targetDataset;
+  const targetDataset = isKafkaSource && isDefaultTargetDataset(rawTargetDataset)
+    ? kafkaDatasetName
+    : getDisplayText(rawTargetDataset, isKafkaSource ? kafkaDatasetName : DEFAULT_TARGET_DATASET);
+  const rawTargetFormat = target?.targetFormat ?? target?.format ?? compatDraft.targetFormat;
+  const targetFormat = isContinuousKafka
+    ? "parquet"
+    : isKafkaSource && (!rawTargetFormat || rawTargetFormat === DEFAULT_TARGET_FORMAT)
+      ? "jsonl"
+      : getKnownOption(rawTargetFormat, TARGET_FORMAT_OPTIONS, isKafkaSource ? "jsonl" : DEFAULT_TARGET_FORMAT);
+  const rawTargetLayer = target?.targetLayer ?? target?.layer ?? compatDraft.targetLayer ?? draft.target.layer;
+  const targetLayer = isKafkaSource && (!rawTargetLayer || rawTargetLayer === DEFAULT_TARGET_LAYER)
+    ? "BRONZE"
+    : normalizeTargetLayer(rawTargetLayer);
+  const storedPath = target?.storagePath ?? draft.target.storagePath;
+  const defaultTargetPath = buildTargetStoragePath(targetDataset, targetLayer);
+  const storagePath = isKafkaSource && (isDefaultTargetStoragePath(storedPath) || isLegacyKafkaLandingPath(storedPath))
+    ? defaultTargetPath
+    : getDisplayText(storedPath, defaultTargetPath);
 
   return {
-    description: getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
+    description: isKafkaSource && isDefaultTargetDescription(target?.description ?? draft.target.description)
+      ? isContinuousKafka ? "Kafka continuous micro-batch target 데이터셋" : "Kafka snapshot direct target 데이터셋"
+      : getDisplayText(target?.description ?? draft.target.description, "고객 리뷰 분석용 정제 데이터셋"),
     jobName: getDisplayText(target?.jobName ?? compatDraft.jobName, buildJobName(targetDataset)),
     owner: getDisplayText(target?.owner ?? compatDraft.owner ?? draft.permission.owner, DEFAULT_OWNER),
     partitionColumns: target?.partitionColumns ?? draft.target.partitionColumns ?? ["date", "category"],
@@ -1036,6 +1078,7 @@ export function SourceConnectionPage({
   onSave: () => void;
 }) {
   const [sourceType, setSourceType] = useState(draft.source.sourceType || "");
+  const kafkaExecutionMode = draft.source.executionMode ?? "snapshot";
   const [sourceFields, setSourceFields] = useState<Record<string, Array<[string, string]>>>({});
   const [connectionStatus, setConnectionStatus] = useState<SourceDraft["connectionStatus"]>(draft.source.connectionStatus);
   const [connectionMessage, setConnectionMessage] = useState(draft.source.connectionMessage ?? "검토 전에 연결 테스트가 필요합니다.");
@@ -1043,6 +1086,22 @@ export function SourceConnectionPage({
   const [sourceStage, setSourceStage] = useState<"choose" | "connect" | "browse">(() => getInitialSourceStage(draft));
   const [loadingAssetPath, setLoadingAssetPath] = useState("");
   const [selectedAssetPath, setSelectedAssetPath] = useState("");
+  const [continuousAdvancedOpen, setContinuousAdvancedOpen] = useState(false);
+  const sourceLocked = connectionStatus === "testing";
+  const continuousConfig = draft.source.continuousConfig ?? {
+    initialOffsetPolicy: "earliest" as const,
+    triggerIntervalSeconds: 30,
+    maxOffsetsPerTrigger: 10000,
+  };
+  const updateContinuousConfig = (patch: Partial<typeof continuousConfig>) => {
+    onDraftChange({
+      source: {
+        executionMode: "continuous",
+        continuousConfig: { ...continuousConfig, ...patch },
+      },
+      target: { format: "parquet" },
+    });
+  };
   const connectorMeta: Record<string, { icon: React.ReactNode; label: string; status: string }> = {
     "File / S3": { icon: <SourceBrandIcon kind="s3" />, label: "MinIO", status: "실제 연결" },
     PostgreSQL: { icon: <SourceBrandIcon kind="postgres" />, label: "Postgres", status: "실제 연결" },
@@ -1297,6 +1356,7 @@ export function SourceConnectionPage({
       return;
     }
     const label = sourceLabelFromFields(nextType, nextFields);
+    const executionMode = nextType === "Stream / Kafka" ? draft.source.executionMode ?? "snapshot" : "snapshot";
     onDraftChange({
       source: {
         connectionMessage: nextMessage,
@@ -1304,6 +1364,8 @@ export function SourceConnectionPage({
         sourceConfig: nextFields,
         sourceLabel: label,
         sourceType: nextType,
+        executionMode,
+        continuousConfig: executionMode === "continuous" ? draft.source.continuousConfig : undefined,
       },
     });
   };
@@ -1584,6 +1646,64 @@ export function SourceConnectionPage({
                     </FormFieldGroup>
                   ))}
                 </div>
+                {activeSourceType === "Stream / Kafka" && (
+                  <section className="source-step-section" aria-label="Kafka 실행 방식">
+                    <div className="source-step-header">
+                      <em>2</em>
+                      <div><strong>Kafka 실행 방식</strong></div>
+                    </div>
+                    <div className="kafka-execution-mode-grid" role="group" aria-label="Kafka 실행 방식 선택">
+                      <button aria-pressed={kafkaExecutionMode === "snapshot"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "snapshot" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => onDraftChange({ source: { executionMode: "snapshot" } })}>
+                        <span className="kafka-execution-mode-icon"><Clock3 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Snapshot</strong>
+                          <span>수동 또는 스케줄 실행</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Batch</span>
+                        {kafkaExecutionMode === "snapshot" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
+                      <button aria-pressed={kafkaExecutionMode === "continuous"} className={`kafka-execution-mode-card ${kafkaExecutionMode === "continuous" ? "selected" : ""}`} disabled={sourceLocked} type="button" onClick={() => updateContinuousConfig({})}>
+                        <span className="kafka-execution-mode-icon"><Repeat2 size={19} /></span>
+                        <span className="kafka-execution-mode-copy">
+                          <strong>Continuous</strong>
+                          <span>실시간 데이터 적재</span>
+                        </span>
+                        <span className="kafka-execution-mode-tag">Streaming</span>
+                        {kafkaExecutionMode === "continuous" && <span className="kafka-execution-mode-check"><Check size={14} /></span>}
+                      </button>
+                    </div>
+                    {kafkaExecutionMode === "continuous" && (
+                      <div className="kafka-continuous-settings">
+                        <button aria-expanded={continuousAdvancedOpen} className="kafka-continuous-settings-toggle" type="button" onClick={() => setContinuousAdvancedOpen((open) => !open)}>
+                          <span>고급 설정</span>
+                          {continuousAdvancedOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+                        {continuousAdvancedOpen && (
+                          <div className="kafka-continuous-settings-grid">
+                            <FormFieldGroup className="field" hint="새 checkpoint를 만들 때만 적용" label="시작 위치">
+                              <NativeSelect disabled={sourceLocked} value={continuousConfig.initialOffsetPolicy} onChange={(event) => updateContinuousConfig({ initialOffsetPolicy: event.target.value as "earliest" | "latest" })}>
+                                <option value="earliest">처음부터 읽기</option>
+                                <option value="latest">새 이벤트부터 읽기</option>
+                              </NativeSelect>
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~3600초" label="Trigger 간격">
+                              <Input disabled={sourceLocked} max={3600} min={1} type="number" value={continuousConfig.triggerIntervalSeconds} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 3600) updateContinuousConfig({ triggerIntervalSeconds: value });
+                              }} />
+                            </FormFieldGroup>
+                            <FormFieldGroup className="field" hint="1~1,000,000건" label="Micro-batch 최대 메시지">
+                              <Input disabled={sourceLocked} max={1_000_000} min={1} type="number" value={continuousConfig.maxOffsetsPerTrigger} onChange={(event) => {
+                                const value = Number(event.target.value);
+                                if (Number.isInteger(value) && value >= 1 && value <= 1_000_000) updateContinuousConfig({ maxOffsetsPerTrigger: value });
+                              }} />
+                            </FormFieldGroup>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )}
                 {current.info && <InfoBox title={isSqlResultSource ? "SQL Preview 입력" : "보안 연결"} body={current.info} />}
               </section>
 

@@ -84,6 +84,8 @@ X-Request-Id: req_20260703_000001
 
 현재 로컬 인증은 `/api/auth/login` 또는 `/api/auth/signup`이 발급하는 httpOnly `asklake_session` 쿠키를 사용합니다. 외부 IdP/OAuth/SSO, refresh token, 비밀번호 재설정, 이메일 인증은 아직 범위 밖이며, 기존 smoke와 수동 검증을 위해 `X-AskLake-*` actor header fallback은 유지합니다. 이 fallback은 로컬 smoke/manual 검증용이며, 운영에서는 session/IdP 또는 trusted gateway 검증 없이 client-provided header만으로 role/user/group을 신뢰하면 안 됩니다.
 
+Frontend는 `/api/auth/session` actor 확인 이후 보호 route와 backend hydrate를 시작합니다. Session/identity/admin 계약은 `/api/auth/signup`, `/api/auth/login`, `/api/auth/session`, `/api/auth/logout`, `/api/users/me`, `/api/admin/users`, `/api/admin/groups`, `/api/admin/permissions`, `/api/admin/governance-controls`, `/api/admin/audit-logs`를 사용하며, `/api/admin/*`는 현재 ActorContext가 admin이 아니면 `403 FORBIDDEN`을 반환합니다.
+
 ### Permission/Governance Phase 0 용어
 
 Phase 0 기준에서 identity metadata와 access control은 별도 개념입니다.
@@ -175,7 +177,7 @@ Profile/Admin Console Phase 0 기준:
 - 프로필 페이지와 관리 페이지는 세션 쿠키가 있으면 해당 계정 actor를 우선 사용하고, 세션이 없으면 기존 demo actor header fallback을 사용합니다.
 - `POST /api/auth/login`, `POST /api/auth/signup`, `GET /api/auth/session`, `POST /api/auth/logout`은 로컬 데모 계정/session API입니다.
 - `GET /api/users/me`는 현재 actor의 표시 프로필, role, group, 권한 요약을 반환합니다.
-- `/api/admin/*` endpoint는 `X-AskLake-Role=admin` actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
+- `/api/admin/*` endpoint는 현재 ActorContext의 role이 `admin`인 actor만 호출할 수 있습니다. 권한이 없으면 `403 FORBIDDEN`을 반환합니다.
 - 관리 콘솔은 사용자/그룹/감사 로그 조회, 사용자/그룹 차단, resource lock, permission grant 생성/수정/삭제를 지원합니다. 사용자/그룹 자체 생성, 멤버십 편집, deny policy, 조건부 정책은 후속 계약으로 분리합니다.
 - 관리자 편집 API는 group grant를 기본 흐름으로, user grant를 예외 흐름으로 제공합니다. Admin 계정은 resource 접근 그룹에 속하지 않고 `role=admin`으로 관리 권한을 받습니다. role/public grant는 계약상 허용하지만 운영 위험이 크므로 관리 콘솔의 기본 추가 옵션으로 노출하지 않고 정책 확인 후 사용합니다. payload에서 유래한 owner/permissionRoles grant는 원본 resource metadata로 남기며, 관리 콘솔에서는 읽기 전용으로 표시합니다.
 - 관리 콘솔의 권한 표시는 resource별 `permissionGrants`와 현재 actor 기준 `permissions`를 설명하는 운영 화면이며, 프론트 표시만으로 보안 판정을 대체하지 않습니다.
@@ -250,7 +252,6 @@ type AdminPermissionSummary = {
   currentActorPermissions?: ResourcePermissions;
 };
 ```
-
 ### Success Envelope
 
 P0 API는 프론트 타입과 바로 맞추기 위해 envelope 없이 아래 response shape 그대로 반환합니다.
@@ -550,6 +551,93 @@ type KafkaSnapshot = {
 Direct target write의 성공 run은 `sourceKind: "kafka"`, target layer, target storage location, `KafkaSnapshot`, transform/quality summary를 함께 기록한다. target write 또는 Catalog 등록이 실패하면 Kafka offset을 commit하지 않으며, quality `Fail Run`도 target write 전에 같은 방식으로 중단한다. `Quarantine` 행은 같은 snapshot directory의 별도 object로 분리한다. 같은 `snapshotId` 재시도는 target과 materialization run을 idempotent하게 갱신한다. 상세 전환 계약은 `docs/kafka-snapshot-direct-target-contract.md`를 따른다.
 
 Kafka Job command가 실패하면 `JobRunSummary.status`는 `failed`이며 `taskStates.kafkaSnapshot`으로 captured range를, `failedStage`로 실패 위치를 유지한다. direct ingest endpoint error response의 `error.details.bridge`도 같은 snapshot diagnostic을 포함한다.
+
+### Kafka Continuous Runtime
+
+Issue #500 defines `executionMode: "snapshot" | "continuous"` on Kafka Job creation. Existing and migrated Kafka Jobs default to `snapshot`. `continuous` is immutable after creation and adds `continuousConfig` (`initialOffsetPolicy`, `triggerIntervalSeconds`, `maxOffsetsPerTrigger`, `schemaEvolutionPolicy`, `checkpointPath`) plus `continuousRuntime` (`status`, heartbeat, lag, last flush, counters, last error) to `JobRowData`.
+
+`startContinuous`, `pauseContinuous`, `resumeContinuous`, and `stopContinuous` are command extensions of `POST /api/etl/jobs/{jobId}/commands`. They launch or signal a Spark Structured Streaming worker, reject conflicting active Snapshot or Continuous consumer identity with `409`, and use a durable Spark checkpoint as source-progress authority. Each batch publishes `batch_id=<id>` Parquet paths with `_SUCCESS` plus a hidden count/offset signature, then writes an immutable full-batch manifest. A pre-manifest retry may reuse an output only when its signature matches; a committed manifest may be reused only when its batch ID and source ranges match. Job hydrate reconciles all reported publication manifests into Catalog before worker liveness failure handling. An exited/missing/stale worker becomes `failed` only while active, and the same container attempt increments `failedCount` once. An intentional exit after `pauseContinuous` or `stopContinuous` completes as `paused` or `stopped`. See [Kafka Continuous Ingestion Contract](kafka-continuous-ingestion-contract.md).
+
+Frontend `DraftPipeline.source` carries optional `executionMode` and `continuousConfig`; `executionMode: "continuous"` serializes them into Job creation. `JobRowData` includes optional `continuousRuntime` for lifecycle controls and runtime display.
+
+Snapshot Job은 기존 스케줄 단계에서 수동 또는 반복 실행 정책을 저장한다. Continuous Job은 그 단계를 건너뛰며 `scheduleLabel: "스케줄링 건너뛰기"`, stream lifecycle 설명, `continuousConfig`만 생성 request에 보낸다. Continuous의 시작 위치, trigger 간격, micro-batch 최대 메시지는 Source 단계의 접힌 고급 설정에서 지정한다.
+
+### Kafka Replay Producer
+
+`GET|POST|DELETE /api/etl/kafka/replay-producer`는 Continuous 적재를 수동 검증할 때만 쓰는 admin `manage` 도구다. producer 상태는 process-local이며 backend 재시작 또는 배포 교체 시 함께 종료된다. `POST` body는 아래와 같고 topic 삭제를 요청할 수 없다.
+
+```ts
+type KafkaReplayProducerRequest = {
+  topic?: string; // default: reviews.raw
+  inputPath?: string; // ASKLAKE_REPLAY_INPUT_DIR 아래 상대 경로
+  rate?: number; // default: 10 messages/sec
+  batchSize?: number; // default: 100
+  progressEvery?: number; // default: 100
+  loop?: boolean; // default: true
+  maxCycles?: number;
+  maxMessages?: number;
+  cycleDelayMs?: number;
+  burstMinMessages?: number;
+  burstMaxMessages?: number;
+  burstIntervalSeconds?: number;
+};
+```
+
+loop는 cycle별 `event_id` suffix와 전역 증가 `offset`을 보장한다. burst 세 필드는 함께 지정해야 하며, loop 중 매 `burstIntervalSeconds`마다 `burstMinMessages`~`burstMaxMessages`의 랜덤 건수를 한 burst로 전송한다. `DELETE`는 SIGTERM을 보내 현재 send batch를 마친 뒤 연결을 닫도록 요청하며, 응답은 `running`, `pid`, `sentMessages`, `completedCycles`, bounded `logs`를 반환한다.
+
+Continuous runtime operations:
+
+```text
+GET  /api/etl/jobs/{jobId}/continuous/logs?tail=200
+GET  /api/etl/jobs/{jobId}/continuous/sessions
+GET  /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}
+GET  /api/etl/jobs/{jobId}/continuous/sessions/{sessionId}/batches?limit=100
+GET  /api/etl/jobs/{jobId}/continuous/quarantine?limit=100
+GET  /api/etl/jobs/{jobId}/continuous/maintenance-runs
+POST /api/etl/jobs/{jobId}/continuous/quarantine/replays
+POST /api/etl/jobs/{jobId}/continuous/compactions
+```
+
+`startContinuous`와 `resumeContinuous`는 각각 새 `KafkaContinuousSession`을 만들고 시작 시점의 누적 runtime counter를 baseline으로 저장한다. worker report를 읽을 때 session counter는 `현재 누적값 - baseline`으로 계산되므로 checkpoint를 이어받는 재시작에서도 이전 세션 수치가 섞이지 않는다. pause와 stop은 session을 `stopping`에서 `stopped`로, worker/container/heartbeat 실패는 `failed`로 끝내며 `endedAt`, `endReason`, `lastError`를 보존한다. `publishedBatches`는 `(sessionId, batchId)` unique key로 멱등 저장되고 시작 전 `lastBatchId` 이하의 복구 manifest는 새 session batch로 다시 기록하지 않는다.
+
+```ts
+type KafkaContinuousSession = {
+  sessionId: string;
+  jobId: string;
+  workerAttemptId: string | null;
+  status: "starting" | "running" | "stopping" | "stopped" | "failed";
+  startedAt: string;
+  endedAt: string | null;
+  endReason: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  failedCount: number;
+  lastBatchId: string | null;
+  lastFlushAt: string | null;
+  lag: number | null;
+  checkpointPath: string;
+  lastError: string | null;
+};
+
+type KafkaContinuousBatch = {
+  batchId: number;
+  sessionId: string;
+  publishedAt: string | null;
+  consumedCount: number;
+  storedCount: number;
+  quarantinedCount: number;
+  durationMs: number | null;
+  sourceRanges: Array<{ topic: string; partition: number; startOffset: number; endOffset: number }>;
+  dataPath: string | null;
+  quarantinePath: string | null;
+  manifestPath: string | null;
+};
+```
+
+`continuousRuntime` additionally exposes `maxPartitionLag`, `laggingPartitionCount`, `lagAvailable`, `partitionProgress`, `lastBatchDurationMs`, `lastBatchInputRows`, `throughputRowsPerSecond`, `replayedCount`, `schemaVersion`, `schemaFingerprint`, `schemaStatus`, and `schemaChanges`. `replayedCount` prevents recovered quarantine rows from being double-counted: `storedCount + quarantinedCount - replayedCount = consumedCount`. Worker logs are limited to 1,000 lines, ANSI-stripped, and redact common key/token/password assignments.
+
+Quarantine replay accepts optional `offsets` values in `partition:offset` form and `approveUnknownFields` (default `false`). It reads only `_SUCCESS` batch paths, reapplies the Job's current schema evolution policy, anti-joins target Kafka offsets, and appends recovered rows under the same `batch_id=replay_<runId>` partition layout. `approveUnknownFields: true` requires Job `manage` permission, relaxes only unknown-field handling, and records an audit event plus `policyOverride`. It never rewinds the Kafka consumer group. Compaction accepts `targetFileSizeMb` from 128 to 512, calculates partitions from completed Parquet bytes, and writes a run-specific staged result without deleting source batches. Quarantine inspection/replay and compaction serialize on the runtime row, require an idle worker, and return `409` while another maintenance run is active. Each persisted run has a lease (`ASKLAKE_CONTINUOUS_MAINTENANCE_LEASE_SECONDS`, default 900); expiry marks it failed and removes its named Docker container.
 
 ### LineageGraph
 
@@ -1472,7 +1560,7 @@ Validation:
 프론트 함수:
 
 - `createDerivedDatasetFromSql({ request, sourceDataset, sqlResult })`
-- 현재 SQL 화면의 `처리 Job 생성` UI는 `prepareSqlDatasetJobDraft(request)`로 같은 metadata를 ETL `DraftPipeline`에 주입한 뒤 Review 화면에서 `POST /api/etl/jobs`를 호출한다.
+- 현재 SQL 화면의 `처리 Job 생성` UI는 `SqlJobWizardDialog`에서 기본 정보, 스케줄, 거버넌스, 저장 설정을 순차 입력한다. 최종 제출 시 `createSqlDatasetJob(request)`가 SQL Result metadata와 설정을 명시적인 ETL `DraftPipeline`으로 변환해 `POST /api/etl/jobs`를 호출하며 `/etl/review`로 이동하지 않는다.
 
 Request:
 
@@ -1485,6 +1573,19 @@ type CreateDerivedDatasetRequest = {
     rag: boolean;
     refreshPolicy: "manual";
     tags: string[];
+  };
+  job?: {
+    accessScope: "organization" | "private" | "project";
+    compression: "Gzip" | "None" | "Snappy";
+    owner: string;
+    overlapPolicy: "skip_if_running" | "queue_after_current" | "allow_parallel";
+    partitionColumn?: string;
+    permissionSummary: string;
+    scheduleLabel: string;
+    scheduleMode: "manual" | "repeat";
+    scheduleSummary: string;
+    storagePath: string;
+    timezone?: string;
   };
   previewLimit?: number;
   query: string;
@@ -1503,9 +1604,22 @@ Request 예시:
     "description": "일별 매출 SQL Preview 결과로 생성한 분석 데이터셋",
     "layer": "GOLD",
     "name": "sales_daily_summary_analysis",
-    "rag": true,
+    "rag": false,
     "refreshPolicy": "manual",
-    "tags": ["#sql-derived", "#sales", "#dw"]
+    "tags": []
+  },
+  "job": {
+    "accessScope": "organization",
+    "compression": "Snappy",
+    "owner": "data-team-01",
+    "overlapPolicy": "skip_if_running",
+    "partitionColumn": "order_date",
+    "permissionSummary": "Data Engineer Group · 조직 내부 · 승인 검토",
+    "scheduleLabel": "매일 09:00",
+    "scheduleMode": "repeat",
+    "scheduleSummary": "반복 실행 · 매일 09:00 · Asia/Seoul · 실행 중이면 다음 예약 건너뜀",
+    "storagePath": "s3a://asklake-output/sales_daily_summary_analysis/gold/",
+    "timezone": "Asia/Seoul"
   },
   "previewLimit": 100,
   "query": "SELECT ...",
@@ -1524,10 +1638,10 @@ type CreateDerivedDatasetResponse = CatalogDataset;
 
 프론트 기대 동작:
 
-- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명/태그/레이어/RAG 여부와 `sourceRunId`, `query`, `referenceDatasetIds`를 보존한 ETL Review draft를 만든다.
-- Review에서 `파이프라인 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
+- SQL 화면의 기본 materialize UX는 생성 대상 이름/설명과 `sourceRunId`, `query`, `referenceDatasetIds`를 보존하고, 같은 모달에서 스케줄·거버넌스·압축·파티션·저장 경로를 설정한다. SQL 간편 생성에서는 레이어 선택, 태그, RAG 설정을 노출하지 않고 내부 기본값 `GOLD`, `[]`, `false`를 사용한다.
+- 마지막 `처리 Job 생성`을 누르면 기존 `POST /api/etl/jobs` 경로로 처리 Job이 생성되고, 실행 성공 후 Catalog dataset 등록 흐름을 따른다.
 - 생성된 dataset을 Catalog 목록 맨 앞에 추가합니다. SQL 작성 화면이 리셋되지 않도록 현재 선택 dataset은 유지할 수 있습니다.
-- 저장 화면에서 입력한 `name`, `description`, `tags`, `layer`, `rag` 값을 생성된 `CatalogDataset` metadata에 반영합니다.
+- 저장 화면에서 입력한 `name`, `description`, 스케줄, owner, permission summary, 압축, 파티션, 저장 경로를 생성 Job metadata에 반영합니다.
 - mock mode에서는 생성된 derived dataset을 pipeline 생성 dataset과 같은 `window.localStorage["asklake.catalogDatasets"]`에 저장하고, 앱 로드시 mock catalog dataset 앞에 병합합니다. 기존 `asklake.derivedDatasets`는 읽기 호환만 유지합니다.
 - live API mode에서는 localStorage fallback을 사용하지 않고 `POST /api/catalog/derived-datasets` 응답과 이후 `GET /api/catalog/datasets` hydrate를 신뢰합니다.
 - `sampleRows`, `schema`, `upstream`에는 SQL Preview 결과와 `sourceRunId` 연결 정보가 포함되어야 합니다.

@@ -53,6 +53,7 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
   const sourceReady = draft.source.connectionStatus === "success";
   const schemaReady = includedColumns.length > 0;
   const processingReady = Boolean(request.ruleSummary.trim());
+  const continuousRulesSupported = request.executionMode !== "continuous" || (!request.transformSteps.some((step) => step.enabled) && !request.qualityRules.some((rule) => rule.enabled));
   const scheduleReady = Boolean(request.scheduleLabel.trim());
   const retryReady = Boolean(request.retryPolicySummary.trim());
   const permissionReady = Boolean(request.permissionSummary.trim() && request.targetDataset.trim() && request.owner.trim());
@@ -62,10 +63,11 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       ["작업 ID", request.id],
       ["작업명", request.jobName],
       ["소스", [sourceTypeLabel(request.sourceType), request.sourceLabel].filter(Boolean).join(" · ")],
+      ["실행 방식", request.executionMode === "continuous" ? "실시간 스트림" : "Snapshot batch"],
       ["대상 데이터셋", request.targetDataset],
       ["설명", request.targetDescription],
     ]),
-    canCreate: sourceReady && schemaReady && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
+    canCreate: sourceReady && schemaReady && continuousRulesSupported && Boolean(request.sourceType.trim()) && Boolean(request.sourceLabel.trim()) && Boolean(request.targetDataset.trim()) && Boolean(request.owner.trim()),
     destination: toReviewEntries([
       ["저장 경로", request.storagePath ?? ""],
       ["데이터베이스", request.targetDatabase ?? "asklake"],
@@ -91,7 +93,8 @@ function buildMockReviewSnapshot(draft: DraftPipeline): ReviewSnapshot {
       validationRow("소스 연결", sourceReady, "완료", "확인 필요"),
       validationRow("스키마", schemaReady, "확정됨", "추론 필요"),
       validationRow("처리 테스트", processingReady, "통과", "확인 필요"),
-      validationRow("스케줄", scheduleReady, "유효함", "확인 필요"),
+      ...(request.executionMode === "continuous" ? [validationRow("Continuous 규칙", continuousRulesSupported, "지원 범위 확인", "Continuous에서는 transform/quality rule을 제거하세요")] : []),
+      validationRow(request.executionMode === "continuous" ? "스트림 제어" : "스케줄", scheduleReady, request.executionMode === "continuous" ? "시작/중지로 제어" : "유효함", "확인 필요"),
       validationRow("실패 재시도", retryReady, "유효함", "확인 필요"),
       validationRow("권한/타겟", permissionReady, "유효함", "확인 필요"),
     ],
